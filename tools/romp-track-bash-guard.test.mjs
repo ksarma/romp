@@ -7382,6 +7382,7 @@ const RESIDUAL_TABLE = [
   ['RT-xargs', 'a reader outside the roads', 'xargs', "printf '%s\\n' ../base/report.md report.md | xargs cp", ['bash', 'zsh', 'dash']],
   ['RT-xargs-I', 'a reader outside the roads', 'xargs', 'echo report.md | xargs -I{} cp ../base/report.md {}', ['bash', 'zsh', 'dash']],
   ['RT-script-file-path', 'a reader outside the roads', null, "printf 'cp \"$@\"\\n' > ../scratch/c2; chmod +x ../scratch/c2; PATH=../scratch:$PATH; c2 ../base/report.md report.md", ['bash', 'zsh', 'dash']],
+  ['RT-run-written-prefix', 'a reader outside the roads', null, "printf 'cp \"$@\"\\n' > ../scratch/env; chmod +x ../scratch/env; PATH=../scratch:$PATH; env ../base/report.md report.md", ['bash', 'zsh', 'dash']],   // round 6's tenth commit: a written script bound through PATH under a wrapper's name (`env`); THE PEELED NAME reads a copy or link of a command, not a script the command writes, so this stays the reader class RT-script-file-path names
   ['RT-source-written', 'a reader outside the roads', null, "printf 'cp ../base/report.md report.md\\n' > ../scratch/s.sh; . ../scratch/s.sh", ['bash', 'zsh', 'dash']],
   ['RT-perl-system', 'a reader outside the roads', 'perl', "perl -e 'system(\"cp ../base/report.md report.md\")'", ['bash', 'zsh', 'dash']],
   ['RT-python-system', 'a reader outside the roads', 'python3', "python3 -c 'import os; os.system(\"cp ../base/report.md report.md\")'", ['bash', 'zsh', 'dash']],
@@ -7497,7 +7498,6 @@ const RESIDUAL_TABLE = [
   ['RT-glued-true-sub-head', 'a command name the resolver never reads', null, 'c=cp; $c$(true) ../base/report.md report.md', ['bash', 'zsh', 'dash']],
   ['RT-glued-backtick-head', 'a command name the resolver never reads', null, 'c=cp; $c`:` ../base/report.md report.md', ['bash', 'zsh', 'dash']],
   ['RT-glued-strip-head', 'a command name the resolver never reads', null, 'c=cp; $c${x#y} ../base/report.md report.md', ['bash', 'zsh', 'dash']],
-  ['RT-glued-plus-head', 'a command name the resolver never reads', null, 'c=cp; ${x:+y}$c ../base/report.md report.md', ['bash', 'zsh', 'dash']],
   ['RT-getopts-optarg-eval', 'a script held in a variable', null, "getopts c: o -c 'cp ../base/report.md report.md'; eval \"$OPTARG\"", ['bash', 'zsh', 'dash']],
   ['RT-while-read-eval', 'a script held in a variable', null, "echo 'cp ../base/report.md report.md' | while read -r l; do eval \"$l\"; done", ['bash', 'zsh', 'dash']],
   ['RT-subshell-read-eval', 'a script held in a variable', null, "echo 'cp ../base/report.md report.md' | (read -r l; eval \"$l\")", ['bash', 'zsh', 'dash']],
@@ -8261,7 +8261,7 @@ test("round 6, fifth commit, the rows: the parameter's value joins a default wor
     const dw = lex('c=cp; ${c:-cat} a b').segments[1].words[0];
     assert.deepEqual([dw.readings, dw.readingParams], [['cat'], [{ name: 'c', op: ':-', before: '', after: '' }]], "THE PARAMETER'S VALUE: the reading carries the name and the operator");
     assert.deepEqual(lex('${c:?} a').segments[0].words[0].readingParams, [{ name: 'c', op: ':?', before: '', after: '' }], 'a `?` form: the value alone (no text of its own)');
-    assert.equal(lex('${c:+x} a').segments[0].words[0].readingParams, undefined, 'a `+` form depends on no value');
+    assert.deepEqual(lex('${c:+x} a').segments[0].words[0].readingParams, [{ name: 'c', op: ':+', before: '', after: '', plus: true }], "THE ALTERNATE VALUE (round 6's tenth commit): a `+` form carries the name and operator so scriptTexts adds the word's empty possibility where the name may be unset");
     assert.deepEqual(lex('${d:-${c:-cat}} e').segments[0].words[0].readingParams.map((p) => p.name), ['c', 'd'], 'a nested default word carries both names');
     assert.deepEqual(lex('eval "${c:-cat} a b"').segments[0].words[1].readingParams, [{ name: 'c', op: ':-', before: '', after: ' a b' }], 'the glue around the expansion travels with the name');
     assert.ok(lex('$c${x:-} a').segments[0].words[0].unresolvableReading, 'a default word glued to another expansion is UNRESOLVABLE');
@@ -9208,5 +9208,104 @@ test("round 6, ninth commit, the rows: a positional list of several elements at 
     assert.equal(lex('echo x >>(bash)').segments[0].redirects[0].op, '>', "zsh's `>>(cmd)` is `>` and the substitution");
     assert.equal(lex('echo x >>(bash)').segments[0].redirects[0].target.text, '>(bash)');
     assert.equal(lex('echo x >>(bash)', 'dash').segments[0].redirects.length, 0, "under dash's grammar `>>` stays `>>`, with no target word before the `(` (dash rejects the line)");
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+test("round 6, tenth commit, the rows: a double-quoted `\"$*\"` joins the positional parameters by the first character of IFS (and dash joins `\"$@\"` at a redirection target), an unbraced multi-digit `$10` is the tenth positional in zsh, a `${name:+word}` the name may leave unset stands for nothing, a value the prompt names runs its dropped-expansion text, a leading expansion the command never gives a value makes the next word the command, the standard output reaches a process substitution along a chain of `>&` dups and out of a group's body, `[[` bound through PATH runs under dash, and a `function [` definition names the bracket; each with the shells that write and the twins allowed", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const NOT_LIT = ['text', 'not a literal path'];
+    const rows = [
+      // THE IFS RULE over a positional list (finding: `"$*"` joins by the first character of IFS)
+      ["S10-ifs-star", "nas", "set -- .. docs report.md; IFS=/; echo x > \"$*\"", ["bash", "zsh", "dash"], NOT_LIT],
+      ["S10-ifs-braced-star", "nas", "set -- .. docs report.md; IFS=/; echo x > \"${*}\"", ["bash", "zsh", "dash"], NOT_LIT],
+      ["S10-ifs-at-dash", "nas", "set -- .. docs report.md; IFS=/; echo x > \"$@\"", ["dash"], NOT_LIT],
+      ["S10-ifs-operand", "nas", "set -- .. docs report.md; IFS=/; cp ../base/report.md \"$*\"", ["bash", "zsh", "dash"], NOT_LIT],
+      ["S10-ifs-readonly", "nas", "set -- .. docs report.md; readonly IFS=/; echo x > \"$*\"", ["bash", "zsh", "dash"], NOT_LIT],
+      ["S10-ifs-slice-star", "nas", "set -- .. docs report.md; IFS=/; echo x > \"${*:1}\"", ["bash", "zsh"], NOT_LIT],
+      ["S10-ifs-twin-space", "nas", "set -- .. docs report.md; echo x > \"$*\"", [], 'allow'],
+      // THE MULTI-DIGIT POSITIONAL (finding: `$10` is the tenth in zsh, `${1}0` in bash and dash)
+      ["S10-ten-target", "nad", "set -- 1 2 3 4 5 6 7 8 9 report.md; echo x > $10", ["zsh"], NOT_LIT],
+      ["S10-ten-dq", "nad", "set -- 1 2 3 4 5 6 7 8 9 report.md; echo x > \"$10\"", ["zsh"], NOT_LIT],
+      ["S10-ten-eval", "nad", "set -- 1 2 3 4 5 6 7 8 9 report.md; eval 'echo x > $10'", ["zsh"], NOT_LIT],
+      ["S10-ten-cp-operand", "nad", "set -- 1 2 3 4 5 6 7 8 9 report.md; cp ../base/report.md $10", ["zsh"], NOT_LIT],
+      ["S10-eleven-target", "nad", "set -- 1 2 3 4 5 6 7 8 9 10 report.md; echo x > $11", ["zsh"], NOT_LIT],
+      ["S10-ten-braced", "nad", "set -- 1 2 3 4 5 6 7 8 9 report.md; echo x > ${10}", ["bash", "zsh", "dash"], 'name'],
+      ["S10-single-digit-twin", "nad", "set -- other.md report.md; echo x > $1", [], 'allow'],
+      // THE ALTERNATE VALUE (finding: `${name:+word}` the name may leave unset stands for nothing)
+      ["S10-alt-eval", "nad", "eval cp ${c:+x} ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
+      ["S10-alt-plus", "nad", "eval cp ${c+x} ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
+      ["S10-alt-eval-dq", "nad", "eval \"cp ${c:+x} ../base/report.md report.md\"", ["bash", "zsh", "dash"], 'name'],
+      ["S10-alt-bash-c", "nad", "bash -c \"cp ${c:+x} ../base/report.md report.md\"", ["bash", "zsh", "dash"], 'name'],
+      ["S10-alt-value-road", "nad", "x=\"cp ${c:+x} ../base/report.md report.md\"; $x", ["bash", "dash"], ['text', 'could not establish that text']],
+      ["S10-alt-plain-operand", "nad", "cp ${c:+x} ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
+      ["S10-alt-twin-set", "nad", "c=1; eval cp ${c:+x} ../base/report.md report.md", [], 'allow'],
+      ["S10-alt-twin-plus-empty", "nad", "c=; eval cp ${c+x} ../base/report.md report.md", [], 'allow'],
+      // THE VANISHED TEXT on a prompt road (finding: PS4/PS1 value with a dropped expansion)
+      ["S10-ps4-vanish", "nad", "PS4=\"\\$(cp $c ../base/report.md report.md)\"; set -x; true", ["bash"], 'name'],
+      ["S10-ps4-sub-empty", "nad", "PS4=\"\\$(cp $(true) ../base/report.md report.md)\"; set -x; true", ["bash"], 'name'],
+      ["S10-ps4-twin", "nad", "PS4=\"prompt> \"; set -x; true", [], 'allow'],
+      // THE VANISHING HEAD (finding: a leading expansion the command never gives a value makes the next word the command)
+      ["S10-head-c", "nad", "$c cp ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
+      ["S10-head-braced", "nad", "${c} cp ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
+      ["S10-head-pos", "nad", "$1 cp ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
+      ["S10-head-at", "nad", "\"$@\" cp ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
+      ["S10-head-sub", "nad", "$(true) cp ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
+      ["S10-head-nice", "nad", "$c nice cp ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
+      ["S10-head-tee", "nad", "$c tee report.md < ../base/report.md", ["bash", "zsh", "dash"], 'name'],
+      ["S10-head-out-abs", "out", "$c cp {NA}/base/report.md {NA}/docs/report.md", ["bash", "zsh", "dash"], 'name', null],
+      ["S10-head-twin", "nad", "$c report.md", [], 'allow'],
+      // THE ROUTED STANDARD OUTPUT (finding: the output reaches a process substitution along a chain of `>&` dups)
+      ["S10-dup-two-hop", "nad", "echo 'cp ../base/report.md report.md' 3> >(bash) 2>&3 1>&2", ["bash", "zsh"], 'name'],
+      ["S10-dup-three-hop", "nad", "echo 'cp ../base/report.md report.md' 3> >(bash) 4>&3 5>&4 >&5", ["bash", "zsh"], 'name'],
+      ["S10-dup-fd4", "nad", "echo 'cp ../base/report.md report.md' 3> >(bash) 4>&3 >&4", ["bash", "zsh"], 'name'],
+      ["S10-dup-group", "nad", "{ echo 'cp ../base/report.md report.md' >&3; } 3> >(bash)", ["bash", "zsh"], 'name'],
+      ["S10-dup-subshell", "nad", "(echo 'cp ../base/report.md report.md' >&3) 3> >(bash)", ["bash", "zsh"], 'name'],
+      ["S10-dup-if", "nad", "if true; then echo 'cp ../base/report.md report.md' >&3; fi 3> >(bash)", ["bash", "zsh"], ['text', 'is filled in from']],
+      ["S10-dup-twin-stderr", "nad", "echo 'cp ../base/report.md report.md' 2> >(bash)", [], 'allow'],
+      ["S10-dup-twin-nodup", "nad", "echo 'cp ../base/report.md report.md' 3> >(bash)", [], 'allow'],
+      // THE PEELED NAME: `[[` bound through PATH under dash, and a `function [` definition
+      ["S10-bracket-bound-dash", "nad", "cp /usr/bin/cp '../scratch/[['; PATH=../scratch:$PATH; [[ ../base/report.md report.md", ["dash"], ['text', 'looked up through a PATH']],
+      ["S10-bracket-bound-notes", "nan", "cp /usr/bin/cp '../scratch/[['; PATH=../scratch:$PATH; [[ ../base/report.md n1.md", ["dash"], ['text', 'looked up through a PATH']],
+      ["S10-bracket-bound-twin", "nad", "cp /usr/bin/cp '../scratch/['; PATH=../scratch:$PATH; [ ../base/report.md report.md", [], 'allow'],
+      ["S10-fn-bracket", "nad", "function [ { cp \"$@\"; }; [ ../base/report.md report.md", ["bash", "zsh"], 'name'],
+      ["S10-fn-bracket-args", "nad", "function [ { cp $1 $2; }; [ ../base/report.md report.md", ["bash", "zsh"], 'name'],
+      ["S10-fn-bracket-notes", "nan", "function [ { cp \"$@\"; }; [ ../base/report.md n1.md", ["bash", "zsh"], 'name'],
+      ["S10-fn-greet-twin", "nad", "function greet { echo hi; }; greet", [], 'allow'],
+    ];
+    const judge = (id, cwd, raw, writers, expect, outside = 'allow') => {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      w.build();
+      const h = w.hook(cmd, at);
+      assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error: ${h.reason.split('\n')[0]}`);
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      if (outside != null) {
+        w.build();
+        const o = w.hook(cmd, w.cwds.out);
+        if (outside === 'allow') assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
+        else assert.equal(o.status, 2, `${id}: from a cwd in no project the stated cost refuses: ${cmd}`);
+      }
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    };
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect, outside] of rows) { judge(id, cwd, raw, writers, expect, outside); n++; }
+    assert.equal(n, 49);
+    // the readings the tenth commit's fixes rest on, in-process over the scratch project
+    assert.deepEqual(lex('${c:+x} a').segments[0].words[0].readingParams, [{ name: 'c', op: ':+', before: '', after: '', plus: true }], 'THE ALTERNATE VALUE: the reading carries the name and operator so scriptTexts adds the empty possibility');
+    assert.deepEqual(lex('echo x 3> >(bash) 2>&3 1>&2').segments[0].outDups, [{ from: '2', to: '3' }, { from: '1', to: '2' }], 'the dup chain is recorded in full, for THE ROUTED STANDARD OUTPUT to follow');
+    assert.ok(lex('function [ { cp "$@"; }').segments.length >= 1, 'a `function [` line lexes');
   } finally { process.env.HOME = savedHome; w.rm(); }
 });

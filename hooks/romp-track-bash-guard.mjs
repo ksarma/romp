@@ -1558,10 +1558,23 @@ export function lex(command, shell = null, opts = {}) {
         const view = { ...seg, redirects: seg.redirects.filter((r) => !fedSubs.includes(r)), subs: seg.subs.filter((t) => !fedInner.has(t)) };   // the substitution fed is the road, not an operand's substitution (shapeOnPrinter)
         const c = seg.words.length ? commandOf(seg.words) : null;
         const isExec = !!(c && c.wrapped && c.name === '' && !c.args.length && c.wrappers.includes('exec'));
-        const onStdout = (r) => { const fd = r.fd == null ? '1' : r.fd; return fd === '1' || seg.outDups.some((d) => d.from === '1' && d.to === fd); };
+        // THE ROUTED STANDARD OUTPUT (round 6's tenth commit, 2026-09-22; the round's verifiers: `echo TXT 3> >(bash) 2>&3 1>&2` ran the text
+        // in bash and zsh while the one-hop check missed the chain fd1->fd2->fd3->`>(bash)`): the standard output reaches the descriptor a
+        // process substitution opens not only when a single `>&` routes it there but along a chain of them, so onStdout follows the dup
+        // graph. The two arrays (seg.redirects, seg.outDups) keep no interleaved order, so the walk over-approximates (a `>&` is treated as
+        // reaching wherever its target reaches, whatever the order the shell applied them): a reversed chain that leaves fd1 at the terminal
+        // is refused all the same, the safe side of a route the guard does not order.
+        const groupSite = isExec ? null : streamSite(view);   // a subshell, group or keyword compound before the redirection carries the pipe; its body's own `>&` routes its output to the opened descriptor (the round's verifiers: `{ echo TXT >&3; } 3> >(bash)`)
+        const dupsHere = [...seg.outDups, ...(groupSite && groupSite.segs ? groupSite.segs.flatMap((s) => s.outDups || []) : [])];
+        const onStdout = (r) => {
+          const fd = r.fd == null ? '1' : r.fd;
+          const reach = new Set([fd]);
+          for (let grew = true; grew;) { grew = false; for (const d of dupsHere) if (reach.has(d.to) && !reach.has(d.from)) { reach.add(d.from); grew = true; } }
+          return reach.has('1');
+        };
         seg.procsubFeeds = [];
         for (const r of fedSubs) {
-          const site = isExec ? { kind: 'exec', spelling: seg.words.map((w) => w.raw).join(' ') } : onStdout(r) ? streamSite(view) : null;
+          const site = isExec ? { kind: 'exec', spelling: seg.words.map((w) => w.raw).join(' ') } : onStdout(r) ? groupSite : null;
           const holder = {};
           if (site) placeReading(streamOutput(site, view), site.spelling, 'segment', holder);
           seg.procsubFeeds.push({ inner: procsubOf(r.target), printed: holder.printed || null });
@@ -3869,10 +3882,20 @@ function streamOutput(site, view) {
 // operator's word is several segments or empty.
 function defaultWordReading(nested, prefixLen, param = null) {
   // THE PARAMETER'S VALUE (round 6's fifth commit; lex's defaultReading says why): the reading carries the name and operator whose value
-  // decides between the value and the word (`params`), so extract's scriptTexts can join the value or refuse; the `+` forms depend on no
-  // value (the word, or nothing) and carry none; a `?` form stands for the value alone (the word is a message the shell prints as it
-  // exits), so its reading is no text and the name
-  const withParam = (r) => (param && !/\+$/.test(param.op) ? Object.assign(r, { params: [...(r.params || []), param] }) : r);
+  // decides between the value and the word (`params`), so extract's scriptTexts can join the value or refuse; a `?` form stands for the
+  // value alone (the word is a message the shell prints as it exits), so its reading is no text and the name.
+  // THE ALTERNATE VALUE (round 6's tenth commit, 2026-09-22; the round's verifiers: `eval cp ${c:+x} ../base/report.md report.md` ran the
+  // two-operand copy in every shell while the word read as `x` alone made three operands and allowed): a `${name:+word}` or `${name+word}`
+  // stands for the word when the name is set (and non-empty, with the colon) and for NOTHING otherwise, so the word alone is a sound reading
+  // only when the name is known set; the reading carries the name and operator (`plus`), and extract's scriptTexts adds the empty reading (the
+  // word dropped) where the name may be unset, refusing a text a copying writer's operand count then makes a write. A name every shell always
+  // sets to a non-empty value (`$#`, `$$`, `$0`, `$?`, `$-`) has no empty reading, so its `+` word stands alone as before (THE SPECIAL PARAMETER).
+  const ALWAYS_SET = /^[#$0?-]$/;
+  const withParam = (r) => {
+    if (!param) return r;
+    if (/\+$/.test(param.op)) return param.name && ALWAYS_SET.test(param.name) ? r : Object.assign(r, { params: [...(r.params || []), { ...param, plus: true }] });
+    return Object.assign(r, { params: [...(r.params || []), param] });
+  };
   // THE SPECIAL PARAMETER (round 6's sixth commit, 2026-09-21; the body auditor: `${#:+cp} a b`, `${?:+cp}`, `${0:+cp}`, `${$:+cp}`, `${-:+cp}`, their
   // `+` twins, `${1:-cp}`, `${9:-cp}`, `${10:-cp}`, `${@:-cp}`, `${*:-cp}`, `${!:-cp}`, `set -- x; ${1:+cp} a b`, and the consumers `${$:+bash} -c`,
   // `| ${#:+bash}`, `${#:+eval}` and `${#:+.} <(..)` each ran the copy in the shells named while the default-word grammar read names alone and the
@@ -4240,7 +4263,7 @@ function unreadableExpandedNames(segments, homeWrites = new Set()) {
 // the environment stays exported when reassigned, measured in all three); any other mention of HOME outside an
 // expansion leaves it unreadable for the whole command, as before, and so does an eval, a source or a call of a function
 // the command defines from that point, for HOME, PWD and OLDPWD as for every name.
-const RESOLVED_NAME = /^\$(?:\{([A-Za-z_][A-Za-z0-9_]*|[0-9]+)\}|([A-Za-z_][A-Za-z0-9_]*|[0-9]))/;   // a positional parameter is a name to the rule since round 6's sixth commit (THE POSITIONAL VALUE): `$1` one digit unbraced (`$10` is `${1}0` in every shell), `${10}` any run braced; its value is the operand extract holds for it, or none
+const RESOLVED_NAME = /^\$(?:\{([A-Za-z_][A-Za-z0-9_]*|[0-9]+)\}|([A-Za-z_][A-Za-z0-9_]*|[0-9]))/;   // a positional parameter is a name to the rule since round 6's sixth commit (THE POSITIONAL VALUE): `$1` one digit unbraced (`$10` is `${1}0` in bash and dash but the tenth positional in zsh, so resolveWord's THE MULTI-DIGIT POSITIONAL leaves it unread where zsh may run the line), `${10}` any run braced; its value is the operand extract holds for it, or none
 const VAR_ASSIGNERS = new Set(['export', 'declare', 'typeset', 'readonly']);   // NAME=VALUE operands that persist in this shell at the top level
 const VAR_POISONERS = new Set(['eval', 'source', '.', 'xargs']);   // after these the guard reads no assigned name
 // The declaration flags that change neither the value nor what the name refers to (`-g`, `-x`, `-r`). Until round 5's
@@ -4640,7 +4663,7 @@ function extractIn(command, ctx) {
     const braced = m[2].startsWith('{') && m[2].endsWith('}');
     const t = braced ? m[2].slice(1, -1) : m[2];
     let mm;
-    if ((mm = t.match(/^([1-9][0-9]*)$/))) return braced || mm[1].length === 1 ? { quoted, from: Number(mm[1]) - 1, to: Number(mm[1]), star: false } : null;   // `$10` unbraced is `${1}0`
+    if ((mm = t.match(/^([1-9][0-9]*)$/))) return braced || mm[1].length === 1 ? { quoted, from: Number(mm[1]) - 1, to: Number(mm[1]), star: false } : null;   // an unbraced multi-digit `$10` is `${1}0` in bash and dash and the tenth positional in zsh: no positional here, resolveWord's THE MULTI-DIGIT POSITIONAL leaves it unread where zsh may run the line
     if (/^[@*]$/.test(t)) return { quoted, from: 0, to: Infinity, star: t === '*' };
     if (braced && (mm = t.match(/^([@*]):( ?-?[0-9]+|\$#)(?::([0-9]+|\$#|[^]*))?$/))) {
       const off = mm[2] === '$#' ? null : Number(mm[2]);
@@ -4664,7 +4687,14 @@ function extractIn(command, ctx) {
     if (!sp) return null;
     if (positionals === UNKNOWN_POSITIONALS) return { unresolvable: positionalsWhy };
     const { quoted, star } = sp;
-    if (ifsNamed && !quoted) return { unresolvable: 'the command names IFS, so the fields the shell cuts the positional parameters into where they are not double-quoted are not known' };
+    // THE IFS RULE over a positional list (round 6's tenth commit, 2026-09-22; the round's verifiers: `set -- .. docs report.md; IFS=/; echo
+    // x > "$*"` wrote ../docs/report.md in bash, zsh and dash while allowed): an unquoted `$@`/`$*` splits by IFS (the existing rule), and
+    // `"$*"` joins the parameters with the FIRST character of IFS (bash: Special Parameters; dash(1); zshexpn(1)), so a named IFS the resolver
+    // does not read leaves the joined name unknown too; at a redirection target dash joins even `"$@"` with that character (measured), so any
+    // quoted list there is one the hook cannot read while the command names IFS. The exempt case is a quoted `"$@"` that is not a target: its
+    // elements stay separate whatever IFS holds. (The `IFS=' '` and `unset IFS` twins join by whitespace, an untracked name, and are refused
+    // here as the unquoted forms already were: a stated cost, the safe side of a value the resolver does not compute.)
+    if (ifsNamed && (!quoted || star || oneWord === 'target')) return { unresolvable: `the command names IFS, so the ${quoted ? 'first character it joins the positional parameters with at a redirection target' : 'fields the shell cuts the positional parameters into where they are not double-quoted'} ${quoted ? 'is' : 'are'} not known` };
     if (sp.zero) return { unresolvable: `the word \`${w.raw}\` is a slice of the positional parameters from 0, which bash heads with the shell's own name, a word I do not read` };
     let picked;
     if (sp.slice) {
@@ -4846,6 +4876,15 @@ function extractIn(command, ctx) {
           // report.md:report.md; IFS=:; cp $x` copied, while the value was judged whole), so the name is not read there and the word is one the
           // hook cannot read (a target refuses, a copying writer's one operand refuses as split, a command name refuses through scriptTexts)
           if (ifsNamed && !dqSingleField(w.raw)) { if (!named) named = { kind: 'ifsNamed', name: m[1] || m[2], text: `the command names IFS, so the fields the shell cuts \`$${m[1] || m[2]}\` into where it is not double-quoted are not the value as stored` }; ok = false; break; }
+          // THE MULTI-DIGIT POSITIONAL (round 6's tenth commit, 2026-09-22; the round's verifiers: `set -- 1 2 3 4 5 6 7 8 9 report.md;
+          // echo x > $10` wrote report.md in zsh while allowed): an unbraced `$` before a run of two or more digits is the FIRST positional
+          // and the remaining digits as literal text in bash and dash (`$10` is `${1}0`) but the tenth (or later) positional in zsh
+          // (zshexpn(1): a multi-digit number after `$` is one positional), so where zsh may run the line the parameter the shell reads is
+          // not known; the braced `${10}` is the tenth in every shell and reads as before
+          if (!m[1] && /^[0-9]$/.test(m[2]) && k + m[0].length === run.length && /^[0-9]$/.test(T[end] || '') && (shell == null || shell === 'zsh')) {
+            if (!named) named = { kind: 'namedExpansion', name: m[2], text: `\`$${m[2]}${T[end]}\` is the ${m[2]} positional parameter and a literal digit in bash and dash but a single multi-digit positional in zsh, so the parameter the shell reads is not known` };
+            ok = false; break;
+          }
           const v = valueOf(m[1] || m[2]);
           if (v == null) { unread(m[1] || m[2]); ok = false; break; }
           value += v;
@@ -5341,7 +5380,7 @@ function extractIn(command, ctx) {
   // expansion marks a sequence of such spellings; a value with no blank the readability rule resolved already) stands for each text the
   // values and the literal characters around them compose, the product capped at 64; null when an expansion of another kind stands in the
   // word, or a name has no value, and the word keeps what it had before
-  const CANDIDATE_TOKEN = /\$\{([A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*])\}|\$([A-Za-z_][A-Za-z0-9_]*|[0-9@*])/y;   // a digit is a name to the candidates too (THE POSITIONAL VALUE, round 6's sixth commit): `$1` one digit unbraced (`$10` is `${1}0`), `${10}` any run braced; `$@` and `$*` hold the operands joined by one blank, the text a here-string or an unquoted here-document body hands a consumer (`f() { bash <<< "$*"; }` fed the call's operands)
+  const CANDIDATE_TOKEN = /\$\{([A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*])\}|\$([A-Za-z_][A-Za-z0-9_]*|[0-9@*])/y;   // a digit is a name to the candidates too (THE POSITIONAL VALUE, round 6's sixth commit): `$1` one digit unbraced (`$10` is `${1}0` in bash and dash but the tenth positional in zsh; resolveWord leaves the multi-digit form unread before it reaches here), `${10}` any run braced; `$@` and `$*` hold the operands joined by one blank, the text a here-string or an unquoted here-document body hands a consumer (`f() { bash <<< "$*"; }` fed the call's operands)
   // THE VANISHED TEXT (round 6's ninth commit, 2026-09-22; the round's verifiers: `eval cp $c ../base/report.md report.md` ran the two-operand
   // copy in bash, zsh and dash while allowed, and `eval "cp $c a b"`, `eval cp "$c" a b` (eval joins its operands with one blank and parses the
   // join, so a quoted empty operand vanishes there too), `eval cp $(true) a b`, `eval cp "$@" a b`, mv, install and `ln -f` the same, `trap "cp
@@ -5405,7 +5444,18 @@ function extractIn(command, ctx) {
       // command never sets (its value is the shell's own, which the guard does not read), makes the word UNRESOLVABLE, refused as a text
       // the hook cannot read, never the word alone
       const texts = new Set(w.readings);
-      for (const { name, before = '', after = '' } of w.readingParams) {
+      for (const p of w.readingParams) {
+        const { name, before = '', after = '', plus, op } = p;
+        if (plus) {
+          // THE ALTERNATE VALUE (round 6's tenth commit): `${name:+word}`/`${name+word}` is the word (already in the readings) when the
+          // name is set (non-empty, with the colon) and the word dropped otherwise; add the dropped form unless the name is known set,
+          // so the empty text the shell may hand over reaches the judgment (a two-operand copy the three-operand reading hid)
+          const setKnown = vars.has(name) && vars.get(name) != null && (!/:/.test(op || '') || vars.get(name) !== '');
+          const candKnown = candidates.has(name) && [...candidates.get(name)].length > 0 && (!/:/.test(op || '') || [...candidates.get(name)].every((v) => v !== ''));
+          const posKnown = /^[0-9@*]+$/.test(name) && positionalsApply() && positionals !== UNKNOWN_POSITIONALS && (name === '@' || name === '*' ? positionals.length > 0 : positionals.length >= Number(name));
+          if (!(setKnown || candKnown || posKnown)) texts.add(before + after);
+          continue;
+        }
         const stands = `the word stands for the value of \`${name}\` when it is set, and`;
         if (varsPoisoned) { cannotRead(w, how, { kind: 'unresolvableReading', spelling: w.raw, text: `${stands} ${poisonWhy || 'an earlier construct may assign any name'}, so that value is not known` }); return []; }
         if (vars.has(name) && vars.get(name) === null) { cannotRead(w, how, { kind: 'unresolvableReading', spelling: w.raw, text: `${stands} ${unreadableWhy.get(name) || `the command writes \`${name}\` through a construct I do not follow`}, so that value is not known` }); return []; }
@@ -5488,15 +5538,19 @@ function extractIn(command, ctx) {
   };
   let sawOpaqueCommand = false;
   let vanishedRead = false;   // THE VANISHED TEXT: scriptTexts answered a text with an expansion the command never gives a value removed (the eval case reads it: such a text may rebind the positional parameters)
-  // THE VALUED NAMES (round 6's fourth commit): the value of a SCRIPT_VALUED_NAMES assignment is a script of this shell when literal (a value
-  // that is an expansion is the residual, a script held in a variable); the value of a STARTUP_FILE_NAMES assignment that is a `<(..)` the
-  // resolver reads is that text (the word's readings carry the name and `=` before the text, THE GLUED READING in lex), read whether or not
-  // the shell is interactive (bash reads BASH_ENV when it is not, ENV in POSIX mode when it is; dash reads ENV when interactive: the safe side)
+  // THE VALUED NAMES (round 6's fourth commit): the value of a SCRIPT_VALUED_NAMES assignment is a script of this shell, read through scriptTexts,
+  // which since the tenth commit (THE VANISHED TEXT on this road; the round's verifiers: `PS4="\$(cp $c ../base/report.md report.md)"; set -x; true`
+  // and the `$(true)` twin ran the copy in bash while the value held a live expansion the literal guard skipped) reads the value with the
+  // expansions the command never gives a value removed, the shell dropping them before it prints or traces the prompt; a value that is only a
+  // command substitution the resolver did not read stands for nothing (the substitution is read where it runs, at assignment). The value of a
+  // STARTUP_FILE_NAMES assignment that is a `<(..)` the resolver reads is that text (the word's readings carry the name and `=` before the text,
+  // THE GLUED READING in lex), read whether or not the shell is interactive (bash reads BASH_ENV when it is not, ENV in POSIX mode when it is;
+  // dash reads ENV when interactive: the safe side)
   const readValuedWords = (words) => {
     for (const w of words) {
       const m = w.text.match(/^([A-Za-z_][A-Za-z0-9_]*)=/);
       if (!m || (w.marks && /x/.test(w.marks.slice(0, m[1].length)))) continue;
-      if (SCRIPT_VALUED_NAMES.has(m[1])) { const v = sliceWord(w, m[0].length); if (v.literal && !v.text.includes('\0')) for (const t of scriptTexts(v, `\`${m[1]}\` value`)) recurse(t, shell, false, ` through \`${m[1]}\``); }
+      if (SCRIPT_VALUED_NAMES.has(m[1])) { const v = sliceWord(w, m[0].length); for (const t of scriptTexts(v, `\`${m[1]}\` value`)) recurse(t, shell, false, ` through \`${m[1]}\``); }
       if (STARTUP_FILE_NAMES.has(m[1])) for (const t of scriptTexts(w, `\`${m[1]}\` file`, 'file')) recurse(t.startsWith(m[0]) ? t.slice(m[0].length) : t, shell, false, ` through \`${m[1]}\``);
     }
   };
@@ -6053,7 +6107,8 @@ function extractIn(command, ctx) {
     // leading braces, whose group frames are open by now (round 5: `{ function f { x=..; }; } | cat`).
     {
       const p = peelIndex(seg.words, k, false);
-      if (seg.words.length >= p + 2 && plainWord(seg.words[p]) && seg.words[p].text === 'function' && seg.words[p + 1].literal && seg.op !== '(' && !frames.some((f) => f.kind === 'function')) {
+      const fnNameWord = (w) => !!(w && w.marks && /^u+$/.test(w.marks) && w.text !== '{' && w.text !== '}');   // an unquoted name after `function`: a plain identifier or a glob-shaped one (`[`, `[[`, `?`, `a*`), which bash and zsh take as the function's name (round 6's tenth commit: `function [ { cp "$@"; }; [ a b` ran cp while `[` was glob-marked and the `.literal` test skipped it)
+      if (seg.words.length >= p + 2 && plainWord(seg.words[p]) && seg.words[p].text === 'function' && fnNameWord(seg.words[p + 1]) && seg.op !== '(' && !frames.some((f) => f.kind === 'function')) {
         // every word up to the body's `{` is a name (round 5's addendum, F2: zsh's `function f g {` defines both and runs nothing;
         // bash rejects the spelling); with no `{` on this segment the body is the next segment, a `{ }` group counted by `braces`
         // or zsh's one-command body, which dash, having no `function` word, runs in THIS shell (`function f⏎{⏎cd ../docs⏎}` moved
@@ -6061,7 +6116,7 @@ function extractIn(command, ctx) {
         // its close (`dashRuns`, popFunction)
         let q = p + 1;
         const fnNames = [];
-        while (q < seg.words.length && !(plainWord(seg.words[q]) && seg.words[q].text === '{')) { if (seg.words[q].literal) { definedFunctions.add(seg.words[q].text); fnNames.push(seg.words[q].text); } q++; }
+        while (q < seg.words.length && !(plainWord(seg.words[q]) && seg.words[q].text === '{')) { if (fnNameWord(seg.words[q])) { definedFunctions.add(seg.words[q].text); fnNames.push(seg.words[q].text); } q++; }
         const body = q < seg.words.length;
         frames.push({ kind: 'function', name: seg.words[p + 1].text, names: fnNames, defFrom: seg.start, running: ctx.runFunction != null && fnNames.includes(ctx.runFunction), bodyMoved: false, dir, unknownDir, unknownWhy, depth: body ? 1 : 0, dashRuns: !body });   // `names`, `defFrom`, `running`: THE CALLED BODY, as on the paren path
         seg.words = seg.words.slice(q + (body ? 1 : 0));
@@ -6318,15 +6373,26 @@ function extractIn(command, ctx) {
         const re = globRegex(hw.text, hw.marks);
         if (re) for (const abs of bound.keys()) if (re.test(abs) || re.test(path.relative(dir, abs)) || re.test('./' + path.relative(dir, abs))) bindHead(abs);
       }
-      if (hw.literal && !hw.text.includes('/') && !unknownDir) {
+      // a bare name, or `[[`, which dash (having no `[[` keyword and no `[[` builtin) looks up as an external command and finds through PATH
+      // (round 6's tenth commit: `cp /usr/bin/cp '../scratch/[['; PATH=../scratch:$PATH; [[ a b` ran cp in dash while `[[` was glob-marked and
+      // skipped the lookup); `[` is a builtin in every shell, so a bound `[` never runs, and it is not searched here
+      const bareName = hw.literal && !hw.text.includes('/') ? hw.text : (hw.text === '[[' && hw.marks && /^u+$/.test(hw.marks) ? '[[' : null);
+      if (bareName != null && !unknownDir) {
         const prefix = seg.words.slice(0, hIdx).find((w) => /^PATH=/.test(w.raw));
         const pathValue = prefix ? (prefix.literal && !prefix.text.includes('\0') ? prefix.text.slice(5) : null) : (vars.has('PATH') ? vars.get('PATH') : (process.env.PATH || ''));
         if (pathValue == null) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `\`${hw.raw}\` is looked up through a PATH this command sets to a value I do not read, and this command made a path by copying or linking a command, so which file it names is not known` });
-        else for (const d of pathValue.split(':')) { const abs = d ? literalPath(path.join(d, hw.text), dir) : null; if (abs && bound.has(abs)) bindHead(abs); }
+        else for (const d of pathValue.split(':')) { const abs = d ? literalPath(path.join(d, bareName), dir) : null; if (abs && bound.has(abs)) bindHead(abs); }
       }
     };
     boundRoad(headWord, headIdx);
     for (const j of peeledIdx) if (j !== headIdx) boundRoad(seg.words[j], j);   // THE PEELED NAME: an external wrapper searches PATH for the name after it, and the shell for the first
+    // THE VANISHING HEAD (round 6's tenth commit, 2026-09-22; the round's verifiers: `$c cp ../base/report.md report.md` ran the copy in every
+    // shell while `$c` was read as the command name and allowed): a command name that is an expansion the command never gives a value may be
+    // empty, and the shell makes no field of it, so the NEXT word is the command (bash: Word Splitting; dash(1); zshexpn(1)); the same reading
+    // THE VANISHING OPERAND gives a writer's operand, given here to the head, so the segment is read again with the head dropped (spliced as the
+    // empty text, which the splice's join drops), beside the reading that keeps it (the residual a command whose name is an unread expansion is).
+    // A head the readability rule resolved to a literal, or one an always-set form makes (mayVanish is false there), keeps its place.
+    if (headWord && mayVanish(headWord, !unknownDir) && !headTexts.some((t) => t.text === '' && (t.at == null ? headIdx : t.at) === headIdx)) headTexts.push({ text: '', chain: aliasChain, at: headIdx });
     for (const w of seg.words) if (w !== headWord && plainWord(w)) { const g = aliases.get(w.text); if (g && g.global && g.line < lineOf(seg)) cannotRead(w, 'a global alias', { kind: 'aliasUnread', text: `\`${w.text}\` is a global alias this command defines (zsh expands it in every position), so the word is not the text spelled` }); }
     for (const r of seg.redirects) if (plainWord(r.target)) { const g = aliases.get(r.target.text); if (g && g.global && g.line < lineOf(seg)) cannotRead(r.target, 'a global alias', { kind: 'aliasUnread', text: `\`${r.target.text}\` is a global alias this command defines (zsh expands it at a redirection target too), so the target is not the text spelled` }); }   // round 6's fourth commit: `alias -g R=report.md` then `echo x > R` wrote report.md in zsh while the target escaped the rule
     if (headTexts.length) {
