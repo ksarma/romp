@@ -70,6 +70,19 @@ const gear = () => setF.evaluate(() => {
 const kernel = async () => { const v = await page.evaluate(async (u) => (await fetch(u, { cache: "no-store" })).json(), cfg.version); const p = await page.evaluate(async (u) => (await fetch(u, { cache: "no-store" })).json(), cfg.perf);
   const feedPage = await page.evaluate(async (u) => (await fetch(u, { cache: "no-store" })).text(), cfg.feedPage);
   return { taskTracking: v.taskTracking, settingsTaskTracking: v.settings && v.settings.taskTracking, tierStarts: p.judge ? p.judge.tierStarts : null, feedNoticeShown: /id=tt-off class=tt-off style=/.test(feedPage), feedNoticeHidden: /class=tt-off hidden/.test(feedPage) }; };
+// THE KERNEL'S SWITCH, POLLED FROM THE DRIVER. The pinned Playwright (vscode-extension/package-lock.json) does not poll an ASYNC
+// waitForFunction predicate: the first call returns a promise, a truthy value, and the wait resolves on it whatever it resolves to, so
+// a wait handed `async (u) => (await fetch(u)...).taskTracking === false` returned at once (about 50 ms against its 10 s bound,
+// measured) and the reads after it raced the kernel's write (a finding on the project PR 2031; fork PR #862 and fork PR #899 in CI).
+// A bounded loop over the same read, a short pause between polls; the elapsed time and a timeout ride in `out`, so a kernel that never
+// wrote is named in the failing pin's table rather than read as a stale value
+const readSwitch = () => page.evaluate(async (u) => (await (await fetch(u, { cache: "no-store" })).json()).taskTracking, cfg.version);
+const pollKernelSwitch = async (want, boundMs = 10000) => {
+  const t0 = Date.now();
+  let value = await readSwitch();
+  while (value !== want && Date.now() - t0 < boundMs) { await page.waitForTimeout(50); value = await readSwitch(); }
+  return { want, value, ms: Date.now() - t0, timedOut: value !== want };
+};
 const feedPane = () => feedF ? feedF.evaluate(() => { const o = document.getElementById("tt-off"), l = document.getElementById("feed-list"); return { present: !!o, noticeShown: !!o && !o.hidden, listHidden: !!l && l.hidden }; }) : Promise.resolve(null);
 const out = {};
 // the Outline pane on (its default is off, so its page is not loaded): the gear's Panes toggle, a same-origin storage event the
@@ -107,7 +120,7 @@ if (feedF) await feedF.evaluate(() => localStorage.setItem("romp:cardNotified", 
 const flipAt = Date.now();
 await setF.click("#rs-tasktrack");
 await page.waitForFunction(() => document.body.classList.contains("no-task-tracking"), null, { timeout: 10000 }).catch(() => {});
-await page.waitForFunction(async (u) => (await (await fetch(u, { cache: "no-store" })).json()).taskTracking === false, cfg.version, { timeout: 10000 }).catch(() => {});
+const offWait = await pollKernelSwitch(false);   // the kernel's own state, not the shell's class: /version must read off before the reads below
 if (feedF) await feedF.waitForFunction(() => { const o = document.getElementById("tt-off"); return !!o && !o.hidden; }, null, { timeout: 15000 }).catch(() => {});
 // the loaders (round two, medium 1): gone within seconds of the off frame, the notice on top; the outline's would otherwise
 // be re-asserted every second past its 30 s failsafe
@@ -115,7 +128,7 @@ let fleetSpinGoneMs = null;
 if (fleetF) { await fleetF.waitForFunction(() => { const o = document.getElementById("tt-off"), sp = document.getElementById("pane-spin"); return !!o && !o.hidden && !!sp && sp.classList.contains("gone"); }, null, { timeout: 12000 }).then(() => { fleetSpinGoneMs = Date.now() - flipAt; }).catch(() => {}); }
 if (feedF) await feedF.waitForFunction(() => { const sp = document.getElementById("pane-spin"); return !!sp && sp.classList.contains("gone"); }, null, { timeout: 12000 }).catch(() => {});
 await page.waitForTimeout(2500);   // two more _keepLoader ticks: a loader re-asserted would show here
-out.off = { shell: await shell(), gear: await gear(), kernel: await kernel(), feedPane: await feedPane(), feedFrames: await feedFrames(),
+out.off = { kernelWait: offWait, shell: await shell(), gear: await gear(), kernel: await kernel(), feedPane: await feedPane(), feedFrames: await feedFrames(),
             fleetPane: await paneRead(fleetF), feedPaneLoader: await paneRead(feedF), fleetSpinGoneMs,
             seenAfterOff: feedF ? await feedF.evaluate(() => JSON.parse(localStorage.getItem("romp:cardNotified") || "[]")) : null };
 // THE ERROR CENTER WHILE OFF (round four, the ruling: the error center is not task tracking). A state file that cannot be read is
@@ -166,9 +179,9 @@ out.afterWait = await kernel();
 // BACK ON
 await setF.click("#rs-tasktrack");
 await page.waitForFunction(() => !document.body.classList.contains("no-task-tracking"), null, { timeout: 10000 }).catch(() => {});
-await page.waitForFunction(async (u) => (await (await fetch(u, { cache: "no-store" })).json()).taskTracking === true, cfg.version, { timeout: 10000 }).catch(() => {});
+const onWait = await pollKernelSwitch(true);
 if (feedF) await feedF.waitForFunction(() => { const o = document.getElementById("tt-off"); return !!o && o.hidden; }, null, { timeout: 15000 }).catch(() => {});
-out.on = { shell: await shell(), gear: await gear(), kernel: await kernel(), feedPane: await feedPane(), feedFrames: await feedFrames(),
+out.on = { kernelWait: onWait, shell: await shell(), gear: await gear(), kernel: await kernel(), feedPane: await feedPane(), feedFrames: await feedFrames(),
            seenAfterOn: feedF ? await feedF.evaluate(() => JSON.parse(localStorage.getItem("romp:cardNotified") || "[]")) : null };
 await browser.close();
 process.stdout.write("RESULT:" + JSON.stringify(out) + "\n", () => process.exit(0));
@@ -219,7 +232,7 @@ class ServedTaskTrackingSwitch(QueuedLab):
     def test_off_hides_the_panes_and_their_buttons_and_the_kernel_says_so(self):
         o = self._result()["off"]; table = "\n  " + json.dumps(o)[:1500]
         self.assertFalse(o["gear"]["checked"], table)
-        self.assertFalse(o["kernel"]["taskTracking"], "/version says off" + table)
+        self.assertFalse(o["kernel"]["taskTracking"], "/version says off (the driver's poll of the switch: %s)" % json.dumps(o.get("kernelWait")) + table)
         self.assertFalse(o["kernel"]["settingsTaskTracking"], "…and in the settings dict" + table)
         self.assertTrue(o["shell"]["noTracking"], "the shell wears body.no-task-tracking" + table)
         self.assertFalse(o["shell"]["fleetBtn"] or o["shell"]["feedBtn"], "the Outline and Feed buttons are gone" + table)
@@ -317,9 +330,20 @@ class ServedTaskTrackingSwitch(QueuedLab):
         self.assertNotIn("sync|seed-3", off, "the rings' half is the frame's own: a stale ring mark leaves" + table)
         self.assertNotIn("n|seed-1", on or [], "back on, the payload's own rule: a card that is not in the payload takes its marks with it" + table)
 
+    def test_the_driver_polled_the_kernels_switch_to_each_value_within_its_bound(self):
+        # the flip's wait on the kernel is a poll from the driver (pollKernelSwitch in DRIVER): the pinned Playwright does not poll an
+        # async waitForFunction predicate, and the old wait, handed `async (u) => ... fetch ...`, returned at once with the kernel unread
+        r = self._result()
+        for scene, want in (("off", False), ("on", True)):
+            w = r[scene].get("kernelWait"); table = "\n  " + scene + ": " + json.dumps(w)
+            self.assertIsNotNone(w, scene + ": the driver recorded its poll of the switch" + table)
+            self.assertEqual(w["want"], want, table)
+            self.assertFalse(w["timedOut"], scene + ": /version read %s within the poll's bound (%s ms)" % (json.dumps(want), w["ms"]) + table)
+            self.assertEqual(w["value"], want, table)
+
     def test_back_on_restores_the_buttons_the_controls_and_the_panes(self):
         o = self._result()["on"]; table = "\n  " + json.dumps(o)[:1500]
-        self.assertTrue(o["gear"]["checked"] and o["kernel"]["taskTracking"], table)
+        self.assertTrue(o["gear"]["checked"] and o["kernel"]["taskTracking"], "the gear and /version read on (the driver's poll of the switch: %s)" % json.dumps(o.get("kernelWait")) + table)
         self.assertFalse(o["shell"]["noTracking"], table)
         self.assertTrue(o["shell"]["fleetBtn"] and o["shell"]["feedBtn"], "the buttons return" + table)
         self.assertEqual(o["gear"]["jrowsOff"], 0, "the judge rows lift" + table)
