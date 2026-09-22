@@ -716,6 +716,18 @@ test('after node --test the script derives per rostered leg that at least one at
   const lost = run(A + '\n', excluded, { report: rec(A, 'fail', 'test', '-', 'test', 'leg a opens the page', LOST, 'testCodeFailure'), exit: 1 });
   assert.equal(lost.status, 1);
   assert.ok(lost.err.includes('ci-browser-legs: ' + A + ': \'leg a opens the page\' failed under ' + SWITCH + '=1 because inBrowser could not launch (' + LOST + '): the runner lost its browser: check the Chromium install step'), lost.err);
+  // the phrase quoted AFTER other text (the rostered switch test's assertion messages embed a child run's stdout, which carries
+  // it): an ordinary failure of the leg, no LOST line, no label of the script's, node's red passed through
+  const quoted = run(A + '\n', excluded, { report: rec(A, 'fail', 'test', '-', 'test', 'leg a opens the page', 'the leg failed under the switch; the child run printed: ' + LOST, 'testCodeFailure'), exit: 1 });
+  assert.equal(quoted.status, 1, 'node\'s failure stands');
+  assert.ok(!quoted.err.includes('the runner lost its browser'), 'a message that quotes the phrase after other text is not a lost browser (LOST reads the start of the message):\n' + quoted.err);
+  assert.equal(quoted.err, '', 'an ordinary failure gets no label of the script\'s:\n' + quoted.err);
+  // the switch under a non-"1" non-empty value: the script reads it as set (any non-empty value arms it, as the helper does),
+  // naming the value in the skip's red and giving the set-switch remedy
+  const yes = run(A + '\n', excluded, { report: PASS + rec(A, 'pass', 'test', 'skip', 'test', 'leg a opens the page', 'why', '-'), switch: 'yes' });
+  assert.equal(yes.status, 1, 'a skip under the switch set to yes is red; stderr: ' + yes.err);
+  assert.ok(yes.err.includes('skipped with ' + SWITCH + '=yes: \'leg a opens the page\' # SKIP why (' + A + ')'), 'the skip names the switch\'s value as the run had it (yes):\n' + yes.err);
+  assert.ok(yes.err.includes('a rostered leg skipped a test with ' + SWITCH + '=yes, so the step claims coverage it did not run') && yes.err.includes('only inBrowser in ui/webview/real-viewer-leg.ts turns a launch it cannot make into a failure here'), 'the set-switch remedy, not the unset one: the script\'s two reads arm on any non-empty value:\n' + yes.err);
   const both = run(A + '\n', excluded, { report: rec(A, 'pass', 'test', 'skip', 'test', 'leg a opens the page', 'why', '-'), exit: 7 });
   assert.equal(both.status, 7, 'with a failure and a skip node\'s own status (7) stands, not overwritten by the skip\'s status=1, and the skip is still named');
   assert.ok(both.err.includes('skipped with ' + SWITCH + '=1'), both.err);

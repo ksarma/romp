@@ -51,8 +51,10 @@
 # node's red, passed through. Beside that property: a test skipped is red naming the test, its reason and the switch's state
 # in the run (with the switch unset, as a local run may have it, the remedy is to run with it set); a failure inside a todo is
 # red (node discards it: # fail 0, exit 0); a file that failed as a whole (node's file-level result failing: a timeout under
-# the run's --test-timeout, or a throw at load) is red naming the file; and a failed test whose message names the switch (inBrowser could not launch) is printed beside its
-# leg with the remedy: the runner lost its browser, check the Chromium install step. One pass over the record (awk),
+# the run's --test-timeout, or a throw at load) is red naming the file; and a failed test whose message BEGINS with the phrase
+# inBrowser fails with when it cannot launch (the switch's name; a message that merely quotes that phrase after other text, as
+# a leg embedding a child run's output does, is an ordinary failure) is printed beside its leg with the remedy: the runner
+# lost its browser, check the Chromium install step. One pass over the record (awk),
 # linear in its length. An empty roster prints "no legs in the roster" and exits 0 without starting node --test: with no
 # file arguments node --test runs its default glob, the whole suite again.
 set -euo pipefail
@@ -217,7 +219,7 @@ node --test --test-timeout=240000 --test-reporter=spec --test-reporter-destinati
 
 # One pass over the record with the roster on stdin: per rostered leg a TALLY line (passes that count, fails that count,
 # skips, todos, todo failures, suites, file-level results); and one line per result the step reads a red from: SKIP, TODOFAIL,
-# FILEFAIL (the file failed as a whole), LOST (a failure whose message names the switch). Node resolves a bundle from its
+# FILEFAIL (the file failed as a whole), LOST (a failure whose message begins with inBrowser's cannot-launch phrase). Node resolves a bundle from its
 # physical working directory, so the roster's lines are keyed by that path.
 here=$(pwd -P)
 report=$(printf '%s\n' "${legs[@]}" | awk -v msg="$SWITCH is set and this leg cannot run" -F '\t' -v here="$here" '
@@ -230,7 +232,12 @@ report=$(printf '%s\n' "${legs[@]}" | awk -v msg="$SWITCH is set and this leg ca
     if ($4 == "todo") { td[$1]++; if ($2 == "fail") { tf[$1]++; print "TODOFAIL\t" leg[$1] "\t" $6 "\t" $7 } }
     if ($3 == "suite") su[$1]++
     if ($5 == "file-level") { fl[$1]++; if ($2 == "fail") print "FILEFAIL\t" leg[$1] "\t" $8 "\t" $7 }
-    if ($2 == "fail" && index($7, msg)) print "LOST\t" leg[$1] "\t" $6 "\t" $7
+    # LOST reads the START of the message (index == 1): the assert.fail message of inBrowser begins with the phrase (the tree
+    # test pins the literal in ui/webview/real-viewer-leg.ts), so a failure whose message quotes the output of a child run that
+    # carries the phrase after other text (the assertion messages of the rostered switch test embed the stdout of the child)
+    # is an ordinary failure, not a lost browser with a remedy pointing at the Chromium install step. No apostrophe here: this
+    # awk program is a single-quoted bash string.
+    if ($2 == "fail" && index($7, msg) == 1) print "LOST\t" leg[$1] "\t" $6 "\t" $7
   }
   END { for (i = 1; i <= n; i++) { a = order[i]; print "TALLY\t" leg[a] "\t" p[a] "\t" f[a] "\t" sk[a] "\t" td[a] "\t" tf[a] "\t" su[a] "\t" fl[a] } }
 ' - "$rep")

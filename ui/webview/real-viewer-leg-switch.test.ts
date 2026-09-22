@@ -1,8 +1,10 @@
 // The shared launcher's switch, executed: inBrowser in ./real-viewer-leg reads ROMP_BROWSER_LEGS_REQUIRE, and under it a leg
 // that cannot launch FAILS naming the switch and the reason, where without it the leg skips naming the reason (CI's
-// browser-legs step sets the switch after the job's Chromium install; the Test step, before any install, does not). The one
-// test below is fork PR 860's test of this behaviour, copied with its mechanism unchanged (two lines differ: the comment's
-// name for the leg it drives, and the --test-name-pattern that picks it), so the two branches carry one test of one helper;
+// browser-legs step sets the switch after the job's Chromium install; the Test step, before any install, does not). The
+// test below began as fork PR 860's test of this behaviour, copied with its mechanism unchanged (two lines differed: the
+// comment's name for the leg it drives, and the --test-name-pattern that picks it); this branch adds a third arm, the switch
+// set to a non-"1" non-empty value ("yes"), which executes the arming rule every header states (any non-empty value arms
+// it) and is OFFERED to 860 for its copy, so the two branches carry one mechanism and, until 860 takes the arm, not one test;
 // the leg it drives is this file's own, above it, which opens a page through inBrowser. The mechanism: a child
 // `node --test --test-name-pattern=<leg> <this bundle>` with an env BUILT from four variables (never inherited: the runner's
 // NODE_TEST_CONTEXT would put the child's report on this process's channel, and an ambient switch would leak into the
@@ -28,7 +30,7 @@ test("the launcher's own leg opens a page through the shared launch", { timeout:
   });
 });
 
-test("ROMP_BROWSER_LEGS_REQUIRE, read in the shared launch helper, turns the browser legs' skip into a failure that names the switch and the reason, and without it the skip stands naming the reason: CI's browser-legs step after the Chromium install sets it", { timeout: 120000 }, (t) => {
+test("ROMP_BROWSER_LEGS_REQUIRE, read in the shared launch helper, turns the browser legs' skip into a failure that names the switch and the reason, under \"1\" and under any other non-empty value, and without it the skip stands naming the reason: CI's browser-legs step after the Chromium install sets it", { timeout: 180000 }, (t) => {
   // a child run of this file's leg with playwright pointed at an empty browsers directory (the pane bench's probe):
   // under the switch the leg fails naming the switch and the reason; without it the leg skips, as the Test step's run does.
   // The reason the child names is this machine's: with the module installed and its browsers hidden, no browser; with the module
@@ -51,6 +53,10 @@ test("ROMP_BROWSER_LEGS_REQUIRE, read in the shared launch helper, turns the bro
     const req = run({ ROMP_BROWSER_LEGS_REQUIRE: "1" });
     assert.match(req.stdout, /^# fail 1$/m, "the leg failed under the switch\n" + req.stdout.slice(-1500));
     assert.match(req.stdout, new RegExp("ROMP_BROWSER_LEGS_REQUIRE[^\\n]*" + esc(why)), "the switch: a failure naming it and the reason (" + why + ") on one line\n" + req.stdout.slice(-1500));
+    // any non-empty value arms it (the headers' rule, executed): a value that is not "1" fails the leg the same way
+    const yes = run({ ROMP_BROWSER_LEGS_REQUIRE: "yes" });
+    assert.match(yes.stdout, /^# fail 1$/m, "the leg failed under the switch set to \"yes\" (any non-empty value arms it)\n" + yes.stdout.slice(-1500));
+    assert.match(yes.stdout, new RegExp("ROMP_BROWSER_LEGS_REQUIRE[^\\n]*" + esc(why)), "under \"yes\": a failure naming the switch and the reason (" + why + ") on one line\n" + yes.stdout.slice(-1500));
     const plain = run({});
     assert.match(plain.stdout, /^# skipped 1$/m, "without the switch the leg skips\n" + plain.stdout.slice(-1500));
     assert.match(plain.stdout, new RegExp(esc(why)), "and the skip names the reason (" + why + ")\n" + plain.stdout.slice(-1500));

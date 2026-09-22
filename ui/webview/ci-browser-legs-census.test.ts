@@ -588,8 +588,13 @@ test("a rostered leg reaching an engine the gating job does not install is red n
   assert.equal(excluded.status, 0, excluded.stderr);
 });
 
-test("the script's reading of the real census over a pending line: allowed while the source is absent (counted on the agreement line); red naming no PR; once the source is present, red with the remedy derived from the source (a shared Chromium leg to the roster; an engine leg keeps the line with the engine reason; a non-leg importer removes the line; an embedded driver keeps the line with the header's sentence) and never as in neither", (t) => {
-  const { run } = syntheticRoot(t, ["p01-alias.test.ts", "p19-default-core.test.ts", "p10-block-comment-mention.test.ts", "p26-embedded-driver.test.ts"]);
+test("the script's reading of the real census over a pending line: allowed while the source is absent (counted on the agreement line); red naming no PR; once the source is present, red with the remedy derived from the source (a shared Chromium leg to the roster; an engine leg keeps the line with the engine reason; a non-leg importer removes the line; an embedded driver keeps the line with the header's sentence) and never as in neither; and promotionOf, this file's copy of that rule, prints the script's sentence for each of the four classes", async (t) => {
+  const mod = await load();
+  const { run, root } = syntheticRoot(t, ["p01-alias.test.ts", "p19-default-core.test.ts", "p10-block-comment-mention.test.ts", "p26-embedded-driver.test.ts"]);
+  const cs = mod.census(root);
+  // promotionOf is otherwise evaluated only inside a failing assertion's message (guarded there by existsSync, since node:assert
+  // builds the message eagerly): executed here over each present pending source against the sentence the script printed
+  const agrees = (r: ReturnType<typeof run>, bundle: string) => assert.ok(r.stderr.includes("promote it: " + promotionOf(mod, cs.byBundle.get(bundle), bundle)), "promotionOf prints the script's remedy for " + bundle + " (" + promotionOf(mod, cs.byBundle.get(bundle), bundle) + "):\n" + r.stderr);
   const P01 = B("p01-alias.test.ts"), P19 = B("p19-default-core.test.ts"), P10 = B("p10-block-comment-mention.test.ts"), P26 = B("p26-embedded-driver.test.ts");
   const ABSENT = "out-tests/ui/webview/zz-absent-browser.test.js";
   const rest = P19 + "\tlaunches WebKit; the gating job installs Chromium only\n" + P26 + "\tloads playwright in a child process it drives from a string; the switch never reaches it\n";
@@ -602,10 +607,18 @@ test("the script's reading of the real census over a pending line: allowed while
     assert.ok(!r.stderr.includes("is in neither"), "the arrived leg is not also called missing from both files:\n" + r.stderr);
   };
   refused(run(P01 + "\n", rest + ABSENT + "\tpending: a leg with no PR named\n"), EXCLUDED + " line 3: '" + ABSENT + "' has a pending reason that names no PR ('pending: a leg with no PR named'): a pending line reads 'pending #<PR>: <why>'");
-  refused(run("", rest + P01 + "\tpending #862: launches through inBrowser\n"), EXCLUDED + " line 3: '" + P01 + "' is pending #862 and its source ui/webview/p01-alias.test.ts is in the tree, so the leg has arrived (#862 merged main, or this is #862's branch) and the line's condition has passed: promote it: delete this line and add '" + P01 + "' to " + ROSTER + " (the source launches through inBrowser alone and reaches no engine but Chromium), with the step's measured seconds in the PR body");
-  refused(run(P01 + "\n", P26 + "\tloads playwright in a child process it drives from a string; the switch never reaches it\n" + P19 + "\tpending #859: launches on its own\n"), "'" + P19 + "' is pending #859", "promote it: keep the line and replace the reason with why the gating job does not run it (launches WebKit; the gating job installs Chromium only; never imports the shared launcher, ui/webview/real-viewer-leg.ts)");
-  refused(run(P01 + "\n", rest + P10 + "\tpending #861: a module\n"), "'" + P10 + "' is pending #861", "promote it: remove the line (the source reaches no browser by the census rule; imports ui/webview/real-viewer-leg.ts and never calls its inBrowser through that import: call it, or remove the line)");
-  refused(run(P01 + "\n", P19 + "\tlaunches WebKit; the gating job installs Chromium only\n" + P26 + "\tpending #863: a driver\n"), "'" + P26 + "' is pending #863", "promote it: keep the line and replace the reason with the embedded-driver sentence the header of " + EXCLUDED + " states");
+  const shared = run("", rest + P01 + "\tpending #862: launches through inBrowser\n");
+  refused(shared, EXCLUDED + " line 3: '" + P01 + "' is pending #862 and its source ui/webview/p01-alias.test.ts is in the tree, so the leg has arrived (#862 merged main, or this is #862's branch) and the line's condition has passed: promote it: delete this line and add '" + P01 + "' to " + ROSTER + " (the source launches through inBrowser alone and reaches no engine but Chromium), with the step's measured seconds in the PR body");
+  agrees(shared, P01);
+  const engine = run(P01 + "\n", P26 + "\tloads playwright in a child process it drives from a string; the switch never reaches it\n" + P19 + "\tpending #859: launches on its own\n");
+  refused(engine, "'" + P19 + "' is pending #859", "promote it: keep the line and replace the reason with why the gating job does not run it (launches WebKit; the gating job installs Chromium only; never imports the shared launcher, ui/webview/real-viewer-leg.ts)");
+  agrees(engine, P19);
+  const nonLeg = run(P01 + "\n", rest + P10 + "\tpending #861: a module\n");
+  refused(nonLeg, "'" + P10 + "' is pending #861", "promote it: remove the line (the source reaches no browser by the census rule; imports ui/webview/real-viewer-leg.ts and never calls its inBrowser through that import: call it, or remove the line)");
+  agrees(nonLeg, P10);
+  const embedded = run(P01 + "\n", P19 + "\tlaunches WebKit; the gating job installs Chromium only\n" + P26 + "\tpending #863: a driver\n");
+  refused(embedded, "'" + P26 + "' is pending #863", "promote it: keep the line and replace the reason with the embedded-driver sentence the header of " + EXCLUDED + " states");
+  agrees(embedded, P26);
 });
 
 test("a form the census cannot classify stops the script with the file and line, judging nothing; without the compiler the census exits 1 naming CI's Shell job and the script stops the same way", (t) => {
