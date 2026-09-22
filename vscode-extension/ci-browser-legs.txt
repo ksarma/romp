@@ -31,6 +31,6 @@
 # rostered leg in the Chromium it installs; a leg's Firefox and WebKit runs live elsewhere (a served pytest step, a
 # local run), and a line whose source reaches another engine is refused. A leg already in
 # ci-browser-legs-excluded.txt is moved, not copied: its line there goes in the same commit as its line here arrives.
-# The switch test below spawns two child node --test runs of its own bundle; they hold no driver string, and the gate reads
-# the string, not the spawn.
+# The switch test below spawns three child node --test runs of its own bundle (the switch set to "1", to another non-empty
+# value, and unset); they hold no driver string, and the gate reads the string, not the spawn.
 out-tests/ui/webview/real-viewer-leg-switch.test.js

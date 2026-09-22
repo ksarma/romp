@@ -321,29 +321,61 @@ test('the completeness sentence is scoped to the extension\'s test build on ever
   // never reaches", the same clause in each of its arms) and the roster header is held to it, so the two homes are one phrase by
   // execution, as the lost-browser phrase is held between the helper and the script below: a reword in either home is red here.
   // The gloss after the clause in the roster, "(the gate reads the string, not a spawn)", is the roster's own and is read as text.
-  const gapArms = [...read(CENSUS).matchAll(/return "drives ([^"]+) \(line " \+ r\.embedded\[0\]\.line \+ "\), which the switch never reaches";/g)].map((m) => m[1]);
+  const census = read(CENSUS);
+  const gapArms = [...census.matchAll(/return "drives ([^"]+) \(line " \+ r\.embedded\[0\]\.line \+ "\), which the switch never reaches";/g)].map((m) => m[1]);
+  // every arm of rosterGap that reads r.embedded[0].line is read by the frame regex above: the count is held first, so a reword of one
+  // arm's clause TOGETHER WITH its frame is red here (2 versus 1) rather than the roster held to the one arm the frame still matched.
+  // Scoped to rosterGap's body, since a binding named otherwise elsewhere escapes the count only by spelling and a comment outside the
+  // function that spells r.embedded[0].line must not move it
+  const gapStart = census.indexOf('export function rosterGap(r) {');
+  assert.ok(gapStart >= 0, path.relative(REPO, CENSUS) + ' exports rosterGap(r): the arm count below is scoped to its body, and an empty slice would count 0 arms and match a deleted function');
+  const gapEnd = census.indexOf('\n}\n', gapStart);
+  assert.ok(gapEnd > gapStart, 'rosterGap\'s body closes with a line holding } alone (the end of the slice the arm count reads)');
+  const arms = (census.slice(gapStart, gapEnd).match(/r\.embedded\[0\]\.line/g) || []).length;
+  assert.equal(gapArms.length, arms, 'rosterGap has ' + arms + ' arm(s) reading r.embedded[0].line and the frame regex matched ' + gapArms.length + ': every arm of rosterGap that reads r.embedded is read here, so an arm whose frame moved is a moved sentence, not an arm the read skipped (holds a property: the count of arms reading r.embedded[0].line in rosterGap equals the count the frame regex matched)');
   assert.ok(gapArms.length > 0 && gapArms.every((c) => c === gapArms[0]), path.relative(REPO, CENSUS) + '\'s rosterGap returns the driver-string gap as "drives <clause> (line N), which the switch never reaches", the same clause in every arm (the clause the roster header is held to is read from here, so an empty read means the sentence moved, not that the clause is free). Holds the sentence frame in the module, "drives <clause> (line N), which the switch never reaches": a reword of the frame moves this pin too; the clause inside it is free here and held to the roster by the next assertion: ' + JSON.stringify(gapArms));
-  const rosterHeader = read(path.join(EXT, ROSTER)).split('\n').filter((l) => l.startsWith('#')).map((l) => l.replace(/^# ?/, '')).join(' ');
+  const rosterHeader = headerJoined(read(path.join(EXT, ROSTER)));
   assert.ok(rosterHeader.includes('does not drive ' + gapArms[0] + ', which the switch never reaches (the gate reads the string, not a spawn)'), ROSTER + '\'s header states the gate\'s own clause for a driver string in the census\'s words: a leg does not drive ' + gapArms[0] + ', which the switch never reaches (the gate reads the string, not a spawn). One phrase, two homes (' + path.relative(REPO, CENSUS) + '\'s gap sentence and this header), held equal here, so a reword in either is red rather than the two drifting apart; the gloss in parentheses is the roster\'s own words, read as text. Holds the property for the clause (a reword of the clause in both homes stays green) and the sentence for the roster\'s frame and gloss, "does not drive <clause>, which the switch never reaches (the gate reads the string, not a spawn)": a reword of those moves this pin too');
 });
 
-test('the grep the exclusions header spells for the pending lines lists exactly the pending rows when run as written from the repo root, and CONTRIBUTING.md spells the same command (residual 1 of the landing condition: a pending line whose PR closes without the leg is found by this command and removed by hand)', () => {
+test('the grep the exclusions header spells for the pending lines lists exactly the pending rows when run as written from the repo root, and with no pending row left exits 1 with empty stdout (the negative form of the same property, so the day the last row is promoted is green, not a false red); run as written from a synthetic root whose exclusions spell the form in their header, it lists the one pending row alone (a positive control); and CONTRIBUTING.md spells the same command (residual 1 of the landing condition: a pending line whose PR closes without the leg is found by this command and removed by hand)', (t) => {
   const text = read(path.join(EXT, EXCLUDED));
   const header = text.split('\n').filter((l) => l.startsWith('#')).join('\n');
   const m = /`(grep [^`]*pending #[^`]*)`/.exec(header);
   assert.ok(m, 'the exclusions header spells, in backticks, a grep for the pending lines');
   const r = spawnSync('bash', ['-c', m[1]], { cwd: REPO, encoding: 'utf8' });
-  assert.equal(r.status, 0, 'the command runs from the repo root and finds the rows: ' + r.stderr);
   const rows = parseExcluded(text).filter((e) => e.pending).map((e) => e.bundle + '\t' + e.reason);
-  assert.ok(rows.length > 0, 'the exclusions hold pending rows (' + rows.length + '); with none this pin proves nothing');
-  assert.deepEqual(r.stdout.split('\n').filter(Boolean), rows, 'the command lists the pending rows and no other line (the header spells the form "pending #<PR>: <why>" twice, which a grep for the bare prefix would list too)');
+  if (rows.length === 0) {
+    // the end state the header describes, every pending row promoted or removed: grep exits 1 when it selected no line (2 is a
+    // broken command or a missing file), so the same property is asserted in its negative form, no line selected and nothing listed
+    assert.equal(r.status, 1, 'with no pending row in the exclusions the command selects no line and exits 1 (2 is a broken command or a missing file; 0 means it listed a line no row holds, such as the header\'s own spelling of the form); stderr: ' + r.stderr + ' (holds the property: the command\'s output equals the pending rows, here none)');
+    assert.equal(r.stdout, '', 'with no pending row the command lists nothing (a line here is one the rows do not hold): ' + JSON.stringify(r.stdout));
+    t.diagnostic('the exclusions hold no pending rows: the command exits 1 with empty stdout');
+  } else {
+    assert.equal(r.status, 0, 'the command runs from the repo root and finds the rows (' + rows.length + '); stderr: ' + r.stderr);
+    assert.deepEqual(r.stdout.split('\n').filter(Boolean), rows, 'the command lists the pending rows and no other line (the header spells the form "pending #<PR>: <why>" twice, which a grep for the bare prefix would list too) (holds the property: the command\'s output equals the pending rows)');
+  }
+  // the positive control: the command as written, run from a synthetic root whose exclusions hold two # lines spelling the form and
+  // the command itself, one ordinary row and one pending row, lists the pending row alone, so the negative form above is never green
+  // for a command that would list nothing anywhere
+  const control = fs.mkdtempSync(path.join(os.tmpdir(), 'cbl-pending-'));
+  try {
+    fs.mkdirSync(path.join(control, 'vscode-extension'), { recursive: true });
+    const PENDING_ROW = 'out-tests/ui/webview/zz-pending.test.js\tpending #999: a leg an open PR brings';
+    fs.writeFileSync(path.join(control, 'vscode-extension', EXCLUDED), '# a reason reading "pending #<PR>: <why>" names a leg an open PR brings\n# `' + m[1] + '` lists the pending lines\nout-tests/ui/webview/zz-a.test.js\tlaunches Firefox; ' + ENGINE_PHRASE + '\n' + PENDING_ROW + '\n');
+    const c = spawnSync('bash', ['-c', m[1]], { cwd: control, encoding: 'utf8' });
+    assert.equal(c.status, 0, 'the positive control: the command as written finds the one pending row of a synthetic exclusions file; stderr: ' + c.stderr);
+    assert.deepEqual(c.stdout.split('\n').filter(Boolean), [PENDING_ROW], 'the positive control: the command lists the synthetic pending row alone, not the header\'s two # lines that spell the form and the command, and not the ordinary row (holds the property: the command\'s output equals the pending rows)');
+  } finally {
+    fs.rmSync(control, { recursive: true, force: true });
+  }
   assert.ok(read(path.join(REPO, 'CONTRIBUTING.md')).includes('`' + m[1] + '`'), 'CONTRIBUTING.md spells the same command as the header: ' + m[1]);
   // the header records HOW the pending rows were derived (the claim that they were derived, not recalled; the date and time of the
   // read; the command that listed the open PRs, in backticks), and CONTRIBUTING.md makes the same claim and spells the same
   // command, held equal by execution: the command is read from the header and looked for in CONTRIBUTING.md, never spelled here.
   // The header wraps the command onto its own # line and CONTRIBUTING.md wraps its prose, so both are read with their line breaks
   // folded to one space.
-  const joined = header.split('\n').map((l) => l.replace(/^# ?/, '')).join(' ');
+  const joined = headerJoined(text);
   const derived = /were DERIVED, not recalled: on (\d{4}-\d{2}-\d{2}) at (\d{2}:\d{2}Z) the fork's open PRs were listed with `([^`]+)`/.exec(joined);
   assert.ok(derived && /pulls\?state=open/.test(derived[3]), 'the exclusions header records how the pending rows were derived: the claim "were DERIVED, not recalled", the date and time of the read ("on <date> at <hh:mm>Z") and, in backticks, the command that listed the open PRs (pulls?state=open); a header that says the rows were recalled, or lost the time or the command, is red (holds the sentence: a reword of the derivation sentence moves this pin too); the header reads: ' + joined.slice(Math.max(0, joined.indexOf('The pending rows at the roster')), Math.max(0, joined.indexOf('The pending rows at the roster')) + 240));
   const contributing = read(path.join(REPO, 'CONTRIBUTING.md')).replace(/\s+/g, ' ');
@@ -386,6 +418,12 @@ function refusedRows(text, sentence, enginePhrase, embedded) {
   return parseExcluded(text).filter((e) => e.reason !== null).map((e) => ({ e, v: reasonKind(e.reason, sentence, enginePhrase, embedded) })).filter(({ v }) => v.kind === null).map(({ e, v }) => where(EXCLUDED, e) + ': ' + v.refusal + '; the reason reads: ' + e.reason);
 }
 
+/** A file's header as one string: its # lines with the marker stripped, joined with a space, so a pin on a sentence of the header
+ *  reads the sentence whatever line it wraps on (a rewrap is not a reword; a pin on the raw text with its line break and comment mark
+ *  was a false red on a reflow of the exclusions header). The roster's and the exclusions' headers are read this way. */
+function headerJoined(text) {
+  return text.split('\n').filter((l) => l.startsWith('#')).map((l) => l.replace(/^# ?/, '')).join(' ');
+}
 /** The exclusions header's one bound line: the grandfather sentence and the commit it is bound to, and the embedded-driver
  *  sentence the header quotes after "carries the sentence" (the census module exports the same as EMBEDDED_PHRASE; the census
  *  test holds the two equal, and this module, which cannot load that module's compiler, reads the header's). */
@@ -394,7 +432,7 @@ function grandfatherBound(text) {
   const lines = text.split('\n').filter((l) => l.startsWith('#'));
   const hits = lines.map((l) => BOUND_LINE.exec(l)).filter(Boolean);
   assert.equal(hits.length, 1, EXCLUDED + '\'s header holds exactly one line binding the grandfather reason to a commit (the form: # Every grandfather reason, "<sentence>", is bound to commit <40 hex>: ...; that line is the bound\'s one home, the census test reads it); found ' + hits.length);
-  const em = /carries the sentence "([^"]+)"/.exec(lines.map((l) => l.replace(/^# ?/, '')).join(' '));
+  const em = /carries the sentence "([^"]+)"/.exec(headerJoined(text));
   assert.ok(em, EXCLUDED + '\'s header quotes the embedded-driver sentence after "carries the sentence"');
   return { sentence: hits[0][1], sha: hits[0][2], embedded: em[1] };
 }
@@ -415,9 +453,10 @@ test('the exclusions header binds the grandfather reason to one commit, in one l
   assert.equal(one.length, 1, 'one row refused of three: ' + JSON.stringify(one));
   assert.ok(one[0].startsWith(EXCLUDED + ' line 3 (out-tests/ui/webview/zz-b.test.js): the reason is none of the four forms') && one[0].includes('the reason reads: existing befora'), 'the refused row is named by its line and bundle, with the four forms and the reason as it reads: ' + one[0]);
   assert.ok(rows.length > 0, 'the exclusions hold grandfather rows (' + rows.length + '); zero means the wording stopped matching, not that the rows left');
-  assert.ok(text.includes('does not run that history read'), 'the header says which checker reads history and which does not');
-  assert.ok(text.includes('Both read a reason\n# as one of four forms'), 'the header says both checkers read a reason as one of four forms');
-  assert.ok(text.includes('is refused as ambiguous, so a tail cannot carry a second claim'), 'the header says a reason carrying another form\'s phrase is refused as ambiguous');
+  const joinedHeader = headerJoined(text);
+  assert.ok(joinedHeader.includes('does not run that history read'), 'the header says which checker reads history and which does not (holds the sentence, read over the # lines joined with a space, so a rewrap is not a reword)');
+  assert.ok(joinedHeader.includes('Both read a reason as one of four forms'), 'the header says both checkers read a reason as one of four forms (holds the sentence, read over the # lines joined with a space, so a rewrap is not a reword)');
+  assert.ok(joinedHeader.includes('is refused as ambiguous, so a tail cannot carry a second claim'), 'the header says a reason carrying another form\'s phrase is refused as ambiguous (holds the sentence, read over the # lines joined with a space, so a rewrap is not a reword)');
   assert.ok(text.split('\n').find((l) => BOUND_LINE.test(l)).includes("reads the file's age, not what it did there"), 'the bound line names its residual: it reads the file\'s age at the commit, not whether the file launched a browser there');
   // the property, executed over synthetic reasons: each form admitted with its kind; every variant of the exemption refused by
   // name; a reason carrying two forms' phrases refused as ambiguous
@@ -594,13 +633,13 @@ test('the script runs the rostered legs through node --test when the roster and 
   const { run, rec, A } = syntheticTree(t);
   // the stub's record: a's one test passed (with no record a rostered leg is red as unrun, the property the post-run test executes)
   const ok = run('# header\n\n' + A + '\n', '# header\n' + EXCLUDE_REST('a'), { report: rec(A, 'pass', 'test', '-', 'test', 'leg a opens the page', '', '-') });
-  assert.equal(ok.status, 0, ok.err);
+  assert.equal(ok.status, 0, 'a roster the tree agrees with runs clean, exit 0; stderr:\n' + ok.err);
   assert.deepEqual(ok.node, ['--test', A], 'node --test received the roster\'s one bundle');
   assert.equal(ok.testTimeout, '--test-timeout=' + testTimeoutMs(), 'node --test received the per-file bound the script spells (its edges are pinned above)');
   assert.deepEqual(ok.reporters.filter((a) => !a.startsWith('--test-reporter-destination=')), ['--test-reporter=spec', '--test-reporter=./scripts/ci-browser-legs-reporter.mjs'], 'the spec reporter for the log and the step\'s own reporter for the post-run read');
   assert.ok(!ok.out.includes('no legs in the roster'));
   const empty = run('# only a comment\n\n   \n', EXCLUDE_REST());
-  assert.equal(empty.status, 0, empty.err);
+  assert.equal(empty.status, 0, 'an empty roster exits 0 (the guard, not a red); stderr:\n' + empty.err);
   assert.ok(empty.out.includes('no legs in the roster'), 'the guard says so: ' + JSON.stringify(empty.out));
   assert.equal(empty.node, null, 'node was not started: with no file arguments node --test would run its default glob');
 });
@@ -616,7 +655,7 @@ test('the script refuses, naming the line and the remedy, on: a missing file, a 
   };
   const rest = EXCLUDE_REST('a', 'b');
   const missing = run(null, B + '\treason\n' + rest);
-  assert.equal(missing.status, 1); assert.ok(missing.err.includes(ROSTER) && missing.err.includes('restore it'), missing.err); assert.equal(missing.node, null);
+  assert.equal(missing.status, 1); assert.ok(missing.err.includes(ROSTER) && missing.err.includes('restore it'), 'a missing roster file is red naming the file and the remedy (restore it):\n' + missing.err); assert.equal(missing.node, null);
   refused(run('# header\n' + A + '\n' + C + '\n', B + '\treason\n' + rest), ROSTER + ' line 3: \'' + C + '\' names ui/webview/c-browser.test.ts, which is not in the tree (the source moved or was deleted): fix the roster line');
   // a leg in neither file: the red carries the remedy the census's row derives (b passes the gate: the roster), never a bare add-or-exclude
   const neither = run(A + '\n', '# nothing excluded but the rest\n' + rest);
@@ -643,7 +682,7 @@ test('the script refuses, naming the line and the remedy, on: a missing file, a 
   refused(run('ui/webview/a-browser.test.ts\n', A + '\treason\n' + B + '\treason\n' + rest), ROSTER + ' line 1: ui/webview/a-browser.test.ts is not a bundle path (out-tests/<dir>/<name>.test.js; a trailing space, tab or carriage return counts', 'fix the line');
   // a carriage return at the end of the line: the line is shown as bash's %q spells it, so the invisible cause is visible,
   // and the leg it names is attributed to that line, not called missing from both files
-  const attributed = (r, file, bundle) => { assert.ok(r.err.includes('browser leg \'' + bundle + '\' is named by a line refused above (' + file + ' line 1): fix that line'), r.err); assert.ok(!r.err.includes('is in neither'), 'the leg the refused line names is not reported as missing from both files:\n' + r.err); };
+  const attributed = (r, file, bundle) => { assert.ok(r.err.includes('browser leg \'' + bundle + '\' is named by a line refused above (' + file + ' line 1): fix that line'), 'the leg a refused line names is attributed to that line (' + file + ' line 1), never called missing from both files:\n' + r.err); assert.ok(!r.err.includes('is in neither'), 'the leg the refused line names is not reported as missing from both files:\n' + r.err); };
   const crlf = run(A + '\r\n', B + '\treason\n' + rest);
   refused(crlf, ROSTER + ' line 1: $\'' + A + '\\r\' is not a bundle path'); attributed(crlf, ROSTER, A);
   // the attribution is the line's first word after its leading whitespace: a roster line with a tab and a pasted reason (the
@@ -690,17 +729,17 @@ test('the script allows a pending line while its source is absent, reds a pendin
   assert.equal(absent.status, 0, 'a pending line with an absent source is allowed; stderr: ' + absent.err);
   assert.deepEqual(absent.node, ['--test', A], 'the rostered leg ran');
   const check = run(A + '\n', C + '\tpending #860: a leg an open PR brings\n' + rest, { check: true });
-  assert.equal(check.status, 0, check.err);
+  assert.equal(check.status, 0, '--check over a pending line with an absent source exits 0; stderr:\n' + check.err);
   assert.match(check.out, /1 rostered, 6 browser legs in the census, 1 pending lines naming absent sources/, 'the agreement line counts the pending lines: ' + check.out);
   const noPr = run(A + '\n', C + '\tpending: a leg with no PR named\n' + rest);
-  assert.equal(noPr.status, 1, noPr.err);
-  assert.ok(noPr.err.includes(EXCLUDED + ' line 1: \'' + C + '\' has a pending reason that names no PR (\'pending: a leg with no PR named\'): a pending line reads \'pending #<PR>: <why>\''), noPr.err);
+  assert.equal(noPr.status, 1, 'a pending reason naming no PR is red, exit 1; stderr:\n' + noPr.err);
+  assert.ok(noPr.err.includes(EXCLUDED + ' line 1: \'' + C + '\' has a pending reason that names no PR (\'pending: a leg with no PR named\'): a pending line reads \'pending #<PR>: <why>\''), 'the pending reason naming no PR is red by line with the form the header spells, \'pending #<PR>: <why>\':\n' + noPr.err);
   assert.equal(noPr.node, null, 'no leg ran');
   // the source arrives (the census table gains its row: a shared Chromium leg): red with the roster remedy naming the PR, once
   fs.writeFileSync(path.join(root, 'ui', 'webview', 'c-browser.test.ts'), 'import { inBrowser } from "./real-viewer-leg";\ntest("leg c opens the page", async (t) => { await inBrowser(t, async (browser) => {}); });\n');
   const present = run(A + '\n', C + '\tpending #860: a leg an open PR brings\n' + rest, { census: TABLE + [C, '1', '-', '-', 'shared'].join('\t') + '\n' });
-  assert.equal(present.status, 1, present.err);
-  assert.ok(present.err.includes(EXCLUDED + ' line 1: \'' + C + '\' is pending #860 and its source ui/webview/c-browser.test.ts is in the tree, so the leg has arrived (#860 merged main, or this is #860\'s branch) and the line\'s condition has passed: promote it: delete this line and add \'' + C + '\' to ' + ROSTER + ' (the source launches through inBrowser alone and reaches no engine but Chromium), with the step\'s measured seconds in the PR body'), present.err);
+  assert.equal(present.status, 1, 'a pending line whose source is present is red, exit 1; stderr:\n' + present.err);
+  assert.ok(present.err.includes(EXCLUDED + ' line 1: \'' + C + '\' is pending #860 and its source ui/webview/c-browser.test.ts is in the tree, so the leg has arrived (#860 merged main, or this is #860\'s branch) and the line\'s condition has passed: promote it: delete this line and add \'' + C + '\' to ' + ROSTER + ' (the source launches through inBrowser alone and reaches no engine but Chromium), with the step\'s measured seconds in the PR body'), 'the arrived pending leg is red with the roster remedy naming the PR (a shared Chromium leg):\n' + present.err);
   assert.ok(!present.err.includes('is in neither'), 'the arrived leg is not also called missing from both files:\n' + present.err);
   assert.equal(present.node, null, 'no leg ran');
   // a private leg (p: never imports the launcher) and one calling inBrowser beside its own playwright (m), both Chromium alone:
@@ -708,22 +747,22 @@ test('the script allows a pending line while its source is absent, reds a pendin
   // non-leg (plain): no line
   const GATE = (gap, bundle) => 'promote it: pass the roster gate (the source ' + gap + ': launch through inBrowser alone, with no playwright, launch, skip or todo of the leg\'s own), then delete this line and add \'' + bundle + '\' to ' + ROSTER + ' with the step\'s measured seconds in the PR body: the exclusions admit no reason of its own, so a leg that reaches Chromium alone is rostered once it passes the gate';
   const priv = run(A + '\n', P + '\tpending #859: a private leg\n' + EXCLUDE_REST('a', 'p'));
-  assert.equal(priv.status, 1, priv.err);
-  assert.ok(priv.err.includes('\'' + P + '\' is pending #859') && priv.err.includes(GATE(GAP_P, P)), priv.err);
+  assert.equal(priv.status, 1, 'a pending line whose arrived source is a private leg is red, exit 1; stderr:\n' + priv.err);
+  assert.ok(priv.err.includes('\'' + P + '\' is pending #859') && priv.err.includes(GATE(GAP_P, P)), 'the arrived private leg is red with the gate\'s own remedy (the source never imports the launcher):\n' + priv.err);
   const both = run(A + '\n', M + '\tpending #853: calls inBrowser beside a playwright load of its own\n' + EXCLUDE_REST('a', 'm'));
-  assert.equal(both.status, 1, both.err);
-  assert.ok(both.err.includes('\'' + M + '\' is pending #853') && both.err.includes(GATE(GAP_M, M)), both.err);
+  assert.equal(both.status, 1, 'a pending line whose arrived source calls inBrowser beside its own playwright is red, exit 1; stderr:\n' + both.err);
+  assert.ok(both.err.includes('\'' + M + '\' is pending #853') && both.err.includes(GATE(GAP_M, M)), 'the arrived leg that loads playwright beside inBrowser is red with the gate\'s own remedy:\n' + both.err);
   assert.ok(!both.err.includes('why the gating job does not run it'), 'the old remedy, a bare gap sentence the closed set refuses, is gone:\n' + both.err);
   // the engine remedy is held by includes() up to the form's closing quote, here and at the neither red in the refusals test above:
   // a tail appended AFTER the closing quote is not refused by these pins, since the quoted form is what a copy into the exclusions
   // carries and a tail outside it grants nothing, while a tail inside the form that carries a second claim (another form's phrase,
   // a second engine) is refused as ambiguous by the closed-set tests
   const eng = run(A + '\n', F + '\tpending #859: an engine leg\n' + EXCLUDE_REST('a', 'f'));
-  assert.equal(eng.status, 1, eng.err);
-  assert.ok(eng.err.includes('\'' + F + '\' is pending #859') && eng.err.includes('promote it: keep the line and replace the reason with the engine form the header of ' + EXCLUDED + ' admits, "launches Firefox; ' + ENGINE_PHRASE + '"'), eng.err);
+  assert.equal(eng.status, 1, 'a pending line whose arrived source reaches Firefox is red, exit 1; stderr:\n' + eng.err);
+  assert.ok(eng.err.includes('\'' + F + '\' is pending #859') && eng.err.includes('promote it: keep the line and replace the reason with the engine form the header of ' + EXCLUDED + ' admits, "launches Firefox; ' + ENGINE_PHRASE + '"'), 'the arrived engine leg is red with the engine-form remedy (keep the line, replace the reason):\n' + eng.err);
   const none = run(A + '\n', PLAIN + '\tpending #861: a module that is no leg\n' + rest);
-  assert.equal(none.status, 1, none.err);
-  assert.ok(none.err.includes('\'' + PLAIN + '\' is pending #861') && none.err.includes('promote it: remove the line (the source reaches no browser by the census rule)'), none.err);
+  assert.equal(none.status, 1, 'a pending line whose arrived source is no leg is red, exit 1; stderr:\n' + none.err);
+  assert.ok(none.err.includes('\'' + PLAIN + '\' is pending #861') && none.err.includes('promote it: remove the line (the source reaches no browser by the census rule)'), 'the arrived non-leg is red with the remove-the-line remedy:\n' + none.err);
   for (const r of [priv, both, eng, none]) assert.ok(!r.err.includes('is in neither'), 'no second red:\n' + r.err);
 });
 
@@ -735,15 +774,15 @@ test('after node --test the script derives per rostered leg that at least one at
   assert.equal(skipped.status, 1, 'a skip under the switch is red; stderr: ' + skipped.err);
   assert.deepEqual(skipped.node, ['--test', A], 'the leg ran (the skip is read from the run, not refused before it)');
   assert.ok(skipped.err.includes('ci-browser-legs: skipped with ' + SWITCH + '=1: \'leg a keeps the slice\\nwhole # 2\' # SKIP no playwright chromium on this box (' + A + ')'), 'the skip names the test as the record spells it (a newline written \\n), its reason and its leg:\n' + skipped.err);
-  assert.ok(skipped.err.includes('a rostered leg skipped a test with ' + SWITCH + '=1, so the step claims coverage it did not run'), skipped.err);
-  assert.ok(skipped.err.includes('only inBrowser in ui/webview/real-viewer-leg.ts turns a launch it cannot make into a failure here') && skipped.err.includes('move it to ' + EXCLUDED + ' with that reason'), skipped.err);
+  assert.ok(skipped.err.includes('a rostered leg skipped a test with ' + SWITCH + '=1, so the step claims coverage it did not run'), 'the skip\'s red says the step claims coverage it did not run:\n' + skipped.err);
+  assert.ok(skipped.err.includes('only inBrowser in ui/webview/real-viewer-leg.ts turns a launch it cannot make into a failure here') && skipped.err.includes('move it to ' + EXCLUDED + ' with that reason'), 'the skip\'s red carries the set-switch remedy (only inBrowser turns a launch it cannot make into a failure) and the move-to-exclusions remedy:\n' + skipped.err);
   assert.ok(!skipped.err.includes('no test of this leg passed'), 'a leg with a pass beside its skip is not called unrun:\n' + skipped.err);
   // the same skip with the switch unset, as a local run may have it: still red, and the message says the switch is unset
   // and that the step sets it, instead of claiming a state the run did not have
   const unset = run(A + '\n', excluded, { report: PASS + rec(A, 'pass', 'test', 'skip', 'test', 'leg a opens the page', 'why', '-'), switch: null });
   assert.equal(unset.status, 1, 'a skip with the switch unset is red too; stderr: ' + unset.err);
-  assert.ok(unset.err.includes('skipped with ' + SWITCH + ' unset: \'leg a opens the page\' # SKIP why (' + A + ')'), unset.err);
-  assert.ok(unset.err.includes('a rostered leg skipped a test with ' + SWITCH + ' unset, so this run claims coverage it did not run: the step sets ' + SWITCH + '=1'), unset.err);
+  assert.ok(unset.err.includes('skipped with ' + SWITCH + ' unset: \'leg a opens the page\' # SKIP why (' + A + ')'), 'a skip with the switch unset names the test, its reason, its leg and the switch as unset:\n' + unset.err);
+  assert.ok(unset.err.includes('a rostered leg skipped a test with ' + SWITCH + ' unset, so this run claims coverage it did not run: the step sets ' + SWITCH + '=1'), 'the unset-switch red says this run claims coverage it did not run and that the step sets the switch:\n' + unset.err);
   assert.ok(!unset.err.includes(SWITCH + '=1:') && !unset.err.includes('with ' + SWITCH + '=1,'), 'no line claims the switch was set:\n' + unset.err);
   const clean = run(A + '\n', excluded, { report: PASS + rec(A, 'pass', 'suite', '-', 'test', 'a suite with tests', '', '-') });
   assert.equal(clean.status, 0, 'a pass beside a suite\'s own pass: no red: ' + clean.err);
@@ -753,35 +792,35 @@ test('after node --test the script derives per rostered leg that at least one at
   const none = run(A + '\n', excluded, { report: rec(A, 'pass', 'test', '-', 'file-level', A, '', '-') });
   assert.equal(none.status, 1, 'a file that registered nothing is red; stderr: ' + none.err);
   assert.deepEqual(none.node, ['--test', A], 'the leg ran (the empty run is read from the record, not refused before it)');
-  assert.ok(none.err.includes(UNRUN + '0 skipped, 0 todo, 0 suite and 1 file-level results for it), so the step claims coverage it did not run') && none.err.includes('move it to ' + EXCLUDED + ' with that reason until one runs'), none.err);
+  assert.ok(none.err.includes(UNRUN + '0 skipped, 0 todo, 0 suite and 1 file-level results for it), so the step claims coverage it did not run') && none.err.includes('move it to ' + EXCLUDED + ' with that reason until one runs'), 'a file that registered nothing is red as unrun with what the record held (1 file-level result) and the move-to-exclusions remedy:\n' + none.err);
   // the unrun red carries the boundary of what the record proves beside its remedy (read from the run's stderr): a pass is the
   // most the record proves, and the browser part's own run is read only by the skip and lost-browser lines when its launch is reached
   assert.ok(none.err.includes('a rostered leg holds a test that runs and passes here (a pass is the most the record proves: a pass from a test needing no browser satisfies this check, and the browser part\'s own run is read only by the skip and lost-browser lines when its launch is reached)'), 'the unrun red says, beside its remedy, that a pass is the most the record proves, so a reader of the red does not take the property for a launch record (holds the sentence as the script emits it: a reword of the parenthetical in the script moves this pin too):\n' + none.err);
   const suite = run(A + '\n', excluded, { report: rec(A, 'pass', 'suite', '-', 'test', 'a suite that registers none', '', '-') });
   assert.equal(suite.status, 1, 'a describe() that registers no test is red; stderr: ' + suite.err);
-  assert.ok(suite.err.includes(UNRUN + '0 skipped, 0 todo, 1 suite and 0 file-level results for it)'), suite.err);
+  assert.ok(suite.err.includes(UNRUN + '0 skipped, 0 todo, 1 suite and 0 file-level results for it)'), 'a describe() that registers none is red as unrun with what the record held (1 suite result):\n' + suite.err);
   const todos = run(A + '\n', excluded, { report: rec(A, 'pass', 'test', 'todo', 'test', 'bodyless todo', '', '-') + rec(A, 'pass', 'test', 'todo', 'test', 'a todo with a passing body', 'waiting on the browser', '-') });
   assert.equal(todos.status, 1, 'a leg whose tests are all todo is red; stderr: ' + todos.err);
-  assert.ok(todos.err.includes(UNRUN + '0 skipped, 2 todo, 0 suite and 0 file-level results for it)'), todos.err);
+  assert.ok(todos.err.includes(UNRUN + '0 skipped, 2 todo, 0 suite and 0 file-level results for it)'), 'a todo-only leg is red as unrun with what the record held (2 todo results):\n' + todos.err);
   assert.ok(!todos.err.includes('failed inside a todo'), 'a todo that passed is not a discarded failure:\n' + todos.err);
   const todoFail = run(A + '\n', excluded, { report: rec(A, 'fail', 'test', 'todo', 'test', 'a real failure inside a todo', 'the leg is broken', 'testCodeFailure') });
   assert.equal(todoFail.status, 1, 'a failure inside a todo is red although node exits 0; stderr: ' + todoFail.err);
-  assert.ok(todoFail.err.includes('ci-browser-legs: ' + A + ': \'a real failure inside a todo\' failed inside a todo (the leg is broken): node discards the failure (# fail 0, exit 0), so the step would read green over a broken test: remove the todo, or fix the test and remove it'), todoFail.err);
+  assert.ok(todoFail.err.includes('ci-browser-legs: ' + A + ': \'a real failure inside a todo\' failed inside a todo (the leg is broken): node discards the failure (# fail 0, exit 0), so the step would read green over a broken test: remove the todo, or fix the test and remove it'), 'a failure inside a todo is red by name with the test, its message, why node hides it (# fail 0, exit 0) and the remedy:\n' + todoFail.err);
   assert.ok(todoFail.err.includes(UNRUN + '0 skipped, 1 todo, 0 suite and 0 file-level results for it)'), 'and the leg ran no counting pass:\n' + todoFail.err);
   // a real pass beside a failure inside a todo: the property holds, the discarded failure is still red
   const mixed = run(A + '\n', excluded, { report: PASS + rec(A, 'fail', 'test', 'todo', 'test', 'a swallowed failure', 'the leg is broken', 'testCodeFailure') });
-  assert.equal(mixed.status, 1, mixed.err);
-  assert.ok(mixed.err.includes('\'a swallowed failure\' failed inside a todo (the leg is broken)') && !mixed.err.includes('no test of this leg passed'), mixed.err);
+  assert.equal(mixed.status, 1, 'a failure inside a todo beside a real pass: exit 1; stderr:\n' + mixed.err);
+  assert.ok(mixed.err.includes('\'a swallowed failure\' failed inside a todo (the leg is broken)') && !mixed.err.includes('no test of this leg passed'), 'a failure inside a todo beside a real pass is still red by name, and the leg is not called unrun:\n' + mixed.err);
   for (const r of [none, suite, todos, todoFail]) assert.ok(!r.err.includes('skipped with'), 'an unrun leg is not called a skip:\n' + r.err);
   // two rostered legs, one of which ran nothing: the red names that one and not the other (attribution is per bundle)
   fs.writeFileSync(path.join(root, 'vscode-extension', B), '');   // b has no bundle in the tree by default
   const two = run(A + '\n' + B + '\n', EXCLUDE_REST('a', 'b'), { report: PASS + rec(B, 'pass', 'test', 'todo', 'test', 'leg b todo', '', '-') });
-  assert.equal(two.status, 1, two.err);
+  assert.equal(two.status, 1, 'two rostered legs, one that ran nothing: exit 1; stderr:\n' + two.err);
   assert.ok(two.err.includes('ci-browser-legs: ' + B + ': no test of this leg passed') && !two.err.includes('ci-browser-legs: ' + A + ': no test'), 'the leg that ran nothing is named and the one that passed is not:\n' + two.err);
   // a file that failed as a whole (node's file-level result failing: a timeout under --test-timeout, or a throw at load)
   const timedOut = run(A + '\n', excluded, { report: rec(A, 'fail', 'test', '-', 'file-level', A, 'test timed out after 300000ms', 'testTimeoutFailure'), exit: 1 });
   assert.equal(timedOut.status, 1, 'node\'s failure stands');
-  assert.ok(timedOut.err.includes('ci-browser-legs: ' + A + ' failed as a whole (testTimeoutFailure: test timed out after 300000ms): a file that timed out under node\'s --test-timeout, or threw at load, ran no test that counts'), timedOut.err);
+  assert.ok(timedOut.err.includes('ci-browser-legs: ' + A + ' failed as a whole (testTimeoutFailure: test timed out after 300000ms): a file that timed out under node\'s --test-timeout, or threw at load, ran no test that counts'), 'a file that failed as a whole is red naming the file and the failure type:\n' + timedOut.err);
   assert.ok(!timedOut.err.includes('no test of this leg passed'), 'a failed file is node\'s red, not called unrun on top:\n' + timedOut.err);
   // node's own exit status is the step's: the roster array is node's argument list, with no xargs to map it (GNU 123, BSD 1)
   const failed = run(A + '\n', excluded, { report: rec(A, 'fail', 'test', '-', 'test', 'leg a opens the page', 'an assertion of the leg\'s own failed', 'testCodeFailure'), exit: 1 });
@@ -791,7 +830,7 @@ test('after node --test the script derives per rostered leg that at least one at
   const LOST = SWITCH + ' is set and this leg cannot run: no playwright browser on this box; the browser leg needs one: browserType.launch: Executable doesn\'t exist at /nowhere';
   const lost = run(A + '\n', excluded, { report: rec(A, 'fail', 'test', '-', 'test', 'leg a opens the page', LOST, 'testCodeFailure'), exit: 1 });
   assert.equal(lost.status, 1);
-  assert.ok(lost.err.includes('ci-browser-legs: ' + A + ': \'leg a opens the page\' failed under ' + SWITCH + '=1 because inBrowser could not launch (' + LOST + '): the runner lost its browser: check the Chromium install step'), lost.err);
+  assert.ok(lost.err.includes('ci-browser-legs: ' + A + ': \'leg a opens the page\' failed under ' + SWITCH + '=1 because inBrowser could not launch (' + LOST + '): the runner lost its browser: check the Chromium install step'), 'a failure whose message names the switch is red with the lost-browser remedy beside the leg (check the Chromium install step):\n' + lost.err);
   // the phrase quoted AFTER other text (the rostered switch test's assertion messages embed a child run's stdout, which carries
   // it): an ordinary failure of the leg, no LOST line, no label of the script's, node's red passed through
   const quoted = run(A + '\n', excluded, { report: rec(A, 'fail', 'test', '-', 'test', 'leg a opens the page', 'the leg failed under the switch; the child run printed: ' + LOST, 'testCodeFailure'), exit: 1 });
@@ -806,7 +845,7 @@ test('after node --test the script derives per rostered leg that at least one at
   assert.ok(yes.err.includes('a rostered leg skipped a test with ' + SWITCH + '=yes, so the step claims coverage it did not run') && yes.err.includes('only inBrowser in ui/webview/real-viewer-leg.ts turns a launch it cannot make into a failure here'), 'the set-switch remedy, not the unset one: the script\'s two reads arm on any non-empty value:\n' + yes.err);
   const both = run(A + '\n', excluded, { report: rec(A, 'pass', 'test', 'skip', 'test', 'leg a opens the page', 'why', '-'), exit: 7 });
   assert.equal(both.status, 7, 'with a failure and a skip node\'s own status (7) stands, not overwritten by the skip\'s status=1, and the skip is still named');
-  assert.ok(both.err.includes('skipped with ' + SWITCH + '=1'), both.err);
+  assert.ok(both.err.includes('skipped with ' + SWITCH + '=1'), 'with node\'s own failure status (7) the skip is still named:\n' + both.err);
 });
 
 /** Synthetic bundles for the reporter and the composition: each a node:test module of one shape, written under `dir` as
@@ -866,10 +905,10 @@ test('the composition, executed: the script with the real node and the real repo
   assert.equal(all.status, 1, 'node\'s exit 1 (the lost shape) is the script\'s; stderr: ' + all.err);
   for (const b of [S.todoBoth, S.describeNone, S.nothing, S.todoFail]) assert.ok(all.err.includes('ci-browser-legs: ' + b + ': no test of this leg passed in this run'), b + ' is red as unrun:\n' + all.err);
   for (const b of [S.passSkip, S.mixed, S.describePass, S.lost]) assert.ok(!all.err.includes('ci-browser-legs: ' + b + ': no test of this leg passed'), b + ' is not called unrun:\n' + all.err);
-  assert.ok(all.err.includes('ci-browser-legs: ' + S.todoFail + ': \'a real failure inside a todo\' failed inside a todo (the leg is broken)') && all.err.includes('ci-browser-legs: ' + S.mixed + ': \'a swallowed failure\' failed inside a todo (the leg is broken)'), all.err);
-  assert.ok(all.err.includes('skipped with ' + SWITCH + '=1: \'one skip\' # SKIP no browser # here (' + S.passSkip + ')'), all.err);
-  assert.ok(all.err.includes('ci-browser-legs: ' + S.lost + ': \'the launch\' failed under ' + SWITCH + '=1 because inBrowser could not launch (' + SWITCH + ' is set and this leg cannot run: no playwright browser on this box): the runner lost its browser: check the Chromium install step'), all.err);
-  assert.ok(all.err.includes(S.describeNone + ': no test of this leg passed in this run (the record holds 0 skipped, 0 todo, 1 suite and 0 file-level results for it)') && all.err.includes(S.nothing + ': no test of this leg passed in this run (the record holds 0 skipped, 0 todo, 0 suite and 1 file-level results for it)'), all.err);
+  assert.ok(all.err.includes('ci-browser-legs: ' + S.todoFail + ': \'a real failure inside a todo\' failed inside a todo (the leg is broken)') && all.err.includes('ci-browser-legs: ' + S.mixed + ': \'a swallowed failure\' failed inside a todo (the leg is broken)'), 'the composition reds the failure inside a todo by leg for the todo-fail and the mixed shapes:\n' + all.err);
+  assert.ok(all.err.includes('skipped with ' + SWITCH + '=1: \'one skip\' # SKIP no browser # here (' + S.passSkip + ')'), 'the composition names the skip with its reason (a # inside it kept) and its leg:\n' + all.err);
+  assert.ok(all.err.includes('ci-browser-legs: ' + S.lost + ': \'the launch\' failed under ' + SWITCH + '=1 because inBrowser could not launch (' + SWITCH + ' is set and this leg cannot run: no playwright browser on this box): the runner lost its browser: check the Chromium install step'), 'the composition prints the lost-browser remedy beside the leg whose failure names the switch:\n' + all.err);
+  assert.ok(all.err.includes(S.describeNone + ': no test of this leg passed in this run (the record holds 0 skipped, 0 todo, 1 suite and 0 file-level results for it)') && all.err.includes(S.nothing + ': no test of this leg passed in this run (the record holds 0 skipped, 0 todo, 0 suite and 1 file-level results for it)'), 'the composition reds describe-none and nothing as unrun with what the record held (a suite result, a file-level result):\n' + all.err);
   const clean = run(S.describePass + '\n', excl(S.describePass), { census, real: true });
   assert.equal(clean.status, 0, 'a leg whose test passes inside a describe(): green; stderr: ' + clean.err);
   assert.equal(clean.err, '', 'nothing on stderr');
@@ -888,7 +927,7 @@ test('the phrase the script reads a lost browser by is a literal in inBrowser\'s
   const helper = read(path.join(REPO, 'ui', 'webview', 'real-viewer-leg.ts'));
   assert.ok(helper.includes('"' + phrase + ': "'), 'the shared phrase: ui/webview/real-viewer-leg.ts holds the literal ' + JSON.stringify(phrase + ': ') + ' that vscode-extension/scripts/ci-browser-legs.sh hands awk (awk -v msg=), so a reword in one file is red here and the lost-browser remedy is never dropped in silence. This reads source text and guards the phrase alone, not the behaviour: that inBrowser FAILS with it under ' + SWITCH + ' and skips without is executed by ' + path.relative(REPO, SWITCH_TEST) + ' (a child node --test with PLAYWRIGHT_BROWSERS_PATH emptied), which the vscode-extension job runs; a green here with that test red is a helper that carries the words and not the behaviour');
   // the executed test this message points at exists and is rostered (so the step runs its leg with a browser on every CI
-  // run, and the Test step runs its two child arms); what it asserts is its own to state, and the census test holds it to the
+  // run, and the Test step runs its three child arms); what it asserts is its own to state, and the census test holds it to the
   // roster gate. The helper's playwrightInstalled export has that test as its consumer (the reason the child names is derived
   // from the helper's own module read, never from a second one): presence pins, which say only that the file names these
   assert.ok(fs.existsSync(SWITCH_TEST), 'the executed test of the switch exists at ' + path.relative(REPO, SWITCH_TEST));

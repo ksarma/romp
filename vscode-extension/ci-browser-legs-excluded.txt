@@ -69,8 +69,9 @@
 # tools/ci-browser-legs.test.mjs ("the script allows a pending line while its source is absent"). A pending row dropped while
 # its source is absent leaves every checker green (the row is a promise about an absent source, a member of neither set); its
 # consequence surfaces when the source arrives, in the red for a leg in neither file, which prints the remedy derived from the
-# source by the same rule a pending row's promotion uses, so no per-row presence pin is held (of a row's presence,
-# tools/ci-browser-legs.test.mjs holds only that at least one pending row exists).
+# source by the same rule a pending row's promotion uses, so no per-row presence pin is held (of the rows' presence,
+# tools/ci-browser-legs.test.mjs holds the header's grep command's output equal to the pending rows, empty with exit 1 when
+# none remain, beside a synthetic positive control).
 out-tests/ui/timeline-tags-scale-browser.test.js	launches Firefox; the gating job installs Chromium only
 out-tests/ui/webview/anchor-map-cells-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
 out-tests/ui/webview/anchor-map-code-lines-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
