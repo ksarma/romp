@@ -55,10 +55,12 @@
 # denylist and no credential scan makes no clean report a replace ref could
 # falsify. The last section is the identifier scan's own transform: a text file
 # git calls binary (its path's diff attribute; its size over
-# core.bigFileThreshold; a driver named one of check-attr's reserved words) is
-# read by one content check or neither, and is refused rather than scanned on
-# git's own verdict from each read, with the tip or the commit, the path and
-# what the attribute reads named.
+# core.bigFileThreshold, a symlink's target included; a driver named one of
+# check-attr's reserved words) is read by one content check or neither, and is
+# refused rather than scanned on git's own verdict from each read, with the tip
+# or the commit, the path and what the attribute reads named; a type change is
+# judged as the diff prints it, a deletion and an addition, and a mode-only
+# change, which it prints no content for, is not judged at all.
 
 ROMP_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 HOOK="$ROMP_DIR/.githooks/pre-push"
@@ -1804,8 +1806,11 @@ path_without_gitleaks() {
 # fixture's own commits run no hooks before or after.
 push_main_through_hook() {
     add_remote
+    push_main_through_installed_hook
+}
+push_main_through_installed_hook() {   # the remote is the case's own (add_remote), so a case that pushed once without the hook pushes again with it
     mkdir -p "$TEST_DIR/hooks"
-    ln -s "$HOOK" "$TEST_DIR/hooks/pre-push"
+    ln -sf "$HOOK" "$TEST_DIR/hooks/pre-push"
     git -C "$REPO" config core.hooksPath "$TEST_DIR/hooks"
     run git -C "$REPO" push origin main
     git -C "$REPO" config core.hooksPath "$TEST_DIR/no-hooks"
@@ -2066,6 +2071,201 @@ big_text_file() {   # <path> <last line>: a 150-byte text line, then the line gi
     [[ "$output" == *"BLOCKED"* ]]
 }
 
+# The population of the per-commit verdict is every post-image BLOB, a
+# symlink's as much as a regular file's: a link's target is a blob under the
+# size key like any other, the pairwise diff prints "Binary files differ" for
+# one over the key and no target, and a link so hidden in a middle commit and
+# gone at the tip is read by nothing else (the round 3 auditor, 2026-09-21: a
+# real push published a banned string in such a target with the denylist
+# armed, the derivation judging regular files alone). No attribute reaches a
+# symlink in that diff (an explicit "link diff" line under the key still
+# prints no target, checked by execution), so a link's line names none and
+# the key is its remedy. Under no key a new link's target is a hunk the
+# added-lines pass reads; at the tip the symlink pass reads every target by
+# cat-file, key or no key. A TYPE change is judged as the diff prints it, a
+# deletion and an addition each alone, by a numstat of the empty tree against
+# the commit's tree for its path: the pair's stat is binary when either side
+# is, and by it a binary file replaced by a link whose target the diff printed
+# in full was refused as hidden. A MODE-ONLY change is not judged: the same
+# blob under a new mode has no hunk and no Binary line, while the pair's stat
+# calls an unchanged blob over the key binary, and by it a push that published
+# nothing new was refused (the round 3 auditor, 2026-09-21).
+long_target() {   # a symlink target of 96 bytes, over a threshold of 20, carrying a banned string unless another head is given
+    printf '%s, a long target aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "${1:-seen on TESTHOST}"
+}
+symlink_commit() {   # <path> <target> <message>: a committed symlink
+    ln -s "$2" "$REPO/$1"
+    git -C "$REPO" add "$1"
+    git -C "$REPO" commit -qm "$3"
+}
+
+@test "a SYMLINK whose target is over core.bigFileThreshold and carries a banned string, added in a middle commit and gone at the tip, is refused rather than scanned, the line naming the commit, the link and no attribute; the remote holds nothing" {
+    git -C "$REPO" config core.bigFileThreshold 20
+    symlink_commit link "$(long_target)" "a banned string in a long symlink target"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    size="$(git -C "$REPO" cat-file -s "$leak:link")"
+    remove_file link "remove it"                                 # the tip has no link left: only the per-commit half can name it
+    # the road as git applies it: the diff prints no target, the pair's stat a dash for each count
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" -- link' _ "$leak"
+    [[ "$output" == *"new file mode 120000"* ]]
+    [[ "$output" == *"Binary files /dev/null and b/link differ"* ]]
+    [[ "$output" != *"TESTHOST"* ]]
+    run _hook_in "$REPO" -c 'git diff-tree -r -m -M --numstat --root --no-commit-id "$1" -- link' _ "$leak"
+    [ "$output" = "-"$'\t'"-"$'\t'"link" ]
+    push_main_through_hook
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: link in commit ${leak:0:10} is text that git calls binary although it is a symbolic link, whose target this read judges by its size and bytes and by no attribute of the path, so no attribute of its path accounts for the verdict (the blob is $size bytes; core.bigFileThreshold is 20 in this clone's configuration); the identifier scan did not read it, so the push is refused rather than scanned"* ]]
+    [[ "$output" == *"Where a line names no attribute, a configuration key can be what makes git call the file binary: core.bigFileThreshold"* ]]
+    [[ "$output" == *"for a link the key is the remedy"* ]]
+    [[ "$output" != *"link in commit ${leak:0:10} is text that its diff attribute"* ]]
+    [[ "$output" != *"at the tip of"* ]]
+    [[ "$output" != *"personal identifier"* ]]
+    [[ "$output" == *"git push --no-verify"* ]]
+    ! remote_holds_main
+}
+
+@test "an explicit \"link diff\" line does not reach a symlink: the same link under it is hidden by the key all the same and refused the same way, so the advice names the key as a link's remedy" {
+    git -C "$REPO" config core.bigFileThreshold 20
+    attributes 'link diff'
+    symlink_commit link "$(long_target)" "a banned string in a long symlink target under an explicit diff line"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file link "remove it"
+    run _hook_in "$REPO" -c 'git check-attr diff link'
+    [[ "$output" == *"link: diff: set"* ]]
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" -- link' _ "$leak"   # the attribute lifted nothing: the pairwise diff applies none to a link
+    [[ "$output" == *"Binary files /dev/null and b/link differ"* ]]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"link in commit ${leak:0:10} is text that git calls binary although it is a symbolic link"* ]]
+    [[ "$output" == *"(a symbolic link's target takes no attribute, so for a link the key is the remedy)"* ]]
+    [[ "$output" != *"ADDS a personal identifier"* ]]
+}
+
+@test "the same symlink AT the tip under the key is a HIT by the tip's symlink pass, which reads every target by cat-file whatever the key says, and the tip is never called hidden; the commit whose diff printed no target for it is" {
+    git -C "$REPO" config core.bigFileThreshold 20
+    symlink_commit link "$(long_target)" "a banned string in a long symlink target at the tip"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the tip of refs/heads/main (${sha:0:10}) would publish a personal identifier"* ]]
+    [[ "$output" == *"in the SYMLINK TARGET of link -> seen on TESTHOST, a long target"* ]]
+    [[ "$output" != *"link at the tip of refs/heads/main (${sha:0:10}) is text"* ]]
+    [[ "$output" == *"link in commit ${sha:0:10} is text that git calls binary although it is a symbolic link"* ]]   # the per-commit diff printed no target: git's verdict on that read, stated
+    [[ "$output" == *"BLOCKED"* ]]
+}
+
+@test "a symlink whose target carries the string under no key, added in a middle commit and gone at the tip, is a HIT by the added-lines pass, which reads the target as a hunk, and is never called hidden" {
+    symlink_commit link "$(long_target)" "a banned string in a symlink target"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file link "remove it"
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" -- link' _ "$leak"   # the target is a hunk
+    [[ "$output" == *"+seen on TESTHOST, a long target"* ]]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"commit ${leak:0:10} ADDS a personal identifier in:"* ]]
+    [[ "$output" == *"  link"* ]]
+    [[ "$output" != *"git calls binary"* ]]
+    [[ "$output" != *"hides from the identifier scan"* ]]
+}
+
+@test "a binary file replaced by a symlink (a TYPE change) whose target is clean passes: the diff prints the change as a deletion and an addition and printed the target in full, so the link is judged as the addition it is, though the pair's stat calls the pair binary" {
+    printf 'ab\0cd\n' > "$REPO/thing"
+    git -C "$REPO" add thing
+    git -C "$REPO" commit -qm "a binary file"
+    rm "$REPO/thing"
+    symlink_commit thing "nothing to see" "replaced by a symlink"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" -- thing' _ "$sha"
+    [[ "$output" == *"Binary files a/thing and /dev/null differ"* ]]      # the deletion, judged alone
+    [[ "$output" == *"+nothing to see"* ]]                                # the addition, printed in full
+    run _hook_in "$REPO" -c 'git diff-tree -r -m -M --numstat --root --no-commit-id "$1" -- thing' _ "$sha"
+    [ "$output" = "-"$'\t'"-"$'\t'"thing" ]                              # the pair's stat: binary on either side
+    run_hook
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "a text file under -diff replaced by a symlink whose target carries the string is a HIT, not hidden: the addition the diff printed is what the link is judged as" {
+    add_remote
+    attributes 'thing -diff'
+    commit_file thing "nothing to see" "a clean -diff file"
+    git -C "$REPO" push -q origin main                          # the hidden file is on the remote; the type change is all this push adds
+    before="$(git -C "$REPO" rev-parse HEAD)"
+    rm "$REPO/thing"
+    symlink_commit thing "seen on TESTHOST" "replaced by a symlink"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    run_hook "$before"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the tip of refs/heads/main (${sha:0:10}) would publish a personal identifier"* ]]
+    [[ "$output" == *"in the SYMLINK TARGET of thing -> seen on TESTHOST"* ]]
+    [[ "$output" == *"commit ${sha:0:10} ADDS a personal identifier in:"* ]]
+    [[ "$output" == *"  thing"* ]]
+    [[ "$output" != *"is text that"* ]]
+}
+
+@test "a file replaced by a symlink whose target is over the key and carries the string, gone at the tip, is refused, the line naming the commit and the link: the addition the diff judged alone is the one it printed no target for" {
+    git -C "$REPO" config core.bigFileThreshold 20
+    commit_file thing "clean" "a small file"
+    rm "$REPO/thing"
+    symlink_commit thing "$(long_target)" "replaced by a long symlink"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    size="$(git -C "$REPO" cat-file -s "$leak:thing")"
+    remove_file thing "remove it"
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" -- thing' _ "$leak"
+    [[ "$output" == *"Binary files /dev/null and b/thing differ"* ]]
+    [[ "$output" != *"TESTHOST"* ]]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: thing in commit ${leak:0:10} is text that git calls binary although it is a symbolic link"* ]]
+    [[ "$output" == *"(the blob is $size bytes; core.bigFileThreshold is 20 in this clone's configuration)"* ]]
+    [[ "$output" != *"ADDS a personal identifier"* ]]
+    [[ "$output" != *"at the tip of"* ]]
+}
+
+@test "a MODE-ONLY change of a text file over the key, the denylist armed, passes through a real push: the same blob under a new mode has no hunk and no Binary line, and the remote holds main" {
+    add_remote
+    git -C "$REPO" config core.bigFileThreshold 100
+    big_text_file big.txt "nothing to see"
+    git -C "$REPO" add big.txt
+    git -C "$REPO" commit -qm "a clean big text file"
+    git -C "$REPO" push -q origin main                          # the blob is on the remote; the mode change is all this push adds
+    git -C "$REPO" update-index --chmod=+x big.txt
+    git -C "$REPO" commit -qm "a mode-only change"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1"' _ "$sha"       # mode lines alone
+    [[ "$output" == *"old mode 100644"* ]]
+    [[ "$output" == *"new mode 100755"* ]]
+    [[ "$output" != *"Binary files"* ]]
+    run _hook_in "$REPO" -c 'git diff-tree -r -m -M --numstat --root --no-commit-id "$1"' _ "$sha"           # the pair's stat: a dash for each count all the same
+    [ "$output" = "-"$'\t'"-"$'\t'"big.txt" ]
+    push_main_through_installed_hook
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$sha" ]
+}
+
+@test "the control: the same file with one changed byte under the key is refused as hidden, the row kept, and the remote holds the blob's first commit alone" {
+    add_remote
+    git -C "$REPO" config core.bigFileThreshold 100
+    big_text_file big.txt "nothing to see"
+    git -C "$REPO" add big.txt
+    git -C "$REPO" commit -qm "a clean big text file"
+    git -C "$REPO" push -q origin main
+    before="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'x' >> "$REPO/big.txt"
+    git -C "$REPO" add big.txt
+    git -C "$REPO" commit -qm "one byte more"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    size="$(git -C "$REPO" cat-file -s "$sha:big.txt")"
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1"' _ "$sha"
+    [[ "$output" == *"Binary files a/big.txt and b/big.txt differ"* ]]
+    push_main_through_installed_hook
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: big.txt in commit ${sha:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict (the blob is $size bytes; core.bigFileThreshold is 100 in this clone's configuration)"* ]]
+    [[ "$output" != *"at the tip of"* ]]      # the tip's grep applies no size rule and read the file
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$before" ]
+}
+
 # check-attr's three reserved words (set, unspecified, unset) are also names a
 # driver may take: `diff=set` on a path with diff.set.binary true makes
 # check-attr answer `set`, the word a bare `diff` attribute answers, and a
@@ -2118,8 +2318,9 @@ big_text_file() {   # <path> <last line>: a 150-byte text line, then the line gi
 # The check's own reads fail closed like every other, each against its refusing
 # input: the scratch directory, the tip's listing and the grep's read list, each
 # commit's listing and its numstat, a numstat that answers for fewer paths than
-# the listing names, a path with a newline, the hidden blob's content read; and
-# the label's check-attr, which cannot lift a refusal git's verdict made. The
+# the listing names, a type change's two reads (the empty tree's name, the
+# numstat against it), a path with a newline, the hidden blob's content read;
+# and the label's check-attr, which cannot lift a refusal git's verdict made. The
 # replace-ref listing (refuse_replace_refs) is here too. The round 3 refuters
 # deleted each such arm alone and together and the suite stayed green, which is
 # why each has a case: a refusal that never fires cannot be told from an arm
@@ -2131,6 +2332,9 @@ fail_grep_read_list()    { git_refusing '[ "${1:-}" = grep ] && [ "${5:-}" = -z 
 fail_diff_tree_raw()     { git_refusing 'case " $* " in *" --raw "*) true ;; *) false ;; esac' 128 "fatal: shim: diff-tree --raw refused"; }             # the changed-path listing alone: the added-lines diff carries no --raw, and the count's --stdin --raw read runs only with the credential scan armed, which setup disarms
 fail_diff_tree_numstat() { git_refusing 'case " $* " in *" --numstat "*) true ;; *) false ;; esac' 128 "fatal: shim: diff-tree --numstat refused"; }   # the verdict read alone: the generic diff-tree shim is consumed by the added-lines arm
 empty_diff_tree_numstat() { git_refusing 'case " $* " in *" --numstat "*) true ;; *) false ;; esac' 0 ""; }                      # a numstat that exits 0 and answers nothing: a short read, not a failed one
+fail_hash_object()        { git_refusing '[ "${1:-}" = hash-object ]' 128 "fatal: shim: hash-object refused"; }                   # the empty tree's name, read for a type change alone: no other read of the hook asks it
+fail_empty_tree_numstat() { git_refusing 'case " $* " in *" --numstat "*" -- :(literal)"*) true ;; *) false ;; esac' 128 "fatal: shim: diff-tree --numstat against the empty tree refused"; }   # the type change's numstat alone: the literal pathspecs are its own
+empty_empty_tree_numstat() { git_refusing 'case " $* " in *" --numstat "*" -- :(literal)"*) true ;; *) false ;; esac' 0 ""; }   # the same read answering nothing: a short read
 check_attr_answering() {   # <printf format of the answer, NUL-delimited>: a git whose check-attr prints that and exits 0, the real git for every other command
     local real_git
     real_git="$(command -v git)"
@@ -2237,6 +2441,56 @@ check_attr_answering() {   # <printf format of the answer, NUL-delimited>: a git
     sha="$(git -C "$REPO" rev-parse HEAD)"
     empty_diff_tree_numstat
     run _hook_in "$REPO" -c 'git diff-tree -r -m -M --numstat --root -z --no-commit-id "$1"' _ "$sha"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the BINARY VERDICTS of commit ${sha:0:10} could not be read (git diff-tree --numstat answered for fewer paths than the commit changes)"* ]]
+    [[ "$output" != *"exited"* ]]
+}
+
+type_change_to_symlink() {   # a small text file replaced by a clean symlink: one T row, the pair's stat text, the addition verdict the read that decides
+    commit_file thing "clean" "a small file"
+    rm "$REPO/thing"
+    symlink_commit thing "nothing to see" "replaced by a symlink"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+}
+
+@test "a type change whose addition verdict cannot be read (git hash-object, asked for the empty tree's name, exiting 128) refuses the push as unscanned, naming that read; the pair verdicts stand and no other cause is named" {
+    type_change_to_symlink
+    fail_hash_object
+    run _hook_in "$REPO" -c 'git hash-object -t tree --stdin < /dev/null'
+    [ "$status" -eq 128 ]
+    run _hook_in "$REPO" -c 'git diff-tree -r -m -M --numstat --root -z --no-commit-id "$1" >/dev/null' _ "$sha"
+    [ "$status" -eq 0 ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the BINARY VERDICTS of commit ${sha:0:10} could not be read (git hash-object, asked for the empty tree's name, exited 128)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"against the empty tree exited"* ]]
+    [[ "$output" != *"answered for fewer paths"* ]]       # the short-answer arm is gated on every read having exited 0: one cause
+    [[ "$output" != *"--numstat -M exited"* ]]
+}
+
+@test "a type change whose addition verdict cannot be read (diff-tree --numstat against the empty tree exiting 128, the pair numstats untouched) refuses the push as unscanned, naming that read" {
+    type_change_to_symlink
+    fail_empty_tree_numstat
+    run _hook_in "$REPO" -c 'git diff-tree -r --numstat -z --no-commit-id --no-renames "$(git hash-object -t tree --stdin < /dev/null)" "$1" -- ":(literal)thing"' _ "$sha"
+    [ "$status" -eq 128 ]
+    run _hook_in "$REPO" -c 'git diff-tree -r -m -M --numstat --root -z --no-commit-id "$1" >/dev/null' _ "$sha"
+    [ "$status" -eq 0 ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the BINARY VERDICTS of commit ${sha:0:10} could not be read (git diff-tree --numstat against the empty tree exited 128)"* ]]
+    [[ "$output" != *"hash-object"* ]]
+    [[ "$output" != *"--numstat -M exited"* ]]
+    [[ "$output" != *"answered for fewer paths"* ]]
+}
+
+@test "a type change whose addition verdict answers nothing (the numstat against the empty tree exiting 0 with no row) is a short read, refused as unscanned: no answer is not an answer of text" {
+    type_change_to_symlink
+    empty_empty_tree_numstat
+    run _hook_in "$REPO" -c 'git diff-tree -r --numstat -z --no-commit-id --no-renames "$(git hash-object -t tree --stdin < /dev/null)" "$1" -- ":(literal)thing"' _ "$sha"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
     run_hook
