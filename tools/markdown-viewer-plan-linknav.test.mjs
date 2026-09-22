@@ -49,7 +49,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cssRules, renderRule, underScreen } from '../ui/webview/css-rules.mjs';
+import { cssRules, renderRule, stripCssComments, underScreen } from '../ui/webview/css-rules.mjs';
 import { execFileSync } from 'node:child_process';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -319,7 +319,7 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   assert.ok(section.includes('a right float\'s at the top-LEFT corner (`fv-figopen-left`, `fv-figopen-right`'));
 });
 
-test('the rule reader the two homes of the closed set share (ui/webview/css-rules.mjs): a sheet is read as rules with their enclosing at-rules, not as lines, so a rule indented under an at-rule, a grouped selector wrapped across lines, a one-line at-rule block and a column-zero rule read alike; a statement at-rule, a declaration-only at-rule and a comment yield no rule; a brace inside a string is text; whether a chain confines a rule to screens is a property of the whole query list; a nested block, an unbalanced brace and an open comment are refused (the file review\'s round 10, correctness-1 with tests-1 and ui-1)', () => {
+test('the rule reader the two homes of the closed set share (ui/webview/css-rules.mjs): a sheet is read as rules with their enclosing at-rules, not as lines, so a rule indented under an at-rule, a grouped selector wrapped across lines, a one-line at-rule block and a column-zero rule read alike; a statement at-rule, a declaration-only at-rule (its last declaration with or without a semicolon, styles.css\'s own @font-face blocks among them) and a comment yield no rule; a brace inside a string is text; whether a chain confines a rule to screens is a property of the whole query list; a nested block, an unbalanced brace, a lost open brace at the top level or under a rule-holding at-rule, a prelude the sheet ends inside, an open string and an open comment are refused, and the reader\'s header counts its refusals as the source has them (the file review\'s round 10, correctness-1 with tests-1 and ui-1, then correctness-2 with extra7-2, and extra7-1)', () => {
   const sheet = [
     '/* a comment naming .fv-figopen { */',
     '.fileview-md .fv-figopen { opacity: 0; }',
@@ -344,12 +344,46 @@ test('the rule reader the two homes of the closed set share (ui/webview/css-rule
   assert.deepEqual(cssRules('@supports (display: grid) { @media screen { .a { top: 0 } } }'), [{ selector: '.a', body: 'top: 0', chain: ['@supports (display: grid)', '@media screen'] }], 'the chain holds every enclosing at-rule, outermost first');
   assert.deepEqual(cssRules('.a::after { content: "{"; }\n.b[data-x="}"] { top: 0; }').map(renderRule), ['.a::after { content: "{"; }', '.b[data-x="}"] { top: 0; }'], 'a brace inside a string is text');
   assert.deepEqual(cssRules('@import "x.css";\n@font-face { font-family: F; src: url(f.woff2); }\n@keyframes k { from { opacity: 0; } to { opacity: 1; } }').map(renderRule), ['@keyframes k { from { opacity: 0; } }', '@keyframes k { to { opacity: 1; } }'], 'a statement at-rule and a declaration-only at-rule yield no rule; a keyframes step is a rule under its at-rule');
+  // the no-semicolon spelling of a declaration-only at-rule, valid CSS and the one every minifier writes (the file review's round
+  // 10, correctness-2 with extra7-2: the reader had refused it as a close brace inside a prelude, an unbalanced-brace message on a
+  // balanced sheet, while the with-semicolon spelling above parsed; the acceptance keys on the innermost enclosing at-rule's NAME,
+  // the set css-rules.mjs's DECLARATION_AT_RULE names, never on depth alone, so a lost open brace stays refused below)
+  assert.deepEqual(cssRules('@font-face { font-family: F; src: url(f.woff2) }\n.a { top: 0 }').map(renderRule), ['.a { top: 0 }'], 'a declaration-only at-rule whose last declaration ends at the block\'s own brace with no semicolon yields no rule, and the rule after it is read');
+  assert.deepEqual(cssRules('@page :first { margin: 1in; @top-center { content: "x" } }\n.a { top: 0 }').map(renderRule), ['.a { top: 0 }'], 'the same for a @page block and the margin at-rule nested in it');
+  assert.deepEqual(cssRules('@property --x { syntax: "<length>"; inherits: false; initial-value: 0px }\n@counter-style c { system: cyclic; symbols: "x" }\n@font-palette-values --p { font-family: F }'), [], 'and for @property, @counter-style and @font-palette-values');
+  // styles.css's own @font-face blocks, each as the sheet has it and with its final semicolon removed, and the whole sheet both ways
+  const styles = stripCssComments(read('ui', 'webview', 'styles.css'));
+  const faces = styles.match(/@font-face\s*\{[^{}]*\}/g) ?? [];
+  assert.equal(faces.length, (styles.match(/@font-face/g) ?? []).length, 'every @font-face of styles.css is a flat block this read finds');
+  for (const face of faces) {
+    assert.deepEqual(cssRules(face), [], 'a @font-face block of styles.css yields no rule: ' + face.slice(0, 40));
+    assert.deepEqual(cssRules(face.replace(/;(\s*\})$/, '$1')), [], 'and none with its final semicolon removed: ' + face.slice(0, 40));
+  }
+  const unterminated = styles.replace(/(@font-face\s*\{[^{}]*);(\s*\})/g, '$1$2');
+  assert.notEqual(unterminated, styles, 'the sheet carries a @font-face block ending in a semicolon, so the removal landed');
+  assert.equal(cssRules(unterminated).length, cssRules(styles).length, 'styles.css reads to the same rule count with or without the final semicolons of its @font-face blocks');
   assert.deepEqual(cssRules('.a,\n  .b\n{\n  top: 0;\n  left: 0;\n}').map(renderRule), ['.a, .b { top: 0; left: 0; }'], 'whitespace inside a selector list and a body is collapsed, so a rule renders the same however the sheet wrapped it');
   assert.throws(() => cssRules('.a { .b { top: 0; } }'), /CSS nesting/, 'a block inside a style rule is refused, not read');
   assert.throws(() => cssRules('.a { top: 0;'), /never closes/, 'an unclosed rule is refused');
   assert.throws(() => cssRules('@media screen { .a { top: 0; }'), /never closes/, 'an unclosed at-rule block is refused');
   assert.throws(() => cssRules('.a { top: 0; } }'), /no block open/, 'a stray close brace is refused');
   assert.throws(() => cssRules('/* open'), /never closes/, 'an open comment is refused');
+  // the three refusals that had no pin (the file review's round 10, extra7-1: neutralising any one of the eight left both homes
+  // green; each pattern here is a phrase only its path emits, since /never closes/ on the open string is also met by the rule's
+  // own end-of-sheet refusal once the string path is neutralised, so that pattern held nothing)
+  assert.throws(() => cssRules('.a { content: "x }'), /a string opened with/, 'an unclosed string is refused, named as the string');
+  assert.throws(() => cssRules('.a } .b { top: 0 }'), /a close brace inside a prelude/, 'a close brace inside a prelude at the top level, a lost open brace, is refused, not read as a selector');
+  assert.throws(() => cssRules('.a'), /never reaches a brace or a semicolon/, 'a prelude the sheet ends inside is refused');
+  // the two refusals the no-semicolon read keeps: it keys on the at-rule's name, and a break on any close brace at depth zero
+  // would read each of these as a declaration and return no rule, silently, where the reader refuses them today
+  assert.throws(() => cssRules('@media screen { .a top: 0 }'), /a close brace inside a prelude/, 'a lost open brace under a rule-holding at-rule is still refused');
+  assert.throws(() => cssRules('@media screen { .fv-figopen }'), /a close brace inside a prelude/, 'a bare selector under a rule-holding at-rule is still refused');
+  // the header's count of refusals is the source's count of refusal sites (a figure in a header is not an instrument: this holds it)
+  const reader = read('ui', 'webview', 'css-rules.mjs');
+  const sites = (reader.match(/\bfail\('/g) ?? []).length + (reader.match(/throw new Error\('css-rules: [a-z]/g) ?? []).length;
+  const stated = /rather than classifies, in (\w+) refusals/.exec(reader);
+  assert.ok(stated, 'the header states how many refusals the reader has');
+  assert.equal(NUMBER_WORDS[stated[1]], sites, 'the header\'s count of refusals is the source\'s count of refusal sites (a fail call, or a throw whose message literal runs past the css-rules prefix, the comment reader\'s; the fail helper\'s own throw, whose literal ends at the prefix, is no site); it says ' + stated[1] + ', the source has ' + sites);
   for (const chain of [['@media screen'], ['@media screen and (hover: none)'], ['@media only screen and (min-width: 1px) and (hover: none)'], ['@supports (display: grid)', '@media screen'], ['@media screen', '@media (min-width: 1px)']]) assert.equal(underScreen(chain), true, 'confined to screens: ' + JSON.stringify(chain));
   for (const chain of [[], ['@media (min-width: 1px)'], ['@media print'], ['@media print, screen'], ['@media screen, print'], ['@media screen and (hover: none), (min-width: 1px)'], ['@media not screen'], ['@media all'], ['@supports (display: grid)'], ['@container (max-width: 540px)']]) assert.equal(underScreen(chain), false, 'not confined to screens: ' + JSON.stringify(chain));
 });
