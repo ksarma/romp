@@ -34,7 +34,9 @@ for EVERY module under tests/, walked recursively, fixtures/ included (941 files
 of the variable, module-level if/try/for/with bodies included, in every shape a write takes (a subscript assignment,
 setdefault, update of a literal or of a module-level name bound to one, |=, os.putenv, through os.environ or any name
 bound to it; review round 2, 2026-09-18, after the subscript and setdefault alone left a module-level update
-invisible), and a write whose keys the scan cannot read fails the test rather than passing unread. The probe beside
+invisible; the dunder spellings __setitem__ and __ior__, called on the mapping or unbound with the mapping as the first
+argument, and os.environb with a bytes key, since the third commit of 2026-09-22, when the verifier found those three
+passing silently), and a write whose keys the scan cannot read fails the test rather than passing unread. The probe beside
 them imports the module in a fresh interpreter and runs one setUp, and one that fails, to see the value. The restore is
 a cleanup rather than a tearDown since review round 1 (2026-09-18): unittest skips tearDown when a subclass's setUp
 raises after the base's returned, and a tearDown restore left the 0 in the worker on that path.
@@ -63,7 +65,10 @@ call at import the scan can resolve to a def or class under tests/ (a module-loc
 tests-local module, a bare decorator, an instantiation; two such calls exist today, both to
 test_asm_checkpoint.kernel_module(), whose setdefault of the browser switch is licensed), with what stays outside the
 scan named above _Module; and every licence carries a checkable value condition (a value written through a name is read
-through the name) and every temporary licence a since date, held by _licence_table_faults.
+through the name) and every temporary licence a since date, held by _licence_table_faults. The third commit of the same
+day closes the second verification's findings: the call resolver reads a dotted `import tests.helper` and a star import,
+the temp-root licences accept a bare mkdtemp (or one with a literal prefix) and nothing with a `dir=`, and the comment
+above _Module names what stays outside the scan after that.
 
 The fixture rule below is static, so it holds for tests that skip here (no browser, no extension deps) and fails at
 the spawn site, naming the file.
@@ -129,13 +134,18 @@ def _literal_mapping(node):
     licence on a module-level write can be a condition on the value written (the dead port is "1", the catalog is
     "off"), and the banner module writes its dead ports through a name bound to a dict literal."""
     if isinstance(node, ast.Dict):
-        if all(isinstance(k, ast.Constant) and isinstance(k.value, str) for k in node.keys):
-            return {k.value: v for k, v in zip(node.keys, node.values)}
+        if all(isinstance(k, ast.Constant) and isinstance(k.value, (str, bytes)) for k in node.keys):
+            return {_key_text(k.value): v for k, v in zip(node.keys, node.values)}
         return None
     if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "dict" and not node.args
             and all(kw.arg is not None for kw in node.keywords)):
         return {kw.arg: kw.value for kw in node.keywords}
     return None
+
+
+def _key_text(k):
+    """A key as os.environ spells it: a str as written; a bytes key (os.environb's) decoded the way environb decodes one."""
+    return os.fsdecode(k) if isinstance(k, bytes) else k
 
 
 def _literal_mapping_keys(node):
@@ -148,7 +158,8 @@ class _EnvNames:
     """What spells the process environment in a module, so a write is read whatever name it goes through (review round 2,
     2026-09-18; before it the scan read `os.environ[...]` and `os.environ.setdefault` alone, and a module-level
     `os.environ.update(...)` was invisible to it): `os.environ` under any name os is imported as, `environ` after
-    `from os import environ` (or its `as` name), and every name bound to it (`env = os.environ`). Beside those, the names
+    `from os import environ` (or its `as` name), and every name bound to it (`env = os.environ`); `os.environb`, the same
+    environment keyed by bytes, the same way (the third commit of 2026-09-22). Beside those, the names
     bound to a dict literal or to `dict(...)` of keywords, which an `update(NAME)` reads through the name
     (tests/test_update_banner_confirm_served.py updates its DEAD_PORTS that way at import); a name bound any other way,
     or more than once, is unreadable, and an update of it is loud. Built from the code that runs at import (a class
@@ -202,7 +213,7 @@ class _EnvNames:
                         self._bind((a.asname or a.name).split(".")[0], None)
                 elif isinstance(n, ast.ImportFrom):
                     if n.module == "os":
-                        self.environ_names.update(a.asname or a.name for a in n.names if a.name == "environ")
+                        self.environ_names.update(a.asname or a.name for a in n.names if a.name in ("environ", "environb"))
                     for a in n.names:
                         self._bind(a.asname or a.name, None)
                 elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -239,7 +250,7 @@ class _EnvNames:
         return inner.absorb([node])
 
     def is_environ(self, node):
-        if isinstance(node, ast.Attribute) and node.attr == "environ" and isinstance(node.value, ast.Name):
+        if isinstance(node, ast.Attribute) and node.attr in ("environ", "environb") and isinstance(node.value, ast.Name):
             return node.value.id in self.os_names
         return isinstance(node, ast.Name) and node.id in self.environ_names
 
@@ -269,16 +280,16 @@ def _resolved(node, names):
 
 
 def _unreadable(what, node, where):
-    return UnreadableEnvWrite("cannot read the key%s of this %s at line %d of %s: %s (a string-literal key, a dict literal, "
+    return UnreadableEnvWrite("cannot read the key%s of this %s at line %d of %s: %s (a string or bytes literal key, a dict literal, "
                               "keyword arguments, or a name bound once to a dict literal are read; a computed key or "
                               "mapping is not)" % ("s" if what == "update" else "", what, node.lineno, where, ast.unparse(node)))
 
 
 def _keys(node, stmt, where, what, names):
-    """The key(s) a subscript, setdefault or putenv names: a string literal, or a name a `for` over string literals binds
-    (each literal in turn); loud for anything else."""
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return {node.value}
+    """The key(s) a subscript, setdefault, __setitem__ or putenv names: a string literal (a bytes literal for os.environb),
+    or a name a `for` over string literals binds (each literal in turn); loud for anything else."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
+        return {_key_text(node.value)}
     if isinstance(node, ast.Name) and names.loop_literals.get(node.id):
         return set(names.loop_literals[node.id])
     raise _unreadable(what, stmt, where)
@@ -311,7 +322,8 @@ def _flat_targets(targets):
 
 
 _Write = collections.namedtuple("_Write", "key shape value line resolved via", defaults=("",))
-#   one environment write as the scan reads it: the KEY written, the SHAPE (assignment, setdefault, update, |=, putenv),
+#   one environment write as the scan reads it: the KEY written, the SHAPE (assignment, setdefault, update, |=, putenv;
+#   __setitem__ and __ior__ for the dunder spellings, called on the mapping or unbound with the mapping as the first argument),
 #   the VALUE expression (an ast node, or None where the shape has none the scan reads), the LINE of the statement (of
 #   the CALL, for a write reached through one), the value RESOLVED through the names bound once at import (_resolved) and
 #   VIA: "" for a write made where it stands, else the callee chain a write at import is reached through (_reached_writes)
@@ -321,7 +333,10 @@ def _env_write_records(node, names, where="<module>"):
     """Every environment write under `node`, as _Write records: `environ[KEY] = v`, `environ |= {...}`,
     `environ.update({...})`, `environ.update(KEY=v)`, `environ.update(NAME)` for a NAME bound to a dict literal,
     `environ.setdefault(KEY, v)` and `os.putenv(KEY, v)`, environ spelled any way `names` knows (review round 2,
-    2026-09-18: the subscript and setdefault alone before, so a module-level update was invisible). A write whose keys
+    2026-09-18: the subscript and setdefault alone before, so a module-level update was invisible), and since the third
+    commit of 2026-09-22 the dunder spellings `environ.__setitem__(KEY, v)` and `environ.__ior__({...})`, the same two
+    unbound with the mapping as the first argument (`dict.__setitem__(environ, KEY, v)`), and every shape through
+    `os.environb` with a bytes key (the verifier found the three passing silently against the contract). A write whose keys
     cannot be read from the source raises UnreadableEnvWrite naming the line, never skips: the repo-wide import-time
     rule is only as good as the writes it reads. Removals (`pop`, `del`) are not writes and are outside this scan's
     contract: unset is the production default and the state a clean shell gives every module, so a removal at import
@@ -344,21 +359,47 @@ def _env_write_records(node, names, where="<module>"):
             for k, v in _mapping_items(n.value, names, n, where).items():
                 write(k, "|=", v, n.lineno)
         elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
-            if names.is_environ(n.func.value) and n.func.attr == "update":
-                if len(n.args) > 1 or any(kw.arg is None for kw in n.keywords):
-                    raise _unreadable("update", n, where)
-                for a in n.args:
-                    for k, v in _mapping_items(a, names, n, where).items():
-                        write(k, "update", v, n.lineno)
-                for kw in n.keywords:
-                    write(kw.arg, "update", kw.value, n.lineno)
-            elif names.is_environ(n.func.value) and n.func.attr == "setdefault":
-                for k in sorted(_keys(n.args[0] if n.args else None, n, where, "setdefault", names)):
-                    write(k, "setdefault", n.args[1] if len(n.args) > 1 else None, n.lineno)
+            method_args = _mapping_write_call(n, names)
+            if method_args is not None:
+                method, args = method_args
+                if method == "update":
+                    if len(args) > 1 or any(kw.arg is None for kw in n.keywords):
+                        raise _unreadable("update", n, where)
+                    for a in args:
+                        for k, v in _mapping_items(a, names, n, where).items():
+                            write(k, "update", v, n.lineno)
+                    for kw in n.keywords:
+                        write(kw.arg, "update", kw.value, n.lineno)
+                elif method == "__ior__":
+                    for k, v in _mapping_items(args[0] if args else None, names, n, where).items():
+                        write(k, "__ior__", v, n.lineno)
+                else:       # setdefault and __setitem__: (KEY, value)
+                    for k in sorted(_keys(args[0] if args else None, n, where, method, names)):
+                        write(k, method, args[1] if len(args) > 1 else None, n.lineno)
             elif isinstance(n.func.value, ast.Name) and n.func.value.id in names.os_names and n.func.attr == "putenv":
                 for k in sorted(_keys(n.args[0] if n.args else None, n, where, "putenv", names)):
                     write(k, "putenv", n.args[1] if len(n.args) > 1 else None, n.lineno)
     return out
+
+
+_MAPPING_WRITERS = ("update", "setdefault", "__setitem__", "__ior__")
+
+
+def _mapping_write_call(n, names):
+    """(method, args) for a call of a writing method of the environment mapping: update, setdefault, __setitem__ or __ior__
+    called on the mapping (`environ.update(...)`), or the two dunders called unbound with the mapping as the first
+    argument (`dict.__setitem__(os.environ, K, v)`), the argument list then starting after the mapping; None for any other
+    call. The third commit of 2026-09-22: the verifier found `os.environ.__setitem__(K, v)` and `dict.__setitem__(os.environ,
+    K, v)` passing the scan silently where the contract says a write is read or loud. An unbound update or setdefault
+    (`MutableMapping.update(os.environ, {...})`) is NOT read: the scan cannot tell it from `saved.update(os.environ)`, a
+    read of the environment into another mapping, so it stays outside and is named above _Module."""
+    if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in _MAPPING_WRITERS):
+        return None
+    if names.is_environ(n.func.value):
+        return n.func.attr, list(n.args)
+    if n.func.attr in ("__setitem__", "__ior__") and n.args and names.is_environ(n.args[0]):
+        return n.func.attr, list(n.args[1:])
+    return None
 
 
 def _env_writes(node, names, where="<module>"):
@@ -375,15 +416,15 @@ def _env_removals(node, names):
     keys = set()
     for n in ast.walk(node):
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.args and isinstance(n.args[0], ast.Constant) \
-                and isinstance(n.args[0].value, str):
+                and isinstance(n.args[0].value, (str, bytes)):
             if (names.is_environ(n.func.value) and n.func.attr == "pop") or (
                     isinstance(n.func.value, ast.Name) and n.func.value.id in names.os_names and n.func.attr == "unsetenv"):
-                keys.add(n.args[0].value)
+                keys.add(_key_text(n.args[0].value))
         elif isinstance(n, ast.Delete):
             for t in n.targets:
                 if isinstance(t, ast.Subscript) and names.is_environ(t.value) and isinstance(t.slice, ast.Constant) \
-                        and isinstance(t.slice.value, str):
-                    keys.add(t.slice.value)
+                        and isinstance(t.slice.value, (str, bytes)):
+                    keys.add(_key_text(t.slice.value))
     return keys
 
 
@@ -468,23 +509,32 @@ def _import_time_nodes(body, nested=False):
 # this PR, 2026-09-22: `def _floor(): os.environ[...] = ...` then `_floor()` at module level left the pin green). The
 # scan resolves a call's callee to code under tests/ and reads it: a def of the module, a class of the module (its
 # __init__, for an instantiation; a method, for `Class.method()`), a def or class imported from a module under tests/
-# (`from helper import floor; floor()`, `import helper; helper.floor()`), a bare decorator (`@_arm` calls `_arm(fn)` at
-# import) and a decorator factory's call, recursively through the callee's own calls. OUTSIDE the scan, named here so
-# nobody mistakes the pin for wider than it is: a callee the resolver cannot reach, which is product code (the modules
-# a test loads by path through romp_load.load_source, itself a name bound to product code and not a def under tests/;
-# what product code writes to the environment at import is the product's own tests' matter), the standard library, a
-# method called on an instance (`Seam().arm()`), a lambda, a call through a name bound to a call's result
-# (`under_conftest = unittest.skipUnless(...)`), and `exec`/`eval` of a string. The census at this head found two calls
-# at import that reach a write, both licensed: tests/test_intr_marks_memo.py and tests/test_merge_tx_sets_light.py call
-# test_asm_checkpoint.kernel_module() at module level (`import test_asm_checkpoint as TA; km = TA.kernel_module()`) and
-# its body setdefaults ROMP_KERNEL_NO_OPEN to "1"; the verifier's own walker had counted the shape empty, so the
+# (`from helper import floor; floor()`, `import helper; helper.floor()`, `import helper as h; h.floor()`,
+# `helper.Seam.arm()`), a module imported by its dotted name (`import tests.helper; tests.helper.floor()`) and a name a
+# star import binds (`from helper import *; floor()`; the module's `__all__` is not consulted, so a private name is read
+# as bound too, the safe side: the two dotted and star shapes passed the resolver silently until the third commit of
+# 2026-09-22), a bare decorator (`@_arm` calls `_arm(fn)` at import) and a decorator factory's call, recursively through
+# the callee's own calls. OUTSIDE the scan, named here so nobody mistakes the pin for wider than it is. Callees the
+# resolver cannot reach: product code (the modules a test loads by path through romp_load.load_source, itself a name
+# bound to product code and not a def under tests/; what product code writes to the environment at import is the
+# product's own tests' matter), the standard library, a method called on an instance (`Seam().arm()`), a lambda, a call
+# through a name bound to a call's result (`under_conftest = unittest.skipUnless(...)`), and `exec`/`eval` of a string.
+# Writes that reach the mapping other than by a method called on it (or __setitem__/__ior__ unbound with the mapping as
+# the first argument): `operator.setitem(os.environ, K, v)`, a bound method held in a name or fetched by getattr
+# (`_set = os.environ.__setitem__; _set(K, v)`), a functools.partial of one, `posix.putenv`, and an unbound update or
+# setdefault on the mapping's class (`MutableMapping.update(os.environ, {...})`, which the scan cannot tell from
+# `saved.update(os.environ)`, a read). None of these is in the tree at module level. The census at this head found two
+# calls at import that reach a write, both licensed: tests/test_intr_marks_memo.py and tests/test_merge_tx_sets_light.py
+# call test_asm_checkpoint.kernel_module() at module level (`import test_asm_checkpoint as TA; km = TA.kernel_module()`)
+# and its body setdefaults ROMP_KERNEL_NO_OPEN to "1"; the verifier's own walker had counted the shape empty, so the
 # module-alias form is one a resolver misses easily. The 79 module-level calls to local defs reach no write; the 1179
 # through tests-local imports are almost all load_source; 0 on module classes; 0 decorators or defaults reach one.
 
-_Module = collections.namedtuple("_Module", "where tree names defs classes imports root")
+_Module = collections.namedtuple("_Module", "where tree names defs classes imports stars root")
 #   a module the resolver reads: its label (WHERE), TREE, import-time NAMES (_EnvNames), module-level DEFS and CLASSES by
-#   name, IMPORTS {local name: (path of a module under ROOT, attribute or None for the module itself)} and the ROOT the
-#   imports resolve against (tests/, or a synthetic tree's directory in the tests of the scan itself)
+#   name, IMPORTS {local name, dotted for `import tests.helper`: (path of a module under ROOT, attribute or None for the
+#   module itself)}, STARS, the paths of the modules under ROOT it star-imports, and the ROOT the imports resolve against
+#   (tests/, or a synthetic tree's directory in the tests of the scan itself)
 
 _MODULE_CACHE = {}     # path -> ((mtime_ns, size), _Module): the helper modules the resolver reads, parsed once per run
 
@@ -508,31 +558,39 @@ def _tests_module_path(modname, root, level=0):
 
 
 def _imports_of(tree, root):
-    """{local name: (path, attribute)} for every import at import time that names a module under `root`: `import M [as
-    m]` and `from . import M` bind the module (attribute None); `from M import f [as g]` binds f, a def or class of M."""
-    out = {}
+    """({local name: (path, attribute)}, [star-imported paths]) for every import at import time that names a module under
+    `root`: `import M [as m]` and `from . import M` bind the module (attribute None), under its alias or, with none, its
+    own spelling, dotted when it is (`import tests.helper` binds "tests.helper", the spelling a call then uses); `from M
+    import f [as g]` binds f, a def or class of M; `from M import *` puts M's path in the second value, and _callee reads a
+    name the module does not bind itself through it. The dotted and the star shapes are read since the third commit of
+    2026-09-22 (the verifier found both passing the resolver silently)."""
+    out, stars = {}, []
     for node, _nested in _import_time_nodes(tree.body):
         for n in ast.walk(node):
             if isinstance(n, ast.Import):
                 for a in n.names:
                     path = _tests_module_path(a.name, root)
-                    if path and (a.asname or "." not in a.name):
+                    if path:
                         out[a.asname or a.name] = (path, None)
             elif isinstance(n, ast.ImportFrom):
                 path = _tests_module_path(n.module, root, n.level)
                 for a in n.names:
-                    if path:
+                    if a.name == "*":
+                        if path:
+                            stars.append(path)
+                    elif path:
                         out[a.asname or a.name] = (path, a.name)
                     else:
                         sub = _tests_module_path(("%s.%s" % (n.module, a.name)) if n.module else a.name, root, n.level)
                         if sub:
                             out[a.asname or a.name] = (sub, None)
-    return out
+    return out, stars
 
 
 def _module_record(tree, where, root):
+    imports, stars = _imports_of(tree, root)
     return _Module(where, tree, _EnvNames(tree), {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)},
-                   {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}, _imports_of(tree, root), root)
+                   {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}, imports, stars, root)
 
 
 def _module_at(path, root):
@@ -547,39 +605,57 @@ def _module_at(path, root):
     return hit[1]
 
 
+def _dotted(node):
+    """["tests", "helper", "arm"] for the attribute chain `tests.helper.arm` on a name; None for anything else in the chain
+    (a call, a subscript, a literal)."""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        parts.append(node.id)
+        return parts[::-1]
+    return None
+
+
+def _in_module(target, rest):
+    """(target, [FunctionDef, ...]) for the name chain `rest` in the module `target`: one name, a def (or a class, whose
+    __init__ chain runs on instantiation); two names, a method on a class of the module; (None, []) for anything else."""
+    if len(rest) == 1:
+        if rest[0] in target.defs:
+            return target, [target.defs[rest[0]]]
+        if rest[0] in target.classes:
+            return target, _method_chain(target.classes[rest[0]], "__init__", target.classes)
+    elif len(rest) == 2 and rest[0] in target.classes:
+        return target, _method_chain(target.classes[rest[0]], rest[1], target.classes)
+    return None, []
+
+
 def _callee(call, mod):
     """(module, [FunctionDef, ...]) for a call at import in `mod` whose callee the scan can resolve to code under
-    `mod.root`: a def of the module, a class of the module (its __init__ chain), a method called on a class of the
-    module, a def or class imported from a module under the root, a method on such a class; (None, []) for anything
-    else (the comment above names what that is)."""
+    `mod.root`, read along the callee's dotted chain (_dotted): a def of the module, a class of the module (its __init__
+    chain), a method called on a class of the module; else the LONGEST prefix of the chain an import binds (`floor`,
+    `_h`, `Seam`, `tests.helper`) with the rest of the chain looked up in that module (a def, a class, `Class.method`);
+    else, for a bare name or a `Class.method`, the star-imported modules in order (the third commit of 2026-09-22, with
+    the dotted import); (None, []) for anything else (the comment above names what that is)."""
     f = call.func if isinstance(call, ast.Call) else call
-    if isinstance(f, ast.Name):
-        if f.id in mod.defs:
-            return mod, [mod.defs[f.id]]
-        if f.id in mod.classes:
-            return mod, _method_chain(mod.classes[f.id], "__init__", mod.classes)
-        if f.id in mod.imports:
-            path, attr = mod.imports[f.id]
-            if attr is not None:
-                target = _module_at(path, mod.root)
-                if attr in target.defs:
-                    return target, [target.defs[attr]]
-                if attr in target.classes:
-                    return target, _method_chain(target.classes[attr], "__init__", target.classes)
-    elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name):
-        base = f.value.id
-        if base in mod.classes:
-            return mod, _method_chain(mod.classes[base], f.attr, mod.classes)
+    parts = _dotted(f)
+    if not parts:
+        return None, []
+    target, fns = _in_module(mod, parts)
+    if fns:
+        return target, fns
+    for i in range(len(parts), 0, -1):
+        base = ".".join(parts[:i])
         if base in mod.imports:
             path, attr = mod.imports[base]
-            target = _module_at(path, mod.root)
-            if attr is None:
-                if f.attr in target.defs:
-                    return target, [target.defs[f.attr]]
-                if f.attr in target.classes:
-                    return target, _method_chain(target.classes[f.attr], "__init__", target.classes)
-            elif attr in target.classes:
-                return target, _method_chain(target.classes[attr], f.attr, target.classes)
+            rest = ([attr] if attr is not None else []) + parts[i:]
+            return _in_module(_module_at(path, mod.root), rest) if rest else (None, [])
+    if len(parts) <= 2:
+        for path in mod.stars:
+            target, fns = _in_module(_module_at(path, mod.root), parts)
+            if fns:
+                return target, fns
     return None, []
 
 
@@ -726,21 +802,77 @@ def _a_string_literal(v):
     return bool(re.fullmatch(r"""'[^']+'|"[^"]+\"""", v))
 
 
+def _expr(v):
+    """The value text `v` (ast.unparse's spelling, resolved through the names bound once) parsed back to an expression node,
+    so a licence's predicate reads the value's structure and not a regex over its text; None when it is not one."""
+    try:
+        return ast.parse(v, mode="eval").body
+    except SyntaxError:
+        return None
+
+
+def _str_literal(node):
+    return isinstance(node, ast.Constant) and isinstance(node.value, str)
+
+
+def _call_of(node, dotted):
+    """True for a call whose callee is spelled exactly `dotted` ("tempfile.mkdtemp")."""
+    return isinstance(node, ast.Call) and _dotted(node.func) == dotted.split(".")
+
+
+def _is_mkdtemp(node):
+    """`tempfile.mkdtemp()` bare, or with a string-literal `prefix` and nothing else: no positional argument (the third is
+    dir) and no other keyword, so no `dir=`, which would put the directory under a real path while the licence's reason
+    says the run's temp root (the third commit of 2026-09-22: the regex before accepted any argument list). The forms the
+    census finds over the tree, every one of them: `tempfile.mkdtemp()` (755 XDG_STATE_HOME writes, 6 CLAUDE_CONFIG_DIR,
+    the one ROMP_STATE_DIR join) and `tempfile.mkdtemp(prefix='romp-envnames-')` (one XDG_STATE_HOME write and the
+    ROMP_SERVICE_ENV_FILE concatenation of the same module); the floor's are `prefix='romp-tests-state-'` and
+    `prefix='romp-tests-claude-'`."""
+    return (_call_of(node, "tempfile.mkdtemp") and not node.args
+            and all(kw.arg == "prefix" and _str_literal(kw.value) for kw in node.keywords))
+
+
+def _is_temporary_directory_name(node):
+    """`tempfile.TemporaryDirectory().name`, bare: the form of the three ROMP_STATE_DIR writers that use it; a `dir=` or a
+    positional argument would place it under a real directory."""
+    return (isinstance(node, ast.Attribute) and node.attr == "name" and _call_of(node.value, "tempfile.TemporaryDirectory")
+            and not node.value.args and not node.value.keywords)
+
+
+def _is_join_onto(node, base_ok):
+    """`os.path.join(<base>, '<literal>', ...)`: `base_ok` over the first argument, every further part a string literal."""
+    return (_call_of(node, "os.path.join") and not node.keywords and len(node.args) >= 2
+            and base_ok(node.args[0]) and all(_str_literal(a) for a in node.args[1:]))
+
+
+def _is_module_state_home(node):
+    """`os.environ['XDG_STATE_HOME']`: the module's own root, which its own licence checks."""
+    return (isinstance(node, ast.Subscript) and _dotted(node.value) == ["os", "environ"]
+            and _str_literal(node.slice) and node.slice.value == "XDG_STATE_HOME")
+
+
 def _a_mkdtemp(v):
-    """A fresh private directory: `tempfile.mkdtemp(...)`, with or without a prefix."""
-    return bool(re.fullmatch(r"tempfile\.mkdtemp\(.*\)", v, re.S))
+    """A fresh private directory under the run's temp root: a bare `tempfile.mkdtemp()`, or one with a literal prefix
+    (_is_mkdtemp); a `dir=` is a fault naming the module and the line."""
+    return _is_mkdtemp(_expr(v))
 
 
 def _a_state_dir(v):
-    """A private state directory for ROMP_STATE_DIR: a mkdtemp, a TemporaryDirectory's name, a path joined onto a mkdtemp,
-    or the shell's own value written back after the load (the three converge and update modules)."""
-    return (_a_mkdtemp(v) or bool(re.fullmatch(r"tempfile\.TemporaryDirectory\(.*\)\.name", v, re.S))
-            or v.startswith("os.path.join(tempfile.mkdtemp(") or v == "os.environ.get('ROMP_STATE_DIR')")
+    """A private state directory for ROMP_STATE_DIR: a mkdtemp, a bare TemporaryDirectory's name, a path of literals joined
+    onto a mkdtemp (`os.path.join(tempfile.mkdtemp(), 'romp')`), or the shell's own value written back after the load
+    (the three converge and update modules); each of the four the exact form the census shows."""
+    node = _expr(v)
+    return (_is_mkdtemp(node) or _is_temporary_directory_name(node) or _is_join_onto(node, _is_mkdtemp)
+            or v == "os.environ.get('ROMP_STATE_DIR')")
 
 
 def _under_the_state_root(v):
-    """A path built on the module's own state root and nowhere real: joined onto its XDG_STATE_HOME, or onto a mkdtemp."""
-    return v.startswith("os.path.join(os.environ['XDG_STATE_HOME'],") or v.startswith("tempfile.mkdtemp(")
+    """A path built on the module's own state root and nowhere real: literals joined onto its XDG_STATE_HOME, or onto a
+    mkdtemp, or a literal concatenated onto a mkdtemp (`tempfile.mkdtemp(prefix='romp-envnames-') + '/absent.env'`); the
+    mkdtemp bare or with a literal prefix, never with a `dir=`."""
+    node = _expr(v)
+    return (_is_join_onto(node, _is_module_state_home) or _is_join_onto(node, _is_mkdtemp)
+            or (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add) and _is_mkdtemp(node.left) and _str_literal(node.right)))
 
 
 def _a_serve_token(v):
@@ -1197,9 +1329,10 @@ class HermeticKernelPostal(unittest.TestCase):
         (review round 2 widened the scan from the subscript and setdefault to update, |=, a name bound to os.environ and
         putenv: the subscript alone left a module-level update invisible), each copy faulting exactly once, for the
         write and nothing else; the port and client-only put back at module level where they were until 2026-09-22,
-        each faulting once; a planted update whose keys the scan cannot read is loud, naming the line, never a clean
-        pass; and the restore moved back into a tearDown with no cleanup registered, which faults every leg and the
-        BUS_PORT restore of both attaching classes."""
+        each faulting once; the dunder and bytes spellings the second verification found passing silently (the third
+        commit of 2026-09-22), each faulting once; a planted update whose keys the scan cannot read is loud, naming the
+        line, never a clean pass; and the restore moved back into a tearDown with no cleanup registered, which faults
+        every leg and the BUS_PORT restore of both attaching classes."""
         src = _tunnels_source()
         plants = (
             ("the port, as it was written until 2026-09-22", 'import socket as _socket\n_s = _socket.socket(); _s.bind(("127.0.0.1", 0)); os.environ["ROMP_POSTAL_PORT"] = str(_s.getsockname()[1]); _s.close()\n'),
@@ -1224,6 +1357,10 @@ class HermeticKernelPostal(unittest.TestCase):
             ("through a module-local def called at import", 'def _planted_floor():\n    os.environ["ROMP_POSTAL_PEERS"] = "0"\n_planted_floor()\n'),
             ("through a bare decorator", 'def _planted_arm(fn):\n    os.environ["ROMP_POSTAL_PEERS"] = "0"\n    return fn\n@_planted_arm\ndef _planted_decorated():\n    pass\n'),
             ("through an instantiation", 'class _PlantedSeam:\n    def __init__(self):\n        os.environ["ROMP_POSTAL_PEERS"] = "0"\n_PlantedSeam()\n'),
+            # the third commit of 2026-09-22: the three shapes that passed silently, read now
+            ("by __setitem__", 'os.environ.__setitem__("ROMP_POSTAL_PEERS", "0")\n'),
+            ("by __setitem__ unbound, the mapping as the first argument", 'dict.__setitem__(os.environ, "ROMP_POSTAL_PEERS", "0")\n'),
+            ("through os.environb with a bytes key", 'os.environb[b"ROMP_POSTAL_PEERS"] = b"0"\n'),
         )
         for label, lines in plants:
             faults = _placement_faults(ast.parse(_plant(src, lines)))
@@ -1274,8 +1411,11 @@ class HermeticKernelPostal(unittest.TestCase):
         real module that wrote it (the tunnels module's port and client-only through the same planting the placement
         check uses, the sessions-file seam and the postal host after the seam file's line in the delegation module);
         the dead port, the browser switch, the catalog switch, the scope switch, the models URL and the claude config
-        dir written with a value outside their licence; a licence whose re-assert conftest dropped; and a dead licence.
-        The floor modules are never faulted, whatever they write; a licensed write is clean."""
+        dir written with a value outside their licence; the temp-root licences (the state preamble, the claude config
+        dir, the service-env path) written with a mkdtemp or a TemporaryDirectory under a real directory (`dir=`, or the
+        positional dir), which the regex before the third commit of 2026-09-22 accepted; a licence whose re-assert
+        conftest dropped; and a dead licence. The floor modules are never faulted, whatever they write; a licensed write
+        is clean, every mkdtemp form the census shows among them."""
         def records_of(src, rel):
             out = collections.defaultdict(list)
             for name, rec in _module_level_records(ast.parse(src), rel):
@@ -1333,7 +1473,18 @@ class HermeticKernelPostal(unittest.TestCase):
                              ('os.environ["ROMP_SERVE_TOKEN"] = os.environ["SOME_OTHER_NAME"]', "not one this licence covers"),
                              ('os.environ["ROMP_SERVICE_ENV_FILE"] = os.path.expanduser("~/.config/romp/service.env")', "not one this licence covers"),
                              ('os.environ["ROMP_SERVICE_ENV"] = "/etc/romp/service.env"', "not one this licence covers"),
-                             ('_ROOT = "/x/claude"\nos.environ["CLAUDE_CONFIG_DIR"] = _ROOT', "_ROOT (that is, '/x/claude') is not one this licence covers")):
+                             ('_ROOT = "/x/claude"\nos.environ["CLAUDE_CONFIG_DIR"] = _ROOT', "_ROOT (that is, '/x/claude') is not one this licence covers"),
+                             # the third commit of 2026-09-22: a temp-root licence requires a bare mkdtemp (a literal prefix allowed), never a dir=
+                             ('os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(dir="/srv/real-state")', "the value tempfile.mkdtemp(dir='/srv/real-state') is not one this licence covers"),
+                             ('os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp("", "romp-", "/srv/real-state")', "not one this licence covers"),
+                             ('_ROOT = tempfile.mkdtemp(dir="/srv/real-state")\nos.environ["XDG_STATE_HOME"] = _ROOT', "_ROOT (that is, tempfile.mkdtemp(dir='/srv/real-state')) is not one this licence covers"),
+                             ('os.environ["CLAUDE_CONFIG_DIR"] = tempfile.mkdtemp(dir="/srv/real-state")', "not one this licence covers"),
+                             ('_TD = tempfile.TemporaryDirectory(dir="/srv/real-state")\nos.environ["ROMP_STATE_DIR"] = _TD.name', "not one this licence covers"),
+                             ('os.environ["ROMP_STATE_DIR"] = os.path.join(tempfile.mkdtemp(dir="/srv/real-state"), "romp")', "not one this licence covers"),
+                             ('os.environ["ROMP_STATE_DIR"] = os.path.join(tempfile.mkdtemp(), sub)', "not one this licence covers"),
+                             ('os.environ["ROMP_SERVICE_ENV_FILE"] = tempfile.mkdtemp(dir="/srv/real-state") + "/absent.env"', "not one this licence covers"),
+                             ('os.environ["ROMP_SERVICE_ENV_FILE"] = os.path.join(os.environ["XDG_STATE_HOME"], sub)', "not one this licence covers"),
+                             ('os.environ["ROMP_SERVICE_ENV"] = os.path.join(tempfile.mkdtemp(suffix="-real"), "service.env")', "not one this licence covers")):
             faults = full("import os\n" + line + "\n", "test_planted.py")
             self.assertEqual(len(faults), 1, (line, faults))
             self.assertIn(expect, faults[0], line)
@@ -1351,6 +1502,10 @@ class HermeticKernelPostal(unittest.TestCase):
                      'os.environ["ROMP_SERVICE_ENV_FILE"] = os.path.join(os.environ["XDG_STATE_HOME"], "no-such-service.env")\n'
                      'os.environ["ROMP_SERVICE_ENV"] = os.environ["ROMP_SERVICE_ENV_FILE"]',
                      '_STATE = tempfile.mkdtemp()\nos.environ["ROMP_SERVICE_ENV_FILE"] = _STATE + "/absent.env"',
+                     # the third commit of 2026-09-22: the prefixed forms the census shows, clean
+                     'os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix="romp-envnames-")',
+                     '_ROOT = tempfile.mkdtemp(prefix="romp-envnames-")\nos.environ["ROMP_SERVICE_ENV_FILE"] = _ROOT + "/absent.env"',
+                     'os.environ["ROMP_STATE_DIR"] = os.path.join(tempfile.mkdtemp(prefix="romp-tests-state-"), "romp")',
                      'class _K:\n    os.environ["ROMP_KERNEL_NO_OPEN"] = "1"',
                      'def _floor():\n    os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")\n_floor()'):
             self.assertEqual(full("import os, tempfile\n" + line + "\n", "test_planted.py"), [], line)
@@ -1411,14 +1566,15 @@ class HermeticKernelPostal(unittest.TestCase):
             "ROMP_D: until names no filed item (no filing date in it)"])
 
     def test_the_census_counts_by_name_and_shape_and_the_table_reads_back(self):
-        """module_level_env_census over a synthetic tree: one module, five shapes, two names; the nested write is counted
-        as such; the table names the module count. The counts over the real tree are the by-product fork PR #871's
+        """module_level_env_census over a synthetic tree: one module, six shapes (the dunder spelling among them since the
+        third commit of 2026-09-22), two names; the nested write is counted as such; the table names the module count. The counts over the real tree are the by-product fork PR #871's
         docstring recorded from a grep, re-derived by ast here and pasted at the head in the PR; they are NOT pinned by
         equality, since they move with every new module (the enforced property is the licensed set's equality)."""
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         src = ("import os\nos.environ['A'] = '1'\nos.environ.setdefault('A', '2')\nos.environ.update({'B': '3'})\n"
                "os.environ |= {'B': '4'}\nos.putenv('B', '5')\nif True:\n    os.environ['A'] = '6'\n"
+               "os.environ.__setitem__('B', '9')\n"                  # the dunder spelling, its own shape
                "def f():\n    os.environ['C'] = 'never counted'\n"
                "class K:\n    os.environ['A'] = '7'\n"                 # a class body runs at import: counted, nested
                "def g():\n    os.environ['D'] = '8'\ng()\n")           # a def called at import: counted at the call, via set
@@ -1427,12 +1583,13 @@ class HermeticKernelPostal(unittest.TestCase):
             f.write(src)
         n, counts, records = module_level_env_census([path])
         self.assertEqual(n, 1)
-        self.assertEqual(counts, {"A": {"assignment": 3, "setdefault": 1}, "B": {"update": 1, "|=": 1, "putenv": 1}, "D": {"assignment": 1}})
+        self.assertEqual(counts, {"A": {"assignment": 3, "setdefault": 1}, "B": {"update": 1, "|=": 1, "putenv": 1, "__setitem__": 1},
+                                  "D": {"assignment": 1}})
         self.assertEqual([r.nested for r in records["A"]], [False, False, True, True])
         self.assertEqual(records["A"][2].value, "'6'")
         self.assertEqual(records["A"][3].value, "'7'")
         rel = os.path.relpath(path, HERE)          # the census labels a module relative to tests/, a synthetic one included
-        self.assertEqual((records["D"][0].line, records["D"][0].via), (15, "g() at %s:13, the write at line 14" % rel))
+        self.assertEqual((records["D"][0].line, records["D"][0].via), (16, "g() at %s:14, the write at line 15" % rel))
         table = _census_table([path])
         self.assertIn("modules: 1", table)
         self.assertIn("%-34s %-11s %6d %8d %7d %8d" % ("A", "assignment", 3, 1, 2, 0), table)
@@ -1444,7 +1601,11 @@ class HermeticKernelPostal(unittest.TestCase):
         to a dict literal (tests/test_update_banner_confirm_served.py's DEAD_PORTS) and the scan reads the keys AND the
         values through the name; a `for` over string literals binds its name to each in turn (conftest's service-env
         fixture writes that way) and the literals are the keys; a write the scan cannot read is loud, with the file and
-        the line, never a clean pass (review round 2, 2026-09-18; the loop shape 2026-09-22)."""
+        the line, never a clean pass (review round 2, 2026-09-18; the loop shape 2026-09-22). Since the third commit of
+        2026-09-22 the dunder spellings (__setitem__ and __ior__, on the mapping or unbound with the mapping first) and
+        os.environb with a bytes key are read, a computed key in them is loud, a dotted `import tests.helper` and a star
+        import resolve a call, and `saved.update(os.environ, ...)` is a write to `saved`, not read as one to the
+        environment."""
         for shape in ('os.environ["ROMP_POSTAL_PEERS"] = "0"',
                       'if True:\n    os.environ["ROMP_POSTAL_PEERS"] = "0"',
                       'os.environ.setdefault("ROMP_POSTAL_PEERS", "0")',
@@ -1472,26 +1633,56 @@ class HermeticKernelPostal(unittest.TestCase):
                       'def _arm(v):\n    os.environ["ROMP_POSTAL_PEERS"] = v\n    return lambda fn: fn\n@_arm("0")\ndef _decorated():\n    pass',
                       'class _Seam:\n    def __init__(self):\n        os.environ["ROMP_POSTAL_PEERS"] = "0"\n_Seam()',
                       'class _Base:\n    def __init__(self):\n        os.environ["ROMP_POSTAL_PEERS"] = "0"\nclass _Seam(_Base):\n    pass\n_Seam()',
-                      'class _Seam:\n    @classmethod\n    def arm(cls):\n        os.environ["ROMP_POSTAL_PEERS"] = "0"\n_Seam.arm()'):
+                      'class _Seam:\n    @classmethod\n    def arm(cls):\n        os.environ["ROMP_POSTAL_PEERS"] = "0"\n_Seam.arm()',
+                      # the third commit of 2026-09-22: the dunder spellings and the bytes mapping
+                      'os.environ.__setitem__("ROMP_POSTAL_PEERS", "0")',
+                      'dict.__setitem__(os.environ, "ROMP_POSTAL_PEERS", "0")',
+                      'os.environ.__ior__({"ROMP_POSTAL_PEERS": "0"})',
+                      'dict.__ior__(os.environ, {"ROMP_POSTAL_PEERS": "0"})',
+                      'env = os.environ\nenv.__setitem__("ROMP_POSTAL_PEERS", "0")',
+                      'os.environb[b"ROMP_POSTAL_PEERS"] = b"0"',
+                      'os.environb.setdefault(b"ROMP_POSTAL_PEERS", b"0")',
+                      'os.environb.update({b"ROMP_POSTAL_PEERS": b"0"})',
+                      'from os import environb\nenvironb[b"ROMP_POSTAL_PEERS"] = b"0"',
+                      'class _Planted:\n    os.environb.__setitem__(b"ROMP_POSTAL_PEERS", b"0")'):
             self.assertIn("ROMP_POSTAL_PEERS", _module_level_env_writes(ast.parse("import os\n" + shape + "\n"), "planted.py"), shape)
+        dunder = _module_level_env_write_records(ast.parse('import os\nos.environ.__setitem__("ROMP_POSTAL_PEERS", "0")\nos.environ.__ior__({"ROMP_X": "1"})\n'), "planted.py")
+        self.assertEqual([(w.key, w.shape, ast.unparse(w.value)) for w, _n in dunder], [("ROMP_POSTAL_PEERS", "__setitem__", "'0'"), ("ROMP_X", "__ior__", "'1'")],
+                         "the dunder spellings are their own shapes, with the value read")
         looped = _module_level_env_writes(ast.parse('import os\nfor v in ("ROMP_POSTAL_PEERS", "ROMP_X"):\n    os.environ[v] = "0"\n'), "planted.py")
         self.assertEqual(looped, {"ROMP_POSTAL_PEERS", "ROMP_X"}, "each literal the loop binds is a key")
         for shape in ('def setUp(self):\n    os.environ["ROMP_POSTAL_PEERS"] = "0"',                                  # a def never called at import
                       'class _Seam:\n    def setUp(self):\n        os.environ["ROMP_POSTAL_PEERS"] = "0"',            # a method never called at import
-                      'class _Seam:\n    def arm(self):\n        os.environ["ROMP_POSTAL_PEERS"] = "0"\n_Seam().arm()'):   # a method on an instance: outside the scan, named
+                      'class _Seam:\n    def arm(self):\n        os.environ["ROMP_POSTAL_PEERS"] = "0"\n_Seam().arm()',   # a method on an instance: outside the scan, named
+                      'saved = {}\nsaved.update(os.environ, ROMP_POSTAL_PEERS="0")',                                 # a write to `saved`; the environment is read
+                      'saved = {}\nsaved.setdefault(os.environ, "0")'):                                           # not the environment's setdefault
             self.assertNotIn("ROMP_POSTAL_PEERS", _module_level_env_writes(ast.parse("import os\n" + shape + "\n"), "planted.py"), shape)
-        # through a helper under the root: imported by name, as a module, aliased, and with the package prefix; the record
-        # names the chain; a class's __init__ is read; a computed key in the helper is loud with both places named
+        # through a helper under the root: imported by name, as a module, aliased, with the package prefix, by its dotted
+        # name and by a star import (the last two since the third commit of 2026-09-22: both passed the resolver
+        # silently); the record names the chain; a class's __init__ is read, and a method on a class of the helper; a
+        # computed key in the helper is loud with both places named
         root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, root, True)
         with open(os.path.join(root, "planted_helper.py"), "w", encoding="utf-8") as f:
             f.write('import os\ndef floor():\n    os.environ["ROMP_POSTAL_PEERS"] = "0"\ndef restore(name, value):\n    os.environ[name] = value\n'
-                    'class Seam:\n    def __init__(self):\n        os.environ["ROMP_X"] = "1"\n')
+                    'class Seam:\n    def __init__(self):\n        os.environ["ROMP_X"] = "1"\n'
+                    '    @classmethod\n    def arm(cls):\n        os.environ["ROMP_Y"] = "1"\n')
         for shape in ('from planted_helper import floor\nfloor()', 'import planted_helper\nplanted_helper.floor()',
                       'import planted_helper as _h\n_h.floor()', 'from planted_helper import floor as _floor\n_floor()',
-                      'from tests.planted_helper import floor\nfloor()'):
+                      'from tests.planted_helper import floor\nfloor()',
+                      'import tests.planted_helper\ntests.planted_helper.floor()', 'from planted_helper import *\nfloor()',
+                      'from tests.planted_helper import *\nfloor()'):
             self.assertIn("ROMP_POSTAL_PEERS", _module_level_env_writes(ast.parse(shape + "\n"), "planted.py", root=root), shape)
         self.assertIn("ROMP_X", _module_level_env_writes(ast.parse("from planted_helper import Seam\nSeam()\n"), "planted.py", root=root))
+        for shape in ('import planted_helper\nplanted_helper.Seam.arm()', 'from planted_helper import Seam\nSeam.arm()',
+                      'import tests.planted_helper\ntests.planted_helper.Seam.arm()', 'from planted_helper import *\nSeam.arm()',
+                      'import tests.planted_helper\ntests.planted_helper.Seam()'):
+            keys = _module_level_env_writes(ast.parse(shape + "\n"), "planted.py", root=root)
+            self.assertIn("ROMP_Y" if "arm" in shape else "ROMP_X", keys, shape)
+        self.assertEqual(_module_level_env_writes(ast.parse("import planted_helper\ndef floor():\n    pass\nfloor()\n"), "planted.py", root=root), set(),
+                         "a def of the module itself outranks a helper's of the same name")
+        star = _module_level_env_write_records(ast.parse('from planted_helper import *\nfloor()\n'), "planted.py", root=root)
+        self.assertEqual([(w.key, w.line, w.via) for w, _nested in star], [("ROMP_POSTAL_PEERS", 2, "floor() at planted_helper.py:2, the write at line 3")])
         recs = _module_level_env_write_records(ast.parse('from planted_helper import floor\nfloor()\n'), "planted.py", root=root)
         self.assertEqual([(w.key, w.line, w.via) for w, _nested in recs], [("ROMP_POSTAL_PEERS", 2, "floor() at planted_helper.py:2, the write at line 3")])
         with self.assertRaises(UnreadableEnvWrite) as loud:
@@ -1510,7 +1701,10 @@ class HermeticKernelPostal(unittest.TestCase):
                       "os.environ |= saved", 'os.environ[name] = "0"', 'os.environ.setdefault(name, "0")', 'os.putenv(name, "0")',
                       "saved = dict(os.environ)\nos.environ.update(saved)",
                       'OFF = {"ROMP_POSTAL_PEERS": "0"}\nOFF = computed()\nos.environ.update(OFF)',
-                      'for v in NAMES:\n    os.environ[v] = "0"'):
+                      'for v in NAMES:\n    os.environ[v] = "0"',
+                      # the third commit of 2026-09-22: a computed key or mapping in the dunder and bytes spellings
+                      'os.environ.__setitem__(name, "0")', 'dict.__setitem__(os.environ, name, "0")', "os.environ.__ior__(saved)",
+                      "dict.__ior__(os.environ, saved)", 'os.environb[name] = b"0"', "os.environb.update(saved)"):
             with self.assertRaises(UnreadableEnvWrite, msg=shape) as loud:
                 _module_level_env_writes(ast.parse("import os\n" + shape + "\n"), "planted.py")
             self.assertIn("cannot read the key", str(loud.exception), shape)

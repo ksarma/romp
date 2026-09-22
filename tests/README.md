@@ -74,7 +74,14 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   fixed-port belt licensed the bind) and `ROMP_POSTAL_CLIENT_ONLY` (inert with peers
   on) and the `ROMP_SESSIONS_FILE` seam ten postal modules wrote at module level
   (one live row, so the bus never autostopped); it wrote into a shared state root
-  every 30 s and turned another module's snapshot test red. THE RULE, a property and
+  every 30 s and turned another module's snapshot test red. What put the first write
+  inside that test's 50 ms window on the cell stays unknown (no kick, restart road or
+  removal of `postal/` in the 21 modules between the bus-restore module and the
+  asserting module; `server.pid` and `server.log` were not among the files added, so
+  no bus started inside the window), and the disclosure is conditional: a run carries
+  the contaminant only when the revive wins the race AND a write lands in an asserting
+  window; the witness is the leaked process the run's log names, with the test name
+  when the spawn carried it. THE RULE, a property and
   not a list of names: **no test module writes an environment variable at module
   level that a spawned child could inherit**, outside a licensed set. A module-level
   write executes at COLLECTION and holds for every test in the process and for every
@@ -88,19 +95,27 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   class bodies, the decorators and default argument values of a def, the decorators
   and bases of a class, and the writes reached through a call at import the scan can
   resolve to a def or class under `tests/`: a module-local helper, a name imported
-  from a tests-local module, a bare decorator, an instantiation), in every shape a
-  write takes (a subscript assignment, `setdefault`, `update` of a dict literal, of
-  keywords or of a module-level name bound to a dict literal, `|=`, `os.putenv`,
-  through `os.environ` or any name bound to it, a subscript whose key a `for` over
-  string literals binds), EQUALS the licensed set `LICENSED_MODULE_LEVEL_WRITES`
-  there, an equality and never a floor, and every write meets its licence's
-  condition. Outside the scan, named in the module: a callee it cannot resolve
-  (product code loaded by path, the standard library, a method on an instance, a
-  lambda, `exec`). The licences are per name and checkable, each with a condition on
+  from a tests-local module, by its dotted name or by a star import, a bare
+  decorator, an instantiation), in every shape a write takes (a subscript assignment,
+  `setdefault`, `update` of a dict literal, of keywords or of a module-level name
+  bound to a dict literal, `|=`, `os.putenv`, the dunder spellings `__setitem__` and
+  `__ior__` on the mapping or unbound with the mapping as the first argument, through
+  `os.environ` or `os.environb` or any name bound to either, a subscript whose key a
+  `for` over string literals binds), EQUALS the licensed set
+  `LICENSED_MODULE_LEVEL_WRITES` there, an equality and never a floor, and every write
+  meets its licence's condition. Outside the scan, named in the module above
+  `_Module`: a callee it cannot resolve (product code loaded by path, the standard
+  library, a method on an instance, a lambda, a name bound to a call's result,
+  `exec`), and a write that reaches the mapping other than by a method called on it
+  (`operator.setitem`, a bound method held in a name or fetched by `getattr`, a
+  `functools.partial`, `posix.putenv`, an unbound `update` on the mapping's class,
+  which the scan cannot tell from `saved.update(os.environ)`, a read). The licences
+  are per name and checkable, each with a condition on
   the written value (read through a module-level name bound once, so
   `_ROOT = tempfile.mkdtemp()` is read as the mkdtemp): the state preamble
-  (`XDG_STATE_HOME` a mkdtemp, `ROMP_STATE_DIR` a private root or the shell's value
-  put back; `tests/test_state_isolation_order.py` mandates the preamble),
+  (`XDG_STATE_HOME` a bare mkdtemp or one with a literal prefix, never a `dir=`;
+  `ROMP_STATE_DIR` a private root of the same shape or the shell's value put back;
+  `tests/test_state_isolation_order.py` mandates the preamble),
   `ROMP_SERVE_TOKEN` (a string literal, or the shell's value put back) and
   `ROMP_KERNEL_NO_OPEN` (the value "1"), the four of them dated 2026-09-22 and
   pointed at the class item fork PR #871 filed in the notes (import-time writers

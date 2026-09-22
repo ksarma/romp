@@ -107,8 +107,8 @@ class _PostalTrio(unittest.TestCase):
     default) a detach tells the bus the peer is gone, nothing listens on this process's bus port, and the refused notice
     kicks _revive_postal_bus into running the postal service's ensure from inside the test process (kernel.py,
     _notify_bus_peer) with this process's environment: the three names are what that child would read. All three are
-    set here, per test, and put back by ONE cleanup registered right after the writes, whatever the shell had; the
-    module header says why none is set at import. The revive road itself is stubbed for the test as well
+    set here, per test, and put back by cleanups registered right after the writes, one per name, whatever the shell
+    had; the module header says why none is set at import. The revive road itself is stubbed for the test as well
     (km._ensure_postal_bus records the call instead of running ensure), so a refusal the trio did not prevent can start
     nothing, and the recorder is checked empty by the cleanup: a revive this module never expects is an error on the
     test, not a child. A subclass calls super().setUp() first, and its own tearDown does the detach, which reads the
@@ -131,8 +131,8 @@ class _PostalTrio(unittest.TestCase):
         # after this one returned, and both subclasses go on to make a temp dir and bind a server, so a tearDown
         # restore left the 0 in the worker for every later module, the leak this class exists to end. A cleanup
         # registered here runs whether or not the rest of setUp finishes, and after tearDown. One per name, each
-        # naming its name (the placement check reads the names a cleanup restores), the kernel's two attributes last
-        # to be registered and so first to be put back.
+        # naming its name (the placement check reads the names a cleanup restores); the kernel's two attributes are
+        # registered FIRST and so put back LAST (cleanups run in reverse), once every name is back.
         self.addCleanup(self._restore_bus, bus_port, ensure)
         self.addCleanup(restore_env, "ROMP_POSTAL_PEERS", prior["ROMP_POSTAL_PEERS"])
         self.addCleanup(restore_env, "ROMP_POSTAL_CLIENT_ONLY", prior["ROMP_POSTAL_CLIENT_ONLY"])
