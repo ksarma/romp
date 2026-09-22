@@ -62,7 +62,8 @@ CLI_PID = 4194305       # the stand-in CLI's pid in the in-process classes: abov
 def system_tmp() -> str:
     """The temp dir this RUN was handed, before tests/conftest.py redirected TMPDIR into the run's private root
     (ROMP_TESTS_SYSTEM_TMPDIR, recorded by tests/__init__.py with setdefault, so an xdist worker keeps the controller's
-    record rather than its own, one level deeper): the sanctioned way out of the root, for an AF_UNIX path that has to
+    record; since 2026-09-21 a worker's own root sits beside the controller's in that dir, one level under it like every
+    process's): the sanctioned way out of the root, for an AF_UNIX path that has to
     fit sun_path or be built to an exact length (tests/test_host_transport.py's two socket dirs take the same road)."""
     return os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR") or tempfile.gettempdir()
 
@@ -72,7 +73,8 @@ def padded_root(case, total, tail):
     `total` BYTES (os.fsencode: the measure the host's budget check and the bind take, and not the character count, which
     a multibyte component separates from it), made under the system temp dir (system_tmp) and removed with the case.
     NEVER A SKIP (the review of the socket-mode fix, round 2, 2026-09-19): round 1's padded cases were rooted in the run's
-    private temp root and skipped once that root was deep (the sweep's xdist nesting, a long TMPDIR), so the module
+    private temp root and skipped once that root was deep (a long TMPDIR; the sweep's xdist nesting too, until
+    2026-09-21), so the module
     reported green with the high they pin unpinned. A system temp dir too deep for the pad is a FAILURE naming the remedy,
     so a green module means the padded cases ran (PaddedRoots pins both directions)."""
     base = tempfile.mkdtemp(prefix="pad-", dir=system_tmp())
@@ -1137,8 +1139,9 @@ class SocketMode(unittest.TestCase):
 
     def test_the_temp_name_is_writer_unique_and_the_published_names_length(self):
         """The length proof and the identity proof (the review of this fix, 2026-09-18 and 2026-09-19): the socket path
-        budget is sun_path (SOCK_PATH_MAX, 107 usable bytes on Linux), the published path IS that budget on the sweep's
-        deepest xdist root, so the temp is never longer than the published name; and the temp embeds this process's pid
+        budget is sun_path (SOCK_PATH_MAX, 107 usable bytes on Linux), the published path is what that budget is spent on
+        (the harness's deepest hosts-on root puts it at TMPDIR + 70 bytes; 107 exactly at a 17-byte TMPDIR under the xdist
+        nesting before 2026-09-21), so the temp is never longer than the published name; and the temp embeds this process's pid
         and random digits, so two hosts never share a temp name and a rename can only publish the socket its own host
         bound. Two earlier shapes were longer (a temp inside hosts/<sid>/, then a 0700 directory beside the socket) and
         failed the bind at the budget; the first cut's fixed `<sid8>.tmp` was the shared name."""
@@ -1317,7 +1320,8 @@ class SocketMode(unittest.TestCase):
         self.assertEqual(rc.errno, errno.ENAMETOOLONG)
 
     def test_a_published_path_at_exactly_the_budget_is_served_and_a_client_connects(self):
-        """The other direction of the same pin, in-process: at SOCK_PATH_MAX bytes exactly (the sweep's deepest root) the
+        """The other direction of the same pin, in-process: at SOCK_PATH_MAX bytes exactly (where a long TMPDIR puts the
+        harness's deepest hosts-on root) the
         host binds its temp (which is the same length), publishes 0600, logs socket-ready with both names, and a client
         connect through the published path completes."""
         self._reroot(sh.SOCK_PATH_MAX)
@@ -1680,11 +1684,12 @@ class SocketMode(unittest.TestCase):
         main() so the host-crashed row is the one main writes, over a root whose path carries a marker, with a non-empty
         directory planted at the published path so the rename is the leg that fails (the prelude's unlink cannot remove a
         directory, and asyncio's own bind removes only a socket)."""
-        marker = "m4rk3r" + uuid.uuid4().hex[:6]
         # under the system temp dir (system_tmp), not the run's private root: the case exists to force the RENAME leg, and
         # a published path over the budget (a deep run root plus this marker) is refused at the budget check before it,
-        # so the leg never ran on a long-temp runner (the review's round 2, 2026-09-19)
-        root = tempfile.mkdtemp(prefix=marker + "-", dir=system_tmp())
+        # so the leg never ran on a long-temp runner (the review's round 2, 2026-09-19). The marker is the minted basename
+        # (the prefix a literal, so tests/test_tempdir_hygiene.py's directory scan can read it; the tail makes it unique)
+        root = tempfile.mkdtemp(prefix="m4rk3r-", dir=system_tmp())
+        marker = os.path.basename(root)
         self.addCleanup(shutil.rmtree, root, True)
         self._spec_at(root)
         self.assertLessEqual(len(os.fsencode(str(self.pub))), sh.SOCK_PATH_MAX,
@@ -4268,7 +4273,8 @@ class HostProcess(unittest.TestCase):
 
     def test_the_socket_is_served_where_the_published_path_is_exactly_the_budget(self):
         """The real host under a state root padded so hosts/<sid8>.sock is exactly sun_path's usable length (107 bytes on
-        Linux, 103 on macOS): the sweep's xdist nesting puts a served state root there (2026-09-18), and the bind must
+        Linux, 103 on macOS): a served state root sits there at a 37-byte TMPDIR (2026-09-18; at a 17-byte one under the
+        xdist nesting before 2026-09-21), and the bind must
         succeed with the socket 0600 and the kernel side attaching. This is the length bound on the temp name, tested by
         execution; SocketMode's unit case computes it."""
         budget = sh.SOCK_PATH_MAX
