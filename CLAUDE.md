@@ -98,8 +98,11 @@ so there is no list to write. **gitleaks** covers them, in two places:
   loud notice and no scan (requiring an install to push would break every clone
   that never asked for it); a gitleaks that fails to run refuses the push and
   says so. `ROMP_NO_GITLEAKS=1` skips the scan, `ROMP_GITLEAKS` points at a
-  binary. This is the same hook as the identifier scan and both report before
-  it refuses, so one push tells you about both.
+  binary. The hook's scan reads git's plain patch stream, so a path a committed
+  `.gitattributes` marks `-diff` (or `binary`) passes it unscanned until the hook
+  carries `--text`, which PR #875 brings; CI's history scan, the next bullet,
+  carries `--text`. This is the same hook as the identifier scan and both report
+  before it refuses, so one push tells you about both.
 - **CI's `Secret scan (gitleaks)` job** scans all of history, every branch and
   tag the checkout brings, on every PR and every push to `main`, from a
   pinned, checksummed binary. It needs `fetch-depth: 0`: a default checkout
