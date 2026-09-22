@@ -226,6 +226,45 @@ branch_inheriting_mains_symlink_leak() {
     [[ "$output" != *"decoy.txt"* ]]
 }
 
+# The added lines are read through a scratch file, never captured in a command
+# substitution: a substitution drops NUL bytes and prints bash's warning ("ignored
+# null byte in input"), naming the hook's line and no commit, which a real push of
+# this repository's own history did three times (the round 4 refuter, 2026-09-22).
+# A file git calls text can carry a NUL among its lines all the same: the verdict
+# reads the first 8000 bytes, and a NUL past them is inside a line the diff prints.
+# The grep reads that file as text (-a); without it, a NUL among the lines makes
+# grep call the file binary and print no line for a hit, which would drop the hit.
+nul_past_the_verdict() {   # <path> <first line>: 9000 text bytes, then a line holding a NUL; text by git's rule, a NUL in the patch all the same
+    { printf '%s\n' "$2"; head -c 9000 /dev/zero | tr '\0' 'a'; printf '\nlate\0nul\n'; } > "$REPO/$1"
+    git -C "$REPO" add "$1"
+    git -C "$REPO" commit -qm "a NUL past the text verdict"
+}
+
+@test "a commit adding a NUL byte inside a line of a file git calls text (the NUL past the first 8000 bytes) passes with nothing printed: no substitution drops the byte or prints bash's warning" {
+    nul_past_the_verdict late.txt "nothing to see"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" | tr -cd "\0" | wc -c' _ "$sha"   # the patch prints the line, NUL and all
+    [ "$output" -eq 1 ]
+    run _hook_in "$REPO" -c 'git diff-tree -r --numstat --root --no-commit-id "$1" -- late.txt' _ "$sha"                          # and git calls the file text
+    [[ "$output" != *"-"$'\t'"-"* ]]
+    run_hook
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"ignored null byte"* ]]
+    [ -z "$output" ]
+}
+
+@test "the same file with the string on its first line, gone at the tip, is a HIT naming the commit and the path, with no warning: the grep reads the file as text, so the NUL among the lines drops no hit" {
+    nul_past_the_verdict late.txt "seen on TESTHOST"
+    leak_sha="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file late.txt "remove it"                 # tip is clean, so the added-lines pass decides
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"commit ${leak_sha:0:10} ADDS a personal identifier in:"* ]]
+    [[ "$output" == *"  late.txt"* ]]
+    [[ "$output" != *"ignored null byte"* ]]
+    [[ "$output" != *"binary file matches"* ]]
+}
+
 @test "no denylist file means no identifier scan (a fresh clone is unaffected)" {
     export ROMP_PRIVATE_STRINGS="$TEST_DIR/does-not-exist.txt"
     commit_file bad.txt "home is /home/zzsynthuser/x" "leak"
@@ -1810,10 +1849,12 @@ path_without_gitleaks() {
 # the path and what its diff attribute reads; a blob that is binary by its
 # bytes passes as binaries always have. The line quotes the attribute for the
 # report alone and never decides by it (a driver may be named `set`,
-# `unspecified` or `unset`). The advice names the attribute as the cause where
-# one is named and what to do about it (drop it, or keep the file text on
-# purpose with an explicit diff line that outranks it), the configuration key
-# where none is (or, for a one-parent commit's change of a file binary by its
+# `unspecified` or `unset`). Each paragraph of the advice prints only where a
+# line named its cause (the round 4 refuter, 2026-09-22): the attribute's where
+# a line named one, or could not read it, with what to do about it (drop it, or
+# keep the file text on purpose with an explicit diff line that outranks it),
+# the configuration key's, which states that explicit line in its own words,
+# where a line named none (or, for a one-parent commit's change of a file binary by its
 # bytes, that previous version as the cause whether or not the key is set,
 # the key's facts beside it where it is, with the fetch remedy and not the
 # key's), and a rename or copy of such a file is refused the same way,
@@ -1927,6 +1968,9 @@ attributes() {   # <line>: a committed .gitattributes
     run_hook
     [ "$status" -eq 1 ]
     [[ "$output" == *"romp pre-push: notes.txt in commit ${leak:0:10} is text that its diff attribute (unset) hides from the identifier scan, so the push is refused rather than scanned"* ]]
+    [[ "$output" == *"Remove the diff attribute for each path named"* ]]          # the attribute paragraph: the line named one
+    [[ "$output" == *"A rename or copy of such a file is content too"* ]]
+    [[ "$output" != *"a configuration key can be what makes git call the file binary"* ]]   # the key's paragraph: absent, no line having named the key's facts
     [[ "$output" != *"at the tip of"* ]]
     [[ "$output" != *"ADDS a personal identifier"* ]]
 }
@@ -2094,6 +2138,8 @@ big_text_file() {   # <path> <last line>: a 150-byte text line, then the line gi
     [ "$status" -ne 0 ]
     [[ "$output" == *"romp pre-push: big.txt in commit ${leak:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict (the blob is 168 bytes; core.bigFileThreshold is 100 in this clone's configuration); the identifier scan did not read it, so the push is refused rather than scanned"* ]]
     [[ "$output" == *"Where a line names no attribute, a configuration key can be what makes git call the file binary: core.bigFileThreshold"* ]]
+    [[ "$output" == *"or keep the file text on purpose with an explicit \"<path> diff\" line in .gitattributes, which outranks the key for a regular file"* ]]   # the explicit-diff remedy, in the key paragraph's own words
+    [[ "$output" != *"Remove the diff attribute"* ]]                            # the attribute paragraph: absent, no line having named an attribute
     [[ "$output" != *"at the tip of"* ]]
     [[ "$output" != *"personal identifier"* ]]
     [[ "$output" == *"git push --no-verify"* ]]
@@ -2183,6 +2229,8 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
     [ "$status" -ne 0 ]
     [[ "$output" == *"romp pre-push: link in commit ${leak:0:10} is text that git calls binary although it is a symbolic link, whose target this read judges by its size and bytes and by no attribute of the path, so no attribute of its path accounts for the verdict (the blob is $size bytes; core.bigFileThreshold is 20 in this clone's configuration); the identifier scan did not read it, so the push is refused rather than scanned"* ]]
     [[ "$output" == *"Where a line names no attribute, a configuration key can be what makes git call the file binary: core.bigFileThreshold"* ]]
+    [[ "$output" == *"or keep the file text on purpose with an explicit \"<path> diff\" line in .gitattributes, which outranks the key for a regular file"* ]]   # the explicit-diff remedy, in the key paragraph's own words
+    [[ "$output" != *"Remove the diff attribute"* ]]                            # the attribute paragraph: absent, no line having named an attribute
     [[ "$output" == *"for such a link the key is the remedy"* ]]
     [[ "$output" != *"link in commit ${leak:0:10} is text that its diff attribute"* ]]
     [[ "$output" != *"at the tip of"* ]]
@@ -2205,6 +2253,7 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
     [ "$status" -eq 1 ]
     [[ "$output" == *"link in commit ${leak:0:10} is text that git calls binary although it is a symbolic link"* ]]
     [[ "$output" == *"(a one-parent commit's diff applies no attribute to a symbolic link's target, so for such a link the key is the remedy)"* ]]
+    [[ "$output" != *"Remove the diff attribute"* ]]                            # the attribute paragraph: absent, the line naming no attribute
     [[ "$output" != *"ADDS a personal identifier"* ]]
 }
 
@@ -2448,6 +2497,7 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
     [[ "$output" == *"Where a line names the previous version's bytes as the cause, the hook scans only commits new to every fetched remote: if the commit is already on some remote, fetch that remote first and push again, or push from a clone that has fetched it."* ]]
     [[ "$output" != *"core.bigFileThreshold is not set"* ]]   # the key is not the cause here: the line states the cause, not the key's facts
     [[ "$output" != *"a configuration key can be what makes git call the file binary"* ]]
+    [[ "$output" != *"Remove the diff attribute"* ]]                            # the attribute paragraph: absent, the line having said no attribute accounts for the verdict
     [[ "$output" != *"at the tip of"* ]]
     [[ "$output" != *"personal identifier"* ]]
     [[ "$output" == *"git push --no-verify"* ]]
@@ -2485,6 +2535,7 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
     [[ "$output" == *"Where a line names the previous version's bytes as the cause, the hook scans only commits new to every fetched remote"* ]]
     [[ "$output" != *"a configuration key can be what makes git call the file binary"* ]]   # the key's advice: absent, the key being no cause here
     [[ "$output" != *"raise the key above the size"* ]]
+    [[ "$output" != *"Remove the diff attribute"* ]]                            # the attribute paragraph: absent, the line having said no attribute accounts for the verdict
     [[ "$output" != *"at the tip of"* ]]
     [[ "$output" != *"personal identifier"* ]]
     [[ "$output" == *"git push --no-verify"* ]]
@@ -2518,6 +2569,7 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
     [[ "$output" == *"Where a line names the previous version's bytes as the cause, the hook scans only commits new to every fetched remote: if the commit is already on some remote, fetch that remote first and push again, or push from a clone that has fetched it."* ]]
     [[ "$output" != *"core.bigFileThreshold is not set"* ]]   # the key is not the cause here: the line states the cause, not the key's facts
     [[ "$output" != *"a configuration key can be what makes git call the file binary"* ]]
+    [[ "$output" != *"Remove the diff attribute"* ]]                            # the attribute paragraph: absent, the line having said no attribute accounts for the verdict
     [[ "$output" != *"at the tip of"* ]]
     [[ "$output" != *"personal identifier"* ]]
     [[ "$output" != *"printed no verdict"* ]]
@@ -2548,6 +2600,7 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
     [[ "$output" != *"the diff read it as a rename, so the attribute of the path it came from counted too"* ]]   # the cause line names the old path itself
     [[ "$output" != *"core.bigFileThreshold is not set"* ]]
     [[ "$output" != *"a configuration key can be what makes git call the file binary"* ]]
+    [[ "$output" != *"Remove the diff attribute"* ]]                            # the attribute paragraph: absent, the line having said no attribute accounts for the verdict
     [[ "$output" != *"at the tip of"* ]]
     [[ "$output" != *"personal identifier"* ]]
     [[ "$output" == *"git push --no-verify"* ]]
@@ -2576,8 +2629,11 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
 # unscanned; the round 3 auditor, 2026-09-22); a path with no section at all
 # that is no rename is a short read, refused with the other fail-closed arms
 # below. The patch's header quotes a path holding a byte git escapes (a tab,
-# a quote, a backslash) with C escapes, undone before the join so the line
-# names the path byte for byte; a path left quoted would meet no row.
+# a quote, a backslash, and any byte over 127 under core.quotePath's default,
+# so every non-ASCII path) with C escapes, undone before the join so the line
+# names the path byte for byte; a path left quoted would meet no row. Each of
+# the four has its case, the octal one red with the octal loop narrowed (the
+# round 4 refuter, 2026-09-22).
 merge_fixture() {   # a base the remote holds, a side branch and a main commit, the merge left open (--no-commit) for the case's own change; BASE is the remote's sha
     add_remote
     commit_file base.txt "notes-api" "base"
@@ -2827,6 +2883,7 @@ third_path_committed() {   # the merge committed, then the file removed at the t
     [ "$status" -ne 0 ]
     [[ "$output" == *"romp pre-push: b.txt in commit ${merge:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict (the blob is $size bytes; core.bigFileThreshold is 100 in this clone's configuration); the identifier scan did not read it, so the push is refused rather than scanned"* ]]
     [[ "$output" == *"a configuration key can be what makes git call the file binary"* ]]
+    [[ "$output" != *"Remove the diff attribute"* ]]                            # the attribute paragraph: absent, the line naming the key's facts and no attribute
     [[ "$output" != *"a.txt"* ]]
     [[ "$output" != *"c.txt"* ]]
     [[ "$output" != *"printed no verdict"* ]]
@@ -2915,6 +2972,114 @@ third_path_committed() {   # the merge committed, then the file removed at the t
     [[ "$output" != *"personal identifier"* ]]
 }
 
+@test "the same at a path with a byte over 127 in the name (two UTF-8 bytes, each an octal escape in the header under core.quotePath's default): refused as hidden, the line naming the path byte for byte and no short read claimed" {
+    qpath=$'caf\xc3\xa9.txt'
+    attributes '"caf\303\251.txt" -diff'                     # gitattributes reads the same C quoting: each byte over 127 as a three-digit octal escape
+    merge_fixture
+    printf 'seen on TESTHOST\n' > "$REPO/$qpath"
+    git -C "$REPO" add -- "$qpath"
+    git -C "$REPO" commit -qm "the merge adds a -diff file at a quoted path"
+    merge="$(git -C "$REPO" rev-parse HEAD)"
+    is_merge "$merge"
+    remove_file "$qpath" "remove it"
+    [ -z "$(git -C "$REPO" config core.quotePath || true)" ]     # the key at its default: a byte over 127 is quoted
+    run _hook_in "$REPO" -c 'git check-attr diff -- "$1"' _ "$qpath"
+    [[ "$output" == *"diff: unset"* ]]
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1"' _ "$merge"
+    [[ "$output" == *'diff --combined "caf\303\251.txt"'* ]]    # the header quotes the path, the two bytes as octal escapes
+    [[ "$output" == *"Binary files differ"* ]]
+    run_hook "$BASE"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: $qpath in commit ${merge:0:10} is text that its diff attribute (unset) hides from the identifier scan, so the push is refused rather than scanned"* ]]
+    [[ "$output" != *'"caf\303\251.txt"'* ]]                    # the quoted form names nothing
+    [[ "$output" != *"printed no verdict"* ]]                  # an escape left undone meets no row and is refused as unscanned instead
+    [[ "$output" != *"personal identifier"* ]]
+}
+
+@test "the same at a path with a BACKSLASH in the name (the -diff line a glob: a quoted gitattributes pattern reads a backslash as the glob's escape): refused as hidden, the line naming the path byte for byte and no short read claimed" {
+    qpath='a\b.txt'
+    attributes 'a*.txt -diff'
+    merge_fixture
+    printf 'seen on TESTHOST\n' > "$REPO/$qpath"
+    git -C "$REPO" add -- "$qpath"
+    git -C "$REPO" commit -qm "the merge adds a -diff file at a quoted path"
+    merge="$(git -C "$REPO" rev-parse HEAD)"
+    is_merge "$merge"
+    remove_file "$qpath" "remove it"
+    run _hook_in "$REPO" -c 'git check-attr diff -- "$1"' _ "$qpath"
+    [[ "$output" == *"diff: unset"* ]]
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1"' _ "$merge"
+    [[ "$output" == *'diff --combined "a\\b.txt"'* ]]            # the header doubles the backslash
+    [[ "$output" == *"Binary files differ"* ]]
+    run_hook "$BASE"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: $qpath in commit ${merge:0:10} is text that its diff attribute (unset) hides from the identifier scan, so the push is refused rather than scanned"* ]]
+    [[ "$output" != *'"a\\b.txt"'* ]]
+    [[ "$output" != *"printed no verdict"* ]]
+    [[ "$output" != *"personal identifier"* ]]
+}
+
+# A merge with THREE parents (an octopus): the combined listing carries one more
+# leading colon, mode and sha per parent, and the hook reads the post-image's
+# fields by the parent count (k), while the combined patch prints one column per
+# parent and the added-lines pass keys its plus prefix on the same count. Every
+# other merge case here has two parents, and a hook whose field arithmetic was
+# right for two alone published this pair's hidden file through a real push (the
+# round 4 refuter, 2026-09-22).
+octopus_fixture() {   # a base the remote holds, two side branches and a main commit, the three-parent merge left open (--no-commit) for the case's own change; BASE is the remote's sha
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" checkout -q -b web
+    commit_file web.txt "the web session's line" "web side"
+    git -C "$REPO" checkout -q -b api main
+    commit_file api.txt "the api session's line" "api side"
+    git -C "$REPO" checkout -q main
+    commit_file main.txt "the tests session's line" "main side"
+    git -C "$REPO" merge -q --no-ff --no-commit web api > /dev/null 2>&1
+}
+is_octopus() {   # <sha>: three parents (rev-list --parents prints the commit and then each parent: four words)
+    [ "$(git -C "$REPO" rev-list --parents -n 1 "$1" | wc -w)" -eq 4 ]
+}
+
+@test "a THREE-PARENT merge (an octopus) whose own addition is a text file under -diff carrying the string, gone at the tip, is refused as hidden through a real push, the line naming the merge and the path: the listing's fields are read by the parent count, not a two-parent shape; the remote stays at the base" {
+    attributes 'notes.txt -diff'
+    octopus_fixture
+    commit_file notes.txt "seen on TESTHOST" "the octopus adds a -diff file"
+    merge="$(git -C "$REPO" rev-parse HEAD)"
+    is_octopus "$merge"
+    remove_file notes.txt "remove it"                            # gone at the tip: only the per-commit half can name it
+    run _hook_in "$REPO" -c 'git diff-tree -r --raw --no-renames --root -c -z --no-commit-id "$1" | tr "\0" "|"' _ "$merge"
+    [[ "$output" == *":::000000 000000 000000 100644 "*" AAA|notes.txt|"* ]]      # three parents: three leading colons, and three pre-image modes and shas ahead of the post-image's
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" -- notes.txt' _ "$merge"
+    [[ "$output" == *"Binary files differ"* ]]
+    [[ "$output" != *"TESTHOST"* ]]
+    push_main_through_installed_hook
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: notes.txt in commit ${merge:0:10} is text that its diff attribute (unset) hides from the identifier scan, so the push is refused rather than scanned"* ]]
+    [[ "$output" != *"printed no verdict"* ]]
+    [[ "$output" != *"personal identifier"* ]]
+    [[ "$output" != *"at the tip of"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
+@test "the same octopus adding the file under NO attribute is a HIT by the added-lines pass, which reads a line in none of the three parents (three plus columns) as the merge's own, and is never called hidden" {
+    octopus_fixture
+    commit_file notes.txt "seen on TESTHOST" "the octopus adds a plain file"
+    merge="$(git -C "$REPO" rev-parse HEAD)"
+    is_octopus "$merge"
+    remove_file notes.txt "remove it"
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" -- notes.txt' _ "$merge"
+    [[ "$output" == *"+++seen on TESTHOST"* ]]                   # one plus per parent
+    run_hook "$BASE"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"commit ${merge:0:10} ADDS a personal identifier in:"* ]]
+    [[ "$output" == *"  notes.txt"* ]]
+    [[ "$output" != *"is text that"* ]]
+    [[ "$output" != *"printed no verdict"* ]]
+}
+
 # check-attr's three reserved words (set, unspecified, unset) are also names a
 # driver may take: `diff=set` on a path with diff.set.binary true makes
 # check-attr answer `set`, the word a bare `diff` attribute answers, and a
@@ -2965,9 +3130,12 @@ third_path_committed() {   # the merge committed, then the file removed at the t
 }
 
 # The check's own reads fail closed like every other, each against its refusing
-# input: the scratch directory, the tip's listing and the grep's read list, each
+# input: the scratch directory (for the added lines' capture and the verdict
+# check alike), the tip's listing and the grep's read list, each
 # commit's listing and its numstat, a numstat that answers for fewer paths than
-# the listing names, a type change's two reads (the empty tree's name, the
+# the listing names (the line naming the first path met no verdict; named by
+# the commit alone, the pusher had to find the path themselves, the round 4
+# refuter 2026-09-22), a type change's two reads (the empty tree's name, the
 # numstat against it), a merge's combined patch (a read that fails; one that
 # prints no verdict for a path the merge changes; the addition numstat for its
 # renames answering short), a path with a newline, the listings' rewrite for
@@ -3028,7 +3196,7 @@ check_attr_answering() {   # <printf format of the answer, NUL-delimited>: a git
     [[ "$output" != *"BLOCKED"* ]]
 }
 
-@test "a scratch directory that cannot be made (TMPDIR at a missing path) refuses the push as unscanned, naming mktemp" {
+@test "a scratch directory that cannot be made (TMPDIR at a missing path) refuses the push as unscanned, naming mktemp for both reads that write there: the added lines' capture and the verdict check" {
     commit_file file.txt "nothing to see" "clean"
     sha="$(git -C "$REPO" rev-parse HEAD)"
     export TMPDIR="$TEST_DIR/no-such-dir"
@@ -3036,6 +3204,7 @@ check_attr_answering() {   # <printf format of the answer, NUL-delimited>: a git
     [ "$status" -ne 0 ]
     run_hook
     [ "$status" -eq 1 ]
+    [[ "$output" == *"the ADDED LINES of commit ${sha:0:10} could not be read (no scratch directory for the capture: mktemp failed)"* ]]
     [[ "$output" == *"the BINARY VERDICTS on the paths refs/heads/main (${sha:0:10}) publishes could not be checked (no scratch directory: mktemp failed)"* ]]
     [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
     [[ "$output" != *"BLOCKED"* ]]
@@ -3184,7 +3353,7 @@ hidden_file_on_remote_then_clean_commit() {   # the shape: .gitattributes and a 
     [[ "$output" != *"ADDED LINES"* ]]
 }
 
-@test "a numstat that exits 0 and answers for FEWER paths than the commit changes is a short read, refused as unscanned: a missing answer is not an answer of text" {
+@test "a numstat that exits 0 and answers for FEWER paths than the commit changes is a short read, refused as unscanned naming the path met no verdict: a missing answer is not an answer of text" {
     commit_file file.txt "nothing to see" "clean"
     sha="$(git -C "$REPO" rev-parse HEAD)"
     remove_file file.txt "remove it"                             # gone at the tip: the blob is the commit's to judge, so the commit's reads are the ones that must answer (a blob the tip holds is the tip's, whatever a per-commit read says)
@@ -3194,7 +3363,7 @@ hidden_file_on_remote_then_clean_commit() {   # the shape: .gitattributes and a 
     [ -z "$output" ]
     run_hook
     [ "$status" -eq 1 ]
-    [[ "$output" == *"the BINARY VERDICTS of commit ${sha:0:10} could not be read (git diff-tree --numstat answered for fewer paths than the commit changes)"* ]]
+    [[ "$output" == *"the BINARY VERDICTS of commit ${sha:0:10} could not be read (git diff-tree --numstat answered for fewer paths than the commit changes and printed no verdict for file.txt)"* ]]
     [[ "$output" != *"exited"* ]]
 }
 
@@ -3236,7 +3405,7 @@ type_change_to_symlink() {   # a small text file replaced by a clean symlink: on
     [[ "$output" != *"answered for fewer paths"* ]]
 }
 
-@test "a type change whose addition verdict answers nothing (the numstat against the empty tree exiting 0 with no row) is a short read, refused as unscanned: no answer is not an answer of text" {
+@test "a type change whose addition verdict answers nothing (the numstat against the empty tree exiting 0 with no row) is a short read, refused as unscanned naming the path: no answer is not an answer of text" {
     type_change_to_symlink
     remove_file thing "remove it"                                # gone at the tip: the new object is the commit's to judge (case 120's note)
     empty_empty_tree_numstat
@@ -3245,7 +3414,7 @@ type_change_to_symlink() {   # a small text file replaced by a clean symlink: on
     [ -z "$output" ]
     run_hook
     [ "$status" -eq 1 ]
-    [[ "$output" == *"the BINARY VERDICTS of commit ${sha:0:10} could not be read (git diff-tree --numstat answered for fewer paths than the commit changes)"* ]]
+    [[ "$output" == *"the BINARY VERDICTS of commit ${sha:0:10} could not be read (git diff-tree --numstat answered for fewer paths than the commit changes and printed no verdict for thing)"* ]]
     [[ "$output" != *"exited"* ]]
 }
 
@@ -3273,7 +3442,7 @@ merge_with_hidden_link() {   # a merge whose own change is a symlink at a -diff 
     [[ "$output" != *"is text that"* ]]
 }
 
-@test "a merge whose combined patch prints NOTHING (diff-tree -p -c exiting 0 with no output) is a short read, refused as unscanned: no section is not a verdict of text, and the hidden link is not called hidden either" {
+@test "a merge whose combined patch prints NOTHING (diff-tree -p -c exiting 0 with no output) is a short read, refused as unscanned naming the path: no section is not a verdict of text, and the hidden link is not called hidden either" {
     merge_with_hidden_link
     empty_combined_patch
     run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1"' _ "$sha"
@@ -3281,13 +3450,13 @@ merge_with_hidden_link() {   # a merge whose own change is a symlink at a -diff 
     [ -z "$output" ]
     run_hook "$BASE"
     [ "$status" -eq 1 ]
-    [[ "$output" == *"the BINARY VERDICTS of commit ${sha:0:10} could not be read (git diff-tree -p -c, the merge's combined patch, printed no verdict for a path the merge changes)"* ]]
+    [[ "$output" == *"the BINARY VERDICTS of commit ${sha:0:10} could not be read (git diff-tree -p -c, the merge's combined patch, printed no verdict for link, a path the merge changes)"* ]]
     [[ "$output" != *"exited"* ]]
     [[ "$output" != *"is text that"* ]]
     [[ "$output" != *"against the empty tree"* ]]
 }
 
-@test "a merge's pure rename whose addition verdict answers nothing (the numstat against the empty tree exiting 0 with no row) is a short read, refused as unscanned, naming that read and not the patch" {
+@test "a merge's pure rename whose addition verdict answers nothing (the numstat against the empty tree exiting 0 with no row) is a short read, refused as unscanned, naming that read and the path, not the patch" {
     merge_fixture
     git -C "$REPO" mv base.txt moved.txt
     git -C "$REPO" commit -qm "merge side, base.txt moved"
@@ -3300,7 +3469,7 @@ merge_with_hidden_link() {   # a merge whose own change is a symlink at a -diff 
     [ -z "$output" ]
     run_hook "$BASE"
     [ "$status" -eq 1 ]
-    [[ "$output" == *"the BINARY VERDICTS of commit ${sha:0:10} could not be read (git diff-tree --numstat against the empty tree answered for fewer paths than the merge renames)"* ]]
+    [[ "$output" == *"the BINARY VERDICTS of commit ${sha:0:10} could not be read (git diff-tree --numstat against the empty tree answered for fewer paths than the merge renames and printed no verdict for moved.txt)"* ]]
     [[ "$output" != *"exited"* ]]
     [[ "$output" != *"the merge's combined patch"* ]]
 }
@@ -3322,7 +3491,7 @@ merge_with_hidden_link() {   # a merge whose own change is a symlink at a -diff 
     [[ "$output" != *"CHANGED PATHS"* ]]
 }
 
-@test "a merge whose listing against each parent answers NOTHING (diff-tree --raw -m exiting 0 with no output) leaves the third-path content a short read, refused as unscanned by the patch's arm: a listing that came up short names no candidate, and the path passes on nothing" {
+@test "a merge whose listing against each parent answers NOTHING (diff-tree --raw -m exiting 0 with no output) leaves the third-path content a short read, refused as unscanned by the patch's arm naming that path: a listing that came up short names no candidate, and the path passes on nothing" {
     third_path_merge "nothing to see" pushed
     third_path_committed
     empty_per_parent_listing
@@ -3331,7 +3500,7 @@ merge_with_hidden_link() {   # a merge whose own change is a symlink at a -diff 
     [ -z "$output" ]
     run_hook "$BASE"
     [ "$status" -eq 1 ]
-    [[ "$output" == *"the BINARY VERDICTS of commit ${merge:0:10} could not be read (git diff-tree -p -c, the merge's combined patch, printed no verdict for a path the merge changes)"* ]]
+    [[ "$output" == *"the BINARY VERDICTS of commit ${merge:0:10} could not be read (git diff-tree -p -c, the merge's combined patch, printed no verdict for b.txt, a path the merge changes)"* ]]
     [[ "$output" != *"exited"* ]]
     [[ "$output" != *"is text that"* ]]
 }
@@ -3722,7 +3891,7 @@ hidden_file_in_middle_commit_after_base() {   # a base on the remote (BASE), the
 # an answer about another path, and no answer at all (the short read the
 # round 3 refuters found fail-open in the batch read this replaced).
 
-@test "a check-attr that fails leaves the refusal standing, the failure in the attribute's place: the label read cannot lift a verdict git made" {
+@test "a check-attr that fails leaves the refusal standing, the failure in the attribute's place and the tail open (whether an attribute accounts for the verdict is unknown), both remedies printed: the label read cannot lift a verdict git made" {
     attributes 'notes.txt -diff'
     commit_file notes.txt "nothing to see" "a clean -diff file"
     sha="$(git -C "$REPO" rev-parse HEAD)"
@@ -3731,13 +3900,15 @@ hidden_file_in_middle_commit_after_base() {   # a base on the remote (BASE), the
     [ "$status" -eq 128 ]
     run_hook
     [ "$status" -eq 1 ]
-    [[ "$output" == *"notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that git calls binary although its diff attribute could not be read (git check-attr exited 128), so no attribute of its path accounts for the verdict"* ]]
-    [[ "$output" == *"the push is refused rather than scanned"* ]]
+    [[ "$output" == *"notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that git calls binary although its diff attribute could not be read (git check-attr exited 128), so whether an attribute of its path accounts for the verdict is unknown (the blob is "*" bytes; core.bigFileThreshold is not set in this clone's configuration); the identifier scan did not read it, so the push is refused rather than scanned"* ]]
+    [[ "$output" != *"so no attribute of its path accounts for the verdict"* ]]   # the failed read establishes no such thing
+    [[ "$output" == *"Remove the diff attribute for each path named"* ]]          # both remedies: either may be the cause
+    [[ "$output" == *"Where a line names no attribute, a configuration key can be what makes git call the file binary"* ]]
     [[ "$output" != *"(unset)"* ]]
     [[ "$output" != *"BLOCKED"* ]]
 }
 
-@test "a check-attr that answers about ANOTHER path leaves the refusal standing, the answer named as out of step with the path asked" {
+@test "a check-attr that answers about ANOTHER path leaves the refusal standing, the answer named as out of step with the path asked and the tail open, both remedies printed" {
     attributes 'notes.txt -diff'
     commit_file notes.txt "nothing to see" "a clean -diff file"
     sha="$(git -C "$REPO" rev-parse HEAD)"
@@ -3746,11 +3917,14 @@ hidden_file_in_middle_commit_after_base() {   # a base on the remote (BASE), the
     [ "$output" = "other.txt|diff|unset|" ]
     run_hook
     [ "$status" -eq 1 ]
-    [[ "$output" == *"notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that git calls binary although its diff attribute could not be read (git check-attr answered out of step with the path asked), so no attribute of its path accounts for the verdict"* ]]
+    [[ "$output" == *"notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that git calls binary although its diff attribute could not be read (git check-attr answered out of step with the path asked), so whether an attribute of its path accounts for the verdict is unknown (the blob is "* ]]
+    [[ "$output" != *"so no attribute of its path accounts for the verdict"* ]]
+    [[ "$output" == *"Remove the diff attribute for each path named"* ]]
+    [[ "$output" == *"Where a line names no attribute, a configuration key can be what makes git call the file binary"* ]]
     [[ "$output" != *"(unset)"* ]]
 }
 
-@test "a check-attr that answers NOTHING (a truncated read) leaves the refusal standing, the short answer named: the push does not pass" {
+@test "a check-attr that answers NOTHING (a truncated read) leaves the refusal standing, the short answer named and the tail open, both remedies printed: the push does not pass" {
     attributes 'notes.txt -diff'
     commit_file notes.txt "nothing to see" "a clean -diff file"
     sha="$(git -C "$REPO" rev-parse HEAD)"
@@ -3760,7 +3934,10 @@ hidden_file_in_middle_commit_after_base() {   # a base on the remote (BASE), the
     [ -z "$output" ]
     run_hook
     [ "$status" -eq 1 ]
-    [[ "$output" == *"notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that git calls binary although its diff attribute could not be read (git check-attr answered nothing for the path asked), so no attribute of its path accounts for the verdict"* ]]
+    [[ "$output" == *"notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that git calls binary although its diff attribute could not be read (git check-attr answered nothing for the path asked), so whether an attribute of its path accounts for the verdict is unknown (the blob is "* ]]
+    [[ "$output" != *"so no attribute of its path accounts for the verdict"* ]]
+    [[ "$output" == *"Remove the diff attribute for each path named"* ]]
+    [[ "$output" == *"Where a line names no attribute, a configuration key can be what makes git call the file binary"* ]]
     [[ "$output" == *"the push is refused rather than scanned"* ]]
 }
 
