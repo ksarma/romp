@@ -26,8 +26,8 @@
 //     with no em dash, and every reason is exactly one of four closed forms (the grandfather sentence the header quotes,
 //     whole and exact; an engine reason, "launches <Firefox|WebKit|Firefox and WebKit>; the gating job installs Chromium
 //     only", a tail after the phrase allowed; the embedded-driver sentence the header quotes, whole and exact; a pending
-//     line), a reason of no form refused by name and one that reads as a form while carrying another form's phrase refused
-//     as ambiguous (whether the source reaches the engine named, is
+//     line), a reason of no form refused by name and one that reads as a form while carrying another form's phrase, or an
+//     engine reason whose tail names a second engine, refused as ambiguous (whether the source reaches the engine named, is
 //     an embedded driver, or names a browser leg at all, is the census test's to say); an exclusions reason "pending #<PR>:
 //     <why>" (a leg an open PR brings) names a PR and its source is ABSENT from the tree: a present source is red here as
 //     arrived, and the promotion remedy derived from that source (a roster line, the engine form, the embedded-driver
@@ -254,6 +254,9 @@ function parseExcluded(text) {
     return e;
   });
 }
+/** A row's place, for every red that names one: "<file> line <n> (<bundle>)". Module scope: the closed-set loop below reads it too
+ *  (a first copy scoped inside one test made that loop die with a ReferenceError on its first refused row instead of naming it). */
+const where = (file, e) => file + ' line ' + e.n + ' (' + e.bundle + ')';
 
 test('the vscode-extension job runs on every pull request (no paths filter on the trigger, no job-level if:), so the census test there gates every PR that could add a browser leg', () => {
   const text = read(CI);
@@ -279,7 +282,6 @@ test('both files are well formed: each line is a bundle path naming a source in 
   const roster = parseRoster(read(path.join(EXT, ROSTER)));
   const excluded = parseExcluded(read(path.join(EXT, EXCLUDED)));
   assert.ok(excluded.length + roster.length > 100, 'the two files hold the tree\'s browser legs (' + (excluded.length + roster.length) + ' lines; a count near zero means the files emptied, not that the legs left); ' + CENSUS_HOME);
-  const where = (file, e) => file + ' line ' + e.n + ' (' + e.bundle + ')';
   for (const [file, entries] of [[ROSTER, roster], [EXCLUDED, excluded]]) {
     const seen = new Map();
     for (const e of entries) {
@@ -334,7 +336,8 @@ test('the grep the exclusions header spells for the pending lines lists exactly 
  *  and exact); engine ("launches <Firefox|WebKit|Firefox and WebKit>; " then the engine phrase, a tail after it allowed); embedded
  *  (the header's embedded-driver sentence, whole and exact); pending ("pending #<PR>: <why>"). A reason matching none is refused
  *  (there is no reason of its own, so a misspelt exemption cannot pass as one); one that reads as a form while its text carries
- *  another form's phrase is refused as AMBIGUOUS, so a tail cannot carry a second claim. */
+ *  another form's phrase, or an engine reason whose tail names a second engine, is refused as AMBIGUOUS, so a tail cannot carry
+ *  a second claim. */
 const ENGINE_FORM = /^launches (Firefox|WebKit|Firefox and WebKit); /;
 function reasonKind(reason, sentence, enginePhrase, embeddedSentence) {
   const head = ENGINE_FORM.exec(reason);
@@ -345,7 +348,18 @@ function reasonKind(reason, sentence, enginePhrase, embeddedSentence) {
   const FORMS = 'the four forms the header of ' + EXCLUDED + ' defines (the grandfather sentence as quoted there, whole and exact; \'launches <Firefox|WebKit|Firefox and WebKit>; ' + enginePhrase + '\', a tail after the phrase allowed; the embedded-driver sentence, whole and exact; \'pending #<PR>: <why>\')';
   if (matched.length === 0) return { kind: null, refusal: 'the reason is none of ' + FORMS + '; a reason of its own is not admitted, so a misspelt exemption cannot pass as one' };
   if (matched.length > 1 || carried.length) return { kind: null, refusal: 'the reason is AMBIGUOUS: it reads as the ' + matched.join(' and the ') + ' form and its text also carries the ' + [...matched.slice(1), ...carried].join(' and the ') + ' form\'s phrase; a reason is exactly one of ' + FORMS };
+  if (matched[0] === 'engine') {
+    // the engines a reason claims have one home, the form's head (the census test reads them there against the source): a tail naming another engine is a second claim
+    const second = /\b(Firefox|WebKit)\b/.exec(reason.slice(head[0].length + enginePhrase.length));
+    if (second) return { kind: null, refusal: 'the reason is AMBIGUOUS: it reads as the engine form and its tail, after the phrase, names an engine (' + second[1] + '); the engines a reason claims have one home, the form\'s head, so a tail cannot carry a second engine; a reason is exactly one of ' + FORMS };
+  }
   return { kind: matched[0], engines: matched[0] === 'engine' ? head[1].split(' and ') : [] };
+}
+/** The rows of an exclusions file text whose reason is none of the four forms, or ambiguous, each with the sentence the red
+ *  carries (the row's place, the refusal, the reason as it reads): one writer for the loop over the real file and for the
+ *  synthetic text that drives it below. */
+function refusedRows(text, sentence, enginePhrase, embedded) {
+  return parseExcluded(text).filter((e) => e.reason !== null).map((e) => ({ e, v: reasonKind(e.reason, sentence, enginePhrase, embedded) })).filter(({ v }) => v.kind === null).map(({ e, v }) => where(EXCLUDED, e) + ': ' + v.refusal + '; the reason reads: ' + e.reason);
 }
 
 /** The exclusions header's one bound line: the grandfather sentence and the commit it is bound to, and the embedded-driver
@@ -361,14 +375,21 @@ function grandfatherBound(text) {
   return { sentence: hits[0][1], sha: hits[0][2], embedded: em[1] };
 }
 
-test('the exclusions header binds the grandfather reason to one commit, in one line the checkers read, and every reason in the file is exactly one of the four closed forms (the grandfather sentence as quoted, an engine reason with the phrase, the embedded-driver sentence, a pending line): every variant of the exemption is refused by name and a reason carrying two forms\' phrases is refused as ambiguous; whether each grandfather row\'s source existed at that commit is read from history by the census test in the vscode-extension job, not here (CI\'s Shell job checks out at depth 1 and fetches nothing, so this module cannot read that commit)', () => {
+test('the exclusions header binds the grandfather reason to one commit, in one line the checkers read, and every reason in the file is exactly one of the four closed forms (the grandfather sentence as quoted, an engine reason with the phrase, the embedded-driver sentence, a pending line): every variant of the exemption is refused by name, a reason carrying two forms\' phrases or an engine tail naming a second engine is refused as ambiguous, and the loop over a file names a refused row by its line (executed over a synthetic text); whether each grandfather row\'s source existed at that commit is read from history by the census test in the vscode-extension job, not here (CI\'s Shell job checks out at depth 1 and fetches nothing, so this module cannot read that commit)', () => {
   const text = read(path.join(EXT, EXCLUDED));
   const { sentence, sha, embedded } = grandfatherBound(text);
   assert.ok(sentence.length > 20, 'the bound line quotes the grandfather sentence: ' + JSON.stringify(sentence));
   assert.ok(embedded.length > 20, 'the header quotes the embedded-driver sentence: ' + JSON.stringify(embedded));
+  const refused = refusedRows(text, sentence, ENGINE_PHRASE, embedded);
+  assert.deepEqual(refused, [], 'every reason is one of the four forms; the rows refused, each named by line with the four forms and the remedy: ' + refused.join(' || ') + '; ' + CENSUS_HOME);
   const kinds = parseExcluded(text).filter((e) => e.reason !== null).map((e) => ({ e, v: reasonKind(e.reason, sentence, ENGINE_PHRASE, embedded) }));
-  for (const { e, v } of kinds) if (v.kind === null) assert.fail(where(EXCLUDED, e) + ': ' + v.refusal + '; the reason reads: ' + e.reason + '; ' + CENSUS_HOME);
   const rows = kinds.filter(({ v }) => v.kind === 'grandfather');
+  // the loop over a file, executed against what it refuses: a synthetic text of one misspelt row between two admitted rows names the
+  // misspelt row by its line and bundle with the four forms (the real file above is refused by the same function)
+  const synthetic = '# header\nout-tests/ui/webview/zz-a.test.js\t' + sentence + '\nout-tests/ui/webview/zz-b.test.js\t' + sentence.replace('before', 'befora') + '\nout-tests/ui/webview/zz-c.test.js\tlaunches Firefox; ' + ENGINE_PHRASE + '\n';
+  const one = refusedRows(synthetic, sentence, ENGINE_PHRASE, embedded);
+  assert.equal(one.length, 1, 'one row refused of three: ' + JSON.stringify(one));
+  assert.ok(one[0].startsWith(EXCLUDED + ' line 3 (out-tests/ui/webview/zz-b.test.js): the reason is none of the four forms') && one[0].includes('the reason reads: existing befora'), 'the refused row is named by its line and bundle, with the four forms and the reason as it reads: ' + one[0]);
   assert.ok(rows.length > 0, 'the exclusions hold grandfather rows (' + rows.length + '); zero means the wording stopped matching, not that the rows left');
   assert.ok(text.includes('does not run that history read'), 'the header says which checker reads history and which does not');
   assert.ok(text.includes('Both read a reason\n# as one of four forms'), 'the header says both checkers read a reason as one of four forms');
@@ -386,7 +407,7 @@ test('the exclusions header binds the grandfather reason to one commit, in one l
     assert.equal(v.kind, null, what + ' is refused: ' + JSON.stringify(reason));
     assert.ok(v.refusal.startsWith('the reason is none of the four forms'), what + ': the refusal names the four forms: ' + v.refusal);
   }
-  for (const [what, reason] of [['an engine tail carrying the grandfather sentence', 'launches Firefox; ' + ENGINE_PHRASE + '; ' + sentence], ['a pending line naming an engine', 'pending #859: launches Firefox at its merge'], ['a pending line carrying the embedded-driver sentence', 'pending #864: ' + embedded]]) {
+  for (const [what, reason] of [['an engine tail carrying the grandfather sentence', 'launches Firefox; ' + ENGINE_PHRASE + '; ' + sentence], ['a pending line naming an engine', 'pending #859: launches Firefox at its merge'], ['a pending line carrying the embedded-driver sentence', 'pending #864: ' + embedded], ['an engine tail naming a second engine', 'launches Firefox; ' + ENGINE_PHRASE + '; also WebKit'], ['an engine tail naming the same engine again', 'launches WebKit; ' + ENGINE_PHRASE + '; WebKit in the pane\'s own scene']]) {
     const v = k(reason);
     assert.equal(v.kind, null, what + ' is refused: ' + JSON.stringify(reason));
     assert.ok(v.refusal.startsWith('the reason is AMBIGUOUS'), what + ': refused as ambiguous: ' + v.refusal);

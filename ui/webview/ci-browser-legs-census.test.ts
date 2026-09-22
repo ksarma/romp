@@ -87,8 +87,9 @@ const headerOf = (text: string) => {
  *  and exact); engine ("launches <Firefox|WebKit|Firefox and WebKit>; " then ENGINE_PHRASE, a tail after the phrase allowed,
  *  since two rows carry a locator there); embedded (the embedded-driver sentence, whole and exact); pending ("pending #<PR>:
  *  <why>"). A reason matching none is refused (there is no reason of its own, so a misspelt exemption cannot pass as one), and
- *  one that reads as a form while its text carries another form's phrase is refused as AMBIGUOUS, so a tail cannot carry a
- *  second claim. The age claim behind the grandfather form is settled by git, in the bound test below; this reads the form.
+ *  one that reads as a form while its text carries another form's phrase, or an engine reason whose tail names a second
+ *  engine, is refused as AMBIGUOUS, so a tail cannot carry a second claim. The age claim behind the grandfather form is settled
+ *  by git, in the bound test below; this reads the form.
  *  tools/ci-browser-legs.test.mjs holds the same rule for CI's Shell job. */
 type Kind = "grandfather" | "engine" | "embedded" | "pending";
 type Verdict = { kind: Kind; engines: string[] } | { kind: null; refusal: string };
@@ -102,6 +103,11 @@ function reasonKind(reason: string, sentence: string, enginePhrase: string, embe
   const FORMS = "the four forms the header of " + EXCLUDED + " defines (the grandfather sentence as quoted there, whole and exact; 'launches <Firefox|WebKit|Firefox and WebKit>; " + enginePhrase + "', a tail after the phrase allowed; the embedded-driver sentence, whole and exact; 'pending #<PR>: <why>')";
   if (matched.length === 0) return { kind: null, refusal: "the reason is none of " + FORMS + "; a reason of its own is not admitted, so a misspelt exemption cannot pass as one" };
   if (matched.length > 1 || carried.length) return { kind: null, refusal: "the reason is AMBIGUOUS: it reads as the " + matched.join(" and the ") + " form and its text also carries the " + [...matched.slice(1), ...carried].join(" and the ") + " form's phrase; a reason is exactly one of " + FORMS };
+  if (matched[0] === "engine") {
+    // the engines a reason claims have one home, the form's head (reasonVerdict reads them there): a tail naming another engine is a second claim
+    const second = /\b(Firefox|WebKit)\b/.exec(reason.slice((head as RegExpExecArray)[0].length + enginePhrase.length));
+    if (second) return { kind: null, refusal: "the reason is AMBIGUOUS: it reads as the engine form and its tail, after the phrase, names an engine (" + second[1] + "); the engines a reason claims have one home, the form's head, so a tail cannot carry a second engine; a reason is exactly one of " + FORMS };
+  }
   return { kind: matched[0], engines: matched[0] === "engine" ? (head as RegExpExecArray)[1].split(" and ") : [] };
 }
 /** The verdict on one exclusions row that is not pending, against the census's record of its source (`r` is undefined when the
@@ -432,7 +438,7 @@ test("every grandfather row's source existed at the commit the exclusions header
   t.diagnostic(rows.length + " grandfather rows bound to " + sha + ", every source in the tree at that commit");
 });
 
-test("an exclusions reason is exactly one of four closed forms: the grandfather sentence as quoted, an engine reason with the phrase (a tail allowed), the embedded-driver sentence, a pending line; every variant of the exemption (a letter, a punctuation mark, a space, the word grandfather, an inflection, a paraphrase) is refused by name, and a reason that reads as one form while carrying another's phrase is refused as ambiguous", async () => {
+test("an exclusions reason is exactly one of four closed forms: the grandfather sentence as quoted, an engine reason with the phrase (a tail allowed), the embedded-driver sentence, a pending line; every variant of the exemption (a letter, a punctuation mark, a space, the word grandfather, an inflection, a paraphrase) is refused by name, and a reason that reads as one form while carrying another's phrase, or an engine reason whose tail names a second engine, is refused as ambiguous", async () => {
   const { ENGINE_PHRASE, EMBEDDED_PHRASE } = await load();
   const sentence = "existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers";
   const k = (reason: string) => reasonKind(reason, sentence, ENGINE_PHRASE, EMBEDDED_PHRASE);
@@ -443,7 +449,7 @@ test("an exclusions reason is exactly one of four closed forms: the grandfather 
   assert.deepEqual(k("pending #862: launches through inBrowser; at its merge of main the owner moves it to the roster"), { kind: "pending", engines: [] });
   const variants: [string, string][] = [["a capital letter", "Existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers"], ["a comma for a semicolon", "existing before the roster; unmeasured in the gating job, its owner moves it to the roster with measured numbers"], ["doubled and tabbed spacing", "existing  before the\troster, unmeasured in the gating job; its owner moves it to the roster with measured numbers"], ["the word grandfather", "the grandfather clause: measured later"], ["one letter changed (befora)", sentence.replace("before", "befora")], ["one letter changed (rostar)", sentence.replace("the roster,", "the rostar,")], ["a letter added (rosters)", sentence.replace("the roster,", "the rosters,")], ["a letter dropped (befor)", sentence.replace("before", "befor")], ["an inflection (grandfathered)", "grandfathered: measured later"], ["a paraphrase", "predates the roster; measured later"], ["an engine named without the phrase", "launches Firefox"], ["the engine phrase alone", ENGINE_PHRASE], ["a pending line naming no PR", "pending: a leg with no PR named"], ["a reason of its own", "launches on its own"]];
   for (const [what, reason] of variants) { const v = k(reason); assert.equal(v.kind, null, what + " is refused, not read as a form: " + JSON.stringify(reason)); assert.ok((v as { refusal: string }).refusal.startsWith("the reason is none of the four forms"), what + ": the refusal names the four forms: " + (v as { refusal: string }).refusal); }
-  const ambiguous: [string, string][] = [["an engine reason whose tail carries the grandfather sentence", "launches Firefox; " + ENGINE_PHRASE + "; " + sentence], ["an engine reason whose tail carries the embedded-driver sentence", "launches WebKit; " + ENGINE_PHRASE + "; " + EMBEDDED_PHRASE], ["a pending line that names an engine", "pending #859: launches Firefox at its merge"], ["a pending line carrying the engine phrase", "pending #859: " + ENGINE_PHRASE], ["a pending line carrying the embedded-driver sentence", "pending #864: " + EMBEDDED_PHRASE]];
+  const ambiguous: [string, string][] = [["an engine reason whose tail carries the grandfather sentence", "launches Firefox; " + ENGINE_PHRASE + "; " + sentence], ["an engine reason whose tail carries the embedded-driver sentence", "launches WebKit; " + ENGINE_PHRASE + "; " + EMBEDDED_PHRASE], ["a pending line that names an engine", "pending #859: launches Firefox at its merge"], ["a pending line carrying the engine phrase", "pending #859: " + ENGINE_PHRASE], ["a pending line carrying the embedded-driver sentence", "pending #864: " + EMBEDDED_PHRASE], ["an engine reason whose tail names a second engine", "launches Firefox; " + ENGINE_PHRASE + "; also WebKit"], ["an engine reason whose tail names the same engine again", "launches WebKit; " + ENGINE_PHRASE + "; WebKit in the pane's own scene"]];
   for (const [what, reason] of ambiguous) { const v = k(reason); assert.equal(v.kind, null, what + " is refused: " + JSON.stringify(reason)); assert.ok((v as { refusal: string }).refusal.startsWith("the reason is AMBIGUOUS"), what + ": refused as ambiguous, naming both forms: " + (v as { refusal: string }).refusal); }
 });
 
@@ -550,7 +556,7 @@ test("the script's --list-legs is the census's legs and its --check is green ove
   const c = census(REPO);
   const list = spawnSync("bash", [SCRIPT, "--list-legs"], { cwd: EXT, encoding: "utf8" });
   assert.equal(list.status, 0, list.stderr);
-  assert.deepEqual(list.stdout.split("\n").filter(Boolean), c.legs, "the script lists the census's legs (it runs the same module)");
+  assert.deepEqual(list.stdout.split("\n").filter(Boolean).sort(), c.legs, "the script lists the census's legs (it runs the same module; the script prints them in the census's walk order over LEG_DIRS and census() returns them sorted, so the two are compared sorted)");
   const check = spawnSync("bash", [SCRIPT, "--check"], { cwd: EXT, encoding: "utf8" });
   assert.equal(check.status, 0, check.stderr);
   assert.match(check.stdout, /^ci-browser-legs: the roster and the tree agree: \d+ rostered, \d+ browser legs in the census/m, check.stdout);
