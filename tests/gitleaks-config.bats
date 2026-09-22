@@ -6,8 +6,10 @@
 # the hook looks like when gitleaks really runs, which a stub cannot check).
 #
 # Skipped when gitleaks is not installed, so a clone that never wanted the
-# scanner still runs a green suite; CI installs it and is the arbiter.
-# ROMP_GITLEAKS names a binary that is not on PATH, as it does for the hook.
+# scanner still runs a green suite; CI installs it and is the arbiter, and
+# sets ROMP_GITLEAKS_REQUIRE=1 so that an absence there fails with the reason
+# instead of skipping (see setup). ROMP_GITLEAKS names a binary that is not on
+# PATH, as it does for the hook.
 #
 # Nothing in this file may contain a credential-shaped literal: gitleaks scans
 # this repo, and a fixture secret written out longhand would flag the very test
@@ -21,7 +23,22 @@ load git-hermetic
 setup() {
     git_hermetic
     GL="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"
-    if [ -z "$GL" ] || [ ! -x "$GL" ]; then skip "gitleaks not installed"; fi
+    if [ -z "$GL" ] || [ ! -x "$GL" ]; then
+        # ROMP_GITLEAKS_REQUIRE=1 makes the absence a failure naming the reason, not a skip:
+        # CI's Linux Shell job installs the pinned gitleaks in the step before it runs bats
+        # and sets the switch, so a skip there would report a broken install as ten green
+        # skips (the stance ROMP_SERVED_TESTS_REQUIRE takes in tests/conftest.py). Without
+        # the switch the file skips, and a clone that never wanted the scanner stays green.
+        if [ -n "$GL" ]; then why="ROMP_GITLEAKS names $GL, which is not executable"
+        else why="gitleaks is not on PATH and ROMP_GITLEAKS is unset or empty"; fi
+        if [ "${ROMP_GITLEAKS_REQUIRE:-}" = "1" ]; then
+            echo "ROMP_GITLEAKS_REQUIRE=1: $why, and this runner must have it: the arbiter runner" \
+                "installs the pinned gitleaks before bats, so its absence here is a broken install," \
+                "not a missing tool" >&2
+            return 1
+        fi
+        skip "gitleaks not installed"
+    fi
     TEST_DIR="$(mktemp -d)"
     CFG="$ROMP_DIR/.gitleaks.toml"
 }

@@ -153,7 +153,8 @@ jobs:
       - name: Install gitleaks (Linux)
         # tests/gitleaks-config.bats skips itself when gitleaks is absent, so without this step the
         # repo's scanning rules (.gitleaks.toml: the value-anchored allowlist, the merge-commit scan)
-        # would be checked nowhere and a rule regression would ship green. The same pinned,
+        # would be checked nowhere; ROMP_GITLEAKS_REQUIRE=1 on the Run bats step below turns that
+        # skip into a red job, so a broken install cannot ship as green skips. The same pinned,
         # checksummed release the secrets job installs; bump the two version/sha pairs together.
         # Linux only: the macOS cell is manual (see the header), and one arbiter is enough.
         if: runner.os == 'Linux'
@@ -177,6 +178,12 @@ jobs:
         # slowest legitimate test on macOS (the romp-serve probe tests hold 60 s by design).
         env:
           BATS_TEST_TIMEOUT: "180"
+          # ROMP_GITLEAKS_REQUIRE=1 on Linux only: the Linux cell installs the pinned gitleaks in the
+          # step above, so tests/gitleaks-config.bats skipping there would hide a broken install
+          # behind ten green skips; with the switch its setup() fails and names the reason. macOS
+          # has no install step and may keep skipping. Off-Linux the expression yields an empty
+          # value, which the file reads as the switch unset (the PYTHON_GIL idiom above).
+          ROMP_GITLEAKS_REQUIRE: ${{ runner.os == 'Linux' && '1' || '' }}
         run: bats --print-output-on-failure tests/*.bats
       # T224: the manager<->kernel handshake proof (tests/manager-*.test.js: restart coalescing, the
       # quiet-window chain, the drain-lease refusal notices) ran only by hand until now. It runs HERE,
