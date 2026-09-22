@@ -9,11 +9,16 @@ WHY (the mechanism found on 2026-09-21, romp-manager's verification). tests/test
 a REAL kernel judge loop (km._producer) and stopped it on its body's last lines: km._LOOPS_STOP.set(), gate.set(),
 km._producer_wake.set(), producer.join(5). Its assertion at the head of the body ("a judge pass is in flight") began
 failing when kernel commit 3421c94d0 (2026-09-11) put an 8 s boot hold (BOOT_JUDGE_HOLD_S, _wait_boot_attached) in
-front of the producer's first pass, against a test written 2026-09-03 that polled 5 s for the pass. The module still
-passed serially, because its alphabetically first test's km._pusher_cycle() reached _sdk() through _turn_notify_tick
-and _alive_sessions and built a real SdkBackend whose boot reconcile fired attachDone within a second, pre-setting
-_BOOT_ATTACHED as a side effect; under xdist --dist load the target landed in a worker with no module-mate ahead of it
-and failed, red in every full sweep since 2026-09-11 and never in CI (serial). The failed assertion skipped the stop on
+front of the producer's first pass, against a test written 2026-09-03 that polled 5 s for the pass. The defect is a
+CONDITION, not a frequency: _BOOT_ATTACHED (kernel/kernel.py:30789, set at :30860) is a one-way, process-wide latch,
+never cleared, and the test patches km._sdk to lambda: None, so it can never latch it itself; the test passes if and
+only if something earlier in the same interpreter already latched it, and fails otherwise after the 8 s hold against its
+5 s deadline. Alone serially: always red. The module serially: green (its alphabetically first test's km._pusher_cycle()
+reaches _sdk() through _turn_notify_tick and _alive_sessions and builds a real SdkBackend whose boot reconcile latches
+it as a side effect). The module under -n 9: red. A full -n 10 sweep: a prior latcher in the target's worker is likely
+but not guaranteed: five full sweeps checked on 2026-09-21 did not fire it (those for 853, 862 twice and 887, and 781's
+at c7e51ae47), one did (box 2's control at 65f1895f6). An isolated-level certainty and a sweep-level flake at the same
+time, decided by which tests ran before it in that worker's process; never in CI (serial). The failed assertion skipped the stop on
 the tail, the tearDown only CLEARED the stop flag when the producer was already dead and never SET it, so a live,
 fully UNPATCHED judge loop (the with-block's eleven patches were undone on the way out while the producer was still in
 its hold) ran for the rest of the worker's life. The T282 census in tearDown named the leftover thread (the "1 error"

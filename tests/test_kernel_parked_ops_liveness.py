@@ -14,12 +14,17 @@ THE PRODUCER UNDER TEST IS A REAL KERNEL LOOP, and it is ended on every exit pat
 test starts km._producer against judge tiers stuck on a gate. Two things went wrong with the way it used to end it:
   1. The boot hold. Kernel commit 3421c94d0 (2026-09-11) put a bounded wait for the boot's attachDone in front of the
      producer's FIRST pass (BOOT_JUDGE_HOLD_S, 8 s; _wait_boot_attached). This module predates the hold (2026-09-03)
-     and proves nothing about it; run alone, nothing here fires attachDone, so the pass began 3 s after the test's 5 s
-     poll for it gave up, and the "a judge pass is in flight" assertion failed. The module still passed serially,
-     because its alphabetically first test's km._pusher_cycle() reached _sdk() (through _turn_notify_tick and
-     _alive_sessions) and built a real SdkBackend whose boot reconcile fired attachDone as a side effect; under xdist
-     the target landed in a worker with no module-mate ahead of it and was red in every full sweep since 2026-09-11,
-     never in CI (serial). setUp neutralises the hold the way tests/test_judges_process.py does.
+     and proves nothing about it. The defect is a CONDITION, not a frequency: _BOOT_ATTACHED (kernel/kernel.py:30789,
+     set at :30860) is a one-way, process-wide latch, never cleared, and this test patches km._sdk to lambda: None, so
+     it can never latch it itself; the test passes if and only if something earlier in the same interpreter already
+     latched it, and fails otherwise, the 8 s hold outlasting its 5 s poll, on "a judge pass is in flight". Alone
+     serially: always red. The module serially: green (its alphabetically first test's km._pusher_cycle() reaches _sdk()
+     through _turn_notify_tick and _alive_sessions and builds a real SdkBackend whose boot reconcile latches it as a
+     side effect). The module under -n 9: red. A full -n 10 sweep: a prior latcher in the target's worker is likely but
+     not guaranteed: five full sweeps checked on 2026-09-21 did not fire it (those for 853, 862 twice and 887, and 781's
+     at c7e51ae47) and one did (box 2's control at 65f1895f6). An isolated-level certainty and a sweep-level flake at the
+     same time, decided by which tests ran before it in that worker's process; never in CI (serial). The red-before
+     measurement is the single test alone, serially. setUp neutralises the hold as tests/test_judges_process.py does.
   2. The stop on the tail. The stop seam, the gate release and the join were the body's LAST lines, so the failed
      assertion skipped them, the with-block's eleven patches were undone on the way out while the producer was still in
      its hold, and a live, fully unpatched judge loop ran for the rest of the worker's life; tearDown only CLEARED the
@@ -236,9 +241,12 @@ class DeliveryRidesTheSettle(unittest.TestCase):
         census in the nested case's own cleanup reads clean (one failure, the planted one, and nothing beside it), and no
         producer or tier thread is alive afterwards. A second nested case has the pre-fix shape, the stop only on the
         body's tail: the same failure leaves the producer and its two tier threads wedged on the gate, the census names
-        them (the teardown ERROR every full sweep since 2026-09-11 showed; the free-running case is in the red-before
-        log), and this test ends them. Both nested cases run under the pass's stubs held by this test, so the pass that
-        completes when the gate opens never runs the real _compact_goal_stores or _sdk() inside this suite."""
+        them (the teardown ERROR beside the FAILED wherever the condition in the module docstring fired: the test alone
+        serially every time, a full sweep only when no earlier test in the target's worker had latched _BOOT_ATTACHED;
+        the free-running case is in the red-before log, the single test alone serially), and this test ends them by a
+        cleanup registered before the nested case runs. Both nested cases run under the pass's stubs held by this test,
+        so the pass that completes when the gate opens never runs the real _compact_goal_stores or _sdk() inside this
+        suite."""
         for p in self._pass_stubs():
             p.start()
             self.addCleanup(p.stop)
