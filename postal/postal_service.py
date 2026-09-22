@@ -3180,7 +3180,7 @@ def _monitor_tick(idle):
         _warn_stuck_mail()  # warn the sender when a LIVE-but-idle recipient still hasn't read (backstop)
     except Exception:
         pass
-    _write_remote_sids()    # the TTL prunes only at write time; the poll is the write that needs no beat to arrive
+    _write_remote_sids()    # the TTL marks a beat expired only at write time; the poll is the write that needs no beat to arrive
     try:
         n, answered = present_count_checked()
     except Exception:
@@ -3834,37 +3834,152 @@ def my_tier_of(host):
     return row.get("trust") or "directed"
 
 
-def _write_remote_sids():
-    """STATE/remote-sids — every session id this box knows to be LIVE on another host (federated
-    presence gossip + legacy heartbeats), one per line, atomically. A best-effort mirror for the
-    kernel/judge DEADNESS rule (2026-08-28, the dead-session round): a sid absent from the local
-    registry but present here is a live REMOTE session whose local mirror store must never be
-    presumed closed. The FILE's existence means the bus has spoken; readers treat a missing file
-    as "cannot determine" and stay conservative. This module's STATE is the romp state root plus
-    `postal`, so the file's one home is <state root>/postal/remote-sids; the bus owns that home,
-    and its reader (kernel/judge.py _presumed_closed, rules 4 and 5) reads it there, as its own
-    STATE / "postal" / "remote-sids". Until 2026-09-22 the judge read <state root>/remote-sids, a
-    path nothing wrote, so its rule 5 never fired (tests/test_dead_session_staleness.py
-    ReaderFollowsTheWriter runs this writer and that reader over one root).
+_REMOTE_SIDS_LOCK = threading.Lock()   # one writer at a time: the write reads the file it replaces (the carry-forward)
+_REMOTE_SIDS_SAID = set()              # a write failure is said once per distinct text in the bus log, not swallowed
+REMOTE_SIDS_LEGACY = "legacy:list"     # the source a whitespace-list mirror (the shape until 2026-09-22) is carried under
+REMOTE_SIDS_HEARTBEAT = "heartbeat:"   # a legacy heartbeat's source key, heartbeat:<sid>: one source per beat, each its own TTL
+# Both keys carry a colon, which _SAFE_ID_RE refuses, so no peer host name can collide with them.
 
-    The TTL is applied at WRITE time, so an expired heartbeat leaves the file only when something
-    writes it: every recorded heartbeat, every peer exchange, and (since 2026-09-06) every _monitor
-    poll. In peer mode (the default) a local session's beats end once its bus confirms it local, and
-    remote presence arrives through the peer exchange, which writes here. In legacy singleton mode
-    the beats continue; the poll-time write is the backstop for a hub whose local sessions have all
-    gone quiet while a dead remote's sid waits out its TTL."""
+
+def _remote_sids_previous(path):
+    """The hosts table of the mirror on disk, for the carry-forward: {key: row} from a document this
+    module wrote; the whitespace list of the shape until 2026-09-22 as one row under REMOTE_SIDS_LEGACY
+    (those sids were live remote sessions when the last bus wrote them, and this bus cannot vouch for them
+    until it hears them); {} for no file or a file of neither shape, which carries nothing."""
     try:
-        now = time.time()
-        ids = {sid for sid, (_nm, ts) in HEARTBEATS.items() if now - ts < HEARTBEAT_TTL}
-        for st in PEER_STATE.values():
-            for pa in st.get("presence") or []:
-                if pa.get("id"):
-                    ids.add(str(pa["id"]))
-        tmp = STATE / "remote-sids.tmp"
-        tmp.write_text("\n".join(sorted(ids)) + ("\n" if ids else ""))
-        os.replace(tmp, STATE / "remote-sids")
-    except Exception:
-        pass
+        text = path.read_text()
+    except OSError:
+        return {}
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        doc = None
+    if isinstance(doc, dict) and isinstance(doc.get("hosts"), dict):
+        out = {}
+        for key, row in doc["hosts"].items():
+            if isinstance(row, dict) and isinstance(row.get("sids"), list):
+                out[str(key)] = row
+        return out
+    if doc is None:
+        sids = sorted({t for t in text.split() if _safe_id(t)})
+        if sids:
+            return {REMOTE_SIDS_LEGACY: {"kind": "legacy", "sids": sids, "heard": False, "expired": False, "seenAt": 0}}
+    return {}
+
+
+def _remote_sids_document(now, previous):
+    """The mirror's content, {"v": 2, "busStarted", "writtenAt", "hosts": {key: row}}: one row per PRESENCE
+    SOURCE, the roster it last reported and whether THIS bus process can vouch for it.
+      key      a peer host by name (its own sessions); a far host by name, gossiped through a hub (kind
+               `via`, the hub named in `via`); a legacy heartbeat as heartbeat:<sid>; REMOTE_SIDS_LEGACY
+      sids     the session ids it named, sorted
+      heard    a heartbeat or an exchange from it arrived in this bus process (never carried over a restart)
+      expired  its presence is past HEARTBEAT_TTL; legacy heartbeats only: a peer's presence has no TTL, its
+               age is shown to the user as staleness and its roster stands until the next exchange
+      seenAt   the last heartbeat or exchange time, kept across processes
+    The reader (kernel/judge.py _presumed_closed_verdict) counts a source REACHABLE when heard and not
+    expired; a sid a reachable source names is live on another host (rule 4); a sid no source names is
+    presumed closed only when a reachable source exists (rule 5); a sid only an unreachable source names,
+    or a mirror with no reachable source, is cannot-determine. Two roads to a false settle, both shown in
+    fork PR #897's round 1 by the reviewer's refuters, are closed here rather than by the reader alone:
+      (1) a bus restarted from empty memory wrote its first mirror from that memory, so until its first
+          exchange every sid live on another host was absent from the file: every key the previous file
+          named that this process has not heard is CARRIED FORWARD with its last roster and heard=false,
+          so a restarted bus writes a first mirror whose hosts are all unreachable, and each becomes
+          reachable on the event that closes the road, its heartbeat or exchange arriving in this process;
+      (2) an expired legacy heartbeat was pruned from the file, so a tunnel drop or a stalled peer longer
+          than HEARTBEAT_TTL removed a live session's sid: the row stays, marked expired, unreachable, and
+          the next beat (the event) makes it reachable again.
+    Both are event-keyed; there is no grace period. Two folds keep one row per source: a carried row whose
+    busId a heard row also carries is the same bus under a stale name (the event _drop_peer_name_dupes keys
+    on) and is dropped; the legacy list loses each sid a heard source names (its owner has spoken) and is
+    dropped when empty. Gossip about a host this bus holds a direct link to is skipped (_via_duplicate: the
+    direct row speaks for it, heard or carried). A PEER_STATE row with no seenAt (a refusal or drift note,
+    no exchange landed) is not a source."""
+    hosts = {}
+    for sid, (name, ts) in list(HEARTBEATS.items()):
+        hosts[REMOTE_SIDS_HEARTBEAT + str(sid)] = {"kind": "heartbeat", "sids": [str(sid)], "heard": True,
+                                                   "expired": now - ts >= HEARTBEAT_TTL, "seenAt": int(ts),
+                                                   "name": name or "?"}
+    direct_bus = _direct_bus_ids()
+    peers = {h: st for h, st in list(PEER_STATE.items()) if st.get("seenAt")}
+    for host, st in peers.items():                    # every heard host's own rows first...
+        row = {"kind": "peer", "sids": [], "heard": True, "expired": False, "seenAt": int(st.get("seenAt") or 0)}
+        if st.get("busId"):
+            row["busId"] = str(st["busId"])
+        for pa in st.get("presence") or []:
+            if pa.get("id") and not pa.get("via"):
+                row["sids"].append(str(pa["id"]))
+        hosts[str(host)] = row
+    for host, st in peers.items():                    # ...then the far hosts each gossips, keyed by the far host
+        for pa in st.get("presence") or []:
+            far = pa.get("via")
+            if not (pa.get("id") and far) or _via_duplicate(pa, direct_bus):
+                continue
+            far = str(far)
+            if far in hosts and hosts[far]["kind"] != "via":
+                continue                              # heard directly: its own row speaks for it
+            row = hosts.setdefault(far, {"kind": "via", "sids": [], "heard": True, "expired": False,
+                                         "seenAt": 0, "via": str(host)})
+            row["sids"].append(str(pa["id"]))
+            row["seenAt"] = max(row["seenAt"], int(st.get("seenAt") or 0))
+    heard_bus = {row["busId"] for row in hosts.values() if row.get("busId")}
+    named = {s for row in hosts.values() for s in row["sids"]}
+    for key, prev in previous.items():
+        if key in hosts:
+            continue
+        if prev.get("busId") and prev["busId"] in heard_bus:
+            continue                                  # the same bus, heard under its dialable name
+        row = dict(prev, heard=False)
+        row.setdefault("kind", "peer")
+        row.setdefault("expired", False)
+        row.setdefault("seenAt", 0)
+        if key == REMOTE_SIDS_LEGACY:
+            row["sids"] = [s for s in row["sids"] if s not in named]
+            if not row["sids"]:
+                continue
+        hosts[key] = row
+    for row in hosts.values():
+        row["sids"] = sorted({str(s) for s in row["sids"]})
+    return {"v": 2, "busStarted": BUS_EPOCH, "writtenAt": int(now), "hosts": hosts}
+
+
+def _write_remote_sids():
+    """STATE/remote-sids, the bus's PRESENCE MIRROR for the kernel/judge DEADNESS rule (2026-08-28, the
+    dead-session round): a JSON document, atomically replaced, one row per presence source with the
+    roster it reported and whether this bus process has heard it (_remote_sids_document has the shape and
+    the reasons). A sid absent from the local registry but named by a reachable source is a live REMOTE
+    session whose local mirror store must never be presumed closed; a sid no source names is presumed
+    closed only when a reachable source exists. The FILE alone no longer means the bus has spoken: a bus
+    restarted from empty memory writes a first mirror whose hosts are all unreachable (carried from the
+    previous file) until their heartbeats and exchanges arrive. This module's STATE is the romp state
+    root plus `postal`, so the file's one home is <state root>/postal/remote-sids; the bus owns that home
+    and the shape, and its reader (kernel/judge.py _presumed_closed_verdict, rules 4 and 5) reads it there,
+    as its own STATE / "postal" / "remote-sids", answering cannot-determine, once and loudly in its log,
+    for a file of any other shape (a whitespace list from a bus before 2026-09-22 among them). Until
+    2026-09-22 the judge read <state root>/remote-sids, a path nothing wrote, so its rule 5 never fired
+    (tests/test_dead_session_staleness.py ReaderFollowsTheWriter runs this writer and that reader over one
+    root: the first write, the restart, the expiry, the legacy shape).
+
+    The TTL is applied at WRITE time, so an expired heartbeat is MARKED only when something writes:
+    every recorded heartbeat, every peer exchange, and (since 2026-09-06) every _monitor poll. In peer
+    mode (the default) a local session's beats end once its bus confirms it local, and remote presence
+    arrives through the peer exchange, which writes here. In legacy singleton mode the beats continue;
+    the poll-time write is the backstop for a hub whose local sessions have all gone quiet while a dead
+    remote's beat ages past its TTL. Under _REMOTE_SIDS_LOCK: the write reads the file it replaces, and
+    the heartbeat, exchange and monitor threads all write."""
+    with _REMOTE_SIDS_LOCK:
+        try:
+            path = STATE / "remote-sids"
+            doc = _remote_sids_document(time.time(), _remote_sids_previous(path))
+            tmp = STATE / "remote-sids.tmp"
+            tmp.write_text(json.dumps(doc, sort_keys=True) + "\n")
+            os.replace(tmp, path)
+        except Exception as e:
+            line = "the remote-sids mirror was not written (%s: %s); the judge reads the previous one" % (type(e).__name__, e)
+            if line not in _REMOTE_SIDS_SAID:
+                _REMOTE_SIDS_SAID.add(line)
+                _log(line)
 
 
 def peers_snapshot():

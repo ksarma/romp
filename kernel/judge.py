@@ -19371,47 +19371,118 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None, _fb
     return fb[0][1] if (_depth == 0 and fb) else None
 
 
-def _presumed_closed(sid, now):
+def _remote_sids_mirror():
+    """The postal bus's presence mirror, STATE/postal/remote-sids: the bus's STATE is this module's plus
+    `postal`, and postal_service.py _write_remote_sids owns the file's home and its shape (its
+    _remote_sids_document: a JSON object whose `hosts` table has one row per presence source, {"sids":
+    [...], "heard": bool, "expired": bool, ...}); this reader follows both. Returns (hosts, None) with the
+    table as the bus wrote it; (None, "no-mirror") when there is no file (the bus has not written under
+    this root); (None, "mirror-unparsable") when the file is not a document of that shape, a whitespace
+    list written by a bus from before 2026-09-22 among them, said once per distinct text in this
+    process's log, so a shape drift between the two modules is seen and never read as an empty roster."""
+    path = STATE / "postal" / "remote-sids"
+    try:
+        text = path.read_text()
+    except OSError:
+        return None, "no-mirror"
+    try:
+        doc = json.loads(text)
+        hosts = doc["hosts"] if isinstance(doc, dict) else None
+        if not isinstance(hosts, dict):
+            raise ValueError("no hosts table")
+        for key, row in hosts.items():
+            if not (isinstance(row, dict) and isinstance(row.get("sids"), list)
+                    and all(isinstance(s, str) for s in row["sids"])
+                    and isinstance(row.get("heard"), bool) and isinstance(row.get("expired"), bool)):
+                raise ValueError("host %r is not a roster row" % (key,))
+    except (ValueError, KeyError, TypeError) as e:
+        _say_once_judge("romp-judge: the postal bus's presence mirror %s is not the shape the bus writes (%s: %s); "
+                        "rules 4 and 5 of the dead-session ladder answer cannot-determine until the bus rewrites it"
+                        % (path, type(e).__name__, str(e)[:120]))
+        return None, "mirror-unparsable"
+    return hosts, None
+
+
+Deadness = collections.namedtuple("Deadness", "closed rule why")
+#   closed  the ladder's answer, what _presumed_closed returns
+#   rule    1 to 5, the rule that answered; None when none could (closed is then False: cannot determine)
+#   why     one token per arm, matched by value in tests/test_dead_session_staleness.py and
+#           tests/test_judge_propagate_loads.py: parsed, parse-failed (rules 1 and 2); ext (3);
+#           named-by-reachable-host (4); no-reachable-host-names-it (5); and the cannot-determine arms
+#           no-mirror, mirror-unparsable, named-by-unreachable-host, no-reachable-host
+
+
+def _presumed_closed_verdict(sid, now):
     """Deadness for a session no live parse can answer for (the user 2026-08-28, the dead-session
     round: complete tops on dead sids read working forever because the settle gate derived
-    closed=False from mere registry absence). The ladder, most-evidence-first:
+    closed=False from mere registry absence). The ladder, most-evidence-first, with the rule that
+    answered and its reason (Deadness), so a test can tell rule 4's False from cannot-determine's:
       1. discovered in the recency window → the parse decides (_session_closed), exactly as before;
       2. absent from the window but the transcript exists → windowless lookup + parse — a dead
          LOCAL session's own record says it closed;
       3. an ext: pseudo-sid → closed by construction (a one-shot mailer, no session behind it);
-      4. a sid the postal bus reports LIVE ON ANOTHER HOST (STATE/postal/remote-sids, the federated
-         presence mirror) → NOT closed — a live remote session's local mirror store must never be
-         presumed settled (the premature-settle flicker the gate exists to prevent);
-      5. nothing anywhere knows it AND the bus has spoken (the mirror file exists) → a dead
-         determination, True; no mirror file at all → conservative False (cannot determine).
+      4. a sid a REACHABLE host names in the postal bus's presence mirror (STATE/postal/remote-sids,
+         _remote_sids_mirror) → NOT closed: live on another host, and a live remote session's local
+         mirror store must never be presumed settled (the premature-settle flicker the gate exists to
+         prevent). Reachable is the bus's word, per row: heard in the bus's current process and its
+         presence not expired (a legacy heartbeat past HEARTBEAT_TTL; a peer's presence has no TTL);
+      5. at least one reachable host, none names it, and no unreachable host's last roster names it
+         either → a dead determination, True.
+    Cannot determine, False, in four arms: no mirror file (the bus has not written under this root); a
+    mirror not in the bus's shape (said once in this process's log; never read as an empty roster); the
+    sid named only by an UNREACHABLE host, whose last roster stands until the host is heard again; no
+    reachable host at all (a bus that has heard nobody since it started, a mirror carried from before).
+    The last two close the two roads to a false settle that arming this rule opened (fork PR #897,
+    round 1, the reviewer's refuters): (1) a bus restarted from empty memory wrote its first mirror from
+    that memory, so until its first exchange every sid live on another host was absent from the file and
+    its local mirror store settled; the bus now carries every host it has not heard forward, unreachable,
+    and the event that closes the road is that host's heartbeat or exchange arriving in the new process;
+    (2) under the legacy singleton scheme the bus pruned an expired heartbeat's sid from the file, so a
+    tunnel drop or a stalled peer longer than the TTL settled a live session on no new information; the
+    row now stays, marked expired, and the event that closes the road is the next beat. Both are
+    event-keyed: no grace period anywhere. A dead rule was conservative; an armed rule that settles falsely
+    is worse than dead, so both arms answer as the dead rule did, cannot-determine.
     The mirror is read where the bus writes it: postal_service.py's _write_remote_sids puts it at the
     BUS's state root, which is this module's STATE plus `postal` (its STATE binding carries that
-    suffix), so the file is STATE/postal/remote-sids here. The writer owns the file's home and the
-    reader follows it. From the ladder's birth (2026-08-28) until 2026-09-22 this read was
+    suffix), so the file is STATE/postal/remote-sids here. The writer owns the file's home and its shape
+    and the reader follows. From the ladder's birth (2026-08-28) until 2026-09-22 this read was
     STATE/remote-sids, a path nothing wrote: it raised OSError on every call, rule 5 never fired,
     and every sid reaching it answered cannot-determine (the conservative side: nothing settled
     early, a dead sender's card only took longer to settle). tests/test_dead_session_staleness.py
     (ReaderFollowsTheWriter) runs the bus writer and this reader over one root, under both root
-    shapes, and holds the two paths together by execution."""
+    shapes, through the first write, a restart, an expiry and the legacy shape, and holds the two
+    modules together by execution."""
     for f, p, _a, _n in discover(now):
         if f == sid:
             try:
-                return _session_closed(parsed_session(sid, [str(p)], now))
+                return Deadness(_session_closed(parsed_session(sid, [str(p)], now)), 1, "parsed")
             except Exception:
-                return False
+                return Deadness(False, 1, "parse-failed")
     for f, p, _a, _n in discover(now, window=now):
         if f == sid:
             try:
-                return _session_closed(parsed_session(sid, [str(p)], now))
+                return Deadness(_session_closed(parsed_session(sid, [str(p)], now)), 2, "parsed")
             except Exception:
-                return False
+                return Deadness(False, 2, "parse-failed")
     if str(sid).startswith("ext:"):
-        return True
-    try:
-        remote = set((STATE / "postal" / "remote-sids").read_text().split())
-    except OSError:
-        return False                                   # the bus has not spoken → cannot determine
-    return sid not in remote
+        return Deadness(True, 3, "ext")
+    hosts, why = _remote_sids_mirror()
+    if hosts is None:
+        return Deadness(False, None, why)               # the bus has not spoken in a shape this reader knows
+    sid = str(sid)
+    reachable = [row for row in hosts.values() if row["heard"] and not row["expired"]]
+    if any(sid in row["sids"] for row in reachable):
+        return Deadness(False, 4, "named-by-reachable-host")
+    if any(sid in row["sids"] for row in hosts.values()):
+        return Deadness(False, None, "named-by-unreachable-host")   # its host's last word stands until heard again
+    if not reachable:
+        return Deadness(False, None, "no-reachable-host")           # a bus that has heard nobody since it started
+    return Deadness(True, 5, "no-reachable-host-names-it")
+
+
+def _presumed_closed(sid, now):
+    """The ladder's answer alone (_presumed_closed_verdict has the rule that answered and its reason)."""
+    return _presumed_closed_verdict(sid, now).closed
 
 
 def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=None, verbose=False):

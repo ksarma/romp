@@ -107,12 +107,33 @@ def _rev(sid):
 def _mirror():
     """The deadness mirror where the BUS writes it (postal_service.py _write_remote_sids: the bus's
     STATE is the judge's plus `postal`), the path _presumed_closed reads since 2026-09-22. Until then
-    this fixture wrote jd.STATE / "remote-sids", the judge's dead read path, and restated the defect;
-    tests/test_dead_session_staleness.py ReaderFollowsTheWriter holds this spelling to the writer's
-    by execution."""
+    this fixture wrote jd.STATE / "remote-sids", the judge's dead read path, and restated the defect.
+    This helper is held to the READER's path by the two LoadOncePerPass tests that write it,
+    test_an_absent_senders_single_publish_carries_the_settled_rollup and
+    test_a_back_link_completion_on_an_absent_sender_is_settled_when_the_bus_knows_no_such_session, each
+    of which reds by its verdict assertion when the helper spells another path (the reader then answers
+    no-mirror); the reader is held to the WRITER's path and shape by
+    tests/test_dead_session_staleness.py ReaderFollowsTheWriter, which runs both over one root."""
     d = jd.STATE / "postal"
     d.mkdir(parents=True, exist_ok=True)
     return d / "remote-sids"
+
+
+def _bus_hears_nobody_remote():
+    """The bus has spoken and knows no remote session: one REACHABLE host (heard in the bus's current
+    process, its presence not expired) naming nobody, in the document shape the bus writes (its
+    _remote_sids_document; the restatement is held to the writer by ReaderFollowsTheWriter's frame pin).
+    Until fork PR #897's round 2 this fixture was an empty file, which the reader now answers
+    cannot-determine for (a whitespace list is the shape of a bus before 2026-09-22)."""
+    _mirror().write_text(json.dumps({"v": 2, "busStarted": T - 100, "writtenAt": T, "hosts": {
+        "TESTHOST": {"kind": "peer", "sids": [], "heard": True, "expired": False, "seenAt": T}}}) + "\n")
+
+
+def _verdict(sid, now):
+    """(rule, why) of the ladder's verdict: which rule answered, so a fixture at a path nothing reads
+    (the reader then answers (None, "no-mirror")) turns its test red."""
+    v = jd._presumed_closed_verdict(sid, now)
+    return (v.rule, v.why)
 
 
 class World(unittest.TestCase):
@@ -564,10 +585,12 @@ class LoadOncePerPass(World):
         self.assertEqual(got["status"][DEAD2 + ":t1"], "working", "no mirror: not determinable, not settled")
         self.assertIn(DEAD2 + ":t1", got.get("confirming") or [])
         _focused_tracker(DEAD, MID)
-        _mirror().write_text("")
+        _bus_hears_nobody_remote()
         self.assertEqual(jd.run_propagate(now=T + 901), 1)
         got = jd.load_goals(DEAD)
         self.assertTrue(got["nodes"][DEAD + ":t1"]["nodeComplete"])
+        self.assertEqual(_verdict(DEAD, T + 901), (5, "no-reachable-host-names-it"),
+                         "the fixture was read: rule 5 answered for the sender, so the settle below is its doing")
         self.assertEqual(got["status"][DEAD + ":t1"], "completed", "the bus knows no such live session: settled")
         self.assertNotIn(DEAD + ":t1", got.get("confirming") or [])
 
@@ -649,7 +672,9 @@ class LoadOncePerPass(World):
             self.assertTrue(got["nodes"][sid + ":t1"]["nodeComplete"])
             self.assertEqual(got["status"][sid + ":t1"], "working", "no mirror: not determinable, not settled")
             self.assertIn(sid + ":t1", got.get("confirming") or [])
-        _mirror().write_text("")          # the bus has spoken: no live session anywhere by the sid
+        _bus_hears_nobody_remote()        # the bus has spoken: no live session anywhere by the sid
+        self.assertEqual(_verdict(DEAD, T + 901), (5, "no-reachable-host-names-it"),
+                         "the fixture was read: rule 5 answers for the sender")
         mid7 = "msg-propagate-0007"
         _focused(DEAD, 2, mid7)
         g7 = _complete(RECIP, 7, origin={"peer": DEAD, "goalId": DEAD + ":t2", "msgId": mid7})

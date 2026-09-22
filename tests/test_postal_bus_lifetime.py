@@ -232,7 +232,10 @@ class IdleGate(unittest.TestCase):
 class MonitorTick(unittest.TestCase):
     """One _monitor poll, end to end: an answered listing is remembered as evidence, an unanswered one
     holds the count only on that evidence, and the deadness mirror (STATE/remote-sids) is rewritten
-    every poll so an expired heartbeat leaves it within one tick (2026-09-06)."""
+    every poll so an expired heartbeat is MARKED within one tick (2026-09-06 made the poll write; fork PR
+    #897's round 2 made the write mark rather than prune: the row stays with its roster, expired and so
+    unreachable to the judge, which answers cannot-determine for its sid instead of presuming it closed).
+    The mirror is removed between tests: the writer carries the previous file's rows forward."""
 
     def setUp(self):
         self._saved = (pm._kernel_sessions_checked, pm._kernel_up, pm._sweep_orphans, pm._warn_stuck_mail)
@@ -240,11 +243,13 @@ class MonitorTick(unittest.TestCase):
         pm._sweep_orphans = pm._warn_stuck_mail = lambda: None
         pm.HEARTBEATS.clear()
         pm.STATE.mkdir(parents=True, exist_ok=True)
+        (pm.STATE / "remote-sids").unlink(missing_ok=True)
         _forget_presence()
 
     def tearDown(self):
         pm._kernel_sessions_checked, pm._kernel_up, pm._sweep_orphans, pm._warn_stuck_mail = self._saved
         pm.HEARTBEATS.clear()
+        (pm.STATE / "remote-sids").unlink(missing_ok=True)
         _forget_presence()
 
     def test_a_never_answered_bus_stops_at_the_grace(self):
@@ -284,16 +289,24 @@ class MonitorTick(unittest.TestCase):
         pm.HEARTBEATS[GAMMA] = ("gamma", pm.time.time())
         self.assertEqual(pm._monitor_tick(pm.IDLE_GRACE - 1), (0, False))
 
-    def test_an_expired_heartbeat_leaves_the_mirror_after_one_tick(self):
+    def test_an_expired_heartbeat_is_marked_unreachable_by_the_polls_write_and_stays(self):
         pm._kernel_sessions_checked = lambda threads=False: ([], True)
         old, fresh = GAMMA, "99999999-8888-7777-6666-555555555556"
         now = pm.time.time()
         pm.HEARTBEATS[old] = ("gamma", now - pm.HEARTBEAT_TTL - 1)
         pm.HEARTBEATS[fresh] = ("delta", now)
-        (pm.STATE / "remote-sids").write_text(old + "\n" + fresh + "\n")   # what the last beat wrote
-        pm._monitor_tick(0)
-        self.assertEqual((pm.STATE / "remote-sids").read_text(), fresh + "\n",
-                         "the expired sid is pruned by the poll's write, not by the next beat")
+        (pm.STATE / "remote-sids").write_text(old + "\n" + fresh + "\n")   # what the last beat wrote, in the
+        pm._monitor_tick(0)                                                  # shape before 2026-09-22
+        text = (pm.STATE / "remote-sids").read_text()
+        try:
+            rows = {k: (r["heard"], r["expired"], r["sids"]) for k, r in json.loads(text)["hosts"].items()}
+        except (ValueError, KeyError, TypeError):
+            rows = text                                                      # not a document: the pin reads the text
+        self.assertEqual(rows, {"heartbeat:" + old: (True, True, [old]), "heartbeat:" + fresh: (True, False, [fresh])},
+                         "the poll's write marks the expired beat's row expired and keeps its roster: the judge "
+                         "reads it as unreachable and answers cannot-determine for its sid (the shape before "
+                         "2026-09-22 pruned the sid, and a live session that missed a beat was presumed closed); "
+                         "the legacy list is not carried, both its sids being named by heard sources")
 
 
 class MonitorLoop(unittest.TestCase):

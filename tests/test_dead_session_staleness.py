@@ -10,11 +10,21 @@ remote-sids mirror), with a LIVE REMOTE session's mirror store never presumed se
 mail minted DIFFERENT ids on the two sides, so the delegation link never formed — deliver() stamps
 the sender-side originMid on the receiving row and every join seam accepts either id. Plus the
 plant-time dedupe of byte-identical same-peer mirrors (the ext mailer's same-minute twins).
-Since 2026-09-22 also the mirror's ONE home: rule 5's read and the bus's write meet on the same
-file over one state root (ReaderFollowsTheWriter, by execution, under both root shapes). From the
-ladder's birth the judge read STATE/remote-sids while the bus wrote STATE/postal/remote-sids, so
-rule 5 never fired; the fixtures here wrote the judge's dead path themselves and hid it.
+Since 2026-09-22 also the mirror's ONE home and its MEANING: rule 5's read and the bus's write meet
+on the same file over one state root (ReaderFollowsTheWriter, by execution, under both root shapes).
+From the ladder's birth the judge read STATE/remote-sids while the bus wrote STATE/postal/remote-sids,
+so rule 5 never fired; the fixtures here wrote the judge's dead path themselves and hid it. Arming the
+rule opened two roads to a false settle (fork PR #897, round 1): a bus restarted from empty memory
+wrote a first mirror naming nobody, and an expired legacy heartbeat was pruned from the file; the
+mirror now says per host whether the bus has heard it in its current process and whether its presence
+expired, rule 5 fires only when a REACHABLE host exists and none names the sid, and a sid only an
+unreachable host names, a mirror with no reachable host, or a mirror of another shape (a whitespace
+list from an older bus) answers cannot-determine, as the dead rule did. The fixtures here write the
+bus's document shape (_bus_wrote) and every test that writes one asserts the ladder's verdict, the
+rule that answered and its reason, so a fixture at a path nothing reads turns its test red.
 SYNTHETIC fixtures only; private synthetic sids; hostname TESTHOST."""
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -42,18 +52,59 @@ RCP = "a11f0001-1111-4222-8333-000000000002"
 EXT = "ext:vault-warning-mailer"
 MID = "1788299000.000001_1.TESTHOST"
 REMOTE = "a11f0001-1111-4222-8333-000000000003"   # a sid live on ANOTHER host: the bus hears its heartbeat
+REMOTE2 = "a11f0001-1111-4222-8333-000000000004"  # a second remote session, on a host that stays reachable
+HOST, HOST2 = "TESTHOST", "TESTHOST2"             # synthetic peer hosts (path-safe names, as the bus keys them)
+
+RULE_5 = (True, 5, "no-reachable-host-names-it")               # the ladder's verdicts, (closed, rule, why), as
+RULE_4 = (False, 4, "named-by-reachable-host")                 # _presumed_closed_verdict spells them; a fixture
+LOST = (False, None, "named-by-unreachable-host")              # written at a path nothing reads answers NO_MIRROR
+NO_REACHABLE = (False, None, "no-reachable-host")
+NO_MIRROR = (False, None, "no-mirror")
+UNPARSABLE = (False, None, "mirror-unparsable")
 
 
 def _mirror():
     """The deadness mirror where the BUS writes it: the bus's STATE is the judge's plus `postal`
     (postal_service.py _write_remote_sids), and _presumed_closed reads it there. Until 2026-09-22
     these fixtures wrote jd.STATE / "remote-sids", the judge's own read path, which nothing in the
-    product wrote; the ladder tests passed against a restatement of the dead path. This spelling is
-    held to the writer's by ReaderFollowsTheWriter below, which runs the real writer and the real
-    reader over one root; the helper exists so the fixtures have one spelling to hold."""
+    product wrote; the ladder tests passed against a restatement of the dead path. This helper is
+    held to the READER's path by PresumedClosed.test_the_deadness_ladder and DeadSenderSweep's
+    test_a_dead_senders_quiet_tracker_closes_on_the_reply_and_settles, each of which reds by its
+    verdict assertion when the helper spells another path (the reader then answers no-mirror); the
+    reader is held to the WRITER's path and shape by ReaderFollowsTheWriter below, which runs both
+    over one root. The helper exists so the fixtures have one spelling to hold."""
     d = jd.STATE / "postal"
     d.mkdir(parents=True, exist_ok=True)
     return d / "remote-sids"
+
+
+def _row(sids, heard=True, expired=False, kind="peer"):
+    """One presence-source row as the bus writes it: the roster it last reported, whether the bus heard
+    it in its current process, whether its presence expired (heard and not expired is reachable)."""
+    return {"kind": kind, "sids": sorted(sids), "heard": heard, "expired": expired, "seenAt": NOW - 5}
+
+
+def _bus_wrote(hosts):
+    """Write the mirror in the bus's document shape (postal_service.py _remote_sids_document: v 2 and a
+    `hosts` table of rows). A restatement of the writer's shape, held to it by ReaderFollowsTheWriter,
+    whose frame pin reads the real writer's document back and asserts these fields."""
+    _mirror().write_text(json.dumps({"v": 2, "busStarted": NOW - 100, "writtenAt": NOW, "hosts": hosts}) + "\n")
+
+
+def _bus_hears_nobody_remote():
+    """One reachable host naming no session: rule 5's premise (the bus has spoken and knows no remote sid)."""
+    _bus_wrote({HOST: _row([])})
+
+
+def _bus_hears(*sids):
+    """One reachable host naming the sids: live on another host, rule 4."""
+    _bus_wrote({HOST: _row(sids)})
+
+
+def _bus_lost(*sids):
+    """The host that last named the sids is unreachable (not heard since the bus started, or expired);
+    another host is reachable and names nobody, so the only reason for a False is the lost host's roster."""
+    _bus_wrote({HOST: _row(sids, heard=False), HOST2: _row([])})
 
 
 def _node(nid, text, parent, t=T0, **kw):
@@ -106,49 +157,131 @@ class World(unittest.TestCase):
             {"t": at, "ev": "sent", "id": "r1", "from_id": RCP, "to_id": DEAD,
              "kind": "coordinate", "body": "verified; drift zero"}) + "\n")
 
+    def _verdict(self, sid):
+        """(closed, rule, why): the ladder's verdict for the sid, so a test can assert WHICH rule answered
+        and why, not only the boolean, which is the same False under rule 4 and under cannot-determine."""
+        v = jd._presumed_closed_verdict(sid, NOW)
+        return (v.closed, v.rule, v.why)
+
 
 class DeadSenderSweep(World):
     def test_a_dead_senders_quiet_tracker_closes_on_the_reply_and_settles(self):
-        _mirror().write_text("")     # the bus has spoken: no remote sessions
+        _bus_hears_nobody_remote()   # the bus has spoken: a reachable host, and it knows no remote session
         self._dead_sender()
         self._reply(T0 + 500)
         jd.run_propagate(now=NOW)
         st = jd.load_goals(DEAD)
         nd = st["nodes"][DEAD + ":g1"]
         self.assertTrue(nd.get("nodeComplete"), "the reply is the event; the sweep is its only writer")
+        self.assertEqual(self._verdict(DEAD), RULE_5, "the fixture was read: rule 5 answered for the dead "
+                         "sender (a fixture at a path the reader does not read answers no-mirror instead)")
         self.assertEqual(st["status"].get(DEAD + ":g1"), "completed",
-                         "a dead determination settles the top — the card leaves Working")
+                         "a dead determination settles the top: the card leaves Working")
 
     def test_a_live_remote_mirror_closes_but_never_presumes_settled(self):
-        _mirror().write_text(DEAD + "\n")   # the bus says: alive on another host
+        _bus_hears(DEAD)             # the bus says: alive on another host it can reach
         self._dead_sender()
         self._reply(T0 + 500)
         jd.run_propagate(now=NOW)
         st = jd.load_goals(DEAD)
         self.assertTrue(st["nodes"][DEAD + ":g1"].get("nodeComplete"))
+        self.assertEqual(self._verdict(DEAD), RULE_4, "the fixture was read: the False below is rule 4's, "
+                         "not cannot-determine's (which holds the same status for another reason)")
         self.assertNotEqual(st["status"].get(DEAD + ":g1"), "completed",
                             "a live remote session's mirror store is never premature-settled")
 
+    def test_a_remote_session_the_bus_lost_is_never_presumed_settled(self):
+        # The two roads of fork PR #897's round 1 in one shape: the host that last named the sid has not been
+        # heard since the bus started (a restart from empty memory), or its beat expired; either way the
+        # bus carries its last roster as unreachable, and another host being reachable does not settle it
+        _bus_lost(DEAD)
+        self._dead_sender()
+        self._reply(T0 + 500)
+        jd.run_propagate(now=NOW)
+        st = jd.load_goals(DEAD)
+        self.assertTrue(st["nodes"][DEAD + ":g1"].get("nodeComplete"), "the reply still closes the tracker")
+        self.assertEqual(self._verdict(DEAD), LOST, "named only by an unreachable host: cannot determine")
+        self.assertNotEqual(st["status"].get(DEAD + ":g1"), "completed",
+                            "a sid its host last named is never presumed closed while that host is unreachable")
+
+    def test_a_bus_that_has_heard_no_host_settles_nothing(self):
+        # a restarted bus's first mirror: every host carried from the previous file, none heard yet
+        _bus_wrote({HOST: _row([], heard=False), HOST2: _row([REMOTE], heard=False)})
+        self._dead_sender()
+        self._reply(T0 + 500)
+        jd.run_propagate(now=NOW)
+        st = jd.load_goals(DEAD)
+        self.assertTrue(st["nodes"][DEAD + ":g1"].get("nodeComplete"))
+        self.assertEqual(self._verdict(DEAD), NO_REACHABLE, "no reachable host: cannot determine")
+        self.assertNotEqual(st["status"].get(DEAD + ":g1"), "completed",
+                            "a mirror written before the bus heard anyone settles nothing")
+
     def test_no_reply_leaves_the_tracker_open(self):
-        _mirror().write_text("")
+        _bus_hears_nobody_remote()
         self._dead_sender()
         jd.run_propagate(now=NOW)
+        self.assertEqual(self._verdict(DEAD), RULE_5, "the fixture was read: rule 5 answers for the sid")
         self.assertFalse(jd.load_goals(DEAD)["nodes"][DEAD + ":g1"].get("nodeComplete"),
-                         "no report-back event → nothing moves")
+                         "no report-back event: nothing moves")
 
 
 class PresumedClosed(World):
     def test_the_deadness_ladder(self):
-        self.assertTrue(jd._presumed_closed(EXT, NOW), "ext: is closed by construction")
-        # absent everywhere + the bus has spoken (empty mirror) → dead
+        self.assertEqual(self._verdict(EXT), (True, 3, "ext"), "ext: is closed by construction")
+        # absent everywhere, a reachable host names nobody: dead
+        _bus_hears_nobody_remote()
+        self.assertEqual(self._verdict(DEAD), RULE_5)
+        # a reachable host names it: live on another host, not closed
+        _bus_hears(DEAD)
+        self.assertEqual(self._verdict(DEAD), RULE_4)
+        # only an unreachable host names it (not heard since the bus started): its last word stands
+        _bus_lost(DEAD)
+        self.assertEqual(self._verdict(DEAD), LOST, "a host the bus cannot reach protects the roster it last reported")
+        self.assertEqual(self._verdict(REMOTE), RULE_5, "...and the reachable host settles a sid neither names")
+        # the host that names it is heard but its beat expired (the legacy TTL): unreachable the same way
+        _bus_wrote({"heartbeat:" + DEAD: _row([DEAD], heard=True, expired=True, kind="heartbeat"), HOST2: _row([])})
+        self.assertEqual(self._verdict(DEAD), LOST, "an expired beat is unreachable, not absent")
+        # no reachable host at all (a bus that has heard nobody since it started): cannot determine
+        _bus_wrote({HOST: _row([], heard=False), HOST2: _row([REMOTE], heard=False)})
+        self.assertEqual(self._verdict(DEAD), NO_REACHABLE)
+        self.assertEqual(self._verdict(REMOTE), LOST)
+        _bus_wrote({})
+        self.assertEqual(self._verdict(DEAD), NO_REACHABLE, "a document with no host is not a host that names nobody")
+        # a mirror of another shape (the whitespace list a bus before 2026-09-22 wrote): not an empty roster
         _mirror().write_text("")
-        self.assertTrue(jd._presumed_closed(DEAD, NOW))
-        # the bus lists it as remote-live → not closed
+        self.assertEqual(self._verdict(DEAD), UNPARSABLE)
         _mirror().write_text(DEAD + "\n")
-        self.assertFalse(jd._presumed_closed(DEAD, NOW))
-        # no mirror file at all → cannot determine → conservative
+        self.assertEqual(self._verdict(DEAD), UNPARSABLE, "a legacy list naming the sid is not read as rule 4 either")
+        _mirror().write_text(json.dumps({"hosts": {HOST: {"sids": [DEAD]}}}))
+        self.assertEqual(self._verdict(DEAD), UNPARSABLE, "a row without heard and expired is not a roster row")
+        _mirror().write_text(json.dumps({"hosts": [DEAD]}))
+        self.assertEqual(self._verdict(DEAD), UNPARSABLE)
+        # no mirror file at all: cannot determine, conservative
         _mirror().unlink()
-        self.assertFalse(jd._presumed_closed(DEAD, NOW))
+        self.assertEqual(self._verdict(DEAD), NO_MIRROR)
+        self.assertFalse(jd._presumed_closed(DEAD, NOW), "_presumed_closed is the verdict's closed alone")
+
+    def test_a_mirror_of_another_shape_is_said_once_in_the_judges_log(self):
+        # A reader that cannot parse the mirror says so in the judge's log and answers cannot-determine; it
+        # never reads the file as an empty roster (which, with a reachable host, would settle every sid).
+        jd._SAID_ONCE.clear()                       # the once-per-text set is process-wide; this test owns its lines
+        _mirror().write_text(DEAD + "\n")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            first = self._verdict(DEAD)
+            again = self._verdict(REMOTE)
+        self.assertEqual((first, again), (UNPARSABLE, UNPARSABLE))
+        lines = [ln for ln in err.getvalue().splitlines() if ln.startswith("romp-judge:")]
+        self.assertEqual(len(lines), 1, "said once per distinct text, not per call: %r" % lines)
+        self.assertIn(str(_mirror()), lines[0], "the line names the file")
+        self.assertIn("not the shape the bus writes", lines[0])
+        self.assertIn("cannot-determine", lines[0])
+        _mirror().write_text(json.dumps({"hosts": {HOST: {"sids": [DEAD]}}}))
+        err2 = io.StringIO()
+        with contextlib.redirect_stderr(err2):
+            self.assertEqual(self._verdict(DEAD), UNPARSABLE)
+        self.assertEqual(len([ln for ln in err2.getvalue().splitlines() if ln.startswith("romp-judge:")]), 1,
+                         "a different failure is a different text: said once too")
 
 
 class OriginMidJoin(World):
@@ -174,36 +307,55 @@ class OriginMidJoin(World):
         jd.save_goals(RCP, {"rompUuid": RCP, "nodes": {RCP + ":g5": rn},
                             "placements": {}, "status": {}})
         self._reply(T0 + 500)
-        _mirror().write_text("")
+        _bus_hears_nobody_remote()
         jd.run_propagate(now=NOW)
+        self.assertEqual(self._verdict(DEAD), RULE_5, "the fixture was read: rule 5 answers for the sender")
         nd = jd.load_goals(DEAD)["nodes"][DEAD + ":g1"]
         self.assertTrue(nd.get("nodeComplete"), "the join formed across the relay's re-stamped id")
         self.assertIn("dismissed", nd.get("doneWhy") or "")
 
 
 class ReaderFollowsTheWriter(unittest.TestCase):
-    """Rule 5's read and the bus's write meet on ONE file (2026-09-22). The bus writes the deadness
-    mirror at its STATE, the romp state root plus `postal`; the judge's STATE is the root itself, and
-    from the ladder's birth (2026-08-28) its read was STATE/remote-sids, a path nothing wrote: the
-    read raised OSError on every call, rule 5 never fired, every sid reaching it answered
-    cannot-determine. Conservative, so nothing settled early; a dead sender's card only took longer
-    to settle. Pinned by EXECUTION, not by spelling: the real writer (_write_remote_sids) and the
-    real reader (_presumed_closed) run in one fresh interpreter over one temp root, under each of
-    the two root shapes the constants bind from (XDG_STATE_HOME, and ROMP_STATE_DIR, which outranks
-    it), and a sid nothing knows is presumed closed once the bus has written. The control isolates
-    the old path: with the bus's file removed and the same line at STATE/remote-sids, the judge's
-    read path until 2026-09-22, the reader answers cannot-determine, so the read MOVED to the bus's
-    file rather than widening to both, and a reverted read fails this pin by its own message. The
-    proof that the rule itself was sound, and only its path dead, is the same control run at the
-    base: there the bytes at the old path answered True, the only way rule 5 could fire then. That
-    run is recorded in the fix-up's red-before log for this change (the fire and rule-4 pins red
-    under both root shapes, this control red on `True is not false`, the frame green); it is not
-    asserted here, where it can no longer hold. The bus's file is removed FIRST: this control's
-    first form left it in place and asserted True, which held because the bus's file was read, not
-    the old path's (a pin true for a reason other than its message; the fix-up of 2026-09-22). The
-    root carries `session-hosts` off, the repo rule for a test that mints its own state root, and
-    the child reads that file back through the judge's STATE, so the root the test prepared is the
-    root both modules bound."""
+    """Rule 5's read and the bus's write meet on ONE file with ONE meaning (2026-09-22). The bus writes
+    the deadness mirror at its STATE, the romp state root plus `postal`; the judge's STATE is the root
+    itself, and from the ladder's birth (2026-08-28) its read was STATE/remote-sids, a path nothing
+    wrote: the read raised OSError on every call, rule 5 never fired, every sid reaching it answered
+    cannot-determine. Conservative, so nothing settled early; a dead sender's card only took longer to
+    settle. Pinned by EXECUTION, not by spelling: the real writer (_write_remote_sids) and the real
+    reader (_presumed_closed) run in one fresh interpreter over one temp root, under each of the two
+    root shapes the constants bind from (XDG_STATE_HOME, and ROMP_STATE_DIR, which outranks it), and the
+    bus's document is read back and its rows asserted, so the fixtures' restatement of the shape
+    (_bus_wrote) is held to the writer here. Six phases, in the order a bus lives them:
+      first write   one live remote heartbeat; a sid nothing knows is presumed closed (rule 5), the
+                    heartbeating one is not (rule 4);
+      restart       a second bus process over the same root (a fresh module object: empty HEARTBEATS and
+                    PEER_STATE, as after a real restart) writes its first mirror before any beat arrives,
+                    the write _monitor_tick's first poll makes; the host it has not heard is carried from
+                    the previous file as unreachable, so the sid it last named is not presumed closed and
+                    a sid nothing knows is cannot-determine (no reachable host), the first road of fork PR
+                    #897's round 1, which at the round's head settled both;
+      heard again   the beat arrives in the new process: rule 5 and rule 4 answer as at the first write;
+      expired       the beat's recorded time driven past HEARTBEAT_TTL (no sleeping): the row stays,
+                    marked expired, unreachable; its sid is not presumed closed, the second road, which
+                    at the round's head pruned the sid and settled it;
+      beside a live beat  a second host's live beat: rule 5 fires for a sid nothing knows, rule 4 holds
+                    the live one, and the expired one is still protected by its host's last word;
+      legacy shape  the whitespace list a bus before 2026-09-22 wrote, at the bus's path: the reader
+                    answers cannot-determine for the sid it does not name AND for the one it does, and
+                    says once in the judge's log that the file is not the shape the bus writes; it is
+                    never read as an empty roster.
+    The control isolates the old path: with the bus's file removed and a line at STATE/remote-sids, the
+    judge's read path until 2026-09-22, the reader answers cannot-determine, so the read MOVED to the
+    bus's file rather than widening to both, and a reverted read fails this pin by its own message. The
+    proof that the rule itself was sound, and only its path dead, is the same control run at the base of
+    the first commit on this branch, where the bytes at the old path answered True, the only way rule 5
+    could fire then; the message of the review fix-up commit of 2026-09-22 on this branch records that run
+    (6 failed, 4 passed; the control red on True is not false). It is not asserted here, where it can no
+    longer hold. The bus's file is removed FIRST: this control's first form left it in place and asserted
+    True, which held because the bus's file was read, not the old path's (a pin true for a reason other
+    than its message). The root carries `session-hosts` off, the repo rule for a test that mints its own
+    state root, and the child reads that file back through the judge's STATE, so the root the test
+    prepared is the root both modules bound."""
 
     @classmethod
     def setUpClass(cls):
@@ -229,50 +381,81 @@ class ReaderFollowsTheWriter(unittest.TestCase):
                 "ROMP_KERNEL_NO_OPEN": "1", "PYTHONDONTWRITEBYTECODE": "1", **env}
         # The child: the bus and the judge loaded into ONE fresh interpreter under the root shape set above, so
         # both STATE constants bind at import exactly as in production (a `-c` program: romp_load's direct-run
-        # floor does not arm, so the environment above is the whole of it). The bus's writer is given one live
-        # remote heartbeat and called; the judge's reader is asked about a sid nothing knows (rule 5) and about
-        # the heartbeating one (rule 4), before and after the write; then the control, isolated: the bus's file
-        # removed, the writer's line for that sid put at the judge's read path until 2026-09-22
-        # (STATE/remote-sids), and the reader asked again, so the answer can come from nothing but that old
-        # path. A missing bus file is reported, not raised, so a moved writer fails the pins by their own
-        # messages. The source sits as a literal in the argv slot after "-c": the shape the hosts-on census
+        # floor does not arm, so the environment above is the whole of it). The phases the class docstring
+        # names, each recording the bus's document (`hosts`: key -> (heard, expired, sids), or the raw text when
+        # the file is not a document, so a writer of another shape fails the frame pin by its message rather
+        # than crashing the child) and the reader's answers. The restart is a second load of the bus module
+        # under a private name: a fresh module object over the same root, its memory empty, as a restarted
+        # process's is. A missing bus file is reported, not raised, so a moved writer fails the pins by their
+        # own messages. The source sits as a literal in the argv slot after "-c": the shape the hosts-on census
         # (tests/test_tempdir_hygiene.py, HarnessSocketBudget's ledger) reads as a child Python's source, parsing
         # the literal as a nested module, where the child's read of the session-hosts toggle is a read; a
         # module-level name bound to the same text is not followed into the child, and the whole text stood
         # unaccounted (the sweep red of 2026-09-22).
         out = subprocess.run([sys.executable, "-c", r"""
-import json, os, sys, time
-tests_dir, bin_dir, remote, dead = sys.argv[1:5]
+import contextlib, io, json, os, sys, time
+tests_dir, bin_dir, remote, remote2, dead = sys.argv[1:6]
 sys.path.insert(0, tests_dir)
 from romp_load import load_source
 pm = load_source("romp_postal_oneroot", os.path.join(bin_dir, "romp-postal-service"))
 jd = load_source("romp_judge_oneroot", os.path.join(bin_dir, "romp-judge"))
 now = time.time()
-out = {"busState": str(pm.STATE), "judgeState": str(jd.STATE),
+bus_file = pm.STATE / "remote-sids"
+def ask(sid):
+    return jd._presumed_closed(sid, now)
+def hosts():
+    if not bus_file.exists():
+        return None
+    text = bus_file.read_text()
+    try:
+        return {k: [r["heard"], r["expired"], r["sids"]] for k, r in json.loads(text)["hosts"].items()}
+    except (ValueError, KeyError, TypeError):
+        return text
+def phase():
+    return {"hosts": hosts(), "fire": ask(dead), "named": ask(remote), "named2": ask(remote2)}
+out = {"busState": str(pm.STATE), "judgeState": str(jd.STATE), "busFile": str(bus_file),
        "hostsOff": (jd.STATE / "session-hosts").read_text().strip(),
        "discovered": len(jd.discover(now)) + len(jd.discover(now, window=now)),
-       "beforeWrite": jd._presumed_closed(dead, now)}
+       "beforeWrite": ask(dead)}
 pm.STATE.mkdir(parents=True, exist_ok=True)
-pm.HEARTBEATS[remote] = ("web", now)
+pm.HEARTBEATS[remote] = ("web", now)               # the first bus process hears one live remote session
 pm._write_remote_sids()
-bus_file = pm.STATE / "remote-sids"
-out["busFile"] = str(bus_file)
-out["busFileText"] = bus_file.read_text() if bus_file.exists() else None
-out["fire"] = jd._presumed_closed(dead, now)
-out["named"] = jd._presumed_closed(remote, now)
+out["first"] = phase()
+pm2 = load_source("romp_postal_oneroot_restarted", os.path.join(bin_dir, "romp-postal-service"))
+out["restartMemory"] = {"heartbeats": len(pm2.HEARTBEATS), "peers": len(pm2.PEER_STATE),
+                        "sameFile": str(pm2.STATE / "remote-sids") == str(bus_file), "freshObject": pm2 is not pm}
+pm2._write_remote_sids()                           # the first poll's write, before any beat arrives
+out["restarted"] = phase()
+pm2.HEARTBEATS[remote] = ("web", time.time())      # the beat arrives in the new process
+pm2._write_remote_sids()
+out["heardAgain"] = phase()
+pm2.HEARTBEATS[remote] = ("web", time.time() - pm2.HEARTBEAT_TTL - 1)   # the recorded time, past the TTL
+pm2._write_remote_sids()
+out["expired"] = phase()
+pm2.HEARTBEATS[remote2] = ("api", time.time())     # a second host's live beat beside the expired one
+pm2._write_remote_sids()
+out["besideLive"] = phase()
+bus_file.write_text(remote + "\n")                 # the shape a bus before 2026-09-22 wrote
+err = io.StringIO()
+with contextlib.redirect_stderr(err):
+    legacy = {"fire": ask(dead), "named": ask(remote), "fireAgain": ask(dead)}
+legacy["log"] = err.getvalue()
+out["legacy"] = legacy
 bus_file.unlink(missing_ok=True)
 out["busFileGoneForControl"] = not bus_file.exists()
 old_path = jd.STATE / "remote-sids"
 old_path.write_text(remote + "\n")
 out["oldPath"] = str(old_path)
 out["oldPathText"] = old_path.read_text()
-out["controlOldPathOnly"] = jd._presumed_closed(dead, now)
+out["controlOldPathOnly"] = ask(dead)
 print(json.dumps(out))
-""", HERE, BIN, REMOTE, DEAD], capture_output=True, text=True, env=full, cwd=str(home), timeout=120)
+""", HERE, BIN, REMOTE, REMOTE2, DEAD], capture_output=True, text=True, env=full, cwd=str(home), timeout=120)
         assert out.returncode == 0, "%s child failed: %s" % (shape, out.stderr[-2000:])
         got = json.loads(out.stdout.strip().splitlines()[-1])
         got["root"] = str(root)
         return got
+
+    HB = "heartbeat:"       # the bus keys a legacy heartbeat's row heartbeat:<sid> (postal_service.py REMOTE_SIDS_HEARTBEAT)
 
     def test_both_modules_bound_the_one_root_the_test_prepared(self):
         for shape, got in self.got.items():
@@ -281,21 +464,71 @@ print(json.dumps(out))
                 self.assertEqual(got["busState"], got["root"] + "/postal", "the bus's STATE is the root plus postal")
                 self.assertEqual(got["hostsOff"], "off", "the child read the session-hosts file the test wrote")
                 self.assertEqual(got["discovered"], 0, "an empty HOME: rules 1 and 2 have no session to answer for")
-                self.assertEqual(got["busFileText"], REMOTE + "\n", "the writer wrote the heartbeating sid")
+                self.assertEqual(got["first"]["hosts"], {self.HB + REMOTE: [True, False, [REMOTE]]},
+                                 "the writer's document at %s: one row per presence source, the heartbeating sid's "
+                                 "row heard and not expired (the fixtures' _bus_wrote restates this shape)" % got["busFile"])
 
     def test_rule_5_fires_for_a_sid_nothing_knows_once_the_bus_has_written(self):
         for shape, got in self.got.items():
             with self.subTest(shape=shape):
                 self.assertFalse(got["beforeWrite"], "no mirror file yet: cannot determine, conservative")
-                self.assertTrue(got["fire"], "the bus wrote %s; the judge's read must be that file: rule 5 "
+                self.assertTrue(got["first"]["fire"], "the bus wrote %s; the judge's read must be that file: rule 5 "
                                 "presumes a sid nothing knows closed" % got["busFile"])
 
     def test_rule_4_holds_the_sid_the_bus_names_open(self):
         for shape, got in self.got.items():
             with self.subTest(shape=shape):
-                self.assertTrue(got["fire"], "rule 5 fired in this run, so the False below is rule 4's, "
+                self.assertTrue(got["first"]["fire"], "rule 5 fired in this run, so the False below is rule 4's, "
                                 "not cannot-determine's")
-                self.assertFalse(got["named"], "live on another host: never presumed settled")
+                self.assertFalse(got["first"]["named"], "live on another host: never presumed settled")
+
+    def test_a_restarted_bus_carries_the_host_it_has_not_heard_as_unreachable(self):
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                self.assertEqual(got["restartMemory"], {"heartbeats": 0, "peers": 0, "sameFile": True, "freshObject": True},
+                                 "the restart is a fresh module object over the same root, its memory empty")
+                self.assertEqual(got["restarted"]["hosts"], {self.HB + REMOTE: [False, False, [REMOTE]]},
+                                 "the first mirror of a restarted bus carries the host the previous file named, "
+                                 "its last roster kept, heard=false: unreachable, not absent")
+                self.assertFalse(got["restarted"]["named"], "the sid its host last named is not presumed closed "
+                                 "while the new bus process has not heard that host (the first road of fork PR #897's "
+                                 "round 1: a first write from empty memory settled it)")
+                self.assertFalse(got["restarted"]["fire"], "no reachable host yet: a sid nothing knows is "
+                                 "cannot-determine, as the dead rule answered")
+                self.assertEqual(got["heardAgain"]["hosts"], {self.HB + REMOTE: [True, False, [REMOTE]]},
+                                 "the beat arriving in the new process is the event that makes the host reachable")
+                self.assertTrue(got["heardAgain"]["fire"], "rule 5 fires again once a host is reachable")
+                self.assertFalse(got["heardAgain"]["named"], "rule 4 holds the live sid")
+
+    def test_an_expired_beat_stays_in_the_mirror_as_unreachable(self):
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                self.assertEqual(got["expired"]["hosts"], {self.HB + REMOTE: [True, True, [REMOTE]]},
+                                 "past HEARTBEAT_TTL the row stays, marked expired, its roster kept (the shape "
+                                 "before this change pruned it)")
+                self.assertFalse(got["expired"]["named"], "a sid whose beat expired is not presumed closed on no "
+                                 "new information (the second road of fork PR #897's round 1)")
+                self.assertFalse(got["expired"]["fire"], "the only host is unreachable: cannot determine")
+                self.assertEqual(got["besideLive"]["hosts"], {self.HB + REMOTE: [True, True, [REMOTE]],
+                                                              self.HB + REMOTE2: [True, False, [REMOTE2]]},
+                                 "a second host's live beat beside the expired one")
+                self.assertTrue(got["besideLive"]["fire"], "a reachable host that names neither: rule 5 fires for "
+                                "a sid nothing knows")
+                self.assertFalse(got["besideLive"]["named2"], "rule 4 holds the live sid")
+                self.assertFalse(got["besideLive"]["named"], "the expired host's last word still protects its sid")
+
+    def test_a_mirror_of_the_legacy_shape_is_cannot_determine_and_said_once(self):
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                leg = got["legacy"]
+                self.assertFalse(leg["fire"], "a whitespace list at %s is not read as an empty roster: the sid it "
+                                 "does not name is cannot-determine" % got["busFile"])
+                self.assertFalse(leg["named"], "nor as a roster: the sid it names is cannot-determine too")
+                lines = [ln for ln in leg["log"].splitlines() if ln.startswith("romp-judge:")]
+                self.assertEqual(len(lines), 1, "the judge says once, in its log, that the file is not the shape "
+                                 "the bus writes: %r" % lines)
+                self.assertIn(got["busFile"], lines[0], "the line names the file")
+                self.assertIn("not the shape the bus writes", lines[0])
 
     def test_the_control_the_old_path_alone_is_no_longer_read(self):
         for shape, got in self.got.items():
@@ -306,8 +539,7 @@ print(json.dumps(out))
                                  "judge's read path until 2026-09-22" % got["oldPath"])
                 self.assertFalse(got["controlOldPathOnly"], "with only the old path populated the judge "
                                  "answers cannot-determine: the read moved to the bus's file and no longer "
-                                 "reaches %s (at the base the same bytes there answered True; that run is "
-                                 "the round's red-before log)" % got["oldPath"])
+                                 "reaches %s (at the base the same bytes there answered True)" % got["oldPath"])
 
 
 class PlantDedupe(unittest.TestCase):
