@@ -5958,15 +5958,22 @@ class ParseCacheRetention(unittest.TestCase):
         derivation's freeze, four million new tracked objects triggered none, and in a fresh process with eight million
         frozen the count rule alone needed two million), unless its second threshold is zero, which asks for immediate
         scheduling once the young count passes the first; the pin sets that for its own run there, the thresholds restored
-        by the cleanup registered before the change, and the calibration then finds one chunk."""
+        by the cleanup registered before the change, and sizes its chunk to the first threshold plus one, so each chunk
+        crosses the young threshold once and fires one collection. Why the size matters there: every collection on that
+        build visits the frozen heap to skip it, about a tenth of a second over the eight million objects the census
+        freezes, and with chunks of ten thousand the calibration's one chunk fired five collections and the premise's two
+        fired nine, which with the three explicit collections cost this pin 1.7 s in the whole-module run on 3.14t against
+        0.03 s alone (the fifteenth pass's verification, 2026-09-22); with the sized chunk the calibration finds one chunk
+        and the armed span sees about six collections. Nothing here asserts seconds."""
         self.assertTrue(gc.isenabled(), "the pin needs the automatic collector on, the state pytest runs in")
         self._restore_collector()
+        chunk, cap = 10000, 400
         if _is_free_threaded_build():
             thresholds = gc.get_threshold()
             self.addCleanup(gc.set_threshold, *thresholds)         # BEFORE the change
             gc.set_threshold(thresholds[0], 0, thresholds[2])      # immediate scheduling past the young threshold: the docstring
+            chunk = thresholds[0] + 1                              # one crossing of the young threshold per chunk, one collection each: the docstring
         full = self._counter()
-        chunk, cap = 10000, 400
 
         def allocate(chunks):
             return [[[] for _ in range(chunk)] for _ in range(chunks)]
