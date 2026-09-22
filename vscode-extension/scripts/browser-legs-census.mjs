@@ -25,14 +25,17 @@
 //              never read as no engine. A call with no third argument passes nothing and the record says nothing of it.
 //              A name is read at its USE SITE by lexical scope: a use reaches the innermost enclosing declaration of that name,
 //              so a destructured parameter, a catch variable or a local const of an inner scope that reuses the name is not
-//              the import or the loader-bound variable, and a use in the scope that binds them is.
+//              the import or the loader-bound variable, and a use in the scope that binds them is. A `var` is declared at the
+//              nearest enclosing function or the module, not at the block, for head or catch clause that spells it (JavaScript
+//              hoists it there), so a use outside that block reaches it.
 //   loaded:    every module of the tree the test loads by a relative specifier (an import, an export from, import =, require(),
 //              await import(), a loader bound by createRequire or a createRequire(...) call applied directly; a specifier that
 //              names no file beside the module resolves
 //              against the repo root and vscode-extension/, the bases loaders in this tree are anchored to) is read by this same
-//              walker, transitively, for what it BINDS: a module that binds the launcher's inBrowser (imports it, imports the
-//              launcher whole, or re-exports it) while the test itself never calls inBrowser, names a playwright package, holds
-//              a driver string, or holds a form the walker refuses, REFUSES the test at its import line with the chain. The
+//              walker, transitively, for what it BINDS OR CALLS: a module that binds the launcher's inBrowser (imports it,
+//              imports the launcher whole, or re-exports it) or calls it (on a binding, or on a load where it stands) while the
+//              test itself never calls inBrowser, names a playwright package, holds a driver string, or holds a form the walker
+//              refuses, REFUSES the test at its import line with the chain. The
 //              walker follows nothing THROUGH such a module (it does not read what the test calls on it), so the verdict is a
 //              refusal with the remedy, never a silent non-leg. A file under node_modules is a package and binds nothing of
 //              the tree; a json or css file is not a script.
@@ -63,8 +66,11 @@
 //              cannot fold on a playwright or launcher binding; the inBrowser binding used as a value, not called (an
 //              initializer `const f = inBrowser` and a default value `{ x = inBrowser }` included; the exempt uses are the
 //              NAME position of a declaration or import specifier and an assignment's target); the launcher's whole-module or
-//              default binding handed on as a value (aliased, destructured, passed as an argument, or read for inBrowser
-//              without a call, `.bind` included; reading another member off it is not a hand-on); a local declaration
+//              default binding handed on as a value (aliased, destructured, passed as an argument, read for inBrowser
+//              without a call, `.bind` included, handed to a promise callback through .then, .catch or .finally, read for a
+//              default member, or awaited into a name; reading another member off it is not a hand-on, and the refusal names
+//              the position the line holds); the launcher loaded where it stands and handed on through .then, .catch,
+//              .finally or .default; a local declaration
 //              shadowing a launcher or playwright binding; a parse diagnostic; a loaded module of the tree as the `loaded`
 //              clause states, or a relative specifier that names no file, or two; and THE INVARIANT's refusal, below. The CLI
 //              exits 2 on any refusal.
@@ -74,12 +80,14 @@
 // parse resolved (an import, an export from, import =, a loader call in ANY position) is in `playwright`. (2) The launcher the
 // parse resolved is carried as an import (launcherImported), a type-only import (typeOnly), or a FOLLOWED load: a loader call
 // bound by a binding's initializer or an assignment's right side, standing as a statement of its own, or the object of a
-// member the walker read (`require(launcher).inBrowser(...)` counted as a shared call, another member read as an import); a
-// load in any other position (returned from a wrapper, passed as an argument, held in a class field, an object property or an
-// array, read for inBrowser without a call) is refused naming the line and the position. (3) Every reference to a launcher
-// binding that can carry inBrowser onward (the inBrowser binding, the whole module, its default) is one the walker READ: a
-// call it counted, the name position of a declaration, a property name, a type position, the object of a member other than
-// inBrowser, or a computed member it refused by name; a reference in any other position is refused as a value use by the
+// member the walker read (`require(launcher).inBrowser(...)` counted as a shared call, another member read as an import,
+// where then, catch, finally and default are not another member: they hand the load on, and the call arm refuses the
+// promise members by name); a load in any other position (returned from a wrapper, passed as an argument, held in a class
+// field, an object property or an array, read for inBrowser without a call, read for a default member) is refused naming
+// the line and the position. (3) Every reference to a launcher binding that can carry inBrowser onward (the inBrowser
+// binding, the whole module, its default) is one the walker READ: a call it counted, the name position of a declaration, a
+// property name, a type position, the object of a member other than inBrowser, then, catch, finally or default, or a
+// computed member it refused by name; a reference in any other position is refused as a value use by the
 // walker, and one the walker classified as neither is refused by the invariant itself. Each refusal names the line and what
 // was resolved. The invariant compares two states of the parse (what it resolved, what it recorded), so no string trips it
 // and no module need cooperate: a module that names playwright or the launcher in a string, a test title, a regex or a file
@@ -118,6 +126,9 @@ export const LAUNCHER_REL = "ui/webview/real-viewer-leg.ts";
 const PW_PACKAGES = ["playwright", "playwright-core", "@playwright/test"];
 const ENGINES = new Set(["chromium", "firefox", "webkit"]);
 const LAUNCHES = new Set(["launch", "launchPersistentContext", "launchServer", "connect", "connectOverCDP"]);
+// members that hand a launcher module (or its load) on rather than reading an export of it: a promise callback receives the
+// module where the walker does not follow, and a default member is not one of the launcher's exports (it has none)
+const HANDOFF = new Set(["then", "catch", "finally", "default"]);
 
 /** typescript, from vscode-extension/node_modules and nowhere else; a named error when npm ci has not run. */
 export function loadTypescript() {
@@ -192,25 +203,32 @@ export function classify(ts, file, src, opts = {}) {
   /** The declarations a scope holds ITSELF (an inner scope's are not its own): name -> the first node in source order that
    *  declares it, a variable declaration, a parameter, a binding element (a destructured declaration or parameter, an array
    *  pattern's element included), a function or class declaration, a catch variable; at the source file an import's binding too
-   *  (a named specifier, the default clause, a namespace import, an import =). Read once per scope and kept for the life of this
-   *  classify call: every lookup of a tracked name resolves through it. */
+   *  (a named specifier, the default clause, a namespace import, an import =). A `var` (a declaration list with neither the
+   *  let nor the const flag, a destructured var's binding elements included) is hoisted: it is held by the nearest enclosing
+   *  function or the source file, whatever block, for head or catch clause spells it, and never by that block. Read once per
+   *  scope and kept for the life of this classify call: every lookup of a tracked name resolves through it. */
   const scopeDecls = new Map();
+  const hoisted = (n) => { let d = n; while (d && (ts.isBindingElement(d) || ts.isObjectBindingPattern(d) || ts.isArrayBindingPattern(d))) d = d.parent; return !!(d && ts.isVariableDeclaration(d) && d.parent && ts.isVariableDeclarationList(d.parent) && !(d.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const))); };
   const declsOf = (scope) => {
     let m = scopeDecls.get(scope);
     if (m) return m;
     m = new Map();
+    const holdsVars = ts.isFunctionLike(scope) || ts.isSourceFile(scope);
     const note = (n) => { if (!m.has(n.name.text)) m.set(n.name.text, n); };
-    const look = (n) => {
-      if ((ts.isVariableDeclaration(n) || ts.isParameter(n) || ts.isBindingElement(n) || ts.isFunctionDeclaration(n) || ts.isClassDeclaration(n)) && n.name && ts.isIdentifier(n.name)) note(n);
-      else if (ts.isImportSpecifier(n) || ts.isNamespaceImport(n) || ts.isImportEqualsDeclaration(n)) note(n);
-      else if (ts.isImportClause(n) && n.name) note(n);
-      if (n !== scope && isScope(n)) return; // an inner scope's declarations are not ours
-      ts.forEachChild(n, look);
+    // `inner`: the walk has crossed into an inner block, for head or catch clause, whose own declarations are not this
+    // scope's; a var found there still is (hoisted), when this scope is the kind that holds vars
+    const look = (n, inner) => {
+      if ((ts.isVariableDeclaration(n) || ts.isBindingElement(n)) && n.name && ts.isIdentifier(n.name)) { if (hoisted(n) ? holdsVars : !inner) note(n); }
+      else if (!inner && (ts.isParameter(n) || ts.isFunctionDeclaration(n) || ts.isClassDeclaration(n)) && n.name && ts.isIdentifier(n.name)) note(n);
+      else if (!inner && (ts.isImportSpecifier(n) || ts.isNamespaceImport(n) || ts.isImportEqualsDeclaration(n))) note(n);
+      else if (!inner && ts.isImportClause(n) && n.name) note(n);
+      if (n !== scope && isScope(n)) { if (ts.isFunctionLike(n) || !holdsVars) return; ts.forEachChild(n, (c) => look(c, true)); return; } // an inner function's declarations are never ours; an inner block's vars are, when we hold vars
+      ts.forEachChild(n, (c) => look(c, inner));
     };
-    if (ts.isFunctionLike(scope)) { for (const prm of scope.parameters) look(prm); if (scope.body && ts.isBlock(scope.body)) for (const st of scope.body.statements) look(st); }
-    else if (ts.isForOfStatement(scope) || ts.isForInStatement(scope) || ts.isForStatement(scope)) { if (scope.initializer) look(scope.initializer); }
-    else if (ts.isCatchClause(scope)) { if (scope.variableDeclaration) look(scope.variableDeclaration); }
-    else if (ts.isBlock(scope) || ts.isSourceFile(scope)) for (const st of scope.statements) look(st);
+    if (ts.isFunctionLike(scope)) { for (const prm of scope.parameters) look(prm, false); if (scope.body && ts.isBlock(scope.body)) for (const st of scope.body.statements) look(st, false); }
+    else if (ts.isForOfStatement(scope) || ts.isForInStatement(scope) || ts.isForStatement(scope)) { if (scope.initializer) look(scope.initializer, false); }
+    else if (ts.isCatchClause(scope)) { if (scope.variableDeclaration) look(scope.variableDeclaration, false); }
+    else if (ts.isBlock(scope) || ts.isSourceFile(scope)) for (const st of scope.statements) look(st, false);
     scopeDecls.set(scope, m);
     return m;
   };
@@ -519,7 +537,7 @@ export function classify(ts, file, src, opts = {}) {
   const walkShadow = (n) => {
     if ((ts.isVariableDeclaration(n) || ts.isParameter(n) || ts.isFunctionDeclaration(n) || ts.isClassDeclaration(n)) && n.name && ts.isIdentifier(n.name)) {
       const b = bindingsNamed(n.name.text).some(([k, x]) => k !== n && ((x.module === "launcher" && (x.member === "inBrowser" || x.member === null)) || x.module === "playwright"));
-      if (b) { const init = ts.isVariableDeclaration(n) && n.initializer ? unwrap(n.initializer) : null; const viaLoader = init && (loaderCall(init) || pwChain(init)); const isBinderItself = ts.isVariableDeclaration(n) && (viaLoader || (init === null && n.initializer === undefined)); if (!isBinderItself && !(ts.isVariableDeclaration(n) && n.initializer && (literalName(init) === null && (init.kind === ts.SyntaxKind.NullKeyword || init.kind === ts.SyntaxKind.UndefinedKeyword)))) refuse(n, "a local declaration shadows an import binding of the launcher or of playwright (a use of the name reaches the local, not the import, so what the module does through the import is unread: rename the local)"); }
+      if (b) { const init = ts.isVariableDeclaration(n) && n.initializer ? unwrap(n.initializer) : null; const viaLoader = init && (loaderCall(init) || pwChain(init)); const isBinderItself = ts.isVariableDeclaration(n) && (viaLoader || (init === null && n.initializer === undefined)); if (!isBinderItself && !(ts.isVariableDeclaration(n) && n.initializer && (literalName(init) === null && (init.kind === ts.SyntaxKind.NullKeyword || init.kind === ts.SyntaxKind.UndefinedKeyword)))) refuse(n, "a local declaration shadows an import binding of the launcher or of playwright (a use inside the local's scope reaches the local, not the import; the shadow is refused so an import it leaves uncalled, or whose launches it hides, is not read as an ordinary non-leg without notice: rename the local)"); }
     }
     ts.forEachChild(n, walkShadow);
   };
@@ -549,6 +567,25 @@ export function classify(ts, file, src, opts = {}) {
     for (const v of vals) { if (ENGINES.has(v)) engines.add(v); else refuse(arg, "an engine argument to the shared launcher that names no engine (" + v + "; the engines are chromium, firefox and webkit)"); }
   };
   const carriesInBrowser = (b) => b !== null && b.module === "launcher" && (b.member === "inBrowser" || b.member === null || b.member === "default");
+  /** The position a launcher binding is handed on in, for the refusal's parenthetical: read from the reference's parent so the
+   *  sentence says what the line holds (a wording the round-2 review ruled on for another refusal: a message names what it
+   *  refuses, not a list of forms the line may lack). `q` is the reference up through parentheses, ! and as; `pp` its parent. */
+  const handedHow = (q, pp) => {
+    if (!pp) return "in a position the walker does not read";
+    if (ts.isPropertyAccessExpression(pp) || ts.isElementAccessExpression(pp)) {
+      const names = memberNames(pp) || [];
+      if (names.includes("default")) return "read for a default member, which is not an export of the launcher";
+      if (names.some((x) => x === "then" || x === "catch" || x === "finally")) return "handed to a promise callback through ." + names.find((x) => x === "then" || x === "catch" || x === "finally") + ", where inBrowser is called from is unread: await the load where it is made and call inBrowser on the result";
+      return "read for inBrowser without a call" + (pp.parent && ts.isPropertyAccessExpression(pp.parent) && pp.parent.name.text === "bind" ? " (.bind makes no call)" : "");
+    }
+    if (ts.isAwaitExpression(pp)) return "awaited into a name the walker does not bind: await the import where it is loaded and call inBrowser on the result";
+    if (ts.isVariableDeclaration(pp) && pp.initializer === q) return ts.isIdentifier(pp.name) ? "aliased by a declaration" : "destructured";
+    if (ts.isBinaryExpression(pp) && pp.right === q) return "aliased by an assignment";
+    if (ts.isCallExpression(pp) || ts.isNewExpression(pp)) return "passed as an argument";
+    if (ts.isArrayLiteralExpression(pp) || ts.isPropertyAssignment(pp) || ts.isShorthandPropertyAssignment(pp)) return "held in an array or an object literal";
+    if (ts.isReturnStatement(pp) || ts.isArrowFunction(pp)) return "returned from a function";
+    return "in a position the walker does not read (" + ts.SyntaxKind[pp.kind] + ")";
+  };
   const walk3 = (n) => {
     if (ts.isCallExpression(n)) {
       {
@@ -580,7 +617,12 @@ export function classify(ts, file, src, opts = {}) {
           if (names.some((x) => x === "skip" || x === "todo")) skipTodo.push({ line: lineOf(n), what: "." + names.join("|") + "(" });
           // launcher namespace or default binding: leg.inBrowser(...); or the loader call's own result: require(launcher).inBrowser(...)
           if (ts.isIdentifier(obj)) { const b = bindingAt(obj); if (b && b.module === "launcher" && (b.member === null || b.member === "default") && names.includes("inBrowser")) { sharedCalls++; calledThrough.add(obj); readEngineArg(n, viaCall); if (inTryWithCatch(n)) swallow.push(lineOf(n)); } }
-          else { const l = loaderCall(obj); if (l && l.kind === "launcher") { followed.add(unwrap(obj)); launcherImported.push(lineOf(n)); if (names.includes("inBrowser")) { sharedCalls++; readEngineArg(n, viaCall); if (inTryWithCatch(n)) swallow.push(lineOf(n)); } } }
+          else {
+            // the loader call's own result as the object: `require(launcher).inBrowser(...)` is a shared call and any other export
+            // read is an import; `.then(cb)` (or .catch, .finally) hands the module to a callback the walker does not follow, and
+            // `.default` is no export of the launcher: refused by name, the load read (followed) by that refusal
+            const l = loaderCall(obj); if (l && l.kind === "launcher") { followed.add(unwrap(obj)); if (names.some((x) => HANDOFF.has(x))) refuse(n, "the launcher loaded where it stands and handed on through a member the walker does not follow (a promise callback through .then, .catch or .finally, or a default member), so where inBrowser is called from is unread: await the load and call inBrowser on the result"); else { launcherImported.push(lineOf(n)); if (names.includes("inBrowser")) { sharedCalls++; readEngineArg(n, viaCall); if (inTryWithCatch(n)) swallow.push(lineOf(n)); } } }
+          }
           if (names.some((x) => LAUNCHES.has(x))) { const chain = pwChain(obj); if (chain && !chain.refused) { noteChain(chain); launches.push({ line: lineOf(n), how: "." + names.join("|") + "(" + (viaCall ? " via .call/.apply" : "") }); } }
           const chain = pwChain(c); if (chain && !chain.refused) noteChain(chain);
         }
@@ -591,9 +633,9 @@ export function classify(ts, file, src, opts = {}) {
       // an engine read that is not a call: const b = pw.firefox (bound above), or await pw.firefox.launch handled at the call
       if (!(n.parent && (ts.isCallExpression(n.parent) && n.parent.expression === n))) { const chain = pwChain(n); if (chain && !chain.refused) noteChain(chain); }
       // a member read off the launcher loaded where it stands, not a call (`require(launcher).EXT`; the call form is above):
-      // FOLLOWED as an import when the member is another export; a read of inBrowser without a call hands it on and stays
-      // unfollowed, so THE INVARIANT refuses it
-      if (!(n.parent && ts.isCallExpression(n.parent) && n.parent.expression === n)) { const obj = unwrap(n.expression); const l = !ts.isIdentifier(obj) && loaderCall(obj); if (l && l.kind === "launcher") { const names = memberNames(n); if (names !== null && !names.includes("inBrowser")) { followed.add(unwrap(obj)); launcherImported.push(lineOf(n)); } } }
+      // FOLLOWED as an import when the member is another export; a read of inBrowser without a call, of a promise member or
+      // of a default member hands it on and stays unfollowed, so THE INVARIANT refuses it
+      if (!(n.parent && ts.isCallExpression(n.parent) && n.parent.expression === n)) { const obj = unwrap(n.expression); const l = !ts.isIdentifier(obj) && loaderCall(obj); if (l && l.kind === "launcher") { const names = memberNames(n); if (names !== null && !names.includes("inBrowser") && !names.some((x) => HANDOFF.has(x))) { followed.add(unwrap(obj)); launcherImported.push(lineOf(n)); } } }
     } else if (ts.isIdentifier(n)) {
       // a reference to a launcher binding (inBrowser, the whole module or its default) that the call arm did not resolve a call
       // through (calledThrough), and that is not a declaration name, a property name or an import clause: a value use, refused
@@ -609,14 +651,15 @@ export function classify(ts, file, src, opts = {}) {
         else if (b.member === "inBrowser") { refuse(n, "the launcher's inBrowser binding used as a value, not called (the walker cannot follow where it is called from)"); refRefused.add(n); }
         else {
           // the whole module or its default: up through parentheses, ! and as, then the object of a member access is read when
-          // the member is not inBrowser (another export) or when the computed-member arm refused it by name (refusedRoots); an
-          // inBrowser member here was not called (else the call arm recorded this node), so the binding is handed on: refused
+          // the member is another export (not inBrowser, not then/catch/finally, not default) or when the computed-member arm
+          // refused it by name (refusedRoots); an inBrowser member here was not called (else the call arm recorded this node),
+          // so the binding is handed on: refused, the message naming the position the line holds (handedHow)
           let q = n; while (q.parent && (ts.isParenthesizedExpression(q.parent) || ts.isNonNullExpression(q.parent) || ts.isAsExpression(q.parent))) q = q.parent;
           const pp = q.parent;
           let read = false, handed = true;
-          if (pp && (ts.isPropertyAccessExpression(pp) || ts.isElementAccessExpression(pp)) && pp.expression === q) { const names = memberNames(pp); if (names === null) { read = refusedRoots.has(n); handed = false; } else { read = !names.includes("inBrowser"); handed = !read; } }
+          if (pp && (ts.isPropertyAccessExpression(pp) || ts.isElementAccessExpression(pp)) && pp.expression === q) { const names = memberNames(pp); if (names === null) { read = refusedRoots.has(n); handed = false; } else { read = !names.includes("inBrowser") && !names.some((x) => HANDOFF.has(x)); handed = !read; } }
           if (read) refRead.add(n);
-          else if (handed) { refuse(n, "the launcher's module binding handed on as a value (aliased, destructured, passed or read for inBrowser without a call), so the walker cannot follow where inBrowser is called from"); refRefused.add(n); }
+          else if (handed) { refuse(n, "the launcher's module binding handed on as a value (" + handedHow(q, pp) + "), so the walker cannot follow where inBrowser is called from"); refRefused.add(n); }
           // a computed member no arm refused: left to THE INVARIANT below
         }
       }
@@ -655,14 +698,15 @@ export function classify(ts, file, src, opts = {}) {
   for (const [n, r] of resolved) {
     if (r.kind === "playwright" && !playwright.has(r.spec)) refuse(n, "THE INVARIANT: the census resolved the playwright package " + r.spec + " here and its record carries no playwright package, a position the walker does not read; the census refuses rather than guesses");
     else if (r.kind === "launcher" && r.how === "import" && !importedLines.has(r.line)) refuse(n, "THE INVARIANT: the census resolved the shared launcher (" + r.spec + ") here and its record carries neither an import nor a type-only import of it; the census refuses rather than guesses");
-    else if (r.kind === "launcher" && r.how === "load" && !followed.has(n)) refuse(n, "THE INVARIANT: the census resolved the shared launcher (" + r.spec + ") here and its record carries nothing of the load, which stands in a position the walker does not read (not a binding's initializer, an assignment's right side, a statement of its own, or the object of a member the walker read: here it is returned, passed, held in a field, a property or an array, or read for inBrowser without a call); the census refuses rather than guesses: bind the load to a name, or call inBrowser on it directly");
+    else if (r.kind === "launcher" && r.how === "load" && !followed.has(n)) refuse(n, "THE INVARIANT: the census resolved the shared launcher (" + r.spec + ") here and its record carries nothing of the load, which stands in a position the walker does not read (not a binding's initializer, an assignment's right side, a statement of its own, or the object of a member the walker read: here it is returned, passed, held in a field, a property or an array, read for inBrowser without a call, or read for a default member, which is not an export of the launcher); the census refuses rather than guesses: bind the load to a name, or call inBrowser on it directly");
   }
   const walkRefs = (n) => { if (ts.isIdentifier(n) && carriesInBrowser(bindingAt(n)) && !refRead.has(n) && !refRefused.has(n)) refuse(n, "THE INVARIANT: the census resolved the name " + n.text + " here to the shared launcher's binding and its record carries nothing of this use, a position the walker does not read; the census refuses rather than guesses"); ts.forEachChild(n, walkRefs); };
   walkRefs(sf);
   const seenL = new Set(); const launchesU = launches.filter((l) => { const k = l.line + "|" + l.how; if (seenL.has(k)) return false; seenL.add(k); return true; }); launches.length = 0; launches.push(...launchesU);
   const reaches = sharedCalls > 0 || playwright.size > 0 || embedded.length > 0;
-  // the module holds inBrowser under a binding (named, whole-module or default) or re-exports it: what a module that imports THIS one reaches
-  let launcherBinds = launcherReexport;
+  // the module holds inBrowser under a binding (named, whole-module or default), re-exports it, or calls it (on a binding or on
+  // a load where it stands): what a module that imports THIS one reaches through it
+  let launcherBinds = launcherReexport || sharedCalls > 0;
   for (const [, b] of bindings) if (b.module === "launcher" && (b.member === null || b.member === "default" || b.member === "inBrowser")) launcherBinds = true;
   const seenI = new Set(); const localU = localImports.filter((l) => { const k = l.line + "|" + l.spec; if (seenI.has(k)) return false; seenI.add(k); return true; });
   return { rel, refusals, launcherImported: launcherImported.length > 0, typeOnly, launcherBinds, sharedCalls, embedded, playwright: [...playwright].sort(), engines: [...engines].sort(), launches, skipTodo, swallow, reaches, localImports: localU };
@@ -692,7 +736,7 @@ const isPackagePath = (abs) => abs.split(path.sep).includes("node_modules");
 
 /** The refusals a test module owes to the modules of the tree it loads, read transitively (a cache of own records per module,
  *  a walk over the import graph per test import, so a cycle is visited once): a test whose import reaches a module that binds
- *  the launcher's inBrowser (and the test itself never calls inBrowser), names a playwright package, holds a driver string, or
+ *  or calls the launcher's inBrowser (and the test itself never calls inBrowser), names a playwright package, holds a driver string, or
  *  a form the walker refuses, is refused at its import line with the chain. The walker follows nothing THROUGH such a module
  *  (it does not read what the test calls on it), so the remedy is to import the launcher directly, or to teach the census. */
 export function localRefusals(ts, r, file, root, opts, ownCache) {
@@ -720,7 +764,7 @@ export function localRefusals(ts, r, file, root, opts, ownCache) {
       if (rec.refusals.length) { at(li, link + ", which the census cannot classify (" + rec.refusals[0] + ")"); refused = true; break; }
       if (rec.playwright.length) { at(li, link + ", which names a playwright package (" + rec.playwright.join(", ") + "), so this module reaches a browser through it"); refused = true; break; }
       if (rec.embedded.length) { at(li, link + ", which holds a driver string that loads playwright (line " + rec.embedded[0].line + ")"); refused = true; break; }
-      if (rec.launcherBinds && r.sharedCalls === 0) { at(li, link + ", which binds the shared launcher's inBrowser, so this module may launch through it without the census seeing a call"); refused = true; break; }
+      if (rec.launcherBinds && r.sharedCalls === 0) { at(li, link + ", which binds or calls the shared launcher's inBrowser, so this module may launch through it without the census seeing a call"); refused = true; break; }
       for (const n of next) {
         if (n.to === null || n.to.ambiguous) { at(li, link + ", which " + unresolved(n.li, n.to, rel) + " (" + rel + ":" + n.li.line + ")"); refused = true; break; }
         if (!MODULE_EXT.test(n.to.abs) || isPackagePath(n.to.abs) || seen.has(n.to.abs)) continue;
