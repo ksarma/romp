@@ -34,8 +34,10 @@ from the committed counts (scripts/network-inventory-expected.json); it walks it
 whose far end its argv does not derive as external-program (never set aside), places a browser fetch by its URL, names
 the four classes it cannot see in its --table output, and prints the ledger's table from the sites. The classes below
 run it by subprocess with the repository's python: over the tree (clean, against the committed counts), over a copy of
-the scanned scope with one mutation at a time (each red the round reproduced or named, now a pin), over two tiny roots
-(no sites; a missing root), and --table against the block the ledger entry carries between its two marker lines. The
+the scanned scope with one mutation at a time (each red the round reproduced or named, now a pin), or with a class's
+row-less mutations planted together and read from one run (_SharedRun, whose docstring says why that loses nothing),
+over two tiny roots (no sites; a missing root), and --table against the block the ledger entry carries between its two
+marker lines. The
 script loads no romp code and neither does this module, so no state root is minted here either; the copy lives under
 the run's temp root (tests/__init__.py's hook removes it, and tearDownModule does too).
 
@@ -345,47 +347,67 @@ def tearDownModule():
     del _COPY[:]
 
 
+def _plant(rel, text, cleanup):
+    """Write (or overwrite) rel under the copy and hand `cleanup` the undo (a new file is removed again, its made
+    directories with it; an existing one is restored): a case passes its addCleanup, a shared run its undo list."""
+    path = os.path.join(scope_copy(), rel)
+    existed = os.path.exists(path)
+    old = None
+    if existed:
+        with open(path, encoding="utf-8") as f:
+            old = f.read()
+    made = []
+    d = os.path.dirname(path)
+    while not os.path.isdir(d):
+        made.append(d)
+        d = os.path.dirname(d)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+    def restore():
+        if existed:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(old)
+        else:
+            os.remove(path)
+            for m in made:
+                os.rmdir(m)
+    cleanup(restore)
+    return path
+
+
+def _append(rel, text, cleanup):
+    with open(os.path.join(scope_copy(), rel), encoding="utf-8") as f:
+        old = f.read()
+    return _plant(rel, old + ("" if old.endswith("\n") else "\n") + text, cleanup)
+
+
+def _replace(rel, old, new, cleanup):
+    with open(os.path.join(scope_copy(), rel), encoding="utf-8") as f:
+        text = f.read()
+    if text.count(old) != 1:
+        raise AssertionError("the mutation's anchor %r occurs %d times in %s, not once" % (old[:60], text.count(old), rel))
+    return _plant(rel, text.replace(old, new), cleanup)
+
+
+def _lines(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read().splitlines()
+
+
 class _Scope(unittest.TestCase):
     """Mutations over the scope copy, each undone by cleanup, and the assertions the copy's runs share."""
 
     def plant(self, rel, text):
         """Write (or overwrite) rel under the copy; a new file is removed again, an existing one restored."""
-        path = os.path.join(scope_copy(), rel)
-        existed = os.path.exists(path)
-        old = None
-        if existed:
-            with open(path, encoding="utf-8") as f:
-                old = f.read()
-        made = []
-        d = os.path.dirname(path)
-        while not os.path.isdir(d):
-            made.append(d)
-            d = os.path.dirname(d)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(text)
-
-        def restore():
-            if existed:
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(old)
-            else:
-                os.remove(path)
-                for m in made:
-                    os.rmdir(m)
-        self.addCleanup(restore)
-        return path
+        return _plant(rel, text, self.addCleanup)
 
     def append(self, rel, text):
-        with open(os.path.join(scope_copy(), rel), encoding="utf-8") as f:
-            old = f.read()
-        return self.plant(rel, old + ("" if old.endswith("\n") else "\n") + text)
+        return _append(rel, text, self.addCleanup)
 
     def replace(self, rel, old, new):
-        with open(os.path.join(scope_copy(), rel), encoding="utf-8") as f:
-            text = f.read()
-        self.assertEqual(text.count(old), 1, "the mutation's anchor %r occurs once in %s" % (old[:60], rel))
-        return self.plant(rel, text.replace(old, new))
+        return _replace(rel, old, new, self.addCleanup)
 
     def move(self, rel, to):
         root = scope_copy()
@@ -402,8 +424,7 @@ class _Scope(unittest.TestCase):
         self.addCleanup(restore)
 
     def lines(self, path):
-        with open(path, encoding="utf-8") as f:
-            return f.read().splitlines()
+        return _lines(path)
 
     def assertRefused(self, rc, out, *needles):
         self.assertNotEqual(rc, 0, "the run must exit non-zero:\n" + gates(out))
@@ -422,6 +443,57 @@ class _Scope(unittest.TestCase):
             head = pattern.split(":")[0].replace("\\", "")
             self.fail("no listed line matches %r%s\n%s\n%s" % (pattern, (": " + msg) if msg else "", gates(out),
                       "\n".join(ln for ln in out.splitlines() if ln.startswith(head))))
+
+
+_SHARED = {}   # run name -> (exit code, stdout) of the one run the classes naming it read
+
+
+class _SharedRun(_Scope):
+    """Classes whose row-less mutation cases read ONE run over the scope copy. Every class naming the same RUN plants its
+    mutations (`mutate`, recording line numbers in cls.at) on the copy in definition order, the script runs once, and every
+    mutation is undone before any case runs, so a case of the class with a mutation of its own still starts from the clean
+    copy; the cases read the run as self.rc and self.out. One child process per run instead of one per case: the serial CI
+    cell's growth after the third round (2026-09-22) was these runs, at about 3.5 s each on the box, and the cell reached
+    its 25-minute wall.
+
+    A run shared this way is exactly as strict as one run per case because of what the shared cases assert: a property
+    keyed on a file and a line (a site named UNCLASSIFIED at file:line, the tag on that line's listing, an IMPORT line at
+    file:line, a STALE ROW or COUNTS line naming the case's own key, a line NOT listed), never a figure of the whole run.
+    The mutations touch different files, or blocks appended in turn to one file with each block's lines recorded as it
+    lands, so no block moves another's lines; a second block adds sites at its own lines only, which can fail another
+    case's negative (a line it says is no site becoming one) and cannot satisfy its positive. Names two blocks plant in one
+    Python file differ, since the scan resolves a module constant by its last assignment. A case that asserts a figure of
+    the whole run (a class count, an empty UNCLASSIFIED set, a clean summary equal to the tree's) keeps a run of its own."""
+
+    RUN = None      # the run the class reads; classes naming the same run mutate one copy and read one output
+    MEMBERS = {}    # run name -> the classes naming it, in definition order (the order their mutations land)
+    at = None       # the line numbers `mutate` recorded, per class
+
+    def __init_subclass__(cls, **kw):
+        super().__init_subclass__(**kw)
+        if cls.RUN:
+            _SharedRun.MEMBERS.setdefault(cls.RUN, []).append(cls)
+
+    @classmethod
+    def mutate(cls, cleanup):
+        """Plant the class's mutations with _plant, _append and _replace, passing `cleanup`, and record lines in cls.at."""
+        raise NotImplementedError
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        if cls.RUN not in _SHARED:
+            undo = []
+            try:
+                for member in _SharedRun.MEMBERS[cls.RUN]:
+                    member.at = {}
+                    member.mutate(undo.append)
+                rc, out, _ = inventory(scope_copy())
+                _SHARED[cls.RUN] = (rc, out)
+            finally:
+                for f in reversed(undo):
+                    f()
+        cls.rc, cls.out = _SHARED[cls.RUN]
 
 
 def _expected():
@@ -517,23 +589,31 @@ class TheCensusRunsFromTheSuite(_Scope):
                 self.assertNotIn("declared root", gates(out))
 
 
-class TheWalkIsRecursiveOverTheDeclaredScope(_Scope):
-    """The declared scope and the walk are held equal by execution: a file below a root and a hook of any kind are opened."""
+class TheWalkIsRecursiveOverTheDeclaredScope(_SharedRun):
+    """The declared scope and the walk are held equal by execution: a file below a root and a hook of any kind are opened.
+    One run (_SharedRun) carries the five plants: a Python file one directory down, a site appended to the node hook, a new
+    shell hook, a Python fixture below the webview root and a program reference in kernel/credentials.py; each case's
+    property is a file's own line in UNCLASSIFIED or in a gate line, or a file's absence from them."""
 
-    def test_a_site_one_directory_down_is_found(self):
-        self.plant("kernel/sub/extra.py", "import urllib.request\n\ndef _warm():\n    return urllib.request.urlopen(%r, timeout=4)\n" % FEED_LITERAL)
-        rc, out, _ = inventory(scope_copy())
-        self.assertRefused(rc, out, "UNCLASSIFIED")
-        self.assertIn("kernel/sub/extra.py:4", unclassified(out))
+    RUN = "walk"
 
-    def test_every_hook_is_scanned_whatever_its_extension_and_a_fixture_of_another_kind_is_not(self):
+    @classmethod
+    def mutate(cls, cleanup):
+        _plant("kernel/sub/extra.py", "import urllib.request\n\ndef _warm():\n    return urllib.request.urlopen(%r, timeout=4)\n" % FEED_LITERAL, cleanup)
         # a node hook (the one in the tree, hooks/romp-track-bash-guard.mjs, is read: a site appended to it is named), a new
         # shell hook with the ordinary ssh spelling, and a Python fixture below the webview root, which is skipped by kind
-        self.append("hooks/romp-track-bash-guard.mjs", "fetch(%r);\n" % FEED_LITERAL)
-        self.plant("hooks/probe.sh", "#!/usr/bin/env bash\nssh TESTHOST uptime\n")
-        self.plant("ui/webview/anchor-map-fixtures/probe.py", "import urllib.request\nurllib.request.urlopen(%r)\n" % FEED_LITERAL)
-        rc, out, _ = inventory(scope_copy())
-        self.assertRefused(rc, out, "UNCLASSIFIED")
+        _append("hooks/romp-track-bash-guard.mjs", "fetch(%r);\n" % FEED_LITERAL, cleanup)
+        _plant("hooks/probe.sh", "#!/usr/bin/env bash\nssh TESTHOST uptime\n", cleanup)
+        _plant("ui/webview/anchor-map-fixtures/probe.py", "import urllib.request\nurllib.request.urlopen(%r)\n" % FEED_LITERAL, cleanup)
+        _append("kernel/credentials.py", '\n_PROBE_HOST = "tools/probe-host.mjs"\n', cleanup)
+
+    def test_a_site_one_directory_down_is_found(self):
+        self.assertRefused(self.rc, self.out, "UNCLASSIFIED")
+        self.assertIn("kernel/sub/extra.py:4", unclassified(self.out))
+
+    def test_every_hook_is_scanned_whatever_its_extension_and_a_fixture_of_another_kind_is_not(self):
+        out = self.out
+        self.assertRefused(self.rc, out, "UNCLASSIFIED")
         named = unclassified(out)
         self.assertIn("hooks/probe.sh:2", named, "ssh <host> <command> in a shell hook is a site")
         self.assertTrue(any(t.startswith("hooks/romp-track-bash-guard.mjs:") for t in named), "the node hook is scanned: %r" % named)
@@ -541,9 +621,7 @@ class TheWalkIsRecursiveOverTheDeclaredScope(_Scope):
         self.assertFalse([ln for ln in out.splitlines() if ln.startswith("PARSE")], "the fixture directory's Python is not parsed:\n" + gates(out))
 
     def test_a_program_the_kernel_runs_from_an_unscanned_directory_is_a_gate(self):
-        self.append("kernel/credentials.py", '\n_PROBE_HOST = "tools/probe-host.mjs"\n')
-        rc, out, _ = inventory(scope_copy())
-        self.assertRefused(rc, out, "PROGRAM kernel/credentials.py:", "names 'tools/probe-host.mjs'")
+        self.assertRefused(self.rc, self.out, "PROGRAM kernel/credentials.py:", "names 'tools/probe-host.mjs'")
 
 
 MUTANT_PROGRAMS = '''
@@ -714,25 +792,51 @@ def _listed(out, prefix):
     return [ln for ln in out.splitlines() if ln.startswith(prefix) and SITE_LINE.match(ln)]
 
 
-class TheShellSideHasAnInterpreterArm(_Scope):
+SERVICE_TEXT = "_probe_fetch() {\n    python3 -c 'import urllib.request, sys; urllib.request.urlopen(sys.argv[1]).read()' %r\n}\n" % FEED_LITERAL
+WAKE_TEXT = ("python3 - \"$1\" <<'PY'\nimport sys\nprint(sys.argv[1])\nPY\n"
+             "node -e 'fetch(%r)'\n"
+             "rsync -a \"$d\" TESTHOST:/srv/x\n"
+             "scp \"$f\" TESTHOST:/srv/x\n"
+             "sftp TESTHOST\n"
+             "nc TESTHOST 443\n"
+             "npx --yes some-package\n"
+             "[ -e \"$f\" ] && grep -c romp \"$f\"\n"
+             "\"$PY\" -c pass\n" % FEED_LITERAL)
+WAKE_STARTS = (("heredoc", "python3 - "), ("node", "node -e"), ("rsync", "rsync "), ("scp", "scp "), ("sftp", "sftp "), ("nc", "nc "),
+               ("npx", "npx "), ("flags", "[ -e"), ("variable", '"$PY" -c'))
+NPX_LINE, NPX_GONE = "npx --yes @vscode/vsce package", "# the package step removed in this copy: vsce package"
+
+
+class TheShellSideHasAnInterpreterArm(_SharedRun):
     """An interpreter head (python, python3, node, perl, sh, bash) followed by -c or -e, or by a bare `-` (the heredoc
     shape), is a site keyed file plus tool in the external-program class, and needs a row like every member; npx, scp,
     rsync, sftp and nc are tools. Before the round's fix a urllib call inside `python3 -c` in a shell script was no site
-    and exit 0 (correctness-1, extra6-1 of the third round)."""
+    and exit 0 (correctness-1, extra6-1 of the third round). The shared run carries three files: the row-less python3 -c
+    text in bin/romp-service, the nine lines in hooks/romp-wake.sh and vscode-extension/install.sh with its npx line
+    removed; the rowed text's case reads the whole run's class count and runs alone."""
+
+    RUN = "shell"
+
+    @classmethod
+    def mutate(cls, cleanup):
+        # bin/romp-service has rows for its curl and its heredoc; a python3 -c text is a new tool and so a new key
+        cls.at["service"] = len(_lines(_append("bin/romp-service", SERVICE_TEXT, cleanup))) - 1
+        # hooks/romp-wake.sh has a curl row and nothing else: every new tool below is a new key with no row
+        lines = _lines(_append("hooks/romp-wake.sh", WAKE_TEXT, cleanup))
+        cls.at.update({name: next(i + 1 for i, ln in enumerate(lines) if ln.startswith(start)) for name, start in WAKE_STARTS})
+        _replace("vscode-extension/install.sh", NPX_LINE, NPX_GONE, cleanup)
 
     def test_an_inline_interpreter_text_in_a_rowed_shell_file_needs_its_own_row_and_carries_the_class(self):
-        # bin/romp-service has rows for its curl and its heredoc; a python3 -c text is a new tool and so a new key
-        n = len(self.lines(self.append("bin/romp-service", "_probe_fetch() {\n    python3 -c 'import urllib.request, sys; urllib.request.urlopen(sys.argv[1]).read()' %r\n}\n" % FEED_LITERAL))) - 1
-        rc, out, _ = inventory(scope_copy())
-        self.assertRefused(rc, out, "UNCLASSIFIED")
+        n, out = self.at["service"], self.out
+        self.assertRefused(self.rc, out, "UNCLASSIFIED")
         self.assertIn("bin/romp-service:%d" % n, unclassified(out), "the python3 -c text is a site with no row")
         self.assertListed(out, r"bin/romp-service:%d  python3 -c  .*  in -  -> UNCLASSIFIED \[external-program\]" % n,
                           "the site is keyed on the interpreter and its flag and classed, so the class count moves with it")
 
     def test_the_same_text_with_a_row_is_listed_on_its_road_with_the_class(self):
-        n = len(self.lines(self.append("bin/romp-service", "_probe_fetch() {\n    python3 -c 'import urllib.request, sys; urllib.request.urlopen(sys.argv[1]).read()' %r\n}\n" % FEED_LITERAL))) - 1
+        n = len(self.lines(self.append("bin/romp-service", SERVICE_TEXT))) - 1
         self.replace(INVENTORY, "LOCAL_ROADS = {", '_t("local-program", "bin/romp-service:python3 -c")\nLOCAL_ROADS = {')   # a row planted before the road sets
-        rc, out, _ = inventory(scope_copy())
+        rc, out, _ = inventory(scope_copy())   # a run of its own: the empty UNCLASSIFIED set and the class count are the whole run's
         self.assertFalse(unclassified(out), "the row places the site: %r" % unclassified(out))
         self.assertListed(out, r"bin/romp-service:%d  python3 -c  .*  in -  -> local-program \[external-program\]" % n,
                           "a rowed interpreter site keeps its class whatever road the row names")
@@ -742,22 +846,8 @@ class TheShellSideHasAnInterpreterArm(_Scope):
                            % (expected["classes"]["external-program"], expected["classes"]["external-program"] + 1))
 
     def test_the_heredoc_shape_node_e_and_the_five_tools_are_sites_and_a_variable_head_and_a_bare_flag_are_not(self):
-        # hooks/romp-wake.sh has a curl row and nothing else: every new tool below is a new key with no row
-        lines = self.lines(self.append("hooks/romp-wake.sh",
-            "python3 - \"$1\" <<'PY'\nimport sys\nprint(sys.argv[1])\nPY\n"
-            "node -e 'fetch(%r)'\n"
-            "rsync -a \"$d\" TESTHOST:/srv/x\n"
-            "scp \"$f\" TESTHOST:/srv/x\n"
-            "sftp TESTHOST\n"
-            "nc TESTHOST 443\n"
-            "npx --yes some-package\n"
-            "[ -e \"$f\" ] && grep -c romp \"$f\"\n"
-            "\"$PY\" -c pass\n" % FEED_LITERAL))
-        at = {name: next(i + 1 for i, ln in enumerate(lines) if ln.startswith(start))
-              for name, start in (("heredoc", "python3 - "), ("node", "node -e"), ("rsync", "rsync "), ("scp", "scp "), ("sftp", "sftp "),
-                                  ("nc", "nc "), ("npx", "npx "), ("flags", "[ -e"), ("variable", '"$PY" -c'))}
-        rc, out, _ = inventory(scope_copy())
-        self.assertRefused(rc, out, "UNCLASSIFIED")
+        at, out = self.at, self.out
+        self.assertRefused(self.rc, out, "UNCLASSIFIED")
         named = unclassified(out)
         for name in ("heredoc", "node", "rsync", "scp", "sftp", "nc", "npx"):
             self.assertIn("hooks/romp-wake.sh:%d" % at[name], named, "%s is a site with no row" % name)
@@ -785,39 +875,60 @@ class TheShellSideHasAnInterpreterArm(_Scope):
         self.assertGreater(expected["per_key"]["bin/romp:python3 -c"], 50, "bin/romp's inline texts are the bulk of the class")
 
     def test_the_npx_line_removed_is_a_stale_row(self):
-        self.replace("vscode-extension/install.sh", "npx --yes @vscode/vsce package", "# the package step removed in this copy: vsce package")
-        rc, out, _ = inventory(scope_copy())
-        self.assertRefused(rc, out, "STALE ROW vscode-extension/install.sh:npx names no site")
+        self.assertRefused(self.rc, self.out, "STALE ROW vscode-extension/install.sh:npx names no site")
 
 
-class TheBrowserSideHasTheChildProcessFamilyAndTheConnectionPrimitives(_Scope):
+EXEC_TEXT = ('\nfunction exec(s: string): string {\n  return s;\n}\nexport function probePrograms(): void {\n  child_process.exec("ls -la", () => {});\n'
+             '  require("child_process").execFile("ls", ["-la"]);\n  void exec("not a program");\n  void /x/.exec("not a program either");\n}\n')
+SPAWN_TEXT = 'import { spawn } from "child_process";\n\nexport function probe(): void {\n  spawn(process.execPath, ["-e", "1"]);\n}\n'
+CONNECTIONS_TEXT = ('\nexport function probeConnections(u: string): void {\n  net.connect(443, "TESTHOST");\n  net.createConnection({ host: "TESTHOST", port: 443 });\n'
+                    '  tls.connect(443, "TESTHOST");\n  const x = new XMLHttpRequest();\n  void x;\n  navigator.sendBeacon(u);\n}\n')
+IMPORTS_TEXT = ('\nimport * as fs from "node:fs";\nimport { probe } from "./probe-spawn";\nimport {\n  createSocket,\n} from "dgram";\nconst net = require("net");\n'
+                'void fs; void probe; void createSocket; void net;\n')
+DYNAMIC_TEXT = '\nexport async function probeImports(u: string): Promise<void> {\n  await import(u);\n  await import("./probe-spawn");\n  await import("dgram");\n}\n'
+
+
+class TheBrowserSideHasTheChildProcessFamilyAndTheConnectionPrimitives(_SharedRun):
     """A child_process call is a site through its binding (`child_process.<fn>(`, `require('child_process').<fn>(`, a
     namespace or a bare name the file binds from the module), never as a bare `exec(`, which RegExp spells the same way;
     net.connect, net.createConnection, tls.connect, XMLHttpRequest and sendBeacon are sites; a package outside
-    KNOWN_JS_IMPORTS fails the run (correctness-1, extra6-1 of the third round)."""
+    KNOWN_JS_IMPORTS fails the run (correctness-1, extra6-1 of the third round). The shared run carries four blocks
+    appended in turn to ui/webview/strip.ts (the exec shapes, the connections, the imports, the dynamic imports), each
+    case's lines read as its block lands, and the new file probe-spawn.ts; none of the blocks binds a child_process name
+    into strip.ts, so the first block's bare exec( stays unbound whatever lands after it. The rowed program site's case
+    reads the whole run's class count and runs alone."""
+
+    RUN = "browser"
+
+    @classmethod
+    def mutate(cls, cleanup):
+        n = len(_lines(_append("ui/webview/strip.ts", EXEC_TEXT, cleanup)))
+        cls.at.update(qualified=n - 4, inline=n - 3, bare=n - 2, regexp=n - 1)
+        _plant("ui/webview/probe-spawn.ts", SPAWN_TEXT, cleanup)
+        n = len(_lines(_append("ui/webview/strip.ts", CONNECTIONS_TEXT, cleanup)))
+        cls.at.update({"net.connect": n - 6, "net.createConnection": n - 5, "tls.connect": n - 4, "XMLHttpRequest": n - 3, "sendBeacon": n - 1})
+        n = len(_lines(_append("ui/webview/strip.ts", IMPORTS_TEXT, cleanup)))
+        cls.at.update(import_known=n - 6, import_relative=n - 5, import_dgram=n - 2, import_net=n - 1)
+        n = len(_lines(_append("ui/webview/strip.ts", DYNAMIC_TEXT, cleanup)))
+        cls.at.update(dynamic_computed=n - 3, dynamic_relative=n - 2, dynamic_package=n - 1)
 
     def test_a_qualified_exec_is_a_site_in_the_class_and_a_bare_exec_with_no_binding_is_not(self):
-        n = len(self.lines(self.append("ui/webview/strip.ts",
-            '\nfunction exec(s: string): string {\n  return s;\n}\nexport function probePrograms(): void {\n  child_process.exec("ls -la", () => {});\n'
-            '  require("child_process").execFile("ls", ["-la"]);\n  void exec("not a program");\n  void /x/.exec("not a program either");\n}\n')))
-        qualified, inline, bare, regexp = n - 4, n - 3, n - 2, n - 1
-        rc, out, _ = inventory(scope_copy())
-        self.assertRefused(rc, out, "UNCLASSIFIED")
+        at, out = self.at, self.out
+        self.assertRefused(self.rc, out, "UNCLASSIFIED")
         named = unclassified(out)
-        self.assertIn("ui/webview/strip.ts:%d" % qualified, named)
-        self.assertIn("ui/webview/strip.ts:%d" % inline, named)
-        self.assertListed(out, r"ui/webview/strip\.ts:%d  exec  ls -la SHELL  in -  -> UNCLASSIFIED \[external-program\]" % qualified,
+        self.assertIn("ui/webview/strip.ts:%d" % at["qualified"], named)
+        self.assertIn("ui/webview/strip.ts:%d" % at["inline"], named)
+        self.assertListed(out, r"ui/webview/strip\.ts:%d  exec  ls -la SHELL  in -  -> UNCLASSIFIED \[external-program\]" % at["qualified"],
                           "exec runs its text through a shell: the class whatever the head")
-        self.assertListed(out, r"ui/webview/strip\.ts:%d  execFile  ls  in -  -> UNCLASSIFIED$" % inline, "a literal head that is no interpreter: a site, no class")
-        for line in (bare, regexp):
+        self.assertListed(out, r"ui/webview/strip\.ts:%d  execFile  ls  in -  -> UNCLASSIFIED$" % at["inline"], "a literal head that is no interpreter: a site, no class")
+        for line in (at["bare"], at["regexp"]):
             self.assertNotIn("ui/webview/strip.ts:%d" % line, named)
             self.assertFalse(_listed(out, "ui/webview/strip.ts:%d  " % line), "a bare exec( with no child_process binding is not a site (RegExp exec)")
 
     def test_a_bare_name_the_file_binds_from_child_process_is_a_site_classed_by_its_argv(self):
         """The UNCLASSIFIED path for a program site with no row: a new editor-side file spawning the running node."""
-        self.plant("ui/webview/probe-spawn.ts", 'import { spawn } from "child_process";\n\nexport function probe(): void {\n  spawn(process.execPath, ["-e", "1"]);\n}\n')
-        rc, out, _ = inventory(scope_copy())
-        self.assertRefused(rc, out, "UNCLASSIFIED", "COUNTS per_key ui/webview/probe-spawn.ts:spawn: the committed count is None, this run found 1")
+        out = self.out
+        self.assertRefused(self.rc, out, "UNCLASSIFIED", "COUNTS per_key ui/webview/probe-spawn.ts:spawn: the committed count is None, this run found 1")
         self.assertIn("ui/webview/probe-spawn.ts:4", unclassified(out))
         self.assertListed(out, r"ui/webview/probe-spawn\.ts:4  spawn  RUNTIME-SUPPLIED\(process\.execPath\)  in -  -> UNCLASSIFIED \[external-program\]",
                           "an argv the code does not spell out: the class, with the head the by-program breakdown groups on")
@@ -825,7 +936,7 @@ class TheBrowserSideHasTheChildProcessFamilyAndTheConnectionPrimitives(_Scope):
     def test_a_non_literal_head_inside_a_rowed_program_site_moves_the_class_count_naming_the_class(self):
         """The class-count path on an existing rowed key: the timeline view's `open` becomes a variable."""
         self.replace("ui/romp-timeline-view.js", "require('child_process').execFile('open', [url]);", "require('child_process').execFile(opener, [url]);")
-        rc, out, _ = inventory(scope_copy())
+        rc, out, _ = inventory(scope_copy())   # a run of its own: the class count and the empty UNCLASSIFIED set are the whole run's
         expected = _expected()
         self.assertRefused(rc, out, "COUNTS classes external-program: the committed count is %d, this run found %d"
                            % (expected["classes"]["external-program"], expected["classes"]["external-program"] + 1),
@@ -846,70 +957,86 @@ class TheBrowserSideHasTheChildProcessFamilyAndTheConnectionPrimitives(_Scope):
         self.assertListed(out, r"ui/romp-timeline-view\.js:\d+  execFile  open  in -  -> local-program$", "a literal local tool: rowed, no class")
 
     def test_the_connection_primitives_are_sites_with_no_class_tag(self):
-        n = len(self.lines(self.append("ui/webview/strip.ts",
-            '\nexport function probeConnections(u: string): void {\n  net.connect(443, "TESTHOST");\n  net.createConnection({ host: "TESTHOST", port: 443 });\n'
-            '  tls.connect(443, "TESTHOST");\n  const x = new XMLHttpRequest();\n  void x;\n  navigator.sendBeacon(u);\n}\n')))
-        at = {"net.connect": n - 6, "net.createConnection": n - 5, "tls.connect": n - 4, "XMLHttpRequest": n - 3, "sendBeacon": n - 1}
-        rc, out, _ = inventory(scope_copy())
-        self.assertRefused(rc, out, "UNCLASSIFIED")
+        out = self.out
+        self.assertRefused(self.rc, out, "UNCLASSIFIED")
         named = unclassified(out)
-        for tool, line in at.items():
+        for tool in ("net.connect", "net.createConnection", "tls.connect", "XMLHttpRequest", "sendBeacon"):
+            line = self.at[tool]
             self.assertIn("ui/webview/strip.ts:%d" % line, named, tool)
             self.assertListed(out, r"ui/webview/strip\.ts:%d  %s  .*  in -  -> UNCLASSIFIED$" % (line, re.escape(tool)), "a connection, not a program: no class tag")
 
     def test_a_package_the_census_does_not_know_is_the_loud_line_and_a_known_or_relative_import_is_not(self):
-        n = len(self.lines(self.append("ui/webview/strip.ts",
-            '\nimport * as fs from "node:fs";\nimport { probe } from "./probe-spawn";\nimport {\n  createSocket,\n} from "dgram";\nconst net = require("net");\n'
-            'void fs; void probe; void createSocket; void net;\n')))
-        known, relative, dgram, net = n - 6, n - 5, n - 2, n - 1
-        rc, out, _ = inventory(scope_copy())
-        self.assertRefused(rc, out, "IMPORT ui/webview/strip.ts:%d imports dgram, a package the census does not know" % dgram,
-                           "IMPORT ui/webview/strip.ts:%d imports net, a package the census does not know" % net)
-        for line in (known, relative):
+        at, out = self.at, self.out
+        self.assertRefused(self.rc, out, "IMPORT ui/webview/strip.ts:%d imports dgram, a package the census does not know" % at["import_dgram"],
+                           "IMPORT ui/webview/strip.ts:%d imports net, a package the census does not know" % at["import_net"])
+        for line in (at["import_known"], at["import_relative"]):
             self.assertNotIn("IMPORT ui/webview/strip.ts:%d " % line, out, "a known package and the project's own module pass the gate")
 
     def test_a_dynamic_import_of_a_computed_module_url_is_the_computed_class_and_a_literal_one_is_an_import(self):
-        n = len(self.lines(self.append("ui/webview/strip.ts", '\nexport async function probeImports(u: string): Promise<void> {\n  await import(u);\n  await import("./probe-spawn");\n  await import("dgram");\n}\n')))
-        computed, relative, package = n - 3, n - 2, n - 1
-        rc, out, _ = inventory(scope_copy())
-        self.assertListed(out, r"ui/webview/strip\.ts:%d  import\(\)  import\(u\)  in -  -> \(browser-computed-url\)" % computed)
-        self.assertFalse(_listed(out, "ui/webview/strip.ts:%d  " % relative) + _listed(out, "ui/webview/strip.ts:%d  " % package), "a literal specifier is an import, not a site")
-        self.assertRefused(rc, out, "IMPORT ui/webview/strip.ts:%d imports dgram" % package)
+        at, out = self.at, self.out
+        self.assertListed(out, r"ui/webview/strip\.ts:%d  import\(\)  import\(u\)  in -  -> \(browser-computed-url\)" % at["dynamic_computed"])
+        self.assertFalse(_listed(out, "ui/webview/strip.ts:%d  " % at["dynamic_relative"]) + _listed(out, "ui/webview/strip.ts:%d  " % at["dynamic_package"]),
+                         "a literal specifier is an import, not a site")
+        self.assertRefused(self.rc, out, "IMPORT ui/webview/strip.ts:%d imports dgram" % at["dynamic_package"])
 
 
-class ThePythonImportGateReachesImportModule(_Scope):
+UNKNOWN_IMPORTS_TEXT = ('\nimport importlib\n_PROBE_MOD = "httpx"\n\ndef _probe_import():\n    importlib.import_module("httpx")\n    importlib.import_module(_PROBE_MOD)\n'
+                        '    return __import__("httpx")\n')
+KNOWN_IMPORTS_TEXT = ('\nimport importlib\n_PROBE_KNOWN = "json"\n_PROBE_KNOWNS = (("json", "loads"), ("re", "compile"))\n\ndef _probe_known_import(name):\n'
+                      '    importlib.import_module("json")\n    importlib.import_module(_PROBE_KNOWN)\n    for mod, attr in _PROBE_KNOWNS:\n        importlib.import_module(mod)\n'
+                      '    found = {a: importlib.import_module(m) for m, a in _PROBE_KNOWNS}\n    return found, importlib.import_module(name)\n')
+
+
+class ThePythonImportGateReachesImportModule(_SharedRun):
     """importlib.import_module and __import__ name a module the way an import statement does: a string literal, a module
     constant, or a loop or comprehension variable over a module constant resolves and goes through KNOWN_IMPORTS; an
-    argument the scan cannot resolve is refused as a module named at run time (extra6-2 of the third round)."""
+    argument the scan cannot resolve is refused as a module named at run time (extra6-2 of the third round). The
+    credentials run is shared with the net-list and git-boundary classes below: four blocks appended in turn to
+    kernel/credentials.py, this class's two first, under names no other block uses (the scan resolves a module constant by
+    its last assignment, so the known-module block's constant is not the unknown-module block's)."""
+
+    RUN = "credentials"
+
+    @classmethod
+    def mutate(cls, cleanup):
+        n = len(_lines(_append("kernel/credentials.py", UNKNOWN_IMPORTS_TEXT, cleanup)))
+        cls.at.update(literal=n - 2, constant=n - 1, dunder=n)
+        cls.at["run_time"] = len(_lines(_append("kernel/credentials.py", KNOWN_IMPORTS_TEXT, cleanup)))
 
     def test_a_literal_or_a_constant_the_census_does_not_know_is_the_loud_line(self):
-        n = len(self.lines(self.append("kernel/credentials.py", '\nimport importlib\n_PROBE_MOD = "httpx"\n\ndef _probe_import():\n    importlib.import_module("httpx")\n    importlib.import_module(_PROBE_MOD)\n    return __import__("httpx")\n')))
-        rc, out, _ = inventory(scope_copy())
-        self.assertRefused(rc, out, "IMPORT kernel/credentials.py:%d imports httpx" % (n - 2), "IMPORT kernel/credentials.py:%d imports httpx" % (n - 1),
-                           "IMPORT kernel/credentials.py:%d imports httpx" % n)
+        self.assertRefused(self.rc, self.out, *("IMPORT kernel/credentials.py:%d imports httpx" % self.at[k] for k in ("literal", "constant", "dunder")))
 
     def test_a_known_module_by_literal_constant_loop_or_comprehension_passes_and_a_run_time_name_is_refused(self):
-        n = len(self.lines(self.append("kernel/credentials.py",
-            '\nimport importlib\n_PROBE_MOD = "json"\n_PROBE_MODS = (("json", "loads"), ("re", "compile"))\n\ndef _probe_import(name):\n    importlib.import_module("json")\n'
-            '    importlib.import_module(_PROBE_MOD)\n    for mod, attr in _PROBE_MODS:\n        importlib.import_module(mod)\n    found = {a: importlib.import_module(m) for m, a in _PROBE_MODS}\n'
-            '    return found, importlib.import_module(name)\n')))
-        rc, out, _ = inventory(scope_copy())
-        self.assertRefused(rc, out, "IMPORT kernel/credentials.py:%d imports a module named at run time (importlib.import_module(name))" % n)
-        self.assertEqual(len([ln for ln in out.splitlines() if ln.startswith("IMPORT")]), 1, "the literal, the constant, the loop and the comprehension resolve to known modules:\n" + gates(out))
+        out = self.out
+        self.assertRefused(self.rc, out, "IMPORT kernel/credentials.py:%d imports a module named at run time (importlib.import_module(name))" % self.at["run_time"])
+        # the run's IMPORT lines, as a set: the case above's three httpx lines and the run-time name, and no other line of the
+        # run, this block's literal, constant, loop and comprehension included (the shared run holds the same property the
+        # one-IMPORT-line count held over a run of this block alone)
+        self.assertEqual(sorted(ln.split()[1] for ln in out.splitlines() if ln.startswith("IMPORT")),
+                         sorted("kernel/credentials.py:%d" % self.at[k] for k in ("literal", "constant", "dunder", "run_time")),
+                         "the literal, the constant, the loop and the comprehension resolve to known modules:\n" + gates(out))
 
 
-class TheNetListNamesSendtoAndTheLoopConnections(_Scope):
+SENDTO_TEXT = ('\nimport asyncio, socket\n\ndef _probe_udp(addr):\n    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n    s.sendto(b"x", addr)\n\n'
+               'async def _probe_loop(addr):\n    loop = asyncio.get_event_loop()\n    await loop.sock_connect(socket.socket(), addr)\n'
+               '    await asyncio.get_running_loop().create_connection(lambda: None, "TESTHOST", 443)\n    await loop.create_datagram_endpoint(lambda: None, remote_addr=addr)\n')
+
+
+class TheNetListNamesSendtoAndTheLoopConnections(_SharedRun):
     """socket.sendto on a socket bound in the function or with a tuple-literal address, and the event loop's sock_connect,
     create_connection and create_datagram_endpoint on a loop bound in the function or on the getter's own call, are sites
-    (extra6-2 of the third round; zero sites at this head, so the tree's counts do not move)."""
+    (extra6-2 of the third round; zero sites at this head, so the tree's counts do not move). The block is the third of
+    the credentials run (ThePythonImportGateReachesImportModule)."""
+
+    RUN = "credentials"
+
+    @classmethod
+    def mutate(cls, cleanup):
+        cls.at["n"] = len(_lines(_append("kernel/credentials.py", SENDTO_TEXT, cleanup)))
 
     def test_sendto_and_the_three_loop_methods_are_sites(self):
-        n = len(self.lines(self.append("kernel/credentials.py",
-            '\nimport asyncio, socket\n\ndef _probe_udp(addr):\n    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n    s.sendto(b"x", addr)\n\n'
-            'async def _probe_loop(addr):\n    loop = asyncio.get_event_loop()\n    await loop.sock_connect(socket.socket(), addr)\n'
-            '    await asyncio.get_running_loop().create_connection(lambda: None, "TESTHOST", 443)\n    await loop.create_datagram_endpoint(lambda: None, remote_addr=addr)\n')))
-        rc, out, _ = inventory(scope_copy())
-        self.assertRefused(rc, out, "UNCLASSIFIED")
+        n, out = self.at["n"], self.out
+        self.assertRefused(self.rc, out, "UNCLASSIFIED")
         named = unclassified(out)
         self.assertIn("kernel/credentials.py:%d" % (n - 6), named, "sendto on a socket bound in the function")
         self.assertIn("kernel/credentials.py:%d" % (n - 2), named, "sock_connect on a loop bound in the function")
@@ -972,18 +1099,26 @@ class TheHeadsFigureNamesASwappedProgram(_Scope):
             self.assertIn(k, expected["per_key"], "every heads key is a row key")
 
 
-class TheGitClassBoundaryIsPinned(_Scope):
+GIT_TEXT = '\ndef _probe_checkout():\n    return subprocess.run(["git", "checkout", "main"], check=False)\n\ndef _probe_git(sub):\n    return subprocess.run(["git", sub], check=False)\n'
+
+
+class TheGitClassBoundaryIsPinned(_SharedRun):
     """The external-program class holds git with a subcommand the code does not spell out, never a spelled one: a
     row-less `git checkout` is UNCLASSIFIED with no class tag (it needs a row; it is not local by default since checkout
     left LOCAL_GIT), and a bare git with a runtime subcommand carries the tag. Pinned by execution because the round's
-    record misstated the boundary and nothing executed held it (tests-1, extra8-2 of the third round)."""
+    record misstated the boundary and nothing executed held it (tests-1, extra8-2 of the third round). The block is the
+    fourth of the credentials run (ThePythonImportGateReachesImportModule)."""
+
+    RUN = "credentials"
+
+    @classmethod
+    def mutate(cls, cleanup):
+        lines = _lines(_append("kernel/credentials.py", GIT_TEXT, cleanup))
+        cls.at.update({name: next(i + 2 for i, ln in enumerate(lines) if ln.startswith("def %s(" % name)) for name in ("_probe_checkout", "_probe_git")})
 
     def test_a_row_less_checkout_is_unclassified_with_no_class_tag_and_a_runtime_subcommand_carries_it(self):
-        lines = self.lines(self.append("kernel/credentials.py",
-            '\ndef _probe_checkout():\n    return subprocess.run(["git", "checkout", "main"], check=False)\n\ndef _probe_git(sub):\n    return subprocess.run(["git", sub], check=False)\n'))
-        at = {name: next(i + 2 for i, ln in enumerate(lines) if ln.startswith("def %s(" % name)) for name in ("_probe_checkout", "_probe_git")}
-        rc, out, _ = inventory(scope_copy())
-        self.assertRefused(rc, out, "UNCLASSIFIED")
+        at, out = self.at, self.out
+        self.assertRefused(self.rc, out, "UNCLASSIFIED")
         named = unclassified(out)
         self.assertIn("kernel/credentials.py:%d" % at["_probe_checkout"], named, "a spelled subcommand outside LOCAL_GIT needs a row")
         self.assertIn("kernel/credentials.py:%d" % at["_probe_git"], named)
