@@ -148,10 +148,13 @@ module in the same process parsed: in CI's serial cell this module runs before t
 copy.deepcopy of a two-node hand (a Name and its Load) followed the shared Load's `_parent` into this census's whole
 graph, a RecursionError inside copy.py on 3.10 and 3.11 and on 3.12 a completed copy of the graph costing minutes. The
 three marks (the third, `_lfn`, names a Lambda's scope on the Lambda node, which the parser never shares, and is guarded
-all the same) skip the shared nodes (SHARED_NODE_TYPES), and a pin holds the parser's shared nodes clean after the census
-(read from parses and held to one instance across two of them; a constructed ast.Load() is fresh and unshared) and shows
-each of the three old writes red in turn on the parsed instances, the restore registered before the first write. No
-verdict moves: no rule reads a context or operator node by its mark.
+all the same) skip the shared nodes (SHARED_NODE_TYPES), and a pin holds that the census added nothing to the parser's
+shared nodes (read from parses and held to one instance across two of them; a constructed ast.Load() is fresh and
+unshared): setUpClass snapshots vars() of each instance BEFORE the census runs and the pin asserts the delta empty, an
+attribute the snapshot did not hold or one whose value is no longer the snapshot's object, so what it names is this
+module's own write and never an earlier module's, which the thread-stop census's singleton pin (tests/parse_cache.py)
+names in the serial cell; the pin then shows each of the three old writes red in turn on the parsed instances, the
+restore registered before the first write. No verdict moves: no rule reads a context or operator node by its mark.
 """
 import ast
 import glob
@@ -1690,11 +1693,25 @@ def shared_nodes(tree):
     return list(out.values())
 
 
-def shared_node_attributes(nodes):
+def shared_node_snapshot(nodes):
+    """{id(node): dict(vars(node))} for `nodes`: what each parser's shared instance carried at the moment of the snapshot,
+    taken in setUpClass before the census runs and read by the pin that holds the census added nothing to them."""
+    return {id(n): dict(vars(n)) for n in nodes}
+
+
+def shared_node_attributes(nodes, held=None):
     """`Load carries _fn (Fn), _parent (Name)` for each of `nodes` that carries an attribute (these types have no fields,
-    so vars() of a clean one is empty): the probe of the pin that holds the parser's shared nodes clean."""
-    return ["%s carries %s" % (type(n).__name__, ", ".join("%s (%s)" % (k, type(v).__name__) for k, v in sorted(vars(n).items())))
-            for n in nodes if vars(n)]
+    so vars() of a clean one is empty): the probe of the pin over the parser's shared nodes. With `held`, a
+    shared_node_snapshot, only the DELTA against it is named: an attribute the snapshot did not hold for that node, or
+    one whose value is no longer the object the snapshot held (`is`), so an attribute another module wrote before the
+    snapshot is not in the lines and a write of this module's is."""
+    out = []
+    for n in nodes:
+        was = held.get(id(n), {}) if held is not None else {}
+        extra = sorted(((k, v) for k, v in vars(n).items() if k not in was or was[k] is not v), key=lambda kv: kv[0])
+        if extra:
+            out.append("%s carries %s" % (type(n).__name__, ", ".join("%s (%s)" % (k, type(v).__name__) for k, v in extra)))
+    return out
 
 
 def product_modules(root=ROOT):
@@ -2048,6 +2065,7 @@ def plant(base_census, appendices):
 class HostsPathCensus(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls.shared_before = shared_node_snapshot(shared_nodes(ast.parse(_SHARED_PROBE)))   # BEFORE the census: what the pin's delta is against
         cls.census = derive()
 
     def test_no_other_product_module_makes_a_syscall_on_a_path_under_hosts(self):
@@ -2107,24 +2125,36 @@ class HostsPathCensus(unittest.TestCase):
         rode on every tree any later module in the process parsed, and a reader that copied a node with copy.deepcopy
         followed `_parent` into this census's whole graph, which CI's diagnostic run 35740276523 read back on the
         thread-stop census, the module after this one in the serial cell (a RecursionError inside copy.py on 3.10 and
-        3.11, a copy of the graph costing minutes on 3.12). After setUpClass's census (the wide census and the plants walk
-        by the same code), the parser's Load, Store and Del and one operator of each family carry no attribute. THE RED,
-        three times on the PARSED instances, with the restore registered as a cleanup BEFORE the first write so a failing
-        plant leaves the process clean: each old write in turn, unguarded, runs over a fresh parse of the probe text (whose
-        context and operator nodes are the parser's shared instances), a THIRD parse then carries that mark on every one of
-        its context and operator nodes, the probe names it on each, and the restore puts every instance back to exactly
-        the state found, asserted clean before the next mark."""
+        3.11, a copy of the graph costing minutes on 3.12). THE PIN IS A DELTA (round 4 of PR 891's review, 2026-09-22):
+        setUpClass snapshots vars() of the parser's Load, Store and Del and one operator of each family BEFORE the census
+        runs, and after it (the wide census and the plants walk by the same code) the instances carry nothing the snapshot
+        did not hold, and nothing it held as another object. So what a red names is a write of THIS module's, and the pin
+        reads the same alone and in CI's serial cell (one process, every test module in collection order): a module that
+        wrote on a shared node before this one runs leaves its attribute in the snapshot and is not this pin's red (the
+        thread-stop census's singleton pin, tests/parse_cache.py, names such a writer), while a write this census makes
+        on an attribute an earlier module also wrote is a changed object and is red. Before round 4 the pin asserted the
+        instances bare and its message blamed this census for any writer in the process. THE RED, three times on the
+        PARSED instances, with the restore registered as a cleanup BEFORE the first write so a failing plant leaves the
+        process clean: each old write in turn, unguarded, runs over a fresh parse of the probe text (whose context and
+        operator nodes are the parser's shared instances), a THIRD parse then carries that mark on every one of its
+        context and operator nodes, the probe names it on each as a delta against the state this test found, and the
+        restore puts every instance back to exactly that state, asserted so before the next mark."""
         first, second = shared_nodes(ast.parse(_SHARED_PROBE)), shared_nodes(ast.parse(_SHARED_PROBE))
         self.assertEqual(sorted(type(n).__name__ for n in first), ["Add", "And", "Del", "Load", "Lt", "Store", "USub"])
         self.assertEqual([id(n) for n in first], [id(n) for n in second],
                          "the probe is not reading a shared instance: two parses of one text gave different context or operator objects")
         self.assertIs(first[[type(n) for n in first].index(ast.Load)], ast.parse("q").body[0].value.ctx, "the Load of any parsed Name is that instance")
         shared = first
-        self.assertEqual(shared_node_attributes(shared), [],
-                         "the census wrote on a node the parser shares with every tree of the process: a mark written in _index "
-                         "or run without the SHARED_NODE_TYPES guard, or a new write on an AST node; guard it, or keep the datum "
-                         "in a side table keyed by id(node)")
+        self.assertEqual([type(n).__name__ for n in shared if id(n) not in self.shared_before], [],
+                         "setUpClass's snapshot was taken over other instances than the ones parsed now: the parser did not hand out one "
+                         "instance per type for the whole process, and the pin cannot read a delta")
+        self.assertEqual(shared_node_attributes(shared, self.shared_before), [],
+                         "the census wrote on a node the parser shares with every tree of the process (an attribute setUpClass's snapshot, "
+                         "taken before the census, did not hold on that node, or one whose value is no longer the snapshot's object): a mark "
+                         "written in _index or run without the SHARED_NODE_TYPES guard, or a new write on an AST node; guard it, or keep the "
+                         "datum in a side table keyed by id(node)")
         held = [(n, dict(vars(n))) for n in shared]
+        found = {id(n): was for n, was in held}            # the state this test found: what the three plants' deltas are read against
 
         def restore():
             for n, was in held:
@@ -2153,12 +2183,13 @@ class HostsPathCensus(unittest.TestCase):
             write(ast.parse(_SHARED_PROBE))                  # over a fresh parse: its context and operator nodes are the parser's
             later = shared_nodes(ast.parse(_SHARED_PROBE))   # a later parse carries the mark: the mechanism
             self.assertEqual([id(n) for n in later], [id(n) for n in shared], mark)
-            lines = shared_node_attributes(later)
+            lines = shared_node_attributes(later, found)
             self.assertEqual([line.split(" carries ")[0] for line in lines], [type(n).__name__ for n in shared], "%s: every shared node is named" % mark)
             for line in lines:
                 self.assertRegex(line, r" carries %s \((%s)\)$" % (mark, holder))
             restore()
-            self.assertEqual(shared_node_attributes(shared), [], "%s: the restore left the parser's instances exactly as found" % mark)
+            self.assertEqual(shared_node_attributes(shared, found), [], "%s: the restore left the parser's instances exactly as found" % mark)
+            self.assertEqual([dict(vars(n)) for n in shared], [was for _n, was in held], "%s: exactly the state found, key for key" % mark)
 
     def test_no_use_escapes_the_walk(self):
         """The six forms the escape rule covers (the module docstring, CLASSIFY) are printed as escapes by file and line;
