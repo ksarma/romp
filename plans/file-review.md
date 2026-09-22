@@ -4679,7 +4679,7 @@ document stands on its own, each with the reasoning it was given.
     process substitution, a decode, an inner shell's output, fakeroot and rbash, a producer outside the output
     model (a `bash -c cat` in a pipe, zsh's `print`, a NULLCMD here-string, a cat of a process substitution), and
     python's os.rename, os.replace, an exec'd write and an aliased open.
-    ROUND 6, EIGHTH COMMIT (2026-09-21; the round's three verifiers on the seventh commit's head, an attack lens, a
+    ROUND 6, EIGHTH COMMIT (2026-09-22; the round's three verifiers on the seventh commit's head, an attack lens, a
     residuals lens and the body auditor). The regression closed through every wrapper, two mechanism defects that let
     a shell write while the guard allowed, and the rest disclosed as rows. THE WRAPPED PRINTER (commandOf, printerOf):
     the seventh commit's splice restored the bare `$e 'cp a b' | bash` refusal and left the same printer behind a
@@ -4713,6 +4713,52 @@ document stands on its own, each with the reasoning it was given.
     the shell-set names and an eighth class the hook functions. The piped-script matrix names, in a field of its own,
     the allowed rows whose writer evidence needs ksh, a shell no box running the matrix has, so their allow rests on
     ksh's `[[` grammar (TEST_ARITH_SHELLS) and on no measured writer.
+    ROUND 6, NINTH COMMIT (2026-09-22; the round's three verifiers on the eighth commit's head, an attack lens,
+    a residuals lens and the body auditor). Four defects of the round's own class, a reading that resolves a
+    word wrongly and thereby allows, each fixed at the mechanism, and the rest disclosed as rows. THE POSITIONAL
+    TARGET (positionalWords' target mode, expandPositionals): a redirection whose target is a positional list of
+    several elements was joined into one quoted name, so `set -- a.md report.md; echo x > $@` wrote report.md in
+    zsh, which opens every element under MULTIOS, while the guard judged the name `a.md report.md` and allowed;
+    `"$@"` kept the first element alone; a single unquoted element's pattern went unexpanded while bash expands
+    it at a target. The list stands now for the joined name dash opens (measured from notes/: the file `a.md
+    n1.md`) beside each element zsh opens, a single unquoted element for itself with its pattern read, an
+    element that is an expansion for a target the hook cannot read, one redirection per word, under every write
+    operator, on a closer's and an `exec`'s redirection. THE PEELED NAME (commandOf's wrapperIdx; nameRoads,
+    boundRoad): the alias, hash and bound-path roads were asked of the head the wrapper walk left, so a binding
+    of a wrapper's own name was never seen once operands followed it: `alias command=cp`, then `command a b`,
+    copied in dash, and every name of the wrapper set, zsh's modifiers, `[` and `[[`, through a here-document or
+    a pipe in every shell; `hash -p /usr/bin/cp env` then `env a b` in bash, `hash env=/usr/bin/cp` in zsh; a
+    copy or link of cp at `../scratch/env` on PATH, as `env a b`, as `../scratch/env a b` and behind `nice`, in
+    every shell. Every word the walk peeled is asked the three roads, the binding spliced at that word with the
+    words around it as spelled and the wrapper peeled again on the spliced text, an unreadable binding refused
+    as the head's is; `[` and `[[` take the alias and hash roads by their text, and an alias whose name the
+    lexer marks a pattern keeps its plain body. THE VANISHED TEXT (candidateTexts' vanish, scriptTexts,
+    noteCandidate): an expansion the command never gives a value may be empty, and the shell drops the empty
+    text before a script is handed over, so `eval cp $c a b`, `eval cp "$c" a b` (eval joins its operands and
+    parses the join), `eval cp $(true) a b`, `eval cp "$@" a b`, mv, install and `ln -f` the same, `trap "cp $c
+    a b" EXIT`, `bash -c "cp $c a b"` through sh, dash and zsh, behind nice and command, in a subshell, a group,
+    an if and after `&&`, `flock -c`, zsh's `emulate -c`, python's inline code, and `x="cp $c a b"` run as `$x`,
+    `eval $x`, `sh -c "$x"`, `bash <<< "$x"`, through declare and export, each ran the two-operand copy in every
+    shell while allowed (the single-quoted spellings, the default words and a value the command gives c were
+    refused). The text with every such expansion removed is one script the shell may run, read beside the
+    residual (the word stays opaque, its other values not read), and never in THE SHELL'S OPTION WORD's place,
+    where an empty answer is the refusal (`a=(-c); bash "${a[@]}" 'cp a b'` would read as a script file and
+    pass). THE WRITTEN PROCESS SUBSTITUTION (lex's streamSite and procsubFeeds, streamOutput, outDups and the
+    descriptor of a write; extract's recurseSubs and inheritedTexts): a write redirection whose target is
+    `>(cmd)` is a pipe into cmd, so what the command prints (or a subshell's or group's list before the
+    redirection) is cmd's standard input where the redirection is on the standard output or on a descriptor a
+    `>&` of the command routes it to, UNRESOLVABLE where an `exec` opens it for every later command, and outside
+    the model on another descriptor or from a command that is no printer (a cat of a file, the residual); zsh's
+    `>>(cmd)` reads as `>` and the substitution. `echo 'cp a b' > >(bash)` and thirty-nine forms (printf, `1>`,
+    `>|`, `>>`, `&>`, sh, zsh, dash, env bash, command bash, `bash -s`, `cat | bash`, a subshell, a group, exec,
+    `3> >(bash) >&3`, a resolved `$e` printer bare and behind command, a redirection and a `sed -i` in the text)
+    ran in bash and zsh while allowed, where the same `>(bash)` fed by a tee or a cat was read. The residual
+    table gains sed's `s///e` flag and bare `e`, logsave, script's typescript, node's writeFileSync under
+    another name, python's Path held in a name, dbus-run-session and capsh, and through `>(..)` a cat of a file,
+    a `while read` and a python; the property's fifth class names the write redirection into a process
+    substitution. The eighth commit's records on the hook header, this decision, the piped-script fixture and
+    the tests date it 2026-09-22, the day of its commit. Every fix is pinned by execution in the ninth commit's
+    rows test, the writers measured in bash, zsh and dash, red on the eighth commit's head.
     THE RESIDUAL PROPERTY. The guard refuses a write only when it resolves the command to a writer it models (the
     writer cases of extract's switch, a write redirection, an interpreter's write call it scans) reached through a
     road it reads (the wrapper set, the shells' script roads, the readings of the resolver, the alias and hash roads),
@@ -4736,7 +4782,7 @@ document stands on its own, each with the reasoning it was given.
     parameter of a fresh shell's script), run as a command or handed to a shell (`$c` after `read c`, `eval "$1"`
     inside a `bash -c` given arguments, `bash -c "$c"` after `printf -v c`; a value an assignment word gives,
     whitespace included, is read through THE HEAD CANDIDATES since round 6's fourth commit, and a `${name:=word}`
-    gives word since the sixth); a producer outside the output model, a pipe into a shell from anything but a literal
+    gives word since the sixth); a producer outside the output model, a pipe into a shell, or a write redirection into a process substitution running one, from anything but a literal
     echo or printf, alone or in a subshell or group of such commands, or a plain cat passing such a text through (a
     call of a function the command defines, a tee or a pipe through another command, a cat of a file); zsh's glob
     grouping, a `(..)` inside a word handed to zsh, read as a subshell by the lexer's zsh grammar while zsh globs it
