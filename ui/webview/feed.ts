@@ -13,6 +13,7 @@ import { distillText, distillInputs, applyDistillLine, distillPending, distillSt
 import { openContextMenu, CtxItem } from "./ctx-menu";   // the one menu builder (the v0.16.0 tidy): the card menu's card, dismissal and keys
 import { delegate } from "./actions";
 import { paintHeld, paintReleased, publishPaneHidden } from "./paint-gate";
+import { firstPaintHeld, viewportHiddenSinceLoad, revealDecision } from "./paint-gate";   // the phone's first-paint hold (stage 0, 2026-09-18) and the reveal's decision under it; its own line, so the merged line above stays upstream's text
 import { linkifyPrRefs, setLinkedText, senderPrRepo, installPrLinkOpener } from "./pr-links";
 import { cardInputsKey, cardNeedsUpdate, sameKeySeq, type GateEnv } from "./feed-card-gate";
 import { spinFor, awaitWord, groupRows, waitsNote, GROUP_TITLE, ROW_KIND_OF_LEGACY, type AwaitRow } from "./spin-caption";
@@ -451,20 +452,35 @@ function reconcileFollowMove(incoming: AskItem[], buildId: number, buildIds?: Re
 // already in flight when the reply landed (honestly pre-reply) then bounced the card back to Blocked with
 // no prediction left to hold it. Replacing the list SLOT with a copy keeps the render identical while the
 // cached frame stays exactly what the kernel sent, so the prediction ends only on the real events.
-function applyFollowMove(list: AskItem[]) {
-  if (!pendingFollowMove.size) return;
+// THE PREDICTION AS A PURE TRANSFORM (review round 3, 2026-09-19, extra6-1): the list with each pending, non-working card replaced by
+// its predicted copy (column working, the follow-up chip, the sort key bumped to now), writing nothing: no list slot, no predictedFrom,
+// no pendingMoveKind. render() applies it to `asks` in place through applyFollowMove below, and paintedKeyOf runs the paint plan over
+// it, so the reveal's answer at the tap is derived from the INPUT render() will paint. Before this paintedKeyOf read the unpredicted
+// asks while render() planned over the predicted ones, and under a held paint (no render had run) the handler parked a key the release
+// paint never stamped: a pending card the tag lens shows only through viewBase's needs-you escape, predicted into Working and hidden.
+// Idempotent over a list a render already predicted (a working copy is skipped), so the release's losing arm reads the same plan.
+function predictFollowMoves(list: AskItem[]): AskItem[] {
+  if (!pendingFollowMove.size) return list;
   // now, in the server's epoch-second unit (kernel is local). Bump the predicted card's sort key to now so
   // the INSTANT optimistic move lands at the BOTTOM of Working, matching where the kernel's authoritative
   // followupAt stamp keeps it once this prediction clears — no top-flash then lurch-down (the user 2026-07-03).
   const nowSec = Math.floor(Date.now() / 1000);
-  for (let i = 0; i < list.length; i++) {
-    const a = list[i];
-    if (!pendingFollowMove.has(a.itemId) || a.column === "working") continue;
+  return list.map((a) => {
+    if (!pendingFollowMove.has(a.itemId) || a.column === "working") return a;
     const c: AskItem = { ...a, column: "working" };
     if ((pendingMoveKind.get(a.itemId) ?? "followup") === "followup") { c.recheck = true; c.followupPending = true; }   // plain move / answer: no chip
     if (c.t < nowSec) c.t = nowSec;   // sort to the bottom (newest); the group's repr follows via buildGroup
-    predictedFrom.set(a.itemId, a);   // what a refusal of the post puts back (revertFollowMove)
-    list[i] = c;
+    return c;
+  });
+}
+// render()'s in-place application of the transform: each replaced slot is recorded in predictedFrom (what a refusal of the post puts
+// back, revertFollowMove) and the copy takes the slot. One implementation of the prediction: this and paintedKeyOf both read predictFollowMoves.
+function applyFollowMove(list: AskItem[]) {
+  const out = predictFollowMoves(list);
+  for (let i = 0; i < list.length; i++) {
+    if (out[i] === list[i]) continue;
+    predictedFrom.set(list[i].itemId, list[i]);   // what a refusal of the post puts back (revertFollowMove)
+    list[i] = out[i];
   }
 }
 // (drag-to-Working and the modal's "Move to Working" button were REMOVED, the user 2026-07-25: a
@@ -5563,6 +5579,30 @@ function viewFiltered(list: AskItem[]): AskItem[] {
   return viewBase(list);
 }
 
+// THE PAINT PLAN (review round 2, 2026-09-19): what render() will stamp for a card list, derived ONCE and read by renderBody
+// and by the reveal's decision. The display view (viewFiltered: the session filter, the search box, the tag lens), the
+// typed-turn groups it forms (turnGroups, the rule the jump-unfold reads too) and the itemIds those groups fold, so a
+// group member paints as g:<turnId> and every other shown ask as a:<itemId>. One derivation: renderBody consumes this object
+// and paintedKeyOf answers from it, so what the board paints and what a reveal expects painted can never disagree.
+function paintPlan(list: AskItem[]): { shown: AskItem[]; byTurn: Map<string, AskItem[]>; grouped: Set<string> } {
+  const shown = viewFiltered(list);
+  const byTurn = turnGroups(shown);
+  const grouped = new Set<string>();   // itemIds folded into a group -> excluded from single ask cards
+  for (const members of byTurn.values()) members.forEach((m) => grouped.add(m.itemId));
+  return { shown, byTurn, grouped };
+}
+// The key render() stamps for one card of the CURRENT model, or null when it paints none: a:<itemId> for a shown ask outside
+// every group, g:<turnId> for a member of a typed-turn group, null for a card the view hides (a delegation satellite off its
+// session's filter, a session the footer filter or the search box excludes, a lens-hidden session outside needs-you). The
+// revealCard handler asks this at the tap (review round 2: the model-membership question parked a reveal the paint could
+// never land, so a bell-row tap on such a card did nothing where the base opened the session).
+function paintedKeyOf(itemId: string): string | null {
+  const plan = paintPlan(predictFollowMoves(asks));   // the render's INPUT (review round 3, extra6-1): render() predicts the pending moves before it plans, so the answer is derived from what the paint will stamp
+  const a = plan.shown.find((x) => x.itemId === itemId);
+  if (!a) return null;
+  return plan.grouped.has(itemId) ? "g:" + a.turnId : "a:" + itemId;
+}
+
 // The per-host loading strip (the user 2026-08-25): while an attached host's cards are pending,
 // one quiet line per host — the romp loader family scoped to a strip, never a board takeover; the
 // cards already present stay fully live. Retires per host on the exact event of its first merged
@@ -5609,13 +5649,66 @@ function ensureHostLoad(list: HTMLElement): void {
 // hidden arm of visibilitychange publish document.hidden OR the observer's last word as window.__rompPaneHidden,
 // on the same events, and nothing until the observer has spoken.
 let feedIntersecting: boolean | null = null;   // #feed-list on screen by the observer's last word; null until it speaks (the gate reads null as on screen; nothing is published for it)
+// THE SHOW OVERRIDE (review round 2, 2026-09-19, D4). A bell jump or the shell's show word arrives in the SAME task as the pane's
+// show, before the observer has re-measured (its callback waits for a rendering step), so the paint must proceed on that word.
+// It used to be written INTO feedIntersecting, the observer's own variable, which nothing restored: the observer queues no
+// callback while the computed state equals its recorded state, so a reveal into a pane the shell had off screen left the word
+// at `true` until the next show-and-hide, every push repainted the board into a display:none iframe, and publishPaneHidden
+// told the shim a hidden pane was on screen. The override is its own flag now, read as the PAINT's measure alone (seenNow) and
+// never published (publishPaneHidden keeps the observer's word); the observer's next callback spends it.
+let revealShown = false;
+function seenNow(): boolean | null { return revealShown ? true : feedIntersecting; }
+// The FIRST paint's hold on the phone (stage 0, 2026-09-18; paint-gate.ts firstPaintHeld): the shell's last panes word for this
+// pane (on.feed; undefined until one arrives) and the shell's layout probe, read live the way the kernel's pane shim reads it
+// (parentMobile), so a layout flip or a first show is seen at the read; the zero-viewport probe is paint-gate.ts's
+// viewportHiddenSinceLoad over this window (this file carries no probe of its own: the standing gate never reads one).
+let feedShellOn: boolean | undefined;
+function parentMobile(): boolean | undefined {
+  try { const p = window.parent as unknown as { __rompMobileOn?: unknown }; return (window.parent !== window && typeof p.__rompMobileOn === "function") ? !!(p.__rompMobileOn as () => unknown)() : undefined; } catch { return undefined; }
+}
+// a bell jump or a notification tap that reached this pane while its first paint was held (the board applied, unpainted): the
+// card's key, revealed by the paint that lands (releasePaint), never a card-gone fallback for a card the paint will stamp (review
+// pass 1, 2026-09-19: the lookup over the empty DOM took the fallback and posted openSession for an existing card). Its
+// retirement is the pane's NEXT visibility change (review round 2, D5: a park with no bound was consumed by an unrelated
+// Feed-tab tap hours later, a card move on no new information): the show that follows the reveal consumes it in
+// releasePaint's tail; a flip to hidden (the shell's word, or the observer's) drops it; a second reveal replaces or drops it; a re-tell
+// of the same word (the shell's socket events) changes nothing. No timer.
+// THE BOUND (review round 3, 2026-09-19, extra9-1): a park is made only while the shell's last word has this pane on screen or no word
+// has arrived (paint-gate.ts revealDecision's fifth input); with the pane off screen by the shell's word the reveal is DROPPED at the
+// tap and said (revealDropped below), since no show of this gesture is coming and the next one would be an unrelated later tap. THE
+// LOSING ARM (extra9-2): the itemId and sid ride beside the key (pendingReveal, written in the park arm alone and read at the consume
+// alone, so the key stays the one latch its retirements clear); at the consume a card the release paint stamped under another key (an
+// ask folded into its turn's group card while the park stood) is found through the plan's answer for the itemId, and a card the paint
+// did not stamp at all drops with the sid kept in the breadcrumb, never through openSession (a deferred session switch on an unrelated
+// tap was rejected in pass 1).
+let pendingRevealKey: string | null = null;
+let pendingReveal: { itemId: string; sid: string } = { itemId: "", sid: "" };
+// a reveal this pane could not land, said as a breadcrumb (client-diag.jsonl, the column-flip tripwire's channel): ids only, no card text.
+// `why` offscreen: dropped at the tap with the pane off screen by the shell's word; unpainted: parked, and the release paint stamped the
+// card under no key (`key` the parked key, `painted` the plan's answer at the release, null for none)
+function revealDropped(data: { itemId: string; sid: string; why: "offscreen" | "unpainted"; key?: string; painted?: string | null }): void {
+  vscodeApi?.postMessage({ type: "clientDiag", surface: "feed", what: "reveal-dropped", data });
+}
+// the pane loader's hold (review round 2, D3): while the FIRST paint is owed nobody can see the pane, so the pane's own loader
+// (kernel _pane_spin) stands with no timer, told once per hold by `romp:firstpaintheld`, and re-arms its 30 s backstop on
+// `romp:firstpaintreleased`, dispatched once, after the release render has painted (a release that re-held dispatches nothing).
+// Before this the loader's 30 s failsafe faded over the still-empty list of a hidden phone feed, and the tap revealed a blank pane.
+let firstHoldTold = false, firstHoldReleased = false;
+function firstPaintHoldTold(): void {
+  if (firstHoldTold) return;
+  firstHoldTold = true;
+  try { window.dispatchEvent(new Event("romp:firstpaintheld")); } catch { /* no Event constructor */ }
+}
 let paintDirty = false;        // a render was withheld while the pane could not be seen
 let skipFlipOnce = false;      // the release paint snaps: cards that moved while away have no old spot to glide from
 let feedWatching = false;
 function watchFeedVisibility(list: HTMLElement): void {
   if (typeof IntersectionObserver === "undefined") return;   // no observer → the tab's visibility alone gates
   new IntersectionObserver((entries) => {
+    const was = feedIntersecting;
     feedIntersecting = entries.some((e) => e.isIntersecting);
+    revealShown = false;   // the observer's own word: the show override is spent (D4)
+    if (was === true && !feedIntersecting) pendingRevealKey = null;   // a hide after a show: a park made for the shown pane is moot (D5)
     releasePaint();
     live.catchUp();   // the 15 s age pass skipped while off screen (feed-age.ts liveRefresher); one pass, same measure
   }).observe(list);
@@ -5625,18 +5718,43 @@ function watchFeedVisibility(list: HTMLElement): void {
 // so a paint inside the event handler is the earliest fresh frame.
 function releasePaint(): void {
   publishPaneHidden(document.hidden, feedIntersecting);
-  if (!paintReleased(paintDirty, document.hidden, feedIntersecting)) return;
+  if (!paintReleased(paintDirty, document.hidden, seenNow())) return;
   paintDirty = false;
   skipFlipOnce = true;
   render();
+  if (firstHoldTold && !firstHoldReleased && !paintDirty) { firstHoldReleased = true; try { window.dispatchEvent(new Event("romp:firstpaintreleased")); } catch { /* no Event constructor */ } }   // the first paint landed: the pane loader's backstop resumes (D3)
+  // a jump that arrived under the phone's first-paint hold lands on the paint it waited for (the revealCard handler parks it). The
+  // losing arm (review round 3, extra9-2): the parked key not stamped, ask the plan for the card's key NOW (paintedKeyOf over the model
+  // this paint rendered: the same derivation renderBody consumed, so a card folded into its group while the park stood scrolls to the
+  // group card, g:<turnId>); no key at all, the card left the board or the view: the jump drops, said with the sid kept, never openSession
+  if (pendingRevealKey !== null && !paintDirty) { const k = pendingRevealKey, r = pendingReveal; pendingRevealKey = null; let t = cardByKey(k), painted: string | null = k; if (!t) { painted = paintedKeyOf(r.itemId); t = painted ? cardByKey(painted) : null; } if (t) jumpToCard(t); else revealDropped({ itemId: r.itemId, sid: r.sid, why: "unpainted", key: k, painted }); }
+}
+// Match the key STRUCTURALLY, never an interpolated attribute selector: a crafted push-card value with a quote or bracket
+// would throw a SyntaxError inside querySelector and abort the caller, dropping its fallback too (review find on #940,
+// 2026-09-07). Every [data-key] is stamped by render(): an unpainted board has none.
+function cardByKey(key: string): HTMLElement | null {
+  return (Array.from(document.querySelectorAll("[data-key]")) as HTMLElement[]).find((c) => c.dataset.key === key) || null;
+}
+// scroll the card into view and pulse it accent so the eye lands on the right card (the bell jump and the notification tap)
+function jumpToCard(target: HTMLElement): void {
+  target.scrollIntoView({ block: "center", behavior: "smooth" });
+  target.classList.remove("reveal-pulse"); void target.offsetWidth;   // restart the animation on a repeat jump
+  target.classList.add("reveal-pulse");
+  target.addEventListener("animationend", () => target.classList.remove("reveal-pulse"), { once: true });
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) releasePaint(); });
 document.addEventListener("visibilitychange", () => { if (document.hidden) publishPaneHidden(true, feedIntersecting); });   // the hidden arm releases nothing, so the release path never publishes it
+// THE SHOW, synchronously (review round 2, 2026-09-19, D3): the shell's show() calls this on the frame's window in the tap's own
+// task (kernel _LANDING_MOBILE_JS: contentWindow.__rompPaneShown, the shell's __rompLink read in the other direction), so the
+// owed first paint lands before the compositor can show the empty pane; the panes word's release below rides a later message
+// task and stays as the belt for a document that loads after the show. The word is the shell's, so it is this pane's on-screen
+// word too. The same body as the panes handler's show arm.
+(window as unknown as { __rompPaneShown?: () => void }).__rompPaneShown = () => { feedShellOn = true; if (paintDirty && parentMobile() === true) { revealShown = true; releasePaint(); } };
 
 function render() {
   const list = document.getElementById("feed-list")!;
   if (!feedWatching) { feedWatching = true; watchFeedVisibility(list); }
-  if (paintHeld(document.hidden, feedIntersecting, list.childElementCount > 0)) { paintDirty = true; return; }
+  if (paintHeld(document.hidden, seenNow(), list.childElementCount > 0) || firstPaintHeld(list.childElementCount > 0, parentMobile(), feedShellOn, viewportHiddenSinceLoad(window), seenNow())) { paintDirty = true; if (list.childElementCount === 0) firstPaintHoldTold(); return; }
   pruneTip();   // drop the styled tip only if the render tore its hovered anchor out (tip.ts pruneTip)
   applyFollowMove(asks);   // keep optimistically-moved follow-up cards in Working until the kernel confirms (or reverts)
   inRender = true;   // the body is render time: a post it makes is never the reader's jump (noteOwnJump, T416 round two)
@@ -5681,14 +5799,13 @@ function renderBody(list: HTMLElement) {
   const cols = ensureCols(list);
   const buckets: Record<Column, Entry[]> = { asks: [], needsInput: [], completed: [] };
   // The display-side view filters (session filter + search), shared with the hover-freeze badge
-  // painter so the deferred-churn hint counts exactly what the user would see move (viewFiltered).
-  let shown = viewFiltered(asks);
-  // Derive sibling GROUPS at render time, keyed by the shared typed turn (turnId) — turnGroups, the rule the
-  // jump-unfold reads too, so what renders as a group and what unfolds as one can never disagree (T263e).
-  const byTurn = turnGroups(shown);
-  const grouped = new Set<string>();   // itemIds folded into a group → excluded from single ask cards
+  // painter so the deferred-churn hint counts exactly what the user would see move (viewFiltered), and the sibling
+  // GROUPS keyed by the shared typed turn (turnId) — turnGroups, the rule the jump-unfold reads too, so what renders as
+  // a group and what unfolds as one can never disagree (T263e). Both come from paintPlan, the one derivation the
+  // reveal's decision reads as well (review round 2, 2026-09-19).
+  const plan = paintPlan(asks);
+  const shown = plan.shown, byTurn = plan.byTurn, grouped = plan.grouped;
   for (const [tid, members] of byTurn) {
-    members.forEach((m) => grouped.add(m.itemId));
     const g = buildGroup(tid, members);
     buckets[g.column].push({ kind: "group", t: g.t, group: g });
   }
@@ -5840,7 +5957,7 @@ function renderBody(list: HTMLElement) {
     lmore.onclick = () => { setFeedLens({ all: true }); render(); };
     list.appendChild(lmore);
   }
-  const lensShownN = viewFiltered(asks).length;
+  const lensShownN = shown.length;   // the plan's view (paintPlan), not a second viewFiltered pass (review round 2)
   lmore.classList.toggle("prominent", lensOutN > lensShownN);
   lmore.style.display = lensOutN ? "" : "none";
   if (lensOutN) {
@@ -6504,9 +6621,11 @@ function applyFeedPayload(m: any): void {
   render();
   if (!feedAnnounced) {
     feedAnnounced = true;
-    // First content is on screen → tell the shell, the way the timeline does: the boot splash's cue, and the
+    // The first frame has applied → tell the shell, the way the timeline does: the boot splash's cue, and the
     // exact event a notification tap's card reveal waits for — the shell holds its {romp:'revealCard'} until
-    // the feed has cards to scroll to (kernel.py _LANDING_REVEAL_JS). Standalone page: no parent, nothing to say.
+    // the feed has cards to scroll to (kernel.py _LANDING_REVEAL_JS). On the phone's first-paint hold the board is
+    // applied but not yet painted at this point (paint-gate.ts firstPaintHeld); a reveal that lands then is decided
+    // from the model and painted with the pane's show (the revealCard handler). Standalone page: no parent, nothing to say.
     try { if (window.parent && window.parent !== window) window.parent.postMessage({ romp: "ready", app: "feed" }, "*"); } catch { /* no shell */ }
   }
 }
@@ -6520,6 +6639,21 @@ listenForFrames(perfFrameHandler("feed", (m) => vscodeApi?.postMessage(m), (e: M
   if (!m) return;
   if (m.type === "pipeState") { pipeBanner(!!m.up, Number(m.queued) || 0); return; }
   if (m.romp === "paneFocus") { kbEnterCards(); return; }   // the shell handed us keyboard focus → arm card nav
+  if (m.romp === "panes") {
+    // the shell's pane set (kernel.py _LANDING_COLLAPSE_JS panesMsg: posted on this iframe's load, on every toggle and on every
+    // phone tab switch): on.feed is this pane's on-screen word, the first-paint hold's measure on the phone (paint-gate.ts
+    // firstPaintHeld) and, on the pane's show, the release of a paint the hold owes. The shell shows the pane and re-tells in
+    // the same task, before the observer has re-measured the list, so the word stands in for the observer's here as it does
+    // for a bell jump (revealCard below); the observer's next callback re-measures. Phone only: on the desktop the word is the
+    // rail's flag, not a paint event, and the gate's two measures stand alone there.
+    if (m.on && typeof m.on === "object") {
+      const was = feedShellOn;
+      feedShellOn = m.on.feed === true;
+      if (was !== false && !feedShellOn) pendingRevealKey = null;   // the pane's flip to hidden retires a parked jump (D5), and so does the FIRST word when it says hidden (review round 3, extra9-1: a park made before any word, the load-order race, has no show of its own coming then); a re-tell of the same word changes nothing
+      if (feedShellOn && paintDirty && parentMobile() === true) { revealShown = true; releasePaint(); }
+    }
+    return;
+  }
   if (m.romp === "activeChat") { applyLocalFocus(typeof m.id === "string" && m.id ? m.id : null, false, !!m.gesture, typeof m.nonce === "number" ? m.nonce : null); return; }   // the chat pane's tab change, handed across the page by the shell (T416): the reader's own passes the hover-freeze, a kernel-driven one defers under a held card; no jump scroll
   if (m.romp === "revealCard") {
     // a bell-entry click (the user 2026-07-28) or a notification tap (2026-09-06) jumps to the card it was
@@ -6531,22 +6665,32 @@ listenForFrames(perfFrameHandler("feed", (m) => vscodeApi?.postMessage(m), (e: M
     // the list (its callback waits for a rendering step): a paint owed from a hidden stretch is settled
     // here on the shell's word, or a card added while away is not there to find (2026-09-07). The
     // observer's next callback re-measures, so a wrong word costs one unseen paint, never a stale pane.
-    if (paintDirty) { feedIntersecting = true; releasePaint(); }
+    // Through the show override, never the observer's variable (D4), and not when the shell's last word says this
+    // pane is OFF screen (the phone's bell row switches no tab): the paint stays owed and the reveal is decided below.
+    if (paintDirty && feedShellOn !== false) { revealShown = true; releasePaint(); }
     const key = "a:" + String(m.itemId || "");
     unfoldThreadsFor(new Set([key]));
-    // Match the key STRUCTURALLY, never an interpolated attribute selector: a crafted push-card value
-    // with a quote or bracket would throw a SyntaxError inside querySelector and abort this handler,
-    // dropping the openSession fallback too (review find on #940, 2026-09-07).
-    const target = (Array.from(document.querySelectorAll("[data-key]")) as HTMLElement[])
-      .find((c) => c.dataset.key === key) || null;
-    if (target) {
-      target.scrollIntoView({ block: "center", behavior: "smooth" });
-      target.classList.remove("reveal-pulse"); void target.offsetWidth;   // restart the animation on a repeat jump
-      target.classList.add("reveal-pulse");
-      target.addEventListener("animationend", () => target.classList.remove("reveal-pulse"), { once: true });
-    } else if (m.sid) {
+    const target = cardByKey(key);   // the structural match (cardByKey): a crafted key never reaches querySelector's parser
+    // the decision is paint-gate.ts's (revealDecision, pure, executed by the tests): jump to a found card; under the phone's
+    // first-paint hold (the release above re-held, so the board is applied but unpainted) park a card the paint WILL stamp
+    // under this key (paintedKeyOf: the render's own plan, so a satellite, a filtered or lens-hidden card and a turn-group
+    // member, none of which the paint lands as a:<itemId>, take the base's open road at the tap; review round 2, 2026-09-19)
+    // for the paint that lands (the pane's show word, the panes handler above), never the card-gone fallback for it; else
+    // the fallback. The park is bounded by the shell's word (review round 3, extra9-1): with this pane OFF screen by the last panes
+    // word the reveal is dropped and said, since nothing in this gesture shows the pane (the bell's Log row now switches the tab
+    // before it posts, so its reveal finds the board painted; the notification landing's /reveal put the session in front already).
+    // The shell's own tab switch, or none, is unchanged: this pane decides only what it says about the card.
+    const itemId = String(m.itemId || ""), sid = String(m.sid || "");
+    const decision = revealDecision(!!target, paintDirty, paintedKeyOf(itemId) === key, !!m.sid, feedShellOn);
+    pendingRevealKey = decision === "park" ? key : null;   // this gesture's park, or none: a second reveal replaces or drops an earlier park whatever road it takes (D5, review round 2 closeout: written in the park arm alone, an open or a card-gone reveal left the first park standing and the next show jumped to the older gesture's card)
+    if (decision === "park") pendingReveal = { itemId, sid };   // the losing arm's record, read at the consume alone
+    if (decision === "jump" && target) {
+      jumpToCard(target);
+    } else if (decision === "open") {
       frameGesture = !!m.gesture;   // the bell click or the notification tap behind this frame is the reader's gesture (round three)
       try { vscodeApi?.postMessage({ type: "openSession", id: String(m.sid) }); } finally { frameGesture = false; }
+    } else if (decision === "drop") {
+      revealDropped({ itemId, sid, why: "offscreen" });
     }
     return;
   }

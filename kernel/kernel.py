@@ -3526,7 +3526,8 @@ CLIENT_DIAG_KEYS = {
     "reload-core": frozenset(("reason", "detail", "hold", "ageMs")),
     "shell": frozenset(("sidAttached", "host", "why", "tabs", "status", "via", "boot", "hasSid", "hasCard", "hasPid", "controlled", "dup",
                         "sub", "rows", "err", "getNotifications", "displayed", "vanished", "superseded", "sid8", "ageS", "shape", "kind", "sw",
-                        "decision", "hiddenMs", "quietMs", "attempts", "firstFailMs", "ms")),                    # D3 (2026-09-18): the shell socket's return-probe row (all fixed identifiers / enum members)
+                        "decision", "hiddenMs", "quietMs", "attempts", "firstFailMs", "ms",                      # D3 (2026-09-18): the shell socket's return-probe row (all fixed identifiers / enum members)
+                        "pane", "n")),                                                                            # pane-load-failed (2026-09-19): a lazy pane's document failed to load (pane key, via 'load' or 'backstop', the failure count)
     "federation": frozenset(("host", "ev", "why", "quietMs", "foreground", "msgType", "rs", "flushed", "held", "unread", "endedUnread",
                              "code", "clean", "detached", "pendingDropped", "buildId", "counts", "gt", "superseded")),
     "chat": frozenset(("sid", "error", "held", "got", "distVer", "path", "mdLen", "queuedLeft", "ids", "n", "active", "ts", "len", "route",
@@ -3536,7 +3537,8 @@ CLIENT_DIAG_KEYS = {
                        "dh", "last", "cls", "fromTail", "atBottom", "where", "removed", "added", "reAdded", "shBefore", "shAfter", "st",
                        "top", "bot", "dTop", "dBot", "lo", "hi", "edge", "why", "notice", "nav", "kind", "keep", "reland")),
     "strip": frozenset(("ok", "tunnels", "err", "open", "base")),
-    "feed": frozenset(("id", "from", "to", "ev", "buildId", "predicted", "appeared", "gone", "total")),
+    "feed": frozenset(("id", "from", "to", "ev", "buildId", "predicted", "appeared", "gone", "total",
+                       "itemId", "sid", "why", "key", "painted")),                                                 # reveal-dropped (review round 3, 2026-09-19): a bell or notification reveal the feed could not land (ids only; why offscreen or unpainted, key the parked key, painted the plan's answer at the release or null)
     "outline": frozenset(("buildId", "slot", "rev")),
     "waiting": frozenset(("buildId",)),
     "kernel": frozenset(("app", "kind", "reconnect", "iid", "cid", "host", "sid", "type", "span", "events", "bytes", "head", "missing",
@@ -54985,6 +54987,16 @@ def _client_reset_chat_base(client):
         # the accept-time comment in _ws states the rationale in full).
         if not client.get("redial"):
             client.pop("skeleton", None); client.pop("skeletonOrder", None); client.pop("reconnect", None)
+            client.pop("preferred", None)   # [fork] pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 finding kernel-2): the parked-reveal
+            #   preference's record (`preferred`, _resolve_reconnect) is a belief about this set, so it leaves with the set. The road that reaches
+            #   this line with a record standing is the ready arm's re-base: a second ready on a socket whose connect push already resolved and
+            #   recorded (Handler._dispatch_ws runs this reset on every ready, readySeen or not). Before this line the record outlived its set and
+            #   _watched_tab demoted the page's own declared tab out of _push's active-first batch. By reading, no client of this tree posts a
+            #   second ready on one socket (render.ts posts once at evaluation, the shim re-posts on a new socket alone, federation.ts once per
+            #   remote socket, the extension's pipe once per up), so the arm's own re-base branch is the road; driven by
+            #   tests/test_chat_skeleton_reconnect.py test_12g over the ?skeleton=1 handshake's own client shape (reconnect, dietSkeleton,
+            #   skeletonOnReady): the first ready's connect push records, the second ready re-bases. A declared redial keeps its record
+            #   with its set, as the guard above says.
         # A SKELETON client (a later chat column, ?skeleton=1 at its handshake, 2026-09-11): the pop above took the
         # `reconnect` the handshake armed, with the set a pre-ready pusher cycle may have built into a document that
         # could not hear it. Re-armed HERE, from the survivor, so the ready arm's connect push serves the page the same
@@ -55308,6 +55320,72 @@ def _resolve_reconnect(c, chat_list):
             # this socket; without the stamp a tap for this window parked for the rest of the page's life.
             c["ready"] = True
         act = c.get("active")
+        _hint = None   # the page's hint the preference below replaced, when it did (pass 5, the author's label, taking the reviewer's round-4 finding kernel-2: the record)
+        # [fork] pass 4b, the author's label (2026-09-20, taking the reviewer's round-3 addendum: fresh-1 / regression-4, the round-3 fixlist's extra9-1): a reveal PARKED for this client's
+        # window (the shell's /reveal at boot beats the chat pane's socket on the ack and vanish roads, and on sw when the browser opens the
+        # installed app on its own start URL) names the session the user tapped, and the consume behind this strip will focus it. When the
+        # tab list carries it, the one full is ITS, not the last-shown tab's: before this the phone's skeleton first dial spent the full on
+        # the dial's hint and the notified session arrived as a skeleton, shown only after a skeleton-click round trip. What this buys is
+        # that time-to-show, NOT a full or an ask saved (the author's pass-4b verify; settled by execution in the ack-road leg of
+        # tests/test_notification_tap_resume_browser.py): the strip lands ahead of the focus, so the page restores the tab its blob stored,
+        # a skeleton now, and asks for it (activeTab, then needFull skeleton-click) before it processes the focus; the ask is answered
+        # (the activeTab's release, _release_skeleton) and the tab is whole at a later tap. The round trip moves from the notified session
+        # to the stored tab. By reading, not driven: on a warm redial with a park, render.ts noteSkeletonTabOrder re-shows the shown tab
+        # that became a skeleton, a loader until the focus switches. The entry read is the one _consume_pending_reveal lands (the
+        # window's, else the no-wid one); a parked sid the list lacks (an ended session, another host's id) leaves the hint as before; no
+        # hint keeps the fail-safe whole push below. A dict read under this slot lock and no second lock: the park is one dict write
+        # (_reveal_request, _send_focus_to_view), and a park landing after this read is served as today, its consume behind the strip
+        # landing the focus on a skeleton tab the page then asks for. The ruled release+wake half is DEFERRED by the reviewer, not landed:
+        # executed, it added a duplicate full on the live road and closed nothing.
+        if act and not fresh:
+            _pk = str(c.get("wid") or "")
+            _pr = _PENDING_REVEAL.get(_pk)
+            if _pr is None and _pk:
+                _pr = _PENDING_REVEAL.get("")
+            _ps = str((_pr or {}).get("sid") or "")
+            # [fork] pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding correctness-1: the regression pass 4b introduced by taking the reviewer's round-3 addendum). The preference is for the client
+            # that will SHOW the parked session, and the kernel cannot name it on a split chat page (two or more columns under one wid:
+            # the consume focuses the first chat client of the wid, and the page hands a session another column holds to that column,
+            # render.ts's focus gate), so it applies to a window with ONE chat column. Two reads say how many the window has, and both
+            # must say one. The DECLARATION (the author's pass-5 verify): the shell posts its chat column count with the tap (_LANDING_REVEAL_JS
+            # cols, the /reveal body), kept on the park as `cols`, so a split page is known before its columns have all redialed; a park
+            # with no declaration (_send_focus_to_view's, a shell of a build before the field) leaves this read open. The SOCKETS: every
+            # chat client of this wid, this one included, reports the same `col` (the column each declares at its handshake, _ws), the
+            # belt for a column split off after the tap. Keyed on the column and not on a count of same-wid clients, because the boot
+            # road's normal state is a stale twin of the SAME column (the previous page's socket, its wid kept by sessionStorage, up to
+            # WS_DEAD_S from its reaping): a count read it as a second column and dropped the preference on the road the clause exists
+            # for (executed by the reviewer's round-4 refuter). Read off a lock-free copy of _clients, no _clients_lock under this slot lock (a new
+            # nesting would need its order stated; a stale read here chooses between the preference and the parent's whole-hint push,
+            # fail-safe either way). RESIDUAL, disclosed in the PR body: for a park with NO declaration the sockets read is the only one,
+            # and on a split page whose columns redial one after another (both reaped by the ping timeout, or a kernel restart) the first
+            # column's resolve sees one column and takes the preference: its own shown tab is served as a skeleton (a loader until it
+            # asks) and the parked session's full is spent on a column that may not show it. `not fresh`: the skeleton client's pre-ready
+            # pop consumes nothing (the ready arm re-resolves and consumes), so the preference waits for the pop that does.
+            _pc = (_pr or {}).get("cols")
+            _col = str(c.get("col") or "")
+            _cols = {str(x.get("col") or "") for x in list(_clients) if x.get("app") == "chat" and str(x.get("wid") or "") == _pk}
+            _cols.add(_col)
+            # [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1); DEFENSIVE (pass 8, the author's label,
+            # 2026-09-21, taking the reviewer's round-6 findings tests-2 and extra9-3): no road reaches the pop below with a record at this head. A
+            # socket enters this branch at most once: `skeletonOnReady` alone re-arms `reconnect` on a live client (the ready arm's reset, once, at
+            # the bundle's one ready), and the two other writers arm it at the handshake; so a redial enters once (its first strip sender's pop,
+            # fresh False), a skeleton column enters once (the pre-ready pop skips the branch under `fresh`, the ready-time re-arm's pop enters), and
+            # a redial of a skeleton column enters once. The record's releases today are the page's activeTab (Handler._dispatch_ws) and the ready
+            # arm's reset (_client_reset_chat_base). Kept against a future writer that re-arms `reconnect` on a live client past the fresh guard,
+            # so a second resolve of one socket never carries the first's record into its set; the premise is pinned by
+            # tests/test_chat_skeleton_reconnect.py test_12h (the three roads driven, the branch entered once each, the pop finding nothing).
+            c.pop("preferred", None)   # [fork] pass 7 (kernel-1), defensive since pass 8 (the block above)
+            if _ps and (_pc is None or _pc == 1) and len(_cols) <= 1 and _ps != str(act) and any(s.get("sid") == _ps for s in chat_list):
+                _hint = str(act)   # the page's own hint, for the record below (pass 5, the reviewer's round-4 kernel-2)
+                act = _ps
+                # [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1): the session served whole is RECORDED on the client, under this slot lock, where _push's readers
+                # look (_watched_tab: the active-first set, build_order, _all_active and the cold-tab gate). Before this the preference reassigned
+                # the local `act` alone, so those readers still named the page's stale hint: on the boot road the hint, a skeleton on every
+                # connected page, was ranked first and handed a cold full build the gate would otherwise have skipped, and the notified session's
+                # full was built after it. `active` is left as the page's own declaration (the client-diag skeleton row, _watched_sids and the
+                # live-wake exemption read it); the page's next activeTab drops this record (Handler._dispatch_ws), and so does the ready
+                # arm's reset (_client_reset_chat_base, pass 8: the record is a belief about the set and leaves with it).
+                c["preferred"] = _ps
         held = c.get("echat") or {}
         if not act:
             # No active hint. A RELAY client that DIETED (skeleton=1 at the handshake: `dietSkeleton`, kind `relay`)
@@ -55329,7 +55407,75 @@ def _resolve_reconnect(c, chat_list):
         skel = [sid for sid in _skeleton_for(c, str(act), chat_list) if sid not in held]
         c["skeleton"] = set(skel)
         c["skeletonOrder"] = skel
+        if _hint is not None:
+            # [fork] pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding kernel-2): the preference is the one place the kernel overrides the page's own active
+            # hint, and every other _PENDING_REVEAL transition prints a [reveal] line; this one filed nothing, and the `skeleton` client-diag
+            # row carries the page's activeId, so no record named the session the kernel served whole. Printed after the set is built, so the
+            # hint's fate is read off the resolved set (a hint with no transcript stays whole: _skeleton_for), and named by the EVENT, this
+            # client's set resolving, not by a road: the branch runs on the redial and on the ready arm's boot resolve alike.
+            print("[reveal] sid=%s wid=%s: preferred at the set's resolve, the one full in place of the page's hint %s (%s)"
+                  % (str(act)[:8], _pk[:8], _hint[:8], "a skeleton" if _hint in c["skeleton"] else "whole"), file=sys.stderr)
     return not fresh
+
+
+def _watched_tab(c):
+    """The chat tab a client will show once its set resolves, for _push's active-first order and the cold-tab gate: the
+    session the parked-reveal preference served whole in place of the page's hint (`preferred`, written by
+    _resolve_reconnect under the slot lock when the preference applies and dropped by the page's next activeTab, which is
+    the page's own word, and by the ready arm's reset, with the set it belongs to), else the page's own declaration (`active`). `active` itself is never overwritten: the client-diag
+    skeleton row, _watched_sids and the live-wake exemption read it as the page's declaration. [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1): before this the
+    preference reassigned only the local `act`, so on the boot road the stale hint stayed in _push's active set, was ranked first
+    and handed a cold full build the gate would have skipped (every connected page holds it as a skeleton, and its live row
+    states its status), and the notified session's full was built after it (tests/test_chat_skeleton_reconnect.py test_12f)."""
+    return c.get("preferred") or c.get("active")
+
+
+def _watched_records(clients):
+    """The parked-reveal preference's standing records over `clients`, for the two derivations below: (recs, withheld),
+    where `recs` is every record (`preferred`) a client carries and `withheld` is every declaration (`active`) a client with
+    a record made that no record-less client also declares. A client with a record watches the record and not its
+    declaration (_watched_tab), so the set of watched tabs is the declared set minus `withheld` plus `recs`; with no record
+    standing both sets are empty and the declared set is the watched set. [fork] pass 8 (the author's label, 2026-09-21,
+    taking the reviewer's round-6 findings kernel-1 and regression-4): the fork's readers DERIVE their answer from the
+    project's line (the declared set, or the declared flag) instead of recomputing it, so a later upstream edit to that
+    line takes effect here; the residual, disclosed: a client the project's line filters out still contributes its record."""
+    recs, withheld = set(), set()
+    for c in clients:
+        p = c.get("preferred")
+        if not p:
+            continue
+        recs.add(p)
+        a = c.get("active")
+        if a and a != p and not any(x is not c and not x.get("preferred") and x.get("active") == a for x in clients):
+            withheld.add(a)
+    return recs, withheld
+
+
+def _watched_flag(declared, sid, clients):
+    """Whether `sid` is a watched tab, derived from the project's answer `declared` (whether a client declares it): the
+    project's answer stands while no client in `clients` carries the preference's record; with one standing, a withheld
+    declaration does not count and a record does, so the targeted push's perf label (_push_session_now) files the session
+    the preference served whole as active, as _push's active-first set ranks it (kernel-1, the reviewer's round 6: the label
+    read the declaration alone and filed that session as background while the set built it first, one question with two
+    answers). [fork] pass 8."""
+    recs, withheld = _watched_records(clients)
+    if not recs:
+        return declared
+    return (declared and sid not in withheld) or sid in recs
+
+
+def _watched_set(declared, clients):
+    """_push's set of watched tabs, derived from the project's `declared` set (the tabs `clients` declare active): the
+    project's set itself while no client carries the parked-reveal preference's record, else that set minus the
+    declarations the records replaced plus the records (_watched_records), which is what {_watched_tab(c) for c in clients}
+    computes when `declared` is the unfiltered declaration set (tests/test_chat_skeleton_reconnect.py test_12i checks the
+    two over every configuration of three clients). The project's line stays live and consumed: a filter it gains upstream
+    reaches build_order and the cold-tab gate (test_12j mutates it in a scratch copy and the result moves). [fork] pass 8
+    (the author's label, 2026-09-21, taking the reviewer's round-6 finding regression-4)."""
+    recs, withheld = _watched_records(clients)
+    if not recs:
+        return declared
+    return (set(declared) - withheld) | recs
 
 
 def _send_tab_order(c, tab_order, tab_meta, live):
@@ -61177,6 +61323,7 @@ def _push(targets, connect=False, live_map=None):
                 if redialed:                             # the redial's first strip stands in for the ready it never posts:
                     _consume_pending_reveal(c, why="the pane's redial")   # a reveal parked for its window lands behind the strip
             active = {c.get("active") for c in chat_clients if c.get("active")}
+            active = _watched_set(active, chat_clients)   # [fork] pass 7 (kernel-1), derived since pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 finding regression-4): the project's set above, consumed as is while no client carries the parked-reveal preference's record, and with one standing the record in the declaration's place; build_order and the gate read this set, and an upstream edit to the line above reaches them instead of being recomputed away
             # Stable: active tabs first — and TRANSCRIPT-LESS sessions with them. A just-created session
             # has no transcript, so its build is near-free, and its creator is guaranteed to be staring
             # at its placeholder — yet the active-first hint can never name it: a client cannot declare
@@ -61205,6 +61352,7 @@ def _push(targets, connect=False, live_map=None):
             _live_scope.chat_floor0 = _chat_floor0_of(_all_chat)
             _all_active = {c.get("active") for c in _all_chat if c.get("active")}   # every connected column's watched tab,
             #                                                                          not this push's targets alone (round two, low 2)
+            _all_active = _watched_set(_all_active, _all_chat)   # [fork] pass 7 (kernel-1), derived since pass 8 (regression-4): the same derivation over every connected column's declared set, the project's two lines above consumed (this pair merges clean on a fold, the project's continuation comment standing between: the pair with the silent-discard hazard the derivation closes)
             _chat_sig_bump(pushes=1)                     # memos.chatSig.pushes: a push that runs the chat tab loop, the table's per-push denominator
             _sig_tabs = []                               # memos.chatSig: the per-tab rows the warm-tab census folds after the loop (_chat_sig_note_census)
             for s in build_order:
@@ -61852,6 +62000,7 @@ def _push_session_now(sid):
         except OSError:
             _nbytes = None
         _active = sid in {c.get("active") for c in targets if c.get("active")}   # the watched tab, as _push reads it from its clients
+        _active = _watched_flag(_active, sid, targets)   # [fork] pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 finding kernel-1): derived from the project's answer above, which stands while no target carries the parked-reveal preference's record; with one standing the record counts as watched and the declaration it replaced does not, so this label and _push's active-first set answer alike
         _PERF_STATS.build_chat(False, _dt, active=_active, miss=("targeted",), sid=sid, nbytes=_nbytes)
         _chat_sig_bump(targetedBuilds=1)             # memos.chatSig.targetedBuilds: a targeted build, no signature taken, watched or not
         #   the per-session timer (round three, 2026-09-15): this push builds too (27 attach handshakes at a boot run it), and an
@@ -61929,8 +62078,15 @@ def _take_live_wake_sids():
 
 
 def _watched_sids():
-    """The chat tabs connected clients are looking at: each alive, ready chat client's active sid (the
-    ?active= connect hint or the activeTab message; the same set _push builds first)."""
+    """The chat tabs connected clients are looking at, by each alive, ready chat client's own declaration: its active sid (the
+    ?active= connect hint or the activeTab message), the page's word, for the live-wake exemption. _push's active-first set
+    differs from this set in two ways, its population and its field: _push filters its targets by _client_ready alone and
+    reaps a socket a handler thread marked dead (`alive` False) at the cycle's end, so such a socket's declaration counts
+    there for that cycle and never here; and while a parked-reveal preference's record stands on a client, _push reads the
+    record in the declaration's place (_watched_tab, _watched_set). Over live clients with no record standing the two sets
+    are equal. The exemption stays on the page's word (the reviewer's round-5 ruling), so the two sets are named apart here
+    (pass 8, the author's label, taking the reviewer's round-6 finding kernel-1; the population difference stated at the
+    pass-8 verify's finding kernel-3)."""
     with _clients_lock:
         return {str(c["active"]) for c in _clients
                 if c.get("app") == "chat" and c.get("alive", True) and _client_ready(c) and c.get("active")}
@@ -64370,7 +64526,7 @@ def _sw_js():
 # and a park for a wid whose page never connected a socket has no end but a consume, since the drop at the last
 # client sees no client leave. A sweep of the park sites was tried in review and dropped live taps (a dead-shell-socket
 # phone park, a storage-blocked page's own park), so neither is closed here.
-_PENDING_REVEAL = {}                         # wid -> {"sid": ..., "wid": ...[, "sent": [clients]]}; "" is the no-wid entry
+_PENDING_REVEAL = {}                         # wid -> {"sid": ..., "wid": ...[, "sent": [clients]][, "cols": int]}; "" is the no-wid entry. cols (pass 7, the author's label, taking the reviewer's round-5 finding extra9-2): the shell's chat column count, written by _reveal_request from the /reveal body and read by _resolve_reconnect's parked-reveal preference; a park without it (a focus _send_focus_to_view parks, a shell of a build before the field) leaves the preference the sockets read alone, the disclosed residual, so a third park site should carry it
 # The roads a shell may name in /reveal's `via`, the log line's first word (the ledger block above _push_ledger has
 # the design): the worker's message to a live window ('sw'), the deep link the page opened on or was navigated to
 # ('link' — on Apple the OS's own tap callback for a killed app), the kernel's own clicked row ('ack') and the shown
@@ -64396,10 +64552,15 @@ def _reveal_msg(sid):
     return {"type": "focus", "id": sid, "live": True}
 
 
-def _reveal_request(sid, wid, boot=False, via=""):
+def _reveal_request(sid, wid, boot=False, via="", cols=None):
     """POST /reveal: aim the focus at the dashboard whose wid asked. Its chat pane already
     connected → deliver now; not yet (the cold-start norm — the shell's fetch beats the iframe's
     WS) → park for _consume_pending_reveal. Returns whether it was delivered immediately.
+    `cols` ([fork] the author's pass-5 verify, correctness-1's residual): the window's chat column count the shell
+    declared with the tap, kept on the park (`cols`) for _resolve_reconnect's parked-reveal preference, which
+    applies to a one-column window and cannot read that off the sockets registered at the first column's
+    resolve; None declares nothing (a shell of a build before the field; _send_focus_to_view's park has no
+    declaration either) and the entry keeps its two-key shape.
 
     Two ways a same-wid chat socket the kernel holds is NOT the pane this tap is for (the user
     2026-09-06, whose tap on the phone did nothing — the phone is where sockets die without a
@@ -64462,13 +64623,16 @@ def _reveal_request(sid, wid, boot=False, via=""):
                 sent.append(c)
         except Exception:
             pass
+    entry = {"sid": str(sid), "wid": str(wid or "")}
+    if cols is not None:
+        entry["cols"] = int(cols)
     if not delivered:
-        _PENDING_REVEAL[str(wid or "")] = {"sid": str(sid), "wid": str(wid or "")}
+        _PENDING_REVEAL[str(wid or "")] = entry
     elif sent:
-        _PENDING_REVEAL[str(wid or "")] = {"sid": str(sid), "wid": str(wid or ""), "sent": sent}
+        _PENDING_REVEAL[str(wid or "")] = dict(entry, sent=sent)
     outcome = ("delivered, copy parked (%s)" % ("booting page" if boot else "target unproven") if sent else "delivered") if delivered else "parked"
-    print("[reveal] %s sid=%s wid=%s%s: %s" % (via or "shell", str(sid)[:8], str(wid or "")[:8],
-                                             " boot" if boot else "", outcome), file=sys.stderr)
+    print("[reveal] %s sid=%s wid=%s%s: %s%s" % (via or "shell", str(sid)[:8], str(wid or "")[:8],
+                                               " boot" if boot else "", outcome, " cols=%d" % cols if cols is not None else ""), file=sys.stderr)   # cols after the outcome: the trail regexes of the unit and served legs read `wid=…: parked` and `boot: parked`
     return delivered
 
 
@@ -66150,6 +66314,30 @@ function parentLink(){try{return (window.parent!==window&&typeof window.parent._
 // byte for byte. The shell is present when its probe exists, window.parent.__rompMobileOn is a function, as parentLink()'s
 // gate reads the link; undefined off a shell (standalone, VS Code, an older shell): parks nothing.
 function parentMobile(){try{return (window.parent!==window&&typeof window.parent.__rompMobileOn==="function")?!!window.parent.__rompMobileOn():undefined;}catch(e){return undefined;}}
+// [fork] stage 0 (2026-09-18, the user's decision of that day): the phone's FIRST chat dial takes the skeleton diet. The kernel
+// then serves the strip with a skeleton list, ONE full for the tab the page shows (its ?active= hint, the state blob's activeId)
+// and a ~400 B status per other tab (_resolve_reconnect), where a fresh dial was served every tab whole (17 frames / 9 MB on the
+// measured board); the page's idle prefetch loads the rest one tab at a time once the visible tab's full has applied (render.ts,
+// skeleton-tabs.ts's gate). The dial line below reads RESTART_DIET for the first dial (everConnected false) and nothing after it,
+// so setting the reload diet's flag here gives the phone the same shape with the URL line left as upstream wrote it; a redial
+// carries the diet through reconnect=1 as today, and a redial after a socket that died before the bundle's ready was answered
+// dials as a fresh page, as the reload diet does. TWO readers of the flag (review round 3, 2026-09-19): the dial line below, and
+// window.__rompDialTerms (the reload core's tail), whose skeleton term federation.ts carries onto every remote relay dial
+// (remoteDialUrl); both scope it to this page's first LOCAL dial through !everConnected. The relay is dialed after the bundle's
+// async /tunnels poll (federation.ts start, poll, openRemote, connect), which this shim's dial at parse precedes, so on a healthy
+// page the local socket has opened (everConnected true) before the relay dial is built and that dial carries NO skeleton term
+// (observed 3/3 and 7/7 phone cold opens in review; pinned in a real engine by test_federated_dial_terms_served.py's phone pass):
+// the remote serves its whole board through the relay, the shape the main pane always had. In the window before the local open
+// (never observed) the relay dial would carry skeleton=1: with the stored tab on that host `active` names it and the remote serves
+// it whole and skeletons the rest; with the stored tab not this host's (the hub's own, or another remote's) no `active` rides and the remote's relay no-active rule
+// (_resolve_reconnect) skeletons every transcript-bearing tab, which the hub's chain loads one per ask through the relay once the
+// local gate opens. Off this pane the flag stays false: a column is SKEL already, a standalone page or the VS Code webview has no
+// shell (parentMobile undefined), the desktop's grid shows several panes and keeps the whole push. The
+// shell's probe is defined in its head, before any iframe (_landing), so this read at the shim's load cannot race the shell's
+// body scripts. A blob with no activeId (a first-ever open) dials the term too and the kernel keeps its fail-safe whole push
+// for a local page with no hint (_resolve_reconnect); a stored tab that has ended matches no session and every tab is skeleton,
+// which the page's strip gate loads in the kernel's order.
+if(APP==="chat"&&!COL&&!SKEL&&parentMobile()===true)RESTART_DIET=true;
 // [fork] D2: park this pane's socket. abandon()'s teardown (the four handlers detached, close, ws nulled, so the watchdog tick
 // is inert on !ws and no onclose timer can arm) and its quiet-stale rule, but ONE state word to the shell, "parked", never
 // abandon()'s "down": a parked pane is not a broken one, so the shell's connection log stays silent and its cue dark
@@ -66449,7 +66637,7 @@ if(ws.readyState===3&&Date.now()-connT>8000){connect();}},5000);
 // waits, and the shell's link-up word is the redial's event. The shell re-tells the link on its socket's open, close
 // and abandon (_LANDING_COLLAPSE_JS broadcast): the six pane frames hear it as the link field of the panes word
 // (link:'up'|'down', panesMsg), every other shim-bearing iframe (the settings frame, a split chat column) as a link
-// word of its own ({romp:'link',link}), since a panes word would replace those frames' pane set (review round 1,
+// word of its own ({romp:'link',link,mob}: this reader takes the link alone, render.ts the layout term), since a panes word would replace those frames' pane set (review round 1,
 // 2026-09-18: before this the word reached the six pane frames alone, and the others ended their await on the 5 s
 // backstop poll below). Only ends an await with no socket; stamps linkUpMs (foreground->link-up) onto the pending
 // return-fresh.
@@ -66913,6 +67101,20 @@ def _pane_spin(cid, ignore_id=""):
             # pane that has content — the kernel's connect-time push landing is. So it waits for
             # romp:wsfresh, the shim's first real frame after the reconnect.
             "window.addEventListener('romp:wsup',function(){hide();});"
+            # [fork] review round 2 (2026-09-19, D3): while a pane's FIRST paint is held off screen (the feed on the phone,
+            # paint-gate.ts firstPaintHeld) nobody can see the sheet, so it stands with no timer (a failsafe firing then
+            # faded it over the still-empty list, and the tap revealed a blank pane); the release render re-arms the 30 s
+            # backstop, and its first child retires the sheet through the observer above. Both events are the bundle's
+            # (feed.ts), dispatched once per hold. A LATCH, not a one-shot (review round 3, fresh-2): the hold word sets
+            # `held` and re-shows a sheet a blip had faded before the word (the socket's wsup hide() above); two fork
+            # listeners after the upstream ones stand the socket's arms down while held: a wsdown's show() re-armed the 30 s
+            # failsafe (cleared again here, same-target listeners run in registration order, so this runs after it), and a
+            # wsup's hide() faded the sheet over the still-empty list (re-shown here). The release clears the latch and re-arms.
+            "var held=false;"
+            "window.addEventListener('romp:firstpaintheld',function(){held=true;clearTimeout(fail);o.classList.remove('gone');});"
+            "window.addEventListener('romp:firstpaintreleased',function(){held=false;arm();});"
+            "window.addEventListener('romp:wsdown',function(){if(held)clearTimeout(fail);});"
+            "window.addEventListener('romp:wsup',function(){if(held)o.classList.remove('gone');});"
             "window.addEventListener('romp:wsfresh',function(){badge(false);});})();</script>")
 
 
@@ -67558,6 +67760,13 @@ row.addEventListener('click',function(){close();
 // reveal at this dashboard). A shell socket that is down says so in the Log rather than dropping the click.
 if(!feedHere()){jumpChat(n.tgt.sid||'');return;}
 try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}
+// [fork] review round 3 (2026-09-19, extra9-1): the jump SHOWS the pane on the phone too (the browseFiles relay's precedent in
+// _LANDING_SETTINGS_JS): show() runs the feed's synchronous show hook, so its held board is painted and its panes word posted in
+// this click's task, BEFORE the revealCard message below, and the feed finds the card at the tap; nothing parks on this road.
+// Gated on the phone layout (review round 4, 2026-09-19, correctness-3 and regression-3; the viewFile relay's shape in _LANDING_SETTINGS_JS):
+// the desktop grid shows the feed pane already, and show() there would still persist romp-mobile-tab and set body data-tab, so the switch
+// would buy nothing and write the remembered phone tab from a desktop click; before this the call ran on every layout.
+try{if(window.__rompMobileOn&&window.__rompMobileOn())window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}
 var f=document.getElementById('f-feed');
 try{f&&f.contentWindow&&f.contentWindow.postMessage({romp:'revealCard',itemId:n.tgt.itemId||'',sid:n.tgt.sid||'',gesture:true},'*');}catch(e){}});}
 row.appendChild(tx);row.appendChild(tm);row.appendChild(del);list.appendChild(row);})(NOTES[i],i);
@@ -68989,13 +69198,38 @@ function feedHere(){return !(window.__rompPaneEnabled&&!window.__rompPaneEnabled
 // document still on its way would be dropped, and the first click would show nothing. A second ask while that
 // one waits is not queued: the page's opener toggles, so two would open and close it.
 var sPend=false;
+var sArmed=false,sOpen=null;   // [fork] review round 4 (2026-09-19, correctness-2 and extra6-2), on its own line so the project's declaration above stands unedited: sArmed, the one load listener armed for the element's life; sOpen, the poster of the ask the fetch in flight answers, written by the tap that fetched and read once by that listener
+var sDeferred=false;   // [fork] pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding ui-1): a tap has ridden the fetch in flight (the deferral below), once per fetch; cleared where a fetch starts
 window.__rompOpenSettings=function(tab,section){var f=document.getElementById('f-settings');if(!f)return;
 // tab and section (T379): the chat strip's tab-widgets gear asks for the Chat tab at its Tab widgets section; the rail's gear names none (the remembered tab)
 var msg={romp:'openSettings'};if(typeof tab==='string'&&tab)msg.tab=tab;if(typeof section==='string'&&section)msg.section=section;
 var open=function(){try{f.contentWindow&&f.contentWindow.postMessage(msg,'*');}catch(e){}};
+// [fork] review round 3 (2026-09-19, kernel-3): a src set over NO document is a failed fetch (Chromium commits a cross-origin error
+// page, contentDocument null; Firefox and WebKit keep the frame's initial about:blank and fire no load event), and before this it left
+// the gear unopenable for the page's life: every later tap returned at sPend or posted into a dead document. Read at TAP time (no load
+// event comes on two engines, and no timer: the next tap is the event): no document, or about:blank, drops the src and the pending flag
+// and falls through to the promotion below, which fetches again and posts the open on the load. Live means the settings PAGE: a
+// same-origin document at a url with the pane shim's marker in its window (window.__rompApp, set as the shim parses, the read
+// docState makes for its `app` answer in _LANDING_MOBILE_JS, kernel.py function docState; review round 4, 2026-09-19, kernel-2). A document without it (the kernel's 403 line
+// under a stale cookie, a proxy's 502 body) is not the page: it cannot hear the ask, and this frame is display:none until the page
+// speaks, so the lazy panes' shown-as-served rule has no bearing here; before this a same-origin error body left the gear dead for the
+// page's life, every tap posting into it. A body that stays an error leaves the gear silently unopenable still (a disclosed residual).
+// A tap while the first fetch is still in flight reads not-live too. Before the document commits (about:blank, or no document) it restarts
+// the fetch (one open still, at that load; the earlier "not queued" rule kept a second tap from toggling the page twice, and the restart
+// keeps that). Once the document has COMMITTED at the url but its inline shim has not run (the page's two stylesheets load ahead of it),
+// the marker alone cannot tell "still in flight" from "finished and not the page": the LOAD EVENT can (pass 5, the author's label, 2026-09-20, the reviewer's round-4 ui-1),
+// since the listener below clears the pending flag on the page's load. With the flag still up, the tap rides the fetch already running,
+// re-recording its own ask so the load posts this tap's tab and section, and it does so ONCE: a further tap in the unchanged state
+// restarts (the refuter's rule: a link lost mid-load, the document committed and its shim never arriving, must not leave the gear
+// unopenable for the page's life). Before this the second tap tore the navigation down and started a second load, where the parent
+// rode the one running. The gear paints no failure state; a further tap is the recovery.
+if(f.getAttribute('src')){var live=false,parsed=false;try{var sd=f.contentDocument;parsed=!!(sd&&sd.URL&&sd.URL!=='about:blank');live=!!(parsed&&f.contentWindow&&typeof f.contentWindow.__rompApp==='string');}catch(e){}
+  if(!live&&parsed&&sPend&&!sDeferred){sDeferred=true;sOpen=open;return;}   // [fork] pass 5, the author's label, the reviewer's round-4 ui-1: committed at the url, no marker yet, no load yet: the fetch is in flight, so this tap rides it once (its ask recorded for the load; the comment above)
+  if(!live){try{f.removeAttribute('src');}catch(e){}sPend=false;}}
 if(!f.getAttribute('src')){var u=f.getAttribute('data-src');if(!u)return;sPend=true;f.setAttribute('src',u);
-  f.addEventListener('load',function(){try{if(f.contentDocument&&f.contentDocument.URL==='about:blank')return;}catch(e){}   // the empty document's own load, not the page's
-    if(sPend){sPend=false;open();}});return;}
+  sOpen=open;sDeferred=false;   // [fork] review round 4 (2026-09-19, correctness-2 and extra6-2): the ask THIS fetch answers (sDeferred: a new fetch, no tap has ridden it yet, pass 5, the reviewer's round-4 ui-1), read by the listener below at the page's load. The listener is armed once for the element's life and closed over the first tap's open (and so its msg), so every re-fetch after a dead document, and the restart a tap during the first fetch makes, opened the gear at the FIRST tap's tab and section whatever the later tap named; the tap that fetches records its own ask here and the listener posts and clears it
+  if(!sArmed){sArmed=true;f.addEventListener('load',function(){try{if(f.contentDocument&&f.contentDocument.URL==='about:blank')return;}catch(e){}   // the empty document's own load, not the page's; ONE listener for the element's life (a re-fetch after a failed one reuses it: review round 3)
+    if(sPend){sPend=false;var o=sOpen;sOpen=null;if(o)o();}});}return;}
 if(sPend)return;
 open();};
 // #settings=<tab> in the URL (T404 round two): a standalone /feed or /fleet page's off notice lands here with the tab named,
@@ -69048,6 +69282,7 @@ if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files
     if(cur!=='files'){window.__rompFilesTabFrom=cur;window.__rompMobileTab&&window.__rompMobileTab('files');}}}catch(e){}
   var fwd=function(){try{ff&&ff.contentWindow&&ff.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null,todoId:m.todoId||null,at:m.at||null,frag:m.frag||null},'*');}catch(e){}};
   var rd='';try{rd=(ff&&ff.contentDocument)?ff.contentDocument.readyState:'';}catch(e){}
+  try{if(ff&&ff.contentDocument&&ff.contentDocument.URL==='about:blank')rd='loading';}catch(e){}   // [fork] stage 0 (2026-09-18): a LAZY Files pane the tab switch above just promoted still holds its initial about:blank (readyState complete) until the page commits; a forward into it would be lost, so it waits for the page's load below (the gear opener's own guard)
   if(ff&&rd!=='complete'){var once=function(){ff.removeEventListener('load',once);fwd();};ff.addEventListener('load',once);}else fwd();}
 // the Files pane's viewer closed (files.ts posts it on the close edge: nothing left up in the pane): on a
 // phone, where the arm above switched tabs to show it, go back to the tab the click came from; on desktop
@@ -69073,6 +69308,7 @@ if(m.romp==='browseFiles'&&(m.pane==='pane'||!feedHere())){var fb=document.getEl
     if(curb!=='files'){window.__rompFilesTabFrom=curb;window.__rompMobileTab&&window.__rompMobileTab('files');}}}catch(e){}
   var fwdb=function(){try{fb&&fb.contentWindow&&fb.contentWindow.postMessage({romp:'browseFiles',path:m.path,sid:m.sid,identity:m.identity||null},'*');}catch(e){}};
   var rdb='';try{rdb=(fb&&fb.contentDocument)?fb.contentDocument.readyState:'';}catch(e){}
+  try{if(fb&&fb.contentDocument&&fb.contentDocument.URL==='about:blank')rdb='loading';}catch(e){}   // [fork] stage 0: the same wait for a just-promoted lazy Files pane (the viewFile arm above says why)
   if(fb&&rdb!=='complete'){var onceb=function(){fb.removeEventListener('load',onceb);fwdb();};fb.addEventListener('load',onceb);}else fwdb();}
 // A browse ask naming no pane surfaces the FILE BROWSER in the FEED pane, which is a different
 // document — so the shell relays it. If the feed pane is toggled off we turn it on for the duration
@@ -69082,7 +69318,7 @@ if(m.romp==='browseFiles'&&(m.pane==='pane'||!feedHere())){var fb=document.getEl
 else if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');
   if(!document.body.classList.contains('po-feed')){window.__rompFeedWasOff=true;
     try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}}
-  try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // phone: one pane at a time
+  try{if(window.__rompMobileOn&&window.__rompMobileOn())window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // the phone's one-pane tab swap, gated on the layout as the two Files arms above and the Log row are (pass 5, the author's label, 2026-09-20, taking the reviewer's round-4 finding ui-2: the desktop grid shows the feed already, and show() there would persist the remembered phone tab, romp-mobile-tab, from a desktop gesture); the lift above and the post below run on both layouts
   try{bf&&bf.contentWindow&&bf.contentWindow.postMessage({romp:'browseFiles',path:m.path,sid:m.sid},'*');}catch(e){}}
 // A passage selected in a viewer hosted by a pane with NO composer (the Files pane, the feed) posts up in
 // the editorSelection shape the chat already handles (file-view.ts composerWindow); the shell forwards it
@@ -69835,6 +70071,19 @@ refresh();   // self-schedules (fast while attaching, slow keep-alive otherwise)
 # to 1024px, is one pane at a time with bottom tabs; mouse desktops keep the grid.
 _MOBILE_MQ = "(max-width:820px),(pointer:coarse) and (max-width:1024px)"
 
+# [fork] stage 0 (review round 1, 2026-09-19, regression-5): the DESKTOP promotion of the Waiting and Files panes. Both are
+# served with data-src (lazy on the phone since 2026-09-18) and have no gear row, so the pane controller's list
+# (_LANDING_COLLAPSE_JS reconcile) does not carry them; on the desktop grid they load at boot, here. Its own <script>, like
+# every shell behaviour (test_kernel_mobile's count pin): a throw in the mobile script must not strand a desktop pane
+# (before this the promotion was the mobile script's last line, behind an early return and 295 lines that can throw). It
+# reads the layout from the media query itself, never from window.__rompMobileOn, which the script assumed to have thrown
+# defines, and never from the controller's list (the gear-optional panes; a Waiting row there would change togglePane).
+# Spliced before the mobile script. A phone layout returns at once: there the mobile script promotes a pane on its tap.
+_LANDING_DESKTOP_PANES_JS = """
+(function(){var MQ=null;try{MQ=window.matchMedia&&matchMedia(""" + json.dumps(_MOBILE_MQ) + """);}catch(e){}if(MQ&&MQ.matches)return;
+['f-waiting','f-files'].forEach(function(id){try{var f=document.getElementById(id);if(f&&!f.getAttribute('src')&&f.getAttribute('data-src'))f.setAttribute('src',f.getAttribute('data-src'));}catch(e){}});})();
+"""
+
 _LANDING_MOBILE_JS = """
 (function(){
 // The shell's own client-diag rows (2026-09-08): the bell's and the tap-landing scripts record what they saw
@@ -69937,11 +70186,133 @@ var F={chat:document.getElementById('f-chat'),fleet:document.getElementById('f-f
 // slash rule keys on, until the next paint event. A tab or a reveal decides which pane shows, nothing else.
 var B=bar.querySelectorAll('button[data-pane]'),KT='romp-mobile-tab';
 function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')||'null');return !!(st&&st.showFilesControl===true);}catch(e){return false;}}   // the gear's Files-control setting (T317; off by default since T317b: shown only when the store holds the literal true under the fresh key, never the T317-era filesControl a whole-object save merged in): the same read the pane controller makes, which parses after this script
+// [fork] stage 0 (2026-09-18): LAZY PANES on the phone (the user's decision of 2026-09-18: a pane nobody is looking at costs
+// nothing until its tap). The served markup gives every pane but the chat a data-src (the optional panes since 2026-09-10;
+// the Waiting and Files panes since this change), and on the desktop the pane controller (_LANDING_COLLAPSE_JS reconcile)
+// copies it to src at boot for every optional pane the gear shows, as before, while the Waiting and Files panes, which have
+// no gear row and so are not in the controller's list, are promoted at boot by their own script (_LANDING_DESKTOP_PANES_JS,
+// spliced before this one; review round 1: a throw here must not strand a desktop pane). On the phone layout only the chat, the feed
+// (exempt: its socket carries the card-trouble entries the shell's bell mirrors, the parking rule's exemption) and the stored
+// tab load at boot; every other pane loads on its FIRST show (a tap, a reveal, a relay's switch), so a cold open costs their
+// documents, sockets and connect pushes nothing. The controller's boot promotion reads data-src, so before it parses (this
+// script runs first) the lazy panes' data-src is parked under data-lazy-src, an attribute the controller does not read, and
+// promote() reads either: the controller's own lines stay upstream's text, byte for byte. A layout flip to the desktop (a
+// rotation across the breakpoint) promotes every lazy pane, since the grid shows them without a tap. A promoted pane's
+// document hears the panes word on its own load (the controller's load hook) and dials as any pane does; from its first show
+// on it is a pane like any other (a return while it is off screen parks it, the shim's D2 rule). The measure of the saving is
+// the pane's absence from the timing rows: a never-tapped pane files none.
+// The loading state (ui/CLAUDE.md, loading states): from the promotion until the iframe's load event the pane's .pane div
+// carries the `loading` class, and while the SHOWN tab's div carries it the body carries `pane-loading`, which paints the
+// shell's #pane-load, the romp loader over the pane area (the .pane div is display:contents on the phone, so it can host no
+// box of its own: one shell element, painted for the tab in view). Event-based, with a 30 s backstop so it can never trap the
+// user; the pane's own loader (_pane_spin) takes over the instant its document paints, with the same backdrop and loader, so
+// the hand-over is not visible.
+// A FAILED load (review round 1, 2026-09-19, HIGH 2): a src is never reassigned, and promote()'s first guard reads it, so a
+// document fetch that failed at the first tap left the pane blank for the life of the page, the backstop clearing the loader
+// over nothing. The detector is docState(): what the frame holds, in five answers. `none`: no readable document, the cross-origin
+// error page Chromium commits for a failed navigation (a failure). `blank`: about:blank, the frame's initial document, kept by
+// Firefox and WebKit through a failed navigation (no load event follows) and by every engine until the fetch commits (still
+// loading). `app`: the pane's OWN document, same-origin at its url with the pane shim run in its window (window.__rompApp, set as
+// the shim parses, ahead of the bundle and the load event). `doc`: a same-origin document at the url with no shim that carries the
+// kernel's stamp of a 200 (data-romp-served=200 on its <html> tag, written by Handler._send on every text/html 200 this kernel
+// writes whose body has an <html> tag, _stamp_served_html: a rule over the writer, not a list of pages; a body with none is served
+// unstamped and would read as a failure here, the paste-the-token page at / being the one today, never at a pane url), so a 200 the kernel served that this reader cannot
+// classify: the kernel's own "needs the ui/ modules" fallback page. `other`: a same-origin document at the url with neither the
+// marker nor the stamp, so what the kernel did not serve as a 200 (its 403 line for a token-gated route once the cookie is stale,
+// its 500 page, a proxy's 502 body while it restarts). THE RULE (review round 2's family two, narrowed in review round 4,
+// 2026-09-19, kernel-1 and tests-1): a 200 the kernel served at the pane's url is not a failure just because this reader cannot
+// recognise it, so `doc` is SHOWN AS SERVED (the loader clears, the src stays, one shell client-diag row `pane-load-unmarked`
+// {pane, via} says what was seen, never silence); every other status is NOT shown as served: `other` is a failure like `none`,
+// re-parked with the failed state and its retry road (a re-tap, the overlay tap, the Try again button). Pass 3 had shown every
+// same-origin document as served, which put the kernel's 403 line, whose body names the serve-token file's path, on the phone's
+// screen with no retry road for the page's life; the stamp is what a 403, a 500 or a 502 body cannot carry. The iframe's `error`
+// event never fires for a failed navigation in any engine; the load listener reads docState() on every load but the initial
+// about:blank's own, and the 30 s backstop reads it for a frame still loading then (`blank` or `none` is a failure by the
+// backstop, WebKit's road; `app` is a slow load, the loader clears as before; `doc` is shown and said; `other` fails).
+// failed() reads the LAYOUT at fire time (review round 3, 2026-09-19, family one: a promotion armed on the phone keeps judging after a
+// flip to the desktop, where the failed state is not painted at all, and before this it re-parked under data-lazy-src whatever the
+// layout, leaving a desktop column with neither src nor data-src and no road to promote it again). On the phone it re-parks the pane
+// (src removed, the url back under data-lazy-src, so the next show() promotes it again as a first tap would) and swaps the div's
+// `loading` for `failed`; on the desktop it hands the url back to data-src (what the gear's reconcile and the desktop boot read),
+// clears `failed` (a later rotation must not paint a stale failure over a pane that loaded there) and promotes once more, since the
+// grid shows the pane with no tap. EVERY promotion arms the load listener and the 30 s backstop, the desktop's included (review
+// pass 4, 2026-09-19, regression-1: pass 3 armed them under mobileOn() alone, so the desktop's re-promotion had no detector; when
+// it failed too the pane kept a src over a dead document with no state, lazyFlip's flip-back parking skipped a frame with a src,
+// and back on the phone the tab tap, the overlay tap and the Try again button all did nothing for the page's life, a dead end the
+// parent commit did not have). The desktop's response is a TABLE over the episode count (EPI) and docState's answer (pass 5, the author's label,
+// 2026-09-20, taking the reviewer's round-4 findings correctness-3 and extra9-1). `blank` at the backstop HOLDS: the src is kept for the fetch still in flight, nothing is
+// re-fetched, the row and the episode count record the 30 s uncommitted document and DEAD records the promotion for the flip back; a
+// healthy slow load is not torn down and lands through the load listener as ever, loaded() ending the episode (pass 4 tore it down at
+// 30 s, re-fetched it, and a rotation to the desktop armed one such deadline per parked pane in the same tick). Otherwise the episode's
+// first failure re-parks under data-src and promotes again, and the second is the bound: `other`, a document the kernel sent (its 403
+// line, whose body names the serve-token file's path; its 500 page), is dropped from the frame (the src removed, so the frame navigates
+// to about:blank; the answer is on show for the frames between its commit and its load event, the listener's read, then dropped: the
+// author's pass-5 verify), its url parked under data-lazy-src, the attribute the controller's reconcile does not read (parked under data-src, a
+// gear save set the src again with no token and no backstop and the bound promotion's stale listener judged and dropped it once more:
+// one re-fetch and one pane-load-failed row per save, the author's pass-5 verify), so on the desktop nothing promotes it again short of a
+// flip to the phone or a reload; and `none`, the browser's own error page, keeps its src as a desktop failure always showed;
+// both record the promotion's token in DEAD, so the promote-fail loop is closed at two and the flip back to the phone (lazyFlip's phone
+// branch) parks that pane under data-lazy-src with the failed state, where the three retry roads promote it again. Pass 4's bound kept
+// the src whatever the answer, which left the kernel's 403 body on the desktop's screen with no failed state and no retry: pass 3's
+// high moved to the desktop layout. The cost of the hold: the desktop's one automatic retry for a navigation that never commits
+// (Firefox and WebKit fire no load event for one) is gone, no worse than the parent, which armed nothing there; and a fetch still in
+// flight at a flip back to the phone is dropped with the src, an open residual. The backstop's guard is
+// PEND, the token of the promotion still awaiting its verdict (the phone's `loading` class is paint alone: the grid paints none).
+// Both layouts count the failure and file one shell client-diag row (`pane-load-failed` {pane, via, n}). Every promotion mints the
+// token (TOK), the desktop's included, so a phone-armed listener or backstop is inert over the desktop's re-promotion (without that
+// the stale listener re-failed the desktop's load and the promote-fail cycle never ended). Not every promotion goes through promote():
+// the desktop's boot promotions (the controller's reconcile in _LANDING_COLLAPSE_JS, and _LANDING_DESKTOP_PANES_JS for the Waiting and
+// Files panes) set src from data-src with no token, listener or backstop, as before this change, so a pane that fails at a
+// desktop-layout boot and is then flipped to the phone has no state and no retry road short of a reload (a residual, disclosed in
+// the author's pass-4 verify; a fix changes the desktop's boot and needs a ruling). The failed state is painted where the user
+// looks: body.pane-failed keeps #pane-load up with #pane-load-msg (role=alert, so it is announced) saying the pane did not load and the
+// #pane-load-retry button, a real button shown in the failed state alone (review round 3, ui-1: focusable and named for the keyboard
+// and a screen reader, the way #rail-api's row is; a tap anywhere on #pane-load retries too); the second failure and later of an
+// EPISODE say so and offer the page reload (EPI counts the failures since the pane last loaded and loaded() resets it, review round 3,
+// correctness-1: FAILS, the page-life count the row carries, never resets, and read for the copy it called a fresh failure the second).
+// The copy names no input (ui-2: "Try again" sits on the control), since the phone layout also serves a narrowed mouse window.
+var LAZY='data-lazy-src',LOAD_MS=30000,URLS={},FAILS={},EPI={},TOK={},PEND={},DEAD={};   // PEND: per pane, the token of the promotion still awaiting its verdict (the backstop's guard); DEAD: the token of a desktop promotion recorded for the flip back to the phone to park: the episode's bound, or a backstop over a fetch still in flight (pass 4, the table of pass 5; the author's labels)
+var MSG_FAILED="Couldn't load this pane.",MSG_FAILED_AGAIN="Still not loading. Try again, or reload the page.";
+var RFOC=false;   // the Try again button's click retried with the keyboard's focus on it (review round 4, 2026-09-19, ui-1): paintLoading hides the button while the retry loads, and hiding the focused control drops focus to the body in every engine with nothing bringing it back, so pass 3's keyboard road survived exactly one activation; the failed paint that shows the button again puts focus on it while this is set, and clears it. A load (loaded) and a tab switch (show) clear it too, so a later pane's first failure moves focus onto nothing the user did not ask for; the overlay tap sets nothing (a pointer gesture keeps its own focus)
+function paneDiv(f){try{var d=f&&f.parentNode;return (d&&d.classList&&typeof d.classList.contains==='function')?d:null;}catch(e){return null;}}
+function paintLoading(){try{var k=document.body.getAttribute('data-tab'),d=paneDiv(F[k]);document.body.classList.toggle('pane-loading',!!(d&&d.classList.contains('loading')));
+var bad=!!(d&&d.classList.contains('failed'));document.body.classList.toggle('pane-failed',bad);
+var msg=document.getElementById('pane-load-msg');if(msg)msg.textContent=bad?((EPI[k]||0)>=2?MSG_FAILED_AGAIN:MSG_FAILED):'';   // the copy by this episode's count (EPI), not the page-life count (FAILS)
+var rb=document.getElementById('pane-load-retry');if(rb){rb.hidden=!bad;if(bad&&RFOC){RFOC=false;try{rb.focus();}catch(e){}}}}catch(e){}}   // the retry button exists for the failed state alone: a focusable control under the loader would be wrong; shown again after the keyboard's retry (RFOC), it takes the focus back, once
+function loaded(k){EPI[k]=0;PEND[k]=0;DEAD[k]=0;RFOC=false;try{var d=paneDiv(F[k]);if(d){d.classList.remove('loading');d.classList.remove('failed');}}catch(e){}paintLoading();}   // a load ends the episode: the next failure's copy is a first failure's; nothing is pending or dead; the keyboard's retry, if one was owed a focus, is answered by the load (RFOC)
+function docState(f){try{var d=f.contentDocument;if(!d)return 'none';var u=d.URL;if(!u||u==='about:blank')return 'blank';var w=f.contentWindow;if(w&&typeof w.__rompApp==='string')return 'app';var h=d.documentElement;return (h&&h.getAttribute&&h.getAttribute('data-romp-served')==='200')?'doc':'other';}catch(e){return 'none';}}   // the frame's document, classified (the comment above): none (a cross-origin error page), blank (the initial document, never committed), app (the pane's own, its shim run: window.__rompApp), doc (a 200 the kernel served, its stamp on the <html> tag, that this reader cannot classify: shown as served, said), other (a document at the url with neither: not a 200 of this kernel's, a failure)
+function unmarked(k,via){loaded(k);try{shellDiag('pane-load-unmarked',{pane:k,via:via});}catch(e){}}   // a 200 the kernel served with no pane shim (its "needs the ui/ modules" fallback page): shown as served, the loading state ended and the src kept, and said once (review round 3; a 200 alone since review round 4, the stamp)
+function failed(k,via,s){var f=F[k];if(!f)return;var mob=mobileOn();PEND[k]=0;FAILS[k]=(FAILS[k]||0)+1;EPI[k]=(EPI[k]||0)+1;   // the verdict is in, s docState's answer at it (pass 5, the author's label); FAILS: the page-life count the row carries (docs/read-side.md); EPI: this episode's, for the copy and the desktop's bound
+var hold=!mob&&s==='blank',again=!mob&&!hold&&EPI[k]<2,bound=!mob&&!hold&&!again,keep=hold||(bound&&s!=='other');   // the desktop's table (pass 5, the author's label; the comment above): a fetch still in flight at the backstop is held (the src kept, nothing re-fetched); else the episode's first failure is re-parked and promoted again below, and the second is the bound, which drops a document the kernel sent (`other`) from the frame and keeps the browser's own error page (`none`); the hold and the bound record DEAD for the flip back
+var park=(mob||bound)?LAZY:'data-src';   // the attribute the url waits under: the phone's, and the desktop BOUND's too (the author's pass-5 verify: the controller's reconcile copies data-src to src on every gear save, so a bound pane parked there was re-fetched with no token and no backstop and judged by the bound promotion's stale listener, one re-fetch and one pane-load-failed row per save); the desktop's first failure keeps data-src, which the promotion below reads at once
+if(!keep){try{f.removeAttribute('src');}catch(e){}try{if(URLS[k]){f.setAttribute(park,URLS[k]);f.removeAttribute(park===LAZY?'data-src':LAZY);}}catch(e){}}   // re-parked under the attribute its next promotion reads, and the other dropped (the author's pass-4 verify: a pane the desktop promoted and the phone judged held data-src beside data-lazy-src, and the controller's reconcile set its src from data-src on the next gear save with no token, listener or backstop armed; so a feed parked by a failure is re-fetched by its Feed tab tap, never off screen by a gear save): promote()'s src guard reads nothing, the url is back where a first tap (the phone) or the grid's promotion below (the desktop's first failure) finds it, and no other writer promotes it (at the desktop's bound the reconcile reads data-src and finds none)
+DEAD[k]=(hold||bound)?TOK[k]:0;
+try{var d=paneDiv(f);if(d){d.classList.remove('loading');if(mob)d.classList.add('failed');else d.classList.remove('failed');}}catch(e){}   // the failed state is the phone's; the desktop path never leaves one for a later rotation to paint (the flip back paints it for a DEAD pane, lazyFlip)
+try{shellDiag('pane-load-failed',{pane:k,via:via,n:FAILS[k]});}catch(e){}paintLoading();
+if(again)promote(k);}   // the desktop grid shows the pane with no tap: promoted again at once, once per episode (its own listener and backstop judge it; at the bound nothing promotes, DEAD above)
+function promote(k){var f=F[k];if(!f)return false;var u=null;
+try{if(f.getAttribute('src'))return false;u=f.getAttribute('data-src')||f.getAttribute(LAZY);}catch(e){return false;}   // loaded already (a src is never reassigned: no reload of a live pane), or an element without attributes: nothing to do
+if(!u)return false;
+if(window.__rompPaneEnabled&&!window.__rompPaneEnabled(k))return false;   // off in the gear's Panes section: not in this dashboard at all (the controller's rule, read through the head's one reader)
+try{f.removeAttribute(LAZY);}catch(e){}
+URLS[k]=u;var tok=TOK[k]=(TOK[k]||0)+1;PEND[k]=tok;DEAD[k]=0;   // tok: this promotion's, minted on EVERY promotion (the desktop's too, review round 3): a listener or backstop of an earlier promotion (a retry after a failure; a phone-armed one over the desktop's re-promotion after a flip) is inert; PEND: its verdict is owed; a DEAD record is over
+try{var d0=paneDiv(f);if(d0)d0.classList.remove('failed');}catch(e){}   // any promotion clears a standing failed state (a flip to the desktop re-promotes a pane the phone failed; a stale `failed` would paint over it on the flip back)
+if(mobileOn()){try{var d=paneDiv(f);if(d)d.classList.add('loading');}catch(e){}}   // the loading state is the phone's paint (the grid paints no loader); the two detectors below are every layout's (review round 4, regression-1: the desktop's re-promotion had none)
+f.addEventListener('load',function(){if(TOK[k]!==tok)return;var s=docState(f);if(s==='blank')return;if(s==='app')loaded(k);else if(s==='doc')unmarked(k,'load');else failed(k,'load',s);});   // the initial about:blank's own load is not the page's (the gear opener's guard); the pane's own document loaded; a stamped 200 with no shim is shown as served and said; an error page (no document), or a document the kernel did not serve as a 200, is a failure
+setTimeout(function(){if(TOK[k]!==tok||PEND[k]!==tok)return;var s=docState(f);if(s==='app')loaded(k);else if(s==='doc')unmarked(k,'backstop');else failed(k,'backstop',s);},LOAD_MS);   // the verdict still owed at the backstop (PEND, the class being paint): the pane's own document is a slow load (the loader clears, as before); a stamped 200 with no shim is shown and said; no document, one never committed (WebKit's road), or one the kernel did not serve as a 200, is a failure
+f.setAttribute('src',u);paintLoading();return true;}
+try{var pl=document.getElementById('pane-load'),prb=document.getElementById('pane-load-retry');
+var retry=function(){try{var k=document.body.getAttribute('data-tab');if(k&&paneDiv(F[k])&&paneDiv(F[k]).classList.contains('failed'))show(k);}catch(e){}};   // the failed state's retry: the shown tab's pane again (show() promotes a re-parked pane as a first tap would)
+if(pl)pl.addEventListener('click',retry);   // a tap anywhere on the overlay
+if(prb)prb.addEventListener('click',function(ev){try{ev.stopPropagation();}catch(e){}retry();RFOC=true;});}catch(e){}   // the button: a real <button>, so Enter and Space run its click natively (no keydown copy); its click does not bubble into the overlay's. RFOC AFTER retry(): its show() clears the flag as any tab switch does, and the button's own retry must survive that (review round 4, ui-1)
 function show(p){if(p==='files'&&!filesCtlM())p='chat';   // the Files tab is hidden while its control is off: the chat shows instead
 if(!F[p])return;for(var i=0;i<B.length;i++)if(B[i].getAttribute('data-pane')===p&&B[i].hidden)return;   // a tab the controller hid (its pane is off in the gear's Panes section) is not a place to go
 document.body.setAttribute('data-tab',p);for(var k in F)if(F[k])F[k].classList.toggle('m-on',k===p);   // a pane this shell lacks is skipped, never a TypeError
+try{var pw=F[p]&&F[p].contentWindow;if(mobileOn()&&pw&&pw.__rompPaneShown)pw.__rompPaneShown();}catch(e){}   // [fork] review round 2 (2026-09-19, D3): the shown pane's own synchronous show hook (same origin; the feed's paints its held first board in THIS task, before the compositor can show the empty pane); the re-tell below still carries the word for a document that has none, or loaded after the show
+RFOC=false;   // [fork] review round 4 (2026-09-19, ui-1): a tab switch retires the keyboard's retry, so a failure that lands after the user moved on (this tab's, or another's) focuses nothing; the button's own click sets the flag after the show() it runs
 for(var i=0;i<B.length;i++)B[i].classList.toggle('on',B[i].getAttribute('data-pane')===p);
 try{localStorage.setItem(KT,p);}catch(e){}
+try{if(mobileOn()){promote(p);paintLoading();}}catch(e){}   // [fork] stage 0: a lazy pane loads on its first show, BEFORE the re-tell below (the pane hears the word on its own load; a word posted into a document not yet there is dropped); the loader paints for a tab whose pane is still loading, and clears for one that is not
 // a tab switch changes what is on screen: re-tell the panes (the collapse script's broadcast; absent only
 // before that script parses, and its boot apply then tells them)
 try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}}
@@ -69950,6 +70321,28 @@ window.__rompMobileTab=show;   // the shell's relays bring a pane's tab forward 
 // and no tab switch: the media query's own change event IS that flip, so re-tell the panes on it
 var retell=function(){try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}};
 if(MQ){if(MQ.addEventListener)MQ.addEventListener('change',retell);else if(MQ.addListener)MQ.addListener(retell);}
+// [fork] stage 0: the desktop grid shows every pane the rail has on without a tap, so a flip TO the desktop layout hands
+// every parked pane back to the controller's attribute (data-src) and promotes the ones the gear shows; a pane the gear has
+// off keeps its data-src for the controller's later enable (review round 1, 2026-09-19: parked with no data-src, a pane
+// turned on in the gear after a rotation showed an empty column until a reload). A flip BACK to the phone layout parks
+// every pane still unloaded (no src) but the chat and the feed again, as the boot does, so a later gear enable on the phone
+// loads nothing off screen (review round 2: after a rotation there and back a gear-off pane sat on data-src and the
+// controller's enable loaded it hidden). A pane whose desktop promotion failed at the episode's bound kept its src over a dead
+// document (failed(), DEAD; since pass 5 (the author's label) the bound drops the src for a document the kernel sent, and a backstop over a fetch
+// still in flight records DEAD with the src kept): the flip back parks it too, under data-lazy-src with the failed state, so the phone's three retry roads
+// (the tab tap, the overlay tap, the Try again button) promote it again (review round 4, regression-1: before, a frame with a src
+// was skipped and the pane was dead for the page's life); keyed on the recorded failure, never on a read of the document at the flip
+// (a read would re-park a served page or tear down a load in flight). The feed is exempt from the unloaded parking alone (it loads at
+// boot): a feed recorded DEAD is parked like any pane (the author's pass-4 verify: skipped with the chat, it kept its src over the dead
+// document and the Feed tab tap did nothing for the page's life). A pane with a src whose desktop promotion is still awaiting its
+// verdict (PEND) gets the loading class the grid never painted, so a tap after the flip back meets the loader and not a blank pane
+// (the same verify). Its own listener on the same media query, beside the re-tell's.
+var lazyFlip=function(){try{if(!mobileOn()){for(var lk in F){var lf2=F[lk],lz=null;try{lz=lf2&&lf2.getAttribute(LAZY);}catch(e){}
+if(lz){try{lf2.setAttribute('data-src',lz);lf2.removeAttribute(LAZY);}catch(e){}}promote(lk);}}
+else{for(var lk3 in F){var lf3=F[lk3];if(!lf3||lk3==='chat')continue;var lu3=null;try{lu3=lf3.getAttribute('data-src');if(DEAD[lk3]&&DEAD[lk3]===TOK[lk3]){var du3=URLS[lk3]||lu3;lf3.removeAttribute('src');if(du3)lf3.setAttribute(LAZY,du3);lf3.removeAttribute('data-src');DEAD[lk3]=0;var dd3=paneDiv(lf3);if(dd3)dd3.classList.add('failed');}   // the DEAD pane, checked FIRST (pass 5, the author's label). The order is DEFENSIVE (pass 7, the author's label, taking the reviewer's round-5 findings correctness-7 and ui-1; the reason re-derived in pass 8, the author's label, 2026-09-21, taking the reviewer's round-6 finding ui-1): DEAD is written truthy by failed() alone (DEAD[k]=(hold||bound)?TOK[k]:0), so three roads record a pane, all on the desktop: the HOLD at the backstop over a fetch still in flight (s 'blank': keep, so the src AND data-src stay), the BOUND over the browser's own error page (s 'none': keep, the src and data-src stay), and the BOUND over a document the kernel sent (s 'other': the src removed, the url parked under data-lazy-src, data-src removed). What is true of all three: none can reach the unloaded parking below, which takes a pane with data-src AND no src, because the first two keep their src and the third has no data-src; so this branch parks every recorded pane under data-lazy-src with the failed state whatever its road left, and the order guards a future writer whose park leaves data-src on a src-less recorded pane. Each road's flip back reads src and data-src in tests/test_pane_state_broadcast.py (the desktop-bound case: the other bound and the none bound; the hold-rotation case: the hold) and case D of tests/test_lazy_pane_layout_flip_served.py drives the other bound in Chromium. What the branch does: its src dropped if it still has one, the url parked for the tap, the failed state on (the phone's response to the failure the desktop recorded), painted if its tab is the shown one; the feed too (the author's pass-4 verify: its exemption is from the off-screen parking, not from a recorded failure; skipped, a feed recorded DEAD kept its src over the dead document and its tab tap did nothing)
+else if(lk3!=='feed'&&lu3&&!lf3.getAttribute('src')){lf3.setAttribute(LAZY,lu3);lf3.removeAttribute('data-src');}
+else if(PEND[lk3]&&PEND[lk3]===TOK[lk3]&&lf3.getAttribute('src')){var pd3=paneDiv(lf3);if(pd3)pd3.classList.add('loading');}}catch(e){}}paintLoading();}}catch(e){}};   // a desktop promotion whose verdict is still owed (PEND, the token) wears the loading class the grid's promote() did not paint, keyed on the recorded promotion and never on a read of the document, so the shown tab's tap meets the loader and not a blank pane (the author's pass-4 verify: on WebKit up to 30 s of blank until the backstop's verdict); loaded() or failed() takes it off
+if(MQ){if(MQ.addEventListener)MQ.addEventListener('change',lazyFlip);else if(MQ.addListener)MQ.addListener(lazyFlip);}
 // A REVEAL un-hides a desktop-toggled-off pane before the mobile tab switch (the user 2026-08-13: a feed
 // click that jumps into a CLOSED chat used to land invisibly — the hidden iframe's WS stays live, so the
 // scroll ran under display:none and nothing appeared to happen). Same __rompPaneToggle(…, true) the Log
@@ -69960,6 +70353,19 @@ function reveal(p){try{window.__rompPaneToggle&&window.__rompPaneToggle(p,true);
 // relay's: the tab the relay remembered for the viewer's close (the settings listener's __rompFilesTabFrom) is
 // dropped, so closing a file much later cannot jump them back to a tab they left on their own
 function userSwitch(p){window.__rompFilesTabFrom=null;show(p);}
+// [fork] pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding ui-2; the reviewer's round-3 class, correctness-3 and regression-3): the switches the person makes are the
+// PHONE's. show() is the one writer of body data-tab and the remembered tab (KT, romp-mobile-tab), and on the desktop layout a reveal aimed
+// at this window (a feed card's tap into a session, the Waiting pane's, a remote link, the kernel's push on a notification tap) and the chat
+// header's Outline pill reached it through userSwitch above, so a desktop gesture rewrote the tab the phone boots on. The Log row and the
+// file relays gate the same switch on the layout probe; this is the one function every other arrival passes through (reveal, the toggleFleet
+// arm, the tab bar's buttons, which the desktop stylesheet hides anyway), so it is gated here: on the desktop a reveal's un-hide stands alone
+// (reveal's __rompPaneToggle) and the pill's toggle is the collapse script's (_LANDING_FLEET_JS), and the relay's remembered tab is left as
+// it was, a phone tab the person did not leave. Declared AGAIN rather than edited: the declaration above is the project's line, and a
+// function body binds the LAST declaration of a name (both are var-scoped, in strict code too), so the gate is inserted around it. Two
+// roads into show() keep both layouts on purpose: the boot show (show(last) below: a flip to the phone needs a tab) and the pane controller's
+// reconcile (a tab whose pane this browser has off is not a place to go on either layout, the gear's set being per browser); the census in
+// tests/test_pane_state_broadcast.py (MobileShowRoads) derives every road from the served scripts and classifies each.
+function userSwitch(p){if(!mobileOn())return;window.__rompFilesTabFrom=null;show(p);}
 for(var i=0;i<B.length;i++)(function(b){var pk=b.getAttribute('data-pane');b.addEventListener('click',function(){userSwitch(pk);});})(B[i]);
 // the rail's actions on mobile: settings opens the settings iframe's modal (the same __rompOpenSettings
 // the desktop gear calls, _LANDING_SETTINGS_JS), net opens the shell's remotes panel, usage opens the
@@ -70074,6 +70480,15 @@ shReturnProbe={decision:(!shWs||shWs.readyState!==1)?'redial-closed':'redial-sta
 shFailed=0;shFirstFailT=0;
 shAbandon();shellWS();});
 shellWS();
+// [fork] stage 0: the lazy panes' boot. On the phone every pane's data-src but the chat's (it ships src) and the feed's (exempt)
+// is parked under data-lazy-src before the pane controller parses, so its boot promotion leaves them alone; the feed is
+// promoted here (the gear's word respected) and the stored tab by show(last) below, which reads the parked attribute too, so
+// an enabled stored tab boots as before while a stored tab the gear has off stays parked (review round 1, 2026-09-19: skipped
+// by the parking, it kept its data-src and a later gear enable loaded it off screen). On the desktop the controller's eager
+// boot stands, and the Waiting and Files panes, outside its list, are promoted by _LANDING_DESKTOP_PANES_JS (its own script).
+try{if(mobileOn()){for(var lk2 in F){var lf=F[lk2];if(!lf||lk2==='chat'||lk2==='feed')continue;
+var lu=lf.getAttribute('data-src');if(lu&&!lf.getAttribute('src')){lf.setAttribute(LAZY,lu);lf.removeAttribute('data-src');}}
+promote('feed');}}catch(e){}
 var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}show(last);
 })();
 """
@@ -70297,9 +70712,21 @@ feedReady=true;if(pendingCard){var c=pendingCard;pendingCard=null;revealCard(c.i
 // the session the user is looking at: the chat pane's active tab, read off the same-origin iframe's DOM — the read
 // the bell's test push uses (one truth, no second channel); '' before the pane has tabs, or without a pane
 function activeSid(){try{var f=document.getElementById('f-chat'),d=f&&f.contentDocument,t=d&&d.querySelector('#tabs .tab.active[data-id]');return t?String(t.getAttribute('data-id')||''):'';}catch(e){return '';}}
+// [fork] the author's pass-5 verify (2026-09-20, correctness-1's residual): the window's CHAT COLUMN COUNT rides every /reveal, so the kernel's
+// parked-reveal preference (_resolve_reconnect) reads a declaration the page made rather than the chat sockets registered so far, which
+// on a split page whose columns redial one after another are one column's at the first column's resolve, whatever the page holds.
+// Before _LANDING_SPLIT_JS parses (this script's own boot run, fromLink below) the count is what that script will build: one on the
+// phone layout (it restores nothing there), else one plus the later columns persisted under romp-chat-cols (a v2 record's entries, or
+// the v1 array of column numbers; an entry the split script would drop is counted, the safe side: a count above one declines the
+// preference). Once the split script is up its frames are the truth (window.__rompChatFrames; a bottom pane counts, it dials as a
+// column). A count this page cannot read (a throwing store) declares nothing, and the kernel reads the sockets it holds as before.
+function cols(){try{var fr=window.__rompChatFrames;if(typeof fr==='function')return fr().length||1;
+if(window.__rompMobileOn&&window.__rompMobileOn())return 1;
+var raw=JSON.parse(localStorage.getItem('romp-chat-cols')||'null');var n=Array.isArray(raw)?raw.length:((raw&&typeof raw==='object'&&raw.v===2&&Array.isArray(raw.cols))?raw.cols.length:0);return 1+n;}catch(e){return 0;}}
 function land(sid,kind,cardId,boot,via){
 boot=!!boot||!(chatUp||activeSid());   // booting, or our chat pane has not connected yet: the kernel parks for it and its ready delivers, never a same-wid socket the previous page left; via: which road the tap took, for the kernel's log line. The pane's rendered tabs (activeSid, the same-origin read above) are proof its socket was up even when its wsState message beat this listener (2026-09-09: the served shell's parser can yield to that message before this script runs, and every landing then said booting and parked for a ready that had already come)
 var body={sid:sid,wid:wid(),via:via};if(boot)body.boot=true;
+var cc=cols();if(cc>0)body.cols=cc;   // [fork] cols: the window's chat column count (above), the kernel's parked-reveal preference reads it; its own line after the project's body line, which is inserted around and never edited (pass 5, the author's label, its verify's fixer, 2026-09-20)
 if(sid)fetch('/reveal',{method:'POST',body:JSON.stringify(body)}).then(function(r){
 diag('reveal-post',{status:r.status,via:via,boot:!!boot});
 if(!r.ok)return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));});},
@@ -70567,17 +70994,17 @@ _LANDING_COLLAPSE_JS = """
   // classes ignored, _LANDING_MOBILE_JS) it is the current tab, so a po.files left true by a desktop session
   // or an earlier bring-forward cannot silently steer a phone's file links into a tab nobody is looking at
   function panesMsg(){var mob=!!(window.__rompMobileOn&&window.__rompMobileOn()),tab=mob?document.body.getAttribute('data-tab'):null;
-    var on={};KEYS.forEach(function(k){on[k]=mob?(k===tab):!!po[k];});return {romp:'panes',on:on,avail:{files:filesCtl()},link:(window.__rompLink&&window.__rompLink().up)?'up':'down'};}   // [fork] D3 (2026-09-18): the page's link is the shell socket's state (_LANDING_MOBILE_JS window.__rompLink), re-told on its open/close/abandon; consumers (render.ts, waiting.ts) replace on and avail wholesale and ignore keys they do not read
+    var on={};KEYS.forEach(function(k){on[k]=mob?(k===tab):!!po[k];});return {romp:'panes',on:on,avail:{files:filesCtl()},link:(window.__rompLink&&window.__rompLink().up)?'up':'down',mob:mob};}   // mob (review round 3, extra8-1): the LAYOUT word, so a pane re-decides a layout-keyed hold on every flip (the media query's change re-tells: _LANDING_MOBILE_JS retell); render.ts's return hold reads it   // [fork] D3 (2026-09-18): the page's link is the shell socket's state (_LANDING_MOBILE_JS window.__rompLink), re-told on its open/close/abandon; consumers (render.ts, waiting.ts) replace on and avail wholesale and ignore keys they do not read
   function tell(f,m){try{f&&f.contentWindow&&f.contentWindow.postMessage(m,'*');}catch(e){}}
   // [fork] D3 (2026-09-18): the page's link reaches EVERY shim-bearing iframe, not the six pane frames alone. The pane
   // frames hear it as the panes word's link field; the others (the settings frame, a split chat column: every iframe
-  // in this document runs the shim) hear a link word of their own, {romp:'link',link}, because a panes word would
+  // in this document runs the shim) hear a link word of their own, {romp:'link',link,mob}, because a panes word would
   // replace a chat column's pane set wholesale (render.ts). The shim's await ends on either word (kernel.py _shim).
   // Review round 1: before this a split column or the settings frame ended its await on the shim's 5 s backstop poll.
   // broadcast (the boot and toggle apply) stays the pane frames' word; the re-tell the shell and the mobile script call
   // (__rompPanesTell) is the one that carries a CHANGED link, so it is the one that reaches every iframe.
   function broadcast(){var m=panesMsg();KEYS.forEach(function(k){tell(document.getElementById('f-'+k),m);});}
-  function linkMsg(){return {romp:'link',link:panesMsg().link};}
+  function linkMsg(){var m=panesMsg();return {romp:'link',link:m.link,mob:m.mob};}   // mob (review round 4, 2026-09-19, kernel-3): the LAYOUT word rides the link word too, so a split chat column, which hears no panes word, re-decides its return hold on every flip as the pane frames do (render.ts's link branch runs onLayoutWord on it); before this a column that armed the hold on the phone kept it for the socket's life after a flip to the desktop
   function tellLink(){var m=linkMsg(),pane={};KEYS.forEach(function(k){pane['f-'+k]=true;});
     Array.prototype.forEach.call(document.querySelectorAll('iframe'),function(f){if(!pane[f.id])tell(f,m);});}
   function broadcastAll(){broadcast();tellLink();}
@@ -71668,6 +72095,40 @@ def _landing():
             # script lands a deep link at its own boot). A corrupt store reads as every pane shown, like reconcile.
             "window.__rompPaneEnabled=function(k){try{var s=JSON.parse(localStorage.getItem('romp:settings')||'{}'),p=s&&s.panes;"
             "return !(p&&typeof p==='object'&&p[k]===false);}catch(e){return true;}};"
+            # [fork] stage 0 (2026-09-18): the phone LAYOUT probe, defined in the head too, before any iframe, so a pane's shim can
+            # read window.parent.__rompMobileOn at its own load (the chat pane's first dial takes the skeleton diet on the phone,
+            # _shim). The mobile script (_LANDING_MOBILE_JS) defines the same probe over its cached media-query list and replaces
+            # this one when it parses, at the body's end, which on a fast origin can be after the chat document's inline shim has
+            # run (the wid mint above moved here for the same race). One constant, _MOBILE_MQ, so the two answers cannot differ.
+            "window.__rompMobileOn=function(){try{return !!(window.matchMedia&&matchMedia(" + json.dumps(_MOBILE_MQ) + ").matches);}catch(e){return false;}};"
+            # [fork] review round 3 (2026-09-19, fresh-1): a push notification's deep link names the session it is about (?push-reveal=<sid>,
+            # the reveal script's param, which that script reads and strips at the body's end). The chat pane's shim dials at ITS parse,
+            # before any body script runs, and reads the tab it shows from the chat blob's activeId, the LAST-SHOWN tab; on the phone that
+            # first dial takes the skeleton diet, so the kernel's one full went to the last-shown tab while the notified session, parked
+            # as a pending reveal, arrived as a skeleton and cost a second kernel round trip (a skeleton-click) before it showed. The blob
+            # is seeded HERE, in the head, before the parser reaches the chat iframe: the notified session becomes the stored tab, the
+            # first dial carries active=<it>, the kernel's one full is its by construction (_resolve_reconnect read the hint as before until
+            # pass 4b, the author's label, whose parked-reveal preference covers the roads the seed does not), and render.ts's wantActive restores
+            # that tab before the reveal's focus lands, which then finds it active
+            # and loaded. The value is admitted in push-card's shape (a host-prefixed id passes); a blob that already names it is left
+            # alone; the param stays for the reveal script, whose /reveal still lands the focus (a revive prompt for an ended session). Its
+            # own try/catch: a page whose storage is missing or throws must still reach the token scrub below. No layout gate: on the desktop
+            # the seed makes the notified tab the active-tab-first build, the outcome the reveal produces there anyway.
+            # The cost when the seeded hint names a session this kernel cannot match (review round 4, 2026-09-19, regression-4): the notified
+            # session ended while the phone was away, or the id is host-prefixed (another host's, admitted by the shape on purpose). The
+            # kernel's _resolve_reconnect reads the hint as any stored tab, and _skeleton_for over an active that matches no session lists
+            # EVERY local transcript-bearing tab as a skeleton, so that cold open is served no local full where the last-shown tab would have
+            # been served whole. The page recovers on its own side, the road the shim's diet comment (_shim, RESTART_DIET) and the strip gate
+            # already describe: a local strip that lists no such local tab opens the prefetch gate (skeleton-tabs.ts gateOnStrip) and the idle
+            # chain loads the tabs in the kernel's order; a tap loads its tab at once. A kernel-side fail-safe (a live-session fallback in
+            # _resolve_reconnect) was executed in the review and declined: it restored the whole board in place of one full, misfired for
+            # the host-prefixed hints the page handles by design, and reached beyond the push cold open. The pass-4b preference in
+            # _resolve_reconnect is a different clause: it reads a reveal PARKED for the window, not the hint's match, and falls back to
+            # the hint when the parked sid is not a session this kernel lists.
+            "try{var _pr=new URL(location.href).searchParams.get('push-reveal');if(_pr&&/^[A-Za-z0-9_.:-]{1,128}$/.test(_pr)){"
+            "var _sk='romp-vscode-state-chat',_sb=null;try{_sb=JSON.parse(localStorage.getItem(_sk)||'null');}catch(e){}"
+            "if(!_sb||typeof _sb!=='object'||Array.isArray(_sb))_sb={};"
+            "if(_sb.activeId!==_pr){_sb.activeId=_pr;_sb.activeName='';localStorage.setItem(_sk,JSON.stringify(_sb));}}}catch(e){}"
             "if(navigator.standalone){document.documentElement.className+=' ios-standalone';"
             "var _vp=document.querySelector('meta[name=viewport]');"
             "_vp.setAttribute('content',_vp.getAttribute('content')+',viewport-fit=cover');}"
@@ -72348,6 +72809,13 @@ def _landing():
             ".pane.pane-focused.split-v::after{display:none}"
             ".pane.pane-focused.split-v.focus-top>iframe,.pane.pane-focused.split-v.focus-bottom>.chat-sub{outline:2px solid rgba(156,210,255,0.55);outline-offset:-2px}"
             "#mtabs{display:none}"
+            "#pane-load{display:none}"   # the lazy pane loader (stage 0, 2026-09-18): hidden everywhere but the phone layout's loading state (the media block below)
+            "#pane-load-msg{display:none;max-width:22em;padding:0 1.5em;text-align:center;font:14px/1.45 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#ccc}"   # the failed-load message (review round 1): shown by body.pane-failed inside the media block
+            # the retry button (review round 3, ui-1): a real button, shown by the failed paint alone (paintLoading drops its `hidden`), in the
+            # rail row's dress: a pill outline, the accent on keyboard focus
+            "#pane-load-retry[hidden]{display:none}"
+            "#pane-load-retry{font:14px/1.2 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;padding:8px 18px;border-radius:999px;border:1px solid rgba(255,255,255,0.28);background:transparent;color:#ddd;cursor:pointer}"
+            "#pane-load-retry:focus-visible{outline:2px solid var(--accent,#9cd2ff);outline-offset:2px}"
             # narrow OR a touch device up to 1024px → one pane + bottom tabs; mouse desktops keep the grid
             # (_MOBILE_MQ: the same query the mobile script's __rompMobileOn probe answers by)
             "@media " + _MOBILE_MQ + "{"
@@ -72387,6 +72855,16 @@ def _landing():
             "iframe{position:static;display:none;width:100%;height:100%;border:0}"
             "#f-chat.m-on,#f-fleet.m-on,#f-feed.m-on,#f-waiting.m-on,#f-files.m-on{display:block}"
             "#f-timeline{flex:1 1 auto;min-height:0}#f-timeline.m-on{display:block}"
+            # the lazy pane loader (stage 0, 2026-09-18): while the shown tab's pane is loading its document the shell paints the
+            # romp loader over the pane area, above the pane's iframe and below the tab bar (z 20; the bar stays tappable, the
+            # loader stops at its reserved height), with the pane loader's backdrop and loader (_pane_spin), so the hand-over is not visible
+            "#pane-load{position:fixed;left:0;right:0;top:0;bottom:var(--mtabs-h,2.6em);z-index:15;align-items:center;justify-content:center;background:#1e1e1e}"
+            "body.pane-loading #pane-load{display:flex}"
+            # the FAILED state (review round 1, 2026-09-19): the same element stays up over a pane whose document did not load, the
+            # loader gone and the message in its place; a tap anywhere on it retries (_LANDING_MOBILE_JS failed / the #pane-load click)
+            "body.pane-failed #pane-load{display:flex;flex-direction:column;gap:14px;cursor:pointer}"
+            "body.pane-failed #pane-load>.rl-in{display:none}"
+            "body.pane-failed #pane-load-msg{display:block}"
             "body[data-tab=timeline] .row{display:none}"    # timeline tab active → collapse the chat/feed row so the band fills
             # compact text-only switcher, FIXED to the visible viewport bottom so nothing can sit below it.
             # NO safe-area padding-bottom in the BROWSER: without viewport-fit=cover the viewport already sits
@@ -72549,6 +73027,9 @@ def _landing():
             "body.theme-light .gv:hover::after,body.theme-light .gh:hover::after{background:var(--accent)}"
             "body.theme-light .pane.pane-focused::after{box-shadow:inset 0 0 0 2px rgba(194,65,12,0.55)}"
             "body.theme-light #romp-boot{background:#F1EAE2}"
+            "body.theme-light #pane-load{background:#F1EAE2}"   # the lazy pane loader's backdrop goes warm-light with the page (stage 0)
+            "body.theme-light #pane-load-msg{color:#333}"
+            "body.theme-light #pane-load-retry{border-color:rgba(0,0,0,0.3);color:#222}"
             # (the loader dots' light rule rides in _LOADER_CSS, included below)
             # light cards: raised white over the warm page, dark warm text, hairline borders, soft shadows
             "body.theme-light #rerr-panel{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
@@ -72625,6 +73106,13 @@ def _landing():
             "</style></head><body class='po-chat po-feed po-timeline'>"
             + _THEME_READER +
             "<div id=romp-boot>" + _loader_inner() + "</div>"
+            # the LAZY PANE loader (stage 0, 2026-09-18): the same loader, painted over the pane area on the phone while the
+            # shown tab's pane is loading its document (_LANDING_MOBILE_JS promote: body.pane-loading while the shown .pane wears
+            # `loading`, from the promotion to the iframe's load event). One element for every pane: a .pane div is
+            # display:contents on the phone and can host no box of its own. Its second child is the failed-load message
+            # (review round 1, 2026-09-19): empty and hidden until a pane's document fails to load (body.pane-failed), announced (role=alert);
+            # its third the retry button, hidden until the failed paint shows it (review round 3, ui-1: a keyboard-reachable, named control)
+            "<div id=pane-load>" + _loader_inner() + "<div id=pane-load-msg role=alert></div><button id=pane-load-retry type=button hidden>Try again</button></div>"
             # the bell popover (2026-09-05; driven by _LANDING_PUSH_JS): the two switches that ONE bell
             # tap used to flip together — the kernel-wide master and this device's push subscription —
             # as separate rows, plus the turn-finished switch and a test button that shows the push
@@ -72684,11 +73172,17 @@ def _landing():
             # "Waiting on you" (2026-09-03): every session's open user todos in one place — the far-right
             # column, OFF by default like the Outline (the feature itself is off by default)
             "<div class=gv id=gv-c></div>"
-            "<div class=pane id=waiting-pane><iframe id=f-waiting src=/waiting></iframe></div>"
+            # data-src since stage 0 (2026-09-18): on the phone the pane loads on its first tap (_LANDING_MOBILE_JS, the lazy
+            # panes); on the desktop the mobile script promotes it at boot, so the column loads as it always did. The chat keeps
+            # its src (the shell's reveal landing reads its document); the Files pane below is data-src too.
+            "<div class=pane id=waiting-pane><iframe id=f-waiting data-src=/waiting></iframe></div>"
             # "Files" (2026-09-03): the file viewer as its own column, far right, OFF by default — the
             # shell's viewFile relay brings it forward when a chat file-link click routes here
             "<div class=gv id=gv-d></div>"
-            "<div class=pane id=files-pane><iframe id=f-files src=/files></iframe></div>"
+            # data-src since stage 0 (2026-09-18): the one upstream markup token this fork changes (src -> data-src). On the phone
+            # the pane loads on its first tap; on the desktop the mobile script promotes it at boot, so the column loads as it
+            # always did (its rail toggle is off by default and it has no gear row, so the controller's list does not carry it).
+            "<div class=pane id=files-pane><iframe id=f-files data-src=/files></iframe></div>"
             "</div>"
             "<div id=gv-ghost></div>"   # the divider drag's landing line (position:fixed; gutter() in _LANDING_JS moves it)
             "<div id=col-ghost></div>"   # a tab drag's provisional rectangle: the right half of the rightmost chat column (position:fixed; _LANDING_SPLIT_JS places it)
@@ -72911,6 +73405,7 @@ def _landing():
                          .replace("__ROMP_BOOT__", json.dumps(_BOOT_ID))
                          .replace("__ROMP_LOADER__", json.dumps(_loader_inner())) + "</script>"
             "<script>" + _LANDING_REMOTES_JS + "</script>"
+            "<script>" + _LANDING_DESKTOP_PANES_JS + "</script>"   # the desktop's Waiting and Files promotion, its own element so a throw in the mobile script cannot strand a pane (review round 1, 2026-09-19)
             "<script>" + _LANDING_MOBILE_JS + "</script>"
             "<script>" + _LANDING_PUSH_JS + "</script>"
             "<script>" + _LANDING_REVEAL_JS + "</script>"
@@ -73044,6 +73539,41 @@ def _state_write_route(path, b):
     return 404, {"ok": False, "error": "no such route"}
 
 
+_STAMP_HTML_TAG = re.compile(r"(<html)(?=[\s>])", re.I)
+_STAMP_HTML_TAG_B = re.compile(rb"(<html)(?=[\s>])", re.I)
+
+
+def _stamp_served_html(code, body, ctype):
+    """[fork] The lazy panes' proof of a 200 (review round 4 of the lazy panes, 2026-09-19, kernel-1): every text/html 200 this kernel
+    writes whose body carries an <html> tag gets `data-romp-served=200` on that tag, written at the top of Handler._send, so it is a
+    rule over the writer and no list of pages. Handler._send is not the one place every response leaves (pass 5, the author's label, taking the reviewer's round-4 finding extra6-1):
+    eight `send_response` sites bypass it, and the rule holds over text/html 200s because none of them writes one: they are HEAD roads
+    with no body, 206 ranges, the 204 preflight, the 101 upgrade, and two 200 attachments with application/octet-stream hardcoded, a
+    census tests/test_pane_state_broadcast.py pins over the writers (every `send_response(` outside _send is a non-200, a bodiless
+    road, or an octet-stream attachment). One road lies outside both censuses (the author's pass-5 verify): _remote_ws writes the remote
+    kernel's status line and headers to the client with `down.sendall(head)` and pumps its frames, with no send_response at all; no
+    document can arrive by it (the route answers 400 text/plain without a Sec-WebSocket-Key, a header no navigation or fetch can set,
+    pinned by tests/test_kernel_remote_ws_proxy.py), and a third census in the same module classifies every raw `sendall(` and
+    `wfile.write(` in this file (this writer's, a bypassing block's, that splice's, or a WebSocket frame's), so a new raw writer of an
+    HTTP response reds it. A body with no <html> tag is returned as it came, unstamped, so served at a pane url it
+    would read as a failure; the paste-the-token page at / is one today, and / is not a pane url (correctness-2, regression-1, extra6-2:
+    the rule with its shape condition, the token page an example and not a list). The phone shell's docState (_LANDING_MOBILE_JS) reads it
+    off a pane frame's same-origin document: one with the pane shim's marker is the pane's own; one with this stamp and no marker
+    is a 200 the kernel served that the shell cannot classify (its "needs the ui/ modules" page), shown as served; one with neither
+    is not a 200 of this kernel's (its 403 line under a stale cookie, its 500 page, a proxy's 502 body while it restarts) and is a
+    failure with the retry road. The 403 and the 500 are text/plain and a proxy's page is not this kernel's, so none can carry it:
+    that is the point. The first <html tag alone (the shell page's own script names the tag in a regex and a comment, so a body can
+    carry more than one match); a body with none is returned as it came, bytes or str alike; any other status or type passes through
+    untouched."""
+    if code != 200 or not isinstance(ctype, str) or not ctype.lower().startswith("text/html"):
+        return body
+    if isinstance(body, bytes):
+        return _STAMP_HTML_TAG_B.sub(rb"\1 data-romp-served=200", body, count=1)
+    if isinstance(body, str):
+        return _STAMP_HTML_TAG.sub(r"\1 data-romp-served=200", body, count=1)
+    return body
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -73051,6 +73581,7 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _send(self, code, body, ctype, cache=None, headers=None):
+        body = _stamp_served_html(code, body, ctype)   # [fork] every text/html 200 whose body has an <html> tag carries the kernel's stamp (the lazy panes' proof of a 200; the function's docstring names the writers that bypass this method and the rootless exception)
         body = body.encode("utf-8") if isinstance(body, str) else body
         self.send_response(code)
         self.send_header("Content-Type", ctype)
@@ -74685,11 +75216,15 @@ class Handler(BaseHTTPRequestHandler):
                     via = str(body.get("via") or "")   # 'sw' | 'link' | 'ack' | 'vanish': the road the tap took, for the log line
                     if via not in _REVEAL_ROADS:       # whitelisted before it reaches the journal (_REVEAL_ROADS has the why)
                         via = "other" if via else ""
+                    # [fork] the author's pass-5 verify (correctness-1's residual): the window's chat column count the shell declares with the
+                    # tap (_LANDING_REVEAL_JS cols), a positive int; anything else, or a shell of a build before the field, declares nothing
+                    cols = body.get("cols")
+                    cols = cols if (isinstance(cols, int) and not isinstance(cols, bool) and 0 < cols < 100) else None
                 except (ValueError, AttributeError):
                     return self._send(400, "bad json", "text/plain")
                 if not sid:
                     return self._send(400, "missing sid", "text/plain")
-                now_ = _reveal_request(sid, wid, boot=boot, via=via)
+                now_ = _reveal_request(sid, wid, boot=boot, via=via, cols=cols)
                 return self._send(200, json.dumps({"ok": True, "delivered": now_}), "application/json")
             if u.path == "/tick":
                 # Event-driven wake: the Stop / UserPromptSubmit / PostCompact hooks (and the postal drain) poke
@@ -76210,6 +76745,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if msg and msg.get("type") == "activeTab":
             client["active"] = msg.get("id")   # tab switch → next push builds the now-active tab first
+            client.pop("preferred", None)   # [fork] pass 7
             if msg.get("id"):
                 _release_skeleton(client, str(msg["id"]))   # a skeleton tab clicked: its full rides that push (2026-09-07)
             _pusher_wake.set()                 # …and the pusher wakes now (the tab switch IS the event): that
@@ -76217,6 +76753,15 @@ class Handler(BaseHTTPRequestHandler):
             #                                       interval has passed or the new tab's live tail changed since
             #                                       the last cycle (the hold re-tests every recorded sid against
             #                                       the active tabs; see _pusher), else at the interval's deadline
+            # [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1): the pop of `preferred`
+            #   above releases the parked-reveal preference's record before this wake, so the push the wake starts reads the
+            #   page's own word (_watched_tab) and never builds the parked preference once more. Its comment is one tag so the
+            #   wake stays inside the tab-switch pin's 400-character window (tests/test_chat_fold.py, Wiring.test_a_tab_switch_wakes_the_pusher).
+            #   THE MARGIN (pass 8, the author's label, 2026-09-21, taking the reviewer's round-6 finding extra8-2): at this head the wake ENDS
+            #   20 characters inside the window (the anchor `msg.get("type") == "activeTab"` to the end of `_pusher_wake.set()` is 380 of the
+            #   400, by the pin's own method: src.index(anchor), then the wake's index in src[i:i + 400] plus the wake's 18 characters). Before
+            #   inserting anything between the anchor and the wake, re-measure by that method and keep the end under 400; a comment goes
+            #   here, after the wake, where it leaves the distance unchanged (this block did).
             if client.get("app") == "chat":
                 _relay_active_chat(client, msg.get("id"), msg.get("nonce"))   # …and the window's feed learns which session is focused (T347), the announcement number echoed (T416)
             return
@@ -77533,6 +78078,8 @@ class Handler(BaseHTTPRequestHandler):
         wid = (q.get("wid") or [""])[0]         # which DASHBOARD this pane belongs to → _send_to_view aims at one
         iid = (q.get("iid") or [""])[0]         # which page INSTANCE: a reconnect carrying it retires its old socket
         active = (q.get("active") or [""])[0]   # the tab this client is looking at → _push builds it FIRST
+        # [fork] pass 8 (kernel-1): first unless a reveal parked for this window names another session at the set's resolve, when the
+        #   parked-reveal preference records that session on the client and _push builds it first in the hint's place (_watched_tab)
         # Capabilities the client ANNOUNCES (comma-separated). FEED_DELTA_CAP: a page whose bundle can apply
         # {type:"feedDelta"} says so on its ws URL (the shim adds it for the kernel-served feed, Outline and
         # Waiting on you pages — see _shim's `caps`); READY_GATE_CAP is the hold below. Announced on the URL

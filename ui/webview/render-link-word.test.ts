@@ -1,5 +1,6 @@
 // The shell's link word in a split chat column's frame handler (D3, review round 2, 2026-09-18). The shell posts
-// {romp:'link', link:'up'|'down'} to every iframe outside the six pane frames on its socket's open, close and abandon
+// {romp:'link', link:'up'|'down', mob} to every iframe outside the six pane frames on its socket's open, close and abandon
+// (the tests here drive the link alone; the layout term, mob, is the link block's layout-word arm's, review round 4, kernel-3)
 // (kernel.py _LANDING_COLLAPSE_JS tellLink), so a split column's pane shim can end its return await on it. The shim reads
 // the word on window itself; render.ts's chat frame handler (the one listenForFrames installs) has nothing to do with it,
 // and it is not a kernel message. Before this round the handler had no branch for it, so the word fell through to the
@@ -82,11 +83,16 @@ test("the shell's panes word, the other post it makes, heals nothing either (its
   assert.equal(h.calls.retryFailedPreviews, 0);
 });
 
-test("at source: the link branch sits right after the panes branch and before the heal, a return with no action", () => {
+test("at source: the link branch sits right after the panes branch and before the heal, and returns after the layout word alone", () => {
   const at = RENDER.indexOf(HEAD);
   const panes = RENDER.indexOf('if (m.romp === "panes") {', at);
-  const link = RENDER.indexOf('if (m.romp === "link") return;', at);
+  const link = RENDER.indexOf('if (m.romp === "link") {', at);
   const heal = RENDER.indexOf("retryFailedPreviews();", at);
-  assert.ok(panes > 0 && link > panes && heal > link, "panes branch, then the link return, then the heal");
+  assert.ok(panes > 0 && link > panes && heal > link, "panes branch, then the link block, then the heal");
   assert.equal(RENDER.slice(at, heal).split('m.romp === "link"').length, 2, "one link branch in the handler");
+  const block = RENDER.slice(link, RENDER.indexOf("\n  }\n", link));
+  // anchored at BOTH ends (pass 5, the author's label, taking the reviewer's round-4 finding tests-3): `block` starts at the `if` keyword itself, so `^` lands on the opening line, and `$`
+  // (no m flag) pins `return;` as the last statement; a tail anchor alone let a statement inserted at the block's head pass (a
+  // console.log, a try/catch-wrapped parent post in render.ts's own idiom). The same shape file-view.test.ts uses on the panes block.
+  assert.match(block, /^if \(m\.romp === "link"\) \{\n\s*if \(typeof m\.mob === "boolean" && onLayoutWord\(skeletonTabs, m\.mob\)[^\n]*schedulePrebuild\(\);[^\n]*\n\s*return;$/, "the block opens on the layout-word arm (review round 4, kernel-3: a split column's hold follows the layout) and returns; nothing else in it, at either end");
 });

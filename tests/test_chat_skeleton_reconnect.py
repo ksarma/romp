@@ -23,6 +23,7 @@ import io
 import json
 import os
 import re
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -52,6 +53,8 @@ TAB_ORDER = [S2, S1, S3, S4]                  # big, mid, small — the tab orde
 SIZES = {S2: 3000, S1: 2000, S3: 1000}        # transcript bytes; S4 has none
 # the journal of a tap that parked on the named road and was landed by the redial's first strip (item 12)
 REDIAL_TRAIL = r"\[reveal\] %s sid=\S+ wid=W1: parked[\s\S]*\[reveal\] sid=\S+ wid=W1: consumed \S+ the pane's redial"
+# the record the parked-reveal preference files when it applies (pass 5, the author's label, taking the reviewer's round-4 finding kernel-2): the session served whole, the page's hint, its fate
+PREFERRED_LINE = r"\[reveal\] sid=%s wid=W1: preferred at the set's resolve, the one full in place of the page's hint %s \(%s\)"
 
 
 def _sess(sid, n, state):
@@ -172,6 +175,12 @@ class SkeletonReconnect(unittest.TestCase):
 
     def _tab_orders(self, c):
         return self._frames(c, "tabOrder")
+
+    @staticmethod
+    def _names(ids):
+        """Tab names for a list of sids (the four synthetic tabs), so a red reads as tabs and not as ids the box's log
+        redactor masks (an unknown id is kept as it is)."""
+        return [NAMES.get(i, i) for i in ids]
 
     # ── §4.1 item 1 ──
     def test_00a_a_sid_already_held_whole_is_never_listed_when_the_set_resolves(self):
@@ -935,6 +944,439 @@ class SkeletonReconnect(unittest.TestCase):
         finally:
             km._PENDING_REVEAL.clear()
 
+    # ── pass 4b, the author's label (2026-09-20, taking the reviewer's round-3 addendum: fresh-1 / regression-4, the round-3 fixlist's extra9-1) ──
+    def test_12e_a_reveal_parked_for_the_window_makes_the_parked_session_the_redials_one_full_when_the_kernel_lists_it(self):
+        # The phone's first dial takes the skeleton diet with the LAST-SHOWN tab as its hint. A notification tap whose /reveal
+        # beat the chat pane's socket (the ack and vanish roads land at boot; sw when the browser opens the installed app on
+        # its own start URL) sits parked for the window; before this the one full went to the hint and the notified session
+        # came as a skeleton, one skeleton-click round trip before it showed. _resolve_reconnect prefers the parked sid when
+        # the tab list carries it: the full is the parked session's, the stored tab is a skeleton, and the consume behind the
+        # strip lands the focus on a tab already whole. A parked sid the list lacks leaves the hint as before (two legs below).
+        km._PENDING_REVEAL.clear()
+        km._live_map = lambda: {S2: {}}       # the tapped session is live, so the reveal is a focus, not a revive
+        try:
+            trail = io.StringIO()
+            with contextlib.redirect_stderr(trail):
+                self.assertFalse(km._reveal_request(S2, "W1", via="ack"), "no socket for the window: parked")
+                c = self._client(active=S1, reconnect=True, wid="W1")   # the dial's hint is the last-shown tab, web
+                km._push([c])
+            self.assertTrue(self._sessions(c), "the cycle sent session frames (a derived expectation over nothing is no witness)")
+            self.assertTrue(self._tab_orders(c), "the cycle sent a strip")
+            self.assertEqual(sorted(self._names(self._sessions(c))), ["api", "docs"], "the one full is the PARKED session's (api), plus the transcript-less docs (whole as ever; build_order ranks it first)")
+            self.assertEqual(self._names(self._tab_orders(c)[0]["skeleton"]), ["tests", "web"], "the stored tab is a skeleton now, ascending size")
+            self.assertEqual(c["skeleton"], {S1, S3})
+            types = [f["type"] for f in c["_frames"]]
+            self.assertEqual([(f["id"], f["live"]) for f in self._frames(c, "focus")], [(S2, True)], "one focus, the parked tap's")
+            self.assertLess(types.index("tabOrder"), types.index("focus"), "behind the strip that names its tab")
+            self.assertEqual(km._PENDING_REVEAL, {}, "the park was consumed")
+            self.assertRegex(trail.getvalue(), REDIAL_TRAIL % "ack", "the journal says the redial landed the park")
+            # pass 5, the author's label, taking the reviewer's round-4 finding kernel-2: the one place the kernel overrides the page's hint files a record, printed once the set is built
+            # and named by the event (the set's resolve; the branch runs on the redial and on the ready arm alike), the hint's fate read off
+            # the resolved set (web has a transcript: a skeleton)
+            self.assertRegex(trail.getvalue(), PREFERRED_LINE % (S2[:8], S1[:8], "a skeleton"), "the preference is recorded, naming the session served whole and the hint's fate")
+            self.assertEqual(len(re.findall(r"preferred at the set's resolve", trail.getvalue())), 1, "once")
+            # the fallback: a parked sid this kernel does not list (an ended session) leaves the hint's set as before, and the
+            # consume still lands its revive prompt
+            gone_trail = io.StringIO()
+            with contextlib.redirect_stderr(gone_trail):
+                self.assertFalse(km._reveal_request(GONE, "W1", via="ack"))
+                c2 = self._client(active=S1, reconnect=True, wid="W1")
+                km._push([c2])
+            self.assertTrue(self._sessions(c2))
+            self.assertEqual(sorted(self._names(self._sessions(c2))), ["docs", "web"], "the hint's full, as before")
+            self.assertNotIn("preferred at the set's resolve", gone_trail.getvalue(), "not applied, so no record claims it (pass 5, the reviewer's round-4 kernel-2)")
+            self.assertEqual(self._names(self._tab_orders(c2)[0]["skeleton"]), ["tests", "api"])
+            self.assertEqual([f["type"] for f in c2["_frames"] if f["type"] in ("focus", "confirmRevive")], ["confirmRevive"],
+                             "the ended session's park lands the revive prompt")
+            self.assertEqual(km._PENDING_REVEAL, {})
+            # ...and a host-prefixed sid (another host's session, admitted by the reveal's shape) matches no local row: the set
+            # is unchanged and the focus carries the id as-is (the page routes it)
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(km._reveal_request("gpu1:" + S2, "W1", via="sw"))
+                c3 = self._client(active=S1, reconnect=True, wid="W1")
+                km._push([c3])
+            self.assertTrue(self._sessions(c3))
+            self.assertEqual(sorted(self._names(self._sessions(c3))), ["docs", "web"])
+            self.assertEqual(self._names(self._tab_orders(c3)[0]["skeleton"]), ["tests", "api"])
+            self.assertEqual([(f["id"], f["live"]) for f in self._frames(c3, "focus")], [("gpu1:" + S2, True)])
+            # THE SPLIT (pass 5, the author's label, taking the reviewer's round-4 finding correctness-1: the regression pass 4b introduced by taking the reviewer's round-3 addendum). Two chat columns under one wid, each
+            # with its own active hint, and a park for api. The kernel cannot name the column that will SHOW the tapped session
+            # (the consume focuses the first chat client of the wid and the page hands a session another column holds to that
+            # column), so the preference is for a window with ONE chat column, keyed on the `col` each column declares at its
+            # handshake: here each column's own active stays whole and out of its own skeleton list, the parent's behaviour. At
+            # the pass-4b head the column that resolved first was served api's full and its own visible tab as a skeleton.
+            del km._clients[:]
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(km._reveal_request(S2, "W1", via="ack"), "parked: neither column has said ready")
+                cA = self._client(active=S1, reconnect=True, wid="W1", col="")     # the first column (the page's ?col= is empty for it)
+                cB = self._client(active=S3, reconnect=True, wid="W1", col="2")    # the second column, its own active hint
+                km._clients.extend([cA, cB])                                        # both registered, as the handshake registers them
+                km._push([cA, cB])
+            self.assertTrue(self._sessions(cA) and self._sessions(cB), "both columns were sent session frames")
+            self.assertNotIn("web", self._names(cA["skeleton"]), "the first column's own active hint stays out of its own skeleton list")
+            self.assertNotIn("tests", self._names(cB["skeleton"]), "the second column's own active hint stays out of its own skeleton list (at the pass-4b head: a skeleton, api's full in its place)")
+            self.assertEqual(sorted(self._names(self._sessions(cA))), ["docs", "web"], "the first column's one full is its own hint's")
+            self.assertEqual(sorted(self._names(self._sessions(cB))), ["docs", "tests"], "the second column's one full is its own hint's")
+            self.assertEqual(self._names(self._tab_orders(cB)[0]["skeleton"]), ["web", "api"], "api is a skeleton for the second column, ascending size (the page's focus handler asks for it, one round trip: the parent's road)")
+            self.assertEqual(km._PENDING_REVEAL, {}, "the park was consumed by the strip behind which the page routes the focus")
+            self.assertEqual([f["id"] for c_ in (cA, cB) for f in self._frames(c_, "focus")], [S2], "one focus for the window, the parked tap's (own=True; the page hands it to the owning column)")
+            # THE STALE TWIN on the boot road (vote 1's executed shape): the previous page's chat socket of the SAME column is still
+            # registered (sessionStorage keeps the wid across a reload and the ping timeout has up to WS_DEAD_S to reap it). A count
+            # of same-wid chat clients would read it as a second column and drop the preference on the road the clause exists for;
+            # keyed on the column, the twin is the same column and the parked session's full still lands.
+            del km._clients[:]
+            with contextlib.redirect_stderr(io.StringIO()):
+                twin = self._client(active=S1, wid="W1", col="")                    # the dead page's socket: never said ready (no target), same column
+                twin["alive"] = False
+                c4 = self._client(active=S1, reconnect=True, wid="W1", col="")
+                km._clients.extend([twin, c4])
+                self.assertFalse(km._reveal_request(S2, "W1", via="ack"), "parked: the twin never said ready, the redial carries no ready")
+                km._push([c4])
+            self.assertTrue(self._sessions(c4))
+            self.assertEqual(sorted(self._names(self._sessions(c4))), ["api", "docs"], "the stale twin of the same column does not cost the preference: the parked session's full lands (a same-wid count would have served the hint's)")
+            self.assertEqual(self._names(self._tab_orders(c4)[0]["skeleton"]), ["tests", "web"])
+            self.assertEqual(km._PENDING_REVEAL, {})
+            self.assertEqual(self._sessions(twin), [], "the dead twin was pushed nothing")
+            # THE FRESH POP (the guard's `not fresh` term): a skeleton client's pre-ready pop consumes no park (the page cannot hear
+            # a focus yet; the ready arm re-resolves and consumes), so the preference waits for the pop that does. Pre-ready the set
+            # is the hint's (api a skeleton, the park standing); the arm's connect push, not fresh, serves api's full and the focus.
+            del km._clients[:]
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(km._reveal_request(S2, "W1", via="sw"))
+                c5 = self._client(active=S1, reconnect=True, skeletonOnReady=True, wid="W1")
+                km._clients.append(c5)
+                km._push([c5])
+            self.assertEqual(self._names(self._tab_orders(c5)[0]["skeleton"]), ["tests", "api"], "the pre-ready pop keeps the hint's set: no preference before a pop that consumes")
+            self.assertEqual(self._sessions(c5), [], "no session frame before the ready")
+            self.assertEqual(km._PENDING_REVEAL.get("W1"), {"sid": S2, "wid": "W1"}, "the park stands for the ready arm")
+            c5["_frames"].clear()
+            h = _Self(lambda cl: km._push([cl], connect=True))   # the real _push_one body
+            with contextlib.redirect_stderr(io.StringIO()):
+                km.Handler._dispatch_ws(h, {"type": "ready"}, c5)
+            self.assertEqual(sorted(self._names(self._sessions(c5))), ["api", "docs"], "the ready arm's connect push, not fresh: the parked session's full")
+            self.assertEqual(self._names(self._tab_orders(c5)[0]["skeleton"]), ["tests", "web"], "the stored tab a skeleton")
+            self.assertEqual([f["id"] for f in self._frames(c5, "focus")], [S2], "the arm consumed the park")
+            self.assertEqual(km._PENDING_REVEAL, {})
+            # THE DECLARATION (the author's pass-5 verify, correctness-1's residual). The sockets read above is ONE column's at the first column's
+            # resolve when a split page's columns redial one after another (the second's handshake has not registered its col yet), so
+            # at the pass-5 head the first column was served the parked session's full and its own shown tab as a skeleton in that
+            # window. The shell now declares its chat column count with the tap (_LANDING_REVEAL_JS cols, the /reveal body) and the park
+            # carries it: a park declaring two columns declines the preference for the first column to resolve, alone in _clients, and
+            # its own hint stays whole; the park is consumed all the same (the page routes the focus to the owning column).
+            del km._clients[:]
+            trail2 = io.StringIO()
+            with contextlib.redirect_stderr(trail2):
+                self.assertFalse(km._reveal_request(S2, "W1", via="ack", cols=2), "parked, with the declaration")
+                self.assertEqual(km._PENDING_REVEAL.get("W1"), {"sid": S2, "wid": "W1", "cols": 2}, "the park carries the shell's column count")
+                cA2 = self._client(active=S1, reconnect=True, wid="W1", col="")
+                km._clients.append(cA2)                                            # the first column's handshake registered it; the second's has not yet
+                km._push([cA2])
+            self.assertTrue(self._sessions(cA2))
+            self.assertEqual(sorted(self._names(self._sessions(cA2))), ["docs", "web"], "the first column to redial, alone in _clients: the declared two columns decline the preference, so its one full is its own hint's (at the pass-5 head: api's full, web a skeleton)")
+            self.assertEqual(self._names(self._tab_orders(cA2)[0]["skeleton"]), ["tests", "api"])
+            self.assertEqual([f["id"] for f in self._frames(cA2, "focus")], [S2], "the park is consumed behind the strip all the same (the page hands the focus to the owning column)")
+            self.assertEqual(km._PENDING_REVEAL, {})
+            self.assertRegex(trail2.getvalue(), r"\[reveal\] ack sid=\S+ wid=W1: parked cols=2", "the park's journal line records the declaration")
+            with contextlib.redirect_stderr(io.StringIO()):
+                cB2 = self._client(active=S3, reconnect=True, wid="W1", col="2")   # the second column's redial lands after the first resolved
+                km._clients.append(cB2)
+                km._push([cB2])
+            self.assertEqual(sorted(self._names(self._sessions(cB2))), ["docs", "tests"], "the second column: its own hint's full")
+            # ...a declared ONE-column window takes the preference (the phone's shape, and a desktop with one column)...
+            del km._clients[:]
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(km._reveal_request(S2, "W1", via="ack", cols=1))
+                c6 = self._client(active=S1, reconnect=True, wid="W1", col="")
+                km._clients.append(c6)
+                km._push([c6])
+            self.assertEqual(sorted(self._names(self._sessions(c6))), ["api", "docs"], "one declared column: the parked session's full")
+            self.assertEqual(self._names(self._tab_orders(c6)[0]["skeleton"]), ["tests", "web"])
+            # ...unless a second column's socket is registered already (a column split off after the tap): the sockets read is the belt
+            del km._clients[:]
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(km._reveal_request(S2, "W1", via="ack", cols=1))
+                c7 = self._client(active=S1, reconnect=True, wid="W1", col="")
+                c8 = self._client(active=S3, reconnect=True, wid="W1", col="2")
+                km._clients.extend([c7, c8])
+                km._push([c7])
+            self.assertEqual(sorted(self._names(self._sessions(c7))), ["docs", "web"], "one declared but a second column registered (split off after the tap): the sockets read declines the preference")
+            # THE UNDECLARED PARK (a focus _send_focus_to_view parked; a shell of a build before the field): the sockets read alone, so on
+            # a split page the first column to redial, alone in _clients, takes the preference. The residual the PR body discloses,
+            # pinned so the disclosure and the code say the same thing.
+            del km._clients[:]
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(km._reveal_request(S2, "W1", via="ack"))
+                self.assertEqual(km._PENDING_REVEAL.get("W1"), {"sid": S2, "wid": "W1"}, "no declaration: the two-key entry as before")
+                c9 = self._client(active=S1, reconnect=True, wid="W1", col="")
+                km._clients.append(c9)
+                km._push([c9])
+            self.assertEqual(sorted(self._names(self._sessions(c9))), ["api", "docs"], "no declaration and one socket registered: the preference applies (the disclosed residual: a split page's staggered redial over a park with no declaration)")
+        finally:
+            km._PENDING_REVEAL.clear()
+
+    def test_12f_the_preference_records_the_served_session_where_the_push_reads_the_watched_tab(self):
+        # pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1). The preference reassigned only the
+        # local `act`: _push's active set, build_order, _all_active and the cold-tab gate still named the page's stale hint, so on
+        # the boot road the hint was ranked first and handed a cold full build the gate would otherwise have skipped (every connected
+        # page holds it as a skeleton and its live row can state a status), and the notified session's full was built after it. The
+        # served session is recorded on the client (`preferred`, under the slot lock the resolve holds) and _watched_tab reads it in
+        # the hint's place for those four readers; `active` stays the page's own declaration (the client-diag skeleton row,
+        # _watched_sids and the live-wake exemption read it), and the page's next activeTab, its own word, drops the record.
+        km._PENDING_REVEAL.clear()
+        row = {"state": "working", "since": 1781100000, "model": "", "effort": "", "mode": "", "backend": "sdk"}
+        km._live_map = lambda: {S2: dict(row), S1: dict(row)}   # the tapped session live (a focus, not a revive); the hint's row states its status
+        skip0 = km._VIEW_STATS.get("chatSkipCold", 0)
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(km._reveal_request(S2, "W1", via="ack", cols=1), "no socket for the window: parked, one column declared")
+                c = self._client(active=S1, reconnect=True, wid="W1", col="")   # the dial's hint is the last-shown tab, web
+                km._clients.append(c)                                          # the gate asks every CONNECTED chat client
+                km._push([c])
+            self.assertEqual(sorted(self._names(self._sessions(c))), ["api", "docs"], "the one full is the parked session's (test_12e's leg)")
+            self.assertEqual(self._names(self.built), ["api", "docs", "tests"],
+                             "the served session is built FIRST (it is the watched tab now), the transcript-less docs with it, then the skeleton "
+                             "tests (no live row: the gate builds it as before); the hint web is not built at all: %r" % (self._names(self.built),))
+            self.assertNotIn(S1, self.built, "the hint, a skeleton on every connected page with a live row to state its status, gets no cold build")
+            self.assertEqual(km._VIEW_STATS["chatSkipCold"] - skip0, 1, "the gate skipped the hint's cold build, once")
+            self.assertIn(S1, {f["id"] for f in self._frames(c, "status")}, "the skipped tab's status still goes, from its live row")
+            self.assertEqual(c["active"], S1, "the page's own declaration is never overwritten")
+            self.assertEqual(c.get("preferred"), S2, "the served session is recorded on the client")
+            self.assertEqual(km._watched_tab(c), S2, "the readers' view: the served session in the hint's place")
+            self.assertEqual(km._PENDING_REVEAL, {}, "the park was consumed")
+            # the page's own tab switch supersedes the record: from here `active` is the page's word again
+            c["_frames"].clear()
+            with contextlib.redirect_stderr(io.StringIO()):
+                km.Handler._dispatch_ws(_Self(), {"type": "activeTab", "id": S1}, c)
+            self.assertNotIn("preferred", c, "the page's activeTab drops the record")
+            self.assertEqual((c["active"], km._watched_tab(c)), (S1, S1))
+            # a redial whose park the preference declines (two columns declared) records nothing
+            del km._clients[:]
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(km._reveal_request(S2, "W1", via="ack", cols=2))
+                c2 = self._client(active=S1, reconnect=True, wid="W1", col="")
+                km._clients.append(c2)
+                km._push([c2])
+            self.assertEqual(sorted(self._names(self._sessions(c2))), ["docs", "web"], "declined: the hint's full")
+            self.assertNotIn("preferred", c2, "no preference applied, no record")
+            self.assertEqual(km._watched_tab(c2), S1)
+        finally:
+            km._PENDING_REVEAL.clear()
+
+    def test_12g_a_second_ready_re_bases_the_record_with_the_set_it_belongs_to(self):
+        # pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 finding kernel-2). `preferred` joined the family of
+        # per-renderer beliefs (echat, skeleton, skeletonOrder, reconnect) and had not joined the reset that clears them: on the
+        # second-ready re-base road (Handler._dispatch_ws runs _client_reset_chat_base on EVERY ready, readySeen or not) the stale
+        # record outlived its set, and _watched_tab demoted the page's own declared tab out of _push's active-first batch. By reading,
+        # no client of this tree posts a second ready on one socket (render.ts once at evaluation, the shim's re-post on a new socket
+        # alone, federation.ts once per remote socket, the extension's pipe once per up): the arm's own re-base branch is the road, and
+        # this drives it over the client shape the ?skeleton=1 handshake mints (kernel.py's _ws: reconnect, dietSkeleton and
+        # skeletonOnReady, no redial), the way the socket meets it: the pre-ready pusher cycle (fresh: the branch skipped, no record),
+        # the first ready (the reset re-arms `reconnect`, the connect push resolves and RECORDS), then the second ready, the re-base.
+        # The pass-8 verify (kernel-1) found the first cut of this test drove a minted shape no handshake produces (reconnect with
+        # neither redial nor skeletonOnReady) through the socket's FIRST ready; the reset's behaviour is shape-independent, so the
+        # fix was right and the sentence promised a road the pin did not travel. Red before (this test as written against the kernel
+        # before the reset's pop, mutations note MJ9): the record stood through the reset and the build order was
+        # ['api', 'docs', 'web', 'tests'], api (the stale record) first and web (the page's declared tab) third.
+        km._PENDING_REVEAL.clear()
+        row = {"state": "working", "since": 1781100000, "model": "", "effort": "", "mode": "", "backend": "sdk"}
+        km._live_map = lambda: {S2: dict(row), S1: dict(row)}
+        ready = lambda cl: km.Handler._dispatch_ws(_Self(lambda x: km._push([x], connect=True)), {"type": "ready", "proto": 2}, cl)
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(km._reveal_request(S2, "W1", via="ack", cols=1), "parked, one column declared")
+                c = self._client(active=S1, reconnect=True, dietSkeleton=True, skeletonOnReady=True, wid="W1", col="")
+                km._clients.append(c)
+                km._push([c])                                   # the pre-ready pusher cycle: fresh, the branch skipped
+                self.assertNotIn("preferred", c, "the pre-ready pop under `fresh` writes no record")
+                ready(c)                                        # the first ready: the reset re-arms, the connect push resolves and records
+            self.assertEqual(c.get("preferred"), S2, "the first ready's connect push recorded the preference")
+            self.assertEqual(km._watched_tab(c), S2, "the readers see the record while it stands")
+            del self.built[:]
+            c["_frames"].clear()
+            km._built_chat.clear()                              # the pusher's warm memo, cleared so the second push's build ORDER is observable
+            with contextlib.redirect_stderr(io.StringIO()):
+                ready(c)                                        # the second ready: the re-base (the reset, then the connect push)
+            self.assertEqual(self._names(self.built), ["web", "docs", "api", "tests"],
+                             "the re-based renderer's active-first batch is the page's declared tab (web), the transcript-less docs with it, "
+                             "then the rest in strip order; before the reset dropped the record, api (the stale record) was built first and "
+                             "web third: %r" % (self._names(self.built),))
+            sent = [f["id"] for f in c["_frames"] if f["type"] == "session"]
+            self.assertEqual(self._names(sent)[:1], ["web"], "the first session frame the re-base sends is the page's declared tab: %r" % (self._names(sent),))
+            for k in ("preferred", "skeleton", "skeletonOrder", "reconnect", "skeletonOnReady"):
+                self.assertNotIn(k, c, "%s: the reset forgets the record with the set it belongs to" % k)
+            self.assertEqual(sorted(self._names(c.get("echat", {}))), ["api", "docs", "tests", "web"],
+                             "echat cleared by the reset and refilled by the connect push with the four served whole")
+            self.assertEqual(km._watched_tab(c), S1, "the readers see the page's own declared tab again")
+            self.assertEqual(c["active"], S1, "the page's declaration was never overwritten")
+            # the family rule both ways: a DECLARED redial keeps its beliefs through a ready, the record among them (the reset's guard)
+            r = self._client(active=S1, redial=True, reconnect=True, skeleton={S3}, skeletonOrder=[S3], preferred=S2, echat={})
+            km._client_reset_chat_base(r)
+            self.assertEqual((r.get("preferred"), r.get("skeleton"), r.get("reconnect")), (S2, {S3}, True),
+                             "a declared redial keeps its state for _resolve_reconnect to fill, the record with it")
+        finally:
+            km._PENDING_REVEAL.clear()
+
+    def test_12h_the_resolve_pop_of_the_record_is_defensive_no_road_reaches_it_with_a_record(self):
+        # pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 findings tests-2 and extra9-3). The `c.pop("preferred", None)`
+        # in _resolve_reconnect's `act and not fresh` branch finds nothing on any road at this head, because a socket enters that branch
+        # at most once: `skeletonOnReady` alone re-arms `reconnect` on a live client (the reset, once, at the bundle's one ready), and
+        # the two other writers arm it at the handshake. Driven, each with a park the preference takes so a record is WRITTEN after the
+        # pop, then a second strip sender (_push_session_now) and a second push, neither of which may re-enter: road A (a redial), road B
+        # (a skeleton column: the pre-ready pop skips the branch under `fresh`, the ready-time re-arm enters once), road C (a redial of a
+        # skeleton column). The spy counts the branch's pops of `preferred` by caller and what each found. Red under a kernel whose
+        # resolve reads the flag without consuming it (every sender re-enters: three pops from the three senders on each road, the
+        # second finding the record; `3 != 1`, mutations note MI5).
+        class _PopSpy(dict):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                self.pops = []
+
+            def pop(self, key, *default):
+                if key == "preferred":
+                    self.pops.append((sys._getframe(1).f_code.co_name, dict.get(self, key)))
+                return dict.pop(self, key, *default)
+
+        row = {"state": "working", "since": 1781100000, "model": "", "effort": "", "mode": "", "backend": "sdk"}
+        km._live_map = lambda: {S2: dict(row), S1: dict(row)}
+        roads = [("A, a redial", dict(active=S1, reconnect=True, redial=True, wid="W1", col="")),
+                 ("B, a skeleton column", dict(active=S1, reconnect=True, skeletonOnReady=True, dietSkeleton=True, wid="W1", col="")),
+                 ("C, a redial of a skeleton column", dict(active=S1, reconnect=True, redial=True, dietSkeleton=True, wid="W1", col=""))]
+        for name, kw in roads:
+            with self.subTest(road=name):
+                del km._clients[:]
+                km._PENDING_REVEAL.clear()
+                km._built_chat.clear()
+                del self.built[:]
+                try:
+                    with contextlib.redirect_stderr(io.StringIO()):
+                        self.assertFalse(km._reveal_request(S2, "W1", via="ack", cols=1), "parked, one column declared")
+                        c = _PopSpy(self._client(**kw))
+                        km._clients.append(c)
+                        km._push([c])                                    # the first strip sender (road B: the pre-ready pop, under fresh)
+                        if kw.get("skeletonOnReady"):
+                            km.Handler._dispatch_ws(_Self(lambda cl: km._push([cl], connect=True)), {"type": "ready", "proto": 2}, c)   # the one ready: the reset re-arms, the connect push resolves
+                        km._push_session_now(S3)                         # a second strip sender: the flag is consumed, the branch is not re-entered
+                        km._push([c])                                    # and the pusher's next cycle
+                    resolve_pops = [(f, v) for f, v in c.pops if f == "_resolve_reconnect"]
+                    self.assertEqual(len(resolve_pops), 1, "the branch is entered once per socket on this road: %r" % (c.pops,))
+                    self.assertIsNone(resolve_pops[0][1], "the pop finds no record on this road: it is defensive: %r" % (c.pops,))
+                    self.assertEqual(c.get("preferred"), S2, "the record is written after the pop, once, and stands until a release")
+                finally:
+                    km._PENDING_REVEAL.clear()
+
+    def test_12i_the_watched_set_and_flag_are_derived_from_the_projects_value(self):
+        # pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 finding regression-4 with kernel-1). The fork's two set
+        # lines in _push and the perf label's line in _push_session_now RECOMPUTED the project's value through _watched_tab, so the
+        # project's line was dead code: an upstream edit to it would merge cleanly and be discarded by the next statement. They derive
+        # from it now (_watched_set, _watched_flag over _watched_records): the project's value stands, consumed as is, while no client
+        # carries the parked-reveal preference's record; with one standing, the record joins and the declaration it replaced leaves
+        # unless a record-less client declares the same tab. Executed over the helpers here; test_12j executes it through the three
+        # functions with the project's line mutated in a scratch copy.
+        A, B, P = S1, S3, S2
+        plain, holder, peer = {"active": A}, {"active": A, "preferred": P}, {"active": B}
+        declared = {A, B}
+        self.assertIs(km._watched_set(declared, [plain, peer]), declared, "no record: the project's set is returned, the same object")
+        self.assertIs(km._watched_flag(True, A, [plain, peer]), True, "no record: the project's answer is returned")
+        self.assertIs(km._watched_flag(False, P, [plain, peer]), False)
+        filtered = {B}   # a project line that filtered `plain` out: its answer participates unchanged
+        self.assertIs(km._watched_set(filtered, [plain, peer]), filtered)
+        self.assertEqual(km._watched_set(declared, [holder, peer]), {P, B}, "a record joins; the declaration it replaced leaves")
+        self.assertEqual(km._watched_set(declared, [holder, plain, peer]), {P, A, B}, "unless a record-less client declares the same tab")
+        self.assertEqual(km._watched_set(set(), [holder]), {P}, "the disclosed residual: a client the project's line filtered out still contributes its record")
+        self.assertEqual((km._watched_flag(True, A, [holder, peer]), km._watched_flag(False, P, [holder, peer]), km._watched_flag(True, B, [holder, peer])),
+                         (False, True, True), "the withheld declaration is not watched, the record is, a peer's declaration stands")
+        self.assertIs(km._watched_flag(True, A, [holder, plain, peer]), True, "the declaration stands when a record-less client also declares it")
+        # over the project's UNFILTERED set the derivation equals the pass-7 recompute, for every configuration of three clients
+        import itertools
+        n = 0
+        for acts in itertools.product((None, A, B, P), repeat=3):
+            for prefs in itertools.product((None, P, B), repeat=3):
+                clients = [dict(kv for kv in (("active", a), ("preferred", pf)) if kv[1]) for a, pf in zip(acts, prefs)]
+                decl = {c.get("active") for c in clients if c.get("active")}
+                want = {km._watched_tab(c) for c in clients if km._watched_tab(c)}
+                self.assertEqual(set(km._watched_set(decl, clients)), want, (clients,))
+                for sid in (A, B, P):
+                    self.assertEqual(bool(km._watched_flag(sid in decl, sid, clients)), sid in want, (sid, clients))
+                n += 1
+        self.assertEqual(n, 4 ** 3 * 3 ** 3, "every configuration was checked")
+
+    def _scratch(self, fn, project_line, mutant_line):
+        """Rebind km.<fn> to a scratch copy of its source with the PROJECT's line replaced by `mutant_line`; the caller restores."""
+        src = inspect.getsource(fn)
+        self.assertEqual(src.count(project_line), 1, fn.__name__ + ": the project's line, once")
+        exec(compile(src.replace(project_line, mutant_line), km.__file__, "exec"), km.__dict__)
+
+    def test_12j_the_projects_line_participates_in_each_of_the_three_derived_readers(self):
+        # pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 finding regression-4): the pin the ruling asks for. A
+        # scratch copy of each function whose PROJECT line gains a per-client filter (`_probeMuted`) runs beside the original: the
+        # fork's result MOVES with the project's, so the project's line is live and consumed, not dead code under a recompute. Three
+        # pairs, one rule: _push's active set (build_order), _push's _all_active (the cold-tab gate), _push_session_now's perf label.
+        # Red before (the pass-7 recompute): the first two results did not move.
+        MUTE = ' and not c.get("_probeMuted")'
+        P1 = 'active = {c.get("active") for c in chat_clients if c.get("active")}'
+        P2 = '_all_active = {c.get("active") for c in _all_chat if c.get("active")}'
+        P3 = '_active = sid in {c.get("active") for c in targets if c.get("active")}'
+        for P, fn in ((P1, km._push), (P2, km._push), (P3, km._push_session_now)):
+            src = inspect.getsource(fn)
+            self.assertEqual(src.count(P), 1, P)
+            nxt = next(l for l in src[src.index(P):].split("\n")[1:] if l.strip() and not l.strip().startswith("#"))   # past the project's own continuation comment
+            self.assertIn("_watched_", nxt, fn.__name__ + ": the fork's line follows the project's line: %r" % (nxt.strip()[:80],))
+        row = {"state": "working", "since": 1781100000, "model": "", "effort": "", "mode": "", "backend": "sdk"}
+        km._live_map = lambda: {S1: dict(row), S2: dict(row)}
+        push0, now0 = km._push, km._push_session_now
+
+        def scenario1():   # the active set: a record-less client declaring web, filtered out by the mutant project line
+            del km._clients[:]
+            km._built_chat.clear()
+            del self.built[:]
+            c = self._client(active=S1, _probeMuted=True)
+            km._clients.append(c)
+            km._push([c])
+            return self._names(self.built)
+
+        def scenario2():   # _all_active: a connected column that is not a target declares web; the target watches api and both hold web as a skeleton
+            del km._clients[:]
+            km._built_chat.clear()
+            del self.built[:]
+            c1 = self._client(active=S2, skeleton={S1, S3}, skeletonOrder=[S1, S3])
+            c2 = self._client(active=S1, skeleton={S1, S3}, skeletonOrder=[S1, S3], _probeMuted=True)
+            km._clients.extend([c1, c2])
+            skip0 = km._VIEW_STATS.get("chatSkipCold", 0)
+            km._push([c1])
+            return (S1 in self.built, km._VIEW_STATS.get("chatSkipCold", 0) - skip0)
+
+        def scenario3():   # the perf label: the one connected client declares web and is filtered out by the mutant project line
+            del km._clients[:]
+            km._built_chat.clear()
+            c = self._client(active=S1, ready=True, handshake=True, proto=2, skeleton=set(), _probeMuted=True)
+            km._clients.append(c)
+            b0 = km._PERF_STATS.snapshot()["builds"]["chat"]
+            km._push_session_now(S1)
+            b1 = km._PERF_STATS.snapshot()["builds"]["chat"]
+            return (b1["active_built"] - b0["active_built"], b1["bg_miss"].get("targeted", 0) - b0["bg_miss"].get("targeted", 0))
+
+        try:
+            control1 = scenario1()
+            self.assertEqual(control1[0], "web", "control: the declared tab is built first: %r" % (control1,))
+            self._scratch(km._push, P1, P1[:-1] + MUTE + "}")
+            moved1 = scenario1()
+            km._push = push0
+            self.assertNotEqual(moved1[0], "web", "the project's set filtered the client out and the fork's active set followed (build_order moved): %r" % (moved1,))
+            control2 = scenario2()
+            self.assertEqual(control2, (True, 0), "control: web is a watched tab of a connected column, so the gate builds it: %r" % (control2,))
+            self._scratch(km._push, P2, P2[:-1] + MUTE + "}")
+            moved2 = scenario2()
+            km._push = push0
+            self.assertEqual(moved2, (False, 1), "the project's set filtered the column out and the fork's _all_active followed (the gate skipped web): %r" % (moved2,))
+            control3 = scenario3()
+            self.assertEqual(control3, (1, 0), "control: the declared tab's targeted build lands in active_built: %r" % (control3,))
+            self._scratch(km._push_session_now, P3, P3[:-1] + MUTE + "}")
+            moved3 = scenario3()
+            km._push_session_now = now0
+            self.assertEqual(moved3, (0, 1), "the project's answer filtered the client out and the fork's label followed (targeted, background): %r" % (moved3,))
+        finally:
+            km._push, km._push_session_now = push0, now0
+            del km._clients[:]
 
 
 

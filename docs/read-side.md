@@ -245,9 +245,11 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   off screen on the phone; the parked paragraph below) carries no `awaitLink`
   and files no `return-fresh` until its tap. A `return-fresh` in such a
   dashboard carries `linkUpMs`: for an unparked return the
-  foreground-to-link-up gap; for a parked return the row files at the tap,
-  with `parked: true`, and `linkUpMs` measures from the tap, 0 when the
-  shell's link stood. Either way the path's own recovery reads apart from the
+  foreground-to-link-up gap; for a parked return the row files at the show
+  word that un-parks the pane (the tap, or the layout leaving the phone's;
+  the parked paragraph below), with `parked: true`, and `linkUpMs` measures
+  from that word, 0 when the shell's link stood. Either way the path's own
+  recovery reads apart from the
   code-owned wait (`ms` minus `linkUpMs`). The shell's own socket files one
   `return-probe` row (surface `shell`) per return that found it dead or quiet:
   the `decision` (`redial-closed` or `redial-stale`; a standing socket files
@@ -269,17 +271,92 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   answers the show carries `parked: true` too, with `ms` and `linkUpMs`
   counted from the show word rather than the return. A return in a shell that
   told a word and did not park says `parked: false`; a standalone page's row
-  carries no `parked` field.
+  carries no `parked` field. On the phone layout the Outline, the Sessions
+  band, the Waiting pane and the Files pane load on their first tap (since
+  2026-09-18; the chat, the feed and the tab the phone was left on load at
+  boot, the last unless the gear has that pane off), so a pane the phone never
+  showed has no document and files no rows of any kind: its absence from the
+  rows is the saving, not a field. A lazy pane whose document fails to load
+  (the load event over an error page, which commits no readable document, or
+  no committed document by the 30 s backstop) is put back where a tap finds
+  it, says so over the pane area with a control to retry, and files one
+  `pane-load-failed` row (surface `shell`: `pane`, `via` `load` or `backstop`,
+  `n` the failures for that pane on this page). A 200 the kernel served at the
+  pane's url that carries no pane shim (its own "needs the ui/ modules" page;
+  the kernel stamps every text/html 200 it writes whose body carries an
+  `<html>` tag with `data-romp-served=200` on that tag, so every text/html 200
+  at a pane url carries the stamp once, which the census tests read off the
+  writers and off a lab kernel (`tests/test_pane_state_broadcast.py`,
+  `tests/test_return_from_background_served.py`); a body with no `<html>` tag
+  is served as it came, unstamped, so at a pane url it would read as a
+  failure (the paste-the-token page at `/` is such a body today, and `/` is
+  not a pane url); and the shell reads that stamp) is not a failure: the
+  shell cannot classify it, so it is shown as served (the loader clears, the
+  src stays) and one `pane-load-unmarked` row (surface `shell`: `pane`, `via`)
+  says what was seen; a reader that cannot classify a 200 never reports
+  absent. A document at the url with neither the shim nor the stamp (the
+  kernel's 403 line under a stale cookie, its 500 page, a proxy's 502 body) is
+  a failure like an error page: re-parked with the retry control and one
+  `pane-load-failed` row (since 2026-09-19; the 200 scope since review round 4
+  the same day). On the desktop layout a pane a flip promoted files the same
+  two rows (its promotion arms the same load listener and 30 s backstop): the
+  episode's first failure hands the url back to `data-src` and promotes once
+  more; the second is the bound, which drops a document the kernel sent (the
+  frame to about:blank, the url under `data-lazy-src`) and keeps the browser's
+  own error page (pass 5, the author's label); a fetch still in flight at the
+  backstop is held on its kept src and its load ends the episode. No loader and
+  no retry control outside the phone layout: a flip to the phone parks a bound
+  or held pane with the failed state, where a tap recovers it, and a reload is
+  the other road.
   A redial declares itself (`reconnect=1` on the `/ws` URL) once the kernel's
   caps frame has answered the bundle's ready; before that, with the ready still
   queued, or after a socket that died before the caps frame came back, it dials
   as a fresh page. A page whose ready was never answered dials fresh for its
   life (the bundle posts ready once), so each of its redials is served whole.
-  On a declared redial the kernel sends the active tab in full and lists every
-  other session as a `skeleton` on the tab strip with one small `status` frame
-  each, and the chat pane loads a skeleton on click or one at a time in idle,
-  never while the tab is hidden; one `skeleton` client-diag row (count, active)
-  records the regime.
+  On a declared redial the kernel sends the active tab in full, or, when a
+  reveal is parked for the window and the kernel lists its session, that
+  session in full (pass 4b, the author's label; for a one-column window alone:
+  the shell declares its chat column count with the tap and the kernel reads
+  the columns' sockets beside it, a split page keeping the active tab, pass 5),
+  and lists every other session as a `skeleton` on the tab strip with one small
+  `status` frame each, and the chat pane loads a skeleton on click or one at a
+  time in idle, never while the tab is hidden; one `skeleton` client-diag row
+  (count, active) records the regime, and a `[reveal]` journal line names the
+  parked session the kernel served whole in place of the page's hint (pass 5). On
+  the phone layout the chat pane's first dial declares `skeleton=1` too (since
+  2026-09-18), so a cold open there is served the same way: the strip, one
+  full for the stored tab, or for the parked reveal's session as above, and a
+  status per other tab, and the `skeleton` row records it. The idle chain's
+  start gate runs on every layout (the desktop's panes and dial are unchanged;
+  a desktop redial's first background ask follows that one full instead of the
+  strip's paint): the chain starts from the moment the stored tab's full has
+  applied, from a tap onto a tab already served whole, or from the local strip
+  when it lists no such local tab, because the stored tab ended while the phone
+  was away or because it is another host's, whose full arrives on that host's
+  relay socket and is not waited for (as before). On the phone the chain also
+  waits for the chat pane to be on screen: a phone opened on another tab arms it
+  when the Chat tab is shown.
+  A return on the phone (the redial that follows a socket the background left
+  dead; the owner's decision of 2026-09-19) reloads the visible tab alone: the
+  kernel re-skeletons the other tabs on the new socket as before, and each of
+  them loads when tapped. The hold lasts the socket's life (decided
+  2026-09-19): a tap loads the tapped tab and nothing else, and the chain does
+  not resume after the first tap, because the owner's answer was that the
+  other tabs reload only when tapped. It covers every phone redial after the
+  first connection, a kernel restart and a dropped link while the app is in
+  the foreground included. The shim can tell them apart (its visibility
+  handler records `pendingWhy` before it enqueues the redial's frame), but the
+  `wsup` frame carries no reason field today, a restart's redial and a
+  foreground drop each cost one full at the tap per tab tapped under the
+  rule, and the one rule is chosen for simplicity; a drop redialed by a
+  throttled timer while the page is still hidden reads `reconnect`, so the
+  word is exact for the two named cases only.
+  The desktop's redial keeps today's chain, and the hold follows the layout
+  (since 2026-09-19): the shell re-tells its panes word with the layout on every
+  flip across the phone breakpoint, and its link word, the one a split chat
+  column hears, carries the same layout term, so a rotation to the desktop
+  inside the socket's life lifts the hold in every chat document and the grid
+  gets its chain, and a rotation to the phone after a redial sets it.
 - **The Outline pane's ages run on the kernel's clock.** Its timestamps are the
   kernel's, so the pane never reads the browser's clock against them: it anchors
   on the frame's `now` paired with the moment that frame arrived from the wire

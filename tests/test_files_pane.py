@@ -212,7 +212,8 @@ class Shell(unittest.TestCase):
         _has(self, "<button data-pane=files>Files</button>", self.html)
 
     def test_the_column_sits_after_waiting_with_its_gutter_and_grow_var(self):
-        self.assertIn('<div class=gv id=gv-d></div><div class=pane id=files-pane><iframe id=f-files src=/files></iframe></div>',
+        # data-src since stage 0 (2026-09-18): the mobile script promotes it, at boot on the desktop and on its first tap on the phone
+        self.assertIn('<div class=gv id=gv-d></div><div class=pane id=files-pane><iframe id=f-files data-src=/files></iframe></div>',
                       self.html.replace('"\n            "', ""))
         self.assertLess(self.html.index("id=waiting-pane"), self.html.index("id=gv-d"))
         self.assertLess(self.html.index("id=gv-d"), self.html.index("id=files-pane"))
@@ -262,7 +263,7 @@ class Shell(unittest.TestCase):
         self.assertNotIn("st.filesControl", js + km._LANDING_MOBILE_JS, "the T317-era key is never read: a whole-object save merged its true into profiles that never touched the box")
         _has(self, "document.body.classList.toggle('no-files-control',!ctl);", js)
         _has(self, "if(k==='files'&&!filesCtl())return;", js)
-        _has(self, "return {romp:'panes',on:on,avail:{files:filesCtl()},link:(window.__rompLink&&window.__rompLink().up)?'up':'down'};", js)   # D3 (2026-09-18): the word gained a link field (the shell socket's state); on and avail are unchanged
+        _has(self, "return {romp:'panes',on:on,avail:{files:filesCtl()},link:(window.__rompLink&&window.__rompLink().up)?'up':'down',mob:mob};", js)   # + mob (review round 3 of the lazy panes, 2026-09-19): the layout word, so a pane re-decides a layout-keyed hold on every flip   # D3 (2026-09-18): the word gained a link field (the shell socket's state); on and avail are unchanged
         _has(self, "window.addEventListener('storage',function(e){if(!e||!e.key||e.key===SK)reconcile(true);apply();});", js)   # the gear writes from another document: this is the event (a gear save re-reads the optional panes before the titles refresh)
         mob = km._LANDING_MOBILE_JS
         _has(self, "function show(p){if(p==='files'&&!filesCtlM())p='chat';", mob)
@@ -345,7 +346,8 @@ class Relay(unittest.TestCase):
     def test_the_feeds_browse_relay_is_untouched(self):
         js = km._LANDING_SETTINGS_JS
         _has(self, "else if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');", js)
-        _has(self, "try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // phone: one pane at a time", js)
+        _has(self, "try{if(window.__rompMobileOn&&window.__rompMobileOn())window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}", js, "the phone's tab swap, gated on the layout probe since pass 5 (the author's label, taking the reviewer's round-4 finding ui-2): the Files arms' and the Log row's gate")
+        _lacks(self, "try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}", js, "no ungated switch left in the feed's browse arm (pass 5, the reviewer's round-4 ui-2)")
         _has(self, "if(m.romp==='browseClosed'&&window.__rompFeedWasOff){window.__rompFeedWasOff=false;", js)
 
     def test_the_two_ends_agree_on_the_message(self):
@@ -491,6 +493,11 @@ send({ romp: 'browseFiles', path: '/repo/notes-api', sid: SID });
 out.noPane = snap(); reset();
 send({ romp: 'browseFiles', pane: 'feed', path: '/repo/notes-api', sid: SID, identity });
 out.otherPane = snap(); reset();
+MOBILE = true; TAB = 'chat';   // the same two asks on the phone (pass 5, the author's label, the reviewer's round-4 ui-2: the two above run on the desktop, where the feed's tab swap is gated now)
+send({ romp: 'browseFiles', path: '/repo/notes-api', sid: SID });
+out.noPanePhone = snap(); reset();
+send({ romp: 'browseFiles', pane: 'feed', path: '/repo/notes-api', sid: SID, identity });
+out.otherPanePhone = snap(); reset(); MOBILE = false;
 // the Files page is still loading when the ask arrives: the forward waits for the iframe's load, once
 FILES_READY = 'loading';
 send({ romp: 'browseFiles', pane: 'pane', path: '/repo/notes-api', sid: SID, identity });
@@ -578,11 +585,14 @@ class BrowseRelay(unittest.TestCase):
         self.assertEqual(len(a["files"]), 1, "the ask is still forwarded")
 
     def test_a_browse_naming_no_pane_or_another_pane_takes_the_feeds_route_exactly_as_before(self):
-        for key in ("noPane", "otherPane"):
+        for key in ("noPane", "otherPane", "noPanePhone", "otherPanePhone"):
             n = self.out[key]
             self.assertEqual(n["feed"], [{"romp": "browseFiles", "path": "/repo/notes-api", "sid": self.SID}], key + ": forwarded into the feed, path and sid only")
             self.assertEqual(n["files"], [], key + ": the Files pane hears nothing")
-            self.assertEqual(n["tabs"], ["feed"], key + ": the feed's browser still switches a phone to the Feed tab")
+            # pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding ui-2): the feed's tab swap is the phone's; on the desktop the grid shows the feed already and the
+            # switch would persist the remembered phone tab from a desktop gesture (before the gate these two desktop steps switched, and
+            # this pin called the switch a phone's)
+            self.assertEqual(n["tabs"], ["feed"] if key.endswith("Phone") else [], key + (": the feed's browser switches a phone to the Feed tab" if key.endswith("Phone") else ": desktop, no tab switch"))
             self.assertEqual(n["toggles"], [], key + ": the feed is on, so nothing to bring forward")
             self.assertEqual(n["from"], "undef", key + ": the Files route's memory is not touched")
 
@@ -620,7 +630,7 @@ class BrowseRelay(unittest.TestCase):
         # the feed branch's body is as it was: the lift, the remembered was-off flag, the phone tab, the forward
         feed = js.split(self.FEED)[1].split("if(m.type==='editorSelection'")[0]
         _has(self, "if(!document.body.classList.contains('po-feed')){window.__rompFeedWasOff=true;", feed)
-        _has(self, "try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // phone: one pane at a time", feed)
+        _has(self, "try{if(window.__rompMobileOn&&window.__rompMobileOn())window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}", feed, "the phone tab, gated on the layout (pass 5, the reviewer's round-4 ui-2)")
         _has(self, "postMessage({romp:'browseFiles',path:m.path,sid:m.sid},'*')", feed)
         _lacks(self, "identity", self._code(feed), "the feed resolves its own identity")
         # the comment above the pane branch names the ladder, the gesture and the phone's way back

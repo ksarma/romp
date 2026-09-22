@@ -21,7 +21,7 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_mobile", os.path.join(BIN, "romp-kernel"))
 sys.path.insert(0, HERE)
-from test_pane_shim_return import HARNESS as _PANE_HARNESS   # noqa: E402  the pane shim's node fakes (never its TestCases), for the linked runs below
+from test_pane_shim_return import HARNESS as _PANE_HARNESS, _run as _run_pane   # noqa: E402  the pane shim's node fakes and its pane-only runner (never its TestCases), for the linked runs below
 
 
 def _mobile_js():
@@ -171,6 +171,60 @@ class LandingShell(unittest.TestCase):
         self.assertIn("#f-timeline.m-on{display:block}", html) # timeline is a mobile tab pane (it lives in the row now)
         self.assertIn("data-tab", km._LANDING_MOBILE_JS)       # show() marks the active pane on <body>
 
+    def test_lazy_panes_markup_loader_and_the_promotions_place_in_show(self):
+        # stage 0 (2026-09-18): the Waiting and Files panes are served with data-src (the mobile script promotes them: at boot on
+        # the desktop, on their first tap on the phone; the Files line is the one upstream markup token this fork changes); the
+        # chat keeps its src (the reveal landing reads its document). The shell's loader for a loading pane is one
+        # element, painted for the shown tab by body.pane-loading inside the phone media block, in _pane_spin's dress.
+        html = km._landing()
+        js = km._LANDING_MOBILE_JS
+        self.assertIn("<iframe id=f-waiting data-src=/waiting>", html)
+        self.assertIn("<iframe id=f-chat class=m-on src=/chat>", html)
+        self.assertIn("<iframe id=f-files data-src=/files>", html)
+        self.assertNotIn("<iframe id=f-files src=", html)
+        self.assertEqual(html.count("<div id=pane-load>"), 1)
+        # tests-2 (review round 1, 2026-09-19): the element CARRIES the romp loader (ui/CLAUDE.md's wait-state rule), as the boot splash's pin
+        # does (tests/test_kernel_refresh_button.py), its first content; the failed-load message is its second child (HIGH 2)
+        self.assertIn("<div id=pane-load>" + km._loader_inner() + "<div id=pane-load-msg role=alert></div><button id=pane-load-retry type=button hidden>Try again</button></div>", html,
+                      "the shell's pane loader is the romp loader first, then the failed-load message (announced: role=alert), then the retry button, hidden until the failed paint (review round 3, ui-1)")
+        self.assertIn("#pane-load-retry[hidden]{display:none}", html)
+        self.assertIn("#pane-load-retry:focus-visible{outline:2px solid var(--accent,#9cd2ff);outline-offset:2px}", html, "the keyboard focus ring")
+        self.assertIn("body.theme-light #pane-load-retry{border-color:rgba(0,0,0,0.3);color:#222}", html)
+        self.assertIn("var rb=document.getElementById('pane-load-retry');if(rb){rb.hidden=!bad;if(bad&&RFOC){RFOC=false;try{rb.focus();}catch(e){}}}", js, "paintLoading shows the button in the failed state alone, and puts the keyboard's focus back on it after its own retry (review round 4, ui-1)")
+        self.assertIn("if(prb)prb.addEventListener('click',function(ev){try{ev.stopPropagation();}catch(e){}retry();RFOC=true;});", js, "the button's click retries (a real button: Enter and Space run it natively)")
+        self.assertLess(html.index("<div id=romp-boot>"), html.index("<div id=pane-load>"))
+        self.assertIn("#pane-load{display:none}", html)
+        self.assertIn("#pane-load-msg{display:none;", html)
+        self.assertIn("body.pane-failed #pane-load{display:flex;flex-direction:column;gap:14px;cursor:pointer}", html, "the failed state keeps the element up (a tap on it retries)")
+        self.assertIn("body.pane-failed #pane-load>.rl-in{display:none}", html, "…with the loader down and the message in its place")
+        self.assertIn("body.pane-failed #pane-load-msg{display:block}", html)
+        self.assertLess(html.index("@media " + km._MOBILE_MQ + "{"), html.index("body.pane-failed #pane-load{display:flex"), "the failed paint lives inside the phone media block too")
+        self.assertIn("pane", km.CLIENT_DIAG_KEYS["shell"]); self.assertIn("n", km.CLIENT_DIAG_KEYS["shell"]); self.assertIn("via", km.CLIENT_DIAG_KEYS["shell"])   # the pane-load-failed row's keys survive the allowlist
+        self.assertIn("#pane-load{position:fixed;left:0;right:0;top:0;bottom:var(--mtabs-h,2.6em);z-index:15;align-items:center;justify-content:center;background:#1e1e1e}", html)
+        self.assertIn("body.pane-loading #pane-load{display:flex}", html)
+        self.assertIn("body.theme-light #pane-load{background:#F1EAE2}", html)
+        self.assertLess(html.index("@media " + km._MOBILE_MQ + "{"), html.index("body.pane-loading #pane-load{display:flex}"), "the paint lives inside the phone media block")
+        self.assertLess(html.index("#pane-load{display:none}"), html.index("@media " + km._MOBILE_MQ + "{"), "hidden by default, outside it")
+        self.assertEqual(html.count("<script>"), 22, "+1 2026-09-19: the desktop promotion of the Waiting and Files panes (_LANDING_DESKTOP_PANES_JS), its own script so a throw in the mobile script cannot strand a desktop pane (review round 1); the mobile script carries the lazy panes")
+        # D7 (review round 1, regression-5): the desktop promotion is its own element, spliced BEFORE the mobile script, reading the media query itself
+        self.assertEqual(html.count("<script>" + km._LANDING_DESKTOP_PANES_JS + "</script>"), 1)
+        self.assertLess(html.index(km._LANDING_DESKTOP_PANES_JS), html.index("var LAZY='data-lazy-src'"), "the desktop promotion runs before the mobile script")
+        self.assertIn("matchMedia(" + json.dumps(km._MOBILE_MQ) + ")", km._LANDING_DESKTOP_PANES_JS, "it reads the layout from the shared media query, not from the mobile script's probe")
+        self.assertNotIn("__rompMobileOn", km._LANDING_DESKTOP_PANES_JS)
+        self.assertIn("['f-waiting','f-files'].forEach(", km._LANDING_DESKTOP_PANES_JS)
+        self.assertNotIn("else{promote('waiting');promote('files');}", js, "the mobile script's boot block no longer carries the desktop promotion")
+        # show(): the promotion sits between the persist and the re-tell (upstream's lines on both sides), so the pane hears the word on its load
+        self.assertIn("try{localStorage.setItem(KT,p);}catch(e){}\ntry{if(mobileOn()){promote(p);paintLoading();}}catch(e){}", js)
+        # D3 (review round 2, 2026-09-19): the shown pane's synchronous show hook, inserted right after the m-on toggle (upstream's line) and before the button loop
+        self.assertIn("F[k].classList.toggle('m-on',k===p);   // a pane this shell lacks is skipped, never a TypeError\ntry{var pw=F[p]&&F[p].contentWindow;if(mobileOn()&&pw&&pw.__rompPaneShown)pw.__rompPaneShown();}catch(e){}", js)
+        self.assertLess(js.index("pw.__rompPaneShown();"), js.index("try{localStorage.setItem(KT,p);}catch(e){}"), "…ahead of the persist, the promotion and the re-tell")
+        self.assertLess(js.index("try{if(mobileOn()){promote(p);paintLoading();}}catch(e){}"), js.index("try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}}\nwindow.__rompMobileTab=show;"))
+        # the boot: the parking of data-src runs before the boot show, whose line is upstream's text
+        self.assertLess(js.index("lf.setAttribute(LAZY,lu);lf.removeAttribute('data-src');"), js.index("var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}show(last);"))
+        self.assertIn("var LAZY='data-lazy-src',LOAD_MS=30000,URLS={},FAILS={},EPI={},TOK={},PEND={},DEAD={};", js)   # + the promoted urls, the failure counts (page-life and per episode, review round 3), and the promotion tokens (HIGH 2, review round 1)
+        self.assertNotIn("__rompPanePromote", js, "no window export of promote() (review round 3, fresh-3): no production code called it; the three promotion roads (show(), the boot block, the lazyFlip listener) call the local promote() directly, and a re-add would be an unused seam commented as a road")
+        self.assertIn("if(en){if(f&&!f.getAttribute('src')&&f.getAttribute('data-src'))f.setAttribute('src',f.getAttribute('data-src'));", km._LANDING_COLLAPSE_JS, "the controller's promotion line is untouched")
+
     def test_shell_reveal_listener_wired(self):
         html = km._landing()
         self.assertIn("app=shell", html)              # shell WS catches kernel reveals (feed/timeline tap)
@@ -202,7 +256,9 @@ class LandingShell(unittest.TestCase):
         # registers as its refused fallback — its own script so a banner throw cannot take the reload with it
         # +1: the bottom bar's API health cell (_LANDING_APIH_JS), after the usage script whose backdrop it shares
         # +1 2026-09-08: the chat split columns (_LANDING_SPLIT_JS), after the pane controller it leans on
-        self.assertEqual(html.count("<script>"), 21)
+        # +1 2026-09-19: the desktop promotion of the Waiting and Files panes (_LANDING_DESKTOP_PANES_JS), its own script so a
+        # throw in the mobile script cannot strand a desktop pane (review round 1 of the lazy panes)
+        self.assertEqual(html.count("<script>"), 22)
 
     def test_bottom_bar_is_text_only_and_compact(self):
         html = km._landing()
@@ -965,14 +1021,18 @@ var shellTell=global.__rompPanesTell;global.__rompPanesTell=function(){shellTell
 """
 
 
-def _run_linked(scenario):
+def _run_linked(scenario, app="test", pre="", before=""):
+    """`app` reaches km._shim_core_js as a served page's would (the chat's diet line and the feed's park exemption key on it).
+    `pre` runs after the shell harness and BEFORE the shell script (element fakes with attributes, the lazy panes). `before`
+    runs inside the pane scope after the pane harness and BEFORE the shim core: the pane's document loading after a shell
+    event (a tap that promotes a lazy pane), where the default runs the shim at the shell's boot as every case before did."""
     node = shutil.which("node")
     if not node:
         raise unittest.SkipTest("node not installed")
     fx = tempfile.mkdtemp()
     path = os.path.join(fx, "run.js")
     with open(path, "w") as f:
-        f.write(_FIT_HARNESS + _SHELL_PROBE_HARNESS + _mobile_js() + "\n(function(){\n" + _PANE_HARNESS + km._shim_core_js() + "\n" + _LINK_GLUE + scenario + "\n})();\n")
+        f.write(_FIT_HARNESS + _SHELL_PROBE_HARNESS + pre + _mobile_js() + "\n(function(){\n" + _PANE_HARNESS + before + km._shim_core_js(app) + "\n" + _LINK_GLUE + scenario + "\n})();\n")
     r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
         raise AssertionError("node failed:\n" + r.stderr)
@@ -1370,6 +1430,253 @@ rf:rows(sock(),"return-fresh").map(function(x){return x.data;})});""")
         self.assertEqual(r["backstop"], 0, "no link-backstop row: the shell's loop was alive throughout")
         self.assertEqual(len(r["rf"]), 1)
         self.assertEqual(r["rf"][0]["linkUpMs"], 5000, "the word's time")
+
+
+# ── the lazy panes and the phone's skeleton first dial, shell + shim (stage 0, 2026-09-18) ────────────────────────
+# The fit harness's element fakes carry no attributes, so the lazy-pane cases hand the shell richer ones (`pre`): six pane
+# iframes with the served markup's src or data-src, a .pane parent each and a body that keeps data-tab. The pane's shim
+# then runs where the document would load: after the tap (`before`), for a lazy pane; at the shell's boot, for the chat.
+_LAZY_PRE = r"""
+const ATTRS = {}, SRCSETS = [], DIVCLS = {}, LOADFNS = {};   // LOADFNS: the load listeners per frame, kept as functions so a case can fire the frame's load (review round 3, tests-3; LOADS keeps the ids as before)
+const mk = (id) => { const k = id.slice(2), a = (k === 'chat') ? { src: '/' + k } : { 'data-src': '/' + k }; ATTRS[id] = a; DIVCLS[id] = new Set();   // the served markup: the chat alone ships src
+  const dc = DIVCLS[id];
+  return { id, parentNode: { classList: { add: (c) => dc.add(c), remove: (c) => dc.delete(c), contains: (c) => dc.has(c) } },
+    classList: { toggle() {} }, contentDocument: {}, contentWindow: { addEventListener: () => {} },
+    getAttribute: (x) => (x in a ? a[x] : null), setAttribute: (x, v) => { a[x] = v; if (x === 'src') SRCSETS.push(id); }, removeAttribute: (x) => { delete a[x]; },
+    addEventListener: (x, f) => { if (x === 'load') { LOADS.push(id); (LOADFNS[id] = LOADFNS[id] || []).push(f); } } }; };
+['f-chat', 'f-fleet', 'f-feed', 'f-timeline', 'f-waiting', 'f-files'].forEach((id) => { PANES[id] = mk(id); });
+let TABNOW = null; const BODYCLS = new Set();
+global.document.body = { setAttribute: (x, v) => { if (x === 'data-tab') TABNOW = v; }, getAttribute: (x) => (x === 'data-tab' ? TABNOW : null),
+  classList: { toggle: (c, on) => { if (on) BODYCLS.add(c); else BODYCLS.delete(c); }, contains: (c) => BODYCLS.has(c) } };
+global.__rompPaneEnabled = () => true;   // the head script's reader: every pane shown
+global.lazySnap = () => ({ src: Object.fromEntries(Object.keys(ATTRS).map((id) => [id, ATTRS[id].src || null])), lazy: Object.fromEntries(Object.keys(ATTRS).map((id) => [id, ATTRS[id]['data-lazy-src'] || null])), sets: SRCSETS.slice() });
+"""
+# the pane reads the shell's REAL layout probe (as _LINK_GLUE points it at the shell's real link)
+_MOBILE_GLUE = r"""Object.defineProperty(window.parent,"__rompMobileOn",{configurable:true,get:function(){return global.__rompMobileOn;}});
+"""
+
+
+class LazyPaneLinked(unittest.TestCase):
+    """T1 (stage 0), shell + shim: a lazy pane has no src, so no document and no socket, until its tap; the tap sets the src once
+    and the pane's shim, loading after it, dials one socket and hears the panes word saying it is on screen; from then on it is a
+    pane like any other, parking at a return off screen (D2) and dialing on its tab (the linked harness of PR 768: one node
+    process, one fake clock, the pane reading the shell's real publications). And the phone's first chat dial carries skeleton=1
+    (the kernel's one-full-plus-statuses shape), where a standalone page, the VS Code webview or a desktop shell does not."""
+
+    def test_a_lazy_pane_dials_nothing_until_its_tap_then_one_socket_and_parks_like_any_pane_after(self):
+        r = _run_linked(app="waiting", pre=_LAZY_PRE, before=_MOBILE_GLUE + r"""
+var t_boot=global.lazySnap();   // the shell booted (show('chat')): read before the tap
+global.__rompMobileTab('waiting');   // the tap: the src is set, the document starts loading; the shim below is that document's
+var t_afterTap={src:PANES['f-waiting'].getAttribute('src'),lazy:PANES['f-waiting'].getAttribute('data-lazy-src'),sets:SRCSETS.slice(),loading:DIVCLS['f-waiting'].has('loading'),bodyLoading:global.document.body.classList.contains('pane-loading')};
+""", scenario=r"""
+global.__rompPanesTell=function(){shellTell();fireWin("message",{romp:"panes",on:{waiting:global.document.body.getAttribute('data-tab')==='waiting'},link:global.__rompLink().up?"up":"down"});};   // the shell's tell carries the real on-screen word for this pane
+var t_atLoad={sockets:sockets.length,url:sock().url,onScreen:onScreen};
+shOpen();shRecv({type:'ka'});   // the shell's link is up
+open();recv({type:"ka"});   // the pane's socket opens on the kernel
+global.__rompPanesTell();    // the controller's load hook: the word on the pane's own load (the harness has no controller; the tell stands in)
+var t_told={onScreen:onScreen,states:states().slice()};
+global.__rompMobileTab('chat');   // the person goes back to the chat: the pane is off screen now
+var t_away={onScreen:onScreen};
+hide();NOW+=40000;sock().readyState=3;show();   // a return from the background with the socket dead: D2 parks a pane off screen on the phone
+var t_parked={states:states().slice(),sockets:sockets.length};
+shRecv({type:'ka'});   // the shell's own socket stands and is fresh (its return redial is ShellLinkProbe's business): the link reads up at the tap
+global.__rompMobileTab('waiting');   // its tab again: the word shows it, it dials
+var t_dialed=sockets.length;open();   // the kernel accepts the redial
+var t_back={dialed:t_dialed,sockets:sockets.length,states:states().slice()};
+out({boot:t_boot,afterTap:t_afterTap,atLoad:t_atLoad,told:t_told,away:t_away,parked:t_parked,back:t_back});   // t_ prefixed: the scenario shares the shim core's function scope, whose own `parked` a bare name would shadow""")
+        self.assertEqual(r["boot"]["src"], {"f-chat": "/chat", "f-files": None, "f-feed": "/feed", "f-fleet": None, "f-timeline": None, "f-waiting": None},
+                         "at the shell's boot on the phone the Waiting pane has no src (nor the Files pane): no document, no shim, no socket")
+        self.assertEqual(r["boot"]["lazy"]["f-waiting"], "/waiting", "its data-src is parked for the tap")
+        self.assertEqual(r["boot"]["sets"], ["f-feed"], "one src set at boot, the exempt feed's")
+        self.assertEqual(r["afterTap"]["src"], "/waiting", "the tap sets it")
+        self.assertIsNone(r["afterTap"]["lazy"])
+        self.assertEqual(r["afterTap"]["sets"], ["f-feed", "f-waiting"], "exactly once")
+        self.assertTrue(r["afterTap"]["loading"] and r["afterTap"]["bodyLoading"], "the shell paints its loader over the shown, loading pane")
+        self.assertEqual(r["atLoad"]["sockets"], 1, "the document's shim dials one socket at its load")
+        self.assertIn("app=waiting", r["atLoad"]["url"])
+        self.assertIs(r["told"]["onScreen"], True, "the word on its load says the pane is on screen")
+        self.assertEqual(r["told"]["states"], ["up"])
+        self.assertIs(r["away"]["onScreen"], False, "the switch back to the chat re-tells: off screen")
+        self.assertEqual(r["parked"], {"states": ["up", "parked"], "sockets": 1}, "a return off screen parks the pane (D2): no dial, one parked word")
+        self.assertEqual(r["back"], {"dialed": 2, "sockets": 2, "states": ["up", "parked", "up"]}, "its tab shows it and it dials once, the shell's link being up; the open says up again")
+
+    def test_the_shells_reader_and_the_real_shims_marker_agree_the_tapped_documents_load_is_the_panes_own(self):
+        # tests-3 (review round 3, 2026-09-19): the shell's docState() decides a lazy pane loaded by the marker the pane shim sets in its window
+        # (window.__rompApp), and before this nothing in a fast tier coupled the two: renaming the marker on either side left every Python and
+        # webview test green and reddened the 80 s served Chromium leg alone. Here the REAL shim core runs in the pane scope after the tap, its
+        # window glued in as the shell frame's contentWindow, and the shell's own promotion listener reads it on the frame's load.
+        r = _run_linked(app="waiting", pre=_LAZY_PRE, before=_MOBILE_GLUE + r"""
+global.__rompMobileTab('waiting');   // the tap: the src is set, the promotion listener armed; the shim below is that document's
+PANES['f-waiting'].contentWindow=window;   // the pane's window IS the frame's contentWindow (before this glue the frame carried a bare fake)
+PANES['f-waiting'].contentDocument={URL:'https://TESTHOST/waiting'};   // its document, committed at the pane's url
+""", scenario=r"""
+shOpen();shRecv({type:'ka'});   // the shell's socket is open: a shell client-diag row goes out at once
+var t_marker={type:typeof window.__rompApp,value:window.__rompApp};   // what the REAL shim set at its parse
+var t_before={loading:DIVCLS['f-waiting'].has('loading'),failed:DIVCLS['f-waiting'].has('failed')};
+(LOADFNS['f-waiting']||[]).forEach(function(f){f({type:'load'});});   // the frame's load event: the shell's listener reads the document
+function shRows(what){var all=[];SHSOCKS.forEach(function(s){s.sent.forEach(function(x){var m=JSON.parse(x);if(m.type==='clientDiag'&&m.surface==='shell'&&m.what===what)all.push(m.data);});});return all;}
+out({marker:t_marker,before:t_before,after:{loading:DIVCLS['f-waiting'].has('loading'),failed:DIVCLS['f-waiting'].has('failed')},
+unmarked:shRows('pane-load-unmarked'),failedRows:shRows('pane-load-failed'),listeners:(LOADFNS['f-waiting']||[]).length});""")
+        self.assertEqual(r["marker"], {"type": "string", "value": "waiting"}, "the real shim set the marker on the pane's window at its parse (APP)")
+        self.assertEqual(r["before"], {"loading": True, "failed": False}, "after the tap the pane is loading")
+        self.assertGreaterEqual(r["listeners"], 1, "the shell's promotion listener is on the frame (a case over no listener would witness nothing)")
+        self.assertEqual(r["after"], {"loading": False, "failed": False}, "the load: the shell read the pane's OWN document (docState 'app') and ended the loading state, no failure")
+        self.assertEqual(r["unmarked"], [], "no pane-load-unmarked row: the shell's reader recognised the marker the real shim set (a renamed marker on either side files one here)")
+        self.assertEqual(r["failedRows"], [], "no pane-load-failed row")
+        # the belt beside the executed case: the two literals, so a rename that keeps the pair in step still shows up in a diff review
+        self.assertIn("window.__rompApp=APP;", km._shim_core_js("waiting"), "the shim's marker line")
+        self.assertIn("if(w&&typeof w.__rompApp==='string')return 'app';", km._LANDING_MOBILE_JS, "the shell's read of the same name (review round 4: the marker is read first, the kernel's 200 stamp tells doc from other after it)")
+
+    def test_the_gears_tap_time_read_and_the_real_settings_shims_marker_agree_so_a_second_tap_toggles_the_live_page_and_fetches_nothing(self):
+        # the author's pass-4 verify (2026-09-19, kernel-2's coupling): the gear's tap-time check reads window.__rompApp on the settings frame's
+        # window, the marker the settings page's REAL shim sets (APP "settings"). The gear harness in tests/test_pane_state_broadcast.py
+        # stubs the marker under whatever name the gear reads, and the linked case above couples the shim to the PANES' reader (docState),
+        # not the gear's, so a rename kept in step on the shim and in docState and missed in the gear's read left every fast tier green
+        # while every second gear tap on the real dashboard judged the live page not-live and fetched it again. Here the real settings
+        # shim runs in the pane scope as the gear frame's contentWindow after the first tap's promotion, and the second tap reads it.
+        settings_js = km._LANDING_SETTINGS_JS.replace("__ROMP_BOOT__", json.dumps("boot-1")).replace("__ROMP_LOADER__", json.dumps(""))
+        r = _run_linked(app="settings", pre=_LAZY_PRE + "PANES['f-settings'] = mk('f-settings');\n" + settings_js + "\n", before=_MOBILE_GLUE + r"""
+var GEARPOSTS=[];var gearListeners=function(){return (LOADFNS['f-settings']||[]).length;};var l0=gearListeners();   // the shell's panes-word hook is on the gear frame already (the mobile script wires the seven frames)
+global.__rompOpenSettings();   // tap 1: the frame has no src, so the src is set once, the opener's one load listener armed, the ask pending
+var t_tap1={src:ATTRS['f-settings'].src,sets:SRCSETS.filter(function(id){return id==='f-settings';}).length,armed:gearListeners()-l0};
+PANES['f-settings'].contentWindow=window;   // the pane's window IS the gear frame's contentWindow; the shim below is the settings page's own
+PANES['f-settings'].contentDocument={URL:'https://TESTHOST/settings'};   // its document, committed at the gear's url
+window.postMessage=function(m){GEARPOSTS.push(JSON.parse(JSON.stringify(m)));};   // what the shell posts into the page
+""", scenario=r"""
+var t_marker={type:typeof window.__rompApp,value:window.__rompApp};   // what the REAL shim set at its parse
+(LOADFNS['f-settings']||[]).forEach(function(f){f({type:'load'});});   // the page's load: the pending ask posts
+var gearSets=function(){return SRCSETS.filter(function(id){return id==='f-settings';}).length;};
+var t_loaded={posts:GEARPOSTS.slice(),sets:gearSets()};
+global.__rompOpenSettings();   // tap 2 over the real, marked page: live, so no re-fetch; the ask posts (the page's own opener toggles)
+var t_tap2={posts:GEARPOSTS.slice(),sets:gearSets(),src:ATTRS['f-settings'].src,armed:gearListeners()-l0};
+out({tap1:t_tap1,marker:t_marker,loaded:t_loaded,tap2:t_tap2});""")
+        self.assertEqual(r["tap1"], {"src": "/settings", "sets": 1, "armed": 1}, "the first tap promotes the gear frame once and arms the opener's one load listener (beside the shell's panes-word hook, wired at boot)")
+        self.assertEqual(r["marker"], {"type": "string", "value": "settings"}, "the real shim set the marker on the settings page's window at its parse (APP)")
+        self.assertEqual(r["loaded"], {"posts": [{"romp": "openSettings"}], "sets": 1}, "the page's load delivers the pending ask into the page")
+        self.assertEqual(r["tap2"], {"posts": [{"romp": "openSettings"}, {"romp": "openSettings"}], "sets": 1, "src": "/settings", "armed": 1}, "the second tap reads the real page as live: zero more src sets (a re-fetch drops and sets it), the ask posts; a marker renamed on the shim alone, or in the gear's read alone, re-fetches here")
+        # the belt beside the executed case: the two literals, so a rename that keeps the pair in step still shows up in a diff review
+        self.assertIn("window.__rompApp=APP;", km._shim_core_js("settings"), "the shim's marker line")
+        self.assertIn("typeof f.contentWindow.__rompApp==='string'", km._LANDING_SETTINGS_JS, "the gear's read of the same name (review round 4, kernel-2)")
+
+    def test_the_phones_first_chat_dial_carries_skeleton_1_and_a_redial_or_another_layout_does_not(self):
+        r = _run_linked(app="chat", pre=_LAZY_PRE, before=_MOBILE_GLUE, scenario=r"""
+var first=sock().url;
+open();recv({type:"ka"});sock().readyState=3;sock().onclose({code:1006});fireTimers();   // the socket dies before the bundle's ready was answered: the redial dials as a fresh page (the reload diet's rule)
+var redial=sock().url;
+out({first:first,redial:redial,sockets:sockets.length,mobile:parentMobile()});""")
+        self.assertIs(r["mobile"], True, "the pane reads the shell's real layout probe (the fit harness's media query matches)")
+        self.assertIn("app=chat&", r["first"])
+        self.assertIn("&skeleton=1", r["first"], "the phone's first chat dial takes the skeleton diet: one full for the shown tab, a status per other tab")
+        self.assertNotIn("reconnect=1", r["first"])
+        self.assertEqual(r["sockets"], 2)
+        self.assertNotIn("&skeleton=1", r["redial"], "a redial after a socket that died before the ready was answered dials as a fresh page, as the reload diet does (everConnected)")
+        # the other layouts, pane-only, the shell's probe stubbed AFTER the harness (its `before` seam: the harness declares parentMobileVal
+        # itself, so a `pre` write is reset; review round 1, 2026-09-19): a desktop shell says false, a standalone page or the VS Code webview
+        # has none. The probe the core read at its load is asserted, so the desktop iteration is known to run a desktop shell.
+        for before, mobile, why in (("parentMobileVal=false;", False, "a desktop shell"), ("", None, "no shell (standalone, VS Code)")):
+            d = _run_pane('out({url:sock().url,mobile:(parentMobile()===undefined?null:parentMobile())});', before=before, app="chat")
+            self.assertIs(d["mobile"], mobile, why + ": the probe the core read at its load")
+            self.assertNotIn("skeleton=1", d["url"], why + ": the whole push, as before")
+        js = km._shim_core_js("chat")
+        self.assertIn('if(APP==="chat"&&!COL&&!SKEL&&parentMobile()===true)RESTART_DIET=true;', js, "the fork line sets the reload diet's flag; the dial line is upstream's text")
+        self.assertLess(js.index("function parentMobile()"), js.index('RESTART_DIET=true;'), "after the probe it reads")
+        self.assertLess(js.index('RESTART_DIET=true;'), js.index('?"&skeleton=1":""'), "before the dial line reads the flag")
+        html = km._landing()
+        probe = "window.__rompMobileOn=function(){try{return !!(window.matchMedia&&matchMedia(" + json.dumps(km._MOBILE_MQ) + ").matches);}catch(e){return false;}};"
+        self.assertEqual(html.count(probe), 1, "the head defines the layout probe once")
+        self.assertLess(html.index(probe), html.index("<iframe"), "…before any iframe, so a pane's shim can read it at its own load (the wid mint's race)")
+        self.assertLess(html.index(probe), html.index("window.__rompMobileOn=mobileOn;"), "…and the mobile script's cached-list version replaces it when the body's scripts run")
+
+
+# The head's notified-session seed (review round 3, 2026-09-19, fresh-1), executed: the shell's head <script> under the auth
+# test's harness (its stubs of the few browser globals the head touches) plus a Map-backed localStorage of this module's own.
+from test_kernel_auth_hardening import _HEAD_HARNESS as _AUTH_HEAD_HARNESS, _head_script as _auth_head_script   # noqa: E402  the harness and the head extractor, never its TestCases
+
+_SEED_SID_A = "aaaaaaaa-1111-2222-3333-444444444444"   # web: the tab the phone was on when it buzzed
+_SEED_SID_B = "bbbbbbbb-1111-2222-3333-444444444444"   # api: the session that buzzed
+_SEED_KEY = "romp-vscode-state-chat"
+_SEED_STORE = r"""
+const STORE = new Map(); const SETS = [];
+if (process.env.ROMP_TEST_BLOB) STORE.set(%s, process.env.ROMP_TEST_BLOB);
+global.localStorage = {
+  getItem: (k) => { if (process.env.ROMP_TEST_LS_THROWS) throw new Error("storage refused"); return STORE.has(k) ? STORE.get(k) : null; },
+  setItem: (k, v) => { if (process.env.ROMP_TEST_LS_THROWS) throw new Error("storage refused"); SETS.push(k); STORE.set(k, String(v)); },
+};
+""" % json.dumps(_SEED_KEY)
+_SEED_DRIVER = "\nconsole.log(JSON.stringify({ replaced: REPLACED, blob: STORE.has(%s) ? STORE.get(%s) : null, sets: SETS }));\n" % (json.dumps(_SEED_KEY), json.dumps(_SEED_KEY))
+
+
+class NotifiedSessionSeed(unittest.TestCase):
+    """A push notification's cold open lands on a URL carrying ?push-reveal=<sid>. The chat pane's shim dials at its own parse,
+    before any body script, with the chat blob's activeId as the dial's hint (the LAST-SHOWN tab), and on the phone that first
+    dial takes the skeleton diet: before this seed the kernel's one full went to the last-shown tab and the notified session
+    arrived as a skeleton, one round trip later. The head script now seeds the blob with the notified session before the parser
+    reaches the chat iframe, so the first dial names it. Executed here under node with a Map-backed store; the served leg
+    (tests/test_notification_tap_resume_browser.py, the phone iteration of the link road) reads the dial off the wire."""
+
+    def _run(self, href, blob=None, throws=False):
+        env = dict(os.environ, ROMP_TEST_HREF=href)
+        if blob is not None:
+            env["ROMP_TEST_BLOB"] = json.dumps(blob)
+        if throws:
+            env["ROMP_TEST_LS_THROWS"] = "1"
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(_AUTH_HEAD_HARNESS + _SEED_STORE + _auth_head_script(km._landing()) + _SEED_DRIVER)
+            path = f.name
+        try:
+            r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30, env=env)
+        finally:
+            os.unlink(path)
+        self.assertEqual(r.returncode, 0, "the head script threw: " + r.stderr[:800])
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        out["blob"] = json.loads(out["blob"]) if out["blob"] is not None else None
+        return out
+
+    def test_a_deep_link_seeds_the_chat_blob_with_the_notified_session_before_the_token_scrub(self):
+        was = {"activeId": _SEED_SID_A, "activeName": "web"}
+        o = self._run("http://localhost:7777/?token=t&push-reveal=" + _SEED_SID_B, blob=was)
+        self.assertEqual(o["blob"], {"activeId": _SEED_SID_B, "activeName": ""}, "the notified session is the stored tab now, its name unknown here (persistActive's shape): %r" % (o,))
+        self.assertEqual(o["sets"], [_SEED_KEY], "one write, the chat blob's")
+        self.assertEqual(o["replaced"], ["/?push-reveal=" + _SEED_SID_B], "the token scrub still ran after the seed, and the param stays for the reveal script")
+        # a blob with other keys keeps them; a missing blob is minted; a host-prefixed id (a relayed remote event's sid) passes the shape
+        o = self._run("http://localhost:7777/?push-reveal=" + _SEED_SID_B, blob={"activeId": _SEED_SID_A, "activeName": "web", "compact": True})
+        self.assertEqual(o["blob"], {"activeId": _SEED_SID_B, "activeName": "", "compact": True})
+        o = self._run("http://localhost:7777/?push-reveal=" + _SEED_SID_B)
+        self.assertEqual(o["blob"], {"activeId": _SEED_SID_B, "activeName": ""}, "a first-ever open: the blob is minted with the notified session")
+        o = self._run("http://localhost:7777/?push-reveal=TESTHOST:" + _SEED_SID_B, blob=was)
+        self.assertEqual(o["blob"]["activeId"], "TESTHOST:" + _SEED_SID_B, "a host-prefixed id, as the dashboard carries a remote session")
+        # a corrupt store reads as an empty blob and is rewritten with the notified session
+        o = self._run("http://localhost:7777/?push-reveal=" + _SEED_SID_B, blob=[1, 2])
+        self.assertEqual(o["blob"], {"activeId": _SEED_SID_B, "activeName": ""})
+
+    def test_no_param_a_blob_already_naming_the_session_and_a_refused_value_write_nothing(self):
+        was = {"activeId": _SEED_SID_A, "activeName": "web"}
+        o = self._run("http://localhost:7777/?token=t&keep=1", blob=was)
+        self.assertEqual((o["blob"], o["sets"], o["replaced"]), (was, [], ["/?keep=1"]), "no deep link: the blob is untouched")
+        o = self._run("http://localhost:7777/?push-reveal=" + _SEED_SID_A, blob=was)
+        self.assertEqual((o["blob"], o["sets"]), (was, []), "the blob already names the notified session: no write")
+        # the refused inputs, recorded: a value outside push-card's shape (a quote), and one over 128 characters
+        for bad in ("a%22b", "x" * 200, "a%20b", ""):
+            o = self._run("http://localhost:7777/?token=t&push-reveal=" + bad, blob=was)
+            self.assertEqual((o["blob"], o["sets"]), (was, []), "refused input %r left the blob alone: %r" % (bad, o))
+            self.assertEqual(len(o["replaced"]), 1, "…and the token scrub still ran: %r" % (o,))
+
+    def test_a_storage_that_throws_leaves_the_token_scrub_standing(self):
+        # a storage that refuses every call (the auth test's harness defines no localStorage at all, a ReferenceError; a browser
+        # with storage blocked throws a SecurityError): the seed's own try/catch swallows it and the scrub after it still runs
+        o = self._run("http://localhost:7777/?token=t&push-reveal=" + _SEED_SID_B, throws=True)
+        self.assertEqual(o["replaced"], ["/?push-reveal=" + _SEED_SID_B], "the seed's own try/catch swallowed the throw and the scrub after it ran")
+        self.assertEqual(o["sets"], [], "nothing was written through a refusing store")
+
+    def test_the_seed_sits_in_the_head_after_the_layout_probe_and_before_the_standalone_flip(self):
+        html = km._landing()
+        head = _auth_head_script(html)
+        seed = head.index("searchParams.get('push-reveal')")
+        self.assertLess(head.index("window.__rompMobileOn=function(){"), seed, "after the layout probe (tests/test_per_viewer_focus.py pins the wid mint as the head's first statement)")
+        self.assertLess(seed, head.index("if(navigator.standalone){"), "before the standalone flip")
+        self.assertLess(seed, head.index("searchParams['delete']('token')"), "before the token scrub, as a statement of its own")
+        self.assertEqual(html.count("<script>"), 22, "no new script element: the seed is a statement of the head script")
+        self.assertLess(html.index("searchParams.get('push-reveal')"), html.index("<iframe"), "ahead of the first pane iframe, whose shim reads the blob at its parse")
 
 
 if __name__ == "__main__":

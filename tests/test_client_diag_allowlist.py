@@ -523,6 +523,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 ("colflip", {"id": "g1", "from": "working", "to": "blocked", "ev": "feedDelta", "buildId": "b1", "predicted": True}),
                 ("itemset", {"appeared": 1, "gone": 0, "total": 12, "ev": "feed", "buildId": "b1"}),
                 ("feedDelta-unapplied", {"buildId": "b1"}),
+                ("reveal-dropped", {"itemId": "g1", "sid": sid, "why": "offscreen"}),   # review round 3 (2026-09-19, D5's bound): a bell or notification reveal dropped at the tap, the pane off screen by the shell's word
+                ("reveal-dropped", {"itemId": "g1", "sid": sid, "why": "unpainted", "key": "a:g1", "painted": None}),   # …or at the consume: the release paint stamped the card under no key (painted the plan's answer, null for none)
             ],
             "outline": [("feedDelta-unapplied", {"buildId": "b1"}), ("delta-unapplied", {"slot": "bars", "rev": 7})],
             "waiting": [("feedDelta-unapplied", {"buildId": "b1"})],
@@ -536,6 +538,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 ("tap-vanish-land", {"sid8": sid[:8], "ageS": 4}),
                 ("sw-message", {"shape": "object", "hasSid": True, "kind": "tap", "dup": False, "sw": True}),
                 ("return-probe", {"decision": "redial-closed", "hiddenMs": 30000, "quietMs": 31000, "attempts": 3, "firstFailMs": 12500, "ms": 30500}),   # D3 (2026-09-18): the shell socket's return probe, one row per return; decision is an enum, the rest ints
+                ("pane-load-failed", {"pane": "waiting", "via": "backstop", "n": 2}),   # the lazy panes (2026-09-19): a pane's document failed to load; pane is a key of _PANE_ORDER, via an enum (load, backstop), n the count for that pane on this page
+                ("pane-load-unmarked", {"pane": "waiting", "via": "load"}),   # review round 3 (2026-09-19, family two; a 200 alone since pass 4, the kernel's stamp): a 200 the kernel served at the pane's url with no pane shim, shown as served and said
             ],
         }
         for surface, rows in posters.items():

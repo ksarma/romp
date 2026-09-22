@@ -269,6 +269,12 @@ class ServedFilesPaneToggle(unittest.TestCase):
         self.assertEqual(m["tab"], "files", "the Files tab is the one showing: %r" % m)
         self.assertTrue(m["panes"]["files-pane"]["iframe"]["mOn"], "the Files iframe is the one on: %r" % m["panes"])
         self.assertFalse(m["panes"]["tl-pane"]["iframe"]["mOn"], "the timeline is not: %r" % m["panes"])
+        # the pane's CONTENT after the tap (review round 3 of the lazy panes, extra9-2): the Files pane is lazy on the phone since stage 0,
+        # so the tab's first show must promote it; before this line the pass asserted the tab and the m-on class alone, and a disabled
+        # promotion left a blank pane with every assertion green (the round-1 refuter's screenshot)
+        self.assertEqual(m["panes"]["files-pane"]["iframe"]["src"], "/files", "the tap promoted the lazy Files pane (its src set): %r" % m["panes"]["files-pane"])
+        self.assertEqual(m["panes"]["files-pane"]["iframe"]["url"], "/files", "…and its document is the Files page, not the initial about:blank: %r" % m["panes"]["files-pane"])
+        self.assertIsNone(r["phone"]["before"]["panes"]["files-pane"]["iframe"]["src"], "…which had no src before the tap (lazy at boot on the phone): %r" % r["phone"]["before"]["panes"]["files-pane"])
 
 
 if __name__ == "__main__":

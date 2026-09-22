@@ -14,7 +14,9 @@ function bundleInstall() {
   const esbuild = require("esbuild");
   const r = esbuild.buildSync({
     stdin: {
-      contents: 'import { watchChatVisibility, browserChatVisibilityDeps } from "./chat-visibility";\nwatchChatVisibility(document.body, browserChatVisibilityDeps());\n',
+      // the third argument, the show hook (stage 0): counted on the frame's window, so the walk can say per engine whether the
+      // published word's flip from hidden to shown ran it (review round 3, extra9-1: the hook's own real-browser witness)
+      contents: 'import { watchChatVisibility, browserChatVisibilityDeps } from "./chat-visibility";\nwatchChatVisibility(document.body, browserChatVisibilityDeps(), () => { window.__shown = (window.__shown || 0) + 1; });\n',
       resolveDir: spec.uiDir, loader: "ts", sourcefile: "chat-visibility-install.ts",
     },
     bundle: true, write: false, format: "iife", platform: "browser", target: "es2020", logLevel: "silent",
@@ -56,7 +58,7 @@ async function walk(browser, shell, install) {
     const w = document.getElementById(fid).contentWindow;
     return { word: w.__rompPaneHidden, iw: w.innerWidth, ih: w.innerHeight, shim: w.paneHidden(),
              probe: w.parent !== w && (w.innerWidth === 0 || w.innerHeight === 0),
-             body: !!w.document.getElementById("composer") };
+             body: !!w.document.getElementById("composer"), shown: w.__shown || 0 };
   }, id);
   const wordIs = (id, v) => page.waitForFunction(([fid, want]) => document.getElementById(fid).contentWindow.__rompPaneHidden === want, [id, v], { timeout: 10000 });
   const shimIs = (id, v) => page.waitForFunction(([fid, want]) => document.getElementById(fid).contentWindow.paneHidden() === want, [id, v], { timeout: 10000 });

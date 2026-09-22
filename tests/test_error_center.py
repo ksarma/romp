@@ -65,12 +65,14 @@ const EL = {};
   EL[id] = withCls(mkEl(id));
 });
 const POSTED = [];   // what the shell posts into the feed iframe (revealCard)
-EL['f-feed'].contentWindow = { postMessage: (msg) => POSTED.push(msg) };
+EL['f-feed'].contentWindow = { postMessage: (msg) => { POSTED.push(msg); if (msg.romp === 'revealCard') SEQ.push('post'); } };
 const SETTINGS_POSTED = [];   // what it posts into the settings iframe: the unread count for the gear's Open log button (the gear's own page since 2026-09-10)
 EL['f-settings'].contentWindow = { postMessage: (msg) => SETTINGS_POSTED.push(msg) };
 const TOGGLES = [];  // window.__rompPaneToggle calls (revealing the feed pane on a jump)
+const SEQ = [];      // the jump's steps in order: the pane toggle, the tab switch (window.__rompMobileTab, review round 3) and the post into the feed
 const SENT = [];     // what the shell socket is asked to send (a jump with the Feed pane off here: openSession)
 let SHELL_OK = true, FEED_OFF = false;   // the socket is open; the gear's Panes section has the Feed pane off in this browser
+let MOBILE_ON = true;   // the shell's layout probe (window.__rompMobileOn): the phone layout unless a step flips it (review round 4, correctness-3)
 EL['rail-errs']._num = mkEl('');   // the <text class=rerr-n> INSIDE each bell svg (the in-bell count)
 EL['merr']._num = mkEl('');
 function bellNum() { return EL['rail-errs']._num.textContent; }
@@ -78,7 +80,9 @@ const BODY = new Set(['po-chat', 'po-feed', 'po-timeline']);   // fleet pane hid
 const WL = {};
 global.window = {
   addEventListener: (k, f) => { (WL[k] = WL[k] || []).push(f); },
-  __rompPaneToggle: (k, to) => TOGGLES.push(k + ':' + to),
+  __rompPaneToggle: (k, to) => { TOGGLES.push(k + ':' + to); SEQ.push('toggle:' + k + ':' + to); },
+  __rompMobileTab: (t) => { SEQ.push('tab:' + t); STORE['romp-mobile-tab'] = t; },   // the mobile script's show(): on the phone the pane's tab comes forward (pass 3, extra9-1); it persists the remembered tab whatever the layout, which is why the Log row gates the call (pass 4)
+  __rompMobileOn: () => MOBILE_ON,   // the layout probe the Log row's gate reads (review round 4, correctness-3 and regression-3)
   __rompShellSend: (m) => { SENT.push(m); return SHELL_OK; },
   __rompPaneEnabled: (k) => !(k === 'feed' && FEED_OFF),   // the head script's reader of the Panes setting, stubbed
 };
@@ -149,14 +153,26 @@ out.afterMany = { num: bellNum() };
 post({ romp: 'notify', kind: 'stalled', text: 'api \u2014 stalled: held', sid: 'TESTSID', itemId: 'TESTSID:g9' });
 const jumpRow = EL['rerr-list'].children[0];
 out.jump = { linky: jumpRow.className.indexOf('link') >= 0 };
+SEQ.length = 0;
 jumpRow.fire('click');
 out.jump.closed = EL['rerr-back'].hidden;
+out.jump.seq = SEQ.slice();
 out.jump.posted = POSTED.filter((m) => m.romp === 'revealCard').pop() || null;   // paint() also posts the unread count (T290)
 out.unseenPosts = SETTINGS_POSTED.filter((m) => m.romp === 'logUnseen').map((m) => m.n);
 out.unseenToFeed = POSTED.filter((m) => m.romp === 'logUnseen').length;   // none: the feed page hosts no gear
 out.jump.toggles = TOGGLES.join('|');
+out.jump.store = STORE['romp-mobile-tab'] === undefined ? 'absent' : STORE['romp-mobile-tab'];   // the phone's switch wrote the remembered tab (the stub's model of show())
 // …while a kernel-minted entry (no target) is not clickable
 out.plainRowLinky = EL['rerr-list'].children[1].className.indexOf('link') >= 0;
+// 13b) the same jump on a DESKTOP dashboard (review round 4, correctness-3 and regression-3): the tab switch is gated on the layout, so the
+// mobile script's show() does not run and the remembered phone tab (romp-mobile-tab) is not written; the reveal and the post are unchanged.
+// The popover closed on the jump above and a closed Log does not re-render its rows, so it is reopened first (step 14's shape).
+MOBILE_ON = false; SEQ.length = 0; delete STORE['romp-mobile-tab'];
+EL['rail-errs'].fire('click');
+EL['rerr-list'].children[0].fire('click');
+out.jumpDesktop = { seq: SEQ.slice(), store: STORE['romp-mobile-tab'] === undefined ? 'absent' : STORE['romp-mobile-tab'], closed: EL['rerr-back'].hidden,
+  posted: POSTED.filter((m) => m.romp === 'revealCard').pop() || null };
+MOBILE_ON = true;
 // 14) the Feed pane off in this browser (the gear's Panes section): a card's entry (itemId: the feed's badge mirror)
 // is not logged; an entry naming only a session lands, and its jump opens the session in the chat (openSession on the
 // shell socket), never toggling or posting into a feed that is not here; a socket that is down says so in the Log
@@ -303,7 +319,27 @@ class ErrorCenterExecutes(unittest.TestCase):
         self.assertIn(1, self.out["unseenPosts"]); self.assertIn(0, self.out["unseenPosts"])
         self.assertEqual(self.out["unseenToFeed"], 0, "the count rides into the settings iframe (the gear's own page), not the feed")
         self.assertIn("feed:true", a["toggles"], "the feed pane is revealed for the jump")
+        # review round 3 (2026-09-19, extra9-1): the jump SHOWS the feed's tab on the phone (window.__rompMobileTab('feed'), the browseFiles
+        # relay's precedent) between the toggle and the post, so the shell's show() paints the feed's held board and posts its panes word in
+        # this click's task, before the revealCard message: the feed finds the card at the tap and parks nothing on this road
+        self.assertEqual(a["seq"], ["toggle:feed:true", "tab:feed", "post"], "the order inside the click: reveal the pane, show its tab, then post the jump")
+        self.assertEqual(a["store"], "feed", "the phone's switch ran show(), which persists the remembered tab (the stub's model; the desktop case below asserts the gate against it)")
+        js = km._LANDING_ERRS_JS
+        self.assertIn("try{if(window.__rompMobileOn&&window.__rompMobileOn())window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}", js, "the switch is gated on the layout probe, the viewFile relay's shape (review round 4, correctness-3 and regression-3)")
+        self.assertNotIn("try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}", js, "no ungated switch left in the Log row's script")
+        self.assertLess(js.index("__rompPaneToggle('feed',true)"), js.index("__rompMobileTab('feed')"))
+        self.assertLess(js.index("__rompMobileTab('feed')"), js.index("{romp:'revealCard',itemId:n.tgt.itemId||''"))
         self.assertFalse(self.out["plainRowLinky"], "a kernel-minted entry with no target is not a link")
+
+    def test_a_desktop_dashboards_log_row_jump_switches_no_tab_and_leaves_the_remembered_phone_tab_alone(self):
+        # review round 4 (2026-09-19, correctness-3 and regression-3): the desktop grid shows the feed pane already, and the mobile script's
+        # show() persists romp-mobile-tab and sets body data-tab on every layout, so an ungated switch rewrote the remembered phone tab from a
+        # desktop click; the call is gated on the layout probe the way the viewFile relay's is. The reveal and the post are the same on both layouts.
+        d = self.out["jumpDesktop"]
+        self.assertEqual(d["seq"], ["toggle:feed:true", "post"], "on the desktop the click reveals the pane and posts the jump, with no tab switch between them: %r" % (d["seq"],))
+        self.assertEqual(d["store"], "absent", "…and the remembered phone tab is not written (the store has no romp-mobile-tab): %r" % (d,))
+        self.assertTrue(d["closed"], "the popover closes on the jump, as on the phone")
+        self.assertEqual(d["posted"], {"romp": "revealCard", "itemId": "TESTSID:g9", "sid": "TESTSID", "gesture": True}, "the same reveal reaches the feed")
 
     def test_with_the_feed_pane_off_here_card_entries_are_not_logged_and_a_jump_opens_the_session_in_the_chat(self):
         # the user 2026-09-10: a browser with the Feed pane off in the gear's Panes section shows no card here, so a

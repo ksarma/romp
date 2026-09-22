@@ -40,6 +40,11 @@ Three scenarios against the REAL shell, the REAL worker and the REAL kernel (her
      /push/landed for that pid, [reveal] vanish in the kernel log. All three displayed → nothing. One displayed → two
      vanished → nothing lands, nothing shows, and both rows are settled (/push/dropped) so they never inflate a later
      count.
+  4. THE ACK ROAD'S COLD OPEN ON THE PHONE (pass 4b of the lazy panes, the author's label, 2026-09-20): a row the worker acked CLICKED, the
+     app opened on its start URL at a phone viewport with `web` stored, and the chat document held until the kernel has answered
+     the shell's boot /reveal (via 'ack', parked: the road's own order, held so a run cannot lose the race). The kernel's
+     parked-reveal preference makes `api` the diet's one full; the page restores its stored tab from the strip and asks for it
+     (one skeleton-click, answered); a later tap on `web` shows it whole.
 
 Skips LOUDLY without the extension deps or a playwright browser (CI installs none). All fixtures synthetic. No network.
 """
@@ -55,6 +60,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -206,6 +212,169 @@ out.after2 = await active();
 for (let i = 0; i < DEADLINE / 50 && !out.ledger.length; i++) await page.waitForTimeout(50);
 out.urlAfterShow = page.url();
 out.later = { reveals: out.reveals.slice(), ledger: out.ledger.slice() };
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
+# THE PHONE'S COLD OPEN ON THE LINK (review round 3 of the lazy panes, 2026-09-19, fresh-1): the phone shell at an iPhone
+# viewport, the chat blob naming `web` (the tab the phone was on when it buzzed), the page booted on the deep link for `api`. On
+# the phone the chat pane's first dial takes the skeleton diet and the kernel serves ONE full, the tab the dial's active= names;
+# the shell's head seeds the blob with the notified session before the chat iframe parses, so that one full is the notified
+# session's. Every socket any document constructs is recorded on the top window (its url, and every frame it receives as
+# [t, type, id] in wire order), so the first dial's terms and the order of the diet's full against the reveal's focus are read
+# off the wire, not off the page.
+DRIVER_LINK_PHONE = r"""
+import { createRequire } from "node:module";
+import fs from "node:fs";
+const require = createRequire(process.env.EXT_PKG);
+const { chromium, devices } = require("playwright");
+const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+let browser;
+try { browser = await chromium.launch(); }
+catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+const DEADLINE = __DEADLINE_MS__;   // the harness deadline for an outcome (SETTLE_S), set by the test
+const out = { reveals: [], ledger: [] };
+const dev = { ...(devices["iPhone 14"] || {}) }; delete dev.defaultBrowserType;
+const context = await browser.newContext({ ...dev, viewport: { width: 390, height: 844 } });
+// the phone was on `web` when it buzzed: the chat blob's activeId is the dial's hint; written by the top document before the shell parses
+await context.addInitScript((sid) => { try { if (window === window.top) localStorage.setItem("romp-vscode-state-chat", JSON.stringify({ activeId: sid, activeName: "web" })); } catch (e) {} }, cfg.sidA);
+// the wire: every WebSocket any document constructs, on the top window, with the frames it receives (type and id, in wire order)
+await context.addInitScript(() => {
+  try {
+    const T = window.top; if (!T.__wire) T.__wire = [];
+    const W = window.WebSocket;
+    const Wrapped = function (url, protos) {
+      const rec = { url: String(url), t: Date.now(), doc: location.pathname, frames: [], sends: [] };
+      T.__wire.push(rec);
+      const ws = protos === undefined ? new W(url) : new W(url, protos);
+      ws.addEventListener("message", (ev) => { if (rec.frames.length >= 400) return; try { const o = JSON.parse(String(ev.data)); rec.frames.push([Date.now(), o && o.type, o && o.id]); } catch (e) { rec.frames.push([Date.now(), "?", null]); } });
+      const send = ws.send;   // the page's own asks on this socket (needFull with its why: the tap's skeleton-click, the chain's prefetch), stamped
+      ws.send = function (d) { if (rec.sends.length < 400) { try { const o = JSON.parse(String(d)); rec.sends.push([Date.now(), o && o.type, o && o.id, o && o.why]); } catch (e) { rec.sends.push([Date.now(), "?", null, null]); } } return send.call(ws, d); };
+      return ws;
+    };
+    Wrapped.prototype = W.prototype; Wrapped.CONNECTING = 0; Wrapped.OPEN = 1; Wrapped.CLOSING = 2; Wrapped.CLOSED = 3;
+    window.WebSocket = Wrapped;
+  } catch (e) {}
+});
+const page = await context.newPage();
+page.on("request", (r) => { const u = r.url();
+  if (r.method() === "POST" && /\/reveal$/.test(u)) out.reveals.push(JSON.parse(r.postData() || "{}"));
+  if (r.method() === "POST" && /\/push\/landed$/.test(u)) out.ledger.push(JSON.parse(r.postData() || "{}")); });
+await page.goto(cfg.link);
+const chat = await (async () => { for (let i = 0; i < DEADLINE / 50; i++) { const f = page.frames().find((f) => /\/chat/.test(f.url())); if (f) return f; await page.waitForTimeout(50); } return null; })();
+if (!chat) { console.error("no chat iframe in the shell"); process.exit(1); }
+const active = () => chat.evaluate(() => (document.querySelector("#tabs .tab.active") || { dataset: {} }).dataset.id || null);
+out.landed = await chat.waitForFunction((sid) => (document.querySelector("#tabs .tab.active") || {}).dataset?.id === sid, cfg.sidB, { timeout: DEADLINE }).then(() => true).catch(() => false);
+out.after = await active();
+out.mobileShell = await page.evaluate(() => !!document.getElementById("mtabs") && getComputedStyle(document.getElementById("mtabs")).display !== "none");
+for (let i = 0; i < DEADLINE / 50 && !out.ledger.length; i++) await page.waitForTimeout(50);
+await page.waitForTimeout(1500);   // the ready arm's push and the parked reveal's focus are on the wire; a beat for anything the chain asks after them
+out.boot = { reveals: out.reveals.slice(), ledger: out.ledger.slice() };
+out.urlAfterBoot = page.url();
+out.strip = await chat.evaluate(() => Array.from(document.querySelectorAll("#tabs .tab[data-id]")).map((t) => ({ id: t.dataset.id, skeleton: t.classList.contains("tab-skeleton"), active: t.classList.contains("active") })));
+out.wire = await page.evaluate(() => (window.__wire || []).slice());
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
+# THE ACK ROAD'S COLD OPEN ON THE PHONE (pass 4b of the lazy panes, the author's label, 2026-09-20, taking the reviewer's round-3 addendum: fresh-1 / regression-4, the round-3 fixlist's
+# extra9-1): the kernel holds a row the worker acked CLICKED, and the app is opened on its start URL (not the link), so the shell's boot
+# check lands the tap via 'ack' and its /reveal beats the chat pane's socket: the tap is PARKED for the window before the chat pane dials.
+# The park's precedence is held by construction here (the chat document is released only once the kernel has answered the shell's /reveal),
+# since the race is what the road is about and a run that lost it would test the delivered case instead. The blob names `web` and the URL
+# carries no push-reveal, so the head seed does not run: the first dial's hint is web, and the kernel's parked-reveal preference alone
+# decides the diet's one full. The wire and the page's own asks are recorded as on the link road; the frames that follow the strip are read
+# in wire order (the focus against the strip decides whether the page restores its stored tab and asks for it); the strip is read after the
+# landing; and the stored tab is TAPPED afterwards, so whether it still loads under this road is read by execution and not by reading.
+DRIVER_ACK_PHONE = r"""
+import { createRequire } from "node:module";
+import fs from "node:fs";
+const require = createRequire(process.env.EXT_PKG);
+const { chromium, devices } = require("playwright");
+const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+let browser;
+try { browser = await chromium.launch(); }
+catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+const DEADLINE = __DEADLINE_MS__;   // the harness deadline for an outcome (SETTLE_S), set by the test
+const out = { reveals: [], ledger: [] };
+const dev = { ...(devices["iPhone 14"] || {}) }; delete dev.defaultBrowserType;
+const context = await browser.newContext({ ...dev, viewport: { width: 390, height: 844 } });
+await context.grantPermissions(["notifications"], { origin: cfg.origin });
+// the phone was on `web` when it buzzed: the chat blob's activeId is the dial's hint; written by the top document before the shell parses
+await context.addInitScript((sid) => { try { if (window === window.top) localStorage.setItem("romp-vscode-state-chat", JSON.stringify({ activeId: sid, activeName: "web" })); } catch (e) {} }, cfg.sidA);
+// this device's subscription and its screen (the vanish driver's stubs): the registration answers with the endpoint the kernel has on
+// file (headless Chromium has no push service), and nothing is displayed (the clicked row is what lands; no shown row can vanish)
+await context.addInitScript((c) => {
+  Object.defineProperty(ServiceWorkerRegistration.prototype, "pushManager", { configurable: true,
+    get() { return { getSubscription: () => Promise.resolve({ endpoint: c.endpoint }) }; } });
+  ServiceWorkerRegistration.prototype.getNotifications = function () { return Promise.resolve([]); };
+}, { endpoint: cfg.endpoint });
+// the wire: every WebSocket any document constructs, on the top window, with the frames it receives and the asks it sends (the link road's recorder)
+await context.addInitScript(() => {
+  try {
+    const T = window.top; if (!T.__wire) T.__wire = [];
+    const W = window.WebSocket;
+    const Wrapped = function (url, protos) {
+      const rec = { url: String(url), t: Date.now(), doc: location.pathname, frames: [], sends: [] };
+      T.__wire.push(rec);
+      const ws = protos === undefined ? new W(url) : new W(url, protos);
+      ws.addEventListener("message", (ev) => { if (rec.frames.length >= 400) return; try { const o = JSON.parse(String(ev.data)); rec.frames.push([Date.now(), o && o.type, o && o.id]); } catch (e) { rec.frames.push([Date.now(), "?", null]); } });
+      const send = ws.send;
+      ws.send = function (d) { if (rec.sends.length < 400) { try { const o = JSON.parse(String(d)); rec.sends.push([Date.now(), o && o.type, o && o.id, o && o.why]); } catch (e) { rec.sends.push([Date.now(), "?", null, null]); } } return send.call(ws, d); };
+      return ws;
+    };
+    Wrapped.prototype = W.prototype; Wrapped.CONNECTING = 0; Wrapped.OPEN = 1; Wrapped.CLOSING = 2; Wrapped.CLOSED = 3;
+    window.WebSocket = Wrapped;
+  } catch (e) {}
+});
+// 1. a warm page registers the worker at '/', as the bell's opt-in does, so the cold open's shell finds a registration to read the
+// endpoint from. The kernel's row is still 'sent' while this page is up (the ack comes after it closes), so its own boot check lands
+// nothing; its sockets close with it and nothing of it is parked
+const warm = await context.newPage();
+await warm.goto(cfg.landing);
+const swWait = context.waitForEvent("serviceworker", { timeout: DEADLINE }).catch(() => null);
+await warm.evaluate(() => navigator.serviceWorker.register("/sw.js"));
+const sw = context.serviceWorkers()[0] || await swWait;
+if (!sw) { console.error("no service worker registered"); process.exit(1); }
+await warm.evaluate(() => navigator.serviceWorker.ready.then(() => null));
+await warm.close();
+// 2. the worker's word on the tap: the kernel's row becomes 'clicked' (authenticated by the pid alone, as the worker's own fetch is)
+const ack = await fetch(cfg.origin + "/push/ack", { method: "POST", body: JSON.stringify({ pid: cfg.pid, stage: "clicked", v: "test" }) });
+out.ack = ack.status;
+// 3. THE COLD OPEN ON THE START URL, the chat document held until the kernel has answered the shell's /reveal
+const page = await context.newPage();
+page.on("request", (r) => { const u = r.url();
+  if (r.method() === "POST" && /\/reveal$/.test(u)) out.reveals.push(JSON.parse(r.postData() || "{}"));
+  if (r.method() === "POST" && /\/push\/landed$/.test(u)) out.ledger.push(JSON.parse(r.postData() || "{}")); });
+let releaseChat = null;
+const chatHeld = new Promise((r) => { releaseChat = r; });
+const release = (why) => { if (releaseChat) { out.hold = why; const f = releaseChat; releaseChat = null; f(); } };
+await page.route((u) => u.pathname === "/chat", async (route) => { out.chatRequestedAt = Date.now(); await chatHeld; out.chatReleasedAt = Date.now(); await route.continue(); });
+page.on("response", (r) => { if (r.request().method() === "POST" && /\/reveal$/.test(r.url())) { out.revealStatus = r.status(); out.revealAnsweredAt = Date.now(); release("reveal-answered"); } });
+const holdTimer = setTimeout(() => release("deadline"), DEADLINE);   // a shell that never posts releases the document anyway, and `hold` says so
+await page.goto(cfg.landing, { waitUntil: "domcontentloaded", timeout: DEADLINE * 2 });   // the top document alone: its load would wait on the held iframe
+const chat = await (async () => { for (let i = 0; i < DEADLINE / 50; i++) { const f = page.frames().find((f) => /\/chat/.test(f.url())); if (f) return f; await page.waitForTimeout(50); } return null; })();
+clearTimeout(holdTimer);
+if (!chat) { console.error("no chat iframe in the shell"); process.exit(1); }
+const active = () => chat.evaluate(() => (document.querySelector("#tabs .tab.active") || { dataset: {} }).dataset.id || null);
+const strip = () => chat.evaluate(() => Array.from(document.querySelectorAll("#tabs .tab[data-id]")).map((t) => ({ id: t.dataset.id, skeleton: t.classList.contains("tab-skeleton"), active: t.classList.contains("active") })));
+out.landed = await chat.waitForFunction((sid) => (document.querySelector("#tabs .tab.active") || {}).dataset?.id === sid, cfg.sidB, { timeout: DEADLINE }).then(() => true).catch(() => false);
+out.after = await active();
+out.mobileShell = await page.evaluate(() => !!document.getElementById("mtabs") && getComputedStyle(document.getElementById("mtabs")).display !== "none");
+for (let i = 0; i < DEADLINE / 50 && !out.ledger.length; i++) await page.waitForTimeout(50);
+await page.waitForTimeout(1500);   // the ready arm's push and the parked reveal's focus are on the wire; a beat for anything the page asks after them
+out.boot = { reveals: out.reveals.slice(), ledger: out.ledger.slice() };
+out.strip = await strip();
+// 4. THE LATER TAP on the stored tab: the tab the phone was on, listed on the redial's strip as the kernel served it
+out.tapAt = Date.now();
+await chat.evaluate((sid) => { const t = document.querySelector('#tabs .tab[data-id="' + sid + '"]'); if (t) t.click(); }, cfg.sidA);
+out.tapActive = await chat.waitForFunction((sid) => (document.querySelector("#tabs .tab.active") || {}).dataset?.id === sid, cfg.sidA, { timeout: DEADLINE }).then(() => true).catch(() => false);
+out.tapLoaded = await chat.waitForFunction((sid) => { const t = document.querySelector('#tabs .tab[data-id="' + sid + '"]'); return !!t && !t.classList.contains("tab-skeleton"); }, cfg.sidA, { timeout: DEADLINE }).then(() => true).catch(() => false);
+out.tapStrip = await strip();
+out.tapLoader = await chat.evaluate(() => { const c = document.getElementById("content"); return c ? (c.textContent || "").indexOf("loading ") >= 0 : null; });
+out.wire = await page.evaluate(() => (window.__wire || []).slice());
 fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
 await browser.close();
 process.exit(0);
@@ -568,6 +737,122 @@ class ServedTapLanding(unittest.TestCase):
         self.assertEqual([(r["via"], r["hasPid"], r["dup"]) for r in rows], [("boot", True, False), ("pageshow", True, False)], "%r" % rows)
         for r in self._diag_rows("deeplink"):
             self.assertNotIn("sid", r.get("data") or {}, "structure only: %r" % r)
+
+    def test_a_phone_cold_open_on_the_deep_link_dials_the_notified_session_as_the_diets_one_full(self):
+        # fresh-1 (review round 3 of the lazy panes, 2026-09-19): the phone's first chat dial takes the skeleton diet (one full, the
+        # tab the dial's active= names). Before the head seed that hint was the last-shown tab (web here), so the one full went to
+        # it and the notified session (api), parked as a pending reveal, arrived as a skeleton and cost a second round trip. Now the
+        # shell's head seeds the chat blob with the link's session before the chat iframe parses: the FIRST dial names api, the one
+        # full before the reveal's focus is api's and no other, and the landing is the same /reveal, via link, at boot.
+        ep, pid = self._subscribe_and_test_push("link-phone-device", host="web.push.apple.com")
+        link = "http://127.0.0.1:%d/?token=%s&push-reveal=%s&push-pid=%s" % (self.port, self.token, SID_B, pid)
+        out = self._drive(DRIVER_LINK_PHONE, link=link)
+        self.assertTrue(out.get("mobileShell"), "the viewport selected the phone shell (the tab bar shows)")
+        self.assertTrue(out["landed"], "the chat pane's active tab must become the session the link names; it is %r, reveals %r\n  kernel: %s"
+                        % (out["after"], out["boot"]["reveals"], self._reveal_lines()))
+        self.assertEqual(out["after"], SID_B)
+        wire = out.get("wire") or []
+        self.assertTrue(wire, "the page dialed at least one socket")
+        chat_dials = [w for w in wire if w.get("doc") == "/chat" and "/ws?app=chat" in w.get("url", "")]
+        self.assertTrue(chat_dials, "the chat pane dialed: %r" % [w.get("url") for w in wire])
+        first = chat_dials[0]
+        q = parse_qs(urlsplit(first["url"]).query)
+        self.assertEqual(q.get("active"), [SID_B], "the FIRST chat dial names the notified session, not the last-shown web tab (the head seed ran before the chat iframe parsed): %r" % first["url"])
+        self.assertEqual(q.get("skeleton"), ["1"], "the phone's first dial takes the diet: %r" % first["url"])
+        self.assertNotIn("reconnect", q, "a first dial")
+        frames, sends = first.get("frames") or [], first.get("sends") or []
+        self.assertTrue(frames, "the first socket received frames")
+        self.assertTrue(sends, "the page sent on it (its ready at least)")
+        types = [f[1] for f in frames]
+        self.assertIn("focus", types, "the reveal's focus arrived on the first socket (parked at the fetch, consumed behind the strip or at the pane's ready): %r" % (types,))
+        # THE CAUSAL SHAPE, not the wire's order (the focus is sent directly and rides ahead of the connect push's queued frames): the
+        # `session` fulls the kernel pushed UNPROMPTED, before the page's first needFull ask of any why, are the diet's set. With the seed
+        # that is api alone; without it web's full is the one pushed and api's arrives only after the focus asks for it (skeleton-click)
+        asks = [x for x in sends if x[1] == "needFull"]
+        first_ask_t = min(x[0] for x in asks) if asks else None
+        pushed = [f[2] for f in frames if f[1] == "session" and (first_ask_t is None or f[0] <= first_ask_t)]
+        self.assertEqual(pushed, [SID_B], "the diet's one full, pushed before the page asked for anything, is the notified session's and no other's (asks: %r; frames: %r)" % (asks, frames[:12]))
+        self.assertEqual([x for x in asks if x[3] == "skeleton-click"], [], "no skeleton-click round trip: the focus found the notified tab loaded (the asks that did leave are the idle chain's prefetch): %r" % (asks,))
+        tabs = out.get("strip") or []
+        self.assertEqual([t["id"] for t in tabs if t.get("active")], [SID_B], "api is the active tab: %r" % (tabs,))
+        self.assertIn(SID_A, [t["id"] for t in tabs], "web is on the strip: %r" % (tabs,))
+        self.assertFalse(next(t for t in tabs if t["id"] == SID_B).get("skeleton"), "…and api is not a skeleton (its full came on the first push): %r" % (tabs,))
+        b = out["boot"]
+        self.assertEqual(len(b["reveals"]), 1, "exactly one /reveal at boot: %r" % b["reveals"])
+        self.assertEqual((b["reveals"][0]["sid"], b["reveals"][0]["via"], b["reveals"][0].get("boot")), (SID_B, "link", True), "%r" % b["reveals"])
+        self.assertEqual(b["ledger"], [{"pid": pid}], "the row the link named is settled")
+        self.assertNotIn("push-reveal", out["urlAfterBoot"], "the params are stripped once read: %r" % out["urlAfterBoot"])
+        self.assertNotIn("token=", out["urlAfterBoot"], "the address keeps no token once the cookie is set: %r" % out["urlAfterBoot"])
+        klog = self._klog_settled(r"\[push\] landed sid=%s endpoint=web\.push\.apple\.com" % re.escape(SID_B[:8]))
+        self.assertRegex(klog, r"\[reveal\] link sid=%s wid=\S+ boot: (parked|delivered, copy parked \(booting page\))" % re.escape(SID_B[:8]), "the boot reveal: %s" % self._trail())
+
+    def test_a_phone_cold_open_with_the_tap_parked_before_the_chat_dial_gets_the_notified_session_as_the_one_full(self):
+        # pass 4b, the author's label (2026-09-20, taking the reviewer's round-3 addendum: fresh-1 / regression-4, the round-3 fixlist's extra9-1): the ack road's cold open, the road the
+        # kernel's parked-reveal preference is for. The shell's boot check lands the kernel's clicked row via 'ack' and its /reveal beats
+        # the chat pane's socket (held to that order here), so the tap is parked for the window when the chat pane's first dial takes
+        # the diet with the stored tab (web) as its hint; no seed runs on this road (the URL carries no push-reveal). _resolve_reconnect
+        # prefers the parked session: the one full pushed before any ask is api's, and api is the active tab, not a skeleton. The cost
+        # the preference moves rather than removes, read off the wire: the strip lands ahead of the focus, the page restores its stored
+        # tab (a skeleton now) and asks for it with skeleton-click before it processes the focus, and the ask is answered; before the
+        # preference the same one ask left for the notified tab. A later tap on the stored tab shows it whole: no awaiting-full latch
+        # stands (the author's pass-4b verify's corollary, not reproduced on this road).
+        ep, pid = self._subscribe_and_test_push("ack-phone-device")
+        out = self._drive(DRIVER_ACK_PHONE, endpoint=ep, pid=pid)
+        self.assertEqual(out.get("ack"), 200, "the worker's clicked ack was admitted (pid-authenticated): %r" % (out.get("ack"),))
+        self.assertTrue(out.get("mobileShell"), "the viewport selected the phone shell (the tab bar shows)")
+        # the construction: the chat document left the hold on the /reveal's answer, so the park was in place before the chat pane could
+        # dial; a run released by the deadline would have tested the delivered case, not this road
+        self.assertEqual(out.get("hold"), "reveal-answered", "the chat document was released by the /reveal's answer, not the deadline: %r"
+                         % ({k: out.get(k) for k in ("hold", "revealStatus", "chatRequestedAt", "revealAnsweredAt", "chatReleasedAt")},))
+        self.assertEqual(out.get("revealStatus"), 200)
+        self.assertGreaterEqual(out.get("chatReleasedAt") or 0, out.get("revealAnsweredAt") or 1, "released at or after the answer")
+        b = out["boot"]
+        self.assertEqual(len(b["reveals"]), 1, "exactly one /reveal at boot: %r" % b["reveals"])
+        self.assertEqual((b["reveals"][0]["sid"], b["reveals"][0]["via"], b["reveals"][0].get("boot")), (SID_B, "ack", True), "%r" % b["reveals"])
+        self.assertTrue(out["landed"], "the chat pane's active tab must become the tapped session; it is %r\n  kernel: %s" % (out["after"], self._reveal_lines()))
+        self.assertEqual(out["after"], SID_B)
+        wire = out.get("wire") or []
+        self.assertTrue(wire, "the page dialed at least one socket")
+        chat_dials = [w for w in wire if w.get("doc") == "/chat" and "/ws?app=chat" in w.get("url", "")]
+        self.assertTrue(chat_dials, "the chat pane dialed: %r" % [w.get("url") for w in wire])
+        first = chat_dials[0]
+        q = parse_qs(urlsplit(first["url"]).query)
+        self.assertEqual(q.get("active"), [SID_A], "the FIRST chat dial's hint is the stored tab, web: no seed runs on this road, so the preference alone decides the full: %r" % first["url"])
+        self.assertEqual(q.get("skeleton"), ["1"], "the phone's first dial takes the diet: %r" % first["url"])
+        self.assertNotIn("reconnect", q, "a first dial")
+        frames, sends = first.get("frames") or [], first.get("sends") or []
+        self.assertTrue(frames, "the first socket received frames")
+        self.assertTrue(sends, "the page sent on it (its ready at least)")
+        types = [f[1] for f in frames]
+        self.assertIn("focus", types, "the parked tap's focus arrived on the first socket (consumed behind the redial's strip): %r" % (types,))
+        asks = [x for x in sends if x[1] == "needFull"]
+        self.assertTrue(asks, "the page asked for at least one full on this socket (the stored tab's, then the cold open's chain)")
+        sess_ids = [f[2] for f in frames if f[1] == "session"]
+        self.assertTrue(sess_ids, "session fulls arrived on the first socket")
+        # THE CAUSAL SHAPE, by what was asked and not by wire time (the page's first ask leaves while the connect push's full is still
+        # arriving, so a before-the-ask read of the frames is a race): the notified session's full came with NO ask of any why naming
+        # it, the diet's unprompted one; without the preference the unprompted full is the hint's (web) and the focus's skeleton-click
+        # asks for api
+        self.assertIn(SID_B, sess_ids, "api's full arrived (frames: %r)" % (frames[:12],))
+        self.assertNotIn(SID_B, [x[2] for x in asks], "…UNPROMPTED: no ask named api, so the diet's one full was the PARKED session's (asks: %r; frames: %r)" % (asks, frames[:12]))
+        self.assertEqual([x[2] for x in asks if x[3] == "skeleton-click"], [SID_A], "one skeleton-click ask, the STORED tab's: the strip landed ahead of the focus, so the page restored web and asked for it (asks: %r; frames: %r)" % (asks, frames[:12]))
+        ask_t = next(x[0] for x in asks if x[3] == "skeleton-click")
+        web_full = [f for f in frames if f[1] == "session" and f[2] == SID_A and f[0] >= ask_t]
+        self.assertTrue(web_full, "the stored tab's ask was answered, its full following the ask on the wire (the ask left after the connect push, so no reset window swallowed it) (asks: %r; frames: %r)" % (asks, frames))
+        tabs = out.get("strip") or []
+        self.assertEqual([t["id"] for t in tabs if t.get("active")], [SID_B], "api is the active tab: %r" % (tabs,))
+        self.assertFalse(next(t for t in tabs if t["id"] == SID_B).get("skeleton"), "…and api is not a skeleton (its full came on the first push): %r" % (tabs,))
+        self.assertIn(SID_A, [t["id"] for t in tabs], "web is on the strip: %r" % (tabs,))
+        # the later tap on the stored tab: shown whole (its ask above was answered, so no awaiting-full latch stands on the page and the
+        # tap asks nothing more); a latched ask would leave it loading for the socket's life
+        self.assertTrue(out.get("tapActive"), "the tap made web the active tab: %r" % (out.get("tapStrip"),))
+        self.assertTrue(out.get("tapLoaded"), "the stored tab shows whole after the tap, not a skeleton with its loader: strip %r, loader %r, asks after the tap %r"
+                        % (out.get("tapStrip"), out.get("tapLoader"), [x for x in asks if x[0] >= (out.get("tapAt") or 0)]))
+        self.assertEqual(b["ledger"], [{"pid": pid}], "the row the ack named is settled")
+        klog = self._klog_settled(r"\[reveal\] sid=%s wid=\S+: consumed" % re.escape(SID_B[:8]))
+        self.assertRegex(klog, r"\[reveal\] ack sid=%s wid=\S+ boot: parked" % re.escape(SID_B[:8]), "the boot reveal was PARKED (no chat socket for the window yet, the hold's point): %s" % self._trail())
+        self.assertRegex(klog, r"\[push\] ack stage=clicked sid=%s" % re.escape(SID_B[:8]), self._trail())
+        self.assertRegex(klog, r"\[push\] landed sid=%s" % re.escape(SID_B[:8]), self._trail())
 
     def _pending_rows(self, ep):
         from urllib.parse import quote
