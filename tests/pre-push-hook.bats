@@ -62,11 +62,13 @@
 # judged as the diff prints it, a deletion and an addition, and a mode-only
 # change, which it prints no content for, is not judged at all; a merge is
 # judged by its combined patch, the read the scan makes for one, which applies
-# no size rule and applies a path's attribute to a symlink; and a blob the tip
+# no size rule and applies a path's attribute to a symlink, its rename
+# candidates read from its deletions against each parent; and a blob the tip
 # holds is the tip's to judge, read there or refused there, never the commit's.
 # A one-parent commit that turns a file binary by its bytes into a text one is
-# refused with the previous version named as the cause, the header's disclosed
-# fail-closed shape, and the tip reads the file where the tip keeps it.
+# refused with the previous version named as the cause, key or no key, the
+# header's disclosed fail-closed shape, and the tip reads the file where the
+# tip keeps it.
 
 ROMP_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 HOOK="$ROMP_DIR/.githooks/pre-push"
@@ -1806,8 +1808,9 @@ path_without_gitleaks() {
 # one is named and what to do about it (drop it, or keep the file text on
 # purpose with an explicit diff line that outranks it), the configuration key
 # where none is (or, for a one-parent commit's change of a file binary by its
-# bytes with no key set, that previous version as the cause, with the fetch
-# remedy), and a rename or copy of such a file is refused the same way,
+# bytes, that previous version as the cause whether or not the key is set,
+# the key's facts beside it where it is, with the fetch remedy and not the
+# key's), and a rename or copy of such a file is refused the same way,
 # since its bytes reach the remote under the new path. The real-push cases
 # push with the hook installed, so the remote's state is asserted too.
 
@@ -2319,9 +2322,12 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
 # A one-parent commit that turns a file binary by its bytes into a TEXT file:
 # the pair is binary when either side is, so the diff prints "Binary files
 # differ" and no hunk for the new text, and the commit is refused rather than
-# scanned (the hook header's disclosed fail-closed shape). No attribute and no
-# key accounts for that verdict, so the line names the cause the hook can
-# read, the previous version's bytes, and the advice names the remedy: the
+# scanned (the hook header's disclosed fail-closed shape). No attribute
+# accounts for that verdict and the key cannot lift it, so the line names the
+# cause the hook can read, the previous version's bytes, whether or not the
+# key is set (with the key set, the r3e text named the key's facts and its
+# remedy instead, a remedy that lifts nothing there; the round 3 auditor,
+# 2026-09-22), and the advice names the remedy: the
 # hook scans only commits new to every fetched remote, so a commit some remote
 # holds is out of range once that remote is fetched. Three commits in this
 # repository's own history have the shape, refused when a clone with no
@@ -2365,6 +2371,29 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
     [[ "$output" != *"previous version"* ]]
 }
 
+@test "the same shape with core.bigFileThreshold SET below the new blob's size is refused on the previous version's bytes all the same, the line naming that cause with the key's two facts beside it and the advice the fetch remedy; the key's advice is absent, since raising the key lifts nothing when the old side is binary by its bytes" {
+    git -C "$REPO" config core.bigFileThreshold 10
+    printf 'ab\0cd\n' > "$REPO/thing"
+    git -C "$REPO" add thing
+    git -C "$REPO" commit -qm "a binary file"
+    commit_file thing "seen on TESTHOST" "now a text file carrying the string"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    size="$(git -C "$REPO" cat-file -s "$leak:thing")"
+    [ "$size" -gt 10 ]                                       # over the key too: two candidate causes, one certain
+    remove_file thing "remove it"                            # gone at the tip: only the per-commit half can name it
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" -- thing' _ "$leak"
+    [[ "$output" == *"Binary files a/thing and b/thing differ"* ]]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: thing in commit ${leak:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict; the previous version of the file is binary by its bytes (a NUL in its first 8000), which made git print no text diff for the change whatever the key says (the blob is $size bytes; core.bigFileThreshold is 10 in this clone's configuration), and the identifier scan could not read the new text, so the push is refused rather than scanned"* ]]
+    [[ "$output" == *"Where a line names the previous version's bytes as the cause, the hook scans only commits new to every fetched remote"* ]]
+    [[ "$output" != *"a configuration key can be what makes git call the file binary"* ]]   # the key's advice: absent, the key being no cause here
+    [[ "$output" != *"raise the key above the size"* ]]
+    [[ "$output" != *"at the tip of"* ]]
+    [[ "$output" != *"personal identifier"* ]]
+    [[ "$output" == *"git push --no-verify"* ]]
+}
+
 # A MERGE is judged by its combined patch, the read the scan makes for one
 # (diff-tree -p -c), parsed section by section, since that patch judges by a
 # rule of its own that no verdict against each parent reproduces: it applies
@@ -2375,9 +2404,14 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
 # 2026-09-21, by real pushes), that link's banned target, gone at the tip,
 # was PUBLISHED with the denylist armed, and a clean big file the merge
 # resolved was refused as hidden. A path the patch prints nothing for is a
-# pure rename (the same blob under a new path, its blob among the merge's
-# deletions), judged as the addition of its new path as a one-parent
-# commit's is; a path it prints the header alone for (an added empty file:
+# pure rename (the same blob under a new path, held by some parent under a
+# path the merge lacks: the candidates are read from the merge's deletions
+# against EACH parent, since the combined listing names a deletion only when
+# every parent held the path, and content both parents held under two paths,
+# moved to a third with both gone, met no candidate and was refused as
+# unscanned; the round 3 auditor, 2026-09-22), judged as the addition of its
+# new path as a one-parent commit's is; a path it prints the header alone for
+# (an added empty file:
 # no hunk, no Binary line) that is no rename is a candidate judged by its
 # bytes, where an empty blob passes (the r3d text refused such a merge as
 # unscanned; the round 3 auditor, 2026-09-22); a path with no section at all
@@ -2551,6 +2585,110 @@ is_merge() {   # <sha>: two parents
     [ -z "$output" ]
 }
 
+# Content BOTH parents hold under DIFFERENT paths, moved by the merge to a
+# third path with both sources gone: the combined listing names a deletion
+# only when every parent held the path, and each source differs from one
+# parent alone, so neither reaches the merge's deletions and the new path was
+# no rename candidate; the patch prints nothing for it (-M pairs it with an
+# identical blob in every parent), so it had no section, and the join's
+# short-read arm refused a legal merge as unscanned, naming a read that had
+# answered whole (the round 3 auditor, 2026-09-22, by real pushes). The
+# candidates now come from the merge's deletions against EACH parent, so
+# such a path is judged as the addition of its new path like any pure
+# rename: text passes, and a big file under the key is refused as hidden.
+third_path_merge() {   # <content> [pushed]: parent A holds the content at a.txt, parent B at c.txt (both on the remote when asked); the merge holds it at b.txt alone, both sources gone; the file gone at the tip. BASE is the remote's main
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" checkout -q -b side
+    commit_file c.txt "$1" "side: the content at c.txt"
+    git -C "$REPO" checkout -q main
+    commit_file a.txt "$1" "main: the same content at a.txt"
+    if [ "${2:-}" = pushed ]; then
+        git -C "$REPO" push -q origin main side
+        BASE="$(git -C "$REPO" rev-parse HEAD)"
+    fi
+    git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1
+    git -C "$REPO" rm -q -f a.txt c.txt                     # -f: the open merge staged c.txt
+    printf '%s\n' "$1" > "$REPO/b.txt"
+}
+third_path_committed() {   # the merge committed, then the file removed at the tip; merge is its sha
+    git -C "$REPO" add b.txt
+    git -C "$REPO" commit -qm "merge side, the shared content moved to a third path"
+    merge="$(git -C "$REPO" rev-parse HEAD)"
+    is_merge "$merge"
+    remove_file b.txt "remove it"
+}
+
+@test "content BOTH parents hold under two paths, moved by a MERGE to a third path with both sources gone and gone at the tip, passes through a real push: the patch prints nothing for it and neither source is among the combined listing's deletions, but a parent holds the blob under a path the merge lacks, so it is a rename candidate judged by the addition verdict of its new path, text; no short read is claimed, and the remote holds main" {
+    third_path_merge "nothing to see" pushed
+    third_path_committed
+    run _hook_in "$REPO" -c 'git diff-tree -r --raw --no-renames --root -c --no-commit-id "$1"' _ "$merge"
+    [[ "$output" == *"AA"$'\t'"b.txt"* ]]                     # the combined listing: the addition alone, neither deletion (each differs from one parent alone)
+    [[ "$output" != *"a.txt"* ]]
+    [[ "$output" != *"c.txt"* ]]
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1"' _ "$merge"   # the patch: nothing at all for the merge
+    [ -z "$output" ]
+    run _hook_in "$REPO" -c 'git diff-tree -r --raw --no-renames -m --no-commit-id "$1"' _ "$merge"         # against each parent: a deletion of each source
+    [[ "$output" == *"D"$'\t'"a.txt"* ]]
+    [[ "$output" == *"D"$'\t'"c.txt"* ]]
+    push_main_through_installed_hook
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]]
+    [[ "$output" != *"printed no verdict"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse HEAD)" ]
+}
+
+@test "the same shape with the string in the content, the source commits new to the remote: the two source commits are the hits (each ADDS the line), the merge adds no line of its own and is neither called hidden nor a short read" {
+    third_path_merge "seen on TESTHOST"
+    third_path_committed
+    a="$(git -C "$REPO" rev-parse "$merge^1")"
+    c="$(git -C "$REPO" rev-parse "$merge^2")"
+    run_hook "$BASE"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"commit ${a:0:10} ADDS a personal identifier in:"* ]]
+    [[ "$output" == *"  a.txt"* ]]
+    [[ "$output" == *"commit ${c:0:10} ADDS a personal identifier in:"* ]]
+    [[ "$output" == *"  c.txt"* ]]
+    [[ "$output" != *"commit ${merge:0:10}"* ]]
+    [[ "$output" != *"is text that"* ]]
+    [[ "$output" != *"printed no verdict"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+}
+
+@test "the same shape with a big text file under core.bigFileThreshold, the sources on the remote, is refused as hidden naming the new path in the merge: the addition verdict of b.txt is binary under the key and its bytes are text; no short read is claimed, and the remote stays at the base" {
+    git -C "$REPO" config core.bigFileThreshold 100
+    big="$(head -c 300 /dev/zero | tr '\0' 'x')"
+    third_path_merge "$big" pushed
+    third_path_committed
+    size="$(git -C "$REPO" cat-file -s "$merge:b.txt")"
+    [ "$size" -gt 100 ]
+    push_main_through_installed_hook
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: b.txt in commit ${merge:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict (the blob is $size bytes; core.bigFileThreshold is 100 in this clone's configuration); the identifier scan did not read it, so the push is refused rather than scanned"* ]]
+    [[ "$output" == *"a configuration key can be what makes git call the file binary"* ]]
+    [[ "$output" != *"a.txt"* ]]
+    [[ "$output" != *"c.txt"* ]]
+    [[ "$output" != *"printed no verdict"* ]]
+    [[ "$output" != *"personal identifier"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
+@test "the same clean content moved to the third path under a NEW MODE passes: the patch prints the header alone for it (the mode line, no hunk, no Binary line), and a rename candidate is judged by the addition verdict of its new path before the header-only rule (the r3e text refused it as hidden with the two-fact line)" {
+    third_path_merge "nothing to see" pushed
+    chmod 755 "$REPO/b.txt"
+    third_path_committed
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1"' _ "$merge"
+    [[ "$output" == *"diff --combined b.txt"* ]]
+    [[ "$output" == *"mode 100644,100644..100755"* ]]
+    [[ "$output" != *"@@"* ]]
+    [[ "$output" != *"Binary files"* ]]
+    run_hook "$BASE"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
 @test "an evil MERGE adding an EMPTY file neither parent holds, gone at the tip, passes through a real push: the combined patch prints the header alone for it (no hunk, no Binary line), a candidate judged by its bytes, and an empty blob hides nothing; no short read is claimed, and the remote holds main" {
     merge_fixture
     : > "$REPO/empty.txt"
@@ -2692,6 +2830,8 @@ fail_empty_tree_numstat() { git_refusing 'case " $* " in *" --numstat "*" -- :(l
 empty_empty_tree_numstat() { git_refusing 'case " $* " in *" --numstat "*" -- :(literal)"*) true ;; *) false ;; esac' 0 ""; }   # the same read answering nothing: a short read
 fail_combined_patch()     { git_refusing 'case " $* " in *" -p "*" -c "*) true ;; *) false ;; esac' 128 "fatal: shim: diff-tree -p -c refused"; }   # the combined patch, the read the scan makes: the added-lines pass reads it too, and both arms name their read
 empty_combined_patch()    { git_refusing 'case " $* " in *" -p "*" -c "*) true ;; *) false ;; esac' 0 ""; }                                        # the same read printing nothing: no verdict for the paths the merge changes
+fail_per_parent_listing() { git_refusing 'case " $* " in *" --raw "*" -m "*) true ;; *) false ;; esac' 128 "fatal: shim: diff-tree --raw -m refused"; }   # the merge's listing against each parent alone: the combined listing carries -c and no -m
+empty_per_parent_listing() { git_refusing 'case " $* " in *" --raw "*" -m "*) true ;; *) false ;; esac' 0 ""; }                                    # the same read answering nothing: no candidate for a path the patch prints nothing for
 check_attr_answering() {   # <printf format of the answer, NUL-delimited>: a git whose check-attr prints that and exits 0, the real git for every other command
     local real_git
     real_git="$(command -v git)"
@@ -2912,6 +3052,37 @@ merge_with_hidden_link() {   # a merge whose own change is a symlink at a -diff 
     [[ "$output" == *"the BINARY VERDICTS of commit ${sha:0:10} could not be read (git diff-tree --numstat against the empty tree answered for fewer paths than the merge renames)"* ]]
     [[ "$output" != *"exited"* ]]
     [[ "$output" != *"the merge's combined patch"* ]]
+}
+
+@test "a merge whose changes against each parent cannot be listed (diff-tree --raw -m exiting 128, the combined listing and the patch untouched) refuses the push as unscanned, naming that read; the third-path content, a candidate that listing alone names, is claimed neither hidden nor a short read" {
+    third_path_merge "nothing to see" pushed
+    third_path_committed
+    fail_per_parent_listing
+    run _hook_in "$REPO" -c 'git diff-tree -r --raw --no-renames -m -z --no-commit-id "$1"' _ "$merge"
+    [ "$status" -eq 128 ]
+    run _hook_in "$REPO" -c 'git diff-tree -r --raw --no-renames --root -c -z --no-commit-id "$1" > /dev/null' _ "$merge"
+    [ "$status" -eq 0 ]
+    run_hook "$BASE"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the BINARY VERDICTS of commit ${merge:0:10} could not be read (git diff-tree --raw -m, the merge's changes against each parent, exited 128)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"printed no verdict"* ]]              # the read's own failure and not a second cause: the short arm is gated on every read having exited 0
+    [[ "$output" != *"is text that"* ]]
+    [[ "$output" != *"CHANGED PATHS"* ]]
+}
+
+@test "a merge whose listing against each parent answers NOTHING (diff-tree --raw -m exiting 0 with no output) leaves the third-path content a short read, refused as unscanned by the patch's arm: a listing that came up short names no candidate, and the path passes on nothing" {
+    third_path_merge "nothing to see" pushed
+    third_path_committed
+    empty_per_parent_listing
+    run _hook_in "$REPO" -c 'git diff-tree -r --raw --no-renames -m -z --no-commit-id "$1"' _ "$merge"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run_hook "$BASE"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the BINARY VERDICTS of commit ${merge:0:10} could not be read (git diff-tree -p -c, the merge's combined patch, printed no verdict for a path the merge changes)"* ]]
+    [[ "$output" != *"exited"* ]]
+    [[ "$output" != *"is text that"* ]]
 }
 
 @test "a path holding a newline byte is refused as unscanned at the tip and in the commit: the listings are joined line by line, and such a path would be judged by nothing" {

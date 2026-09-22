@@ -136,7 +136,8 @@
 # its new object (a numstat of the empty tree against the commit's tree for
 # that path); and a MODE-ONLY change (the same blob under a new mode), which
 # the diff prints as its mode lines with no hunk and no Binary line while the
-# pair's stat calls an unchanged blob over the size key binary, not at all:
+# pair's stat calls an unchanged blob binary when it is over the size key or
+# holds a NUL (a dash for each count either way), not at all:
 # nothing new reaches the remote, and the blob was judged where it was added.
 # For a MERGE, the combined patch itself (git diff-tree -p -c, the read the
 # scan makes for one, read again and parsed section by section), since it
@@ -144,15 +145,26 @@
 # reproduces: it applies no size rule, and it applies a path's diff attribute
 # to a symlink as the pairwise diff does not. A path whose section prints
 # "Binary files differ" is one the patch printed no hunk for; a path it
-# prints a hunk for was read; a path it prints nothing for whose blob is
-# among the merge's deletions is a pure rename, judged as the addition of its
-# new path as a one-parent commit's is; a path whose section is the header
+# prints a hunk for was read; a path it prints nothing for whose blob some
+# parent holds under a path the merge lacks is a pure rename (the patch
+# prints nothing for a path -M pairs with an identical blob in every
+# parent), judged as the addition of its new path as a one-parent commit's
+# is, the candidates read from the merge's deletions against EACH parent:
+# the combined listing names a deletion only when every parent held the
+# path, so content two parents held under two paths, moved to a third with
+# both gone, met no candidate and was refused as unscanned (the round 3
+# auditor, 2026-09-22); a path whose section is the header
 # alone (an added empty file prints its header, no hunk and no Binary line)
 # and that is no rename is a candidate like a Binary one, judged by its bytes
 # below, where an empty blob passes (an evil merge adding an empty file, gone
 # at the tip, was refused as unscanned for that header; the round 3 auditor,
-# 2026-09-22); a path with no section at all that is no rename is a short
-# read, refused as unscanned. Judged against each parent
+# 2026-09-22) and a non-empty blob would be refused as hidden, an arm no
+# shape found reaches, since a header-only section for a blob with bytes is
+# a mode change over content some parent holds, at the path (set aside as
+# unchanged) or under another (a rename candidate); a path with no section
+# at all that is no rename is a short read, refused as unscanned (a per-parent
+# listing that answered short leaves such a path there too, the safe side).
+# Judged against each parent
 # instead, a merge's own symlink at a path under a -diff attribute, the
 # string in its target, gone at the tip, was PUBLISHED by a real push (the
 # patch hid it, the pairwise verdicts did not), and a big text file the
@@ -173,9 +185,14 @@
 # words and also names a driver may take, and a verdict read from the value
 # missed a driver so named) and, where no attribute accounts for the verdict,
 # the blob's size and the clone's core.bigFileThreshold, as facts a reader
-# needs and not as a cause, or, for a one-parent commit's changed file with
-# no key set, the previous version's bytes where a NUL among them is the
-# cause; an explicit `diff` attribute outranks the key in every read, so the
+# needs and not as a cause, or, for a one-parent commit's changed file, the
+# previous version's bytes where a NUL among them is the cause, key or no
+# key (either side binary makes the pair binary), the two facts kept beside
+# that cause where the key is set and the key's advice not printed for it,
+# since raising the key lifts nothing there (with the key set the line named
+# the key's facts and the key's remedy while the certain cause went unnamed;
+# the round 3 auditor, 2026-09-22); an explicit `diff` attribute outranks
+# the key in every read, so the
 # remedy the advice names works for it too. Reading such a file from the
 # objects instead of refusing is the longer fix, not this one. One shape
 # refused that way is disclosed here with its remedy: a one-parent commit
@@ -543,9 +560,10 @@ numstat_rows() {   # <out> <diff-tree arguments...>
 # what follows it to the next header. b for a "Binary files differ" line
 # (git's word that it printed no hunk), t for a hunk (an @@ line), e for a
 # header alone (an added empty file, which has no hunk; a mode change over
-# content some parent had under another path). A line inside a hunk begins
-# with one column per parent (a space, a plus or a minus), so a header, a
-# Binary line or a hunk line is
+# content some parent had at the path, set aside as unchanged before the
+# join, or under another, a rename candidate there). A line inside a hunk
+# begins with one column per parent (a space, a plus or a minus), so a
+# header, a Binary line or a hunk line is
 # never mistaken for content, and the Binary line is read in the header
 # alone, as added_lines reads the +++ line. The header's path is unquoted as
 # git quotes it: a path with a byte git escapes (a quote, a backslash, a
@@ -638,9 +656,15 @@ combined_rows() {   # <patch file>
 # pairwise diff does not. A section printing "Binary files differ" is a path
 # the patch printed no hunk for, a candidate; a section with a hunk was read;
 # a path with no hunk and no Binary line (no section at all, or the header
-# alone) whose blob is among the merge's deletions is a pure rename, the one
-# change the patch prints nothing for, judged as the addition of its new path
-# by the third numstat, as a one-parent commit's is; such a path that is no
+# alone) whose blob some parent holds under a path the merge lacks is a pure
+# rename, the one change the patch prints nothing for, judged as the
+# addition of its new path by the third numstat, as a one-parent commit's
+# is (the candidates are read from the merge's deletions against EACH
+# parent, diff-tree --raw -m, since the combined listing names a deletion
+# only when every parent held the path, and content two parents held under
+# two paths, moved to a third with both gone, is a deletion against each
+# parent alone: it met no candidate and was refused as unscanned, the round
+# 3 auditor 2026-09-22); such a path that is no
 # rename is a candidate when its section is the header alone (an added empty
 # file prints its header and no hunk, and the byte stage passes an empty
 # blob; a non-empty blob so printed is text the patch printed no hunk for,
@@ -666,12 +690,14 @@ combined_rows() {   # <patch file>
 # reserved words are also names a driver may take, so no answer decides
 # anything here) names no attribute the hook can point at, and the line states
 # the blob's size and the clone's core.bigFileThreshold instead, facts and not
-# a cause, unless the key is unset and the file is a one-parent commit's
-# change of a file whose previous version is binary by its bytes (the pair is
-# binary when either side is, so the diff printed no text for the new
-# version): that line names the previous version as the cause, and the
-# advice names the fetch remedy (the header). The previous version is read
-# for the report alone, as the attribute is; a read that fails, or a path
+# a cause, unless the file is a one-parent commit's change of a file whose
+# previous version is binary by its bytes (the pair is binary when either
+# side is, whatever the key says, so the diff printed no text for the new
+# version): that line names the previous version as the cause, with the two
+# facts beside it where the key is set, and the advice names the fetch
+# remedy (the header) and not the key's, which lifts nothing there. The
+# previous version is read for the report alone, as the attribute is, key
+# or no key; a read that fails, or a path
 # with no previous version (an addition, a root commit), leaves the line
 # with its two facts. A one-parent commit's symlink reads no attribute (the
 # pairwise diff applies none to a symlink) and its line says so, with the
@@ -688,7 +714,7 @@ combined_rows() {   # <patch file>
 refuse_hidden_paths() {   # <local_ref> <local_sha> <revs> <tip listed: 1 or 0>
     local local_ref="$1" local_sha="$2" revs="$3" tip_listed="$4"
     local rc rev entry meta path mode blob place fields k i how says size threshold apath attr value counts bytes nuls numstat_ok renamed
-    local status unchanged islink merge prior empty_tree=""
+    local status unchanged islink merge prior facts empty_tree=""
     local -a tpaths
     if [ -z "$scratch" ]; then
         scratch=$(mktemp -d "${TMPDIR:-/tmp}/romp-pre-push.XXXXXX") \
@@ -755,14 +781,33 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs> <tip listed: 1 or 0>
         if [ "$merge" -ne 0 ]; then
             # A merge: the combined patch, the read the scan makes for one, read
             # again and parsed section by section (combined_rows). Its rename
-            # candidates, the post-images whose blob is among the merge's
-            # deletions, are judged as the addition of their new path by the
-            # third numstat below where the patch printed nothing for them (a
-            # pure rename, the one change it prints nothing for); a post-image
-            # the patch printed nothing for that is no rename is a short read.
+            # candidates, the post-images whose blob some parent holds under a
+            # path the merge lacks, are judged as the addition of their new
+            # path by the third numstat below where the patch printed nothing
+            # for them (a pure rename, the one change it prints nothing for); a
+            # post-image the patch printed nothing for that is no rename is a
+            # short read. The candidates come from the merge's deletions
+            # against EACH parent (-m: one raw listing per parent, read apart
+            # from the combined one), since the combined listing names a
+            # deletion only when every parent held the path: content two
+            # parents held under two paths, moved to a third with both gone,
+            # is a deletion against each parent alone, and the patch prints
+            # nothing for it (-M pairs it with an identical blob in every
+            # parent), so it was no candidate and was refused as unscanned
+            # (the round 3 auditor, 2026-09-22). A listing that fails refuses
+            # as unscanned and stands the short arm down for this commit; one
+            # that answers short leaves such a path a short read, the safe
+            # side.
             rc=0; git diff-tree -p -r -M -c --root --no-commit-id --no-color "$rev" > "$scratch/patch" || rc=$?
             [ "$rc" -eq 0 ] || { numstat_ok=0; unscanned "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git diff-tree -p -c, the merge's combined patch, exited $rc)"; }
             combined_rows "$scratch/patch" > "$scratch/rows"
+            rc=0; git diff-tree -r --raw --no-renames -m -z --no-commit-id "$rev" > "$scratch/parents" || rc=$?
+            [ "$rc" -eq 0 ] || { numstat_ok=0; unscanned "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git diff-tree --raw -m, the merge's changes against each parent, exited $rc)"; }
+            while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
+                # shellcheck disable=SC2206  # the record is deliberately word-split
+                fields=($meta)
+                [ "${fields[1]}" != 000000 ] || printf '%s\0' "${fields[2]}" >> "$scratch/gone"
+            done < "$scratch/parents"
             if ! as_lines "$scratch/post" "$scratch/gone"; then
                 unscanned "a path commit ${rev:0:10} changes holds a newline, which the BINARY VERDICT check cannot judge"
                 continue
@@ -920,22 +965,30 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs> <tip listed: 1 or 0>
         else
             size=$(git cat-file -s "$blob" 2>/dev/null || echo unknown)
             threshold=$(git config core.bigFileThreshold 2>/dev/null || true)
-            # No attribute and no key: for a one-parent commit's changed file
-            # (not a rename, whose earlier path this entry does not hold; not
-            # a symlink, judged by its own bytes), the PREVIOUS version's first
-            # 8000 bytes are read as the blob's were above, since a pre-image
-            # binary by its bytes makes the pair binary and the diff prints no
-            # text for the new version (the header). For the report alone,
-            # like the attribute: a read that fails or a path with no previous
-            # version (an addition, a root commit) leaves the two-fact line.
+            # No attribute: for a one-parent commit's changed file (not a
+            # rename, whose earlier path this entry does not hold; not a
+            # symlink, judged by its own bytes), the PREVIOUS version's first
+            # 8000 bytes are read as the blob's were above, key or no key,
+            # since a pre-image binary by its bytes makes the pair binary
+            # whatever the key says and the diff prints no text for the new
+            # version (the header). For the report alone, like the attribute:
+            # a read that fails or a path with no previous version (an
+            # addition, a root commit) leaves the two-fact line, where the key
+            # is the candidate cause. A NUL found names the previous version
+            # as the cause, with the two facts beside it where the key is set;
+            # the key's advice is for the two-fact lines alone, since raising
+            # the key lifts nothing here (with the key set, the line named the
+            # key's facts and its remedy while the certain cause went unnamed;
+            # the round 3 auditor, 2026-09-22).
             prior=0
-            if [ "$place" != tip ] && [ "$islink" -eq 0 ] && [ -z "$renamed" ] && [ -z "$threshold" ] \
+            if [ "$place" != tip ] && [ "$islink" -eq 0 ] && [ -z "$renamed" ] \
                 && [ "$(git rev-list --parents -n 1 "$place" 2>/dev/null | awk '{ print NF - 1 }')" = 1 ]; then
                 rc=0; counts=$(git cat-file blob "$place^:$path" 2>/dev/null | { head -c 8000 | LC_ALL=C od -An -v -tu1 | awk '{ for (i = 1; i <= NF; i++) { b++; if ($i == 0) z++ } } END { print b + 0, z + 0 }'; cat > /dev/null; }) || rc=$?
                 if [ "$rc" -eq 0 ]; then read -r bytes nuls <<< "$counts"; [ "$nuls" -eq 0 ] || prior=1; fi
             fi
             if [ "$prior" -ne 0 ]; then
-                echo "romp pre-push: $path in commit ${place:0:10} is text that git calls binary although $says, so no attribute of its path accounts for the verdict; the previous version of the file is binary by its bytes (a NUL in its first 8000), which made git print no text diff for the change, and the identifier scan could not read the new text, so the push is refused rather than scanned" >&2
+                facts=""; [ -z "$threshold" ] || facts=" whatever the key says (the blob is $size bytes; core.bigFileThreshold is $threshold in this clone's configuration)"
+                echo "romp pre-push: $path in commit ${place:0:10} is text that git calls binary although $says, so no attribute of its path accounts for the verdict; the previous version of the file is binary by its bytes (a NUL in its first 8000), which made git print no text diff for the change$facts, and the identifier scan could not read the new text, so the push is refused rather than scanned" >&2
                 hidden_prior=1
             elif [ "$place" = tip ]; then
                 echo "romp pre-push: $path at the tip of $local_ref (${local_sha:0:10}) is text that git calls binary although $says, so no attribute of its path accounts for the verdict (the blob is $size bytes; core.bigFileThreshold is ${threshold:-not set} in this clone's configuration); the identifier scan did not read it, so the push is refused rather than scanned" >&2
