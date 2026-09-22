@@ -15,7 +15,7 @@ import * as path from "node:path";
 import { createRequire } from "node:module";
 import { viewTagUnion } from "./session-views";
 import { parseTabGroups, planStrip, setSectionCollapsed, setHidden, homeSectionOf, neighborOfFolded, headWords, type StripItem, type TabSection } from "./tab-groups";
-import { sectionPip, sectionPipMembers, sectionPipTitle, sectionTodoFlag, sectionTodoPhrase, sectionDoorTitle } from "./tab-state";
+import { sectionPip, sectionPipMembers, sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle } from "./tab-state";
 import { snapshotModel, snapshotHeading, rowWords, actWords, hiddenFoldWords, hiddenNeeds, standInPip, type SnapModel } from "./tab-snapshot";
 import { statusChip } from "./status-chip";
 import { rowStillOpen, installSnapshotEscape, reconcileRows, repeatedClick } from "./tab-snapshot-view";
@@ -35,6 +35,10 @@ const KEYS_AT = RENDER.indexOf("function onTabKey(e: KeyboardEvent) {");
 const KEYS_END = RENDER.indexOf('// "Enter to start typing" lands on whatever', KEYS_AT);
 const TABS = RENDER.slice(RENDER.indexOf("function renderTabs() {"), RENDER.indexOf("function dismissTabMenu() {"));
 const HEAD = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
+// liveSession, lifted by source: the header's flag reads it (2026-09-22), and its skeleton check is the composition under test, so the
+// world runs render.ts's own body rather than a copy of it
+const LIVE_AT = RENDER.indexOf("function liveSession(");
+const LIVE = RENDER.slice(LIVE_AT, RENDER.indexOf("\n}\n", LIVE_AT) + 3);
 const ACTS_AT = RENDER.indexOf('"toggle-group": (el) => {');
 const ACTS = RENDER.slice(ACTS_AT, RENDER.indexOf("close: (el) => {", ACTS_AT));   // the #tabs delegate's two header acts, up to the tab's close
 const NAV = RENDER.slice(RENDER.indexOf("const navHist = new NavHistory({"), RENDER.indexOf("function setActive(id: string"));
@@ -142,9 +146,10 @@ type Hooks = {
   headWords: typeof headWords; sectionPip: typeof sectionPip; sectionPipMembers: typeof sectionPipMembers; sectionPipTitle: typeof sectionPipTitle;
   // this fork's tabhide layer, which the lifted slices call for real: the hide store's writer, the header's flag words, the stand-in pip,
   // the Hidden fold's words and count, a row's act words, the once-per-gesture click wrapper
-  setHidden: typeof setHidden; sectionTodoFlag: typeof sectionTodoFlag; sectionTodoPhrase: typeof sectionTodoPhrase; sectionDoorTitle: typeof sectionDoorTitle; standInPip: typeof standInPip;
+  setHidden: typeof setHidden; sectionTodoFlag: typeof sectionTodoFlag; sectionTodoTitle: typeof sectionTodoTitle; sectionTodoPhrase: typeof sectionTodoPhrase; sectionDoorTitle: typeof sectionDoorTitle; standInPip: typeof standInPip;
   hiddenFoldWords: typeof hiddenFoldWords; hiddenNeeds: typeof hiddenNeeds; actWords: typeof actWords; repeatedClick: typeof repeatedClick;
   groups: ReturnType<typeof parseTabGroups>;
+  skeletonTabs: { ids: Set<string> };   // the page's skeleton set (upstream's diet), which the lifted liveSession reads: a case lists a member here to say its payload was never served (2026-09-22)
   navDeps: { now: () => { sid: string; top: number } | null } | null;   // what render.ts hands NavHistory (the stub constructor keeps it)
 };
 type Api = {
@@ -160,7 +165,8 @@ function lift(): (H: Hooks) => Api {
   assert.ok(SNAP_AT > 0 && SNAP_AT < SHOW_AT, "the pane block sits right above showActive: re-anchor");
   assert.ok(KEYS_AT > 0 && KEYS_END > KEYS_AT, "onTabKey .. focusActiveTab .. unfoldSectionOf run together above the composer-focus helper: re-anchor");
   assert.ok(HEAD.length > 0 && ACTS.includes('"show-transcript"') && NAV.includes("apply: (spot) => {"), "makeGroupHead, the #tabs delegate's header acts or the nav trail's deps moved: re-anchor");
-  const js = requireCjs("esbuild").transformSync(RENDER.slice(SNAP_AT, SHOW_AT) + RENDER.slice(KEYS_AT, KEYS_END) + HEAD + NAV
+  assert.ok(LIVE_AT > 0 && LIVE.startsWith("function liveSession("), "liveSession moved: re-anchor");   // its body is not pinned here: the flag case below runs it
+  const js = requireCjs("esbuild").transformSync(RENDER.slice(SNAP_AT, SHOW_AT) + RENDER.slice(KEYS_AT, KEYS_END) + HEAD + NAV + LIVE
     + "const tabsActs = {\n" + ACTS + "};\n", { loader: "ts" }).code;
   const prelude = `
     const H = HOOKS;
@@ -173,12 +179,11 @@ function lift(): (H: Hooks) => Api {
     const menuAnchor = (e) => e;
     let tabMenuSeat = "tab", rowRenameEnd = null;   // the menu's seat and the open row editor's end (startTabRename's, executed in tab-snapshot-menu.test.ts); the listener sets the one, hideSnapshot runs the other
     const cssEscape = (s) => s.replace(/"/g, '\\"');   // rowSeatFor's selector
-    const skeletonTabs = { ids: new Set() };
+    const skeletonTabs = H.skeletonTabs;   // the page's skeleton set, the world's to fill: liveSession (lifted) and renderKind read it
     const renderKind = (st, id, has) => (st.ids.has(id) ? "skeleton" : has ? "loaded" : "placeholder");
     const settings = { stripGroupRows: false };   // the fork's default (W1); no case here paints the untagged trail, the one reader
     let order = H.order, lastStripItems = H.lastStripItems, collapsedTabIds = H.collapsed;
     const sessions = H.sessions, ledgers = H.ledgers, tabMeta = H.tabMeta, closingTabs = H.closingTabs, views = H.views;
-    const liveSession = (id) => id && !skeletonTabs.ids.has(id) ? sessions.get(id) : undefined;   // render.ts's own body: the header's flag reads it (2026-09-22)
     const el = (tag, cls) => new H.FakeEl(tag, cls);
     class HTMLButtonElement extends H.FakeEl {}   // the header's door is a real button (this fork): createElement("button") answers the instanceof
     const document = {
@@ -211,7 +216,7 @@ function lift(): (H: Hooks) => Api {
     // the header's parts and gestures: the pure words and pip rules for real, the tag chip and the drag helpers stubs
     const headWords = H.headWords, sectionPip = H.sectionPip, sectionPipMembers = H.sectionPipMembers, sectionPipTitle = H.sectionPipTitle;
     // this fork's tabhide layer for real (pure), and its strip-only helpers inert: no emoji in these worlds
-    const setHidden = H.setHidden, sectionTodoFlag = H.sectionTodoFlag, sectionTodoPhrase = H.sectionTodoPhrase, sectionDoorTitle = H.sectionDoorTitle, standInPip = H.standInPip;
+    const setHidden = H.setHidden, sectionTodoFlag = H.sectionTodoFlag, sectionTodoTitle = H.sectionTodoTitle, sectionTodoPhrase = H.sectionTodoPhrase, sectionDoorTitle = H.sectionDoorTitle, standInPip = H.standInPip;
     const hiddenFoldWords = H.hiddenFoldWords, hiddenNeeds = H.hiddenNeeds, actWords = H.actWords, repeatedClick = H.repeatedClick;
     const tabEmojiNode = () => null;
     const ringSwitch = () => () => true;   // the ring switches the folded pip reads (widgets since 2026-09-14): every ring on here
@@ -262,8 +267,8 @@ function world(active = "web", groups = parseTabGroups(null), ids = ["web", "api
     closingTabs: new Map(), views: new Map(), lastStripItems: plan.items, order: ids, collapsed: plan.folded, nowMs: T0 * 1000, pickerOpen: false,
     calls: [], delegates: [], winCap: [], winBub: [], writes: [], FakeEl, doc: DOC,
     snapshotModel, snapshotHeading, rowWords, statusChip, rowStillOpen, installSnapshotEscape, reconcileRows, homeSectionOf, neighborOfFolded, setSectionCollapsed,
-    headWords, sectionPip, sectionPipMembers, sectionPipTitle, setHidden, sectionTodoFlag, sectionTodoPhrase, sectionDoorTitle, standInPip, hiddenFoldWords, hiddenNeeds, actWords, repeatedClick,
-    groups, navDeps: null };
+    headWords, sectionPip, sectionPipMembers, sectionPipTitle, setHidden, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, standInPip, hiddenFoldWords, hiddenNeeds, actWords, repeatedClick,
+    groups, skeletonTabs: { ids: new Set<string>() }, navDeps: null };
   const api = lift()(H);
   api.set({ activeId: active });
   return { H, api, content, bar, sessions, ledgers };
@@ -648,6 +653,49 @@ test("executed: the nav trail records the reader's spot while the view shows: th
   assert.equal(now(), null, "no active tab: no spot");
   api.set({ activeId: "web" }); api.hideSnapshot();
   assert.deepEqual([api.get().snapKeep, now()], [null, { sid: "web", top: 7 }], "the view hidden (its spot written back to the view): the pane's scroll again");
+});
+
+test("executed: the folded header's flag over a member whose payload this page has not been served reads the roster count (liveSession(id) ?? tabMeta.get(id)): no session entry and a count of 2 paints the flag, 0 or an older kernel's row none, a skeleton's stale entry never speaks for it, a loaded member's rows still do", () => {
+  // THE COMPOSITION the four source pins spell (tab-group-flags, tab-groups, tab-hide, tab-usertodo-skeleton): the header maps
+  // its hidden members through liveSession, undefined for a skeleton whose pre-outage entry the page still holds, else the strip
+  // meta, whose userTodos is the kernel's count of open todos (the tabOrder roster row, tab-meta.ts). Run here over the real
+  // makeGroupHead, the real liveSession and the real sectionTodoFlag (2026-09-22; the user, whose flagged sessions wore no flag
+  // until their tab was clicked).
+  const folded = setSectionCollapsed(parseTabGroups(null), "infra", true);
+  const flagOf = (w: ReturnType<typeof world>) => realHead(w.api, w.bar, headOf(w.H.lastStripItems, "infra")).querySelector(".tab-group-flag");
+  // a placeholder member: the roster lists it (tabMeta), no session entry has arrived; tests active, so infra folds web away
+  const a = world("tests", folded);
+  assert.ok(headOf(a.H.lastStripItems, "infra").hidden.includes("web"), "infra's fold hides web: " + headOf(a.H.lastStripItems, "infra").hidden.join(","));
+  a.sessions.delete("web");
+  a.H.tabMeta.set("web", { name: "web", color: null, userTodos: 2 });
+  const flag = flagOf(a);
+  assert.ok(flag, "a hidden member with no session entry and a roster count of 2 raises the header's flag");
+  assert.deepEqual([flag!.tag, flag!.className, flag!.dataset.act, flag!.dataset.group], ["button", "tab-group-flag", "open-group", "infra"], "the flag is the folded header's open-group button");
+  assert.equal(flag!.title, sectionTodoTitle({ count: 1, names: ["web"] }), "named from the roster row, as a loaded member is from its session");
+  assert.equal(flag!.querySelector(".tab-usertodo")?.textContent, "⚑", "the tab's own mark; no count on a one-session flag");
+  assert.equal(flag!.querySelector(".tab-group-count"), null);
+  assert.ok((flag!.closest(".tab-group-head")!.getAttribute("aria-label") ?? "").includes(sectionTodoPhrase({ count: 1, names: ["web"] })), "spoken on the header too");
+  a.H.tabMeta.set("web", { name: "web", color: null, userTodos: 0 });
+  assert.equal(flagOf(a), null, "0 is a real value: nothing open, no flag");
+  a.H.tabMeta.set("web", { name: "web", color: null });
+  assert.equal(flagOf(a), null, "an older kernel's row carries no count: no flag");
+  // the stale-entry variant: a skeleton member (a redial) keeps its pre-outage session entry underneath, and liveSession is
+  // undefined for it, so the roster row stands in whichever way the stale rows point
+  const b = world("tests", folded);
+  b.H.skeletonTabs.ids.add("web");
+  b.sessions.set("web", { ...b.sessions.get("web"), userTodos: [] });   // stale: nothing was open before the outage
+  b.H.tabMeta.set("web", { name: "web", color: null, userTodos: 1 });   // the kernel's current count
+  assert.ok(flagOf(b), "a skeleton's stale entry with no rows does not hide the roster's count");
+  b.sessions.set("web", { ...b.sessions.get("web"), userTodos: [{ id: "t1", text: "pick a name" }] });   // stale: one open before the outage
+  b.H.tabMeta.set("web", { name: "web", color: null, userTodos: 0 });   // resolved since
+  assert.equal(flagOf(b), null, "a skeleton's stale rows raise no flag its own tab would not wear");
+  // a loaded member: its live session's rows, as before the roster carried a count (tab-groups.test.ts's executed cases)
+  const c = world("tests", folded);
+  c.sessions.set("web", { ...c.sessions.get("web"), userTodos: [{ id: "t1", text: "pick a name" }] });
+  c.H.tabMeta.set("web", { name: "web", color: null });   // an older kernel: no count on the row
+  assert.equal(flagOf(c)?.title, sectionTodoTitle({ count: 1, names: ["web"] }), "a loaded member's rows raise the flag, roster count or not");
+  c.sessions.set("web", { ...c.sessions.get("web"), userTodos: [] });
+  assert.equal(flagOf(c), null, "and the frame that resolves them clears it");
 });
 
 test("pinned: the wiring the lifted slices cannot reach: showActive's branch, the exits, setActive's pick, the strip's follow", () => {
