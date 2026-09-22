@@ -667,6 +667,10 @@ test("the script's reading of the real census over a pending line: allowed while
   const shared = run("", rest + P01 + "\tpending #862: launches through inBrowser\n");
   refused(shared, EXCLUDED + " line 3: '" + P01 + "' is pending #862 and its source ui/webview/p01-alias.test.ts is in the tree, so the leg has arrived (#862 merged main, or this is #862's branch) and the line's condition has passed: promote it: delete this line and add '" + P01 + "' to " + ROSTER + " (the source launches through inBrowser alone and reaches no engine but Chromium), with the step's measured seconds in the PR body");
   agrees(shared, P01);
+  // the engine remedy is held by includes() up to the form's closing quote, here and at the neither red in the fifth-remedy test
+  // below: a tail appended AFTER the closing quote is not refused by these pins, since the quoted form is what a copy into the
+  // exclusions carries and a tail outside it grants nothing, while a tail inside the form that carries a second claim (another
+  // form's phrase, a second engine) is refused as ambiguous by the closed-set tests
   const engine = run(P01 + "\n", P26 + "\tloads playwright in a child process it drives from a string; the switch never reaches it\n" + P19 + "\tpending #859: launches on its own\n");
   refused(engine, "'" + P19 + "' is pending #859", "promote it: keep the line and replace the reason with the engine form the header of " + EXCLUDED + " admits, \"launches WebKit; the gating job installs Chromium only\"");
   agrees(engine, P19);

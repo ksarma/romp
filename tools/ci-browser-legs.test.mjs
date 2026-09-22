@@ -714,6 +714,10 @@ test('the script allows a pending line while its source is absent, reds a pendin
   assert.equal(both.status, 1, both.err);
   assert.ok(both.err.includes('\'' + M + '\' is pending #853') && both.err.includes(GATE(GAP_M, M)), both.err);
   assert.ok(!both.err.includes('why the gating job does not run it'), 'the old remedy, a bare gap sentence the closed set refuses, is gone:\n' + both.err);
+  // the engine remedy is held by includes() up to the form's closing quote, here and at the neither red in the refusals test above:
+  // a tail appended AFTER the closing quote is not refused by these pins, since the quoted form is what a copy into the exclusions
+  // carries and a tail outside it grants nothing, while a tail inside the form that carries a second claim (another form's phrase,
+  // a second engine) is refused as ambiguous by the closed-set tests
   const eng = run(A + '\n', F + '\tpending #859: an engine leg\n' + EXCLUDE_REST('a', 'f'));
   assert.equal(eng.status, 1, eng.err);
   assert.ok(eng.err.includes('\'' + F + '\' is pending #859') && eng.err.includes('promote it: keep the line and replace the reason with the engine form the header of ' + EXCLUDED + ' admits, "launches Firefox; ' + ENGINE_PHRASE + '"'), eng.err);
