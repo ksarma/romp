@@ -179,7 +179,9 @@ test("executed: the builders paint the flag when the one predicate says open, an
 });
 
 test("the folded header's flag reads the live session, else the strip meta (executed: tab-group-flags.test.ts, a count, 0, mixed rows and counts)", () => {
-  assert.match(RENDER, /const flag = sectionTodoFlag\(hidden\.map\(\(id\) => liveSession\(id\) \?\? tabMeta\.get\(id\)\)\);/,
+  // matched over makeGroupHead's slice, not the whole file: a red here prints the builder, not all of render.ts (the closing
+  // verifiers of review round 1 measured a whole-file dump at about 23,000 lines against 232 for a red of a sliced pin)
+  assert.match(fn(RENDER, "makeGroupHead"), /const flag = sectionTodoFlag\(hidden\.map\(\(id\) => liveSession\(id\) \?\? tabMeta\.get\(id\)\)\);/,
     "a loaded member's rows, a skeleton or placeholder member's roster count: liveSession is undefined for a skeleton (its stale entry never reads as current), and the roster row stands in");
 });
 
