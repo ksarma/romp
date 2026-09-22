@@ -22,8 +22,12 @@
 // spellings the round-1 review of the convention found escaping a textual census (an aliased import of the launcher, a
 // single-quoted require, a launch spelled launchPersistentContext, destructured or bracketed, a shared call inside try/catch, a
 // .skip( held in a comment, Firefox reached by a named or destructured import, a block-comment mention) and the forms the parse
-// refuses: each is classified or refused as recorded here, none is silent. Population figures are derived from the run and
-// printed as diagnostics, never asserted as constants. Synthetic: the fixtures' invented modules and a stub launcher.
+// refuses: each is classified or refused as recorded here, none is silent. Of the 51 round-3 rows (p38 to p88), 44 red under the
+// census before round 3 (the round-2 base), 7 hold something else and say what in the table's holds field (a stated residual
+// boundary, the no-refusal half of a pair whose partner reds, a guard of round 3's own scoping), and 3 of the 44 red on a property
+// other than their section's and name the plant that carries it (carried); the plant-table test holds the table to that statement,
+// a count of this file's rows and not a figure from the run. Population figures are derived from the run and printed as
+// diagnostics, never asserted as constants. Synthetic: the fixtures' invented modules and a stub launcher.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -238,16 +242,23 @@ test("the roster plus the exclusions whose source is present equals the census's
 /** What each planted form is: the fixture's file under tests/fixtures/browser-legs-plants/<dir>, and the verdict the census
  *  gives it. `gap` is a substring of rosterGap's sentence (null: the gate passes); `refused` a substring of the refusal, with the
  *  line; `strictRefused`: refused under --strict-computed, where computed names are not folded. The round-1 findings each plant
- *  answers are named beside it. */
+ *  answers are named beside it. A round-3 row (p38 to p88) also says whether it discriminates against the census before round 3
+ *  (the round-2 base): `holds` on a row that stays green under that census, one of the four Held forms and the row's detail;
+ *  `carried` on a row that reds under it, but not on the property its section names, naming the plant that carries that property.
+ *  The plant-table test holds the table to these fields; the discrimination itself was established by running that census over
+ *  the plants (the PR's notes) and is not re-run here. */
+type Held = `${"a stated residual boundary" | "the no-refusal half of a pair whose partner reds" | "a guard of round 3's own scoping" | "a shape another plant carries"}: ${string}`;
 type Plant = {
   dir: string; file: string; leg: boolean; cls: string; gap: string | null; engines?: string[]; playwright?: string[];
   launches?: string[]; skipTodo?: string[]; swallow?: number[]; refused?: string; strictRefused?: boolean; launcherImported?: boolean;
+  holds?: Held; carried?: `a shape another plant carries: ${string}`;
 };
 const W = "ui/webview";
 /** The shadow refusal's WHOLE sentence after "<file>:<line>: ", as the census emits it (read from a run of the CLI over the plants,
  *  not guessed): the p17 and p47 rows hold the whole sentence, not the prefix "a local declaration shadows an import binding",
  *  because the sentence (why the shadow is refused, and the remedy) is what the round-3 item landed and the prefix predates it;
- *  a reword of the why or the remedy in the module is red at those rows. */
+ *  a reword of the why or the remedy in the module is red at those rows. The two rows hold the SENTENCE: a reword of the module's
+ *  refusal moves this constant too (and the rows through it). */
 const SHADOW_REFUSAL = "a local declaration shadows an import binding of the launcher or of playwright (a use inside the local's scope reaches the local, not the import; the shadow is refused so an import it leaves uncalled, or whose launches it hides, is not read as an ordinary non-leg without notice: rename the local)";
 const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p01-alias.test.ts", leg: true, cls: "shared", gap: null },                                                     // tests-1, extra7-2, extra7-3: an aliased import, called
@@ -294,14 +305,14 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p38-prop-assign-launcher.test.ts", leg: false, cls: "none", gap: "never calls its inBrowser through that import", launcherImported: true, refused: "p38-prop-assign-launcher.test.ts:3: a property assignment of a loaded module the walker does not follow: h.leg" }, // h.leg = require(the launcher); h.leg.inBrowser(t, ...)
   { dir: W, file: "p39-prop-assign-playwright.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], refused: "p39-prop-assign-playwright.test.ts:4: a property assignment of a playwright expression the walker does not follow: o.pw" }, // o.pw = pw; o.pw.chromium.launch(): the launch sits behind the refused target
   { dir: W, file: "p40-elem-assign-playwright.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["chromium"], launches: [], refused: "p40-elem-assign-playwright.test.ts:4: an element assignment of a playwright expression the walker does not follow: o[0]" }, // o[0] = pw.chromium: the engine is read from the value, the launch through o[0] is not
-  { dir: W, file: "p41-array-destructure-playwright.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], refused: "p41-array-destructure-playwright.test.ts:3: an array destructuring of a playwright expression the walker does not follow: [eng]" },
-  { dir: W, file: "p42-array-destructure-loaded.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], refused: "p42-array-destructure-loaded.test.ts:2: an array destructuring of a loaded module the walker does not follow: [x]" },
+  { dir: W, file: "p41-array-destructure-playwright.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], refused: "p41-array-destructure-playwright.test.ts:3: an array destructuring of a playwright expression the walker does not follow: [eng]", carried: "a shape another plant carries: fresh-2's kind-naming targetKind is carried by p38, p39, p40 and p43 (red under one constant for every kind), since this row's kind is the constant's own text; it reds under the census before round 3 on the sentence's tail alone (the walker does not follow)" },
+  { dir: W, file: "p42-array-destructure-loaded.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], refused: "p42-array-destructure-loaded.test.ts:2: an array destructuring of a loaded module the walker does not follow: [x]", carried: "a shape another plant carries: fresh-2's kind-naming targetKind is carried by p38, p39, p40 and p43 (red under one constant for every kind), since this row's kind is the constant's own text; it reds under the census before round 3 on one word of the sentence alone (a loaded module)" },
   { dir: W, file: "p43-object-assign-destructure.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], refused: "p43-object-assign-destructure.test.ts:4: an object destructuring by assignment of a playwright expression the walker does not follow: { chromium }" },
   // fresh-1: a name is read at its use site by lexical scope, so an inner scope's same-named binding is not the tracked one
   { dir: W, file: "p44-pattern-param-reuses-name.test.ts", leg: true, cls: "both", gap: "loads playwright itself", engines: ["firefox"], launches: [".launch("] }, // a parameter's array pattern reuses pw inside an arrow (the shape PR 853's module holds): the inner pw is the parameter, the module's pw is playwright, and nothing is refused
   { dir: W, file: "p45-catch-and-for-shadow.test.ts", leg: true, cls: "shared", gap: null },                                       // a catch variable and a for-of const named inBrowser, the import called after them: the call reaches the import
   { dir: W, file: "p46-inner-destructured-shadow.test.ts", leg: false, cls: "none", gap: "never calls its inBrowser through that import", launcherImported: true }, // an inner block's destructured inBrowser is what the call reaches, so the import stands uncalled; a destructured shadow has no identifier-named declaration, so no shadow refusal
-  { dir: W, file: "p47-shadow-delegates.test.ts", leg: true, cls: "shared", gap: null, refused: "p47-shadow-delegates.test.ts:3: " + SHADOW_REFUSAL }, // fresh-1's twin: the local shadow delegates to a module-level helper that calls the import, so the module IS a shared leg (the call resolves to the import by scope) and the identifier-named shadow is still refused; the row holds the whole refusal sentence (SHADOW_REFUSAL) because the sentence is what round 3 landed and the prefix predates it
+  { dir: W, file: "p47-shadow-delegates.test.ts", leg: true, cls: "shared", gap: null, refused: "p47-shadow-delegates.test.ts:3: " + SHADOW_REFUSAL, carried: "a shape another plant carries: fresh-1's scoping is carried by p17 and p46 (leg false by scope where the flat lookup read a call of the import) and p45 (no refusal by scope where the flat lookup refused its catch variable and for-of const as value uses); this row's leg, class and gap are what the census before round 3 also gave and its refusal prefix predates round 3, so it reds under that census on the shadow refusal's whole sentence alone (SHADOW_REFUSAL, r3v-census-3)" }, // fresh-1's twin: the local shadow delegates to a module-level helper that calls the import, so the module IS a shared leg (the call resolves to the import by scope) and the identifier-named shadow is still refused; the row holds the whole refusal sentence (SHADOW_REFUSAL) because the sentence is what round 3 landed and the prefix predates it
   // the round-2 review's roads, section A of its rulings: a loader result used where it stands, in any position
   { dir: W, file: "p48-require-pw-chain.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["chromium"], playwright: ["playwright"], launches: [".launch("] }, // correctness-1, extra7-1: require("playwright").chromium.launch(), never bound
   { dir: W, file: "p49-require-launcher-chain.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true },              // correctness-1: require(the launcher).inBrowser(t, ...), the load followed as the object of the member the call arm read
@@ -324,15 +335,15 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p66-driver-substitution.test.ts", leg: true, cls: "embedded", gap: "drives playwright from a child process whose source is held in a string (line 3)" }, // extra7-5: a driver template assembled with a substitution bound to a const literal, folded before the text is read
   { dir: W, file: "p67-driver-concatenation.test.ts", leg: true, cls: "embedded", gap: "drives playwright from a child process whose source is held in a string (line 2)" }, // extra7-5: a + concatenation, folded
   // the third residual, stated in the census header: a browser reached without spelling a playwright package or the launcher is unread, class none, no refusal
-  { dir: W, file: "p68-driver-env-piece.test.ts", leg: false, cls: "none", gap: null, launcherImported: false },                   // extra7-5's unfoldable piece: the package name arrives from the environment, the fold leaves a placeholder that spells nothing
-  { dir: W, file: "p69-other-driver-package.test.ts", leg: false, cls: "none", gap: null, launcherImported: false },               // extra6-4: another driver package (puppeteer)
-  { dir: W, file: "p70-playwright-chromium-package.test.ts", leg: false, cls: "none", gap: null, launcherImported: false },        // extra6-4: a package whose name contains a tracked spelling (playwright-chromium) is not a playwright package to the census
-  { dir: W, file: "p71-spawn-binary.test.ts", leg: false, cls: "none", gap: null, launcherImported: false },                       // extra6-4: a browser binary spawned by name
+  { dir: W, file: "p68-driver-env-piece.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, holds: "a stated residual boundary: the third residual's run-time package name (the fold leaves a placeholder), class none, no refusal, which the census before round 3 also gives" },                   // extra7-5's unfoldable piece: the package name arrives from the environment, the fold leaves a placeholder that spells nothing
+  { dir: W, file: "p69-other-driver-package.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, holds: "a stated residual boundary: the third residual's other driver package, class none, no refusal, which the census before round 3 also gives" },               // extra6-4: another driver package (puppeteer)
+  { dir: W, file: "p70-playwright-chromium-package.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, holds: "a stated residual boundary: a package name containing a tracked spelling is no playwright package, class none, no refusal, which the census before round 3 also gives" },        // extra6-4: a package whose name contains a tracked spelling (playwright-chromium) is not a playwright package to the census
+  { dir: W, file: "p71-spawn-binary.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, holds: "a stated residual boundary: the third residual's spawned browser binary, class none, no refusal, which the census before round 3 also gives" },                       // extra6-4: a browser binary spawned by name
   // extra7-4: the call arm and the value-use arm read one record of the identifier the call resolved through
-  { dir: W, file: "p72-namespace-member-call.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true },               // leg.inBrowser.call(null, t, ...): a counted shared call, never also a value use
+  { dir: W, file: "p72-namespace-member-call.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true, holds: "the no-refusal half of a pair whose partner reds: p73 (.bind, refused as a value use) reds under the census before round 3, which read the .bind as a call; this row's counted call is what that census also gave" },               // leg.inBrowser.call(null, t, ...): a counted shared call, never also a value use
   { dir: W, file: "p73-namespace-member-bind.test.ts", leg: false, cls: "none", gap: "never calls its inBrowser through that import", launcherImported: true, refused: "p73-namespace-member-bind.test.ts:3: the launcher's module binding handed on as a value (read for inBrowser without a call (.bind makes no call))" }, // leg.inBrowser.bind(null): .bind makes no call, so the bound reference is a value use
   // THE INVARIANT's boundary: text that names playwright or the launcher without a resolution (a title, an array literal, a regex, a message string) trips nothing
-  { dir: W, file: "p74-text-names-playwright.test.ts", leg: false, cls: "none", gap: null, launcherImported: false },
+  { dir: W, file: "p74-text-names-playwright.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, holds: "a stated residual boundary: THE INVARIANT's boundary, text naming playwright without a resolution trips nothing, class none, no refusal, which the census before round 3 also gives" },
   // regression-1's engine parameter (PR 853's launcher takes an engine as inBrowser's third argument): read into the engines the leg reaches, through the closed forms and the two the stub launcher's exports supply; anything else refused
   { dir: W, file: "p75-engine-for-of-import.test.ts", leg: true, cls: "shared", gap: null, engines: ["chromium", "firefox", "webkit"] }, // for (const engine of ENGINES), ENGINES the launcher's exported const array (853's shape)
   { dir: W, file: "p76-engine-typed-param.test.ts", leg: true, cls: "shared", gap: null, engines: ["chromium", "firefox", "webkit"] }, // a parameter typed by the launcher's exported alias Engine: the whole union, on the safe side
@@ -347,7 +358,7 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p84-helper-unbound-call.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p84-helper-unbound-call.test.ts:2: loads ui/webview/call-helper.ts, which binds or calls the shared launcher's inBrowser" }, // the helper calls require(the launcher).inBrowser(...) and binds nothing: a call hands the browser on to the importer as a binding does (before: class none, no refusal)
   { dir: W, file: "p85-helper-await-import-call.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p85-helper-await-import-call.test.ts:2: loads ui/webview/await-helper.ts, which binds or calls the shared launcher's inBrowser" }, // the same through (await import(the launcher)).inBrowser(...)
   { dir: W, file: "p86-helper-then.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p86-helper-then.test.ts:2: loads ui/webview/then-helper.ts, which the census cannot classify (ui/webview/then-helper.ts:2: the launcher loaded where it stands and handed on through a member the walker does not follow" }, // a helper doing the .then hand-on: the helper's own refusal reaches the importer
-  { dir: W, file: "p87-hoisted-var.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["firefox"], playwright: ["playwright"], launches: [".launch("] }, // { var pw = require("playwright"); } then pw.firefox.launch() outside the block: the var is the module's, so the engine and the launch are read (before: engines [], launches [])
+  { dir: W, file: "p87-hoisted-var.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["firefox"], playwright: ["playwright"], launches: [".launch("], holds: "a guard of round 3's own scoping: a var hoisted out of its block is bound at its function (r3v-census-4), which a census that never scoped cannot red against (it read the var flat); red under a var held at the block" }, // { var pw = require("playwright"); } then pw.firefox.launch() outside the block: the var is the module's, so the engine and the launch are read (before: engines [], launches [])
   { dir: W, file: "p88-bound-promise-await-later.test.ts", leg: false, cls: "none", gap: "never calls its inBrowser through that import", launcherImported: true, refused: "p88-bound-promise-await-later.test.ts:3: the launcher's module binding handed on as a value (awaited into a name the walker does not bind" }, // const p = import(the launcher); const m = await p; m.inBrowser(...): refused, the position named (before: the same refusal listing four forms the line does not hold)
 ];
 const bundleOf = (p: Plant): string => "out-tests/" + p.dir + "/" + p.file.replace(/\.test\.ts$/, ".test.js");
@@ -531,11 +542,42 @@ test("every planted form under tests/fixtures/browser-legs-plants is classified 
   // the launcher is unread by the walker, class none, no refusal. A text pin on the header's prose (its // lines joined, since the
   // sentence wraps): it holds that the header names the three forms and the outcome, not that the walker behaves so; the CLASS is
   // executed above by the p68 to p71 rows (a package name from the environment, another driver package, a package whose name
-  // contains a tracked spelling, a spawned binary), each class none with no refusal.
-  const header = read(MODULE).split("\n").filter((l) => l.startsWith("//")).map((l) => l.replace(/^\/\/ ?/, "")).join(" ");
-  assert.ok(header.includes("Three residuals, stated"), "the census header states three residuals (the string-typed parameter's fold, the non-loader call, and a browser reached without spelling a playwright package or the launcher); a header counting two has dropped the third, whose plants are the p68 to p71 rows above");
-  for (const form of ["another driver package such as puppeteer", "a browser binary it spawns", "a driver source whose package name arrives at run time"]) assert.ok(header.includes(form), "the census header names the third residual's form " + JSON.stringify(form) + " (a text pin on the header's prose: the class that form takes is executed by the p68 to p71 rows above)");
-  assert.ok(header.includes("is unread by the walker: class none, no refusal"), "the census header states the third residual's outcome, unread by the walker: class none, no refusal (the outcome the p68 to p71 rows record)");
+  // contains a tracked spelling, a spawned binary), each class none with no refusal. The read is the module's LEADING comment
+  // block, the // lines before its first line of code, so a sentence moved into a body comment does not satisfy it. Each of the
+  // three assertions holds the SENTENCE: a reword of the header's prose moves the pin too.
+  const moduleLines = read(MODULE).split("\n");
+  const codeAt = moduleLines.findIndex((l) => !l.startsWith("//") && l.trim() !== "");
+  const header = moduleLines.slice(0, codeAt < 0 ? moduleLines.length : codeAt).filter((l) => l.startsWith("//")).map((l) => l.replace(/^\/\/ ?/, "")).join(" ");
+  assert.ok(header.includes("Three residuals, stated"), "the census header's leading comment block states three residuals (the string-typed parameter's fold, the non-loader call, and a browser reached without spelling a playwright package or the launcher); a header counting two has dropped the third, whose plants are the p68 to p71 rows above; a sentence moved into a body comment is not the header's (holds the sentence: a reword moves this pin too)");
+  for (const form of ["another driver package such as puppeteer", "a browser binary it spawns", "a driver source whose package name arrives at run time"]) assert.ok(header.includes(form), "the census header's leading comment block names the third residual's form " + JSON.stringify(form) + " (a text pin on the header's prose: the class that form takes is executed by the p68 to p71 rows above; holds the sentence: a reword of the form moves this pin too)");
+  assert.ok(header.includes("is unread by the walker: class none, no refusal"), "the census header's leading comment block states the third residual's outcome, unread by the walker: class none, no refusal (the outcome the p68 to p71 rows record; holds the sentence: a reword moves this pin too)");
+});
+
+test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminate against the census before round 3 and what the others hold: 44 red under that census, 7 hold one of four stated reasons instead (holds), and 3 of the 44 red on a property other than their section's and name the plant that carries it (carried); the discrimination itself was established by running the census before round 3 over the plants, recorded in the PR's notes, and is not re-run here, since that census is not in the tree at test time, so this test holds the TABLE's statement, not the fact", () => {
+  const idOf = (p: Plant) => (/^p\d+/.exec(p.file) || [""])[0];
+  const num = (p: Plant) => Number(idOf(p).slice(1));
+  const inRound3 = (p: Plant) => num(p) >= 38 && num(p) <= 88;
+  const byNum = (a: string, b: string) => Number(a.slice(1)) - Number(b.slice(1));
+  const NOT_RERUN = " (the discrimination was established by running the census before round 3 over the plants, recorded in the PR's notes, and is not re-run here, since that census is not in the tree at test time: this assertion holds the table's statement, not the fact)";
+  const r3 = PLANT_TABLE.filter(inRound3);
+  assert.deepEqual(r3.map(idOf).sort(byNum), Array.from({ length: 51 }, (_, i) => "p" + (38 + i)), "the round-3 rows are p38 to p88, 51 of them, one row each, so every one takes a verdict below: red under the census before round 3 (no holds field) or green with holds set" + NOT_RERUN);
+  const FORMS = ["a stated residual boundary", "the no-refusal half of a pair whose partner reds", "a guard of round 3's own scoping", "a shape another plant carries"];
+  const held = r3.filter((p) => p.holds !== undefined);
+  assert.deepEqual(held.map(idOf).sort(byNum), ["p68", "p69", "p70", "p71", "p72", "p74", "p87"], "the round-3 rows that stay green under the census before round 3 are exactly these 7, each with holds set: a row marked as holding something else that reds under that census, or a green row left unmarked, is red here" + NOT_RERUN);
+  for (const p of held) assert.ok(FORMS.some((f) => (p.holds as string).startsWith(f + ": ") && (p.holds as string).length > f.length + 2), idOf(p) + ": holds begins with one of the four forms, a colon and the row's detail: " + JSON.stringify(p.holds));
+  const carried = r3.filter((p) => p.carried !== undefined);
+  assert.deepEqual(carried.map(idOf).sort(byNum), ["p41", "p42", "p47"], "the round-3 rows that red under the census before round 3 on a property other than their section's are exactly these 3, each with carried set" + NOT_RERUN);
+  const rows = new Map(PLANT_TABLE.map((p) => [idOf(p), p] as [string, Plant]));
+  for (const p of carried) {
+    assert.equal(p.holds, undefined, idOf(p) + ": a carried row reds under the census before round 3, so it holds no reason of its own");
+    const detail = (p.carried as string).slice("a shape another plant carries: ".length);
+    assert.ok((p.carried as string).startsWith("a shape another plant carries: ") && detail.length > 0, idOf(p) + ": carried begins with that form, a colon and the row's detail: " + JSON.stringify(p.carried));
+    const carriers = [...new Set([...detail.matchAll(/\bp\d+\b/g)].map((m) => m[0]))].filter((x) => x !== idOf(p));
+    assert.ok(carriers.length > 0, idOf(p) + ": carried names the plant that carries the property");
+    for (const c of carriers) { const q = rows.get(c); assert.ok(q !== undefined && q.holds === undefined, idOf(p) + ": the carrier " + c + " is a table row that reds under the census before round 3 (no holds field)" + NOT_RERUN); }
+  }
+  assert.equal(r3.length - held.length, 44, "44 round-3 rows red under the census before round 3 (51 rows, 7 with holds)" + NOT_RERUN);
+  assert.deepEqual(PLANT_TABLE.filter((p) => (p.holds !== undefined || p.carried !== undefined) && !inRound3(p)).map(idOf), [], "holds and carried are fields of the round-3 rows, p38 to p88, the population the statement is about; an earlier row carries neither");
 });
 
 test("THE INVARIANT is armed: one mutation of the walker per clause, over the plants, is refused by the invariant naming what the mutation silenced (a playwright package resolved and not recorded; a launcher load the walker stopped reading; a launcher binding handed on that the value-use arm stopped refusing; a computed member on the binding that rootOf stopped seeing), and each mutation's anchor is found once, so a rewrite of the walker re-anchors this test rather than passing it empty", async (t) => {
