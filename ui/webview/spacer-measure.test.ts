@@ -523,7 +523,7 @@ test("rows queued and the page hidden before their frame (visibilitychange): the
 });
 
 test("rows of TWO views pending at the hidden edge (A's row queued, the reader switched to B, B's row queued into the same frame): one drop row counts every pending row, n 2, and names the live view at the edge, sid B, never a count over the live view's rows alone or the first pending row's view (the maintainer's round 6 ruling, extra6-2; the handler's rule: n over every pending row whichever view queued it, sid the live view's id at the edge)", () => {
-  // the mixed-frame pattern of the two-view row test above, hidden before the frame: the two hidden-page cells above hold one view's rows,
+  // the mixed-frame pattern of the two-view row test above, hidden before the frame: the hidden-page cells before and after this one hold one view's rows,
   // so a count restricted to the live view's rows, or a sid taken from the first pending row, left both green and only the frame census's
   // source regex red; this cell reds by execution on either
   const w = lift("A");
@@ -837,7 +837,7 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   // the deferral is bounded on the visibility EVENT (the maintainer's round 5 ruling, kernel-1): the handler inside the span drops the
   // pending rows, cancels their frame and files one row through scrollDiagRow (the budget) with the allowlist's keys and no `view`; the
   // listener stands outside the span, beside the prebuild's, because a module-level statement inside it would run at lift time in the
-  // harnesses that slice this region (the two hidden-page cells above execute the handler through the harness's hide and show)
+  // harnesses that slice this region (the hidden-page cells above execute the handler through the harness's hide and show)
   assert.match(inFrame, /function dropSpacerRowsOnVisibility\(\): void \{\s*\n\s*const rows = spacerRowsPending;\s*\n\s*if \(rows\.length === 0\) return;\s*\n\s*spacerRowsPending = \[\];\s*\n\s*if \(spacerRowsRaf != null\) \{ cancelAnimationFrame\(spacerRowsRaf\); spacerRowsRaf = null; \}\s*\n\s*scrollDiagRow\("spacer-dropped", \{ sid: activeId \|\| "", n: rows\.length, kind: "spacer", why: document\.hidden \? "hidden" : "shown" \}\);/, "the visibility handler drops the pending rows, cancels their frame and files one budgeted row naming the count, the kind and the edge");
   assert.match(RENDER, /\ndocument\.addEventListener\("visibilitychange", dropSpacerRowsOnVisibility\);/, "the visibilitychange listener hands both edges to the span's handler, from outside the span");
   assert.doesNotMatch(inFrame, /const sh = content \? content\.scrollHeight : 0/, "the batch read is gone");
