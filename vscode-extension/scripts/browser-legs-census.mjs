@@ -12,7 +12,8 @@
 // it derives:
 //   launcher:  the module imports ui/webview/real-viewer-leg.ts by RESOLVED path (relative to the module, .js read as .ts, the
 //              suffix added when absent) under any binding form (named, aliased, namespace, default, import-equals, require(),
-//              await import(), a createRequire-bound loader or the launcher's own exported requireCjs, by its named import, as a
+//              module.require(), await import(), a createRequire-bound loader (createRequire by its own name or through its import
+//              alias) or the launcher's own exported requireCjs, by its named import, as a
 //              member of a whole-module or default launcher binding or of the launcher loaded where it stands, or destructured
 //              from a load of the launcher, declared or assigned,
 //              destructured or whole) and calls that module's inBrowser THROUGH the binding (an identifier bound to the
@@ -32,15 +33,18 @@
 //              nearest enclosing function or the module, not at the block, for head or catch clause that spells it (JavaScript
 //              hoists it there), so a use outside that block reaches it.
 //   loaded:    every module of the tree the test loads by a relative specifier (an import, an export from, import =, require(),
-//              await import(), a loader bound by createRequire or a createRequire(...) call applied directly; a specifier that
-//              names no file beside the module resolves
+//              module.require(), await import(), a loader bound by createRequire or a createRequire(...) call applied directly; a
+//              specifier that names no file beside the module resolves
 //              against the repo root and vscode-extension/, the bases loaders in this tree are anchored to, under the root alone:
 //              a candidate outside it is never looked up, so a sibling directory beside the checkout is neither read nor an
 //              ambiguity) is read by this same
 //              walker, transitively, for what it BINDS OR CALLS: a module that binds the launcher's inBrowser (imports it,
 //              imports the launcher whole, or re-exports it) or calls it (on a binding, or on a load where it stands) while the
-//              test itself never calls inBrowser, names a playwright package, holds a driver string, or holds a form the walker
-//              refuses, REFUSES the test at its import line with the chain. The
+//              test itself never calls inBrowser, names a playwright package, holds a driver string, holds a form the walker
+//              refuses, or HANDS ON the launcher's requireCjs loader (a non-type-only named or renamed re-export of it, or export *
+//              or export * as from the launcher: loaderReexport, read whether or not the test calls inBrowser itself, since a load
+//              the test makes through the barrel's export resolves to no loader the walker knows), REFUSES the test at its import
+//              line with the chain. The
 //              walker follows nothing THROUGH such a module (it does not read what the test calls on it), so the verdict is a
 //              refusal with the remedy, never a silent non-leg. A file under node_modules is a package and binds nothing of
 //              the tree; a json or css file is not a script.
@@ -89,7 +93,15 @@
 //              the position the line holds); the launcher loaded where it stands and handed on through .then, .catch,
 //              .finally or .default; the launcher's requireCjs loader handed on as a value, not called (the named import
 //              aliased to a name, or the member read off a whole-module or default binding or off the load where it stands
-//              without a call: a load made through the alias elsewhere is unread); a playwright load or binding, or a load of
+//              without a call: a load made through the alias elsewhere is unread); any other loader the walker knows by name
+//              (`loaders`: require, and a declaration bound to a createRequire(...) call) handed on as a value, not called, the
+//              twin of that arm keyed on the set loaderCall's callee test reads (`const r = require`, `loadPw(req)`, and the
+//              object of .call, .apply or .bind, which make a load or bind a loader where the walker does not follow; the exempt
+//              positions are the callee, a name, a property name, a type, the object of any other member, and the tag of a
+//              tagged template, a call form THE SAFETY NET reads the text of); a createRequire(...) call in a position other than
+//              a declaration's initializer under a plain name, a direct loader callee, or the object of a member other than
+//              call, apply or bind (passed as an argument, an assignment's right side, held in a literal: the loader is handed
+//              on and every load through it is unread); a playwright load or binding, or a load of
 //              the launcher, read through a conditional or logical expression (`cond ? require("playwright") : null`, `?? null`,
 //              `|| null`, `ok && require(...)`, as a binding's initializer, an assignment's right side or a member chain's root:
 //              the walker does not follow which branch the value takes, so the engines and launches read through it, or where
@@ -140,13 +152,16 @@
 // module.require, in every position. A mention is ACCOUNTED when the walker's own records show it read, and only then: a
 // specifier when the import, export or loader call holding it is in `resolved`; a driver string when the string reader noted its
 // line (embedded); requireCjs when bindingAt resolves it to a launcher binding, when it names a member of a launcher binding or of
-// a launcher load in `resolved`, or when the declaration it reaches is a loader the walker bound (loaders); createRequire when it
+// a launcher load in `resolved`, when the declaration it reaches is a loader the walker bound (loaders), or when it is the
+// specifier of a re-export the walker flagged (loaderReexport, the export declaration in `resolved` as the launcher); createRequire
+// (isCreateRequireId, the walker's own reader of the name and its alias) when it
 // is a declaration's or an import's own name or a type query, the callee of a call bound as a loader (loaders), applied directly
 // as a loader callee loaderCall reads, or the object of a member other than call, apply or bind (resolve or cache is a read off
-// the loader function and makes no load; those three make or bind one). The accounting set is derived from those records at the
+// the loader function and makes no load; those three make or bind one); module.require when it is the callee of a call loaderCall
+// reads. The accounting set is derived from those records at the
 // moment of the scan and the net declares no set of its own (a reader checks it by grepping the net block for the records it
-// reads, resolved, embedded, loaders and bindingAt, and the readers loaderCall, resolveSpec, isPwPackage, foldText, memberNames
-// and declOfUse, and finding no other), so a fold that reads a form accounts for its token by construction and the two cannot
+// reads, resolved, embedded, loaders, loaderReexport and bindingAt, and the readers loaderCall, resolveSpec, isPwPackage, foldText,
+// memberNames, declOfUse, isCreateRequireId and isModuleRequire, and finding no other), so a fold that reads a form accounts for its token by construction and the two cannot
 // disagree. Two clauses, one refusal per module, by name with the first unaccounted mention and its line, the count of the rest,
 // and the remedy: (1) a module with an unaccounted mention whose fold produced NO reach and NO refusal is refused, "mentions a
 // browser load the walker did not fold"; (2) a module with an unaccounted mention whose fold produced a reach is refused too, the
@@ -266,6 +281,7 @@ export function classify(ts, file, src, opts = {}) {
   const typeOnly = [];                 // { line, spec }: a type-only import or export of the launcher or a playwright package: resolved, binds nothing, recorded so the record carries it
   const localImports = [];             // { line, spec, text }: every module of the tree this module loads by a relative specifier (census() reads them)
   let launcherReexport = false;        // export { inBrowser } from / export * from the launcher: the module hands inBrowser on
+  let loaderReexport = false;          // export { requireCjs } from (renamed too) / export * from / export * as ns from the launcher: the module hands the launcher's loader on, and a load made through it by an importer is unread (localRefusals refuses the importer on this flag alone, whatever else the importer calls)
   const noteLocal = (n, r) => { if (r && r.kind === "local") localImports.push({ line: lineOf(n), spec: r.spec, folded: r.abs === undefined, text: n.getText(sf).split("\n")[0].slice(0, 120) }); };
 
   const unwrap = (e) => {
@@ -274,6 +290,9 @@ export function classify(ts, file, src, opts = {}) {
       else return e;
     }
   };
+  /** `n` up through the wrappers that leave a value where it stands (parentheses, as, a non-null assertion, satisfies, a type
+   *  assertion): the node whose parent is the position the value is used in. */
+  const up = (n) => { let q = n; while (q.parent && (ts.isParenthesizedExpression(q.parent) || ts.isAsExpression(q.parent) || ts.isNonNullExpression(q.parent) || ts.isSatisfiesExpression(q.parent) || ts.isTypeAssertionExpression(q.parent))) q = q.parent; return q; };
   const literalName = (n) => ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isNumericLiteral(n) ? n.text : null;
   /** The set of string values an identifier can take at a USE SITE, through closed forms only, by lexical scope: from the use
    *  upward, the first enclosing scope that declares the name decides: a const/let bound to a literal; a for-of over an array
@@ -450,7 +469,31 @@ export function classify(ts, file, src, opts = {}) {
   // the root of a member chain, unwrapped at EVERY step (a cast or a non-null assertion on the object, `(pw as any)[k]`, the
   // spelling strict TypeScript forces for a computed index on a typed namespace, hides the root otherwise)
   const rootOf = (e) => { e = unwrap(e); while (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e) || ts.isCallExpression(e) || ts.isNonNullExpression(e) || ts.isParenthesizedExpression(e)) e = unwrap(e.expression); return e; };
-  const isCreateRequireCall = (x) => ts.isCallExpression(x) && ((ts.isIdentifier(unwrap(x.expression)) && unwrap(x.expression).text === "createRequire") || (ts.isPropertyAccessExpression(unwrap(x.expression)) && unwrap(x.expression).name.text === "createRequire"));
+  /** Is `id` createRequire: by its own name, or an alias resolved through its import binding (`import { createRequire as cr }`) or a
+   *  destructuring of the module (`const { createRequire: cr } = require("node:module")`)? One reader for walk1's loaders add,
+   *  isCreateRequireCall, the createRequire-position arm and THE SAFETY NET, so the four agree by construction. */
+  const isCreateRequireId = (id) => { if (id.text === "createRequire") return true; const d = declOfUse(id); return !!(d && (ts.isImportSpecifier(d) || ts.isBindingElement(d)) && d.propertyName && ts.isIdentifier(d.propertyName) && d.propertyName.text === "createRequire"); };
+  /** Is `c` (a callee, unwrapped) createRequire: the identifier (an alias too) or a member spelling it (`mod.createRequire`)? */
+  const isCreateRequireCallee = (c) => (ts.isIdentifier(c) && isCreateRequireId(c)) || (ts.isPropertyAccessExpression(c) && c.name.text === "createRequire");
+  const isCreateRequireCall = (x) => ts.isCallExpression(x) && isCreateRequireCallee(unwrap(x.expression));
+  /** `module.require`, CommonJS's loader off the module object: a loader callee when called (loaderCall); handed on otherwise. */
+  const isModuleRequire = (c) => ts.isPropertyAccessExpression(c) && ts.isIdentifier(c.expression) && c.expression.text === "module" && c.name.text === "require";
+  const CALL_APPLY_BIND = (names) => names.some((x) => x === "call" || x === "apply" || x === "bind");
+  /** The position a loader or a playwright binding is handed on in, for the refusal's parenthetical (the launcher binding's is
+   *  handedHow, whose parentheticals name inBrowser): `q` is the reference up through the wrappers, `pp` its parent. */
+  const valueHandedHow = (q, pp) => {
+    if (!pp) return "in a position the walker does not read";
+    if (ts.isPropertyAccessExpression(pp) || ts.isElementAccessExpression(pp)) { const names = memberNames(pp); return names === null ? "read for a computed member the walker cannot fold" : "read for ." + names.join("|") + (CALL_APPLY_BIND(names) ? ", through which a load is made or a loader bound where the walker does not follow" : ""); }
+    if (ts.isVariableDeclaration(pp) && pp.initializer === q) return ts.isIdentifier(pp.name) ? "aliased by a declaration" : "destructured";
+    if (ts.isBinaryExpression(pp) && isAssignmentOp(pp) && pp.right === q) return "aliased by an assignment";
+    if (ts.isBinaryExpression(pp)) return "read as an operand of " + ts.tokenToString(pp.operatorToken.kind);
+    if (ts.isNewExpression(pp)) return pp.expression === q ? "constructed with new" : "passed as an argument";
+    if (ts.isCallExpression(pp)) return "passed as an argument";
+    if (ts.isArrayLiteralExpression(pp) || ts.isPropertyAssignment(pp) || ts.isShorthandPropertyAssignment(pp) || ts.isSpreadElement(pp) || ts.isSpreadAssignment(pp)) return "held in an array or an object literal";
+    if (ts.isReturnStatement(pp) || ts.isArrowFunction(pp)) return "returned from a function";
+    if (ts.isTemplateSpan(pp)) return "read into a template string";
+    return "in a position the walker does not read (" + (pp.kind === ts.SyntaxKind.QualifiedName ? "QualifiedName" : ts.SyntaxKind[pp.kind]) + ")";
+  };
   // THE INVARIANT's state: every tracked specifier the parse resolved (a playwright package or the launcher), by the node that
   // resolved it, with what accounts for it: an import's line is accounted by launcherImported or typeOnly; a loader call by
   // `followed` (bound, standing as a statement, or the object of a member the walker read)
@@ -477,7 +520,7 @@ export function classify(ts, file, src, opts = {}) {
     e = unwrap(e);
     if (!ts.isCallExpression(e)) return null;
     const c = unwrap(e.expression);
-    const isLoader = (ts.isIdentifier(c) && loaders.has(c.text)) || c.kind === ts.SyntaxKind.ImportKeyword || isCreateRequireCall(c) || isLauncherRequireCjs(c);
+    const isLoader = (ts.isIdentifier(c) && loaders.has(c.text)) || c.kind === ts.SyntaxKind.ImportKeyword || isCreateRequireCall(c) || isModuleRequire(c) || isLauncherRequireCjs(c);
     if (!isLoader) return null;
     const arg = e.arguments[0];
     const spec = arg && literalName(unwrap(arg));
@@ -643,14 +686,23 @@ export function classify(ts, file, src, opts = {}) {
         if (exportTypeOnly && ["launcher", "playwright"].includes(r.kind)) typeOnly.push({ line: lineOf(n), spec });
         if (!exportTypeOnly) {
           noteLocal(n, r);
-          // export * from the launcher, export * as ns from it, or a named export of inBrowser: the module hands inBrowser on
-          if (r.kind === "launcher") { launcherImported.push(lineOf(n)); if (!ec || ts.isNamespaceExport(ec) || ec.elements.some((el) => !el.isTypeOnly && (el.propertyName || el.name).text === "inBrowser")) launcherReexport = true; }
+          // export * from the launcher, export * as ns from it, or a named export of inBrowser: the module hands inBrowser on; the
+          // same three forms with requireCjs (a named or renamed re-export of the loader, or the launcher whole) hand the LOADER on,
+          // a separate flag, since an importer may call inBrowser itself and still load playwright through the barrel unread
+          if (r.kind === "launcher") {
+            launcherImported.push(lineOf(n));
+            const reexports = (name) => !ec || ts.isNamespaceExport(ec) || ec.elements.some((el) => !el.isTypeOnly && (el.propertyName || el.name).text === name);
+            if (reexports("inBrowser")) launcherReexport = true;
+            if (reexports("requireCjs")) loaderReexport = true;
+          }
         }
       }
     } else if (ts.isVariableDeclaration(n) && n.initializer) {
       const init = unwrap(n.initializer);
-      // a createRequire(...) result is a loader
-      if (ts.isCallExpression(init) && ((ts.isIdentifier(unwrap(init.expression)) && unwrap(init.expression).text === "createRequire") || (ts.isPropertyAccessExpression(unwrap(init.expression)) && unwrap(init.expression).name.text === "createRequire")) && ts.isIdentifier(n.name)) loaders.add(n.name.text);
+      // a createRequire(...) result bound by a declaration under a plain name is a loader (createRequire by its own name or through
+      // its import alias, isCreateRequireId); bound any other way (an assignment, a pattern, a property) the call is refused by the
+      // createRequire-position arm in walk3, since a load made through it would resolve nowhere
+      if (isCreateRequireCall(init) && ts.isIdentifier(n.name)) loaders.add(n.name.text);
     }
     ts.forEachChild(n, walk1);
   };
@@ -786,6 +838,19 @@ export function classify(ts, file, src, opts = {}) {
           let q = n; while (q.parent && (ts.isParenthesizedExpression(q.parent) || ts.isAwaitExpression(q.parent) || ts.isAsExpression(q.parent) || ts.isNonNullExpression(q.parent))) q = q.parent;
           if (q.parent && ts.isExpressionStatement(q.parent)) { followed.add(unwrap(n)); launcherImported.push(lineOf(n)); }
         }
+        // a createRequire(...) call, the loader itself made where it stands: READ when a declaration binds it under a plain name
+        // (walk1 added the name to loaders), when it is applied directly as a loader callee (loaderCall reads the outer call), or
+        // when a member other than call, apply or bind is read off it (`createRequire(x).resolve(y)` makes no load); in any other
+        // position (passed as an argument, an assignment's right side, held in an object literal, .call'd) the loader is handed on
+        // and every load made through it resolves nowhere the walker looks: refused by name, the position named
+        if (isCreateRequireCallee(unwrap(n.expression))) {
+          const q = up(n), pp = q.parent;
+          const bound = !!pp && ts.isVariableDeclaration(pp) && pp.initializer === q && ts.isIdentifier(pp.name) && loaders.has(pp.name.text);
+          const applied = !!pp && ts.isCallExpression(pp) && pp.expression === q;
+          let memberRead = false;
+          if (pp && (ts.isPropertyAccessExpression(pp) || ts.isElementAccessExpression(pp)) && pp.expression === q) { const names = memberNames(pp); memberRead = names !== null && !CALL_APPLY_BIND(names); }
+          if (!(bound || applied || memberRead)) refuse(n, "a createRequire(...) loader made where it stands and handed on (" + valueHandedHow(q, pp) + "), so every load made through it is unread by the walker: bind it to a name in a declaration of its own, or apply it where the load is made");
+        }
       }
       let c = unwrap(n.expression);
       // .call / .apply on the callee (.bind makes no call: a bound reference is read as a value use below)
@@ -830,6 +895,32 @@ export function classify(ts, file, src, opts = {}) {
       // a reference to a launcher binding (inBrowser, the whole module or its default) that the call arm did not resolve a call
       // through (calledThrough), and that is not a declaration name, a property name or an import clause: a value use, refused
       const b = bindingAt(n);
+      // a loader the walker knows by NAME (`loaders`: require, and every declaration walk1 bound to a createRequire(...) call) handed
+      // on as a value, not called: the twin of the requireCjs arm below, keyed on the same set loaderCall's callee test reads, so
+      // the call arm and this refusal agree by construction. The identifier IS the loader when no enclosing scope declares the name
+      // (the global require), when the declaration it reaches has no initializer (an ambient `declare var require`), or when that
+      // declaration is the createRequire initializer walk1 read; an inner parameter or local reusing the name is its own binding
+      // and not the loader. Exempt, as for requireCjs: the callee position (loaderCall reads the call), a name position (a
+      // declaration, import, parameter or property name, an assignment's target), a type position, and the object of a member
+      // other than call, apply or bind (`req.resolve(x)` makes no load; those three make a load or bind a loader where the walker
+      // does not follow, so they are refused with the position named). A requireCjs binding is the next arm's.
+      if (loaders.has(n.text) && !(b !== null && b.module === "launcher" && b.member === "requireCjs")) {
+        const d = declOfUse(n);
+        const isTheLoader = d === null || (ts.isVariableDeclaration(d) && (!d.initializer || isCreateRequireCall(unwrap(d.initializer))));
+        if (isTheLoader) {
+          const p = n.parent, q = up(n), pp = q.parent;
+          // the tag of a tagged template (require`playwright`) is a CALL the walker reads no load through, not a hand-on: exempt
+          // here deliberately, since THE SAFETY NET reads the template's text as a specifier-capable position and refuses the module
+          // (the round-5 ruling records the net's refusal for that form and folds it nowhere; p186 holds it)
+          const called = !!pp && ((ts.isCallExpression(pp) && pp.expression === q) || (ts.isTaggedTemplateExpression(pp) && pp.tag === q));
+          const isName = !!p && (ts.isImportSpecifier(p) || ts.isImportClause(p) || ts.isNamespaceImport(p) || ts.isParameter(p) || (ts.isBindingElement(p) && (p.name === n || p.propertyName === n)) || (ts.isVariableDeclaration(p) && p.name === n) || (ts.isFunctionDeclaration(p) && p.name === n) || (ts.isBinaryExpression(p) && p.left === n && isAssignmentOp(p)));
+          const isPropName = !!p && ((ts.isPropertyAccessExpression(p) && p.name === n) || (ts.isPropertyAssignment(p) && p.name === n) || (ts.isPropertySignature(p) && p.name === n) || (ts.isMethodDeclaration(p) && p.name === n));
+          const isType = !!p && (ts.isTypeQueryNode(p) || ts.isTypeReferenceNode(p));
+          let memberRead = false;
+          if (pp && (ts.isPropertyAccessExpression(pp) || ts.isElementAccessExpression(pp)) && pp.expression === q) { const names = memberNames(pp); memberRead = names !== null && !CALL_APPLY_BIND(names); }
+          if (!(called || isName || isPropName || isType || memberRead)) refuse(n, "a loader (" + n.text + ") handed on as a value, not called (a load made through the alias is unread by the walker: call the loader where the load is made): " + valueHandedHow(q, pp));
+        }
+      }
       if (b !== null && b.module === "launcher" && b.member === "requireCjs") {
         // the loader binding itself (the named import, or the member destructured from a load): read as a callee (loaderCall, through
         // parentheses, ! and as) or in a name, property or type position; any other use hands the loader on (`const r = requireCjs`),
@@ -916,8 +1007,9 @@ export function classify(ts, file, src, opts = {}) {
   for (const [, b] of bindings) if (b.module === "launcher" && (b.member === null || b.member === "default" || b.member === "inBrowser")) launcherBinds = true;
   // THE SAFETY NET (the header states it): a pre-scan of the parse for any mention of a browser load, keyed on the walker's own
   // name-sets and readers, with the accounting DERIVED from the walker's records. This block reads the records `resolved`,
-  // `embedded`, `loaders` and `bindings` (through bindingAt) and the readers loaderCall, resolveSpec, isPwPackage, foldText,
-  // memberNames and declOfUse, and declares no set of its own: a fold that reads a form accounts for its token by construction.
+  // `embedded`, `loaders`, `loaderReexport` and `bindings` (through bindingAt) and the readers loaderCall, resolveSpec, isPwPackage,
+  // foldText, memberNames, declOfUse, isCreateRequireId and isModuleRequire, and declares no set of its own: a fold that reads a
+  // form accounts for its token by construction.
   // `netHits` is every UNACCOUNTED mention in source order, { line, what, token }.
   const netHits = [];
   {
@@ -925,7 +1017,6 @@ export function classify(ts, file, src, opts = {}) {
     const pwText = (t) => PW_PACKAGES.some((p) => t.includes(p));
     // a relative path whose segments after its last node_modules name a playwright package (.js, .ts and /index stripped)
     const nmPw = (t) => { const segs = t.split("/"); const i = segs.lastIndexOf("node_modules"); return i >= 0 && isPwPackage(segs.slice(i + 1).join("/").replace(/\.[cm]?[jt]s$/, "").replace(/\/index$/, "")); };
-    const up = (n) => { let q = n; while (q.parent && (ts.isParenthesizedExpression(q.parent) || ts.isAsExpression(q.parent) || ts.isNonNullExpression(q.parent) || ts.isSatisfiesExpression(q.parent) || ts.isTypeAssertionExpression(q.parent))) q = q.parent; return q; };
     /** The node a specifier-capable position hands `n`'s text to, the one noteResolved keys when the walker reads it: the import,
      *  export or import = declaration whose specifier it is, the call or new whose argument it is (an array literal that is a call's
      *  argument too, .apply's list), the tagged template whose text it is; null in any other position (a declaration's initializer,
@@ -962,7 +1053,6 @@ export function classify(ts, file, src, opts = {}) {
       if (found !== null) hit(n, "a playwright package specifier inside a string's text read as code", found);
     };
     const isPlus = (x) => ts.isBinaryExpression(x) && x.operatorToken.kind === ts.SyntaxKind.PlusToken;
-    const isCreateRequireId = (id) => { if (id.text === "createRequire") return true; const d = declOfUse(id); return !!(d && (ts.isImportSpecifier(d) || ts.isBindingElement(d)) && d.propertyName && ts.isIdentifier(d.propertyName) && d.propertyName.text === "createRequire"); };
     /** createRequire as a callee (`c`: the identifier, or the member access spelling it), by the position of the call it makes: accounted
      *  when the walker read that call (bound as a loader by a declaration, `loaders`; applied directly as a loader callee, loaderCall) or
      *  when the call is the object of a member other than call, apply or bind (a read off the loader function makes no load). */
@@ -973,14 +1063,14 @@ export function classify(ts, file, src, opts = {}) {
       if (!cp) return false;
       if (ts.isVariableDeclaration(cp) && cp.initializer === cq && ts.isIdentifier(cp.name)) return loaders.has(cp.name.text);
       if (ts.isCallExpression(cp) && cp.expression === cq) return loaderCall(cp) !== null;
-      if ((ts.isPropertyAccessExpression(cp) || ts.isElementAccessExpression(cp)) && cp.expression === cq) { const names = memberNames(cp); return names !== null && !names.some((x) => ["call", "apply", "bind"].includes(x)); }
+      if ((ts.isPropertyAccessExpression(cp) || ts.isElementAccessExpression(cp)) && cp.expression === cq) { const names = memberNames(cp); return names !== null && !CALL_APPLY_BIND(names); }
       return false;
     };
     const CR_WHAT = "createRequire in a position the walker does not fold (not a declaration's own name or an import's, the callee of a call bound as a loader or applied as one, or the object of a member other than call, apply or bind)";
     const netWalk = (n) => {
       if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) { if (!(n.parent && isPlus(n.parent))) { scanText(n, n.text); scanAsCode(n, n.text); } }   // a `+` operand is read at its chain's root, folded
       else if (ts.isTemplateExpression(n) || (isPlus(n) && !(n.parent && isPlus(n.parent)))) { const t = foldText(n); scanText(n, t); scanAsCode(n, t); }
-      else if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "module" && n.name.text === "require") hit(n, "module.require, a loader callee the walker does not know", n.getText(sf));
+      else if (isModuleRequire(n)) { const q = up(n), call = q.parent; if (!(call && ts.isCallExpression(call) && call.expression === q && loaderCall(call) !== null)) hit(n, "module.require, a loader, in a position the walker does not read (not called)", n.getText(sf)); }   // accounted when it is the callee of a call loaderCall reads
       else if (ts.isPropertyAccessExpression(n) && n.name.text === "createRequire") { if (!createRequireFolded(n)) hit(n, CR_WHAT, n.getText(sf)); }
       else if (ts.isIdentifier(n)) {
         const p = n.parent;
@@ -989,7 +1079,10 @@ export function classify(ts, file, src, opts = {}) {
           const d = declOfUse(n);
           const localLoader = !!(d && ts.isVariableDeclaration(d) && ts.isIdentifier(d.name) && loaders.has(d.name.text));
           const asMember = !!(p && ts.isPropertyAccessExpression(p) && p.name === n) && (() => { const o = unwrap(p.expression); if (ts.isIdentifier(o)) { const ob = bindingAt(o); return ob !== null && ob.module === "launcher"; } const rr = resolved.get(o); return !!(rr && rr.kind === "launcher"); })();
-          if (!((b !== null && b.module === "launcher") || localLoader || asMember)) hit(n, "the identifier requireCjs, the launcher's loader, resolved to no launcher binding", n.getText(sf));
+          // the export specifier of a re-export the walker flagged (loaderReexport): `export { requireCjs } from` the launcher, as the
+          // name or the propertyName of the specifier, the export declaration in `resolved` as the launcher
+          const asReexport = loaderReexport && !!(p && ts.isExportSpecifier(p) && (p.name === n || p.propertyName === n)) && (() => { const ed = p.parent && p.parent.parent; const rr = ed ? resolved.get(ed) : undefined; return !!(rr && rr.kind === "launcher"); })();
+          if (!((b !== null && b.module === "launcher") || localLoader || asMember || asReexport)) hit(n, "the identifier requireCjs, the launcher's loader, resolved to no launcher binding", n.getText(sf));
         } else if (isCreateRequireId(n) && !(p && ts.isPropertyAccessExpression(p) && p.name === n)) {
           const declPos = !!p && (ts.isImportSpecifier(p) || ts.isImportClause(p) || ts.isBindingElement(p) || (ts.isVariableDeclaration(p) && p.name === n) || ts.isTypeQueryNode(p));
           if (!declPos && !createRequireFolded(n)) hit(n, CR_WHAT, n.getText(sf));
@@ -1016,7 +1109,9 @@ export function classify(ts, file, src, opts = {}) {
   const net = netVerdict();
   if (net !== null && !opts.testModule) refusals.push(net);   // a loaded module: refused here, so localRefusals carries it to the importer
   const seenI = new Set(); const localU = localImports.filter((l) => { const k = l.line + "|" + l.spec; if (seenI.has(k)) return false; seenI.add(k); return true; });
-  return { rel, refusals, launcherImported: launcherImported.length > 0, typeOnly, launcherBinds, sharedCalls, embedded, playwright: [...playwright].sort(), engines: [...engines].sort(), launches, skipTodo, swallow, reaches, localImports: localU, ...(opts.testModule ? { net } : {}) };
+  // loaderReexport is carried when set (a barrel of the launcher's loader, which no test module is), so the record of every other
+  // module keeps its shape
+  return { rel, refusals, launcherImported: launcherImported.length > 0, typeOnly, launcherBinds, ...(loaderReexport ? { loaderReexport } : {}), sharedCalls, embedded, playwright: [...playwright].sort(), engines: [...engines].sort(), launches, skipTodo, swallow, reaches, localImports: localU, ...(opts.testModule ? { net } : {}) };
 }
 
 const MODULE_EXT = /\.(d\.ts|[cm]?ts|[cm]?js)$/;
@@ -1076,6 +1171,11 @@ export function localRefusals(ts, r, file, root, opts, ownCache) {
       if (rec.refusals.length) { at(li, link + ", which the census cannot classify (" + rec.refusals[0] + ")"); refused = true; break; }
       if (rec.playwright.length) { at(li, link + ", which names a playwright package (" + rec.playwright.join(", ") + "), so this module reaches a browser through it"); refused = true; break; }
       if (rec.embedded.length) { at(li, link + ", which holds a driver string that loads playwright (line " + rec.embedded[0].line + ")"); refused = true; break; }
+      // the launcher's requireCjs loader re-exported (named, renamed, export * or export * as from the launcher): a load the test
+      // makes through the barrel's export resolves to no loader the walker knows, so the refusal is NOT gated on the test's own
+      // shared calls (a test that calls inBrowser directly AND loads playwright through the barrel is class shared with the launch
+      // unread, which is the silent form the round-4 review found)
+      if (rec.loaderReexport) { at(li, link + ", which hands on the shared launcher's requireCjs loader (a re-export of it, or of the launcher whole), so a playwright load or a launch this module makes through it is unread"); refused = true; break; }
       if (rec.launcherBinds && r.sharedCalls === 0) { at(li, link + ", which binds or calls the shared launcher's inBrowser, so this module may launch through it without the census seeing a call"); refused = true; break; }
       for (const n of next) {
         if (n.to === null || n.to.ambiguous) { at(li, link + ", which " + unresolved(n.li, n.to, rel) + " (" + rel + ":" + n.li.line + ")"); refused = true; break; }
