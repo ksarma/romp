@@ -7,8 +7,9 @@ kernel's /version reports the switch off, the feed pane's frame carries the off 
 in place of its list, a fresh /feed page renders the notice unhidden, the judge rows and the pane toggles wear rs-off with
 the one tooltip and their inputs are disabled, the Automation rows show their waiting note, and /perf's tierStarts stays flat
 across the wait while it grew before and grows again after. Flipped back, the buttons return, /version reads on and the notice hides.
-The kernel's switch is polled from the driver after each flip, past five stale /version answers the driver serves the page first (the
-pinned Playwright does not poll an async waitForFunction predicate, so the wait that stood here gated nothing).
+The kernel's switch is polled from the driver after each flip, past five stale /version answers the driver serves its own marked reads
+first (the pinned Playwright does not poll an async waitForFunction predicate, so the wait that stood here gated nothing); the shell's
+own /version reads, which drive the rail, never meet a stale answer, and a read of the shell's shape inside each window shows it.
 Round two: the Outline pane is turned on first so its page is loaded, and after the flip both panes show the notice ON TOP with
 the romp loader gone within seconds, not at its 30 s failsafe (the outline's _keepLoader used to re-assert it forever); a write
 the kernel refuses (a directory where the file goes) leaves the switch, the shell and the kernel on and draws the stale toast
@@ -69,7 +70,28 @@ const gear = () => setF.evaluate(() => {
            fleet: dep("rs-pane-fleet"), feed: dep("rs-pane-feed"), jix: dep("rs-judges-index"), jtr: dep("rs-judges-triage"),
            nudgeNote: !document.getElementById("rs-autonudge-tt").hidden, compactNote: !document.getElementById("rs-suggestcompact-tt").hidden };
 });
-const kernel = async () => { const v = await page.evaluate(async (u) => (await fetch(u, { cache: "no-store" })).json(), cfg.version); const p = await page.evaluate(async (u) => (await fetch(u, { cache: "no-store" })).json(), cfg.perf);
+// THE DRIVER'S OWN READS OF /version CARRY A MARKER THE PRODUCT NEVER SENDS, a query on the URL. The page reads /version itself: the
+// shell's stale banner (kernel/kernel.py, _STALE_JS: check() at load and every 30 s) and the reload core (checkBoot() on a socket reopen)
+// fetch it relative, an href equal to cfg.version, and hand a boolean taskTracking to the rail (RL.noteVersion sets window.__rompTaskTracking
+// and calls __rompApplyPanes, which toggles body.no-task-tracking); the gear's fill() reads it with a token in the query. The stale seam
+// below must reach none of them: a fabricated body handed to the shell drives the rail to the pre-flip state with no correcting read for
+// 30 s, and the shell pins would red on a body the kernel never sent. The kernel's /version handler answers on the path alone (do_GET:
+// urlparse(self.path).path; the query is parsed and never read for this route), so the marked URL gets the kernel's own answer, and the
+// route matches the marked href and no other: an unmarked read never meets it
+const versionUrl = cfg.version + "?driver=1";
+const readVersion = () => page.evaluate(async (u) => (await fetch(u, { cache: "no-store" })).json(), versionUrl);
+// a read of the SHELL'S OWN SHAPE, the relative fetch check() and checkBoot() make, so what the seam does to the shell's reads is measured
+// by the driver inside each window, and not left to where the shell's 30 s tick happens to fall
+const shellShapedRead = () => page.evaluate(async () => (await fetch("/version", { cache: "no-store" })).json());
+// every /version answer the page receives WITHOUT the marker (the shell's, the gear's, a pane's, the two shell-shaped reads above), and how
+// many carried the seam's staleAnswer mark: the count must move (the shell-shaped reads are two of them) and the stale count must stay 0
+const productReads = { requests: 0, staleAnswers: 0, pending: [] };
+page.on("response", (resp) => { let u; try { u = new URL(resp.url()); } catch (e) { return; }
+  if (u.pathname !== "/version" || u.href === versionUrl) return;
+  productReads.requests += 1;
+  productReads.pending.push(resp.json().then((b) => { if (b && b.staleAnswer === true) productReads.staleAnswers += 1; }).catch(() => {})); });
+const productReadsNow = async () => { await Promise.all(productReads.pending); return { requests: productReads.requests, staleAnswers: productReads.staleAnswers }; };
+const kernel = async () => { const v = await readVersion(); const p = await page.evaluate(async (u) => (await fetch(u, { cache: "no-store" })).json(), cfg.perf);
   const feedPage = await page.evaluate(async (u) => (await fetch(u, { cache: "no-store" })).text(), cfg.feedPage);
   return { taskTracking: v.taskTracking, settingsTaskTracking: v.settings && v.settings.taskTracking, tierStarts: p.judge ? p.judge.tierStarts : null, feedNoticeShown: /id=tt-off class=tt-off style=/.test(feedPage), feedNoticeHidden: /class=tt-off hidden/.test(feedPage) }; };
 // THE KERNEL'S SWITCH, POLLED FROM THE DRIVER. The pinned Playwright (vscode-extension/package-lock.json) does not poll an ASYNC
@@ -78,14 +100,16 @@ const kernel = async () => { const v = await page.evaluate(async (u) => (await f
 // measured) and the reads after it raced the kernel's write (a finding on the project PR 2031; fork PR #862 and fork PR #899 in CI).
 // A bounded loop over the same read, a short pause between polls; the elapsed time and a timeout ride in `out`, so a kernel that never
 // wrote is named in the failing pin's table rather than read as a stale value
-const readSwitch = () => page.evaluate(async (u) => (await (await fetch(u, { cache: "no-store" })).json()).taskTracking, cfg.version);
 // THE STALE ANSWERS THAT MAKE THE POLL SHOW ITS WAIT. In this lab the poll's first read already holds the new value (one fetch round
 // trip, 5 to 48 ms: the kernel writes the switch before it echoes the gear, and the class wait above covers that echo), so a poll cut to
-// one read, or to no bound, would stay green here; the race is a slower kernel's. So the first five /version answers the page receives
-// after each flip are the PRE-FLIP value (a route on cfg.version, count-keyed, then route.fallback() to the kernel): a poll that outlasts
-// them reads the kernel, and one that gives up times out, or hands the reads below the stale value, with staleServed in the pin's table
+// one read, or to no bound, would stay green here; the race is a slower kernel's. So the first five MARKED /version reads after each flip
+// get the PRE-FLIP value (a route on versionUrl, the driver's marked href and no other, count-keyed, then route.fallback() to the kernel):
+// a poll that outlasts them reads the kernel, and one that gives up times out, or hands the reads below the stale value, with
+// staleServed in the pin's table. The route never sees an unmarked request, so the shell's own reads reach the kernel whatever the seam
+// holds; before the marker (the fix-up before this one) the route matched cfg.version itself and the shell's tick took stale answers
+// meant for the poll, which then passed its pin on a count of answers served to anyone
 let stale = null;   // { value, left, served } from the arm until five answers are served; null passes every request to the kernel
-await page.route((u) => u.href === cfg.version, async (route) => {
+await page.route((u) => u.href === versionUrl, async (route) => {
   if (!stale || stale.left <= 0) return route.fallback();
   stale.left -= 1; stale.served += 1;
   await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ taskTracking: stale.value, settings: { taskTracking: stale.value }, staleAnswer: true }) });
@@ -93,9 +117,13 @@ await page.route((u) => u.href === cfg.version, async (route) => {
 const armStale = (preFlip) => { stale = { value: preFlip, left: 5, served: 0 }; };
 const pollKernelSwitch = async (want, boundMs = 10000) => {
   const t0 = Date.now();
-  let value = await readSwitch();
-  while (value !== want && Date.now() - t0 < boundMs) { await page.waitForTimeout(50); value = await readSwitch(); }
-  return { want, value, ms: Date.now() - t0, timedOut: value !== want, staleServed: stale ? stale.served : 0 };
+  let staleRead = 0;   // the stale bodies THIS poll read, counted at the reader by the body's own mark (staleRouted below is the route's count)
+  const take = (b) => { if (b && b.staleAnswer === true) staleRead += 1; return b ? b.taskTracking : undefined; };
+  let value = take(await readVersion());
+  // the shell-shaped read, inside the window (left > 0 at the read, or it proves nothing): unmarked, it must come back from the kernel
+  const shellRead = { left: stale ? stale.left : 0 }; const sb = await shellShapedRead(); shellRead.staleAnswer = !!(sb && sb.staleAnswer === true); shellRead.taskTracking = sb ? sb.taskTracking : null;
+  while (value !== want && Date.now() - t0 < boundMs) { await page.waitForTimeout(50); value = take(await readVersion()); }
+  return { want, value, ms: Date.now() - t0, timedOut: value !== want, staleServed: staleRead, staleRouted: stale ? stale.served : 0, shellRead, productReads: await productReadsNow() };
 };
 const feedPane = () => feedF ? feedF.evaluate(() => { const o = document.getElementById("tt-off"), l = document.getElementById("feed-list"); return { present: !!o, noticeShown: !!o && !o.hidden, listHidden: !!l && l.hidden }; }) : Promise.resolve(null);
 const out = {};
@@ -132,7 +160,7 @@ if (!(await setF.evaluate(() => document.getElementById("rs-tasktrack").checked)
 if (feedF) await feedF.evaluate(() => localStorage.setItem("romp:cardNotified", JSON.stringify(["n|seed-1", "w|seed-2|1700000000|judge", "sync|seed-3"])));
 // THE FLIP, in the gear: a real click on the switch
 const flipAt = Date.now();
-armStale(true);   // on is the value before this flip: the page's first five /version answers after the click say so
+armStale(true);   // on is the value before this flip: the driver's first five marked /version reads after the click say so
 await setF.click("#rs-tasktrack");
 await page.waitForFunction(() => document.body.classList.contains("no-task-tracking"), null, { timeout: 10000 }).catch(() => {});
 const offWait = await pollKernelSwitch(false);   // the kernel's own state, not the shell's class: /version must read off before the reads below
@@ -199,6 +227,7 @@ const onWait = await pollKernelSwitch(true);
 if (feedF) await feedF.waitForFunction(() => { const o = document.getElementById("tt-off"); return !!o && o.hidden; }, null, { timeout: 15000 }).catch(() => {});
 out.on = { kernelWait: onWait, shell: await shell(), gear: await gear(), kernel: await kernel(), feedPane: await feedPane(), feedFrames: await feedFrames(),
            seenAfterOn: feedF ? await feedF.evaluate(() => JSON.parse(localStorage.getItem("romp:cardNotified") || "[]")) : null };
+out.productReads = await productReadsNow();
 await browser.close();
 process.stdout.write("RESULT:" + JSON.stringify(out) + "\n", () => process.exit(0));
 """
@@ -349,19 +378,41 @@ class ServedTaskTrackingSwitch(QueuedLab):
     def test_the_driver_polled_the_kernels_switch_to_each_value_within_its_bound(self):
         # the flip's wait on the kernel is a poll from the driver (pollKernelSwitch in DRIVER): the pinned Playwright does not poll an
         # async waitForFunction predicate, and the old wait, handed `async (u) => ... fetch ...`, returned at once with the kernel unread.
-        # The driver answers the page's first five /version reads after each click with the pre-flip value before the kernel's own (this
+        # The driver answers its own first five marked /version reads after each click with the pre-flip value before the kernel's own (this
         # lab's kernel writes before the gear echoes, so an unpolled read would hold the new value already): a poll that read the kernel
         # outlasted all five; one cut to a single read, or to a shorter bound, reads a stale answer and times out here; a seam never armed
-        # served none, and such a run proves nothing about the poll
+        # served none, and such a run proves nothing about the poll. staleServed is the poll's OWN count, by the mark each stale body
+        # carries, not the route's: a stale answer taken by another reader is not a wait the poll showed
         r = self._result()
         for scene, want in (("off", False), ("on", True)):
             w = r[scene].get("kernelWait"); table = "\n  " + scene + ": " + json.dumps(w)
             self.assertIsNotNone(w, scene + ": the driver recorded its poll of the switch" + table)
             self.assertEqual(w["want"], want, table)
             self.assertFalse(w["timedOut"], scene + ": /version read %s within the poll's bound (%s ms)" % (json.dumps(want), w["ms"]) + table)
-            self.assertEqual(w.get("staleServed"), 5, scene + ": the poll read past the five stale answers the driver served after the click "
-                             "(fewer: it stopped before it reached the kernel; 0: the stale answers were never armed)" + table)
+            self.assertEqual(w.get("staleServed"), 5, scene + ": the poll itself read the five stale answers served after the click "
+                             "(fewer: it stopped before it reached the kernel, or another reader took some; 0: the stale answers were never armed)" + table)
             self.assertEqual(w["value"], want, table)
+
+    def test_the_stale_answers_reach_only_the_drivers_marked_reads_never_the_shells_own(self):
+        # the shell fetches /version itself (kernel/kernel.py, _STALE_JS check(): at load and every 30 s; the reload core's checkBoot() on
+        # a socket reopen) and hands a boolean taskTracking to the rail, so a stale answer that reached it would drive the rail to the
+        # pre-flip state from a body the kernel never sent, with no correcting read for 30 s: a false red in the shell pins above. The
+        # driver's reads carry a query marker and the route matches the marked href only. Inside each window the driver makes one read of
+        # the shell's own shape (a relative fetch of /version), which must come back from the kernel; every unmarked /version answer the
+        # page received is counted, with how many carried the seam's mark: the count moved (the two shell-shaped reads at least) and none
+        # carried it. With the marker gone from the route, the shell-shaped read comes back stale in both scenes
+        r = self._result()
+        for scene in ("off", "on"):
+            w = r[scene].get("kernelWait"); table = "\n  " + scene + ": " + json.dumps(w)
+            sr = (w or {}).get("shellRead")
+            self.assertIsNotNone(sr, scene + ": the driver made a read of the shell's shape inside the window" + table)
+            self.assertGreater(sr["left"], 0, scene + ": ...while stale answers were still armed, or it proves nothing" + table)
+            self.assertFalse(sr["staleAnswer"], scene + ": the shell-shaped read came back from the kernel, not from the seam" + table)
+            self.assertEqual(w.get("staleRouted"), w.get("staleServed"), scene + ": every stale answer the route served, the poll read" + table)
+        pr = r.get("productReads"); table = "\n  " + json.dumps(pr)
+        self.assertIsNotNone(pr, "the driver counted the page's unmarked /version answers" + table)
+        self.assertGreaterEqual(pr["requests"], 2, "the counter saw the unmarked reads (the two shell-shaped ones at least)" + table)
+        self.assertEqual(pr["staleAnswers"], 0, "no unmarked /version answer carried the seam's mark" + table)
 
     def test_back_on_restores_the_buttons_the_controls_and_the_panes(self):
         o = self._result()["on"]; table = "\n  " + json.dumps(o)[:1500]
