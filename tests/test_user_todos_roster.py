@@ -245,6 +245,45 @@ class UserTodosRoster(_ColdTabFixture):
         self.assertEqual(sum(1 for ln in err2.getvalue().splitlines() if ln.startswith("user-todos:") and S3[:8] in ln), 1,
                          "a new episode is said once more")
 
+    def test_an_answers_stamp_and_its_lift_wake_the_pusher_so_the_strip_re_sends_within_one_cycle(self):
+        # extra9-6 (round 1): the stamp is the event, and so is the lift that undoes it. The pusher loop's wait is
+        # `wake.wait(PUSH_BACKSTOP_S)`; with the backstop disabled (a zero wait) the next cycle runs only if the event
+        # set the flag. The stamp is driven directly, as the drain drives it (_deliver_send_batch), so no caller's own
+        # _push_soon stands in for the stamp's; the lift likewise, as the recall and the answer-lost verdict drive it.
+        tid = km._add_user_todo(S3, "Need the auth-scheme decision")
+        c = self._skeleton_client()
+        km._push([c])
+        n0 = len(self._frames(c, "tabOrder"))
+        self.assertEqual(_row(c, S3)["userTodos"], 1)
+        woke = []
+        real_soon = km._push_soon
+        with mock.patch.object(km, "_push_soon", lambda: (woke.append(1), real_soon())):
+            km._pusher_wake.clear()
+            km._stamp_user_todo_answered(S3, tid, "Use the bearer scheme")
+            self.assertEqual(woke, [1], "the stamp itself ends in _push_soon()")
+            self.assertTrue(km._pusher_wake.wait(0), "the pusher's flag is set: the next cycle runs on the event, the backstop never consulted")
+            km._pusher_wake.clear()
+            km._push([c])                                          # the cycle the wake produces
+            self.assertEqual(len(self._frames(c, "tabOrder")), n0 + 1, "a NEW strip within that one cycle")
+            self.assertEqual(_row(c, S3)["userTodos"], 0, "...carrying the answered todo's absence")
+            km._stamp_user_todo_answered(S3, tid, "again")         # a stamp that does not land (already 'answered')
+            self.assertEqual(woke, [1], "...changes nothing and wakes nothing")
+            self.assertFalse(km._pusher_wake.wait(0))
+            self.assertTrue(km._reopen_user_todo(S3, tid), "premise: the lift lands")
+            self.assertEqual(woke, [1, 1], "the lift ends in _push_soon() too")
+            self.assertTrue(km._pusher_wake.wait(0))
+            km._pusher_wake.clear()
+            km._push([c])
+            self.assertEqual(len(self._frames(c, "tabOrder")), n0 + 2)
+            self.assertEqual(_row(c, S3)["userTodos"], 1, "the reopened ask is back on the roster within one cycle")
+            self.assertFalse(km._reopen_user_todo(S3, tid), "a lift with nothing to lift...")
+            self.assertEqual(woke, [1, 1], "...wakes nothing")
+        # the answer-lost verdict lifts through the function above (its landed check reads transcripts this fixture has
+        # none of, so it is not driven here): this pin guards that its reopen still reaches _reopen_user_todo, whose wake
+        # the executed half proves; a lift by another door would not carry it
+        self.assertIn("if _reopen_user_todo(sid, tid):", inspect.getsource(km._user_todo_answer_lost),
+                      "the answer-lost verdict's reopen is _reopen_user_todo (the executed test above proves its wake)")
+
     def test_the_helper_reads_the_switch_and_the_store_once_and_gates_only_a_nonzero_count(self):
         km._add_user_todo(S3, "Need the auth-scheme decision")
         calls = {"on": 0, "store": 0, "shown": []}

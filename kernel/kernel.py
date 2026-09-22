@@ -6661,9 +6661,11 @@ def _tab_meta(chat_list):
     disagree. Built once per push, and only where a chat client exists (the strip goes to chat clients alone): the
     switch is read ONCE here, not per tab (_user_todos_on reads its file on every call), the store once (the
     mtime-cached dict), and the ended gate runs only for a sid with a nonzero count. Store values only, like every
-    field of the row: the strip is deduped per client on content, so a filed, answered, dismissed or withdrawn todo
-    re-sends it on the _push_soon every store mutation ends in, and an unchanged roster costs nothing. The ended gate is
-    CONTAINED per sid: a raise from it (a reg-less sid's malformed death marker or states
+    field of the row: the strip is deduped per client on content, so a filed, answered, dismissed, withdrawn or reopened
+    todo re-sends it on the _push_soon() every store mutation ends in (the filing, dismiss, withdraw and recall routes; the
+    answered stamp at its delivery moment, the immediate send or the drain, _stamp_user_todo_answered; the recall's and
+    the answer-lost reopen, _reopen_user_todo), the event and never the pusher's 0.5 s backstop, and an unchanged roster
+    costs nothing. The ended gate is CONTAINED per sid: a raise from it (a reg-less sid's malformed death marker or states
     row) makes that sid's count read 0, said once on stderr per episode, and the other rows ship, in every sender;
     uncontained, one bad marker aborted every client's whole push each cycle in _push, dropped _push_session_now's
     per-session push and made _confirm_close_now answer False (the board-freeze lesson of 2026-09-06, which _push's
@@ -10394,7 +10396,11 @@ def _reopen_user_todo(sid, tid):
     corroborated loss of its holder (_user_todo_answer_lost: the entry's echo drop-marked with the
     text provably not in the transcript). Never lifts a dismiss or a withdraw (those clearing
     events had no delivery to fail), and never fires from inference — both callers key on the
-    exact delivery-failure event of the send the stamp recorded, so the authority tier holds."""
+    exact delivery-failure event of the send the stamp recorded, so the authority tier holds.
+
+    A lift ends in _push_soon() (2026-09-22), whichever caller lifted it: the store mutation is the event the strip's
+    count (_tab_meta) and the split card re-send on, never the pusher's 0.5 s backstop (the answer-lost verdict also
+    marks the views dirty, for the feed and the timeline; this wake is the roster's and the card's)."""
     with _user_todos_lock:
         cur = dict(_user_todos())                    # copy: never mutate the cached dict in place
         lst = [dict(t) for t in cur.get(sid) or [] if isinstance(t, dict)]
@@ -10407,6 +10413,7 @@ def _reopen_user_todo(sid, tid):
         _write_user_todos(cur)
         _log_user_todo_event(sid, tid, "lost", hit.get("text"), hit.get("detail", ""),   # the answer never arrived
                              file=hit.get("file"), link=hit.get("link"))
+    _push_soon()                                     # the event, not the backstop (the docstring)
     return True
 
 
@@ -10953,9 +10960,17 @@ def _stamp_user_todo_answered(sid, tid, text, nonce=None):
         is the stamp's evidence and the callers stamp on it (_deliver_todo_reply, _deliver_send_batch).
 
     `nonce` stays as a parameter for that retired seam's callers and tests (the stand-down it keyed
-    left with the pending-paste marks); nothing reads it."""
+    left with the pending-paste marks); nothing reads it.
+
+    A stamp that lands ends in _push_soon() (2026-09-22): the stamp is the event the strip's count (_tab_meta) and the
+    split card re-send on, so the woken cycle carries it and the pusher's 0.5 s backstop is never what delivers it.
+    Inside the drain (a parked answer, stamped in the pusher cycle ahead of _push_all) the wake costs one more cycle,
+    which the per-client dedup absorbs. A stamp that did not land (False: cleared meanwhile) changes nothing and
+    wakes nothing."""
     with _user_todos_lock:
-        _resolve_user_todo(sid, tid, "answered", reply=text)
+        stamped = _resolve_user_todo(sid, tid, "answered", reply=text)
+    if stamped:
+        _push_soon()                                 # the event, not the backstop (the docstring)
 
 
 def _user_todo_answer_lost(sid, tid, text, wait=False, nonce=None):
