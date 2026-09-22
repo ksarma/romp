@@ -263,6 +263,11 @@ class ConcurrentCreates(_Routes):
         def first():
             out["first"] = self.post("/new", {"name": "web", "dir": self.dir, "backend": "sdk"})
         t = threading.Thread(target=first)
+
+        def end():                          # on every exit path: release the parked create, wait for its thread
+            self.be.gate.set()
+            t.join(timeout=10)
+        self.addCleanup(end)
         t.start()
         self.assertTrue(self.be.entered.wait(timeout=10), "the first create reached its spawn")
         st, second = self.post("/new", {"name": "web", "dir": self.dir, "backend": "sdk"})
