@@ -1,7 +1,7 @@
 ---
 title: CI gitleaks history scan reads textual diffs through a committed -diff attribute
 status: candidate
-where: .github/workflows/ci.yml (the secrets job's history-scan step); tests/gitleaks-config.bats (the committed -diff attribute case)
+where: .github/workflows/ci.yml (the secrets job's history-scan step); tests/gitleaks-config.bats (the committed -diff attribute case); CLAUDE.md (the credentials section's hook bullet, one sentence); tests/gitleaks-require.bats (the ROMP_GITLEAKS_REQUIRE switch and the Run bats env pin); upstream/2026-09-21-ci-gitleaks-history-scan-text.md (this entry)
 added: 2026-09-21
 pr: 890
 tier: fix
