@@ -458,6 +458,31 @@ test("a frame holding one row of the active view and one of a view switched away
   assert.deepEqual(w.diag.map((d) => [d.data.sid, d.data.sh, d.data.ch, "view" in d.data ? d.data.view : "<none>"]), [["A", null, null, "inactive"], ["B", 9114, 902, "<none>"]], "A's row: nulls and the marker, never B's 9114 / 902; B's row: the frame's figures and no marker");
 });
 
+test("a frame whose live view is hidden by the section-at-a-glance view files its row with nulls and the marker and does not read the scroller: #content holds the section list there, not the view (the maintainer's round 5 ruling, extra10-1; the owner 2026-09-21, who approved the field)", () => {
+  // showActive's section branch sets every view element's display to none and leaves activeId as it was (the kernel's active hint, the MRU
+  // and the drafts still point at the session being read), and the section list is a child of #content: the scroller's heights there are
+  // the LIST's. At the head the maintainer's round 5 ruled on, the frame keyed its read on activeId alone and filed this row with 9114 and
+  // 902 and no marker, the corruption the marker exists to name. The frame's predicate is the view element's display, the property (#content
+  // measures the live view only while its element is shown), not snapView, which is one cause of it; the FakeEl's style is a plain object,
+  // so the test sets the display as showActive does.
+  const w = lift("A");
+  const { v, items } = viewOver(w, 200, 301, 221, () => ["turn turn-assistant", 90]);
+  w.views.set("A", v);
+  buildOne(w, v, items);                       // A is active and shown: its spacer write queues a row for the next frame
+  assert.equal(w.diag.length, 0); assert.equal(w.rafs.length, 1);
+  v.el.style.display = "none";                 // the reader opened a section at a glance before the frame ran: every view hidden, activeId untouched
+  w.rafs.shift()!();
+  assert.deepEqual(w.reads, { offsetHeight: 0, scrollHeight: 0, clientHeight: 0 }, "the live view is not what #content measures: the scroller is not read");
+  assert.deepEqual(w.diag.map((d) => [d.kind, d.data.sid, d.data.sh, d.data.ch, d.data.view]), [["spacer", "A", null, null, "inactive"]], "A's row: nulls and the marker, never the section list's 9114 / 902 (the `view` key, one fixed word, no host name, on the owner's approval)");
+  // back to the transcript before the next frame: the view shown again, a spacer write of it reads the scroller as before
+  v.el.style.display = "";
+  v.avgTurnH = (v.avgTurnH ?? 60) + 10; w.sizeSpacers(v);
+  assert.equal(w.rafs.length, 1, "a spacer write with the view shown again queues a row");
+  w.rafs.shift()!();
+  assert.deepEqual(w.reads, { offsetHeight: 0, scrollHeight: 1, clientHeight: 1 }, "…and its frame reads the scroller once");
+  assert.deepEqual(w.diag.slice(1).map((d) => [d.data.sid, d.data.sh, d.data.ch, "view" in d.data]), [["A", 9114, 902, false]], "the shown view's row: the frame's figures and no marker");
+});
+
 test("spacerRow mints the `view` marker only when handed one, and only the one word (the owner 2026-09-21, who approved the field)", () => {
   // the marker is spread only when handed the one word: the shown view's row carries none, a null row handed nothing carries none, the
   // switched-away view's row carries the word, and a value the parameter's type does not name, handed past the type, mints nothing (the
@@ -716,16 +741,19 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   assert.ok(paintSide.includes("function sizeSpacers(v") && paintSide.includes("function measureUnits(v") && paintSide.includes("function applyMeasure(v"), "the span holds the paint-side functions");
   assert.doesNotMatch(paintSide, /offsetHeight|scrollHeight|clientHeight|getBoundingClientRect|offsetTop/, "sizeSpacers, the trim, the eviction, the measure and the apply read no layout property");
   // the frame's read is per row, not per batch (the maintainer's round 1 addendum): once, only when a queued row is the shown view's. A row of a
-  // view switched away since it was queued is filed with no geometry (sh and ch null) and the marker that says so, `view: "inactive"` (one fixed
+  // view switched away since it was queued, or of the live view while its element is hidden (the section-at-a-glance view, where #content holds
+  // the section list: the maintainer's round 5 ruling, extra10-1; the frame reads the element's display, the property, not snapView, its cause),
+  // is filed with no geometry (sh and ch null) and the marker that says so, `view: "inactive"` (one fixed
   // word, no host name), admitted to the kernel's chat allowlist on the owner's approval (the owner 2026-09-21, who approved the field); the
   // shown view's row always carries numbers (a scroller with no box reads 0, an honest figure), so a null pair is built only for a view that was
   // not the live one in its frame, never with another view's figures. The two assertions after the frame's regex pin the marker on the frame's
   // SOURCE SPELLING (the call's two arms, the marker on the switched-away arm alone; the marker's word in the frame's code once, at that post);
-  // the property by execution is the three row tests above (the switched-away row carries the marker, through the builder as built; the active
+  // the property by execution is the four row tests above (the switched-away row carries the marker, through the builder as built; the live
+  // view hidden by the section view files nulls and the marker with no read; the active
   // view's two rows carry no `view` key, so a marker handed on the active arm reds there and not only here; the mixed frame files the
   // switched-away row with nulls beside the active view's row with the frame's figures, so a post handing the figures to both arms reds there
   // and not only here) and tests/test_client_diag_allowlist.py's presence cell (the chat entry names the key; the marked row is stored whole).
-  assert.match(inFrame, /requestAnimationFrame\(\(\) => \{[\s\S]*?const live = activeId;\s*\n\s*let sh: number \| null = null, ch: number \| null = null;\s*\n\s*if \(live && content && rows\.some\(\(\[rsid\]\) => rsid === live\)\) \{ sh = content\.scrollHeight; ch = content\.clientHeight; \}/, "the diag row's scroller read rides a frame, once, for the active view's rows alone");
+  assert.match(inFrame, /requestAnimationFrame\(\(\) => \{[\s\S]*?const liveView = activeId \? views\.get\(activeId\) : undefined;\s*\n\s*const live = liveView && liveView\.el\.style\.display !== "none" \? activeId : null;\s*\n\s*let sh: number \| null = null, ch: number \| null = null;\s*\n\s*if \(live && content && rows\.some\(\(\[rsid\]\) => rsid === live\)\) \{ sh = content\.scrollHeight; ch = content\.clientHeight; \}/, "the diag row's scroller read rides a frame, once, for the SHOWN live view's rows alone: the live id counts as live only while its element is not display none (the section-at-a-glance view hides every view and #content holds the list; the maintainer's round 5 ruling, extra10-1)");
   assert.match(inFrame, /rsid === live \? spacerRow\(rsid, a, b, c, d, sh, ch\) : spacerRow\(rsid, a, b, c, d, null, null, "inactive"\)\)/, "a switched-away view's row: no geometry and the `view` marker, on the owner's approval of 2026-09-21; keyed on the call's source spelling, so a marker reached another way is for the executed pins: the three row tests above (the switched-away row marked, the active view's rows unmarked, the mixed frame's two rows each with their own view's figures) and tests/test_client_diag_allowlist.py's presence cell");
   assert.equal((code(inFrame).match(/"inactive"/g) || []).length, 1, "the marker's word is in the frame's code once, as the switched-away arm's string literal (the comment names it too; the code alone is counted)");
   assert.doesNotMatch(inFrame, /const sh = content \? content\.scrollHeight : 0/, "the batch read is gone");

@@ -73,9 +73,10 @@ export function tailMutRow(sid: string, m: { removedTail: string[]; addedTail: s
 /** The breadcrumb for one re-size of a view's virtualization spacers (T262j): a top spacer re-estimate paired with
  *  a bottom one leaves scrollHeight unchanged yet moves everything under the top spacer, and Chrome's scroll
  *  anchoring then moves the reader by the same amount with no pane write. `top`/`bot` = [before, after] heights.
- *  `sh`/`ch` are the scroller's heights read a frame later for the view shown in that frame; a row whose view was
- *  switched away before the frame has none (null, never another view's figures; PR E, the maintainer's round 1 addendum)
- *  and carries `view: "inactive"`: one fixed word, no host name, spread only when handed that word (the parameter's type names
+ *  `sh`/`ch` are the scroller's heights read a frame later for the view shown in that frame; a row whose view was not the
+ *  element the scroller measured in that frame (switched away before it, or hidden by the section-at-a-glance view, where
+ *  #content holds the section list) has none (null, never another view's or the list's figures; PR E, the maintainer's
+ *  round 1 addendum; the maintainer's round 5 ruling, extra10-1) and carries `view: "inactive"`: one fixed word, no host name, spread only when handed that word (the parameter's type names
  *  it at compile time and is gone at run time, so the guard holds it there: a value the type does not name mints nothing; the
  *  kernel admits the key and bounds its value to the same word, CLIENT_DIAG_VALUES, refusing any other), admitted to the kernel's chat allowlist on the owner's approval (the owner
  *  2026-09-21, who approved the field). A row with numbers and no marker is the shown view's. */

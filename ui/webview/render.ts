@@ -14137,9 +14137,15 @@ function queueSpacerRow(sid: string, topBefore: number, topAfter: number, botBef
     // is a `view` key holding one fixed word, "inactive", and no host name, admitted to the kernel's chat allowlist on the owner's approval
     // (the owner 2026-09-21, who approved the field: a new field a page posts to the kernel is his to approve, field by field). One read, and
     // only when a queued row is the active view's; a row of the active view under a scroller with no box carries the 0 the scroller reads,
-    // an honest figure.
+    // an honest figure. The live view is what #content measures only while its element is SHOWN: in the section-at-a-glance view
+    // (showActive's snapView branch) every view's element is display none and the section list, a child of #content, is what the scroller
+    // holds, so the live view's row there would carry the LIST's heights; the same with no live view, or a live id whose element is gone.
+    // Such a row is filed as a switched-away view's, nulls and the marker, the case the marker exists for (the maintainer's round 5 ruling,
+    // extra10-1: the stand-down keyed on activeId alone, and a section-view frame filed the list's figures with no marker). The predicate is
+    // the element's display, the property; snapView is one cause of it.
     const content = document.getElementById("content");
-    const live = activeId;
+    const liveView = activeId ? views.get(activeId) : undefined;
+    const live = liveView && liveView.el.style.display !== "none" ? activeId : null;
     let sh: number | null = null, ch: number | null = null;
     if (live && content && rows.some(([rsid]) => rsid === live)) { sh = content.scrollHeight; ch = content.clientHeight; }
     for (const [rsid, a, b, c, d] of rows) scrollDiagRow("spacer", rsid === live ? spacerRow(rsid, a, b, c, d, sh, ch) : spacerRow(rsid, a, b, c, d, null, null, "inactive"));
