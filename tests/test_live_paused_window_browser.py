@@ -2,8 +2,10 @@
 stays on the server and the page's run is a tail, driven by Playwright through the driver head below (DRIVER_HEAD: the pad, sentOf,
 state and frame hooks). The regions labs (test_history_regions_browser.py, test_landing_notice_browser.py)
 build on WindowLab; stage 2 retired the paused strip and the detached client (the tail run is always resident and live, so no
-window ever pauses live updates: plans/chat-history-regions.md Part B), so the one test here is the driver head's own: a misspelled
-ROMP_LAB_ENGINE fails the lab instead of skipping it (UnknownEngineFailsLoudly; PR E, the maintainer's round 1 addendum).
+window ever pauses live updates: plans/chat-history-regions.md Part B), so the tests here are the driver head's own: a misspelled
+ROMP_LAB_ENGINE fails the lab instead of skipping it (UnknownEngineFailsLoudly; PR E, the maintainer's round 1 addendum), and so does a
+name that is one of the Playwright module's other exports, since the guard is membership of the three browser types and not the export's
+truthiness (the maintainer's round 5 ruling, fresh-1).
 """
 import json
 import os
@@ -53,13 +55,17 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const playwright = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
-// the engine: Chromium unless ROMP_LAB_ENGINE names another Playwright engine (webkit: the phone's engine, which has no scroll
-// anchoring; the compact stream lab runs under both). An UNKNOWN name exits 1, a failure: exit 3 is the harness's "no playwright
-// browser on this box", a skip unless ROMP_SERVED_TESTS_REQUIRE=1, and a misspelled engine once turned the whole lab into that
-// silent skip (the maintainer's round 1 addendum); a launch that fails keeps 3 (the browser is missing, which is what 3 says)
+// the engine: Chromium unless ROMP_LAB_ENGINE names another Playwright BROWSER (webkit: the phone's engine, which has no scroll
+// anchoring; the compact stream lab runs under both). The legal set is the module's three browser types, stated here: a name outside
+// it exits 1, a failure, whether a misspelling or one of the module's other exports (devices, errors, selectors, request are truthy
+// objects; _electron is a launcher whose launch throws with no app). Exit 3 is the harness's "no playwright browser on this box", a
+// skip unless ROMP_SERVED_TESTS_REQUIRE=1: a misspelled engine once turned the whole lab into that silent skip (the maintainer's round
+// 1 addendum), and a guard on the export's truthiness then let a non-browser export through to a launch that threw into the same exit
+// (the maintainer's round 5 ruling, fresh-1); a launch of a browser that fails keeps 3 (the browser is missing, which is what 3 says)
 const engineName = process.env.ROMP_LAB_ENGINE || "chromium";
+const BROWSERS = ["chromium", "firefox", "webkit"];
+if (!BROWSERS.includes(engineName)) { console.error("unknown ROMP_LAB_ENGINE: " + engineName + " (one of " + BROWSERS.join(", ") + ")"); process.exit(1); }
 const engine = playwright[engineName];
-if (!engine) { console.error("unknown ROMP_LAB_ENGINE: " + engineName); process.exit(1); }
 let browser;
 try { browser = await engine.launch(cfg.launch || {}); }   // a lab may ask for classic scrollbars (the settle lab's drag road): Playwright hides them headless by default
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -308,6 +314,29 @@ class UnknownEngineFailsLoudly(unittest.TestCase):
             shutil.rmtree(lab, ignore_errors=True)
         self.assertEqual(p.returncode, 1, "an unknown engine is the lab's failure, never the no-browser skip (3):\n" + p.stdout[-1000:] + p.stderr[-2000:])
         self.assertIn("unknown ROMP_LAB_ENGINE: Webkit", p.stderr)
+
+    def test_a_truthy_non_browser_export_exits_one_and_names_itself(self):
+        """The maintainer's round 5 ruling, fresh-1: the guard keyed on the TRUTHINESS of `playwright[name]`, so ROMP_LAB_ENGINE naming any of
+        the module's other exports (devices, errors, selectors, request: objects; _electron: a launcher with a `launch` of its own that
+        throws with no app) passed it, `engine.launch` threw inside the launch try, the driver exited 3 and _drive read 3 as "no playwright
+        browser on this box", the silent skip this class exists to close. The guard is membership of the legal set, the module's three
+        browser types, stated in the head; a truthy non-browser export exits 1 and is named, with a launcher of its own or without one."""
+        if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
+            WindowLab._skip(DEPS_ABSENT)
+        head = DRIVER_HEAD[:DRIVER_HEAD.index("let browser;")]
+        for name in ("devices", "_electron"):
+            lab = tempfile.mkdtemp(prefix="lab-engine-")
+            try:
+                cfg = os.path.join(lab, "cfg.json")
+                Path(cfg).write_text("{}")
+                driver = os.path.join(lab, "engine.mjs")
+                Path(driver).write_text(head)
+                p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=120,
+                                   env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg, ROMP_LAB_ENGINE=name))
+            finally:
+                shutil.rmtree(lab, ignore_errors=True)
+            self.assertEqual(p.returncode, 1, "%s: a truthy export that is not a browser type is refused as an unknown engine (1), never passed to a launch that fails into the no-browser skip (3), and never through (0):\n" % name + p.stdout[-1000:] + p.stderr[-2000:])
+            self.assertIn("unknown ROMP_LAB_ENGINE: " + name, p.stderr, name)
 
 
 if __name__ == "__main__":
