@@ -121,9 +121,12 @@ class ControlRouteLatency(unittest.TestCase):
         km.NAMES.mkdir(parents=True, exist_ok=True)
         (km.NAMES / "probe-session").write_text("probe-session\t\n")
         self.addCleanup(lambda: (km.NAMES / "probe-session").unlink())
-        # simulate the pile: three threads stuck in the (patched, slow) fleet build
-        for _ in range(3):
-            threading.Thread(target=km._push_all, daemon=True).start()
+        # simulate the pile: three threads stuck in the (patched, slow) fleet build; each ends when its 2 s build
+        # returns, and the cleanup waits for all three on every exit path
+        piled = [threading.Thread(target=km._push_all, daemon=True) for _ in range(3)]
+        self.addCleanup(lambda: [t.join(5) for t in piled])
+        for t in piled:
+            t.start()
         km._pusher_wake.clear()
         t0 = time.time()
         status, _ = self._post("/end", {"name": "probe-session"})
