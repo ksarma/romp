@@ -71,7 +71,7 @@ test("every append path emits the divider, so scrolling back can't disagree with
 
 test("the windowed divider carries data-unit so the scroll-to-unit map still resolves it", () => {
   // appendItem tags via tag(); the tail path sets it explicitly
-  assert.match(RENDER, /if \(dv\) \{ dv\.dataset\.unit = String\(u\); v\.el\.appendChild\(dv\); \}/, "normal mode's tail tags its divider with the turn's UNIT, the list's index (the maintainer's round 5 ruling, regression-1)");
+  assert.match(RENDER, /if \(dv\) \{ dv\.dataset\.unit = String\(u\); v\.el\.appendChild\(dv\); \}/, "normal mode's tail tags its divider with the turn's UNIT, the list's index (the maintainer's round 5 ruling, regression-1); this pin holds the spelling, and compact-tail-differential.test.ts's head-gap stream cell holds the behaviour by execution: a day boundary inside the tail-appended span under the head gap, its divider tagged by the list's unit, then the prompt edited and a reply after it (the maintainer's round 6 ruling, extra6-1)");
 });
 
 test("the incremental tail trim goes by data-unit, not by child count", () => {

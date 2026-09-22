@@ -522,6 +522,27 @@ test("rows queued and the page hidden before their frame (visibilitychange): the
   assert.deepEqual(w.diag.slice(1).map((d) => [d.kind, d.data.sid, d.data.sh, d.data.ch, "view" in d.data]), [["spacer", "A", 9114, 902, false]], "a row queued and framed while visible files with its frame's figures, as before");
 });
 
+test("rows of TWO views pending at the hidden edge (A's row queued, the reader switched to B, B's row queued into the same frame): one drop row counts every pending row, n 2, and names the live view at the edge, sid B, never a count over the live view's rows alone or the first pending row's view (the maintainer's round 6 ruling, extra6-2; the handler's rule: n over every pending row whichever view queued it, sid the live view's id at the edge)", () => {
+  // the mixed-frame pattern of the two-view row test above, hidden before the frame: the two hidden-page cells above hold one view's rows,
+  // so a count restricted to the live view's rows, or a sid taken from the first pending row, left both green and only the frame census's
+  // source regex red; this cell reds by execution on either
+  const w = lift("A");
+  const A = viewOver(w, 200, 301, 221, () => ["turn turn-assistant", 90]);
+  const B = viewOver(w, 200, 301, 221, () => ["turn turn-assistant", 90]);
+  w.views.set("A", A.v); w.views.set("B", B.v);
+  buildOne(w, A.v, A.items);            // A is active: its spacer write queues A's row for the next frame
+  w.setActive("B");                     // the reader switched tabs before the frame ran
+  buildOne(w, B.v, B.items);            // B is active: its write queues B's row into the same frame
+  assert.equal(w.rafs.length, 1, "one frame armed for the two views' rows");
+  const frame = w.rafs[0];
+  w.hide();                             // visibilitychange to hidden before the frame ran
+  frame();                              // the frame that came later (once the page showed again, in the browser)
+  assert.deepEqual(w.diag.map((d) => [d.kind, d.data]), [["spacer-dropped", { sid: "B", n: 2, kind: "spacer", why: "hidden" }]], "one drop row: n counts A's row and B's (2), sid is the live view's at the edge (B), never the first pending row's view (A) or the live view's rows alone (1)");
+  assert.deepEqual(w.reads, { offsetHeight: 0, scrollHeight: 0, clientHeight: 0 }, "the scroller was not read for either row");
+  assert.deepEqual(w.cancelled, [1], "the armed frame was cancelled on the hidden edge");
+  assert.equal(w.rafs.length, 0, "…so no frame is pending");
+});
+
 test("rows queued while the page is hidden (a paint runs there) wait for a frame that does not come: the shown edge drops them, cancels the frame and files one row naming the drop, never the first visible frame's heights (the maintainer's round 5 ruling, kernel-1)", () => {
   // the other side of the edge: a paint while hidden (a streamed frame's append) writes the spacers and queues its row; the frame it asks
   // for runs only once the page shows, with every paint since in the scroller's heights. The shown edge drops the pending rows the same way.

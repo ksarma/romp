@@ -690,6 +690,19 @@ test("normal mode under a head gap, the footer lands on the row whose unit names
   assert.equal(footerByUnit("a10"), String(at(10, 7, 10) - at(10, 0, 0)), "complete: the footer stays on a10's row");
   frame(w, "the tail shrinks", (ev) => ev.slice(0, -1), "rebuild");
   frame(w, "a prompt lands again", (ev) => ev.concat([user("u12", at(10, 9, 30), "third question, again")]), "append");
+  // the next day under the head gap (the maintainer's round 6 ruling, extra6-1: the executed witness of render.ts's divider tag): the prompt
+  // opens a day, so the block appends the divider a rebuild draws above it, tagged by the list's UNIT; the executor reads every child's
+  // data-unit, the divider's too, so a divider tagged by the event index (one below its unit under the head gap) is a new node below u0 and
+  // reds there; then the prompt is edited in place (the trim from its unit must take the divider with it, or the re-append draws a second
+  // and the rebuild disagrees), and a reply follows it. The window build drew the first day's divider above the first event (its unit is
+  // 1 under the head gap), so the dividers are read by UNIT: the first event's and the next day's prompt's, both derived from the list.
+  frame(w, "a prompt the next day", (ev) => ev.concat([user("u13", nextDay(0, 1, 0), "next morning")]), "append");
+  const dividerUnits = (): number[] => units(project(w.v.el)).filter((r) => r.uuid == null && r.cls.includes("day-divider")).map((r) => r.unit);
+  assert.deepEqual(dividerUnits(), [unitOfUuid("u0"), unitOfUuid("u13")], "two day dividers stand among the units, by unit: the window build's above the first event (its unit under the head gap) and the block's above the next day's prompt, tagged by the list's unit (the event index plus the head gap), never the event index");
+  frame(w, "the next day's prompt is edited", (ev) => { ev[ev.length - 1] = user("u13", nextDay(0, 1, 0), "next morning, edited"); return ev; }, "append");
+  assert.deepEqual(dividerUnits(), [unitOfUuid("u0"), unitOfUuid("u13")], "the edit's trim took the divider with the prompt's unit and the re-append drew it once: no duplicate divider");
+  frame(w, "a reply the next day", (ev) => ev.concat([reply("a14", nextDay(0, 1, 30), "next morning's answer")]), "append");
+  assert.deepEqual(dividerUnits(), [unitOfUuid("u0"), unitOfUuid("u13")], "the reply opens no day: the same two dividers");
 });
 
 test("normal mode under a head gap, a change below a browsed window: the browse branch's patch lands the footer on the row whose unit names the window's last reply, in both directions, and the window equals a rebuild (the maintainer's round 5 ruling, regression-1)", () => {
