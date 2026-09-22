@@ -69,11 +69,12 @@ every class row carries, read from the script's CLASS_ROWS by importing it in a 
 labelled the class a program the kernel starts while the section, widened, said a program started whose far end its
 arguments do not show), so the two wordings cannot drift apart. Over the archive of the round's reviewed head each
 new or rewritten case is red at its first SECURITY.md assertion (the old editor clause; no fifth-class, residual,
-disclosure or condition sentence) and the table case at its set equality (the archive's table has no fifth-class
-row); the target pin, the negative pin, the figure pin, the one-source pin and the condition pin are each red under a
-mutation of a scratch copy at the tree (the runInstall call repointed at a root install.sh, which the old substring pin
-stayed green under; the executed lines replaced by a comment carrying the same words; `pip` planted in
-vscode-extension/install.sh; the class count word altered; the residual sentence deleted from the docstring; the
+disclosure or condition sentence), the table case at its set equality (the archive's table has no fifth-class row)
+and the kernel-request case at the class label the archive's table prints in the old wording, which the road map
+no longer carries; the target pin, the negative pin, the figure pin, the one-source pin and the condition pin are
+each red under a mutation of a scratch copy at the tree (the runInstall call repointed at a root install.sh, which the
+old substring pin stayed green under; the executed lines replaced by a comment carrying the same words; `pip` planted
+in vscode-extension/install.sh; the class count word altered; the residual sentence deleted from the docstring; the
 PACKAGE_ONLY clause deleted from the gate), and the label pin with the old label restored in a scratch copy of the
 script, naming both texts.
 
@@ -654,6 +655,8 @@ class TheSectionIsTheTables(_Pins):
                          % (sorted(counted), NOT_COUNTED))
         self.assertTrue(classes, "the classes the scan cannot derive are rows of the table")
         for label in classes:
+            self.assertTrue(label in ROAD_PHRASES, "a class row of the table has its words here (the every-road case holds the two sets "
+                            "equal; a label in the old wording is a table this map no longer speaks for): %r" % label)
             for phrase in ROAD_PHRASES[label]:
                 self.assertQuoted(phrase, flat, self.DOC, "a class the scan cannot see, named in the section")
 
