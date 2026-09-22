@@ -183,14 +183,26 @@ program, compares what it finds with the counts committed beside it in
 `scripts/network-inventory-expected.json`, and exits 1 naming any site it
 cannot place, any count that differs, any HTTP or socket client it does not
 know and any row of its table that names no site; the test suite runs it
-(`tests/test_price_feed_census.py`). Four classes of outbound activity the
-scan cannot derive are named and counted in its table rather than left out: an
-external program the kernel starts whose far end its arguments do not show (a
-shell, node, perl or python, or git with a subcommand the code does not spell
-out); a program whose text is supplied at run time (a watch predicate, the
-apiKeyHelper or a login's token command); a browser request whose URL is
-computed at run time; and the loads the browser makes on its own for what a
-page inserts (an image, a frame, a script, a link).
+(`tests/test_price_feed_census.py`). The shell and browser sides are matched
+by a named list with no completeness gate: a tool or a client the lists do not
+name is no site and no line; the Python side's gate is module-granular: an
+import outside the allow-list fails the run, and a primitive of a known module
+outside NET and SUB is not a site. NET and SUB are the script's lists of the
+connection and command primitives it reads. Four classes of outbound activity
+the scan cannot derive are named and counted in its table rather than left
+out: an external program started whose far end its arguments do not show (a
+shell, node, perl or python as the program, whether the kernel starts it, a
+shell script of romp's runs its text inline (`python3 -c`, a heredoc,
+`node -e`), or the manager or the editor extension starts it; a command run
+through a shell; git with a subcommand the code does not spell out; an argv
+the code does not spell out); a program whose text is supplied at run time (a
+watch predicate, the apiKeyHelper or a login's token command); a browser
+request whose URL is computed at run time (a fetch, or a dynamic import of a
+module); and the loads the browser makes on its own for what a page inserts
+(an image, a frame, a script, a link). A fifth is named in the table and not
+counted, since the scan cannot see it: a socket primitive called on a receiver
+the census cannot resolve (an attribute-held or parameter socket) is not a
+site here.
 
 `ROMP_PRICE_FEED=off` in the kernel's environment (`service.env` for the
 installed service, then a manager restart) stops that fetch: the Token usage
@@ -235,9 +247,18 @@ re-armed at boot, and what the command itself sends is not romp's; a
 subscribed phone (web push, encrypted end to end); the apiKeyHelper or
 stored-login command you configured; and an update taken from the banner or
 by the auto mode (`git fetch`, then for a release `install.sh` with pip and
-npm; the editor extension's update prompt runs the same `install.sh` on your
-click). Installing by hand (`bootstrap.sh`, `install.sh`) fetches from GitHub,
-PyPI (and bootstrap.pypa.io for get-pip.py when the python lacks ensurepip;
+npm, through `bin/romp-sdk-setup` and `vscode-extension/install.sh`; the
+editor extension's update prompt runs `vscode-extension/install.sh`
+(`npm install` and `npx`) on your click, not the root `install.sh`, so a click
+reaches the npm registry and not PyPI). Whoever starts it,
+`vscode-extension/install.sh` runs `npm install` against the npm registry on
+every run; `npx --yes @vscode/vsce package`, a fetch of vsce from the same
+registry even when it is cached, runs only when an editor CLI is present
+(`code`, `code-insiders`, `cursor` or `codium` on PATH, or an editor bundle
+under `ROMP_EDITOR_APPS`) or `ROMP_EXT_PACKAGE_ONLY` is set; with neither the
+script exits after the build and sends nothing more. Installing by hand
+(`bootstrap.sh`, `install.sh`) fetches from GitHub, PyPI (and
+bootstrap.pypa.io for get-pip.py when the python lacks ensurepip;
 `ROMP_NO_GET_PIP=1` skips that fetch) and the npm registry, and
 `bin/romp-codex-setup`, run by hand for Codex sessions, fetches the Codex SDK
 from PyPI and the pinned Codex CLI from GitHub.

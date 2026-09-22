@@ -52807,7 +52807,12 @@ def _refresh_remote_prices(now):
     in the browser while the status read live feed. Every rate the parse reads goes through _price_rate_value (round
     3): a JSON number, or a string in the strict decimal form, and never a bare float() on a string, which read "1_0"
     as 10.0 and " 0.5" as 0.5 here until then (the live feed sends numbers, so that arm is belt and braces on this
-    road; the facts are in the helper's docstring)."""
+    road; the facts are in the helper's docstring), with one substitution before it: a cache rate that is absent,
+    null or a numeric zero (0 or 0.0; false is a bool, not one) takes the input rate, which the helper already read,
+    and every other present cache value, false, an empty string, a list and an object included, goes through the
+    helper and rejects the row as it would on the input and output keys (round 3 of the review, the landing round of
+    2026-09-22: `or inp` had taken every falsy cache value to the input rate before the helper saw it, while the
+    comment beside it named absent, null or zero)."""
     if _price_feed_off():
         if _price_feed_first("offSaid"):               # the latch under the lock, the line outside it
             _price_feed_line(now, "price feed: off (ROMP_PRICE_FEED=off)")
@@ -52842,6 +52847,18 @@ def _refresh_remote_prices(now):
                 _price_feed_line(now, "price feed: fetch failed (%s)" % reason)
                 return
             out, matched = {}, set()
+
+            def cache_rate(v, inp, key):
+                """The row's optional cache rate. Absent, null or a numeric zero (0 or 0.0; false is a bool, not one) takes
+                the input rate `inp`, the rule this parse arrived with; every other present value goes through
+                _price_rate_value, so false, an empty string, a list and an object reject the row as they do on the input
+                and output keys. Until round 3 of the review of PR 878 (the landing round, 2026-09-22) the read was
+                `v.get(key) or inp`, which took every falsy value to the input rate before the strict read saw it, against
+                the set the comment beside it named."""
+                raw = v.get(key)
+                if raw is None or (isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw == 0):
+                    return inp
+                return _price_rate_value(raw)
             for k, v in (feed.items() if isinstance(feed, dict) else []):
                 if not str(k).lower().startswith("claude") or not isinstance(v, dict):
                     continue
@@ -52852,9 +52869,9 @@ def _refresh_remote_prices(now):
                 try:                                 # every rate through _price_rate_value (round 3): a JSON number, or a
                     inp = _price_rate_value(v["input_cost_per_token"])   # string in the strict decimal form, else this row is
                     row = {"in": inp, "out": _price_rate_value(v["output_cost_per_token"]),   # rejected (the continue below);
-                           "cache_w": _price_rate_value(v.get("cache_creation_input_token_cost") or inp),   # `or inp`: a cache
-                           "cache_r": _price_rate_value(v.get("cache_read_input_token_cost") or inp)}       # rate absent, null
-                    out[want[sig]] = row                 # or zero takes the input rate, the rule this parse arrived with
+                           "cache_w": cache_rate(v, inp, "cache_creation_input_token_cost"),   # the two optional rates: absent,
+                           "cache_r": cache_rate(v, inp, "cache_read_input_token_cost")}       # null or a numeric zero takes the
+                    out[want[sig]] = row                 # input rate; every other present value goes through the strict read
                 except Exception:
                     continue
             with _price_feed_lock:                   # the landing, whole: the rows and the fields that describe them

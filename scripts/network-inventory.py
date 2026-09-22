@@ -25,20 +25,53 @@ the runtime trees is a gate (PROGRAM), so a second such program takes a place he
 
 A row is keyed on file plus enclosing function (a Python site) or file plus tool (a shell or JavaScript line); the committed
 count per row key is the guard for a second site inside a function that already has a row, and the listing names the new
-line. Four classes of outbound activity this scan cannot derive are named in the table and counted on every run:
-  external-program: a program the kernel starts whose far end is not derivable from the argv here: a shell or an interpreter
-    as argv[0] (sh, bash, node, perl, python, sys.executable), shell=True, git with a subcommand the code does not spell out,
-    or an argv the code does not spell out (RUNTIME-SUPPLIED marks it). Each such site takes an explicit row with its reason
-    and is never set aside as local, whatever road its row names.
+line. For the Python command sites alone the committed counts also carry the program head per row key (the heads map: row
+key, primitive, argv[0] as the scan renders it, with an argv the code does not spell out as RUNTIME-SUPPLIED), so a same-count
+swap of a local tool for a network tool inside a rowed function is a COUNTS line naming the key, the primitive and the new
+head; the residual beside it: a shell or JavaScript site is a line keyed by tool with no head figure, so a swap inside a rowed
+shell or JavaScript line is caught by the count per key when it changes the tool and not when it keeps it (a curl whose URL
+changes). Four classes of outbound activity this scan cannot derive are named in the table and counted on every run:
+  external-program: a program started whose far end is not derivable from the argv here: a shell or an interpreter as argv[0]
+    (sh, bash, node, perl, python, sys.executable), shell=True or child_process's exec, git with a subcommand the code does not
+    spell out, or an argv the code does not spell out (RUNTIME-SUPPLIED marks it), whether the kernel starts it (a Python
+    command site), a shell script runs it inline (the interpreter arm below), or the manager or the editor extension starts it
+    (a child_process site, classed by its argv the same way). Each such site takes an explicit row with its reason and is
+    never set aside as local, whatever road its row names.
   runtime-program: the external programs whose text is supplied at run time (the watch predicate, the operator's helper).
-  browser-computed-url: a fetch in the browser or editor code whose first argument is computed at run time. A fetch is local
-    only when its argument is a relative literal or a kernel-URL helper call (ku, kernelUrl, fileUrl, sliceUrl); an absolute
-    literal needs a row; a computed argument is counted here and listed.
+  browser-computed-url: a fetch, or a dynamic import(), in the browser or editor code whose first argument is computed at run
+    time. A fetch is local only when its argument is a relative literal or a kernel-URL helper call (ku, kernelUrl, fileUrl,
+    sliceUrl); an absolute literal needs a row; a computed argument is counted here and listed; a dynamic import() with a
+    literal specifier is an import and goes through the package gate below, not a site.
   browser-dom-loads: the browser DOM's own loads (img, iframe, script, link and anchor src, srcset and href writes, setAttribute
     of those, HTML templates carrying them, window.open), counted by pattern over the browser and editor code; the viewer's
     and the chat's rendered-markdown insertions have no line of their own and are not counted, so the browser-figures road
     is named from the gate's host-list read and the retry probe, not from a request.
-A program the kernel starts (ssh, git, gh, npm, the session CLIs, the operator's helper, a watch predicate) may open
+A fifth class is named in the table and not counted, since the scan cannot see it by construction: a socket primitive called
+on a receiver the census cannot resolve (an attribute-held or parameter socket) is not a site here. The scan resolves a socket
+receiver as a name bound to socket.socket() in the same function, or by a tuple-literal address argument; a rule on the method
+name alone would tag the backends' and transports' own connect methods, which are not sockets. tests/test_price_feed_census.py
+plants one such call and holds this sentence to the behaviour.
+
+What each side matches. The Python side reads every call by ast, resolved through import aliases, module constants and names
+bound to a primitive (a socket, an asyncio event loop, a primitive itself), and gates every import: a module outside
+KNOWN_IMPORTS fails the run (IMPORT), and so does a module named in importlib.import_module or __import__ (a string literal, a
+module constant, or a loop or comprehension variable over a module constant of strings; an argument the scan cannot resolve is
+refused as a module named at run time). The shell side is a line scan: the tools in SH, and an interpreter arm that emits a
+site keyed file plus tool for an interpreter head (python, python3, node, perl, sh, bash, path-prefixed or not) followed by -c
+or -e, or by a bare `-` (the program on stdin, the heredoc shape); every such site is in the external-program class and takes
+a row that says what the text does, and a head held in a shell variable ("$PY" -c) is not matched, since a bare -c or -e is a
+flag of many tools; a shell text inside a Python string literal (the remote apply scripts, the port probe, the self-update
+script) is outside the shell scan and travels as the argument of a rowed ssh or bash site, whose row's prose carries it. The
+browser and editor side is a line scan too: the clients in JS; the child_process family qualified to
+its binding (`child_process.<fn>(`, `require('child_process').<fn>(`, a namespace the file imports the module as, or a bare
+name the file binds from child_process by a destructured import or require; a bare `exec(` with no such binding is not a
+site, since RegExp exec is spelled the same way), each program site classed by its argv as the Python side classes its own;
+and an import gate over every package the scoped files import or require: a specifier that does not start with `.`, `/` or
+`*` names a package (its first path segment, two for a scoped package, `node:` dropped), and a package outside
+KNOWN_JS_IMPORTS fails the run (IMPORT). The shell and browser sides are matched by a named list with no completeness gate: a
+tool or a client the lists do not name is no site and no line; the Python side's gate is module-granular: an import outside the
+allow-list fails the run, and a primitive of a known module outside NET and SUB is not a site.
+A program the kernel starts (ssh, git, gh, npm, npx, the session CLIs, the operator's helper, a watch predicate) may open
 connections this scan cannot see: such a site is listed by program, on a road that says so."""
 import ast
 import json
@@ -55,7 +88,9 @@ SKIP_DIRS = ("__pycache__", "node_modules")
 NET = {"urllib.request.urlopen": "urlopen", "urllib.request.Request": "Request", "urllib.request.urlretrieve": "urlretrieve",
        "urllib.request.build_opener": "build_opener", "http.client.HTTPConnection": "HTTPConnection",
        "http.client.HTTPSConnection": "HTTPSConnection", "socket.create_connection": "create_connection", "ssl.wrap_socket": "wrap_socket",
-       "asyncio.open_connection": "open_connection", "asyncio.open_unix_connection": "open_unix_connection",
+       "asyncio.open_connection": "open_connection", "asyncio.open_unix_connection": "open_unix_connection", "socket.sendto": "sendto",
+       "asyncio.sock_connect": "loop.sock_connect", "asyncio.create_connection": "loop.create_connection",
+       "asyncio.create_datagram_endpoint": "loop.create_datagram_endpoint",   # event-loop methods, on a loop the scan resolves
        "anyio.connect_tcp": "connect_tcp", "anyio.connect_unix": "connect_unix", "smtplib.SMTP": "smtplib",
        "ClaudeSDKClient": "sdk-client", "claude_agent_sdk.ClaudeSDKClient": "sdk-client", "sdk.ClaudeSDKClient": "sdk-client",
        "CodexClient": "sdk-client", "openai_codex.client.CodexClient": "sdk-client", "SubprocessCLITransport": "sdk-transport"}
@@ -64,6 +99,13 @@ SUB.update({"os." + n: "os." + n for n in ("system", "popen", "execv", "execve",
             "spawnl", "spawnlp", "posix_spawn", "posix_spawnp")})
 SUB.update({"asyncio.create_subprocess_exec": "create_subprocess_exec", "asyncio.create_subprocess_shell": "create_subprocess_shell",
             "webbrowser.open": "webbrowser.open"})
+# A socket method is a site on a receiver the scan resolves: a name bound to socket.socket() in the function, or a tuple-literal
+# address argument. A loop method is a site on a loop the scan resolves: a name bound to one of the getters, or the getter's call.
+SOCKET_METHODS = ("connect", "connect_ex", "sendto")
+LOOP_GETTERS = {"asyncio.get_event_loop", "asyncio.get_running_loop", "asyncio.new_event_loop"}
+LOOP_METHODS = ("sock_connect", "create_connection", "create_datagram_endpoint")
+# A module named to these is an import and goes through KNOWN_IMPORTS; an argument the scan cannot resolve fails the run (IMPORT).
+IMPORTERS = ("importlib.import_module", "__import__")
 # The default rules place a row-less command site only when its program is a fixed literal with no network use of its own.
 LOCAL_TOOLS = {"ps", "scutil", "systemctl", "journalctl", "systemd-run", "osascript", "notify-send", "xdg-open", "open", "zenity"}
 LOCAL_GIT = {"rev-parse", "status", "log", "show", "diff", "symbolic-ref", "merge-base", "rev-list", "merge", "ls-files", "describe", "tag"}
@@ -80,6 +122,24 @@ socket socketserver ssl stat statistics struct subprocess sys tempfile termios t
 urllib uuid warnings weakref webbrowser zlib zoneinfo
 perf_export perf_public spend_repair
 """.split())   # the last three are cli/ siblings imported by name; a relative import resolves inside the scanned tree
+# Every package the scoped JavaScript and TypeScript files import or require: the specifier's first path segment (two for a
+# scoped package, `node:` dropped); a specifier starting with `.`, `/` or `*` is the project's own module or a declaration
+# file's ambient path pattern and is not gated. A package outside this set fails the run (IMPORT). The ones that open
+# connections or start programs are child_process (the manager, the editor extension and the timeline view start programs
+# through it, each a site of the family in line_scan), http (the manager, the extension, its attach helper and the timeline view
+# reach the kernel on the loopback, each a site) and ws (the extension's websocket to the kernel, a site); every other one
+# opens nothing: the node built-ins for files, paths, hashing and assertions; the editor API vscode (its openExternal hands a
+# URL to the OS browser, as `open` does); the TypeScript compiler; and the browser libraries the webview bundles (markdown,
+# math, sanitising, highlighting, the editor widget, PDF rendering).
+KNOWN_JS_IMPORTS = set("""
+child_process http ws
+assert crypto fs module os path url util vscode typescript
+marked katex dompurify highlight.js pdfjs-dist
+@codemirror/autocomplete @codemirror/commands @codemirror/lang-css @codemirror/lang-html @codemirror/lang-javascript
+@codemirror/lang-json @codemirror/lang-markdown @codemirror/lang-python @codemirror/language @codemirror/legacy-modes
+@codemirror/search @codemirror/state @codemirror/view
+""".split())
+CP_FAMILY = ("exec", "execSync", "execFile", "execFileSync", "spawn", "spawnSync", "fork")   # child_process's program starters
 # The one program the kernel starts from a directory outside the runtime trees; a string constant naming tools/ or scripts/
 # from the runtime trees that is not one of these fails the run (PROGRAM).
 KNOWN_PROGRAM_REFS = {"file-comments-host.mjs"}   # kernel/kernel.py _FILE_COMMENTS_HOST = ROOT / "tools" / "file-comments-host.mjs"
@@ -113,6 +173,14 @@ _t("local-kernel", P + "_kernel_sessions_checked", P + "_kernel_post", P + "_ker
    "cli/restart_metrics.py:kernel_live", "cli/update.py:_kernel", "cli/update.py:_get", "cli/update.py:_post", "cli/version.py:_probe_kernel", "bin/romp:curl",
    "bin/romp-service:curl", "hooks/romp-wake.sh:curl", "hooks/romp-usertodo-context.sh:curl", "vscode-extension/src/extension.ts:http.get",
    "vscode-extension/src/extension.ts:WebSocket", "ui/webview/federation.ts:WebSocket")   # a browser fetch is placed by its URL, never by a row
+# The shell scripts' inline interpreter texts (external-program by class: a program text this scan does not read), keyed file
+# plus tool and rowed with what the text does, read once for the row: bin/romp's `python3 -c` and `python3 -` texts parse the
+# JSON the kernel's curls returned and render it, quote a query string (urllib.parse, no request), and stamp the restart audit
+# row; bin/romp-service's renders the down marker's time; the hooks' read the SDK registration file and render the hook's JSON
+# output; bin/romp-uninstall's edit the settings files, the shell rc and the judge scratch. None opens a connection of its own.
+_t("local-kernel", "bin/romp:python3 -c", "bin/romp:python3 -", "bin/romp-service:python3 -", "hooks/romp-postal-context.sh:python3 -c",
+   "hooks/romp-postal-context.sh:python3 -", "hooks/romp-postal-ensure.sh:python3 -c", "hooks/romp-usertodo-context.sh:python3 -")
+_t("local-program", "bin/romp-uninstall:python3 -")
 _t("local-git", K + "_release_remote")   # a bare `git remote`: the list of remote names from .git/config, no subcommand that fetches
 _t("local-program", K + "_port_open", K + "_primary_addr", K + "_rebuild_dist", K + "_open_folder", K + "_open_file", K + "_run_dialog", K + "_system_notify",
    K + "_run_bounded", K + "_git_out", S + "interpreter_tag", S + "cli_scope_supported", S + "proc_start", S + "SdkBackend._session_cli_pid", S + "SdkBackend._end_cli_tree",
@@ -123,7 +191,8 @@ _t("local-program", K + "_port_open", K + "_primary_addr", K + "_rebuild_dist", 
 _t("browser-figures", "ui/webview/figure-gate.ts:figureHosts", "ui/webview/preview.ts:Image")
 _t("install-bootstrap", "bootstrap.sh:curl", "bootstrap.sh:git clone", "bootstrap.sh:git fetch", "bootstrap.sh:git pull")
 _t("install-sdk-setup", "bin/romp-sdk-setup:curl", "bin/romp-sdk-setup:wget", "bin/romp-sdk-setup:pip install")
-_t("install-ext", "vscode-extension/install.sh:npm install", "vscode-extension/src/extension.ts:install.sh")
+_t("install-ext", "vscode-extension/install.sh:npm install", "vscode-extension/src/extension.ts:install.sh",
+   "vscode-extension/install.sh:node -e", "vscode-extension/install.sh:npx")   # the version stamp (local) and the vsce fetch, both behind the editor-CLI gate
 _t("install-codex-setup", "bin/romp-codex-setup:pip install", "kernel/codex_runtime.py:install_runtime")
 LOCAL_ROADS = {"local-bus", "local-manager", "local-kernel", "local-program", "local-git"}
 RUNTIME_ROADS = {"predicate-watch", "api-key-helper"}   # the program text itself arrives at run time
@@ -156,7 +225,7 @@ ROADS = [
   "`git ls-remote <release remote> refs/heads/main`", "`ROMP_UPDATE_CHECK=off`, or update mode off"),
  ("self-update", "self-update to a release (kernel-runs-a-command)",
   "a bash script: the update banner's Update click, or update mode auto when a newer release tag is found, once per tag",
-  "`git fetch <release remote> refs/tags/<tag>`, then `./install.sh`, which runs bin/romp-sdk-setup (pip against PyPI or pip's configured index; get-pip.py from bootstrap.pypa.io when the python lacks ensurepip) and vscode-extension/install.sh (`npm install` against the npm registry) unless `ROMP_NO_SDK` or `ROMP_NO_EXT` is set; then a restart request to the manager on the loopback",
+  "`git fetch <release remote> refs/tags/<tag>`, then `./install.sh`, which runs bin/romp-sdk-setup (pip against PyPI or pip's configured index; get-pip.py from bootstrap.pypa.io when the python lacks ensurepip) and vscode-extension/install.sh (`npm install` against the npm registry on every run, and `npx --yes @vscode/vsce package`, a fetch of vsce from the same registry even when it is cached, only when an editor CLI is present or `ROMP_EXT_PACKAGE_ONLY` is set) unless `ROMP_NO_SDK` or `ROMP_NO_EXT` is set; then a restart request to the manager on the loopback",
   "update mode ask (the default) runs it only on a click; `ROMP_UPDATE_CHECK=off` stops the discovery"),
  ("main-converge", "main converge (kernel-runs-a-command)",
   "kind pull: the drift banner's Update click, or update mode auto, on a main-tracking clone whose main moved",
@@ -220,8 +289,8 @@ ROADS = [
   "get-pip.py from bootstrap.pypa.io only when the python lacks ensurepip (`ROMP_GET_PIP_URL` overrides); `pip install --upgrade pip`, `pip install claude-agent-sdk==<pin>`, `pip install --upgrade cryptography` from pip's configured index, PyPI by default",
   "`ROMP_NO_SDK=1` skips the script; `ROMP_NO_GET_PIP=1` skips the bootstrap fetch"),
  ("install-ext", "vscode-extension/install.sh (install-time-by-hand; also run by the kernel's self-update and by the editor extension's update prompt)",
-  "`npm install`; install.sh runs it unless `ROMP_NO_EXT=1`; the editor extension's `runInstall` (`execFile bash`): by hand at install; the kernel's self-update; the editor extension's update prompt, on the user's click",
-  "`npm install` against npm's configured registry; then a local `node esbuild.js` and a local `code --install-extension`",
+  "`npm install` on every run; `node -e` and `npx` only when an editor CLI is present (`code`, `code-insiders`, `cursor` or `codium` on PATH, or an editor bundle under `ROMP_EDITOR_APPS`) or `ROMP_EXT_PACKAGE_ONLY` is set, the script exiting after the build otherwise; install.sh runs it unless `ROMP_NO_EXT=1`; the editor extension's `runInstall` (`execFile bash`): by hand at install; the kernel's self-update; the editor extension's update prompt, on the user's click",
+  "`npm install` against npm's configured registry, then a local `node esbuild.js`; behind the editor-CLI gate, a local `node -e` that stamps package.json's version, `npx --yes @vscode/vsce package`, which asks npm's configured registry for vsce even when it is cached, and a local `code --install-extension`; with no editor CLI and `ROMP_EXT_PACKAGE_ONLY` unset nothing after `npm install` is sent",
   "`ROMP_NO_EXT=1` for install.sh"),
  ("install-codex-setup", "bin/romp-codex-setup (install-time-by-hand)",
   "the setup script, and kernel/codex_runtime.py `install_runtime`, which the setup runs as a script (the kernel only looks the runtime up: kernel/codex_backend.py `runtime_path`; `ensure_codex_sdk` installs nothing): by hand",
@@ -231,31 +300,50 @@ ROADS = [
 LOCAL_ROW = ("local, set aside and counted (local)",
   "each a connection to this machine or a fixed program with no network use of its own: the kernel to the manager, the postal bus and itself; the bus, bin/romp's curls, cli/*, the installed hooks, the VS Code extension and the manager to the kernel on 127.0.0.1; the browser's fetch and websocket to the kernel's own origin (a relative URL or a kernel-URL helper); the SDK transport's connection to a session host's Unix socket; git read-only queries, ps, scutil and the systemd tools spelled out in the argv; and `_primary_addr`'s UDP connect to TEST-NET-1, which sends no packet. A program on a local road whose far end this scan cannot derive is counted in the external-program row, never here",
   "as the kernel, the CLIs and the browser run", "nothing leaves the machine", "not applicable")
+# Each class label ends with the kind suffix; the external-program label is SECURITY.md's phrase for the class (a program
+# romp's code starts whose far end its arguments do not show, whichever of the kernel, a shell script, the manager or the
+# editor extension starts it), and tests/test_security_price_feed.py holds the two equal by reading this binding.
 CLASS_ROWS = {
- "external-program": ("an external program the kernel starts, far end not derivable here (not derivable by this scan)",
+ "external-program": ("an external program started whose far end its arguments do not show (not derivable by this scan)",
   "as the roads above run: every site of this class sits on a road by an explicit row with its reason, and is never set aside as local",
-  "whatever the program sends: a shell, node, perl or python runs a program text this scan does not read; `shell=True` runs the configured command; git with a subcommand the code does not spell out and an argv the code does not spell out (RUNTIME-SUPPLIED) name their program at run time",
+  "whatever the program sends: a shell, node, perl or python runs a program text this scan does not read, started by the kernel, by a shell script inline (`python3 -c`, `python3 -` with the text on stdin, `node -e`) or by the manager or the editor extension (child_process); `shell=True` and child_process's exec run the configured command; git with a subcommand the code does not spell out and an argv the code does not spell out (RUNTIME-SUPPLIED) name their program at run time",
   "the road's own switch; none for the class"),
  "runtime-program": ("a program supplied at run time (not derivable by this scan)",
   "as the predicate watch and the operator's own commands rows run",
   "whatever the registered text sends: the predicate as `/bin/sh <scratch file holding the text>`, the helper or token command through the shell",
   "none"),
  "browser-computed-url": ("a browser request whose URL is computed at run time (not derivable by this scan)",
-  "as the dashboard runs: a fetch whose first argument is a variable; at this head each reads a kernel URL by its binding (a `same-origin` mode, a `fileUrl` or `kernelUrl` result), which the scan cannot derive from the line",
-  "to the URL the variable holds at run time; the kernel's own origin at this head by reading the bindings",
+  "as the dashboard runs: a fetch whose first argument is a variable, or a dynamic import of a computed module URL; at this head each reads a kernel URL by its binding (a `same-origin` mode, a `fileUrl` or `kernelUrl` result, the PDF worker's URL derived from its own chunk's script src), which the scan cannot derive from the line",
+  "to the URL the variable holds at run time; the kernel's own origin at this head by reading the bindings (the editor's webview reaches the same served bundles by its resource URL)",
   "not applicable"),
  "browser-dom-loads": ("the browser DOM's own loads (not derivable by this scan)",
   "as the dashboard and the editor views render: an element loads its URL when the attribute lands; the viewer's and the chat's rendered-markdown insertions load their figures with no attribute line at all and are not counted",
   "to the URL written: kernel URLs (`fileUrl`, `mediaSrc`, `/media`), object URLs and editor webview URIs, and for a viewed file's figures the hosts the browser-figures road names",
   "the figure-host setting for figures; not applicable otherwise"),
 }
+# Named and not counted: the scan cannot see this class by construction, so its row states the mechanism and the test module
+# plants one call and holds the row to it (the sentence in the where cell is the docstring's).
+UNSEEN_ROW = ("a socket primitive on a receiver this scan cannot resolve (not derivable by this scan)",
+  "not counted: a socket primitive called on a receiver the census cannot resolve (an attribute-held or parameter socket) is not a site here; the scan resolves a socket receiver as a name bound to `socket.socket()` in the same function or by a tuple-literal address, and a rule on the method name alone would tag the backends' and transports' own connect methods, which are not sockets",
+  "wherever such a call would run; no site of this class can be listed by this scan",
+  "to the address the socket is given at run time",
+  "not applicable")
 
 SH = [("curl", r"\bcurl\s"), ("wget", r"\bwget\s"), ("git clone", r"\bgit (?:-C \S+ )?clone\b"), ("git fetch", r"\bgit (?:-C \S+ )?fetch\b"),
       ("git pull", r"\bgit (?:-C \S+ )?pull\b"), ("git push", r"\bgit (?:-C \S+ )?push\b"), ("git ls-remote", r"\bgit (?:-C \S+ )?ls-remote\b"),
       ("npm install", r"\bnpm (?:install|ci)\b"), ("pip install", r"\bpip\S*\"? (?:--isolated )?install\b"),
-      ("gh", r"\bgh (?:pr|repo|api|release|run|issue|auth)\b"), ("ssh", r"\bssh\s+\S")]
+      ("gh", r"\bgh (?:pr|repo|api|release|run|issue|auth)\b"), ("ssh", r"\bssh\s+\S"),
+      ("npx", r"(?:^|[\s;&|(`{])npx\s"), ("scp", r"(?:^|[\s;&|(`{])scp\s"), ("rsync", r"(?:^|[\s;&|(`{])rsync\s"),
+      ("sftp", r"(?:^|[\s;&|(`{])sftp\s"), ("nc", r"(?:^|[\s;&|(`{])nc\s")]
+# The interpreter arm: a head (path-prefixed or not) followed by -c or -e, or by a bare `-` (the program on stdin, the heredoc
+# shape); the tool the site is keyed on is the head with its flag (`python3 -c`, `python3 -`, `node -e`), and the class is
+# external-program. Keyed on the head, never on the flag alone: `[ -e file ]` and `grep -c` carry those flags too.
+SH_INTERPRETER = re.compile(r"(?:^|[\s;&|(`])(?P<head>(?:\S*/)?(?:python3?|node|perl|sh|bash))\s+(?P<flag>-c|-e|-)(?=\s|$)")
 JS = [("fetch", r"\bfetch\("), ("WebSocket", r"new WebSocket\("), ("EventSource", r"new EventSource\("), ("Image", r"new Image\("), ("http.get", r"\bhttps?\.get\("),
-      ("http.request", r"\bhttps?\.request\("), ("execFile", r"\bexecFile\("), ("spawn", r"\bspawn\("), ("figureHosts", r"loadSettings\(\)\.figureHosts")]
+      ("http.request", r"\bhttps?\.request\("), ("net.connect", r"\bnet\.connect\("), ("net.createConnection", r"\bnet\.createConnection\("),
+      ("tls.connect", r"\btls\.connect\("), ("XMLHttpRequest", r"\bXMLHttpRequest\b"), ("sendBeacon", r"\bsendBeacon\("),
+      ("import()", r"(?<![\w.$])import\("), ("figureHosts", r"loadSettings\(\)\.figureHosts")]
+# The child_process family is matched through its binding (see _cp_bindings), never as a bare name: `exec(` is RegExp exec too.
 DOM = [("attribute write", r"\.(?:src|srcset|href)\s*=[^=]"), ("setAttribute", r"setAttribute\(\s*[\"'](?:src|srcset|href)[\"']"),
        ("template", r"<(?:img|script|iframe|link|source|video|audio|a|embed|object)\b[^>]*\b(?:src|srcset|href)="), ("window.open", r"window\.open\(")]
 
@@ -277,9 +365,9 @@ class Result(object):
         self.sites.append(Site(*a))
 
 
-def _fetch_arg(line):
-    """The first argument of the first fetch( on the line, up to its top-level comma or the closing paren."""
-    text = line[line.index("fetch(") + 6:]; depth, out = 0, []
+def _call_arg(line, opener):
+    """The first argument of the first `opener` (`fetch(`, `import(`) on the line, up to its top-level comma or the closing paren."""
+    text = line[line.index(opener) + len(opener):]; depth, out = 0, []
     for ch in text:
         if ch in "([{": depth += 1
         elif ch in ")]}":
@@ -318,7 +406,40 @@ class Scan(ast.NodeVisitor):
         d = self.dotted(n); return SUB.get(d) or NET.get(d)
     def bind(self, name, value):
         if isinstance(value, ast.Call) and self.dotted(value.func) == "socket.socket": self.binds[-1][name] = "SOCKET"
+        elif isinstance(value, ast.Call) and self.dotted(value.func) in LOOP_GETTERS: self.binds[-1][name] = "LOOP"
         elif self.prim(value): self.binds[-1][name] = self.prim(value)
+    def bind_loop(self, target, it):
+        """A for or comprehension target over a module constant of strings, or of tuples of strings, binds each name to the
+        strings at its position, so importlib.import_module(mod) over such a constant resolves to the modules it names."""
+        if not self.stack or not (isinstance(it, ast.Name) and isinstance(self.consts.get(it.id), (ast.List, ast.Tuple))): return
+        names = [target] if isinstance(target, ast.Name) else list(target.elts) if isinstance(target, (ast.Tuple, ast.List)) else []
+        for pos, t in enumerate(names):
+            if not isinstance(t, ast.Name): continue
+            vals = set()
+            for e in self.consts[it.id].elts:
+                v = e if isinstance(target, ast.Name) else e.elts[pos] if isinstance(e, (ast.Tuple, ast.List)) and pos < len(e.elts) else None
+                if isinstance(v, ast.Constant) and isinstance(v.value, str): vals.add(v.value)
+            if vals: self.binds[-1][t.id] = ("MODULES", frozenset(vals))
+    def visit_For(self, n):
+        self.bind_loop(n.target, n.iter); self.generic_visit(n)
+    visit_AsyncFor = visit_For
+    def visit_comprehension(self, n):
+        self.bind_loop(n.target, n.iter); self.generic_visit(n)
+    def comp(self, n):   # the generators bind before the element that reads them is visited
+        for g in n.generators: self.visit(g)
+        for f in ("key", "value", "elt"):
+            if hasattr(n, f): self.visit(getattr(n, f))
+    visit_ListComp = visit_SetComp = visit_GeneratorExp = visit_DictComp = comp
+    def modules_of(self, a):
+        """The modules an import_module or __import__ argument names: a string literal, a module constant holding one, or a
+        loop or comprehension variable bound over a module constant of strings; None when the scan cannot resolve it."""
+        if isinstance(a, ast.Constant) and isinstance(a.value, str): return [a.value]
+        if isinstance(a, ast.Name):
+            c = self.consts.get(a.id)
+            if isinstance(c, ast.Constant) and isinstance(c.value, str): return [c.value]
+            b = self.binds[-1].get(a.id) if self.binds else None
+            if isinstance(b, tuple) and b[0] == "MODULES": return sorted(b[1])
+        return None
     def visit_Assign(self, n):
         if len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
             if not self.stack: self.consts[n.targets[0].id] = n.value
@@ -367,12 +488,24 @@ class Scan(ast.NodeVisitor):
             return "%s or %s" % (a.args[0].value, ast.unparse(a.args[1]) if len(a.args) > 1 else "''"), sub, follow   # SSH_BIN = os.environ.get(..., "ssh")
         return "RUNTIME-SUPPLIED(%s)" % (ast.unparse(a)[:48] if a is not None else ""), sub, follow
     def visit_Call(self, n):
-        d = self.dotted(n.func); p = SUB.get(d) or NET.get(d)
-        if not p and isinstance(n.func, ast.Name) and self.binds and self.binds[-1].get(n.func.id, "SOCKET") != "SOCKET":
-            p = self.binds[-1][n.func.id] + " via " + n.func.id
-        if not p and getattr(n.func, "attr", "") in ("connect", "connect_ex") and n.args:
+        d = self.dotted(n.func); p = SUB.get(d) or NET.get(d); attr = getattr(n.func, "attr", "")
+        if not p and isinstance(n.func, ast.Name) and self.binds:
+            b = self.binds[-1].get(n.func.id)
+            if isinstance(b, str) and b not in ("SOCKET", "LOOP"): p = b + " via " + n.func.id
+        if not p and attr in SOCKET_METHODS and n.args:   # a socket the scan resolves: bound in the function, or a tuple-literal address
             bound = isinstance(n.func.value, ast.Name) and self.binds and self.binds[-1].get(n.func.value.id) == "SOCKET"
-            if bound or isinstance(n.args[0], ast.Tuple): p = "socket." + n.func.attr
+            addr = n.args[1] if attr == "sendto" and len(n.args) > 1 else n.args[0]
+            if bound or isinstance(addr, ast.Tuple): p = "socket." + attr
+        if not p and attr in LOOP_METHODS:   # an event loop the scan resolves: bound in the function, or the getter's own call
+            r = n.func.value
+            if (isinstance(r, ast.Name) and self.binds and self.binds[-1].get(r.id) == "LOOP") or (isinstance(r, ast.Call) and self.dotted(r.func) in LOOP_GETTERS):
+                p = NET["asyncio." + attr]
+        if d in IMPORTERS and n.args:   # an import by name: through KNOWN_IMPORTS, or refused when the name is not spelled out
+            mods = self.modules_of(n.args[0])
+            if mods is None:
+                self.res.problems.append("IMPORT %s:%d imports a module named at run time (%s): the census cannot gate it; spell the module as a "
+                                         "string literal or a module constant" % (self.rel, n.lineno, ast.unparse(n)[:60]))
+            else: self.imports.extend((m.split(".")[0], n.lineno) for m in mods)
         if p:
             fn = ".".join(self.stack) or "<module>"; road = T.get(self.rel + ":" + fn); head, sub, cls = "", "", None
             if p.split(" ")[0] in SUB.values():
@@ -422,25 +555,139 @@ def walk(root, res):
         yield rel, "js" if rel.endswith((".js", ".mjs", ".cjs")) else "sh"
 
 
+_CP_MODULE = r"['\"](?:node:)?child_process['\"]"
+
+
+def _cp_bindings(text):
+    """The names a JavaScript or TypeScript file binds from child_process: `names` maps a bare name the file destructures or
+    imports to the family member it stands for, `spaces` holds the names the file keeps the module under (a namespace or
+    default import, a require assigned whole). A family member called by a bare name the file does not bind is not a site."""
+    names, spaces = {}, set()
+    for m in re.finditer(r"(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\(\s*%s\s*\)|import\s*(?:type\s+)?\{([^}]*)\}\s*from\s*%s" % (_CP_MODULE, _CP_MODULE), text):
+        for part in (m.group(1) or m.group(2) or "").split(","):
+            part = part.strip()
+            if part.startswith("type "): part = part[5:].strip()
+            if part:
+                bits = [b.strip() for b in re.split(r"\s+as\s+|\s*:\s*", part)]
+                names[bits[-1]] = bits[0]
+    for m in re.finditer(r"(?:const|let|var)\s+(\w+)\s*=\s*require\(\s*%s\s*\)|import\s+\*\s+as\s+(\w+)\s+from\s*%s|import\s+(\w+)\s+from\s*%s" % (_CP_MODULE, _CP_MODULE, _CP_MODULE), text):
+        spaces.add(m.group(1) or m.group(2) or m.group(3))
+    return {"names": names, "spaces": spaces}
+
+
+def _cp_sites(ln, cp):
+    """(family member, index after its open paren) for every child_process call on the line: qualified to the module
+    (`child_process.<fn>(`, `require('child_process').<fn>(`, a namespace the file binds), or a bare name the file binds."""
+    qual = [r"\bchild_process", r"require\(\s*%s\s*\)" % _CP_MODULE] + [r"\b" + re.escape(s) for s in sorted(cp["spaces"])]
+    out = [(m.group(1), m.end()) for m in re.finditer(r"(?:%s)\.(%s)\(" % ("|".join(qual), "|".join(CP_FAMILY)), ln)]
+    bare = sorted(n for n, fn in cp["names"].items() if fn in CP_FAMILY)
+    if bare:
+        out.extend((cp["names"][m.group(1)], m.end()) for m in re.finditer(r"(?<![\w.$])(%s)\(" % "|".join(map(re.escape, bare)), ln))
+    return out
+
+
+def _js_args(text):
+    """The top-level arguments of a call, from the text after its open paren up to the closing paren."""
+    args, depth, cur, quote = [], 0, [], None
+    for ch in text:
+        if quote:
+            cur.append(ch)
+            if ch == quote: quote = None
+            continue
+        if ch in "'\"`": quote = ch; cur.append(ch); continue
+        if ch in "([{": depth += 1
+        elif ch in ")]}":
+            if depth == 0: break
+            depth -= 1
+        elif ch == "," and depth == 0: args.append("".join(cur).strip()); cur = []; continue
+        cur.append(ch)
+    if "".join(cur).strip(): args.append("".join(cur).strip())
+    return args
+
+
+def _js_argv(fn, text):
+    """(head, git subcommand or '', the literal after the head or '', shell) for a child_process call, read from the text after
+    its open paren the way Scan.argv reads a Python command call: a quoted literal is the head, anything else RUNTIME-SUPPLIED;
+    the first array argument gives git its subcommand (the first literal not starting with -) and an interpreter its flag."""
+    args = _js_args(text); a0 = args[0] if args else ""
+    lit = lambda t: t[1:-1] if len(t) >= 2 and t[0] in "'\"`" and t[-1] == t[0] and "${" not in t else None
+    head, sub, follow = lit(a0), "", ""
+    if head is None: head = "RUNTIME-SUPPLIED(%s)" % a0[:48]
+    if len(args) > 1 and args[1].startswith("["):
+        elts = [lit(e) for e in _js_args(args[1][1:])]
+        lits = [e for e in elts if e is not None]
+        if head == "git": sub = next((v for v in lits if not v.startswith("-")), "")
+        if elts and elts[0] is not None: follow = elts[0]
+    shell = fn in ("exec", "execSync") or bool(re.search(r"\bshell\s*:\s*true\b", text))   # exec runs its text through a shell
+    return head, sub, follow, shell
+
+
+def _js_specifiers(s):
+    """The module specifiers a JavaScript or TypeScript line imports or requires: an import or export statement's `from` string
+    (the closing line of a multi-line import starts with `}`), a side-effect import, and every literal require() and import()."""
+    out = []
+    if s.startswith(("import", "export", "}")):
+        m = re.search(r"\bfrom\s*(['\"])([^'\"]+)\1", s)
+        if m: out.append(m.group(2))
+        m = re.match(r"import\s*(['\"])([^'\"]+)\1", s)
+        if m: out.append(m.group(2))
+    out.extend(m.group(2) for m in re.finditer(r"(?<![\w.$])(?:require|import)\(\s*(['\"])([^'\"]+)\1\s*\)", s))
+    return out
+
+
+def _js_package(spec):
+    """The package a specifier names, or None for the project's own module (a relative or absolute path) and a declaration
+    file's ambient path pattern (`*/...`): the first path segment, two for a scoped package, `node:` dropped."""
+    if spec.startswith((".", "/", "*")): return None
+    spec = spec[5:] if spec.startswith("node:") else spec
+    parts = spec.split("/")
+    return "/".join(parts[:2]) if spec.startswith("@") else parts[0]
+
+
 def line_scan(root, rel, kind, res):
     tools, comment = (JS, ("//", "*", "/*")) if kind == "js" else (SH, ("#",))
     dom = kind == "js" and rel.startswith(tuple(d + "/" for d in JS_ROOTS))
-    with open(os.path.join(root, rel), encoding="utf-8", errors="replace") as fh:
-        for i, ln in enumerate(fh, 1):
-            s = ln.strip()
-            if s.startswith(comment) or s.startswith(("echo ", "print(")): continue   # a printed remedy is not a request
-            for tool, rx in tools:
-                if re.search(rx, ln):
-                    road, cls, head = T.get("%s:%s" % (rel, tool)), None, s[:70]
-                    if tool == "fetch":   # placed by its URL: the argument is what the listing shows
-                        arg = _fetch_arg(ln); fc = _fetch_class(arg); head = "fetch(%s)" % arg[:60]
-                        if fc == "local": road = "local-kernel"
-                        elif fc == "computed": cls = "browser-computed-url"
-                    if tool == "execFile" and 'execFile("bash"' in ln: tool, road = "install.sh", T.get(rel + ":install.sh")
-                    res.emit(rel, i, tool, head, "-", road, cls, kind)
-            if dom:
-                for name, rx in DOM:
-                    if re.search(rx, ln): res.dom.append((rel, i, name, s[:70])); break
+    with open(os.path.join(root, rel), encoding="utf-8", errors="replace") as fh: text = fh.read()
+    cp = _cp_bindings(text) if kind == "js" else None
+    for i, ln in enumerate(text.splitlines(), 1):
+        s = ln.strip()
+        if s.startswith(comment) or s.startswith(("echo ", "print(")): continue   # a printed remedy is not a request
+        if kind == "js":
+            for spec in _js_specifiers(s):
+                pkg = _js_package(spec)
+                if pkg and pkg not in KNOWN_JS_IMPORTS:
+                    res.problems.append("IMPORT %s:%d imports %s, a package the census does not know: a client that opens connections or starts programs "
+                                        "takes its primitives into JS or the child_process family; either way add it to KNOWN_JS_IMPORTS with the reason" % (rel, i, pkg))
+            for fn, at in _cp_sites(ln, cp):   # a program site, classed by its argv as Scan.visit_Call classes a Python command
+                head, sub, follow, shell = _js_argv(fn, ln[at:])
+                tool, road, cls = fn, T.get("%s:%s" % (rel, fn)), None
+                base = os.path.basename(head) if not head.startswith("RUNTIME-SUPPLIED") else head
+                interp = base in INTERPRETERS or base.startswith("python")
+                external = interp or shell or head.startswith("RUNTIME-SUPPLIED") or (head == "git" and not sub)
+                if shell: head += " SHELL"
+                if interp and follow.startswith("-"): head += " " + follow
+                if external: cls = "runtime-program" if road in RUNTIME_ROADS else "external-program"
+                if fn == "execFile" and 'execFile("bash"' in ln: tool, road = "install.sh", T.get(rel + ":install.sh")
+                res.emit(rel, i, tool, (head + " " + sub).strip(), "-", road, cls, kind)
+        else:
+            for m in SH_INTERPRETER.finditer(ln):   # the interpreter arm: keyed file plus tool, external-program by class
+                tool = "%s %s" % (os.path.basename(m.group("head")), m.group("flag"))
+                res.emit(rel, i, tool, s[:70], "-", T.get("%s:%s" % (rel, tool)), "external-program", kind)
+        for tool, rx in tools:
+            if re.search(rx, ln):
+                road, cls, head = T.get("%s:%s" % (rel, tool)), None, s[:70]
+                if tool == "fetch":   # placed by its URL: the argument is what the listing shows
+                    arg = _call_arg(ln, "fetch("); fc = _fetch_class(arg); head = "fetch(%s)" % arg[:60]
+                    if fc == "local": road = "local-kernel"
+                    elif fc == "computed": cls = "browser-computed-url"
+                if tool == "import()":   # a literal specifier is an import (gated above), a computed one a site of the class
+                    arg = _call_arg(ln, "import(")
+                    if arg[:1] in ("'", '"', "`") and "${" not in arg: continue
+                    cls, head = "browser-computed-url", "import(%s)" % arg[:60]
+                res.emit(rel, i, tool, head, "-", road, cls, kind)
+        if dom:
+            for name, rx in DOM:
+                if re.search(rx, ln): res.dom.append((rel, i, name, s[:70])); break
 
 
 def scan(root):
@@ -468,16 +715,19 @@ def scan(root):
 
 def figures(res):
     """The committed counts: every figure a run is compared against."""
-    per_road, per_key, classes, kinds = {}, {}, dict.fromkeys(CLASSES, 0), {"py": 0, "js": 0, "sh": 0}
+    per_road, per_key, heads, classes, kinds = {}, {}, {}, dict.fromkeys(CLASSES, 0), {"py": 0, "js": 0, "sh": 0}
     for s in res.sites:
         kinds[s.kind] += 1; per_key[s.key()] = per_key.get(s.key(), 0) + 1
         if s.road: per_road[s.road] = per_road.get(s.road, 0) + 1
         if s.cls: classes[s.cls] += 1
+        if s.kind == "py" and s.prim.split(" ")[0] in SUB.values():   # the program head per row key, Python command sites only
+            h = "RUNTIME-SUPPLIED" + (" SHELL" if s.head.endswith(" SHELL") else "") if s.head.startswith("RUNTIME-SUPPLIED") else s.head
+            k = "%s %s %s" % (s.key(), s.prim, h); heads[k] = heads.get(k, 0) + 1
     classes["browser-dom-loads"] = len(res.dom)
     roads = set(per_road)
     return {"sites": len(res.sites), "roads": len(roads), "local_roads": len(roads & LOCAL_ROADS),
             "local_sites": sum(1 for s in res.sites if s.road in LOCAL_ROADS and s.cls is None),
-            "kinds": kinds, "classes": classes, "per_road": per_road, "per_key": per_key}
+            "kinds": kinds, "classes": classes, "per_road": per_road, "per_key": per_key, "heads": heads}
 
 
 def problems(root, res, fig, expected):
@@ -498,7 +748,7 @@ def problems(root, res, fig, expected):
     else:
         for name in ("sites", "roads", "local_roads", "local_sites"):
             if expected.get(name) != fig[name]: out.append("COUNTS %s: the committed count is %s, this run found %s" % (name, expected.get(name), fig[name]))
-        for group in ("kinds", "classes", "per_road", "per_key"):
+        for group in ("kinds", "classes", "per_road", "per_key", "heads"):
             e, f = expected.get(group) or {}, fig[group]
             for k in sorted(set(e) | set(f)):
                 if e.get(k) != f.get(k): out.append("COUNTS %s %s: the committed count is %s, this run found %s" % (group, k, e.get(k), f.get(k)))
@@ -532,9 +782,10 @@ def _where(sites):
 def _programs(sites):
     by = {}
     for s in sites:
-        head = s.head.split(" SHELL")[0]
+        text = s.prim if s.kind == "sh" else s.head   # a shell site's program is its tool (`python3 -c`); its head is the line
+        head = text.split(" SHELL")[0]
         label = ("an argv the code does not spell out" if head.startswith("RUNTIME-SUPPLIED") else "`git` with a subcommand the code does not spell out"
-                 if head == "git" else "`%s` with `shell=True`" % head if " SHELL" in s.head else "`%s`" % head)
+                 if head == "git" else "`%s` with `shell=True`" % head if " SHELL" in text else "`%s`" % head)
         by[label] = by.get(label, 0) + 1
     return ", ".join("%s %d" % (k, by[k]) for k in sorted(by, key=lambda k: (-by[k], k)))
 
@@ -557,6 +808,7 @@ def render_table(res, fig, out):
     for cls in CLASSES:
         label, trigger, sent, off = CLASS_ROWS[cls]
         out.write("| %s | %s | %s | %s | %s |\n" % (label, where[cls], trigger, sent, off))
+    out.write("| %s | %s | %s | %s | %s |\n" % UNSEEN_ROW)
 
 
 def main(argv):

@@ -78,6 +78,7 @@ FEED = {
                          "cache_creation_input_token_cost": 13.75e-6, "cache_read_input_token_cost": 1.1e-6},
     "some-other-vendor-model": {"input_cost_per_token": 1e-6, "output_cost_per_token": 2e-6},
 }
+CACHE_KEYS = ("cache_creation_input_token_cost", "cache_read_input_token_cost")   # the feed row's two OPTIONAL rates
 OFF_LINE = "price feed: off (ROMP_PRICE_FEED=off)"
 FAIL_LINE = "price feed: fetch failed ("
 FEED_RESET = {"fetchedAt": None, "attemptedAt": None, "lastError": None, "matched": 0, "inflight": 0, "flights": 0,
@@ -395,33 +396,83 @@ class SayOnceLatches(PriceFeedCase):
     then a set with no lock (the comment said a lone fact needs none: true of a store, not of a read followed by a
     write), and two cost-view builds arriving together, request-handler threads, both wrote the line. Staged
     deterministically with a one-shot capture-then-park gate rather than a barrier (a barrier that times out raises
-    inside the read and writes no line, a false pass): the first reader captures the latch's value, then parks until
-    the second has read it too, or for half a second when the lock keeps the second out; the second reader releases
-    it. Without the lock both capture False and both write; with it the first holds the lock while parked, the second
-    reads True after it, and one line is written."""
+    inside the read and writes no line, a false pass): the first reader captures the latch's value, then parks until an
+    EVENT ends the park, one of two edges: the second reader's read of the same latch (the shape without the lock: both
+    captured False and both write), or the second attempt's ask for _price_feed_lock while the parked reader holds it
+    (the shape with the lock: the second cannot reach the read until the first is done, reads True after it, and one
+    line is written). Never a wall-clock wait alone: the park is bounded at 5 s and its return is asserted, so a park
+    that ran out is a failure and not a pass (round 3 of the review, 2026-09-22: a fixed half-second park passed by
+    timeout with the lock in place, and its red without the lock needed the second thread to reach the read inside the
+    half second).
+    The lock edge is seen by a shim on km._price_feed_lock keyed on HOLDER identity, never on a count of asks: on the
+    cost view's road (km._model_prices) the parked thread itself asks for the lock twice before the row latch (the off
+    latch, then the status read behind the off line), so a count would end the park before the second attempt arrived.
+    The shim records the holder on enter and clears it on exit, keeps the prefixed threads waiting between their ask
+    and their acquire, and fires when a prefixed thread other than the parked one asks while the parked one holds the
+    lock, seen from whichever side comes second under one small lock of the shim's own (the asker finds the parked
+    thread holding; or the parked thread, parking, finds the other already waiting on the lock it holds): an ask that
+    landed after the first reader acquired the lock and before it parked would otherwise find nobody parked, not
+    fire, and block, and the park would run out with the lock intact. Without the lock nobody holds it at the latch,
+    the shim never fires, and the park ends on the second read with both having captured False."""
 
     def _race(self, key, value, marker, target=None):
         """Two threads run `target` (km._refresh_remote_prices by default) at NOW under ROMP_PRICE_FEED=`value`, the read
-        of `_price_feed[key]` gated as the class docstring says; returns (the count of `marker` in stderr, the log)."""
-        first_read, second_read = threading.Event(), threading.Event()
+        of `_price_feed[key]` gated as the class docstring says; returns (the count of `marker` in stderr, the log).
+        Asserts on the way out, in this order, that the gate saw the first read, that the park ended on one of its two
+        edges and not by running out, and that both attempts finished: the park's return is read before the threads'
+        liveness, because a park that ran out at its 5 s bound races the threads' own 5 s join and would otherwise be
+        reported as a live thread instead of as the park it is."""
+        first_read, release, ended, parked = threading.Event(), threading.Event(), [], []
+        shim_lock, waiting, holder = threading.Lock(), set(), [None]
         prefix = "price-feed-latch-"
 
         class Parked(dict):
             def __getitem__(self, k):
                 v = dict.__getitem__(self, k)                      # captured BEFORE parking: the check's own value
                 if k == key and threading.current_thread().name.startswith(prefix):
+                    me = threading.current_thread().name
                     if not first_read.is_set():
                         first_read.set()
-                        second_read.wait(0.5)                      # the second read, or the lock keeping it out
+                        with shim_lock:                            # the lock edge seen from the park side: the other attempt
+                            parked.append(me)                      # is already waiting on the lock this thread holds
+                            fire = holder[0] == me and any(w != me for w in waiting)
+                        if fire:
+                            release.set()
+                        ended.append(release.wait(5))              # the second read, or the other attempt's ask for the lock
                     else:
-                        second_read.set()
+                        release.set()                              # the second read: the other edge
                 return v
+        real_lock = km._price_feed_lock
+
+        class Shim:
+            """Every acquire goes to the real lock; the shim knows who holds it and which prefixed threads wait for it."""
+
+            def __enter__(self):
+                me = threading.current_thread().name
+                if me.startswith(prefix):
+                    with shim_lock:                                # the lock edge seen from the ask side: the parked thread
+                        waiting.add(me)                            # holds the lock this thread is asking for
+                        fire = bool(parked) and holder[0] == parked[0] and me != parked[0]
+                    if fire:
+                        release.set()
+                real_lock.__enter__()
+                with shim_lock:
+                    holder[0] = me
+                    waiting.discard(me)
+                return self
+
+            def __exit__(self, *exc):
+                with shim_lock:
+                    holder[0] = None
+                return real_lock.__exit__(*exc)
         real = km._price_feed
         km._price_feed = Parked(real)
         self.addCleanup(setattr, km, "_price_feed", real)          # the harness then resets the real dict's values
+        km._price_feed_lock = Shim()
+        self.addCleanup(setattr, km, "_price_feed_lock", real_lock)   # LIFO: the lock is restored before the dict
         os.environ["ROMP_PRICE_FEED"] = value
-        threads = [threading.Thread(target=target or km._refresh_remote_prices, args=(NOW,), name=prefix + str(i))
-                   for i in (1, 2)]
+        run = target or km._refresh_remote_prices
+        threads = [threading.Thread(target=run, args=(NOW,), name=prefix + str(i)) for i in (1, 2)]
         err = io.StringIO()
         with redirect_stderr(err):
             for t in threads:
@@ -429,11 +480,16 @@ class SayOnceLatches(PriceFeedCase):
             for t in threads:
                 t.join(5)
             self._join()
-        self.assertFalse(any(t.is_alive() for t in threads), "both attempts finished")
         self.assertTrue(first_read.is_set(), "the gate saw the first read of the latch")
+        self.assertEqual(ended, [True], "the park ended on one of its edges (the second read of the latch, or the other "
+                         "attempt's ask for the lock the parked reader holds), not by running out")
+        self.assertFalse(any(t.is_alive() for t in threads), "both attempts finished")
         return err.getvalue().count(marker), err.getvalue()
 
     def test_two_attempts_under_off_arriving_together_write_the_off_line_once(self):
+        """The off latch, the one the switch arrived with. The lock's proof is the mutation run: the test-and-set moved
+        outside the lock in a scratch copy of kernel/kernel.py reads 2 here, on both interpreters, and still reads 2 when
+        the second attempt starts 0.6 s late, the delay the half-second park passed."""
         count, log = self._race("offSaid", "off", OFF_LINE)
         self.assertEqual(count, 1, "one off line per kernel life, whatever arrives together:\n" + log)
         self.assertEqual(self.calls, [])
@@ -442,7 +498,7 @@ class SayOnceLatches(PriceFeedCase):
         """The contract's second latch, the same shape. At the reviewed head this arm did not exist, so the latch was
         never read (the gate assertion fails first) and no line was written: the subject is the new arm, and the
         lock's own proof for this latch is the mutation run (the test-and-set moved outside the lock in a scratch
-        copy reads 2 here, on both interpreters)."""
+        copy reads 2 here, on both interpreters, and still reads 2 when the second attempt starts 0.6 s late)."""
         count, log = self._race("unrecognisedSaid", "maybe", UNRECOGNISED_LINE)
         self.assertEqual(count, 1, "one line per kernel life for a value that is not off:\n" + log)
         self.assertIn("'maybe'", log)
@@ -452,7 +508,8 @@ class SayOnceLatches(PriceFeedCase):
         shape on the cost view's road: two merges arriving together (km._model_prices at NOW, refresh on, the switch off
         so no fetch starts) name the row once. At the 5cbf9e397 archive the latch was one boolean, `overrideSaid`, and
         this key is never read: the gate assertion fails first. The lock's proof is the mutation run (the test-and-set
-        moved outside the lock in a scratch copy reads 2 here)."""
+        moved outside the lock in a scratch copy reads 2 here, and still reads 2 when the second attempt starts 0.6 s
+        late)."""
         km.PRICE_CONFIG.write_text(json.dumps({"note": "my rates"}))
         count, log = self._race("overrideRowsSaid", "off", ROW_LINE % "'note'", target=km._model_prices)
         self.assertEqual(count, 1, "one line per kernel life per row, whatever arrives together:\n" + log)
@@ -984,7 +1041,12 @@ class LiveFeed(PriceFeedCase):
         2a5fc1dce archive at the cache assertion for the shapes its bare float() read and cached: "1_0" as $10 a token, the
         padded and the plus-signed forms as 11e-6, true as $1 a token and false as $0, and "1_0" in the optional cache key.
         "inf", "nan" and "1e999" were that head's finite check's already, and "", "abc", null, a list and an object raised in
-        its float(): guards. Each shape is its own fetch (the cache reset to stale), and each landing is said once."""
+        its float(): guards. Each shape is its own fetch (the cache reset to stale), and each landing is said once. Round 3 of
+        the review (the landing round, 2026-09-22) added the four present shapes the read `v.get(key) or inp` took to the
+        input rate on the feed's two optional cache keys, false, "", [] and {}, each on both keys (eight subtests): red at
+        the cache assertion over the base's archive (its float(v.get(key) or inp)) and over the reviewed head's, the
+        fifteenth commit on the branch (its _price_rate_value(v.get(key) or inp)), the row cached at the input rate where a
+        rejection was expected; the set that inherits is the next case's."""
         shapes = {"1_0": "1_0", "padded": " 11e-6", "trailing": "11e-6 ", "plus": "+11e-6", "inf": "inf", "nan": "nan",
                   "1e999": "1e999", "empty": "", "text": "abc", "true": True, "false": False, "null": None, "list": [], "object": {}}
         for name, value in shapes.items():
@@ -995,6 +1057,54 @@ class LiveFeed(PriceFeedCase):
             self.body = json.dumps({"claude-fable-5-1": {"input_cost_per_token": 11e-6, "output_cost_per_token": 55e-6,
                                                          "cache_read_input_token_cost": "1_0"}}).encode()
             self._refresh_once_and_assert_rejected()
+        for key in CACHE_KEYS:                                     # a present value that is not null or a numeric zero goes
+            for name, value in (("false", False), ("empty", ""), ("list", []), ("object", {})):   # through the strict read
+                with self.subTest(rate="%s in %s" % (name, key)):
+                    self.body = json.dumps({"claude-fable-5-1": {"input_cost_per_token": 11e-6, "output_cost_per_token": 55e-6,
+                                                                 key: value}}).encode()
+                    self._refresh_once_and_assert_rejected()
+
+    def test_a_cache_rate_absent_null_or_a_numeric_zero_inherits_the_input_rate_and_true_rejects_the_row(self):
+        """The substitution the worker makes before the strict read, held to its documented set (round 3 of the review, the
+        landing round of 2026-09-22): a cache rate that is absent, null, 0 or 0.0, on either optional key, takes the input
+        rate, and the row is cached and priced as live with cache_w and cache_r at that rate and nothing said; true is a
+        bool, a present value the strict read refuses, so that row is rejected like the false, "", [] and {} of the case
+        above. A GUARD for the inheriting shapes: the read `v.get(key) or inp` inherited every falsy value, this set among
+        them, so they are green over the base's archive and the reviewed head's (the fifteenth commit on the branch) and at
+        the tree and record no red of their own; the case exists so a clause that widened the reject path to null or a zero
+        would red here. The true arm is red over the base's archive at the cache assertion (that head's bare float() read
+        true as 1.0 and cached the row at a dollar a token) and green over the reviewed head's. The status read is guarded
+        for the base's archive alone, whose kernel has no _price_feed_status; at the tree it runs on every inheriting
+        shape."""
+        inherit = [("absent", None, None)]                         # (name, key, value); no key omits both optional keys
+        for key in CACHE_KEYS:
+            inherit += [("null in " + key, key, None), ("0 in " + key, key, 0), ("0.0 in " + key, key, 0.0)]
+        want = {"in": 11e-6, "out": 55e-6, "cache_w": 11e-6, "cache_r": 11e-6}
+        for name, key, value in inherit:
+            with self.subTest(rate=name):
+                row = {"input_cost_per_token": 11e-6, "output_cost_per_token": 55e-6}
+                if key is not None:
+                    row[key] = value
+                self.body = json.dumps({"claude-fable-5-1": row}).encode()
+                km._price_cache.update(t=0, remote={})             # as stale as a cache gets: the next attempt fetches
+                err = io.StringIO()
+                with redirect_stderr(err):
+                    km._refresh_remote_prices(NOW)
+                    self._join()
+                self.assertEqual(km._price_cache["remote"].get("claude-fable-5-1"), want,
+                                 "a cache rate absent, null or a numeric zero takes the input rate and the row is cached")
+                self.assertEqual(dict(km._model_prices(NOW, refresh=False)["claude-fable-5-1"]), want, "and priced from that row")
+                self.assertEqual(err.getvalue(), "", "a landing whose row parses says nothing")
+                status = getattr(km, "_price_feed_status", None)   # absent at the base's archive alone (the docstring)
+                if status is not None:
+                    st = status(NOW)
+                    self.assertEqual((st["source"], st["reason"], st["rows"], st["matched"], st["lastError"]),
+                                     ("feed", None, 1, 1, None), "live, whole")
+        for key in CACHE_KEYS:
+            with self.subTest(rate="true in " + key):
+                self.body = json.dumps({"claude-fable-5-1": {"input_cost_per_token": 11e-6, "output_cost_per_token": 55e-6,
+                                                             key: True}}).encode()
+                self._refresh_once_and_assert_rejected()
 
     def _refresh_once_and_assert_rejected(self):
         """One fetch of self.body from a stale cache: the one row it names signs to claude-fable-5-1 and does not parse."""

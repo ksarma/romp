@@ -44,12 +44,46 @@ the census. Over a git archive of the reviewed head every rewritten case is red 
 assertion (the old sentence); a phrase removed from a copy of the section at the tree reds the table case
 naming the road, which the old pin, asserting the sentence against itself, could not do.
 
+The third round of that review (2026-09-22) found two things in the section. The editor clause said the extension's
+update prompt runs the same `install.sh` as the release update, the root script with pip and npm, where the click runs
+vscode-extension/install.sh (`npm install`, `npx`) and never the root script or pip, and the pin behind it was the bare
+substring `install.sh` in extension.ts, which that file's comments satisfy whichever script the code runs. The clause
+now names the script the click runs and what it reaches (the npm registry, not PyPI), and
+TheEditorPromptRunsTheExtensionsOwnInstallScript pins the target by the property: update-target.ts resolves the
+script as `<dir>/install.sh` with the vscode-extension candidate, extension.ts hands that resolved script to
+`runInstall` and `runInstall` runs it through `execFile("bash", [script])`, matched on code lines with the comments
+stripped (and the comment-only text is checked NOT to satisfy the needles, as a control), the message naming
+update-target.test.ts as the executed test; a negative pin holds extension.ts and vscode-extension/install.sh to no
+`pip` and no `romp-sdk-setup`. The same round widened the census (a shell script's inline interpreter texts, the
+manager's and the editor extension's child_process starts, a dynamic import of a computed module URL) and named a
+fifth class the scan cannot see and does not count (a socket primitive on a receiver it cannot resolve); the section
+states the widened class, the fifth class in the script's own sentence, the disclosure that the shell and browser sides
+are matched by a named list with no completeness gate, and the condition under which vscode-extension/install.sh
+fetches vsce with npx (an editor CLI present, or `ROMP_EXT_PACKAGE_ONLY` set). Those sentences are held to their
+sources by execution: the class count in words is derived from the --table run (the counted class rows, the row whose
+where cell reads not counted) and from the committed counts file, never typed here; the residual and the disclosure
+sentences must appear in the section AND in the script's docstring, one source; the install condition is held to the
+script's own gate lines (PACKAGE_ONLY, the editor-CLI list, the exit before npx) and to the table's install-ext and
+self-update cells; the table's label for the external-program class is the section's phrase plus the kind suffix
+every class row carries, read from the script's CLASS_ROWS by importing it in a child interpreter (the table had
+labelled the class a program the kernel starts while the section, widened, said a program started whose far end its
+arguments do not show), so the two wordings cannot drift apart. Over the archive of the round's reviewed head each
+new or rewritten case is red at its first SECURITY.md assertion (the old editor clause; no fifth-class, residual,
+disclosure or condition sentence) and the table case at its set equality (the archive's table has no fifth-class
+row); the target pin, the negative pin, the figure pin, the one-source pin and the condition pin are each red under a
+mutation of a scratch copy at the tree (the runInstall call repointed at a root install.sh, which the old substring pin
+stayed green under; the executed lines replaced by a comment carrying the same words; `pip` planted in
+vscode-extension/install.sh; the class count word altered; the residual sentence deleted from the docstring; the
+PACKAGE_ONLY clause deleted from the gate), and the label pin with the old label restored in a scratch copy of the
+script, naming both texts.
+
 Text only: the behaviour is pinned in tests/test_price_feed_off.py (the kernel), the reference's prose in
 tests/test_reference_price_feed.py. The documents and the sources are read as files; nothing loads romp
 code, so no state root is minted (the table case runs scripts/network-inventory.py, a standard-library scan
 of the tree, by subprocess). Every case asserts SECURITY.md's text FIRST, so a run over a tree without the
 paragraph fails at that assertion and never at a missing symbol or a script that lacks the flag.
 """
+import json
 import os
 import re
 import subprocess
@@ -141,7 +175,41 @@ WATCH_ITEM = "a watch predicate, which a session registers on its own (`romp wat
 WATCH_RUNS = "runs the registered text through `/bin/sh`"
 WATCH_NOT_ROMPS = "what the command itself sends is not romp's"
 PR_WATCH = "a PR watch (`gh pr view` on a cadence, registered with `romp watch-pr`, which asks `gh` for the repository's name when given no `--repo`)"
-EDITOR_PROMPT = "the editor extension's update prompt runs the same `install.sh` on your click"
+# the third round of the review of PR 878: the editor clause names the script the click runs and what it reaches; the release
+# clause names the two scripts the root install.sh runs; the condition under which vscode-extension/install.sh fetches vsce
+EDITOR_PROMPT = "the editor extension's update prompt runs `vscode-extension/install.sh` (`npm install` and `npx`) on your click"
+EDITOR_NOT_ROOT = "not the root `install.sh`, so a click reaches the npm registry and not PyPI"
+OLD_EDITOR_PROMPT = "runs the same `install.sh` on your click"
+RELEASE_THROUGH = "then for a release `install.sh` with pip and npm, through `bin/romp-sdk-setup` and `vscode-extension/install.sh`"
+EXT_GATE = ("only when an editor CLI is present (`code`, `code-insiders`, `cursor` or `codium` on PATH, or an editor bundle under "
+            "`ROMP_EDITOR_APPS`) or `ROMP_EXT_PACKAGE_ONLY` is set")
+EXT_CONDITION = ("`vscode-extension/install.sh` runs `npm install` against the npm registry on every run; `npx --yes @vscode/vsce package`, "
+                 "a fetch of vsce from the same registry even when it is cached, runs " + EXT_GATE +
+                 "; with neither the script exits after the build and sends nothing more")
+SELF_UPDATE_GATE = "only when an editor CLI is present or `ROMP_EXT_PACKAGE_ONLY` is set"
+UPDATE_TARGET = _read("vscode-extension", "src", "update-target.ts")
+UPDATE_TARGET_TEST = _read("vscode-extension", "src", "update-target.test.ts")
+EXT_INSTALL = _read("vscode-extension", "install.sh")
+ROOT_INSTALL = _read("install.sh")
+# the census's fifth class (named in the table and not counted) and its disclosure, in the script's own words: the section
+# and the script's docstring must both carry each, so the sentence has one source (tests/test_price_feed_census.py holds the
+# same two sentences in the docstring and the --table output)
+RESIDUAL = ("a socket primitive called on a receiver the census cannot resolve (an attribute-held or parameter socket) is not a "
+            "site here")
+DISCLOSURE = ("The shell and browser sides are matched by a named list with no completeness gate: a tool or a client the lists "
+              "do not name is no site and no line; the Python side's gate is module-granular: an import outside the allow-list "
+              "fails the run, and a primitive of a known module outside NET and SUB is not a site.")
+UNSEEN_LABEL = "a socket primitive on a receiver this scan cannot resolve (not derivable by this scan)"
+NOT_COUNTED = "not counted:"   # how the table's where cell opens for a class row that is named and not counted
+COUNTED_CLASSES = "classes of outbound activity the scan cannot derive are named and counted in its table rather than left out"
+FIFTH = "is named in the table and not counted, since the scan cannot see it"
+EXTERNAL_PROGRAM = "an external program started whose far end its arguments do not show"
+OLD_EXTERNAL_PROGRAM = "an external program the kernel starts whose far end its arguments do not show"
+# the table's label for the class: the section's phrase plus the kind suffix every class row carries, one text; the
+# ROAD_PHRASES key is this constant and the label pin reads the script's CLASS_ROWS to hold the table to it
+EXTERNAL_PROGRAM_LABEL = "%s (not derivable by this scan)" % EXTERNAL_PROGRAM
+NUMBER_WORDS = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six", 7: "Seven", 8: "Eight"}
+ORDINALS = {1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth", 6: "sixth", 7: "seventh", 8: "eighth"}
 GET_PIP = "PyPI (and bootstrap.pypa.io for get-pip.py when the python lacks ensurepip; `ROMP_NO_GET_PIP=1` skips that fetch)"
 GET_PIP_LINE = "https://bootstrap.pypa.io/get-pip.py"
 CENSUS_LISTS = "the census lists such a site by the program it starts, never by where that program connects"
@@ -162,7 +230,8 @@ ROAD_PHRASES = {
     "release check (kernel-runs-a-command)": (RELEASE_CLAUSE,),
     "main drift check (kernel-runs-a-command)": (DRIFT_CLAUSE,),
     "self-update to a release (kernel-runs-a-command)": (
-        "an update taken from the banner or by the auto mode (`git fetch`, then for a release `install.sh` with pip and npm",),
+        "an update taken from the banner or by the auto mode (`git fetch`, then for a release `install.sh` with pip and npm",
+        RELEASE_THROUGH),
     "main converge (kernel-runs-a-command)": ("an update taken from the banner or by the auto mode (`git fetch`",),
     "PR watch (kernel-runs-a-command)": ("a PR watch (`gh pr view` on a cadence, registered with `romp watch-pr`",),
     "watch-pr registration (a romp CLI verb a session or the user runs, not the kernel)": (
@@ -185,16 +254,16 @@ ROAD_PHRASES = {
     "bootstrap.sh (install-time-by-hand)": ("Installing by hand (`bootstrap.sh`, `install.sh`) fetches from GitHub",),
     "bin/romp-sdk-setup (install-time-by-hand; also run by the kernel's self-update through install.sh)": (GET_PIP,),
     "vscode-extension/install.sh (install-time-by-hand; also run by the kernel's self-update and by the editor extension's "
-    "update prompt)": ("and the npm registry", EDITOR_PROMPT),
+    "update prompt)": ("and the npm registry", EDITOR_PROMPT, EDITOR_NOT_ROOT, EXT_CONDITION),
     "bin/romp-codex-setup (install-time-by-hand)": (
         "`bin/romp-codex-setup`, run by hand for Codex sessions, fetches the Codex SDK from PyPI and the pinned Codex CLI from GitHub",),
     "local, set aside and counted (local)": (),          # nothing leaves the machine: no sentence owed
-    "an external program the kernel starts, far end not derivable here (not derivable by this scan)": (
-        "an external program the kernel starts whose far end its arguments do not show",),
+    EXTERNAL_PROGRAM_LABEL: (EXTERNAL_PROGRAM,),   # one text: the label is the phrase with the kind suffix (the label pin)
     "a program supplied at run time (not derivable by this scan)": ("a program whose text is supplied at run time",),
     "a browser request whose URL is computed at run time (not derivable by this scan)": (
-        "a browser request whose URL is computed at run time",),
+        "a browser request whose URL is computed at run time (a fetch, or a dynamic import of a module)",),
     "the browser DOM's own loads (not derivable by this scan)": ("the loads the browser makes on its own for what a page inserts",),
+    UNSEEN_LABEL: (RESIDUAL,),       # named and not counted: the where cell opens with NOT_COUNTED and carries RESIDUAL
 }
 KERNEL_REQUEST_ROWS = ("price feed", "model catalog refresh", "fast-mode organisation probe", "web push")
 _TABLE = []
@@ -207,9 +276,10 @@ def _pydef(src, name):
 
 
 def _table():
-    """The rows of `python3 scripts/network-inventory.py --table`, run once over ROOT: a list of (label, kind) from the
-    first cell, header and separator dropped. Parsed from stdout whatever the exit status: the gates (a count that
-    drifted, a site with no road) are tests/test_price_feed_census.py's finding, and this module's is the section."""
+    """The rows of `python3 scripts/network-inventory.py --table`, run once over ROOT: a list of (label, kind, cells) with
+    the label and its kind from the first cell and `cells` the other four (where, trigger and cadence, what is sent, off
+    switch), header and separator dropped. Parsed from stdout whatever the exit status: the gates (a count that drifted,
+    a site with no road) are tests/test_price_feed_census.py's finding, and this module's is the section."""
     if not _TABLE:
         p = subprocess.run([sys.executable, os.path.join(ROOT, INVENTORY), "--table", ROOT],
                            capture_output=True, text=True, timeout=120)
@@ -217,11 +287,58 @@ def _table():
         for line in p.stdout.splitlines():
             if not line.startswith("| ") or line.startswith("| road |") or line.startswith("|---"):
                 continue
-            label = line.split("|")[1].strip()
+            cells = [c.strip() for c in line.strip().strip("|").split(" | ")]
+            label = cells[0]
             kind = label[label.rfind("(") + 1:-1] if label.endswith(")") else ""
-            rows.append((label, kind))
+            rows.append((label, kind, cells[1:]))
         _TABLE.append((rows, p.returncode, p.stderr[-2000:]))
     return _TABLE[0]
+
+
+def _row(rows, label):
+    """The cells of the table row labelled `label`, or None."""
+    for lab, _, cells in rows:
+        if lab == label:
+            return cells
+    return None
+
+
+def _class_label(cls):
+    """The label the script prints for the class row `cls`, CLASS_ROWS[cls][0], read from the script's own binding by
+    importing it in a child interpreter, never from its text; a child and not this process because
+    tests/test_state_isolation_order.py reads every in-process load call as a load of romp code, and this module loads none."""
+    prog = ("import importlib.util, json, sys\n"
+            "spec = importlib.util.spec_from_file_location('network_inventory', sys.argv[1])\n"
+            "mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)\n"
+            "print(json.dumps(mod.CLASS_ROWS[sys.argv[2]][0]))\n")
+    p = subprocess.run([sys.executable, "-c", prog, os.path.join(ROOT, INVENTORY), cls], capture_output=True, text=True, timeout=60)
+    if p.returncode != 0:
+        raise AssertionError("%s could not be imported to read CLASS_ROWS[%r]: %s" % (INVENTORY, cls, p.stderr[-800:]))
+    return json.loads(p.stdout)
+
+
+def _code_lines(src):
+    """`src` split into its code and its `//` comments: a line whose first non-blank text is `//` is a comment whole, and
+    a `//` preceded by whitespace (never the `//` of a URL, which a colon precedes) starts a trailing comment. Returns
+    (code, comments), each the joined text, so a needle can be asserted on what runs and denied on what does not."""
+    code, comments = [], []
+    for line in src.splitlines():
+        if line.lstrip().startswith("//"):
+            comments.append(line)
+            continue
+        m = re.search(r"(?:^|(?<=\s))//", line)
+        if m:
+            code.append(line[:m.start()])
+            comments.append(line[m.start():])
+        else:
+            code.append(line)
+    return "\n".join(code), "\n".join(comments)
+
+
+def _ts_function(src, name):
+    """The text of `function name(...) {` up to its closing brace at column zero; "" when absent."""
+    m = re.search(r"^(?:export )?(?:async )?function " + re.escape(name) + r"\(.*?^\}", src, re.S | re.M)
+    return m.group(0) if m else ""
 
 
 class _Pins(unittest.TestCase):
@@ -422,7 +539,8 @@ class TheSectionScopesItsClaimToWhatTheCodeDoes(_Pins):
         self.assertQuoted('"gh", "pr", "view"', KERNEL, "kernel/kernel.py", "the PR watch's poll")
         self.assertQuoted("gh repo view --json nameWithOwner", ROMP_CLI, "bin/romp", "the registration's own call when no --repo is given")
         self.assertQuoted("function runInstall(", EXTENSION, "vscode-extension/src/extension.ts", "the editor extension's update prompt")
-        self.assertQuoted("install.sh", EXTENSION, "vscode-extension/src/extension.ts")
+        # which install.sh that function runs is TheEditorPromptRunsTheExtensionsOwnInstallScript's pin, by the property: a
+        # bare `install.sh` substring here was satisfied by extension.ts's comments whichever script the code ran (round 3)
         # bootstrap.pypa.io (extra7-4): the get-pip fetch, its condition and its opt-out, in bin/romp-sdk-setup
         self.assertQuoted(GET_PIP_LINE, SDK_SETUP, "bin/romp-sdk-setup", "get-pip.py's default source")
         self.assertQuoted("import ensurepip", SDK_SETUP, "bin/romp-sdk-setup", "fetched only when the python lacks ensurepip")
@@ -498,7 +616,7 @@ class TheSectionIsTheTables(_Pins):
         flat = _flat(NETWORK)
         self.assertQuoted(DERIVED, flat, self.DOC)
         rows, rc, err = _table()
-        labels = [label for label, _ in rows]
+        labels = [label for label, _, _ in rows]
         self.assertGreaterEqual(len(labels), 25, "%s --table printed no table (exit %s): %s" % (INVENTORY, rc, err))
         self.assertEqual(len(labels), len(set(labels)), "one row per road")
         self.assertEqual(set(labels), set(ROAD_PHRASES),
@@ -519,17 +637,199 @@ class TheSectionIsTheTables(_Pins):
         self.assertQuoted(NO_TELEMETRY, flat, self.DOC)
         rows, rc, err = _table()
         self.assertTrue(rows, "%s --table printed no table (exit %s): %s" % (INVENTORY, rc, err))
-        kernel_request = [label[:label.rfind(" (")] for label, kind in rows if kind == "kernel-request"]
+        kernel_request = [label[:label.rfind(" (")] for label, kind, _ in rows if kind == "kernel-request"]
         self.assertEqual(kernel_request, list(KERNEL_REQUEST_ROWS),
                          "the kernel's own requests to hosts other than an attached machine are the table's kernel-request "
                          "rows, and the telemetry sentence names those four; a fifth is a new sentence")
         for road in kernel_request:
             self.assertTrue(ROAD_PHRASES["%s (kernel-request)" % road], "the row %r has words in the section" % road)
-        classes = [label for label, kind in rows if kind == "not derivable by this scan"]
-        self.assertEqual(len(classes), 4, "the four classes the scan cannot derive are rows of the table: %r" % classes)
+        classes = [label for label, kind, _ in rows if kind == "not derivable by this scan"]
+        with open(os.path.join(ROOT, EXPECTED_COUNTS), encoding="utf-8") as f:
+            counted = set(json.load(f)["classes"])
+        self.assertEqual(len([label for label, kind, cells in rows if kind == "not derivable by this scan"
+                              and not cells[0].startswith(NOT_COUNTED)]), len(counted),
+                         "the class rows the table counts are the classes the committed counts file carries (%r); a row "
+                         "named and not counted opens its where cell with %r; the class sentence's number is "
+                         "test_the_class_sentence_counts_the_counted_classes_and_names_the_uncounted_one_from_the_table's"
+                         % (sorted(counted), NOT_COUNTED))
+        self.assertTrue(classes, "the classes the scan cannot derive are rows of the table")
         for label in classes:
             for phrase in ROAD_PHRASES[label]:
                 self.assertQuoted(phrase, flat, self.DOC, "a class the scan cannot see, named in the section")
+
+    def test_the_class_sentence_counts_the_counted_classes_and_names_the_uncounted_one_from_the_table(self):
+        # round 3 of the review of PR 878: the census names a fifth class it cannot see and does not count (a socket primitive
+        # on a receiver it cannot resolve), so the section's "Four classes ... named and counted" and "A fifth is named ...
+        # and not counted" are figures, derived here from the --table run (a class row is counted unless its where cell opens
+        # with NOT_COUNTED) and from the committed counts file, never typed twice; the classes carry no count in the section
+        # (round 2's decision: the table and the counts file carry the counts), so no digit may sit in the class sentences
+        self.assertNetwork()
+        flat = _flat(NETWORK)
+        self.assertQuoted(FIFTH, flat, self.DOC, "the class the scan cannot see is named as not counted, in the section")
+        self.assertQuoted(RESIDUAL, flat, self.DOC, "the fifth class in the script's own words")
+        rows, rc, err = _table()
+        self.assertTrue(rows, "%s --table printed no table (exit %s): %s" % (INVENTORY, rc, err))
+        class_rows = [(label, cells) for label, kind, cells in rows if kind == "not derivable by this scan"]
+        counted = [label for label, cells in class_rows if not cells[0].startswith(NOT_COUNTED)]
+        uncounted = [label for label, cells in class_rows if cells[0].startswith(NOT_COUNTED)]
+        self.assertTrue(counted and uncounted, "the table has class rows it counts and a class row it names and does not count: %r"
+                        % [label for label, _ in class_rows])
+        with open(os.path.join(ROOT, EXPECTED_COUNTS), encoding="utf-8") as f:
+            committed = json.load(f)["classes"]
+        self.assertEqual(len(counted), len(committed),
+                         "the counted class rows are the classes the committed counts file carries: %r" % sorted(committed))
+        self.assertQuoted("%s %s" % (NUMBER_WORDS[len(counted)], COUNTED_CLASSES), flat, self.DOC,
+                          "the section counts the classes the table counts, in words derived from the table (%d rows)" % len(counted))
+        for i, label in enumerate(uncounted):
+            self.assertQuoted("A %s %s" % (ORDINALS[len(counted) + 1 + i], FIFTH), flat, self.DOC,
+                              "a class named and not counted takes the next ordinal: %r" % label)
+            self.assertQuoted(RESIDUAL, _row(rows, label)[0], "the table's where cell of %r" % label,
+                              "the section's sentence for the uncounted class is the table's")
+        span = flat[flat.find(NUMBER_WORDS[len(counted)] + " " + COUNTED_CLASSES):flat.find(RESIDUAL) + len(RESIDUAL)]
+        self.assertTrue(span, "the class sentences run from the count to the fifth class")
+        prose = re.sub(r"`[^`]*`", "", span)   # a code span names a program (`python3 -c`), never a count
+        self.assertIsNone(re.search(r"\d", prose), "%s: the class sentences name the classes without counts; the counts sit in the "
+                          "table and in %s, and a count typed here goes stale with the next scan: %r" % (self.DOC, EXPECTED_COUNTS, span))
+
+    def test_the_residual_and_the_disclosure_sentences_are_the_scripts_words(self):
+        # round 3 of the review of PR 878 (rulings A.5 and A.7): the class the census cannot see and the closedness of its shell
+        # and browser lists are stated in SECURITY.md in the script's own sentences, so the section and the docstring have one
+        # source and a sentence cannot outlive the behaviour it describes (tests/test_price_feed_census.py plants a socket
+        # primitive the scan cannot resolve and holds the same sentence to the run's silence)
+        self.assertNetwork()
+        flat = _flat(NETWORK)
+        self.assertQuoted(RESIDUAL, flat, self.DOC, "the fifth class, in the script's words")
+        self.assertQuoted(DISCLOSURE, flat, self.DOC, "the shell and browser sides are a named list with no completeness gate")
+        self.assertNotIn(OLD_EXTERNAL_PROGRAM, flat, "%s: the class holds programs a shell script of romp's, the manager and the "
+                         "editor extension start too, not the kernel alone (round 3)" % self.DOC)
+        self.assertQuoted(EXTERNAL_PROGRAM, flat, self.DOC)
+        self.assertTrue(INVENTORY_SRC, "%s exists: the derivation the section names" % INVENTORY)
+        doc = re.match(r'(?s)\A(?:#[^\n]*\n)*"""(.*?)"""', INVENTORY_SRC)
+        self.assertTrue(doc, "%s opens with a module docstring" % INVENTORY)
+        docstring = _flat(doc.group(1))
+        self.assertQuoted(RESIDUAL, docstring, "%s's docstring" % INVENTORY, "one source: the section's sentence is the script's")
+        self.assertQuoted(DISCLOSURE, docstring, "%s's docstring" % INVENTORY, "one source: the section's sentence is the script's")
+        rows, rc, err = _table()
+        self.assertTrue(rows, "%s --table printed no table (exit %s): %s" % (INVENTORY, rc, err))
+        cells = _row(rows, UNSEEN_LABEL)
+        self.assertTrue(cells, "the table names the class it cannot see as a row: %r" % UNSEEN_LABEL)
+        self.assertTrue(cells[0].startswith(NOT_COUNTED), "the row is named and not counted: %r" % cells[0])
+        self.assertQuoted(RESIDUAL, cells[0], "the table's where cell", "the same sentence, in the table")
+
+    def test_the_external_program_rows_label_is_the_sections_phrase_read_from_the_scripts_class_rows(self):
+        # round 3 of the review of PR 878, after ruling A widened the class: the table labelled it a program the kernel starts
+        # while the section said a program started whose far end its arguments do not show, two wordings for one class bridged
+        # by a ROAD_PHRASES entry. One wording now: the label is the section's phrase plus the kind suffix every class row
+        # carries, read here from the script's CLASS_ROWS binding and never from its text, so neither can move alone
+        self.assertNetwork()
+        flat = _flat(NETWORK)
+        self.assertQuoted(EXTERNAL_PROGRAM, flat, self.DOC, "the section's phrase for the class")
+        label = _class_label("external-program")
+        self.assertEqual(label, EXTERNAL_PROGRAM_LABEL,
+                         "one wording for the external-program class: the script's CLASS_ROWS label reads %r and the section's "
+                         "phrase with the kind suffix is %r; the class holds programs a shell script of romp's, the manager and the "
+                         "editor extension start too, so the table's label is the section's phrase" % (label, EXTERNAL_PROGRAM_LABEL))
+        self.assertEqual(ROAD_PHRASES.get(label), (EXTERNAL_PROGRAM,),
+                         "the row's entry in ROAD_PHRASES is keyed on that label and says the row with the same phrase")
+
+
+class TheEditorPromptRunsTheExtensionsOwnInstallScript(_Pins):
+    """Round 3 of the review of PR 878 (the section's editor clause): the extension's update prompt runs
+    vscode-extension/install.sh (`npm install`, `npx`), not the root install.sh and not pip, and the section says so. The
+    pin is on the property, not the spelling: update-target.ts resolves the click's script as `<dir>/install.sh` for a
+    vscode-extension candidate, extension.ts hands that resolved script to runInstall, and runInstall runs it through
+    execFile("bash", [script]); matched on code with the `//` comments stripped, since extension.ts's comments carry
+    `install.sh` five times and satisfied the bare substring pin whichever script the code ran. The executed test behind
+    the resolution is vscode-extension/src/update-target.test.ts (script == <vscode-extension dir>/install.sh). Each case
+    asserts the section first: red over the archive of the reviewed head at the old clause, green at the tree; the target
+    pin is red with the runInstall call repointed at a root install.sh in a scratch copy (the old substring pin stayed
+    green under that mutation) and with the executed lines replaced by a comment carrying the same words; the negative
+    pin is red with `pip` planted in a scratch copy of vscode-extension/install.sh; the condition pin is red with the
+    PACKAGE_ONLY clause deleted from the script's gate."""
+
+    TS = "vscode-extension/src/extension.ts"
+    SH = "vscode-extension/install.sh"
+    EXECUTED = ("vscode-extension/src/update-target.test.ts asserts script == <vscode-extension dir>/install.sh, the executed test "
+                "behind this text pin (node esbuild.js --tests, then node --test on that file)")
+
+    def test_the_section_names_the_script_the_click_runs_and_the_code_resolves_to_it(self):
+        self.assertNetwork()
+        flat = _flat(NETWORK)
+        self.assertQuoted(EDITOR_PROMPT, flat, self.DOC, "the click runs the extension's own install.sh: npm install and npx")
+        self.assertQuoted(EDITOR_NOT_ROOT, flat, self.DOC, "what the click reaches, and what it does not")
+        self.assertQuoted(RELEASE_THROUGH, flat, self.DOC, "the release clause names the two scripts the root install.sh runs")
+        self.assertNotIn(OLD_EDITOR_PROMPT, flat, "%s: the click never runs the root install.sh, whose pip half reaches PyPI (round 3)"
+                         % self.DOC)
+        # the release clause's two scripts, as the root install.sh runs them
+        self.assertQuoted('"$ROMP_DIR/bin/romp-sdk-setup"', ROOT_INSTALL, "install.sh", "the release update's pip half")
+        self.assertQuoted('"$ROMP_DIR/vscode-extension/install.sh"', ROOT_INSTALL, "install.sh", "the release update's npm half")
+        # the click's target: resolved locally as <dir>/install.sh, <dir> the extension's own path or ROMP_DIR/vscode-extension
+        resolve = _ts_function(UPDATE_TARGET, "resolveInstallScript")
+        self.assertTrue(resolve, "vscode-extension/src/update-target.ts defines resolveInstallScript")
+        self.assertQuoted('script: path.join(dir, "install.sh")', resolve, "update-target.ts resolveInstallScript", self.EXECUTED)
+        candidates = _ts_function(UPDATE_TARGET, "installCandidates")
+        self.assertTrue(candidates, "vscode-extension/src/update-target.ts defines installCandidates")
+        self.assertQuoted('path.join(repo, "vscode-extension")', candidates, "update-target.ts installCandidates",
+                          "a candidate is the vscode-extension directory, so <dir>/install.sh is the extension's own script")
+        self.assertQuoted('assert.equal(t?.script, path.join(CHECKOUT, "install.sh"))', UPDATE_TARGET_TEST,
+                          "vscode-extension/src/update-target.test.ts", "the executed test this pin points at asserts the resolution")
+        # extension.ts hands the resolved script to runInstall, which runs it through bash: matched on code, comments stripped
+        code, comments = _code_lines(EXTENSION)
+        for needle, why in (("const script = target.script", "the click's script is the resolved target's"),
+                            ("runInstall(script, extDir)", "and it is what runInstall runs")):
+            self.assertQuoted(needle, code, self.TS + " (code, comments stripped)", why + "; " + self.EXECUTED)
+        run_install = _ts_function(code, "runInstall")
+        self.assertTrue(run_install, self.TS + " defines runInstall")
+        self.assertQuoted('execFile("bash", [script]', run_install, self.TS + " runInstall", "bash runs the resolved script and nothing else")
+        # the control: the comments alone satisfy the old substring pin and none of the needles, which is why the match is
+        # on code (the comments name install.sh where the code names its resolved path)
+        self.assertIn("install.sh", comments, self.TS + ": the comments carry the bare substring the old pin matched")
+        for needle in ("const script = target.script", "runInstall(script, extDir)", 'execFile("bash", [script]'):
+            self.assertNotIn(needle, comments, self.TS + ": %r sits in a comment, which runs nothing" % needle)
+
+    def test_the_click_reaches_no_pip_and_no_sdk_setup(self):
+        self.assertNetwork()
+        flat = _flat(NETWORK)
+        self.assertQuoted(EDITOR_NOT_ROOT, flat, self.DOC, "the click reaches the npm registry and not PyPI")
+        for where, src in ((self.TS, EXTENSION), (self.SH, EXT_INSTALL)):
+            self.assertIsNone(re.search(r"\bpip\b", src), "%s carries the word pip: the section says the click reaches no PyPI; if "
+                              "the script now runs pip, the sentence and the table's install-ext row move; a comment that names it "
+                              "is reworded, since this pin reads the file whole so nothing that runs can hide in what it skips" % where)
+            self.assertNotIn("romp-sdk-setup", src, "%s names romp-sdk-setup, the release update's pip half: the click's script "
+                             "runs the extension's build and package alone" % where)
+        # what the click does reach, by the script's own lines, and where pip is: the release clause's script
+        self.assertQuoted("npm install", EXT_INSTALL, self.SH, "the npm registry, on every run")
+        self.assertQuoted("npx --yes @vscode/vsce package", EXT_INSTALL, self.SH, "vsce from the same registry")
+        self.assertQuoted("pip install", SDK_SETUP, "bin/romp-sdk-setup", "pip runs in the release update's script, not the click's")
+
+    def test_the_install_scripts_condition_is_the_scripts_gate_and_the_tables(self):
+        # ruling A.4 of round 3: the install-ext and self-update cells state the condition rather than claim every install
+        # fetches, and the section repeats it; here the condition is held to the script's own gate and to the table's cells
+        self.assertNetwork()
+        flat = _flat(NETWORK)
+        self.assertQuoted(EXT_CONDITION, flat, self.DOC, "npx runs behind the editor-CLI gate; with neither the script exits after the build")
+        rows, rc, err = _table()
+        self.assertTrue(rows, "%s --table printed no table (exit %s): %s" % (INVENTORY, rc, err))
+        install_ext = [cells for label, _, cells in rows if label.startswith("vscode-extension/install.sh (")]
+        self_update = [cells for label, _, cells in rows if label.startswith("self-update to a release (")]
+        self.assertEqual((len(install_ext), len(self_update)), (1, 1), "the table has one install-ext row and one self-update row")
+        self.assertQuoted(EXT_GATE, install_ext[0][1], "the install-ext row's trigger cell", "the section's condition is the table's")
+        self.assertQuoted(SELF_UPDATE_GATE, self_update[0][2], "the self-update row's sent cell", "and the self-update row states it too")
+        # the script: PACKAGE_ONLY read from ROMP_EXT_PACKAGE_ONLY; the editor CLIs from PATH and ROMP_EDITOR_APPS; the gate that
+        # exits after the build when no CLI was found and PACKAGE_ONLY is empty; npm install and the build before it, npx after it
+        gate_line = '[ "${#CLIS[@]}" -eq 0 ] && [ -z "$PACKAGE_ONLY" ]'
+        for needle, why in (('PACKAGE_ONLY="${ROMP_EXT_PACKAGE_ONLY:-}"', "the switch the section names"),
+                            ("for c in code code-insiders cursor codium", "the editor CLIs looked up on PATH, the four the section names"),
+                            ('APPS_DIR="${ROMP_EDITOR_APPS:-/Applications}"', "the editor bundles' directory the section names"),
+                            (gate_line, "the gate: no editor CLI found and the switch unset"),
+                            ('if [ -n "$PACKAGE_ONLY" ]', "the switch alone: packaged, installed into no editor")):
+            self.assertQuoted(needle, EXT_INSTALL, self.SH, why)
+        npm, build = EXT_INSTALL.find("npm install"), EXT_INSTALL.find("node esbuild.js")
+        gate, npx = EXT_INSTALL.find(gate_line), EXT_INSTALL.find("npx --yes @vscode/vsce package")
+        self.assertTrue(0 <= npm < build < gate < npx, "%s: npm install, then the build, then the gate, then npx (the section's order)"
+                        % self.SH)
+        self.assertIn("exit 0", EXT_INSTALL[gate:npx], "%s: the gate exits before npx, so with neither condition nothing after npm "
+                      "install is sent (the section's 'exits after the build and sends nothing more')" % self.SH)
 
 
 class TheNewProse(_Pins):
