@@ -78,6 +78,18 @@ in vscode-extension/install.sh; the class count word altered; the residual sente
 PACKAGE_ONLY clause deleted from the gate), and the label pin with the old label restored in a scratch copy of the
 script, naming both texts.
 
+Before the fourth round (2026-09-22) the reviewer ruled, over a derivation of the editor extension's `vscode.env.openExternal`,
+that the inventory owed a row for a link you click, on both hosts: on the web dashboard the bundles' `window.open`, counted
+until then under the browser DOM's own loads, whose cell named kernel URLs, object URLs, webview URIs and figure hosts and not
+the clicked URL's host; in the editor extension the one call that hands the URL to the operating system's default browser,
+which the scan did not see. The section now says the road (what is sent, to which host, on your click, with no switch and no
+credential of romp's) and its residual in the script's own sentence, and TheSectionIsTheTables' clicked-link case holds the
+sentences to the section, the residual to the script's docstring and the road's trigger cell (one source), the where cell to
+the sites and the code to the openers (the extension's one call inside openLink and its host routes, the router's
+openLinkLocally, the two window.open lines beside their openLink posts); the every-road case is red over the head before the
+commit at its set equality (the table there has no such row), and the new case is red with the sentences deleted from a scratch
+copy of the section and with the residual deleted from a scratch copy of the script's docstring.
+
 Text only: the behaviour is pinned in tests/test_price_feed_off.py (the kernel), the reference's prose in
 tests/test_reference_price_feed.py. The documents and the sources are read as files; nothing loads romp
 code, so no state root is minted (the table case runs scripts/network-inventory.py, a standard-library scan
@@ -221,6 +233,18 @@ TEXT_ATTACHED = ("over your own ssh tunnels to a machine you attached (the text 
                  "views and file bodies relayed back, and the postal mail between the two machines' buses)")
 TEXT_PHONE = "encrypted end to end, to the push service of a phone you subscribed"
 OLD_ONLY = "Session text goes only to"
+# before the fourth round of the review of PR 878: the road for a link you click, on both hosts, its residual in the script's own
+# sentence (one text with scripts/network-inventory.py's docstring and the road's trigger cell), and the openers the code runs
+CLICKED_LABEL = "a link you click (browser)"
+CLICKED_LINK = "A link you click, in the browser showing the dashboard or in one of the editor extension's views"
+CLICKED_HOST = "requests the clicked URL from the host it names with that browser's own cookies"
+CLICKED_NO_TOKEN = "None carries a serve token, a key or a login token, and nothing sends until you click"
+CLICK_RESIDUAL = ("an anchor with no scheme that the chat page's click delegate leaves to the default action (one the page built, or one in a "
+                  "message that does not resolve to a web address) is a gesture this tree does not route, and what the editor's own webview "
+                  "host does with it is outside this tree")
+RENDER = _read("ui", "webview", "render.ts")
+LINK_OPENER = _read("ui", "webview", "link-opener.ts")
+VIEW_ROUTING = _read("vscode-extension", "src", "view-routing.ts")
 # the table's road labels (the first cell of `--table`, the ROADS literal's second field) and the words of the section that
 # say each road: a new road in the table is red here until it has a sentence and an entry; the local row owes no sentence
 ROAD_PHRASES = {
@@ -252,6 +276,7 @@ ROAD_PHRASES = {
     "the judges' CLI (session-or-judge-cli)": ("the judge CLIs",),
     "the postal bus to peer buses (bus-request)": ("the postal mail between the two machines' buses",),
     "a viewed file's pictures from the web (browser)": (IN_THE_BROWSER, PICTURES_DEFAULT),
+    CLICKED_LABEL: (CLICKED_LINK, CLICKED_HOST),
     "bootstrap.sh (install-time-by-hand)": ("Installing by hand (`bootstrap.sh`, `install.sh`) fetches from GitHub",),
     "bin/romp-sdk-setup (install-time-by-hand; also run by the kernel's self-update through install.sh)": (GET_PIP,),
     "vscode-extension/install.sh (install-time-by-hand; also run by the kernel's self-update and by the editor extension's "
@@ -734,6 +759,50 @@ class TheSectionIsTheTables(_Pins):
                          "editor extension start too, so the table's label is the section's phrase" % (label, EXTERNAL_PROGRAM_LABEL))
         self.assertEqual(ROAD_PHRASES.get(label), (EXTERNAL_PROGRAM,),
                          "the row's entry in ROAD_PHRASES is keyed on that label and says the row with the same phrase")
+
+    def test_the_clicked_link_road_is_said_its_residual_is_the_scripts_sentence_and_the_code_opens_as_the_section_says(self):
+        # before the fourth round of the review of PR 878: the reviewer's ruling over the derivation of the editor extension's
+        # vscode.env.openExternal; the section says the road (what is sent, to which host, on your click, with no switch) and
+        # its residual in the script's own sentence, one text with the docstring and the road's trigger cell
+        self.assertNetwork()
+        flat = _flat(NETWORK)
+        self.assertQuoted(CLICKED_LINK, flat, self.DOC, "the road for a link you click, on both hosts")
+        self.assertQuoted(CLICKED_HOST, flat, self.DOC, "what is sent and to which host: the clicked URL, to the host it names, by a browser with its own cookies")
+        self.assertQuoted("`vscode.env.openExternal`", flat, self.DOC, "the editor leg's opener, named")
+        self.assertQuoted("the session's repository name and the number, on github.com", flat, self.DOC, "the private strings a pull-request link carries")
+        self.assertQuoted("the CLI's own sign-in request to claude.com or claude.ai", flat, self.DOC, "the sign-in link's host")
+        self.assertQuoted(CLICKED_NO_TOKEN, flat, self.DOC, "no credential of romp's rides a link, and no switch: the click is the occasion")
+        self.assertQuoted(CLICK_RESIDUAL, flat, self.DOC, "the residual: a gesture the tree does not route")
+        # one source: the residual is the script's sentence, in its docstring and in the road's own trigger cell
+        self.assertTrue(INVENTORY_SRC, "%s exists: the derivation the section names" % INVENTORY)
+        doc = re.match(r'(?s)\A(?:#[^\n]*\n)*"""(.*?)"""', INVENTORY_SRC)
+        self.assertTrue(doc, "%s opens with a module docstring" % INVENTORY)
+        self.assertQuoted(CLICK_RESIDUAL, _flat(doc.group(1)), "%s's docstring" % INVENTORY, "one source: the section's sentence is the script's")
+        rows, rc, err = _table()
+        self.assertTrue(rows, "%s --table printed no table (exit %s): %s" % (INVENTORY, rc, err))
+        cells = _row(rows, CLICKED_LABEL)
+        self.assertTrue(cells, "the table has the road as a row: %r" % CLICKED_LABEL)
+        self.assertQuoted(CLICK_RESIDUAL, cells[1], "the road's trigger cell", "the same sentence, in the table")
+        for site in ("vscode-extension/src/extension.ts (`openExternal`)", "ui/webview/render.ts (`window.open`)", "ui/webview/link-opener.ts (`window.open`)"):
+            self.assertQuoted(site, cells[0], "the road's where cell", "derived from the sites: the extension's call and the web dashboard's window.open")
+        self.assertQuoted("github.com", cells[2], "the road's sent cell", "the table names the pull-request link's host too")
+        self.assertQuoted("none; nothing sends until you click", cells[3], "the road's off-switch cell")
+        # the code: the extension's one call inside openLink, reached from the chat panel's handler and from the router's
+        # openLinkLocally for the other panes, and the web dashboard's window.open beside each opener's openLink post
+        open_link = _ts_function(EXTENSION, "openLink")
+        self.assertTrue(open_link, "vscode-extension/src/extension.ts defines openLink")
+        self.assertQuoted("vscode.env.openExternal(uri);", open_link, "vscode-extension/src/extension.ts openLink", "the one call, inside the function the routes reach")
+        self.assertEqual(EXTENSION.count("vscode.env.openExternal("), 1, "vscode-extension/src/extension.ts: one call of openExternal, the road's one editor site")
+        self.assertQuoted('if (m.type === "openLink" && typeof m.href === "string") { openLink(String(m.href)); return; }', EXTENSION,
+                          "vscode-extension/src/extension.ts", "the chat panel's route")
+        self.assertEqual(EXTENSION.count("if (r.openLinkLocally) openLink(r.openLinkLocally);"), 3,
+                         "vscode-extension/src/extension.ts: the feed panel, the outline panel and wireView route the router's openLinkLocally")
+        self.assertQuoted("openLinkLocally: m.href, forward: false", VIEW_ROUTING, "vscode-extension/src/view-routing.ts",
+                          "the router hands an openLink to the host for every pane; the kernel never sees it")
+        self.assertQuoted('window.open(href, "_blank", "noopener,noreferrer");', RENDER, "ui/webview/render.ts", "the web dashboard's leg in the chat page's delegate")
+        self.assertQuoted('vscodeApi.postMessage({ type: "openLink", href });', RENDER, "ui/webview/render.ts", "and the editor leg beside it")
+        self.assertQuoted('open: (href) => { window.open(href, "_blank", "noopener,noreferrer"); },', LINK_OPENER, "ui/webview/link-opener.ts", "the shared opener's web leg")
+        self.assertQuoted('else if (post) post({ type: "openLink", href });', LINK_OPENER, "ui/webview/link-opener.ts", "and its editor leg")
 
 
 class TheEditorPromptRunsTheExtensionsOwnInstallScript(_Pins):

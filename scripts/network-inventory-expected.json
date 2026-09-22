@@ -1,7 +1,7 @@
 {
  "classes": {
   "browser-computed-url": 5,
-  "browser-dom-loads": 80,
+  "browser-dom-loads": 76,
   "external-program": 108,
   "runtime-program": 2
  },
@@ -91,12 +91,12 @@
   "postal/postal_service.py:ensure Popen sys.executable": 1
  },
  "kinds": {
-  "js": 58,
+  "js": 63,
   "py": 160,
   "sh": 127
  },
  "local_roads": 5,
- "local_sites": 159,
+ "local_sites": 160,
  "per_key": {
   "bin/romp-codex-setup:pip install": 1,
   "bin/romp-manager:http.get": 3,
@@ -248,12 +248,16 @@
   "ui/webview/figure-gate.ts:figureHosts": 1,
   "ui/webview/file-comments.ts:fetch": 2,
   "ui/webview/file-view.ts:fetch": 5,
+  "ui/webview/file-view.ts:window.open": 1,
   "ui/webview/gear.js:fetch": 9,
+  "ui/webview/link-opener.ts:window.open": 1,
   "ui/webview/palette-main.ts:fetch": 1,
   "ui/webview/pdf-chunk.ts:import()": 1,
   "ui/webview/preview.ts:Image": 1,
   "ui/webview/preview.ts:fetch": 3,
+  "ui/webview/preview.ts:window.open": 1,
   "ui/webview/render.ts:fetch": 8,
+  "ui/webview/render.ts:window.open": 1,
   "ui/webview/strip.ts:fetch": 11,
   "vscode-extension/install.sh:node -e": 1,
   "vscode-extension/install.sh:npm install": 1,
@@ -262,12 +266,14 @@
   "vscode-extension/src/extension.ts:execFile": 1,
   "vscode-extension/src/extension.ts:http.get": 2,
   "vscode-extension/src/extension.ts:install.sh": 1,
+  "vscode-extension/src/extension.ts:openExternal": 1,
   "vscode-extension/src/kernel-attach.ts:http.request": 1
  },
  "per_road": {
   "api-key-helper": 1,
   "browser-figures": 2,
   "bus-peers": 2,
+  "clicked-link": 4,
   "drift-check": 1,
   "fast-org-probe": 2,
   "file-viewer-ls-remote": 1,
@@ -279,7 +285,7 @@
   "judge-cli": 3,
   "local-bus": 13,
   "local-git": 21,
-  "local-kernel": 172,
+  "local-kernel": 173,
   "local-manager": 9,
   "local-program": 36,
   "main-converge": 7,
@@ -296,6 +302,6 @@
   "watch-pr-registration": 1,
   "web-push": 2
  },
- "roads": 30,
- "sites": 345
+ "roads": 31,
+ "sites": 350
 }

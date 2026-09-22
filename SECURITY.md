@@ -256,7 +256,24 @@ every run; `npx --yes @vscode/vsce package`, a fetch of vsce from the same
 registry even when it is cached, runs only when an editor CLI is present
 (`code`, `code-insiders`, `cursor` or `codium` on PATH, or an editor bundle
 under `ROMP_EDITOR_APPS`) or `ROMP_EXT_PACKAGE_ONLY` is set; with neither the
-script exits after the build and sends nothing more. Installing by hand
+script exits after the build and sends nothing more. A link you click, in the
+browser showing the dashboard or in one of the editor extension's views (a link
+in a session's reply or in your own message, a pull-request reference in a
+message, a card or an outline row, a URL in a todo's text or the address a todo
+carries, a URL in a viewed file, the gear's sign-in link), opens in a browser
+that requests the clicked URL from the host it names with that browser's own
+cookies: on the web dashboard the browser showing it, in a new tab; from the
+editor extension the operating system's default browser, which
+`vscode.env.openExternal` hands the URL to. For a pull-request reference that
+is the session's repository name and the number, on github.com; for a link in a
+message, a todo or a viewed file, whatever its author wrote, a session, you or
+a peer; for the sign-in link, the CLI's own sign-in request to claude.com or
+claude.ai. None carries a serve token, a key or a login token, and nothing
+sends until you click; an anchor with no scheme that the chat page's click
+delegate leaves to the default action (one the page built, or one in a message
+that does not resolve to a web address) is a gesture this tree does not route,
+and what the editor's own webview host does with it is outside this tree.
+Installing by hand
 (`bootstrap.sh`, `install.sh`) fetches from GitHub, PyPI (and
 bootstrap.pypa.io for get-pip.py when the python lacks ensurepip;
 `ROMP_NO_GET_PIP=1` skips that fetch) and the npm registry, and

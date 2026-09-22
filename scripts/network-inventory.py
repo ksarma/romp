@@ -43,14 +43,22 @@ changes). Four classes of outbound activity this scan cannot derive are named in
     sliceUrl); an absolute literal needs a row; a computed argument is counted here and listed; a dynamic import() with a
     literal specifier is an import and goes through the package gate below, not a site.
   browser-dom-loads: the browser DOM's own loads (img, iframe, script, link and anchor src, srcset and href writes, setAttribute
-    of those, HTML templates carrying them, window.open), counted by pattern over the browser and editor code; the viewer's
-    and the chat's rendered-markdown insertions have no line of their own and are not counted, so the browser-figures road
-    is named from the gate's host-list read and the retry probe, not from a request.
+    of those, HTML templates carrying them), counted by pattern over the browser and editor code; the viewer's and the chat's
+    rendered-markdown insertions have no line of their own and are not counted, so the browser-figures road is named from the
+    gate's host-list read and the retry probe, not from a request; an anchor's href write loads nothing by itself (the click
+    that opens it is the clicked-link road), and a `window.open` is a site keyed file plus tool, never a load counted here.
 A fifth class is named in the table and not counted, since the scan cannot see it by construction: a socket primitive called
 on a receiver the census cannot resolve (an attribute-held or parameter socket) is not a site here. The scan resolves a socket
 receiver as a name bound to socket.socket() in the same function, or by a tuple-literal address argument; a rule on the method
 name alone would tag the backends' and transports' own connect methods, which are not sockets. tests/test_price_feed_census.py
 plants one such call and holds this sentence to the behaviour.
+The clicked-link road holds the openers of a URL the content carries, on both hosts: the editor extension's one
+`vscode.env.openExternal` and the browser bundles' `window.open`, each a JavaScript site keyed file plus tool that takes a row (the
+road's rows name the chat page's click delegate, the shared opener the feed, the outline and the Waiting-on-you panes install, and
+the file viewer's URL anchors; the file preview's own-tab open of the kernel's own file URL takes a local row). Its residual: an
+anchor with no scheme that the chat page's click delegate leaves to the default action (one the page built, or one in a message
+that does not resolve to a web address) is a gesture this tree does not route, and what the editor's own webview host does with
+it is outside this tree.
 
 What each side matches. The Python side reads every call by ast, resolved through import aliases, module constants and names
 bound to a primitive (a socket, an asyncio event loop, a primitive itself), and gates every import: a module outside
@@ -62,7 +70,8 @@ or -e, or by a bare `-` (the program on stdin, the heredoc shape); every such si
 a row that says what the text does, and a head held in a shell variable ("$PY" -c) is not matched, since a bare -c or -e is a
 flag of many tools; a shell text inside a Python string literal (the remote apply scripts, the port probe, the self-update
 script) is outside the shell scan and travels as the argument of a rowed ssh or bash site, whose row's prose carries it. The
-browser and editor side is a line scan too: the clients in JS; the child_process family qualified to
+browser and editor side is a line scan too: the clients and the two URL openers in JS (`vscode.env.openExternal`,
+`window.open`, each a site that takes a row); the child_process family qualified to
 its binding (`child_process.<fn>(`, `require('child_process').<fn>(`, a namespace the file imports the module as, or a bare
 name the file binds from child_process by a destructured import or require; a bare `exec(` with no such binding is not a
 site, since RegExp exec is spelled the same way), each program site classed by its argv as the Python side classes its own;
@@ -127,10 +136,10 @@ perf_export perf_public spend_repair
 # file's ambient path pattern and is not gated. A package outside this set fails the run (IMPORT). The ones that open
 # connections or start programs are child_process (the manager, the editor extension and the timeline view start programs
 # through it, each a site of the family in line_scan), http (the manager, the extension, its attach helper and the timeline view
-# reach the kernel on the loopback, each a site) and ws (the extension's websocket to the kernel, a site); every other one
-# opens nothing: the node built-ins for files, paths, hashing and assertions; the editor API vscode (its openExternal hands a
-# URL to the OS browser, as `open` does); the TypeScript compiler; and the browser libraries the webview bundles (markdown,
-# math, sanitising, highlighting, the editor widget, PDF rendering).
+# reach the kernel on the loopback, each a site), ws (the extension's websocket to the kernel, a site) and vscode (the editor
+# API: its `openExternal` hands a URL to the operating system's default browser, a site of the clicked-link road); every other
+# one opens nothing: the node built-ins for files, paths, hashing and assertions; the TypeScript compiler; and the browser
+# libraries the webview bundles (markdown, math, sanitising, highlighting, the editor widget, PDF rendering).
 KNOWN_JS_IMPORTS = set("""
 child_process http ws
 assert crypto fs module os path url util vscode typescript
@@ -173,7 +182,9 @@ _t("local-manager", K + "_manager_kernels", K + "_restart_this_kernel", "bin/rom
 _t("local-kernel", P + "_kernel_sessions_checked", P + "_kernel_post", P + "_kernel_get", P + "_kernel_up", P + "_seed_peers_from_kernel", "cli/perf_export.py:read_kernel.get",
    "cli/restart_metrics.py:kernel_live", "cli/update.py:_kernel", "cli/update.py:_get", "cli/update.py:_post", "cli/version.py:_probe_kernel", "bin/romp:curl",
    "bin/romp-service:curl", "hooks/romp-wake.sh:curl", "hooks/romp-usertodo-context.sh:curl", "vscode-extension/src/extension.ts:http.get",
-   "vscode-extension/src/extension.ts:WebSocket", "ui/webview/federation.ts:WebSocket")   # a browser fetch is placed by its URL, never by a row
+   "vscode-extension/src/extension.ts:WebSocket", "ui/webview/federation.ts:WebSocket",
+   "ui/webview/preview.ts:window.open")   # a browser fetch is placed by its URL, never by a row; preview.ts's `openFileTab` opens
+                                          # `fileUrl(path, sid)`, the kernel's own file route, in the browser's own tab
 # The shell scripts' inline interpreter texts (external-program by class: a program text this scan does not read), keyed file
 # plus tool and rowed with what the text does, read once for the row: bin/romp's `python3 -c` and `python3 -` texts parse the
 # JSON the kernel's curls returned and render it, quote a query string (urllib.parse, no request), and stamp the restart audit
@@ -190,6 +201,13 @@ _t("local-program", K + "_port_open", K + "_primary_addr", K + "_rebuild_dist", 
    "kernel/host_transport.py:HostTransport.connect")   # the SDK transport's connection to a session host's Unix socket
 # _serve_fault: a test-only fault route runs `sh -c echo`, a fixed literal that prints and opens nothing (external-program by class)
 _t("browser-figures", "ui/webview/figure-gate.ts:figureHosts", "ui/webview/preview.ts:Image")
+# The openers of a URL the content carries, on both hosts: the extension's one `vscode.env.openExternal` (inside `openLink`, reached
+# from the chat panel's handler and from `routeViewMessage`'s `openLinkLocally` for the feed panel, the outline panel and view and
+# the timeline view) and the browser bundles' `window.open` in the chat page's click delegate, in the shared opener the feed, the
+# outline and the Waiting-on-you panes install, and in the file viewer's URL-anchor open. Every one sits in a click or
+# pointer-release handler; a fifth `window.open`, preview.ts's own-tab open of the kernel's file URL, is local (above).
+_t("clicked-link", "vscode-extension/src/extension.ts:openExternal", "ui/webview/render.ts:window.open", "ui/webview/link-opener.ts:window.open",
+   "ui/webview/file-view.ts:window.open")
 _t("install-bootstrap", "bootstrap.sh:curl", "bootstrap.sh:git clone", "bootstrap.sh:git fetch", "bootstrap.sh:git pull")
 _t("install-sdk-setup", "bin/romp-sdk-setup:curl", "bin/romp-sdk-setup:wget", "bin/romp-sdk-setup:pip install")
 _t("install-ext", "vscode-extension/install.sh:npm install", "vscode-extension/src/extension.ts:install.sh",
@@ -198,6 +216,11 @@ _t("install-codex-setup", "bin/romp-codex-setup:pip install", "kernel/codex_runt
 LOCAL_ROADS = {"local-bus", "local-manager", "local-kernel", "local-program", "local-git"}
 RUNTIME_ROADS = {"predicate-watch", "api-key-helper"}   # the program text itself arrives at run time
 CLASSES = ("external-program", "runtime-program", "browser-computed-url", "browser-dom-loads")
+# The clicked-link road's residual, one text in three homes: the docstring above, the road's trigger cell below and SECURITY.md's
+# Network access section (tests/test_security_price_feed.py holds the three equal).
+CLICK_RESIDUAL = ("an anchor with no scheme that the chat page's click delegate leaves to the default action (one the page built, or one in a "
+                  "message that does not resolve to a web address) is a gesture this tree does not route, and what the editor's own webview "
+                  "host does with it is outside this tree")
 
 # The table's prose columns, one entry per road in the order the ledger entry prints them; the where column is derived from the
 # sites on every run, so a hand-written member cannot survive here. Text: the repository's privacy documentation.
@@ -281,6 +304,10 @@ ROADS = [
   "a viewed markdown file's pictures and clips whose host is on the gear's Pictures from the web in files list load when the file opens (the default list, ui/webview/settings.ts `FIGURE_HOSTS_DEFAULT`: github.com, raw.githubusercontent.com and the other GitHub image and asset hosts, localhost, 127.0.0.1); a figure from another host loads on one click; the viewer's retry (`probeMdImgUrl`) probes a failed figure's URL",
   "GET of the figure's URL from the browser showing the dashboard, with that browser's own cookies for the host; the loads themselves are DOM insertions this scan cannot see (the browser-dom-loads row), so this road is named from the gate's host-list read and the retry probe, not from a request",
   "the setting (remove the hosts)"),
+ ("clicked-link", "a link you click (browser)",
+  "your click, and nothing else: in the browser showing the dashboard, the chat page's click delegate (`window.open` in ui/webview/render.ts) opens every anchor with a scheme, a link in a session's reply or in your own message, a whole-backtick URL, a URL in a todo's text or a pinned note, the address a todo carries, a pull-request reference, the gear's sign-in link; the shared opener (ui/webview/link-opener.ts, installed by the feed, the outline and the Waiting-on-you panes) opens a pull-request or URL link on a pointer release or an Enter; the file viewer (`openUrlTab` in ui/webview/file-view.ts) opens a URL in a viewed file's text on a modified click (Ctrl, Cmd or the middle button; a plain click is left to the browser's own open of the anchor); in the editor extension the same openers post the href to the host, whose `openLink` (vscode-extension/src/extension.ts, from the chat panel's handler and from `routeViewMessage`'s `openLinkLocally` for the feed panel, the outline panel and view and the timeline view) hands it to `vscode.env.openExternal`, the extension's own `vscode://romp.romp-chat-view` deep link handled in the extension instead and never reaching a browser; every opener sits in a click or pointer-release handler, no automatic step; " + CLICK_RESIDUAL,
+  "the clicked URL, as the content carries it, to the host that URL names, requested by the browser showing the dashboard (a new tab, `noopener,noreferrer`) or, from the editor extension, by the operating system's default browser, with that browser's own cookies for the host: a pull-request link carries the session's repository name (from the checkout's origin remote, or the text's own owner/repo) and the number, to github.com; a link in a message, a todo, a pinned note or a viewed file is whatever its author wrote, a session, you or a peer, a class this scan cannot bound; the gear's sign-in link is the CLI's own OAuth request to claude.com or claude.ai; no serve token, key or login token rides in any of them (the serve token travels only on the bundles' own fetch and media URLs, the extension's websocket URL and its request header, never into a link)",
+  "none; nothing sends until you click"),
  ("install-bootstrap", "bootstrap.sh (install-time-by-hand)",
   "by hand: the documented one-liner, and re-runs",
   "`curl` of bootstrap.sh from raw.githubusercontent.com (the one-liner itself), `git clone` of the repository (`ROMP_REPO`; github.com by default), on an existing clone `git fetch --tags origin` then `git pull --ff-only`, then `./install.sh`",
@@ -299,7 +326,7 @@ ROADS = [
   "none"),
 ]
 LOCAL_ROW = ("local, set aside and counted (local)",
-  "each a connection to this machine or a fixed program with no network use of its own: the kernel to the manager, the postal bus and itself; the bus, bin/romp's curls, cli/*, the installed hooks, the VS Code extension and the manager to the kernel on 127.0.0.1; the browser's fetch and websocket to the kernel's own origin (a relative URL or a kernel-URL helper); the SDK transport's connection to a session host's Unix socket; git read-only queries, ps, scutil and the systemd tools spelled out in the argv; and `_primary_addr`'s UDP connect to TEST-NET-1, which sends no packet. A program on a local road whose far end this scan cannot derive is counted in the external-program row, never here",
+  "each a connection to this machine or a fixed program with no network use of its own: the kernel to the manager, the postal bus and itself; the bus, bin/romp's curls, cli/*, the installed hooks, the VS Code extension and the manager to the kernel on 127.0.0.1; the browser's fetch and websocket to the kernel's own origin (a relative URL or a kernel-URL helper) and its own-tab open of a file the kernel serves (`fileUrl`); the SDK transport's connection to a session host's Unix socket; git read-only queries, ps, scutil and the systemd tools spelled out in the argv; and `_primary_addr`'s UDP connect to TEST-NET-1, which sends no packet. A program on a local road whose far end this scan cannot derive is counted in the external-program row, never here",
   "as the kernel, the CLIs and the browser run", "nothing leaves the machine", "not applicable")
 # Each class label ends with the kind suffix; the external-program label is SECURITY.md's phrase for the class (a program
 # romp's code starts whose far end its arguments do not show, whichever of the kernel, a shell script, the manager or the
@@ -318,8 +345,8 @@ CLASS_ROWS = {
   "to the URL the variable holds at run time; the kernel's own origin at this head by reading the bindings (the editor's webview reaches the same served bundles by its resource URL)",
   "not applicable"),
  "browser-dom-loads": ("the browser DOM's own loads (not derivable by this scan)",
-  "as the dashboard and the editor views render: an element loads its URL when the attribute lands; the viewer's and the chat's rendered-markdown insertions load their figures with no attribute line at all and are not counted",
-  "to the URL written: kernel URLs (`fileUrl`, `mediaSrc`, `/media`), object URLs and editor webview URIs, and for a viewed file's figures the hosts the browser-figures road names",
+  "as the dashboard and the editor views render: an element that loads (an image, a frame, a script, a stylesheet) loads its URL when the attribute lands, and an anchor's href waits for a click; the viewer's and the chat's rendered-markdown insertions load their figures with no attribute line at all and are not counted",
+  "to the URL written: kernel URLs (`fileUrl`, `mediaSrc`, `/media`), object URLs and editor webview URIs, and for a viewed file's figures the hosts the browser-figures road names; an anchor's href write loads nothing by itself, the click that opens it is the clicked-link road, and a `window.open` is a site of its own (that road, or a local row), not a load counted here",
   "the figure-host setting for figures; not applicable otherwise"),
 }
 # Named and not counted: the scan cannot see this class by construction, so its row states the mechanism and the test module
@@ -343,10 +370,11 @@ SH_INTERPRETER = re.compile(r"(?:^|[\s;&|(`])(?P<head>(?:\S*/)?(?:python3?|node|
 JS = [("fetch", r"\bfetch\("), ("WebSocket", r"new WebSocket\("), ("EventSource", r"new EventSource\("), ("Image", r"new Image\("), ("http.get", r"\bhttps?\.get\("),
       ("http.request", r"\bhttps?\.request\("), ("net.connect", r"\bnet\.connect\("), ("net.createConnection", r"\bnet\.createConnection\("),
       ("tls.connect", r"\btls\.connect\("), ("XMLHttpRequest", r"\bXMLHttpRequest\b"), ("sendBeacon", r"\bsendBeacon\("),
-      ("import()", r"(?<![\w.$])import\("), ("figureHosts", r"loadSettings\(\)\.figureHosts")]
+      ("import()", r"(?<![\w.$])import\("), ("figureHosts", r"loadSettings\(\)\.figureHosts"),
+      ("openExternal", r"vscode\.env\.openExternal\("), ("window.open", r"window\.open\(")]   # the URL openers: sites that take a row
 # The child_process family is matched through its binding (see _cp_bindings), never as a bare name: `exec(` is RegExp exec too.
 DOM = [("attribute write", r"\.(?:src|srcset|href)\s*=[^=]"), ("setAttribute", r"setAttribute\(\s*[\"'](?:src|srcset|href)[\"']"),
-       ("template", r"<(?:img|script|iframe|link|source|video|audio|a|embed|object)\b[^>]*\b(?:src|srcset|href)="), ("window.open", r"window\.open\(")]
+       ("template", r"<(?:img|script|iframe|link|source|video|audio|a|embed|object)\b[^>]*\b(?:src|srcset|href)=")]   # window.open is a JS site, not a load
 
 
 def _compiled(tools):

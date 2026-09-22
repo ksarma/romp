@@ -56,6 +56,13 @@ COUNTS line naming the key and the head; a socket primitive on a receiver the sc
 class and held to the behaviour by a planted call the run does not see; and the git boundary is pinned by two plants (a
 row-less git checkout is UNCLASSIFIED with no class tag, a bare git with a runtime subcommand carries it). Each case is
 green at the tree and red over a copy of the script with its arm removed (the round's record names the mutation).
+
+Before the fourth round (2026-09-22), on the reviewer's ruling over the derivation of the editor extension's
+`vscode.env.openExternal`, the census gained the clicked-link road, a link you click on either host: the extension's one call
+is a site through the JS entry `openExternal`, and `window.open` is a JS tool rather than a DOM load, so each of its four lines
+is a site with a row (three on the road; the file preview's own-tab open of the kernel's own file URL local). TheClickedLinkRoadIsPinned
+holds the five sites to their rows by execution and the road's residual sentence to its three homes; each tree case is red over a
+scratch copy of the tree with its arm taken out of the script (the round's record names the mutation).
 """
 import ast
 import difflib
@@ -1126,6 +1133,70 @@ class TheGitClassBoundaryIsPinned(_SharedRun):
                           "git checkout is not in the class: no tag")
         self.assertListed(out, r"kernel/credentials\.py:%d  run  git  in _probe_git  -> UNCLASSIFIED \[external-program\]" % at["_probe_git"],
                           "git with a subcommand the code does not spell out is the class")
+
+
+# The clicked-link road (before the fourth round): the openExternal entry of the script's JS list, as the copy case removes it, the
+# road's label, and its residual sentence, one text with the script's docstring, its trigger cell and SECURITY.md.
+OPEN_EXTERNAL_ENTRY = '("openExternal", r"vscode\\.env\\.openExternal\\("), '
+CLICKED_LABEL = "a link you click (browser)"
+CLICK_RESIDUAL = ("an anchor with no scheme that the chat page's click delegate leaves to the default action (one the page built, or one in a "
+                  "message that does not resolve to a web address) is a gesture this tree does not route, and what the editor's own webview "
+                  "host does with it is outside this tree")
+
+
+class TheClickedLinkRoadIsPinned(_Scope):
+    """The road for a link you click, on both hosts (before the fourth round of the review, on the reviewer's ruling over the
+    derivation of the editor extension's `vscode.env.openExternal`): the extension's one call is a site through the JS entry
+    `openExternal` and sits on the clicked-link road by its row, and `window.open` is a JS tool rather than a DOM load, so each
+    of its four lines is a site keyed file plus tool with a row (the chat page's click delegate, the shared opener and the file
+    viewer on the road; the file preview's own-tab open of the kernel's own file URL local) and none is counted under
+    browser-dom-loads. Each tree case is red over a scratch copy of the tree with the arm taken out of the script: the
+    openExternal entry removed leaves the call unlisted and the run refusing its stale row; window.open moved back to the DOM
+    list counts the four lines as loads and lists no site; the residual deleted from the docstring breaks the one text. The
+    copy case plants the first of those on the scope copy and reads the refusal."""
+
+    def test_the_extensions_openExternal_is_a_site_on_the_clicked_link_road(self):
+        rc, out, _ = tree_run()
+        self.assertListed(out, r"vscode-extension/src/extension\.ts:\d+  openExternal  vscode\.env\.openExternal\(uri\);  in -  -> clicked-link$",
+                          "the extension's one openExternal call is a site of the road, through the JS entry and its row")
+        self.assertClean(rc, out)
+        expected = _expected()
+        self.assertEqual(expected["per_key"]["vscode-extension/src/extension.ts:openExternal"], 1, "one call, one row key")
+        self.assertEqual(expected["per_road"]["clicked-link"], 4, "the road's sites: the extension's call and three window.open lines")
+
+    def test_the_openExternal_entry_removed_leaves_the_call_unlisted_and_the_run_refuses_its_stale_row(self):
+        self.replace(INVENTORY, OPEN_EXTERNAL_ENTRY, "")
+        rc, out, _ = inventory(scope_copy())
+        self.assertRefused(rc, out, "STALE ROW vscode-extension/src/extension.ts:openExternal names no site",
+                           "COUNTS per_key vscode-extension/src/extension.ts:openExternal: the committed count is 1, this run found None")
+        self.assertFalse([ln for ln in _listed(out, "vscode-extension/src/extension.ts:") if "  openExternal  " in ln],
+                         "without the entry the call is no site and no line; the stale row and the count are what name the loss")
+
+    def test_the_window_open_lines_are_sites_on_their_rows_and_none_is_a_browser_dom_load(self):
+        rc, out, _ = tree_run()
+        for f, why in (("render", "the chat page's click delegate"), ("link-opener", "the shared opener the feed, the outline and the Waiting-on-you panes install"),
+                       ("file-view", "the file viewer's URL anchor on a modified click")):
+            self.assertListed(out, r"ui/webview/%s\.ts:\d+  window\.open  .*  in -  -> clicked-link$" % f, why + ": a site of the road")
+        self.assertListed(out, r"ui/webview/preview\.ts:\d+  window\.open  const w = window\.open\(fileUrl\(path, sid\), \"_blank\"\);  in -  -> local-kernel$",
+                          "the preview's own-tab open of the kernel's own file URL is local, by its row")
+        self.assertFalse([ln for ln in out.splitlines() if "  dom-load  window.open  " in ln], "no window.open is counted as a DOM load")
+        self.assertClean(rc, out)
+        self.assertEqual(sorted(k for k in _expected()["per_key"] if k.endswith(":window.open")),
+                         ["ui/webview/file-view.ts:window.open", "ui/webview/link-opener.ts:window.open", "ui/webview/preview.ts:window.open", "ui/webview/render.ts:window.open"],
+                         "the four window.open lines, each a row key of its own")
+
+    def test_the_roads_residual_is_the_docstrings_sentence_and_the_tables(self):
+        self.assertIn(CLICK_RESIDUAL, _inventory_docstring(), "the docstring names the gesture the tree does not route")
+        rc, table, err = tree_run("--table")
+        self.assertEqual(rc, 0, err[-1500:])
+        row = next((r for r in table.splitlines() if r.startswith("| %s | " % CLICKED_LABEL)), None)
+        self.assertTrue(row, "the table has the road: %r" % CLICKED_LABEL)
+        cells = [c.strip() for c in row.strip().strip("|").split(" | ")]
+        self.assertEqual(len(cells), 5, row[:120])
+        self.assertEqual(cells[1], "ui/webview/file-view.ts (`window.open`); ui/webview/link-opener.ts (`window.open`); ui/webview/render.ts (`window.open`); "
+                                   "vscode-extension/src/extension.ts (`openExternal`)", "the where cell is derived from the sites")
+        self.assertIn(CLICK_RESIDUAL, cells[2], "the same sentence, in the road's trigger cell")
+        self.assertEqual(cells[4], "none; nothing sends until you click", "no switch: the click is the occasion")
 
 
 class TheTableIsTheLedgers(_Scope):
