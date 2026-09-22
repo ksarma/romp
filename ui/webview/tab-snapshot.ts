@@ -13,7 +13,7 @@
 // changed nothing yields the SAME object (snapshotModel returns `prev`) and the renderer rebuilds nothing.
 // render.ts paints it; the shapes below are the minimal "Like" views of render.ts's types (the tab-state.ts
 // idiom), so the rule runs in node tests without a DOM.
-import { tabStateClass, sectionPip, sectionPipMembers, type TabStateLike, type SectionPip, type RingId } from "./tab-state";
+import { tabStateClass, sectionPip, sectionPipMembers, openUserTodo, type TabStateLike, type SectionPip, type RingId } from "./tab-state";
 import { chipWords, type ChipStatusLike, type ChipWords } from "./status-chip";
 import { stripInline } from "./docreview";
 
@@ -239,7 +239,8 @@ export function snapshotRow(id: string, s: SnapSessionLike | null | undefined, l
   // after asking would show a plain idle row here while the feed shows a red card. lg.needsInput is that
   // column, per session, from the kernel's last feed build (build_session); the tab's own cases stay as a
   // floor because the feed build trails the chip by one push. The one judgment is onYou (the header's
-  // stand-in pip reads the same); the row adds an open user todo, the tab's ⚑.
+  // stand-in pip reads the same); the row adds an open user todo, the tab's ⚑, by the ONE open predicate over the
+  // count (tab-state.ts openUserTodo, the header's and the builders' spelling; correctness-1, review round 1).
   const feedBlock = lg?.needsInput === true;
   // the chip: on you → "API error" when the tab's own rule sees an API error only you can clear (tab-blocked: the
   // flags ride beside the state; a flagless API error is the kernel's transient, auto-retried one, and with a feed-filed
@@ -254,7 +255,7 @@ export function snapshotRow(id: string, s: SnapSessionLike | null | undefined, l
     color: src?.color && src.color.bg && src.color.fg ? { bg: src.color.bg, fg: src.color.fg } : null,
     pip: s ? st.pip : "unknown",
     state: st.state,   // the tab's own phrase; a feed-filed block on a quiet session has none, its chip ("Blocked") is the word (T322b)
-    needsYou: feedBlock || st.needsYou || todos > 0,
+    needsYou: feedBlock || st.needsYou || openUserTodo(todos),
     waiting: st.waiting,
     todos,
     chip,

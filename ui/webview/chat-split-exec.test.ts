@@ -20,6 +20,7 @@ import { isProvisionalId } from "./provisional";
 import { isSubId } from "./subagent-view";
 import { StagedStack } from "./staged-messages";
 import { syncSessionsFromTabMeta } from "./tab-meta";
+import { snapshotRow } from "./tab-snapshot";   // the section snapshot's row, composed here over the parsed strip meta (the roster count's third reader)
 import { reconcileTabOrder, retainLiveOmitted, localStrip, stripHost } from "./tab-order";
 import { hostOf } from "./host-prefix";
 
@@ -526,21 +527,32 @@ function idleWorld(o: { col?: string; provisionalId?: string | null; failed?: st
   return { api, posts };
 }
 
-test("executed: the roster row's user-todo count lands on the strip meta (2026-09-22): applyTabOrder keeps a number, 0 included, and reads an absent key or a string as undefined (an older kernel's row); the next strip rebuilds the entry with its new count", () => {
+test("executed: the roster row's user-todo count lands on the strip meta (2026-09-22): applyTabOrder keeps a non-negative integer, 0 included, and reads an absent key, a string, a negative or a fraction as undefined (an older kernel's row, or a count outside the kernel's contract); the next strip rebuilds the entry with its new count", () => {
   // the count a skeleton or placeholder tab paints its flag from (tab-usertodo-skeleton.test.ts pins the builders and the parse's
-  // spelling; this case runs the parse). Parsed inline in applyTabOrder because this world lifts the function by source.
-  const FOUR = "11111111-2222-3333-4444-555555555504";
+  // spelling; this case runs the parse). Parsed inline in applyTabOrder because this world lifts the function by source. The
+  // kernel sends a non-negative integer (tests/test_user_todos_roster.py holds it to that); a row outside that contract reads as
+  // no count, so every reader downstream, the builders, the signature, the header and the section snapshot, holds a real count
+  // or nothing (correctness-1, review round 1)
+  const FOUR = "11111111-2222-3333-4444-555555555504", FIVE = "11111111-2222-3333-4444-555555555505", SIX = "11111111-2222-3333-4444-555555555506";
+  const ALL = [WEB, API, TESTS, FOUR, FIVE, SIX];
   const w = stripWorld({ col: "2", sets: { "2": [API] } });
-  w.api.frame([WEB, API, TESTS, FOUR], [{ id: WEB, name: "web", userTodos: 2 }, { id: API, name: "api", userTodos: 0 }, { id: TESTS, name: "tests" }, { id: FOUR, name: "docs", userTodos: "2" }],
-              { freshHost: "" }, [WEB, API, TESTS, FOUR]);
-  assert.deepEqual([WEB, API, TESTS, FOUR].map((id) => w.api.meta(id)?.userTodos), [2, 0, undefined, undefined], "a count, 0 as a real value, no key, a string: a number or nothing");
-  assert.deepEqual([WEB, API, TESTS, FOUR].map((id) => w.api.meta(id)?.name), ["web", "api", "tests", "docs"], "the row's other fields parse as before");
-  assert.deepEqual(w.api.state().tabMeta, [WEB, API, TESTS, FOUR], "every listed row has an entry");
+  w.api.frame(ALL, [{ id: WEB, name: "web", userTodos: 2 }, { id: API, name: "api", userTodos: 0 }, { id: TESTS, name: "tests" }, { id: FOUR, name: "docs", userTodos: "2" },
+                    { id: FIVE, name: "infra", userTodos: -1 }, { id: SIX, name: "ops", userTodos: 1.5 }],
+              { freshHost: "" }, ALL);
+  assert.deepEqual(ALL.map((id) => w.api.meta(id)?.userTodos), [2, 0, undefined, undefined, undefined, undefined],
+    "a count, 0 as a real value, no key, a string, a negative, a fraction: a non-negative integer or nothing");
+  assert.deepEqual(ALL.map((id) => w.api.meta(id)?.name), ["web", "api", "tests", "docs", "infra", "ops"], "the row's other fields parse as before");
+  assert.deepEqual(w.api.state().tabMeta, ALL, "every listed row has an entry");
+  // -1 through the writer, into the section snapshot's row (tab-snapshot.ts, the count's third reader): a count of 0, not on you
+  const five = w.api.meta(FIVE);
+  const neg = snapshotRow(FIVE, null, null, true, { name: five?.name, userTodos: five?.userTodos });   // the entry's two fields the snapshot reads (render.ts hands it the whole tabMeta row)
+  assert.deepEqual([neg.todos, neg.needsYou, neg.name], [0, false, "infra"], "the snapshot reads the -1 row's entry as no count: 0 things, nothing on you");
   // a todo filed on tests and web's two resolved: the kernel's next strip carries the new counts, and the entries are REBUILT from
   // it (tabMeta.clear(), then one set per row), so a count never lingers from an earlier strip
   w.api.frame([WEB, API, TESTS, FOUR], [{ id: WEB, name: "web", userTodos: 0 }, { id: API, name: "api", userTodos: 0 }, { id: TESTS, name: "tests", userTodos: 1 }, { id: FOUR, name: "docs" }],
               { freshHost: "" }, [WEB, API, TESTS, FOUR]);
   assert.deepEqual([WEB, API, TESTS, FOUR].map((id) => w.api.meta(id)?.userTodos), [0, 0, 1, undefined], "the rebuilt entries carry this strip's counts");
+  assert.deepEqual([FIVE, SIX].map((id) => w.api.meta(id)), [undefined, undefined], "rows the new strip no longer lists have no entry (rebuilt, not merged)");
 });
 
 test("the idle signal: dropping the create in flight posts colBusy:false once; a failed create keeps the column busy until its discard, which posts it; the first column never posts", () => {

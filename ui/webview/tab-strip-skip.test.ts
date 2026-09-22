@@ -50,7 +50,7 @@ test("every input the strip renders is in the signature", () => {
     'surfaceLens(effViews(), "chat")', "unions",
     "snapView",   // the section the pane shows at a glance: a header's mark, its way-back act and its words derive from it
     "m?.name", "m?.color?.bg", "m?.color?.fg", "m?.emoji",
-    "!!m?.userTodos",   // the roster row's user-todo count, the flag's input in the skeleton AND placeholder rows (2026-09-22); one includes over the whole signature, so this reads red only when the term leaves both rows: the census below and tab-usertodo-skeleton.test.ts hold each row
+    "openUserTodo(m?.userTodos)",   // the roster row's user-todo count through the ONE open predicate (tab-state.ts openUserTodo; correctness-1, review round 1), the flag's input in the skeleton AND placeholder rows (2026-09-22); one includes over the whole signature, so this reads red only when the term leaves both rows or is spelled only in a comment: the census below (comments stripped) and tab-usertodo-skeleton.test.ts hold each row's code
     "s.name", "s.color?.bg", "s.color?.fg", "s.emoji ?? tabMeta.get(id)?.emoji", "st.state", "tabStateClass(st)", "!!st.faded",
     "st.ctx", "st.ctxColor", "st.ctxTone", "!!s.sub", "!!(s.userTodos && s.userTodos.length)", "hostIsDown(id)", "hostDownNote(id)",
     "ledgers.get(id)?.needsInput === true",   // the feed's needs-you verdict: a header's stand-in pip over its hidden members reads it (tab-snapshot.ts standInPip)
@@ -77,7 +77,7 @@ test("every input the strip renders is in the signature", () => {
   const tabStateImport = RENDER.match(/^import \{([^}]*)\} from "\.\/tab-state";/m);
   assert.ok(tabStateImport, "render.ts imports from tab-state");
   const tabStateNames = tabStateImport![1].split(",").map((s) => s.trim());
-  for (const name of ["tabStateClass", "sectionPipTitle"]) assert.ok(tabStateNames.includes(name), "the tab-state import carries " + name);
+  for (const name of ["tabStateClass", "sectionPipTitle", "openUserTodo"]) assert.ok(tabStateNames.includes(name), "the tab-state import carries " + name);   // openUserTodo: the signature rows' open predicate (correctness-1, review round 1)
   for (const name of ["tabDotClass", "tabDotTitle"]) assert.ok(!tabStateNames.includes(name), "the dot rule moved into the dot widget (T379): render.ts no longer imports " + name);
   assert.match(RENDER, /^import \{ composeTabWidgets, composeTabRing, ringSwitch, tabHotkey, miniChord \} from "\.\/tab-widgets";/m, "the widgets the strip composes (the rings too, one class at a time), the ring switches the folded pip reads, and the hot-key chord the signature reads");
 });

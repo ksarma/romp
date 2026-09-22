@@ -58,7 +58,7 @@ import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionR
          followAdoption, reorderTagOrder, homeSectionOf, neighborOfFolded, revealedTabs, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection, type StripItem, type StripHead, type TabGroupsState, type SectionRef } from "./tab-groups";
 import { snapshotModel, snapshotHeading, rowWords, hiddenNeeds, hiddenFoldWords, actWords, standInPip, type SnapModel, type SnapRow } from "./tab-snapshot";
 import { rowStillOpen, installSnapshotEscape, reconcileRows, repeatedClick, menuAnchor } from "./tab-snapshot-view";
-import { tabStateClass, sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick } from "./tab-state";
+import { tabStateClass, sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick, openUserTodo } from "./tab-state";
 import { composeTabWidgets, composeTabRing, ringSwitch, tabHotkey, miniChord } from "./tab-widgets";   // the tab-title widgets (T379): the dot, the context bar and the hot-key keycap compose onto every tab from the registry, and the rings too, one class at a time; miniChord is the chord the strip signature reads
 import { titleWithKey, keyHint, chordOf, effectiveChord, loadOverrides, saveOverride, KEYS_EVENT } from "./keybindings";
 import { hotkeyCommandId, loadTabKeys, rememberTabKey, forgetTabKey, goneTabKeys, renamedTabKeys } from "./tab-keys";   // per-tab hot keys (2026-09-10): the set and its bookkeeping; the keycap on the tab is the T379 widget, read from the same store
@@ -6036,7 +6036,7 @@ function applyTabOrder(o: any, tabs?: any, report?: OrderReport, live?: any) {
         tabMeta.set(t.id, { name: typeof t.name === "string" ? t.name : "",
                             color: (t.color && typeof t.color.bg === "string") ? t.color : null,
                             emoji: typeof t.emoji === "string" ? t.emoji : undefined,   // absent = an older kernel
-                            userTodos: typeof t.userTodos === "number" ? t.userTodos : undefined });   // the roster's count of open user todos (2026-09-22): a skeleton or placeholder tab paints its flag from it, the session payload being what the diet withholds; absent = an older kernel. Parsed inline on purpose: chat-split-exec.test.ts lifts this function by source into a stub world where a new import would be undefined
+                            userTodos: Number.isInteger(t.userTodos) && t.userTodos >= 0 ? t.userTodos : undefined });   // the roster's count of open user todos (2026-09-22): a skeleton or placeholder tab paints its flag from it, the session payload being what the diet withholds; absent = an older kernel, and a count outside the kernel's contract (a non-negative integer, tests/test_user_todos_roster.py) reads as absent too, as text did from the start, so every reader downstream holds a real count or nothing (correctness-1, review round 1). Parsed inline on purpose: chat-split-exec.test.ts lifts this function by source into a stub world where a new import would be undefined
       }
     }
     // …and apply the same blob to EXISTING sessions (the user 2026-08-24): the label/color used to
@@ -6894,8 +6894,10 @@ function makeSkeletonTab(id: string): HTMLElement {
   tab.appendChild(label);
   // USER-TODO flag (2026-09-22): from the roster row's COUNT (tabMeta, the tabOrder push), never the stale entry's rows.
   // The session payload that carries the rows is exactly what the diet withholds for this tab, and the entry underneath
-  // is pre-outage. The loaded tab's mark and class (its block in renderTabs says the rest); no count on the strip.
-  if (meta?.userTodos) {
+  // is pre-outage. The loaded tab's mark and class (its block in renderTabs says the rest); no count on the strip. Open by
+  // the ONE predicate (tab-state.ts openUserTodo), the folded header's and the signature rows' spelling, so the tab and the
+  // header it folds into agree on every value (correctness-1, review round 1).
+  if (openUserTodo(meta?.userTodos)) {
     const ut = el("span", "tab-usertodo");
     ut.textContent = "⚑";
     ut.title = "waiting on you: this session flagged something it needs from you (the note by its message box shows once the tab loads)";
@@ -6968,8 +6970,9 @@ function makePlaceholderTab(id: string): HTMLElement {
   else label.textContent = "…";
   tab.appendChild(label);
   // USER-TODO flag (2026-09-22): the roster row's count is here before the session payload is (the strip lands first,
-  // tabs-first), so a tab still opening wears the flag its loaded self will. Same mark, same class; no count on the strip.
-  if (meta?.userTodos) {
+  // tabs-first), so a tab still opening wears the flag its loaded self will. Same mark, same class, the same open predicate
+  // (tab-state.ts openUserTodo; correctness-1, review round 1); no count on the strip.
+  if (openUserTodo(meta?.userTodos)) {
     const ut = el("span", "tab-usertodo");
     ut.textContent = "⚑";
     ut.title = "waiting on you: this session flagged something it needs from you (the note by its message box shows once the tab loads)";
@@ -7311,9 +7314,9 @@ function renderTabs() {
       if (renderKind(skeletonTabs, id, !!s) === "skeleton") {                                              // makeSkeletonTab's reads:
         const m = tabMeta.get(id), kst = skeletonTabs.status.get(id) as Status | undefined;               // the kernel's list + its
         return ["k", m?.name || s?.name, (m?.color || s?.color)?.bg, (m?.color || s?.color)?.fg, id === peekId,   // status frames, never the
-                kst?.state, kst && tabStateClass(kst), kst?.needsYou === true, !!kst?.faded, kst?.ctx, kst?.ctxColor, kst?.ctxTone, !!m?.userTodos, down, note, tabHotkey(id)];   // stale session's status; + the hot-key keycap's chord (T379); + the feed's needs-you verdict, the yellow ring's input (2026-09-13); + the roster's user-todo count, the flag's input (2026-09-22): read as the loaded row reads its rows, open or not
+                kst?.state, kst && tabStateClass(kst), kst?.needsYou === true, !!kst?.faded, kst?.ctx, kst?.ctxColor, kst?.ctxTone, openUserTodo(m?.userTodos), down, note, tabHotkey(id)];   // stale session's status; + the hot-key keycap's chord (T379); + the feed's needs-you verdict, the yellow ring's input (2026-09-13); + the roster's user-todo count through the one open predicate (tab-state.ts openUserTodo), the flag's input (2026-09-22): open or not, as the builder reads it
       }
-      if (!s) { const m = tabMeta.get(id); return ["p", m?.name, m?.color?.bg, m?.color?.fg, m?.emoji, !!m?.userTodos, down, note]; }   // makePlaceholderTab's reads (the user-todo flag's input among them, 2026-09-22)
+      if (!s) { const m = tabMeta.get(id); return ["p", m?.name, m?.color?.bg, m?.color?.fg, m?.emoji, openUserTodo(m?.userTodos), down, note]; }   // makePlaceholderTab's reads (the user-todo flag's input among them, through the one open predicate, 2026-09-22)
       const st = s.status;
       return [s.name, s.color?.bg, s.color?.fg, s.emoji ?? tabMeta.get(id)?.emoji, st.state, tabStateClass(st), st.needsYou === true, !!st.faded,
               st.ctx, st.ctxColor, st.ctxTone, !!s.sub, !!(s.userTodos && s.userTodos.length), down, note,

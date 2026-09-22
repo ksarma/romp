@@ -304,6 +304,10 @@ test("executed: a member's row reads the roster count (this fork's user todos on
   assert.deepEqual([sk.todos, sk.needsYou, sk.loading, sk.pip, sk.name], [2, true, true, "unknown", "new1"], "the flag and its count, on you, still opening");
   assert.ok(rowWords(sk).label.includes("2 things it needs from you"), "spoken like a loaded row's: " + rowWords(sk).label);
   assert.deepEqual([snapshotRow("new1", null, null, false, { name: "new1", userTodos: 0 }).todos, snapshotRow("new1", null, null, false, { name: "new1", userTodos: 0 }).needsYou], [0, false], "0 is a real value");
+  // the row's needs-you asks the ONE open predicate over the count (tab-state.ts openUserTodo; correctness-1, review round 1):
+  // a negative is nothing open, as the header and the builders read it. The strip's parse never hands the snapshot one
+  // (chat-split-exec.test.ts: a -1 row reads as no count), so this is the predicate's own case, not a value the strip can carry
+  assert.equal(snapshotRow("new1", null, null, false, { name: "new1", userTodos: -1 }).needsYou, false, "a negative count is nothing open: the one predicate's answer");
   // a redial keeps the stale pre-outage entry under a skeleton member and render.ts hands the snapshot sessions.get(id):
   // the roster count is the kernel's current and is read first
   assert.equal(snapshotRow("x", { name: "x", status: { state: "ready" }, userTodos: [] }, null, false, { name: "x", userTodos: 2 }).todos, 2, "a stale entry's empty rows do not hide the count");

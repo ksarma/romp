@@ -13,10 +13,15 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createRequire } from "node:module";
+import { openUserTodo } from "./tab-state";   // the ONE spelling of "open" over the count (correctness-1, review round 1): the builders run against the real one below
+import { nodeFactory } from "../test-dom-shim";
 
+const requireCjs = createRequire(__filename);
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const SNAP = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "tab-snapshot.ts"), "utf8");
 const META = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "tab-meta.ts"), "utf8");
+const STATE = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "tab-state.ts"), "utf8");
 
 const fn = (src: string, name: string): string => {
   const i = src.indexOf(`function ${name}(`);
@@ -38,8 +43,8 @@ const sigRow = (marker: string): string => {
  *  from the strip meta's count, and never a number on the strip (plans/user-todos.md governs the glyph, not the wire). */
 function paintsFlagFromMeta(builder: string, name: string): void {
   assert.match(builder, /const meta = tabMeta\.get\(id\);/, name + " reads the strip meta");
-  assert.match(builder, /if \(meta\?\.userTodos\) \{\s*\n\s*const ut = el\("span", "tab-usertodo"\);\s*\n\s*ut\.textContent = "⚑";/,
-    name + " paints the tab's own mark from the roster count: the glyph a loaded tab wears (tab-usertodo.test.ts), the class the phone scrape and the header's flag share");
+  assert.match(builder, /if \(openUserTodo\(meta\?\.userTodos\)\) \{\s*\n\s*const ut = el\("span", "tab-usertodo"\);\s*\n\s*ut\.textContent = "⚑";/,
+    name + " paints the tab's own mark when the ONE open predicate says so (tab-state.ts openUserTodo, the folded header's and the signature rows' spelling; executed below on 2, 1, 0, -1 and no count): the glyph a loaded tab wears (tab-usertodo.test.ts), the class the phone scrape and the header's flag share");
   assert.match(builder, /ut\.title = /, name + ": the flag explains itself on hover, as on a loaded tab");
   const block = builder.slice(builder.indexOf('el("span", "tab-usertodo")'), builder.indexOf('el("span", "tab-usertodo")') + 300);
   assert.doesNotMatch(block, /userTodos\s*\+|`\$\{[^}]*userTodos|String\(meta/, name + ": no count reaches the strip (the glyph is non-numeric on every tab kind)");
@@ -51,9 +56,12 @@ function paintsFlagFromMeta(builder: string, name: string): void {
 test("the roster row's count lands on the strip meta: applyTabOrder parses it INLINE and the tabMeta entry type carries it", () => {
   const apply = fn(RENDER, "applyTabOrder");
   // inline, not a helper: chat-split-exec.test.ts lifts applyTabOrder by source into a stub world where a new import would
-  // be undefined; a number or nothing: an older kernel's row has no key, and the builders paint nothing for it
-  assert.match(apply, /tabMeta\.set\(t\.id, \{[^}]*userTodos: typeof t\.userTodos === "number" \? t\.userTodos : undefined/,
-    "the parse is the set literal's own expression (executed: chat-split-exec.test.ts drives the lifted applyTabOrder with rows of 2, 0, no key and a string, and reads the entries' counts)");
+  // be undefined; a non-negative integer or nothing: an older kernel's row has no key, and a count that is not the kernel's
+  // contract (text, a fraction, a negative; tests/test_user_todos_roster.py holds the kernel to a non-negative integer) reads
+  // as no key too, as text did from the start, so every reader downstream holds a real count or nothing and the builders
+  // paint nothing for it (correctness-1, review round 1)
+  assert.match(apply, /tabMeta\.set\(t\.id, \{[^}]*userTodos: Number\.isInteger\(t\.userTodos\) && t\.userTodos >= 0 \? t\.userTodos : undefined/,
+    "the parse is the set literal's own expression and admits the kernel's contract alone (executed: chat-split-exec.test.ts drives the lifted applyTabOrder with rows of 2, 0, no key, a string, -1 and a fraction, reads the entries' counts, and hands the -1 row's entry to snapshotRow for a count of 0)");
   assert.match(RENDER, /^const tabMeta = new Map<string, \{ name: string; color: Color \| null; emoji\?: string; userTodos\?: number \}>\(\);/m,
     "the entry type names the count (tab-close-optimistic.test.ts holds this declaration within 900 characters of closingTabs)");
   assert.match(META, /export interface TabSessionMeta \{ name: string; color: TabColor \| null; emoji\?: string; userTodos\?: number \| ReadonlyArray<unknown> \| null \}/,
@@ -81,6 +89,93 @@ test("the strip signature's skeleton AND placeholder rows carry the count, so a 
   assert.ok(sig.includes("!!(s.userTodos && s.userTodos.length)"), "the loaded row's input is unchanged (tab-usertodo.test.ts)");
   // the kernel's painter-key census (tests/test_cold_tab_gate.py) reads the skeleton row's kst?. keys: the count is meta, not status
   assert.ok(!sigRow('return ["k",').includes("kst?.userTodos"), "the count rides the roster row, never the status frame");
+});
+
+test("one spelling of open over the roster count: every read of a strip-meta row's userTodos that decides open goes through tab-state's openUserTodo, derived from the sources; the snapshot's count assignment is the one named exemption", () => {
+  // THE RULE (correctness-1, review round 1 of the roster change): a count from the kernel is a non-negative integer, and one
+  // predicate over it, tab-state.ts openUserTodo (the folded header's since the count landed), keeps "open" one fact on the
+  // strip: the two builders, the two signature rows, the header and the section snapshot's needs-you cannot disagree on a
+  // value none of them expected. Executed: the builders below on -1, tab-strip-skip-exec.test.ts's signature on -1,
+  // tab-snapshot.test.ts's row on -1, tab-group-flags.test.ts's header on 0 and a count.
+  assert.match(STATE, /^export const openUserTodo = \(v: TabTodoLike\["userTodos"\]\): boolean =>\s*\n\s*typeof v === "number" \? v > 0 : Array\.isArray\(v\) && v\.length > 0;/m,
+    "tab-state.ts exports the one predicate, spelled once: a positive count, or a non-empty list of rows");
+  const importNames = (src: string, file: string): string[] => {
+    const m = src.match(/^import \{([^}]*)\} from "\.\/tab-state";/m);
+    assert.ok(m, file + " imports from tab-state");
+    return m![1].split(",").map((s) => s.trim());
+  };
+  for (const [src, file] of [[RENDER, "render.ts"], [SNAP, "tab-snapshot.ts"]] as const) {
+    assert.ok(importNames(src, file).includes("openUserTodo"), file + " imports the predicate from tab-state");
+    assert.doesNotMatch(stripComments(src), /\b(?:const|let|var|function)\s+openUserTodo\b/, file + " defines no predicate of its own: one spelling, in tab-state.ts");
+  }
+  // THE RECEIVERS, derived: a strip-meta row is what tabMeta.get(id) returns. In the two builders and the signature it is
+  // bound as `meta` (the builders) or `m` (the skeleton and placeholder rows), or read for its emoji alone (the loaded row's
+  // fallback); the snapshot's is its `meta` parameter and tab-state's member is `m`. Every tabMeta.get(id) in those slices is
+  // one of those, so a read of the count is spelled `m?.userTodos`, `meta?.userTodos` or `meta.userTodos`
+  const bindings = [...stripComments(skeleton + placeholder + sig).matchAll(/(?:const (\w+) = )?tabMeta\.get\(id\)(\?\.\w+)?/g)].map((m) => m[1] ?? m[2]);
+  assert.deepEqual(bindings.sort(), ["?.emoji", "m", "m", "meta", "meta"], "the strip meta's bindings in the builders and the signature: the two builders' meta, the two rows' m, the loaded row's emoji fallback");
+  assert.match(fn(SNAP, "snapshotRow"), /^function snapshotRow\([^)]*meta\?: SnapMetaLike \| null\)/, "the snapshot's row takes the strip meta as `meta`");
+  assert.match(fn(STATE, "sectionTodoFlag"), /for \(const m of members\)/, "the header's members are `m`");
+  // THE CENSUS: every such read in the code (comments stripped) is the predicate's argument, or is listed here with its line
+  const others: string[] = [];
+  for (const [src, file] of [[RENDER, "render.ts"], [SNAP, "tab-snapshot.ts"], [STATE, "tab-state.ts"]] as const) {
+    const code = stripComments(src);
+    for (const hit of code.matchAll(/\b(?:m|meta)\??\.userTodos\b/g)) {
+      const i = hit.index!;
+      if (code.slice(Math.max(0, i - "openUserTodo(".length), i) === "openUserTodo(") continue;
+      const line = code.slice(code.lastIndexOf("\n", i) + 1, code.indexOf("\n", i)).trim();
+      if (!others.includes(file + ": " + line)) others.push(file + ": " + line);
+    }
+  }
+  assert.deepEqual(others, [
+    'tab-snapshot.ts: const todos = typeof meta?.userTodos === "number" ? meta.userTodos : Array.isArray(s?.userTodos) ? s!.userTodos!.length : 0;',   // the COUNT the row shows and rowWords speaks, not an open check: needsYou asks the predicate over it (below), and the strip's parse admits a non-negative integer alone, so the number here is a real count or 0
+  ], "a read of the roster count that is not the one predicate's argument: an open check spelled a second way (truthiness, > 0, a length), or a new exemption to name here with its reason");
+  assert.match(fn(SNAP, "snapshotRow"), /needsYou: feedBlock \|\| st\.needsYou \|\| openUserTodo\(todos\),/,
+    "the snapshot row's needs-you reads the count through the one predicate (executed: tab-snapshot.test.ts, a meta count of -1 flags nothing)");
+});
+
+test("executed: the builders paint the flag when the one predicate says open, and none for 0, -1 or no count (the folded header's rule, run over the real makeSkeletonTab and makePlaceholderTab)", () => {
+  // the two builders lifted by source into a stub world (tab-strip-skip-exec.test.ts's way), with the REAL openUserTodo from
+  // tab-state.ts and a fake element from the shared shim; everything else the builders touch is an inert stand-in. The
+  // -1 case is correctness-1's: before the one predicate, the builders read the count by truthiness and -1 painted a flag
+  // the header would not raise.
+  const make = nodeFactory();
+  const el = (tag: string, cls = ""): any => {
+    const n = make(tag); n.className = cls;
+    for (const c of cls.split(/\s+/)) if (c) n.classList.add(c);
+    n.style.setProperty = (k: string, v: string) => { n.style[k] = v; };
+    n.replaceChildren = (...cs: any[]) => { n.children.length = 0; for (const c of cs) n.appendChild(c); };
+    return n;
+  };
+  const text = (t: string): any => { const n = make("#text"); n.textContent = t; return n; };
+  const js = requireCjs("esbuild").transformSync(skeleton + placeholder, { loader: "ts" }).code;
+  const prelude = `
+    const H = HOOKS;
+    const tabMeta = H.tabMeta, sessions = new Map(), skeletonTabs = { status: new Map() };
+    let activeId = null, peekId = null;
+    const settings = { tabsLocked: false }, fedMissing = false;
+    const openUserTodo = H.openUserTodo;
+    const el = H.el;
+    const onTabKey = () => {}; const wireTabDrag = () => {}; const applyTabStatus = () => {}; const appendTabAfterWidgets = () => {};
+    const showTabMenu = () => {}; const mediaSrc = (f) => f; const tabEmojiNode = () => null;
+    const hostNameNodes = (name) => [H.text(name)];
+  `;
+  const lift = new Function("HOOKS", prelude + js + "\nreturn { makeSkeletonTab, makePlaceholderTab };") as
+    (H: { tabMeta: Map<string, unknown>; openUserTodo: typeof openUserTodo; el: typeof el; text: typeof text }) => { makeSkeletonTab: (id: string) => any; makePlaceholderTab: (id: string) => any };
+  const glyphs = (tab: any): any[] => tab.children.filter((c: any) => c.classList.contains("tab-usertodo"));
+  const cases: Array<[number | undefined, number]> = [[2, 1], [1, 1], [0, 0], [-1, 0], [undefined, 0]];
+  for (const [count, want] of cases) {
+    const tabMeta = new Map<string, unknown>([["s1", { name: "web", color: null, userTodos: count }]]);
+    const api = lift({ tabMeta, openUserTodo, el, text });
+    for (const [name, build] of [["makeSkeletonTab", api.makeSkeletonTab], ["makePlaceholderTab", api.makePlaceholderTab]] as const) {
+      const tab = build("s1");
+      assert.equal(glyphs(tab).length, want, `${name} on a roster count of ${count}: ${want ? "the flag" : "no flag"} (the one predicate's answer; the header agrees, tab-group-flags.test.ts)`);
+      if (want) assert.deepEqual([glyphs(tab)[0].textContent, glyphs(tab)[0].title.startsWith("waiting on you: ")], ["⚑", true], name + ": the loaded tab's mark, and it explains itself");
+      assert.ok(tab.children.some((c: any) => c.classList.contains("tab-label")), name + " still paints the label");
+    }
+  }
+  const bare = lift({ tabMeta: new Map(), openUserTodo, el, text });
+  assert.deepEqual([glyphs(bare.makeSkeletonTab("s9")).length, glyphs(bare.makePlaceholderTab("s9")).length], [0, 0], "no roster row at all: nothing to read, nothing painted");
 });
 
 test("the folded header's flag reads the live session, else the strip meta (executed: tab-group-flags.test.ts, a count, 0, mixed rows and counts)", () => {

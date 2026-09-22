@@ -134,8 +134,14 @@ export function sectionPipTitle(kind: SectionPip, names: readonly string[]): str
 // agrees with the tab whichever kind it is drawn as, and 0 (or an empty list) is a real value, nothing open.
 export interface TabTodoLike { name?: string; userTodos?: number | ReadonlyArray<unknown> | null }
 
-/** Something open: a positive count, or a non-empty list of rows. NaN, a negative number or an absent field is nothing. */
-const openUserTodo = (v: TabTodoLike["userTodos"]): boolean =>
+/** THE ONE SPELLING of "something open" over the field, for every reader of it: the folded header (sectionTodoFlag below),
+ *  the skeleton and placeholder builders and the strip signature's two rows (render.ts), the section snapshot's needs-you
+ *  (tab-snapshot.ts). A positive count, or a non-empty list of rows; NaN, a negative number or an absent field is nothing.
+ *  A count from the kernel is a non-negative integer (tests/test_user_todos_roster.py holds it to that, and render.ts's
+ *  parse of the roster admits nothing else), and one predicate keeps every surface's "open" the same fact over it:
+ *  tab-usertodo-skeleton.test.ts derives the readers from the sources and holds each to this name (correctness-1, review
+ *  round 1 of the roster change, 2026-09-22). */
+export const openUserTodo = (v: TabTodoLike["userTodos"]): boolean =>
   typeof v === "number" ? v > 0 : Array.isArray(v) && v.length > 0;
 
 /** The members holding an open user todo, in strip order. The COUNT is sessions, not todos: the
