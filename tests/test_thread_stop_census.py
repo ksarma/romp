@@ -347,6 +347,21 @@ no `test_*.py` below its top level, so those defaults collect exactly this listi
 so, instead of the census omitting it in silence. Run the module
 directly for the table (`--table`; `--tail` prints only the tail-only and unreadable rows).
 
+HOW THE TREE IS READ ONCE (the ninth pass, 2026-09-22: CI's 3.10 and 3.11 cells had been cancelled at their 25-minute cap
+with this module's serial cost in them). Every file the census reads, a test module, a helper module, a product file, goes
+through tests/parse_cache.py, ONE PARSE PER FILE PER PROCESS (keyed on the file's realpath, size and mtime_ns; one module
+object every census in the process shares, imported as `from . import parse_cache` under pytest, where tests/ is a package,
+and as `import parse_cache` when this module runs as a script), and the whole derivation over the tree, the product loops
+and thread classes, the helper modules, the product index, every module's units, the rows, the informational rows, the
+oracle modules and the inline list joins in the cleanups, is ONE value built once per process (_Tree, behind
+parse_cache.derived's TREE_KEY: tree_census), which setUpClass, the --table road and the list-join pin read. A tree test
+pins the MECHANISM through the helper's counters, not the seconds: the entry point run again builds nothing, every module
+of the population and every product file was parsed once, the parse count over the population is the module count, and a
+second derivation reds (a planted key beside the census's shows it). The cache is per PROCESS: under pytest-xdist the
+censuses that land on different workers parse and derive on their own, and no saving is claimed there; the saving is the
+serial cell and this module's own tests. A second census in the same process that reads kernel/kernel.py or another
+product file through the helper gets this census's parse (a tree test holds that from this side).
+
 """
 import ast
 import builtins
@@ -360,6 +375,12 @@ import unittest
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
+if __package__:                                   # under pytest tests/ is a package: THE SAME parse_cache module object every
+    from . import parse_cache as PC               # census in the process shares (one parse per file, one derivation per key)
+else:                                             # `python3 tests/test_thread_stop_census.py --table`: a script, the module by name
+    if HERE not in sys.path:
+        sys.path.insert(0, HERE)
+    import parse_cache as PC
 
 THREAD_CTORS = ("Thread", "Timer")
 STOP_VERBS = ("join", "set", "shutdown", "stop", "close", "cancel", "terminate", "kill", "server_close", "release")
@@ -713,23 +734,10 @@ def product_thread_classes(root=ROOT):
 
 
 def _product_trees(root):
-    files = []
-    for d in PRODUCT_DIRS:
-        p = os.path.join(root, d)
-        if os.path.isdir(p):
-            files += [os.path.join(p, f) for f in os.listdir(p) if f.endswith(".py")]
-    b = os.path.join(root, "bin")
-    if os.path.isdir(b):
-        for f in os.listdir(b):
-            p = os.path.join(b, f)
-            if os.path.isfile(p) and not os.path.islink(p):
-                with open(p, "rb") as fh:
-                    head = fh.readline()
-                if head.startswith(b"#!") and b"python" in head:
-                    files.append(p)
-    for p in files:
+    """The tree of every product file (_product_files), each parsed once per process (parse_cache)."""
+    for p in _product_files(root):
         try:
-            yield ast.parse(open(p, encoding="utf-8").read(), p)
+            yield PC.source_and_tree(p)[1]
         except (SyntaxError, UnicodeDecodeError):
             continue
 
@@ -786,7 +794,7 @@ class _Product:
         self.trees = {}
         for p in self.files:
             try:
-                tree = ast.parse(open(p, encoding="utf-8").read(), p)
+                tree = PC.source_and_tree(p)[1]
             except (SyntaxError, UnicodeDecodeError, OSError):
                 continue
             self.trees[p] = tree
@@ -912,8 +920,10 @@ class _Module:
         self.helpers = {} if helpers is None else helpers            # helper key -> path (helper_modules)
         self.helper_cache = {} if helper_cache is None else helper_cache   # path -> _Module, shared across the census
         self.product = product                                        # _Product, shared across the census (None: no product read)
-        self.src = open(path, encoding="utf-8").read() if src is None else src
-        self.tree = ast.parse(self.src, path)
+        if src is None:                                               # a file: parsed once per process (parse_cache)
+            self.src, self.tree = PC.source_and_tree(path)
+        else:                                                         # a planted text: its own parse, never cached
+            self.src, self.tree = src, ast.parse(src, path)
         self.classes = {n.name: n for n in self.tree.body if isinstance(n, ast.ClassDef)}
         self.functions = {n.name: n for n in self.tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
         self.globals, self.imports = {}, set()
@@ -4083,18 +4093,23 @@ def _list_joins(node):
     return out
 
 
-def list_join_cleanups(paths, helpers=None):
+def list_join_cleanups(paths, helpers=None, modules=None):
     """Every cleanup registration in the modules under `paths` that joins a LIST of threads inline (_list_joins over the
     registration's own arguments and the bodies of the lambda, local function, module function or method it names, the
     helper-module bodies excluded): [(file, line, unit qualname, the join's text)]. THE PROPERTY THE TREE HOLDS (round 2
     of PR 891's review, 2026-09-22): this is EMPTY, because every such cleanup goes through tests/thread_ends.py's
     join_started, the guard on a thread never started written once (a cleanup registered before a start loop runs on
     the exit path where the body failed between two starts, and Thread.join raises on one never started). A helper module
-    is not in `paths` (module_paths lists tests/test_*.py), so the helper's own for-join is not a finding."""
+    is not in `paths` (module_paths lists tests/test_*.py), so the helper's own for-join is not a finding. `modules` maps a
+    path to its _Module already built (the tree derivation hands census's own, so the tree's units are built once per
+    process); a path not in it is built here. The finding does not depend on the loops or the product a module was built
+    with: a cleanup's nodes are read from the module alone."""
     helpers = helper_modules() if helpers is None else helpers
     out, cache, seen = [], {}, set()
     for p in paths:
-        m = _Module(p, set(), helpers=helpers, helper_cache=cache)
+        m = (modules or {}).get(p)
+        if m is None:
+            m = _Module(p, set(), helpers=helpers, helper_cache=cache)
         for u in m.units():
             for s, _b, _i, _st in u.rows:
                 for sub in _expr_children(s):
@@ -4387,14 +4402,16 @@ def classify(start, at=None):
     return "tail-only"
 
 
-def census(paths, loops=None, thread_classes=None, helpers=None, product=None, extras=None):
+def census(paths, loops=None, thread_classes=None, helpers=None, product=None, extras=None, modules=None):
     """Every thread start under `paths`: rows (start, shape, where) with `where` the unit the shape was read in (the
     start's own, or a caller's); a receiver the walk cannot read is a row with shape 'unreadable'. `helpers` maps the
     helper modules under tests/ a test may import (helper_modules) so a thread one of their functions returns is read;
     `product` is the _Product index of the product sources a product target is read in (built here when None). A dict
     handed as `extras` is filled in the same pass: "modules" (the count of modules read), "product_starts" (the
     INFORMATIONAL _ProductStart rows: threads the product starts on a test's call) and "oracle" (the modules that
-    import or call tests/conftest.py's thread_census / wait_for_census)."""
+    import or call tests/conftest.py's thread_census / wait_for_census). A dict handed as `modules` receives each path's
+    _Module, so a second reading of the same modules (list_join_cleanups in the tree derivation, _Tree) reuses their
+    units instead of building them again."""
     loops = product_loops() if loops is None else loops
     thread_classes = product_thread_classes() if thread_classes is None else thread_classes
     helpers = helper_modules() if helpers is None else helpers
@@ -4404,6 +4421,8 @@ def census(paths, loops=None, thread_classes=None, helpers=None, product=None, e
         extras["modules"], extras["product_starts"], extras["oracle"] = 0, [], []
     for p in paths:
         m = _Module(p, loops, thread_classes=thread_classes, helpers=helpers, helper_cache=cache, product=product)
+        if modules is not None:
+            modules[p] = m
         if extras is not None:
             extras["modules"] += 1
             if _calls_oracle(m.tree):
@@ -4509,13 +4528,40 @@ def _report_info(info):
     return "\n".join("%-13s %-16s %s  (%s)" % (r.kind, r.shape, r.describe(), r.why) for r in sorted(info, key=lambda r: (r.file(), r.line)))
 
 
+TREE_KEY = ("tests/test_thread_stop_census.py", "the tree")   # parse_cache.derived's key for _Tree, with the root appended
+
+
+class _Tree:
+    """THE ONE DERIVATION over the tree, built once per process (tree_census, behind parse_cache.derived under TREE_KEY): the
+    population (`paths`), the product loops and thread classes, the helper modules, the product index, the rows, the
+    informational rows and the oracle modules (`extras`) and the inline list joins in the cleanups (`list_joins`,
+    list_join_cleanups over the same modules census built). ThreadStopCensus.setUpClass, the --table road and the
+    list-join pin all read it, so the tree is parsed once per module and derived once per process, whichever runs first;
+    a tree test pins that through the helper's counters."""
+    def __init__(self, root):
+        self.root = root
+        self.paths = module_paths(os.path.join(root, "tests"))
+        self.loops = product_loops(root)
+        self.thread_classes = product_thread_classes(root)
+        self.helpers = helper_modules(root)
+        self.product = _Product(root)
+        self.extras, modules = {}, {}
+        self.rows = census(self.paths, self.loops, self.thread_classes, self.helpers, self.product, self.extras, modules=modules)
+        self.list_joins = list_join_cleanups(self.paths, self.helpers, modules=modules)
+
+
+def tree_census(root=ROOT):
+    """The tree's derivation (_Tree): built on the first call in the process, the same object after (parse_cache.derived).
+    The one entry point for the tests and the --table road."""
+    return PC.derived(TREE_KEY + (root,), lambda: _Tree(root))
+
+
 class ThreadStopCensus(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.loops = product_loops()
-        cls.thread_classes = product_thread_classes()
-        cls.extras = {}
-        cls.rows = census(module_paths(), cls.loops, cls.thread_classes, extras=cls.extras)
+        cls.tree = tree_census()
+        cls.loops, cls.thread_classes = cls.tree.loops, cls.tree.thread_classes
+        cls.extras, cls.rows = cls.tree.extras, cls.tree.rows
 
     def test_every_loop_or_waiting_thread_a_test_starts_is_stopped_on_every_exit_path(self):
         tails, unread, stale, _bounded = tail_only(self.rows)
@@ -4702,7 +4748,7 @@ class ThreadStopCensus(unittest.TestCase):
         tests import are found by their import names, and each of their functions is read for a returned Thread. None
         returns one at this head; the docstring's does-not-see paragraph says so and dates it."""
         hm = helper_modules()
-        for key in ("conftest", "fs_clock", "git_fixture", "lab_dist", "romp_load", "fixtures.fake_claude"):
+        for key in ("conftest", "fs_clock", "git_fixture", "lab_dist", "romp_load", "fixtures.fake_claude", "thread_ends", "parse_cache"):
             self.assertIn(key, hm)
         self.assertEqual(helper_thread_factories(helpers=hm), [],
                          "a helper module returns a Thread now: the census reads it; update the does-not-see paragraph")
@@ -4714,13 +4760,12 @@ class ThreadStopCensus(unittest.TestCase):
         list empty (the plant reds it on an inline comprehension). The helper itself is in the tree (helper_modules) and is
         the guarded shape."""
         self.assertIn("thread_ends", helper_modules())
-        with open(os.path.join(HERE, "thread_ends.py"), encoding="utf-8") as f:
-            helper = ast.parse(f.read())
+        _src, helper = PC.source_and_tree(os.path.join(HERE, "thread_ends.py"))
         fn = next(n for n in helper.body if isinstance(n, ast.FunctionDef) and n.name == "join_started")
         joins = _list_joins(fn)
         self.assertEqual(len(joins), 1, "the helper joins the list once")
         self.assertTrue(any(isinstance(n, ast.If) and "ident" in ast.dump(n.test) for n in ast.walk(fn)), "the helper's join is guarded on ident")
-        found = list_join_cleanups(module_paths())
+        found = self.tree.list_joins                    # list_join_cleanups over the tree, in the one derivation (_Tree)
         self.assertEqual(found, [], "a cleanup joins a list of threads inline; route it through tests/thread_ends.py's join_started "
                                     "(the guard on a thread never started, written once):\n%s"
                                     % "\n".join("%s:%d %s: %s" % f for f in found))
@@ -6625,7 +6670,7 @@ class PlantedShapes(unittest.TestCase):
         ast.unparse's rendering, which differs between interpreters (3.10: `lambda : f()`). This parses the census itself
         and asserts the functions calling ast.unparse are exactly UNPARSE_ROADS, each a name match between two texts
         rendered under one interpreter, with its reason; a new use must be registered there."""
-        tree = ast.parse(open(__file__, encoding="utf-8").read(), __file__)
+        _src, tree = PC.source_and_tree(__file__)
         found = {}
 
         def visit(node, qual):
@@ -6649,9 +6694,8 @@ class PlantedShapes(unittest.TestCase):
 
 if __name__ == "__main__":
     if "--table" in sys.argv or "--tail" in sys.argv:
-        loops = product_loops()
-        extras = {}
-        rows = census(module_paths(), loops, product_thread_classes(), product=_Product(), extras=extras)
+        tree = tree_census()
+        rows, extras = tree.rows, tree.extras
         print(_report(rows, only_tail="--tail" in sys.argv))
         tails, unread, stale, bounded = tail_only(rows)
         from collections import Counter
