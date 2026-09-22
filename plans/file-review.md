@@ -4818,6 +4818,40 @@ document stands on its own, each with the reasoning it was given.
     rows. Every fix pinned by execution in the eleventh commit's rows test (93 rows, the writers measured in bash, zsh and
     dash), red on the tenth commit's head, and the record list on this header and decision 47 is derived by the plan test
     from the commits the hook's own text names, so a missing record for the newest commit reds.
+    ROUND 6, TWELFTH COMMIT (2026-09-22; the round's two verifiers on the eleventh commit's head): three allows with a
+    writer on no surface, each a reading fitted to its class now, members of stated classes filed, and a B2 boundary case
+    named. THE SUBSCRIPTED POSITIONAL (mayVanish, positionalWords, candidateTexts): under zsh's grammar an unbraced
+    `$argv[N]`, `$argv[-N]`, `$@[N]`, `$*[N]` or `$argv[N,M]` is an element or a range of the positional list, no field
+    past its end, while bash and dash read a literal `[N]` after the parameter and the lexer marked the subscript so, so
+    `$argv[1] cp a b` kept its head and copied in zsh while allowed (and so did the printer, here-string, sed and tee
+    forms, `$@[1]`, `set --`, a function's body, eval, `zsh -c '..'` from every shell, the tracked notes/ folder, a cwd
+    in no project and the operand road `cp $argv[1] a b`); where zsh may run the line the word may vanish, the walk's
+    positional rewrite reads the element where it holds the list, and the head candidates carry the text with the
+    subscript removed beside bash's reading. THE VANISHED HEAD TEXT (vanishedHeadTexts, scriptTexts' head role): a head
+    word whose expansions the command never gives a value, glued to literal characters, stands for the text with them
+    removed, one command the shell may run (`${c}cp a b`, `$c"cp" a b`, `"$c"cp a b` and the verifiers' `$argv[1]cp a b`
+    copied while allowed, the first three at the round-5 head too); the empty text is kept only where headMayVanish says
+    the whole word may stand for no field. The residual table's three glued-unset-head rows and its `$argv[1] $argv[2]
+    $argv[3]` call are refused by name now and pinned as rows. THE STALE POSITIONAL CANDIDATE (scriptTexts' candKnown):
+    bindPositionals notes each bind's values into the candidates and removes no earlier bind's, so after `set -- a;
+    shift` the candidates still held `a` for `1` and `eval cp ${1:+x} a b` read the word alone and copied in every shell
+    while allowed (and so did `shift 2`, a second `set`, `bash -c`, `sh -c`, `${1+x}`, `${@+x}` and `${*+x}` in bash, a
+    head and every cwd); a positional's alternate value is read from the list the walk holds alone (posKnown, and vars,
+    which bindPositionals rebinds), never from the candidates. THE BODY'S OWN LIST (the walk's set and shift): a `set` or
+    `shift` inside a function body being defined rebinds the body's list, the call's, not this shell's (`f() { set -- a;
+    }; eval cp ${1:+x} a b` copied in every shell while the body's `set` had bound `1` here). THE OPTION FLAGS
+    (defaultWordReading's NEVER_EMPTY): `$-` is set in every shell but holds no flag in dash under `-c` (measured), so
+    `${-:+word}` stands for nothing there and its dropped form joins the readings (`eval cp ${-:+x} a b` copied in dash
+    while allowed), while `${-+word}` and the `#`, `$`, `0` and `?` forms keep the word alone. The residual table: 22
+    rows added for a command substitution over a producer outside the output model handed to eval, a shell's -c or a
+    here-string (an inner eval or shell -c, a call of a function, a written file read through the substitution, a value
+    so made and run), the fifth class's gloss naming that conduit beside the pipe and the process substitution on every
+    surface, and 4 rows removed as refused (268 rows over the same 8 classes). The B2 boundary (recordMutations): a path
+    made from a source the resolver does not read is refused at the bound name while a project is in play; from a cwd in
+    no project `cp "$(which cp)" <out>/scratch/c2; PATH=<out>/scratch:$PATH; c2 <proj>/base/report.md
+    <proj>/docs/report.md` copies while allowed, an opaque operand after a literal head outside every project (the
+    eighth class), pinned as a row with the shells that write. Every fix pinned by execution in the twelfth commit's rows
+    test (114 rows, the writers measured in bash, zsh and dash), red on the eleventh commit's head.
     THE RESIDUAL PROPERTY. The guard refuses a write only when it resolves the command to a writer it models (the
     writer cases of extract's switch, a write redirection, an interpreter's write call it scans) reached through a
     road it reads (the wrapper set, the shells' script roads, the readings of the resolver, the alias and hash roads),
@@ -4842,10 +4876,11 @@ document stands on its own, each with the reasoning it was given.
     inside a `bash -c` given arguments, `bash -c "$c"` after `printf -v c`; a value an assignment word gives,
     whitespace included, is read through THE HEAD CANDIDATES since round 6's fourth commit, and a `${name:=word}`
     gives word since the sixth); a producer outside the output model, a pipe into a shell, or a write redirection into a process substitution running one, from anything but a literal
-    echo or printf, alone or in a subshell or group of such commands, or a plain cat passing such a text through (a
-    call of a function the command defines, a tee or a pipe through another command, a cat of a file); zsh's glob
-    grouping, a `(..)` inside a word handed to zsh, read as a subshell by the lexer's zsh grammar while zsh globs it
-    (a lexer gap, stated since the first commit of this round); zsh's hook functions, a function the command defines under a name zsh calls on its own (chpwd, precmd, preexec, periodic, zshexit, and the names in chpwd_functions and its kin), whose body runs when the shell moves, prompts or exits, from the directory the shell is in then, while the guard judges the definition where it stands; an opaque expansion from a cwd outside every project,
+    echo or printf, alone or in a subshell or group of such commands, or a plain cat passing such a text through, or a
+    command substitution over such a producer handed to a shell, an eval or a here-string (a call of a function the
+    command defines, a tee or a pipe through another command, a cat of a file, an eval or a shell -c inside the
+    substitution); zsh's glob grouping, a `(..)` inside a word handed to zsh, read as a subshell by the lexer's zsh
+    grammar while zsh globs it (a lexer gap, stated since the first commit of this round); zsh's hook functions, a function the command defines under a name zsh calls on its own (chpwd, precmd, preexec, periodic, zshexit, and the names in chpwd_functions and its kin), whose body runs when the shell moves, prompts or exits, from the directory the shell is in then, while the guard judges the definition where it stands; an opaque expansion from a cwd outside every project,
     a leading opaque expansion, or one after a literal head outside every project, from a cwd in no project (B2 as
     ruled, with its boundary). A shape outside these classes that reaches a tracked file is a rule to state, not a
     residual.

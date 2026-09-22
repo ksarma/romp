@@ -880,8 +880,9 @@
 // `printf -v c`; a value an assignment word gives, whitespace included, is read through THE HEAD CANDIDATES since round 6's
 // fourth commit, and a `${name:=word}` gives word since the sixth); a producer outside the output model, a pipe into a shell, or a write redirection into a process substitution running one,
 // from anything but a literal echo or printf, alone or in a subshell or group of such commands, or a plain cat passing such a
-// text through (a call of a function the command defines, a tee or a pipe through another command, a cat of a file); zsh's
-// glob grouping, a `(..)` inside a word handed to zsh, read as a subshell by the lexer's zsh grammar while zsh globs it (a
+// text through, or a command substitution over such a producer handed to a shell, an eval or a here-string (a call of a function
+// the command defines, a tee or a pipe through another command, a cat of a file, an eval or a shell -c inside the substitution);
+// zsh's glob grouping, a `(..)` inside a word handed to zsh, read as a subshell by the lexer's zsh grammar while zsh globs it (a
 // lexer gap, stated since the first commit of this round); zsh's hook functions, a function the command defines under a name zsh calls on its own (chpwd, precmd, preexec, periodic, zshexit, and the names in chpwd_functions and its kin), whose body runs when the shell moves, prompts or exits, from the directory the shell is in then, while the guard judges the definition where it stands; an opaque expansion from a cwd outside every project, a leading
 // opaque expansion, or one after a literal head outside every project, from a cwd in no project (B2 as ruled, with its
 // boundary). A shape outside these classes that reaches a tracked file is a rule to state, not a residual. The same
@@ -1000,6 +1001,34 @@
 // commit and pinned as rows. Every fix pinned by execution in the eleventh commit's rows test (93 rows, the writers measured in bash, zsh and dash),
 // red on the tenth commit's head, and the record list on this header and decision 47 is derived by the plan test from the commits the hook's own text
 // names, so a missing record for the newest commit reds.
+// ROUND 6, TWELFTH COMMIT (2026-09-22; the round's two verifiers on the eleventh commit's head): three allows with a writer on no surface, each
+// a reading fitted to its class now, members of stated classes filed, and a B2 boundary case named. THE SUBSCRIPTED POSITIONAL (mayVanish,
+// positionalWords, candidateTexts): under zsh's grammar an unbraced `$argv[N]`, `$argv[-N]`, `$@[N]`, `$*[N]` or `$argv[N,M]` is an element or a
+// range of the positional list, no field past its end, while bash and dash read a literal `[N]` after the parameter and the lexer marked the
+// subscript so, so `$argv[1] cp a b` kept its head and copied in zsh while allowed (and so did the printer, here-string, sed and tee forms,
+// `$@[1]`, `set --`, a function's body, eval, `zsh -c '..'` from every shell, the tracked notes/ folder, a cwd in no project and the operand
+// road `cp $argv[1] a b`); where zsh may run the line the word may vanish, the walk's positional rewrite reads the element where it holds the
+// list, and the head candidates carry the text with the subscript removed beside bash's reading. THE VANISHED HEAD TEXT (vanishedHeadTexts,
+// scriptTexts' head role): a head word whose expansions the command never gives a value, glued to literal characters, stands for the text with
+// them removed, one command the shell may run (`${c}cp a b`, `$c"cp" a b`, `"$c"cp a b` and the verifiers' `$argv[1]cp a b` copied while
+// allowed, the first three at the round-5 head too); the empty text is kept only where headMayVanish says the whole word may stand for no
+// field. The residual table's three glued-unset-head rows and its `$argv[1] $argv[2] $argv[3]` call are refused by name now and pinned as rows.
+// THE STALE POSITIONAL CANDIDATE (scriptTexts' candKnown): bindPositionals notes each bind's values into the candidates and removes no earlier
+// bind's, so after `set -- a; shift` the candidates still held `a` for `1` and `eval cp ${1:+x} a b` read the word alone and copied in every
+// shell while allowed (and so did `shift 2`, a second `set`, `bash -c`, `sh -c`, `${1+x}`, `${@+x}` and `${*+x}` in bash, a head and every
+// cwd); a positional's alternate value is read from the list the walk holds alone (posKnown, and vars, which bindPositionals rebinds), never
+// from the candidates. THE BODY'S OWN LIST (the walk's set and shift): a `set` or `shift` inside a function body being defined rebinds the
+// body's list, the call's, not this shell's (`f() { set -- a; }; eval cp ${1:+x} a b` copied in every shell while the body's `set` had bound
+// `1` here). THE OPTION FLAGS (defaultWordReading's NEVER_EMPTY): `$-` is set in every shell but holds no flag in dash under `-c` (measured), so
+// `${-:+word}` stands for nothing there and its dropped form joins the readings (`eval cp ${-:+x} a b` copied in dash while allowed), while
+// `${-+word}` and the `#`, `$`, `0` and `?` forms keep the word alone. The residual table: 22 rows added for a command substitution over a
+// producer outside the output model handed to eval, a shell's -c or a here-string (an inner eval or shell -c, a call of a function, a written
+// file read through the substitution, a value so made and run), the fifth class's gloss naming that conduit beside the pipe and the process
+// substitution on every surface, and 4 rows removed as refused (268 rows over the same 8 classes). The B2 boundary (recordMutations): a path
+// made from a source the resolver does not read is refused at the bound name while a project is in play; from a cwd in no project `cp
+// "$(which cp)" <out>/scratch/c2; PATH=<out>/scratch:$PATH; c2 <proj>/base/report.md <proj>/docs/report.md` copies while allowed, an opaque
+// operand after a literal head outside every project (the eighth class), pinned as a row with the shells that write. Every fix pinned by
+// execution in the twelfth commit's rows test (114 rows, the writers measured in bash, zsh and dash), red on the eleventh commit's head.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -3936,11 +3965,18 @@ function defaultWordReading(nested, prefixLen, param = null) {
   // stands for the word when the name is set (and non-empty, with the colon) and for NOTHING otherwise, so the word alone is a sound reading
   // only when the name is known set; the reading carries the name and operator (`plus`), and extract's scriptTexts adds the empty reading (the
   // word dropped) where the name may be unset, refusing a text a copying writer's operand count then makes a write. A name every shell always
-  // sets to a non-empty value (`$#`, `$$`, `$0`, `$?`, `$-`) has no empty reading, so its `+` word stands alone as before (THE SPECIAL PARAMETER).
-  const ALWAYS_SET = /^[#$0?-]$/;
+  // sets to a non-empty value (`$#`, `$$`, `$0`, `$?`) has no empty reading, so its `+` word stands alone as before (THE SPECIAL PARAMETER).
+  // THE OPTION FLAGS (round 6's twelfth commit, 2026-09-22; the round's verifiers: `eval cp ${-:+x} ../base/report.md report.md` ran the two-operand
+  // copy in dash while allowed, and so did `bash -c "cp ${-:+x} .."`, `sh -c`, `eval "echo x > ${-:+x}report.md"`, the tracked notes/ folder, the
+  // project root and a cwd in no project): `$-` is SET in every shell, so the colon-less `${-+word}` is the word everywhere, but its value is the
+  // option flags, of which dash under `-c` has none (measured: `dash -c 'printf "[%s]" "$-"'` prints `[]`, where bash prints `[hBc]` and zsh
+  // `[569Xf]`), so the colon form `${-:+word}` stands for nothing there and its dropped form joins the readings; `#`, `$`, `0` and `?` are set
+  // AND non-empty in every shell (a count, a pid, the shell's name, a status), so both of their forms keep the word alone.
+  const ALWAYS_SET = /^[#$0?-]$/;   // set in every shell: `${name+word}` is the word
+  const NEVER_EMPTY = /^[#$0?]$/;   // set and non-empty in every shell: `${name:+word}` is the word
   const withParam = (r) => {
     if (!param) return r;
-    if (/\+$/.test(param.op)) return param.name && ALWAYS_SET.test(param.name) ? r : Object.assign(r, { params: [...(r.params || []), { ...param, plus: true }] });
+    if (/\+$/.test(param.op)) return param.name && (param.op.startsWith(':') ? NEVER_EMPTY : ALWAYS_SET).test(param.name) ? r : Object.assign(r, { params: [...(r.params || []), { ...param, plus: true }] });
     return Object.assign(r, { params: [...(r.params || []), param] });
   };
   // THE SPECIAL PARAMETER (round 6's sixth commit, 2026-09-21; the body auditor: `${#:+cp} a b`, `${?:+cp}`, `${0:+cp}`, `${$:+cp}`, `${-:+cp}`, their
@@ -4024,9 +4060,28 @@ const procsubOf = (w) => (w && w.marks && /^x+$/.test(w.marks) && /^[<>=]\([^]*\
 // matches (copyTargets drops a source matching nothing already, the same reading under a known directory), and one it could not expand (the
 // directory unknown) may vanish. Pinned by execution in the three shells (the eighth commit's rows test), the never-empty forms among them.
 const NEVER_EMPTY_EXPANSION = /^(?:\$\(\(|\$\{#|\$[?$#0]$|\$\{[?$#0]\}$)/;   // never an empty value in any shell: an arithmetic expansion, a length, and the parameters every shell sets
+// THE SUBSCRIPTED POSITIONAL (round 6's twelfth commit, 2026-09-22; the round's verifiers: `$argv[1] cp ../base/report.md report.md` from docs/
+// ran the copy in zsh while allowed, and so did `$argv[1] echo 'cp ..' | bash`, `| sh`, `| zsh`, a here-string, sed -i, tee, `$argv[2]`,
+// `$argv[-1]`, `$@[1]`, `set --; $argv[1] ..`, a function's body, eval, the glued `$argv[1]cp`, the tracked notes/ folder, the project root, a cwd
+// in no project with absolute paths, `zsh -c '..'` from every shell, and on the operand road `cp $argv[1] ../base/report.md report.md`): under
+// zsh's grammar an unbraced `$argv`, `$@` or `$*` followed by `[N]`, `[-N]` or `[N,M]` is one element or a range of the positional list
+// (zshparam(1): Array Parameters, Array Subscripts), which stands for NO field past the end of the list or over an empty range, while bash and
+// dash read the same text as the parameter followed by a literal `[N]`, a pattern; the lexer marks the subscript as bash does (unquoted literal
+// characters), so the marks alone said the word always makes a field and the head or operand kept its place. Where zsh may run the line (the
+// tool's shell is not known, or the script is handed to zsh: extract's zshMayRun) the word may vanish, as mayVanish reads it below; the walk's
+// positional rewrite reads the element where it holds the list (positionalWords), and THE HEAD CANDIDATES read the text with the subscript
+// removed beside bash's reading (candidateTexts), so the glued form's remaining characters are the command. A double-quoted `"$argv[1]"` is one
+// field, empty at most (dqSingleField), and a braced `${argv[1]}` was read already (its marks are all expansion). Pinned by execution in the
+// twelfth commit's rows test, zsh alone writing (every shell where the line is handed to zsh).
+const ZSH_POSITIONAL_SUBSCRIPT = /^\$(?:argv|[@*])\[-?[0-9]+(?:,-?[0-9]+)?\]$/;   // the whole word: the list's unbraced name and one subscript, unquoted
+const ZSH_SUBSCRIPT_AFTER_LIST = /^\[-?[0-9]+(?:,-?[0-9]+)?\]/;   // the subscript opening a literal run that follows the list's name (candidateTexts)
+const ENDS_WITH_LIST_NAME = /\$(?:argv|[@*])$/;   // the expansion run before such a literal run ends with the list's unbraced name
 const VANISH_CAP = 6;
-function mayVanish(w, cwdKnown) {
+// `zshMayRun`: whether zsh may run the line (extract's zshMayRun); THE SUBSCRIPTED POSITIONAL applies under zsh's grammar alone. The default is
+// the safe side (the word may vanish) for a caller that does not know the shell.
+function mayVanish(w, cwdKnown, zshMayRun = true) {
   if (w.literal) return false;
+  if (zshMayRun && ZSH_POSITIONAL_SUBSCRIPT.test(w.raw)) return true;   // THE SUBSCRIPTED POSITIONAL: an element or a range of the positional list past its end is no field in zsh
   if (w.glob) return !cwdKnown;
   if (!w.marks || !/^x+$/.test(w.marks)) return false;
   if (dqSingleField(w.raw)) return false;
@@ -4035,8 +4090,8 @@ function mayVanish(w, cwdKnown) {
 }
 // The operand lists the shell may hand a copying writer besides the one spelled: `args` with each non-empty subset of the operands that may vanish
 // dropped ({ dropped, kept }), or null past VANISH_CAP such operands (the caller then records the count as a target it cannot read).
-function vanishVariants(args, cwdKnown) {
-  const vanishing = args.map((a, i) => (!(a.text.startsWith('-') && a.text.length > 1) && mayVanish(a, cwdKnown) ? i : -1)).filter((i) => i >= 0);
+function vanishVariants(args, cwdKnown, zshMayRun = true) {
+  const vanishing = args.map((a, i) => (!(a.text.startsWith('-') && a.text.length > 1) && mayVanish(a, cwdKnown, zshMayRun) ? i : -1)).filter((i) => i >= 0);
   if (vanishing.length > VANISH_CAP) return null;
   const out = [];
   for (let mask = 1; mask < (1 << vanishing.length); mask++) {
@@ -4540,7 +4595,8 @@ function extractIn(command, ctx) {
   // noted, and to the caller's), the passthrough cat (passthroughCat) and, through the splice's recursion, the alias, hash and bound-path
   // roads of the word that becomes the head. A name whose value the resolver could not establish answers nothing here (scriptTexts refuses
   // it at the head).
-  const headMayVanish = (w) => !!w && mayVanish(w, !unknownDir);
+  const zshMayRun = shell == null || shell === 'zsh';   // the tool's shell is not known, or the script is handed to zsh: zsh's own readings apply (THE SUBSCRIPTED POSITIONAL, positionalSpelling's argv forms)
+  const headMayVanish = (w) => !!w && mayVanish(w, !unknownDir, zshMayRun);
   activeHeadTexts = (w) => {
     if (!headTextsOf) return callerHeads ? callerHeads(w) : null;   // before this command's values are noted: the caller's reading (the command is read again below once they are)
     const c = headTextsOf(w);   // THE HEAD CANDIDATES: { texts } | { unread } | null
@@ -4758,7 +4814,7 @@ function extractIn(command, ctx) {
   // null where the word is no positional or the positionals are not modelled; `oneWord`: true at a place that takes one word (a here-string, a
   // `<`), 'target' at a redirection target (THE POSITIONAL TARGET below: the shells differ there), false among operands
   const positionalWords = (w, oneWord) => {
-    if (positionals === null || w.literal || !w.marks || !/^x+$/.test(w.marks)) return null;
+    if (positionals === null || w.literal || !w.marks || !(/^x+$/.test(w.marks) || (zshMayRun && /^x+u+$/.test(w.marks) && ZSH_POSITIONAL_SUBSCRIPT.test(w.raw)))) return null;   // THE SUBSCRIPTED POSITIONAL: the unbraced `$argv[N]` carries its subscript as literal marks; positionalSpelling reads it under zsh's grammar
     const sp = positionalSpelling(w.raw);
     if (!sp) return null;
     if (positionals === UNKNOWN_POSITIONALS) return { unresolvable: positionalsWhy };
@@ -5312,7 +5368,11 @@ function extractIn(command, ctx) {
     const markAllCandidates = (verb) => { for (const c of optionCandidates(args)) markMutated(abs(c), verb); };
     // THE ALIAS ROAD's bound paths: a copy or a link this command makes (cp, install, ln, link, mv) binds the destination path to the
     // source's text, so a later command named by that path is read as the source (`cp /usr/bin/cp ../scratch/c2; ../scratch/c2 a b` and
-    // `ln -s /usr/bin/cp ../scratch/c2 && ../scratch/c2 a b` copied in every shell, measured); a source the resolver cannot read binds null
+    // `ln -s /usr/bin/cp ../scratch/c2 && ../scratch/c2 a b` copied in every shell, measured); a source the resolver cannot read binds null,
+    // which the bound name refuses (boundRoad) while a project is in play. From a cwd in no project that refusal does not hold, so `cp "$(which
+    // cp)" <out>/scratch/c2; PATH=<out>/scratch:$PATH; c2 <proj>/base/report.md <proj>/docs/report.md` copies into the project while allowed:
+    // the source is an opaque operand after a literal head outside every project, the eighth class of THE RESIDUAL PROPERTY (B2 as ruled, with
+    // its boundary), pinned as a row of the twelfth commit's rows test with the shells that write (round 6's twelfth commit, 2026-09-22)
     if (name === 'cp' || name === 'install' || name === 'ln' || name === 'mv' || name === 'link') {
       const parseOps = (a) => (name === 'link' ? { operands: a.filter((x) => !(x.text.startsWith('-') && x.text.length > 1)) } : parseCopyOptions(a, name));
       const bindUnder = (parsed) => {
@@ -5327,12 +5387,12 @@ function extractIn(command, ctx) {
       bindUnder(parseOps(args));
       // THE VANISHING OPERAND: the path is bound under every operand list the shell may hand the writer (`cp $c /usr/bin/cp ../scratch/c2` binds c2 to
       // cp's text once `$c` is dropped); past the cap every literal operand is a path this command may have changed (markMutated, below)
-      for (const { kept } of vanishVariants(args, !!cwd) || []) bindUnder(parseOps(kept));
+      for (const { kept } of vanishVariants(args, !!cwd, zshMayRun) || []) bindUnder(parseOps(kept));
     }
     // THE VANISHING OPERAND (round 6's eighth commit): a rename, a hard link or a linking copy with an operand the shell may make no word of leaves which
     // operand is the source and which the destination unplaced, as an unknown option does (rule (f)), so every literal candidate is a path this command
     // may have changed
-    if ((name === 'mv' || name === 'ln' || name === 'cp') && args.some((a) => !(a.text.startsWith('-') && a.text.length > 1) && mayVanish(a, !!cwd))) {
+    if ((name === 'mv' || name === 'ln' || name === 'cp') && args.some((a) => !(a.text.startsWith('-') && a.text.length > 1) && mayVanish(a, !!cwd, zshMayRun))) {
       const symbolic = name === 'ln' && args.some((a) => a.literal && (a.text === '--symbolic' || (/^-[^-]/.test(a.text) && a.text.includes('s'))));   // a symbolic ln is class H under each list (recordSymlink over the variants, in the writer's case)
       const linky = name === 'mv' || (name === 'ln' && !symbolic) || (name === 'cp' && args.some((a) => a.literal && ((/^-[^-]/.test(a.text) && (a.text.includes('l') || a.text.includes('s'))) || a.text === '--link' || a.text === '--symbolic-link')));
       if (linky) { markAllCandidates(name === 'cp' ? 'cp -l' : name); return; }
@@ -5487,7 +5547,14 @@ function extractIn(command, ctx) {
       let j = i;
       while (j < w.text.length && w.marks[j] === w.marks[i]) j++;
       const run = w.text.slice(i, j);
-      if (w.marks[i] !== 'x') { texts = texts.map((t) => t + run); i = j; continue; }
+      if (w.marks[i] !== 'x') {
+        // THE SUBSCRIPTED POSITIONAL: a literal run opening with `[N]`, `[-N]` or `[N,M]` after an unbraced `$argv`, `$@` or `$*` is zsh's subscript of
+        // the list, so the text without it stands beside bash's reading (the subscript kept as literal characters) where zsh may run the line
+        const sub = zshMayRun && (w.marks[i] === 'u' || w.marks[i] === 'q') && i > 0 && w.marks[i - 1] === 'x' && ENDS_WITH_LIST_NAME.test(w.text.slice(0, i)) ? run.match(ZSH_SUBSCRIPT_AFTER_LIST) : null;   // an escaped `\[1\]` is no subscript
+        texts = sub ? texts.flatMap((t) => [t + run, t + run.slice(sub[0].length)]) : texts.map((t) => t + run);
+        if (texts.length > 64) return null;
+        i = j; continue;
+      }
       const names = [];
       let tokens = true;
       CANDIDATE_TOKEN.lastIndex = 0;
@@ -5509,8 +5576,20 @@ function extractIn(command, ctx) {
   // THE VANISHING HEAD's texts for a head word (round 6's eleventh commit): where the spelling may stand for no field (headMayVanish), the word is
   // read as THE VANISHED TEXT reads a script word (candidateTexts' vanish: the expansions the command never gives a value removed), so a head the
   // command never values reads as the empty text and the next word is the command, while a head with a value the command gives keeps that value
-  // alone; [] where the spelling always makes a field, or the name's value could not be established (refused at the head by scriptTexts)
-  const vanishedHeadTexts = (w) => { if (!headMayVanish(w)) return []; const v = candidateTexts(w, true); return v && !v.unread && v.texts ? v.texts : []; };
+  // alone; [] where the spelling always makes a field, or the name's value could not be established (refused at the head by scriptTexts).
+  // THE VANISHED HEAD TEXT (round 6's twelfth commit, 2026-09-22; the round's verifiers' row `$argv[1]cp ../base/report.md report.md` ran the copy in
+  // zsh while allowed, and the same reading's plainer members `${c}cp a b`, `$c"cp" a b` and `$c'cp' a b` ran it in every shell, allowed at the
+  // round-5 head too): a head word whose expansions the command never gives a value GLUED to literal characters stands for the text with them
+  // removed, one command the shell may run, as THE VANISHED TEXT reads a script word; where that text is empty the whole word may stand for no
+  // field, which headMayVanish alone decides (a double-quoted single field never does: `"$c" cp a b` runs nothing), so the empty text is kept
+  // only where it says so, and every other text is a head candidate the splice reads (`cp` for `${c}cp`, `[1]cp` beside `cp` for `$argv[1]cp`)
+  const vanishedHeadTexts = (w) => {
+    if (!w || w.literal || !w.marks || !w.marks.includes('x')) return [];
+    const v = candidateTexts(w, true);
+    if (!v || v.unread || !v.texts) return [];
+    const whole = headMayVanish(w);
+    return v.texts.filter((t) => t !== '' || whole);
+  };
   const scriptTexts = (w, how, role = 'text') => {
     if (!w) return [];
     const optionWord = role === 'option';   // THE SHELL'S OPTION WORD: a text role whose empty answer is a refusal (the caller records the word), so THE VANISHED TEXT, one reading beside the residual, does not stand in for it (`a=(-c); bash "${a[@]}" 'cp a b'` would read as a script file and pass)
@@ -5540,7 +5619,15 @@ function extractIn(command, ctx) {
           // name is set (non-empty, with the colon) and the word dropped otherwise; add the dropped form unless the name is known set,
           // so the empty text the shell may hand over reaches the judgment (a two-operand copy the three-operand reading hid)
           const setKnown = vars.has(name) && vars.get(name) != null && (!/:/.test(op || '') || vars.get(name) !== '');
-          const candKnown = candidates.has(name) && [...candidates.get(name)].length > 0 && (!/:/.test(op || '') || [...candidates.get(name)].every((v) => v !== ''));
+          // THE STALE POSITIONAL CANDIDATE (round 6's twelfth commit, 2026-09-22; the round's verifiers: `set -- a; shift; eval cp ${1:+x}
+          // ../base/report.md report.md` ran the two-operand copy in every shell while allowed, and so did `shift 1`, `shift 2`, a second `set`
+          // that drops the parameter, `bash -c`, `sh -c`, the colon-less `${1+x}`, a head, the tracked notes/ folder, the project root and a
+          // cwd in no project, and `${@+x}` and `${*+x}` after a shift in bash): bindPositionals notes each bind's values into the candidates
+          // and removes no earlier bind's, so `1` still held `a` after the shell had dropped it. The candidates are a union over the command
+          // (the safe side for a default word, whose every value joins the texts) and no reading of whether a positional is SET now, so a
+          // positional's alternate value is read from the list the walk holds alone (posKnown, and vars, which bindPositionals rebinds), never
+          // from them; a name's candidates stay a reading of the name being set, as the tenth commit made them
+          const candKnown = !/^[0-9@*]+$/.test(name) && candidates.has(name) && [...candidates.get(name)].length > 0 && (!/:/.test(op || '') || [...candidates.get(name)].every((v) => v !== ''));
           const posKnown = /^[0-9@*]+$/.test(name) && positionalsApply() && Array.isArray(positionals) && (name === '@' || name === '*' ? positionals.length > 0 : positionals.length >= Number(name));   // Array.isArray: at the top level the list is not modelled (null), so a positional's alternate value is not known and the dropped form joins the readings (round 6's eleventh commit: `eval cp ${1:+x} a b` had refused through the catch-all, a TypeError on null, where the rule refuses by name)
           if (!(setKnown || candKnown || posKnown)) texts.add(before + after);
           continue;
@@ -5565,6 +5652,11 @@ function extractIn(command, ctx) {
       const c = candidateTexts(w);
       if (c && c.unread) { cannotRead(w, how, { kind: 'unresolvableReading', spelling: w.raw, text: c.why || `a value this command gives \`${c.unread}\` comes from a text I looked at and could not establish, so what the word stands for is not known` }); return []; }
       if (c) return role === 'head' ? c.texts.map((t) => t.replace(/\n+/g, ' ')) : c.texts;
+      // THE VANISHED HEAD TEXT (vanishedHeadTexts says why): a head word with no candidate text whose expansions the command never gives a
+      // value stands for the text with them removed, one command the shell may run, beside the residual (its other values are not read;
+      // the result's opaque flag is left as the whole-word reading leaves it, a `$(..)` head nested to RECURSION_CAP is read through);
+      // the walk's splice reads each text as the command name, so `${c}cp a b` is judged as the copy it is in every shell
+      if (role === 'head') { const v = vanishedHeadTexts(w); if (v.length) return v.map((t) => t.replace(/\n+/g, ' ')); }
     }
     if (role === 'head') return [];
     if ((role === 'text' || w.herestring) && w.literal && !w.text.includes('\0')) return [w.text];   // a here-string word resolved to a literal text is the script fed (THE POSITIONAL VALUE: `f() { bash <<< "$1"; }`)
@@ -6556,8 +6648,12 @@ function extractIn(command, ctx) {
     }
     // THE POSITIONAL VALUE: a `set` with operands binds them (literal ones read; any other, or an option word before them, rebinds them to values not
     // known), a `shift` drops the first n (a count not read rebinds them to values not known)
-    if (name === 'set') { const ops = setOperands(asSpelled); if (ops) bindPositionals(ops.every((w) => w && w.literal && !w.text.includes('\0')) ? ops : UNKNOWN_POSITIONALS, 'an earlier `set` rebinds the positional parameters through option words or operands I do not read'); }
-    else if (name === 'shift' && positionals !== null) { const n = asSpelled.length ? (asSpelled[0].literal && /^[0-9]+$/.test(asSpelled[0].text) ? Number(asSpelled[0].text) : null) : 1; bindPositionals(n == null || positionals === UNKNOWN_POSITIONALS ? UNKNOWN_POSITIONALS : positionals.slice(n), n == null ? 'an earlier `shift` moves the positional parameters by a count I do not read' : positionalsWhy); }
+    // THE BODY'S OWN LIST (round 6's twelfth commit, 2026-09-22; the round's verifiers' class, the positional list modelled but stale: `f() { set -- a; };
+    // eval cp ${1:+x} ../base/report.md report.md` ran the two-operand copy in every shell while the body's `set` had bound `1` here and the word
+    // read as `x` alone): a `set` or `shift` inside a function body being defined rebinds the body's positional parameters, the call's, not this
+    // shell's (positionalsApply, the rule stated at bindPositionals); the replay of a fed call reads the body with its frame running, where the bind applies
+    if (name === 'set' && positionalsApply()) { const ops = setOperands(asSpelled); if (ops) bindPositionals(ops.every((w) => w && w.literal && !w.text.includes('\0')) ? ops : UNKNOWN_POSITIONALS, 'an earlier `set` rebinds the positional parameters through option words or operands I do not read'); }
+    else if (name === 'shift' && positionals !== null && positionalsApply()) { const n = asSpelled.length ? (asSpelled[0].literal && /^[0-9]+$/.test(asSpelled[0].text) ? Number(asSpelled[0].text) : null) : 1; bindPositionals(n == null || positionals === UNKNOWN_POSITIONALS ? UNKNOWN_POSITIONALS : positionals.slice(n), n == null ? 'an earlier `shift` moves the positional parameters by a count I do not read' : positionalsWhy); }
     // bash's keyword mode (setsKeywordMode): a later writer's operands are read as spelled and with every assignment-shaped
     // word dropped, and a write under either reading is judged; zsh reads the words as spelled
     let variants = keywordMode && asSpelled.some(isAssignmentWord) ? [asSpelled, asSpelled.filter((w) => !isAssignmentWord(w))] : [asSpelled];
@@ -6747,8 +6843,8 @@ function extractIn(command, ctx) {
           // THE VANISHING OPERAND (round 6's eighth commit; the rule is stated at mayVanish): the copy is judged again under every operand list the
           // shell may hand the writer with an operand that may vanish dropped, and a write under any of them refuses naming the operand dropped;
           // past VANISH_CAP such operands the count is a target the hook cannot read
-          const variants = vanishVariants(args, !unknownDir);
-          if (variants == null) cannotRead(args.find((a) => mayVanish(a, !unknownDir)), name, { kind: 'vanishOperand', cap: VANISH_CAP });
+          const variants = vanishVariants(args, !unknownDir, zshMayRun);
+          if (variants == null) cannotRead(args.find((a) => mayVanish(a, !unknownDir, zshMayRun)), name, { kind: 'vanishOperand', cap: VANISH_CAP });
           else for (const { dropped, kept } of variants) {
             let rr;
             try { rr = copyTargets(kept, unknownDir ? null : dir, name); }
@@ -6765,7 +6861,7 @@ function extractIn(command, ctx) {
       case 'link': {   // coreutils link(1): one hard link, made at the second operand (the third pass; the sibling of a hard `ln`)
         const ops = args.filter((a) => !(a.text.startsWith('-') && a.text.length > 1));
         if (ops.length >= 2) add(ops[1], 'link');
-        for (const { dropped, kept } of vanishVariants(args, !unknownDir) || []) { const k = kept.filter((a) => !(a.text.startsWith('-') && a.text.length > 1)); if (k.length >= 2) add(k[1], droppedHow('link', dropped)); }   // THE VANISHING OPERAND
+        for (const { dropped, kept } of vanishVariants(args, !unknownDir, zshMayRun) || []) { const k = kept.filter((a) => !(a.text.startsWith('-') && a.text.length > 1)); if (k.length >= 2) add(k[1], droppedHow('link', dropped)); }   // THE VANISHING OPERAND
         break;
       }
       case 'tee':
