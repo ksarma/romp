@@ -326,7 +326,17 @@ test("the comments frame rides its own dedup slot, never the chat delta baseline
 });
 
 test("a thread fork withholds the names/ entry; promote seeds first, then registers", () => {
-  assert.match(BACKEND, /if not thread_of:\s*\n\s*write_name/);
+  // the names/ entry is published through _publish_name (the names lock) inside `if not thread_of:`, and the waiting
+  // state follows it; until fork PR #813's round 6 the publish was a bare write_name, which this pin matched by name
+  assert.match(BACKEND, /if not thread_of:\s*\n\s*self\._publish_name\(sid, name, cwd, bg, fg\)\s*\n\s*append_state\(self\.state_dir, sid, "waiting"\)/,
+    "a thread fork withholds the names/ entry: fork publishes the name only inside `if not thread_of:`, through _publish_name, and the " +
+    "waiting state follows the publish. This pin matches kernel/sdk_backend.py by source text and is the WEAKER guard; if a refactor " +
+    "moved the call, re-key it here and confirm tests/test_comment_threads.py::ThreadForkInvisibility::" +
+    "test_a_thread_fork_writes_no_names_entry_and_carries_threadOf (and ::test_a_plain_fork_still_writes_its_names_entry) and " +
+    "tests/test_sdk_rename_ping.py::NamesFilePublicationsUnderTheLocks::" +
+    "test_a_forks_record_names_entry_and_waiting_state_land_in_that_order_and_a_thread_fork_skips_the_entry still pass, which is " +
+    "what actually guards the property by execution: the names/ entry is the discoverability trigger, written after the register " +
+    "and before the waiting state; a thread fork withholds it");
   assert.match(BACKEND, /def promote_thread\(/);
   assert.match(BACKEND, /reg\.get\("threadOf"\):\s*\n\s*continue/, "live_sessions skips threads — no tab");
   assert.match(KERNEL, /err = _seed_fork_stores\(parent_sid, tsid, parent_path, str\(th\.get\("cutUuid"\) or ""\)\)/);

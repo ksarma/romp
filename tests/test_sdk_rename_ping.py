@@ -1560,6 +1560,42 @@ class NamesFilePublicationsUnderTheLocks(unittest.TestCase):
         self.assertEqual((d / "names" / other).read_text(), other + "\t\t\t\n", "no file: the sid stands in for the name, the rest empty")
         self.assertEqual(sorted(p.name for p in (d / "names").iterdir()), sorted([SID, other]), "no staging file leaks")
 
+    def test_a_forks_record_names_entry_and_waiting_state_land_in_that_order_and_a_thread_fork_skips_the_entry(self):
+        # The order two webview pins state by source text (ui/webview/fork-session.test.ts and ui/webview/comments.test.ts
+        # read kernel/sdk_backend.py: the register, then the names/ entry inside `if not thread_of:` through _publish_name,
+        # then the waiting state), here by execution (fork PR #813, round 6 of the review, twentieth commit, 2026-09-22: the
+        # round moved the publish into _publish_name and the two text pins went red on the sweep's webview leg; they are
+        # re-keyed and name this test as the guard that holds through a refactor). The names/ entry is the discoverability
+        # trigger (discover() iterates names/), so it follows the record every reader of a discovered session needs and
+        # precedes the waiting state; a comment thread writes no entry and still reaches waiting. Smallest input: a plain
+        # fork of the fixture's parent and a thread fork of it, with write_reg, write_name and append_state recorded in
+        # call order. Red before with the waiting state appended ahead of the record write's hold (the reorder planted on
+        # a scratch copy): ('state', ..., 'waiting') first.
+        events, real_wr, real_wn, real_as, be = [], sb.write_reg, sb.write_name, sb.append_state, self.be
+        thread = "eeeeeeee-1111-2222-3333-444444444444"
+
+        def write_reg(state_dir, sid, reg):
+            events.append(("record", sid[:4], reg.get("name"), be._reg_lock.locked()))
+            return real_wr(state_dir, sid, reg)
+
+        def write_name(state_dir, sid, nm, *a, **k):
+            events.append(("names", sid[:4], nm, be._reg_lock.locked(), self._names_locked(be)))
+            return real_wn(state_dir, sid, nm, *a, **k)
+
+        def append_state(state_dir, sid, state, *a, **k):
+            events.append(("state", sid[:4], state, be._reg_lock.locked()))
+            return real_as(state_dir, sid, state, *a, **k)
+        with mock.patch.object(sb, "write_reg", write_reg), mock.patch.object(sb, "write_name", write_name), \
+                mock.patch.object(sb, "append_state", append_state):
+            self.assertEqual(self.be.fork("child", SID, "", "#112233", "#ffffff", sid=self.CHILD), self.CHILD)
+            self.assertEqual(self.be.fork("thread-x", SID, "", "#112233", "#ffffff", sid=thread, thread_of=SID), thread)
+        self.assertEqual(events, [("record", "dddd", "child", True), ("names", "dddd", "child", True, True), ("state", "dddd", "waiting", False),
+                                  ("record", "eeee", "thread-x", True), ("state", "eeee", "waiting", False)],
+                         "the record, then the names entry under both locks, then the waiting state; the thread's record and its "
+                         "waiting state with no names entry between them: %r" % (events,))
+        self.assertEqual(((self.root / "names" / self.CHILD).exists(), (self.root / "names" / thread).exists()), (True, False),
+                         "the plain fork is discoverable and the thread is not")
+
 
 if __name__ == "__main__":
     unittest.main()
