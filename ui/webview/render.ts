@@ -14172,7 +14172,10 @@ function queueSpacerRow(sid: string, topBefore: number, topAfter: number, botBef
  *  edge (`why`: hidden, for rows queued before the page hid; shown, for rows queued while it was hidden), never a row filed with another
  *  frame's figures: the repository's authoritative-source rule applied to a beacon. A cap alone would file the rows it kept with the
  *  wrong frame's figures, so the bound is the event. The drop row's keys are the chat allowlist's (sid, n, kind, why), no new key and no
- *  `view`, posted through scrollDiagRow like every diag row, so the budget caps it too. */
+ *  `view`, posted through scrollDiagRow like every diag row, so the budget caps it too. The count `n` is over EVERY pending row, whichever
+ *  view queued it (a switched-away view's rows wait in the same list and their own sids go with them), and `sid` is the live view's id at
+ *  the edge, empty when there is none: one row per edge, not one per view, since the row says what was dropped and no more (the author's
+ *  fixer pass over the pass after the maintainer's round 5, its verifier (b), which found this undisclosed; a row per view is not owed). */
 function dropSpacerRowsOnVisibility(): void {
   const rows = spacerRowsPending;
   if (rows.length === 0) return;
