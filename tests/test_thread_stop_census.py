@@ -88,7 +88,15 @@ finished Event), on an asyncio future, task or handle (cancel schedules the done
 a concurrent.futures.Future() the unit registers no add_done_callback on, because concurrent.futures.Future.cancel runs
 the done callbacks SYNCHRONOUSLY and a blocking one blocks it (the refuter's probe on round 2 of PR 891, 2026-09-22,
 which moved cancel out of STDLIB_RETURNS; release re-examined the same way stays: no stdlib release runs a caller's
-callback); and a Timer is bounded only for a literal interval at or under
+callback; a multiprocessing.managers PROXY, Manager().Lock() / .RLock() / .Semaphore() / .BoundedSemaphore() /
+.Condition(), an AcquirerProxy, is NOT a receiver the release entry covers, its reason says so: its release is a
+synchronous round trip to the manager process, blocked while that process is stopped or busy, the probe of 2026-09-22 on
+round 2 of PR 891's review, alive after 1 s with the manager SIGSTOPped and a BrokenPipeError after shutdown; the walk
+reads such a receiver as UNREADABLE and never through the table, because its construction is a method's result and not
+a stdlib constructor (_library_ctor, _library_made), and a plant holds a proxy Lock's and Semaphore's release, a proxy
+Event's set, clear and is_set and a proxy Queue's put_nowait and get_nowait each unreadable and LISTED, through the
+module, an import alias, a bare Manager, a manager bound to a name, a with-as manager, a chained call and a SyncManager,
+whose own start() the walk lists as an unreadable receiver too); and a Timer is bounded only for a literal interval at or under
 the same bound, whatever its function does; each otherwise UNREADABLE); the name rules (serve_forever, an untimed wait, a read) classify the other way, to loop or
 waits; a target the walk cannot read is UNREADABLE, never bounded, and its tail-only stop is listed with the unreadable
 receivers (the pin asserts that bucket empty; ALLOW may excuse one by name with its reason). A structural test hands
@@ -186,6 +194,8 @@ supplied at the caller is read in the caller's row only: the helper's own row ke
            the serve loop ends; a put can block on a full queue) or whose CONDITIONED check fails at the call
            (time.sleep(3600), server_close of a ThreadingTCPServer, set of a multiprocessing.Event(), cancel of a
            concurrent.futures.Future() with an add_done_callback on it or of a pool future, a Timer(3600, ...)), a
+           method of an object the walk does not read (release, set or put_nowait of a Manager proxy: the tables are
+           never consulted for it), a
            method run on an instance it
            cannot name, a product
            attribute no product function defines, a callable built by a call it does not read (functools.partial(f),
@@ -386,7 +396,7 @@ KIND_UNREAD = "unreadable"       # the kind of a target the walk cannot read: ne
 # ends; a put can block on a full queue; a wait with a timeout is a wait the walk has no rule for).
 UNCONDITIONAL_WORDS = ("whatever its arguments", "on any stdlib receiver")
 STDLIB_RETURNS = {
-    "release": "Lock.release returns at once whatever its arguments and on any stdlib receiver (re-examined 2026-09-22: threading's Lock, RLock and Condition release the lock, raising when not held; threading's Semaphore and BoundedSemaphore take their Condition briefly and notify it, release(n) n times; multiprocessing's Lock, RLock, Semaphore, BoundedSemaphore and Condition post the semaphore, no handshake; asyncio's Lock, Semaphore, BoundedSemaphore and Condition wake a waiter's future; re-examined again on round 2 of PR 891's review, 2026-09-22, for a caller's callback run synchronously, the way concurrent.futures.Future.cancel runs its done callbacks and the reason cancel left this table: no stdlib release runs one, threading's notify releases the waiters' locks, asyncio's wake sets the waiter's future, whose callbacks loop.call_soon schedules; a runtime probe had threading.Semaphore.release with a parked waiter and asyncio.Lock.release with a parked waiter return at once)",
+    "release": "Lock.release returns at once whatever its arguments and on any stdlib receiver the walk reads as a stdlib construction, threading's, multiprocessing's or asyncio's own constructor (re-examined 2026-09-22: threading's Lock, RLock and Condition release the lock, raising when not held; threading's Semaphore and BoundedSemaphore take their Condition briefly and notify it, release(n) n times; multiprocessing's Lock, RLock, Semaphore, BoundedSemaphore and Condition post the semaphore, no handshake; asyncio's Lock, Semaphore, BoundedSemaphore and Condition wake a waiter's future; re-examined again on round 2 of PR 891's review, 2026-09-22, for a caller's callback run synchronously, the way concurrent.futures.Future.cancel runs its done callbacks and the reason cancel left this table: no stdlib release runs one, threading's notify releases the waiters' locks, asyncio's wake sets the waiter's future, whose callbacks loop.call_soon schedules; a runtime probe had threading.Semaphore.release with a parked waiter and asyncio.Lock.release with a parked waiter return at once). EXCLUDED, never read through this entry: a multiprocessing.managers proxy (Manager().Lock(), .RLock(), .Semaphore(), .BoundedSemaphore(), .Condition(): an AcquirerProxy), whose release is a synchronous round trip to the manager process, blocked while that process is stopped or busy (the probe of 2026-09-22: a Manager().Lock() proxy's release on a thread was alive after 1 s with the manager process SIGSTOPped and returned after SIGCONT; after the manager's shutdown it raised BrokenPipeError); the walk reads such a receiver as unreadable because its construction is a method's result and not a stdlib constructor (_library_ctor, _library_made), and a plant holds it listed",
 }
 # CONDITIONED on 2026-09-22 (round 2 of PR 891's review, the refuter's probe): cancel, because concurrent.futures.Future.cancel
 # runs the done callbacks SYNCHRONOUSLY (_invoke_callbacks) and a blocking add_done_callback blocks it (`fut.add_done_callback(
@@ -5935,6 +5945,66 @@ class PlantedShapes(unittest.TestCase):
         self.assertEqual(sorted(w.split(".")[1] for s, w in unread),
                          sorted(["test_mp_set", "test_mp_alias_set", "test_mp_bare_clear", "test_ctx_set", "test_mp_get", "test_jq_put"]))
         self.assertEqual((tails, stale), ([], []))
+
+    def test_a_release_or_a_conditioned_name_on_a_manager_proxy_is_unreadable_and_listed(self):
+        """all-4 of round 2 of PR 891's review (2026-09-22): STDLIB_RETURNS' `release` says "on any stdlib receiver", false
+        for a multiprocessing.managers proxy (AcquirerProxy.release is a synchronous round trip to the manager process,
+        blocked while it is stopped or busy: the probe had a Manager().Lock() proxy's release alive after 1 s with the
+        manager SIGSTOPped). The reason now states the exclusion, and this holds the exclusion BY CENSUS: a proxy receiver
+        is read as UNREADABLE and LISTED, never through the table, for release (a proxy Lock, Semaphore, RLock: through the
+        module, an alias, a bare Manager, a manager bound to a name, a with-as manager, a chained call, a SyncManager) and
+        for the conditioned names (a proxy Event's set, clear and is_set; a proxy Queue's put_nowait and get_nowait), while
+        the same names on multiprocessing's and threading's own constructors read bounded through the table. Had the plant
+        read a proxy as bounded, release would have moved to STDLIB_CONDITIONED with a construction checker."""
+        head = self.HEAD.replace("import unittest\n", "import unittest\nimport multiprocessing\nimport multiprocessing as mp\n"
+                                                    "from multiprocessing import Manager\nfrom multiprocessing.managers import SyncManager\n")
+        one = "        t = threading.Thread(target=%s); t.start()\n        self.assertTrue(False)\n"
+        body = ("    def test_mp_lock(self):\n        lk = multiprocessing.Lock()\n" + one % "lk.release" +
+                "    def test_thr_sem(self):\n        s = threading.Semaphore()\n" + one % "s.release" +
+                "    def test_mp_event_set(self):\n        ev = multiprocessing.Event()\n" + one % "ev.set" +
+                "    def test_proxy_lock(self):\n        lk = multiprocessing.Manager().Lock()\n" + one % "lk.release" +
+                "    def test_proxy_alias_sem(self):\n        s = mp.Manager().Semaphore()\n" + one % "s.release" +
+                "    def test_proxy_bare_rlock(self):\n        lk = Manager().RLock()\n" + one % "lk.release" +
+                "    def test_proxy_bound(self):\n        m = multiprocessing.Manager()\n        lk = m.Lock()\n" + one % "lk.release" +
+                "    def test_proxy_with(self):\n        with multiprocessing.Manager() as m:\n            lk = m.Lock()\n"
+                "            t = threading.Thread(target=lk.release); t.start()\n            self.assertTrue(False)\n" +
+                "    def test_proxy_chained(self):\n" + one % "multiprocessing.Manager().Lock().release" +
+                "    def test_sync_manager(self):\n        m = SyncManager()\n        m.start()\n        lk = m.Lock()\n" + one % "lk.release" +
+                "    def test_proxy_event_set(self):\n        ev = multiprocessing.Manager().Event()\n" + one % "ev.set" +
+                "    def test_proxy_event_clear(self):\n        ev = mp.Manager().Event()\n" + one % "ev.clear" +
+                "    def test_proxy_event_is_set(self):\n        m = Manager()\n        ev = m.Event()\n" + one % "ev.is_set" +
+                "    def test_proxy_queue_put(self):\n        q = multiprocessing.Manager().Queue()\n"
+                "        t = threading.Thread(target=q.put_nowait, args=(1,)); t.start()\n        self.assertTrue(False)\n" +
+                "    def test_proxy_queue_get(self):\n        q = Manager().Queue()\n" + one % "q.get_nowait")
+        rows, (tails, unread, stale, bounded), _p = self._census(body, head=head)
+        by = {}
+        for s, sh, w in rows:
+            by.setdefault(w.split(".")[1], []).append((s.kind, s.why, sh, s.recv_shown))
+        for name in ("mp_lock", "thr_sem"):
+            (kind, why, sh, _r), = by["test_" + name]
+            self.assertEqual((kind, why, sh), ("bounded", STDLIB_RETURNS["release"], "tail-only"), (name, by["test_" + name]))
+            self.assertTrue(bounded_reason_is_read(why), (name, why))
+        (kind, why, sh, _r), = by["test_mp_event_set"]
+        self.assertEqual((kind, sh), (KIND_UNREAD, "tail-only"))
+        self.assertIn("set of a multiprocessing.Event()", why, "the conditioned checker, on the module's own constructor")
+        proxies = ("proxy_lock", "proxy_alias_sem", "proxy_bare_rlock", "proxy_bound", "proxy_with", "proxy_chained",
+                   "proxy_event_set", "proxy_event_clear", "proxy_event_is_set", "proxy_queue_put", "proxy_queue_get")
+        for name in proxies:
+            (kind, why, sh, _r), = by["test_" + name]
+            self.assertEqual((kind, sh), (KIND_UNREAD, "tail-only"), (name, by["test_" + name]))
+            self.assertIn("an object the walk does not read", why, (name, why))
+            self.assertNotIn(why, STDLIB_RETURNS.values(), (name, "a proxy read through the table"))
+            self.assertFalse(why.startswith(CONDITIONED_HEADS) or " returns" in why, (name, why))
+        sm = sorted(by["test_sync_manager"], key=lambda r: r[3])
+        self.assertEqual([(k, sh, r) for k, _w, sh, r in sm], [("?", "unreadable", "m"), (KIND_UNREAD, "tail-only", "t")],
+                         "a SyncManager's start() is an unreadable receiver, listed; the thread on its proxy's release unreadable, listed: %r" % (sm,))
+        self.assertIn("a method of `lk`, an object the walk does not read", sm[1][1])
+        self.assertEqual(sorted(w.split(".")[1] for s, w in unread),
+                         sorted(["test_" + n for n in proxies] + ["test_mp_event_set", "test_sync_manager", "test_sync_manager"]))
+        self.assertEqual(sorted(w.split(".")[1] for s, w in bounded), ["test_mp_lock", "test_thr_sem"])
+        self.assertEqual((tails, stale), ([], []))
+        for words in ("multiprocessing.managers proxy", "AcquirerProxy", "synchronous round trip", "SIGSTOPped", "BrokenPipeError", "_library_ctor"):
+            self.assertIn(words, STDLIB_RETURNS["release"], "the reason states the exclusion and its evidence")
 
     def test_every_stdlib_returns_entry_says_it_returns_whatever_its_arguments_on_any_receiver(self):
         """Table-shaped (romp-manager's ruling, 2026-09-22): every STDLIB_RETURNS entry's reason states, in UNCONDITIONAL_WORDS,
