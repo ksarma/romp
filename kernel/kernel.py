@@ -6647,7 +6647,8 @@ def _tab_order_frame(order, tabs, live, c=None):
     return fr
 
 
-_TAB_META_GATE_NOTED = set()        # sids whose ended gate raised inside _tab_meta (one stderr line per episode)
+_TAB_META_GATE_NOTED = set()        # sids whose ended gate raised inside _tab_meta on their last push with open rows (one stderr line per
+                                    #  episode; the episode ends on a push that computes the sid without a raise, open rows or none)
 
 
 def _tab_meta(chat_list):
@@ -6666,7 +6667,11 @@ def _tab_meta(chat_list):
     answered stamp at its delivery moment, the immediate send or the drain, _stamp_user_todo_answered; the recall's and
     the answer-lost reopen, _reopen_user_todo), the event and never the pusher's 0.5 s backstop, and an unchanged roster
     costs nothing. The ended gate is CONTAINED per sid: a raise from it (a reg-less sid's malformed death marker or states
-    row) makes that sid's count read 0, said once on stderr per episode, and the other rows ship, in every sender;
+    row) makes that sid's count read 0, said once on stderr per episode, and the other rows ship, in every sender. An episode
+    runs from the raise until a push computes the sid WITHOUT one: the gate reading clean, or the sid holding no open row (the
+    gate runs only for open rows), so a marker repaired while nothing was open ends the episode there and a later fault under
+    a new todo is said again; a persisting fault is said once per open interval, not per cycle, bounded by todo filings (review
+    round 2; before it the episode ended only on a gate read, and a repair made while nothing was open left the next fault silent);
     uncontained, one bad marker aborted every client's whole push each cycle in _push, dropped _push_session_now's
     per-session push and made _confirm_close_now answer False (the board-freeze lesson of 2026-09-06, which _push's
     per-session catch around build_session already applies; tests/test_user_todos_roster.py drives all three senders)."""
@@ -6690,6 +6695,9 @@ def _tab_meta(chat_list):
                 _TAB_META_GATE_NOTED.discard(sid)    # a gate that reads again ends the episode: a later fault speaks again
             if not shown:
                 n = 0                                # an ended session's todos are hidden, here as on every surface
+        else:
+            _TAB_META_GATE_NOTED.discard(sid)        # nothing open, no gate read: the episode ends here too (review round 2), so a
+                                                     #  marker repaired while nothing was open is not a silent fault at the next todo
         rows.append({"id": sid, "name": s.get("name", ""), "color": _name_color(sid),
                      "emoji": _name_emoji(sid),      # the fork's session label (#246)
                      "userTodos": n})

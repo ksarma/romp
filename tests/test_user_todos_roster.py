@@ -290,7 +290,7 @@ class UserTodosRoster(_ColdTabFixture):
             noted.clear()
             self.addCleanup(noted.clear)
         km._add_user_todo(S2, "Need the staging port")
-        km._add_user_todo(S3, "Need the auth-scheme decision")
+        t3 = km._add_user_todo(S3, "Need the auth-scheme decision")
         gone = km.jd.STATE / "gone"
         gone.mkdir(exist_ok=True)
         (gone / (S3 + ".json")).write_text('{"t": "not-a-time"}')
@@ -341,6 +341,27 @@ class UserTodosRoster(_ColdTabFixture):
         self.assertEqual(_row(c, S3)["userTodos"], 0)
         self.assertEqual(sum(1 for ln in err2.getvalue().splitlines() if ln.startswith("user-todos:") and S3[:8] in ln), 1,
                          "a new episode is said once more")
+        # tests-1 (review round 2): the episode ends on ANY push that computes the sid without a fault, open rows or none, not only
+        # on a gate read, which runs for open rows alone. Before the change a marker repaired while the sid had nothing open left
+        # the sid noted, and a new fault under a new todo read 0 in silence. The quiet interval: dismiss S3's row, repair the
+        # marker, push with nothing open; then a new todo and a new malformed marker, said once more.
+        self.assertTrue(km._resolve_user_todo(S3, t3, "dismissed"), "premise: the dismissal lands (nothing open for the sid)")
+        (gone / (S3 + ".json")).unlink()                               # repaired while nothing is open: no gate read this push
+        del c["_frames"][:]
+        c["sent"].pop(("taborder",), None)
+        err3 = io.StringIO()
+        with contextlib.redirect_stderr(err3):
+            km._push([c])
+        self.assertEqual(_row(c, S3)["userTodos"], 0, "nothing open: the row reads 0 with no gate read")
+        km._add_user_todo(S3, "Need the region pick")                   # a new open todo...
+        (gone / (S3 + ".json")).write_text('{"t": "not-a-time"}')       # ...and a new malformed marker (the first shape again)
+        del c["_frames"][:]
+        c["sent"].pop(("taborder",), None)
+        with contextlib.redirect_stderr(err3):
+            km._push([c])
+        self.assertEqual(_row(c, S3)["userTodos"], 0, "the new fault reads 0; the other rows ship")
+        self.assertEqual(sum(1 for ln in err3.getvalue().splitlines() if ln.startswith("user-todos:") and S3[:8] in ln), 1,
+                         "a fault after a repair made while nothing was open is said: the quiet interval ended the episode")
 
     def test_an_answers_stamp_and_its_lift_wake_the_pusher_so_the_strip_re_sends_within_one_cycle(self):
         # extra9-6 (round 1): the stamp is the event, and so is the lift that undoes it. The pusher loop's wait is

@@ -229,9 +229,10 @@ test("executed: the roster count enters the signature through the one open predi
     assert.equal(sigFor(id, -1), s0, id + ": -1 computes the signature 0 computes (the one predicate: nothing open either way)");
     assert.equal(sigFor(id, undefined), s0, id + ": no count computes it too (an older kernel's row)");
     assert.equal(H.bar.wipes, wipes0, id + ": no repaint between 0, -1 and no count");
-    assert.notEqual(sigFor(id, 2), s0, id + ": a count of 2 computes another signature: the flag's paint");
+    const s2 = sigFor(id, 2);   // captured: the value 1 is held to below (review round 2: an assertion that read api.sig() twice compared it to itself)
+    assert.notEqual(s2, s0, id + ": a count of 2 computes another signature: the flag's paint");
     assert.equal(H.bar.wipes, wipes0 + 1, id + ": the strip repainted once for it");
-    assert.equal(sigFor(id, 1), api.sig(), id + ": 1 keeps the signature 2 computed (open is one bit on the strip)");
+    assert.equal(sigFor(id, 1), s2, id + ": 1 keeps the signature 2 computed (open is one bit on the strip)");
     assert.equal(H.bar.wipes, wipes0 + 1, id + ": no repaint between 2 and 1");
   }
   assert.equal(H.skeletons > 0 && H.placeholders > 0, true, "the world minted a skeleton and a placeholder: both rows ran");

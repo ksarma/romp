@@ -231,7 +231,7 @@ test("executed + pinned: nothing lost. An open header wears the pip and the todo
   assert.match(HEAD, /if \(hidden\.length\) \{\s*\n(?:\s*\/\/[^\n]*\n)*\s*const stand = standInPip\(hidden\.map\(\(id\) => \(\{ session: sessions\.get\(id\), ledger: ledgers\.get\(id\) \}\)\), ringSwitch\(settings\.tabWidgets\)\);/, "the pip over the stand-in set, open or folded, with the ledger and the ring switches the members' tabs wear (ruling 15 c: a fold never shows a colour no unfolded tab would)");
   assert.match(TABS, /ledgers\.get\(id\)\?\.needsInput === true, tabHotkey\(id\)\];/, "the verdict is in the strip's signature (tab-strip-skip.test lists it), before the hot-key keycap's chord (T379)");
   assert.match(HEAD, /const flag = sectionTodoFlag\(hidden\.map\(\(id\) => liveSession\(id\) \?\? tabMeta\.get\(id\)\)\);/,
-    "the flag over the same set (a live member's rows, else the strip meta's count: tab-group-flags.test.ts)");
+    "the flag over the same set (a live member's rows, else the strip meta's count; executed: tab-snapshot-pane.test.ts, the folded header over a member with no session entry, a skeleton's stale entry and a loaded member; tab-group-flags.test.ts runs the flag rule over rows and counts)");
   assert.ok(!HEAD.includes("if (collapsed) {"), "no folded-only block: an open header with hidden members carries the marks too");
   assert.match(TABS, /collapsedTabIds = plan\.folded;\s*\n\s*lastStripItems = plan\.items;/, "the plan's headers, hides included, for setActive's unfold (read per holder: tab-groups.test, T264b)");
   // the strip's signature carries the plan's items whole (upstream's shape, T264b; the fork's explicit tuple of the same

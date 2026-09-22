@@ -74,9 +74,11 @@ test("executed: a resolved todo clears the flag on the next frame — the same f
   assert.equal(sectionTodoFlag([{ name: "tests" }]), null, "a host too old to send the field contributes nothing");
   // render.ts: the header reads the live store at render time, never a copy: the live session (liveSession, undefined for
   // a skeleton, whose stale pre-outage entry must not speak for it), else the strip meta, whose userTodos is the roster's
-  // count (2026-09-22; the executed count cases are the last test in this file)…
+  // count (2026-09-22; the flag rule's count cases are the last test in this file; the composition itself, liveSession(id) ??
+  // tabMeta.get(id), is executed in tab-snapshot-pane.test.ts over the real makeGroupHead and liveSession: a member with no
+  // session entry, a skeleton's stale entry, a loaded member)…
   assert.match(FOLDED, /const flag = sectionTodoFlag\(hidden\.map\(\(id\) => liveSession\(id\) \?\? tabMeta\.get\(id\)\)\);/,
-    "…over the members the fold hides (a member pinned to show through carries its own glyph; tab-groups.test pins that)");
+    "…over the members the fold hides (a member pinned to show through carries its own glyph; tab-groups.test pins that; executed: tab-snapshot-pane.test.ts, the composition; this file, the flag rule over rows and counts)");
   // …and the chat delta that carries the field asks for the strip repaint in the same handler; the frame IS
   // the event. Since the 2026-09-07 fold the ask is upstream's scheduleRenderTabs (one rebuild per animation
   // frame, however many tails a pusher cycle lands): the flag still clears on that frame, with no timer
