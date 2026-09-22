@@ -785,7 +785,8 @@ def _hammer(case, fn, threads=8, n=5000):
     """`threads` threads each call fn `n` times; `case` (the test) registers the joins as a cleanup right after the
     starts, so an assertion that fails in the caller leaves none of them behind (the joins below are the success path's)."""
     ts = [_run(lambda: [fn() for _ in range(n)]) for _ in range(threads)]
-    case.addCleanup(lambda: [t.join(WAIT * 4) for t in ts])
+    case.addCleanup(lambda: [t.join(WAIT * 4) for t in ts if t.ident is not None])   # _run started each; the guard is the
+    # list-join rule (Thread.join raises on a thread never started), so a later shape that builds first stays safe
     for t in ts:
         t.join(WAIT * 4)
     for t in ts:
