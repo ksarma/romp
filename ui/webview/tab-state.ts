@@ -128,8 +128,15 @@ export function sectionPipTitle(kind: SectionPip, names: readonly string[]): str
 // a ⚑ — "this session flagged something it needs from you" — and a fold hid it. The header derives
 // its flag from the SAME field the tab reads, the session payload's userTodos (the kernel's
 // build_session blanks it for an ended session and every chat delta carries it), so the two agree on
-// every frame and the resolve that clears the tab's glyph clears the header's flag in the same render.
-export interface TabTodoLike { name?: string; userTodos?: ReadonlyArray<unknown> | null }
+// every frame and the resolve that clears the tab's glyph clears the header's flag in the same render. Since 2026-09-22
+// the field is a COUNT on a member whose payload this page has not been served (a skeleton or placeholder tab: its
+// tabOrder roster row, tab-meta.ts) and the rows on a loaded member's session: one rule over both shapes, so the header
+// agrees with the tab whichever kind it is drawn as, and 0 (or an empty list) is a real value, nothing open.
+export interface TabTodoLike { name?: string; userTodos?: number | ReadonlyArray<unknown> | null }
+
+/** Something open: a positive count, or a non-empty list of rows. NaN, a negative number or an absent field is nothing. */
+const openUserTodo = (v: TabTodoLike["userTodos"]): boolean =>
+  typeof v === "number" ? v > 0 : Array.isArray(v) && v.length > 0;
 
 /** The members holding an open user todo, in strip order. The COUNT is sessions, not todos: the
  *  folded header's other number is a session count too, and the tooltip names exactly those sessions. */
@@ -138,7 +145,7 @@ export interface SectionTodoFlag { count: number; names: string[] }
 export function sectionTodoFlag(members: ReadonlyArray<TabTodoLike | null | undefined>): SectionTodoFlag | null {
   const names: string[] = [];
   for (const m of members) {
-    if (!m || !Array.isArray(m.userTodos) || !m.userTodos.length) continue;   // no session yet, or nothing open
+    if (!m || !openUserTodo(m.userTodos)) continue;   // no session and no roster row yet, or nothing open
     names.push(String(m.name || "").trim() || "(unnamed)");
   }
   return names.length ? { count: names.length, names } : null;

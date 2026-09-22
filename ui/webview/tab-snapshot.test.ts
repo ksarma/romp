@@ -297,3 +297,19 @@ test("executed: the row's chip is the SHARED status chip's words (T322b): Blocke
   assert.notEqual(snapshotModel(sec, look(s4), look(ledgers), m3), m3, "the peer's colour changed and nothing else the row says: a new model (sameChip)");
   assert.equal(snapshotModel(sec, look(sessions), look(ledgers), m), m, "nothing changed: the same object");
 });
+
+test("executed: a member's row reads the roster count (this fork's user todos on the strip meta, 2026-09-22): a meta-only row with userTodos 2 has todos 2, needs you, loading; the count outranks the session entry's rows; an old host's rows still count", () => {
+  // a skeleton or placeholder member: no session frame this page may show, the roster's count on its tabOrder meta
+  const sk = snapshotRow("new1", null, null, false, { name: "new1", userTodos: 2 });
+  assert.deepEqual([sk.todos, sk.needsYou, sk.loading, sk.pip, sk.name], [2, true, true, "unknown", "new1"], "the flag and its count, on you, still opening");
+  assert.ok(rowWords(sk).label.includes("2 things it needs from you"), "spoken like a loaded row's: " + rowWords(sk).label);
+  assert.deepEqual([snapshotRow("new1", null, null, false, { name: "new1", userTodos: 0 }).todos, snapshotRow("new1", null, null, false, { name: "new1", userTodos: 0 }).needsYou], [0, false], "0 is a real value");
+  // a redial keeps the stale pre-outage entry under a skeleton member and render.ts hands the snapshot sessions.get(id):
+  // the roster count is the kernel's current and is read first
+  assert.equal(snapshotRow("x", { name: "x", status: { state: "ready" }, userTodos: [] }, null, false, { name: "x", userTodos: 2 }).todos, 2, "a stale entry's empty rows do not hide the count");
+  assert.equal(snapshotRow("x", { name: "x", status: { state: "ready" }, userTodos: [{ id: "t1" }] }, null, false, { name: "x", userTodos: 0 }).todos, 0, "a stale entry's rows do not outlive a roster 0");
+  // an older kernel's roster row has no count: the session's rows still count, with the meta beside them or with none
+  assert.equal(snapshotRow("x", { name: "x", status: { state: "ready" }, userTodos: [{ id: "t1" }] }, null, false, { name: "x" }).todos, 1);
+  assert.equal(snapshotRow("x", { name: "x", status: { state: "ready" }, userTodos: [{ id: "t1" }] }, null).todos, 1, "no meta at all");
+  assert.equal(snapshotRow("x", null, null, false, { name: "x" }).todos, 0, "no frame and no count: nothing");
+});

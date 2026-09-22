@@ -231,3 +231,20 @@ test("a push while the flag holds focus puts focus back on the rebuilt FLAG, not
     "the rebuilt header's flag when the flag held it (the open header's count button the same, tab-hide.test); the header when this push resolved the todo and the header has none");
   assert.match(RENDER, /const refocusTab = bar\.contains\(document\.activeElement\);\s*\n\s*bar\.replaceChildren\(\);/, "the tab rule's two-line shape stands (chat-focus-model.test)");
 });
+
+test("executed: the roster count (a skeleton or placeholder member's strip meta, 2026-09-22) raises the flag as the rows do; 0 is a real value; rows and counts mix under federation", () => {
+  // a member whose payload this page has not been served has no live session entry: the header reads its tabOrder meta
+  // (render.ts liveSession(id) ?? tabMeta.get(id)), whose userTodos is the kernel's COUNT of open todos (the roster row,
+  // tab-meta.ts), while a loaded member's is its session's rows. One rule over both shapes.
+  assert.deepEqual(sectionTodoFlag([{ name: "tests", userTodos: 2 }]), { count: 1, names: ["tests"] }, "a count of two: one session flagged");
+  assert.deepEqual(sectionTodoFlag([{ name: "tests", userTodos: 1 }, { name: "old1", userTodos: 3 }]), { count: 2, names: ["tests", "old1"] }, "sessions, not todos, as with rows");
+  assert.equal(sectionTodoFlag([{ name: "tests", userTodos: 0 }]), null, "0 is a real value: nothing open (the strip after every todo resolves)");
+  assert.equal(sectionTodoFlag([{ name: "tests", userTodos: 0 }, { name: "old1", userTodos: [] }]), null, "an empty count and an empty list agree");
+  assert.equal(sectionTodoFlag([{ name: "tests" }]), null, "an older kernel's roster row has no count: nothing");
+  assert.equal(sectionTodoFlag([{ name: "x", userTodos: NaN }, { name: "y", userTodos: -1 }]), null, "not a count a kernel sends: nothing open, never a flag");
+  // federation: one host's member loaded (rows on its session frame), another's a skeleton (a count on its roster row),
+  // a third's cleared on the roster, a fourth's cleared on its frame; strip order kept, host-prefixed names as the tabs show
+  assert.deepEqual(sectionTodoFlag([{ name: "TESTHOST-A:web", userTodos: todo(1) }, { name: "TESTHOST-B:api", userTodos: 1 },
+                                    { name: "TESTHOST-B:tests", userTodos: 0 }, { name: "TESTHOST-A:old", userTodos: [] }]),
+    { count: 2, names: ["TESTHOST-A:web", "TESTHOST-B:api"] }, "rows and counts mix under one rule");
+});

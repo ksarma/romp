@@ -37,8 +37,10 @@ export interface SnapLedgerLike {
 /** `hides`: the members hidden inside the section (tab-groups.ts StripHead.hides, the user 2026-09-08); the
  *  pane lists them under its Hidden fold, with a Show button each. Absent or empty: nothing hidden. */
 export interface SnapSectionLike { name: string | null; color: string; ids: readonly string[]; hides?: readonly string[] }
-/** The strip's meta for a tab whose session frame has not landed (render.ts tabMeta): its name and color alone. */
-export interface SnapMetaLike { name?: string; color?: SnapColor | null }
+/** The strip's meta for a tab whose session frame has not landed (render.ts tabMeta): its name and color, and since
+ *  2026-09-22 the roster's count of its open user todos (the tabOrder row's userTodos, tab-meta.ts), so a skeleton or
+ *  placeholder member's row wears the flag and its count before its payload is served. */
+export interface SnapMetaLike { name?: string; color?: SnapColor | null; userTodos?: number }
 
 /** The pip a row wears: the tab's own colors by the tab's own rule (tab-state.ts), plus the two states the
  *  strip paints on the chip rather than the tab: `waiting` (idle, but background work it dispatched is
@@ -218,13 +220,20 @@ export function standInPip(members: ReadonlyArray<StandInLike>, on: (id: RingId)
 }
 
 /** One row. `s` is the session frame (null for a placeholder tab, whose frame has not landed); `meta` the
- *  strip's meta for it (name and color), read only when the frame is absent, so a loading row still wears
- *  the tab's name and color; `hidden`, the row is hidden inside its section (the user 2026-09-08). */
+ *  strip's meta for it: its name and color, read only when the frame is absent, so a loading row still wears
+ *  the tab's name and color, and the roster's count of open user todos, read FIRST (below); `hidden`, the row
+ *  is hidden inside its section (the user 2026-09-08). */
 export function snapshotRow(id: string, s: SnapSessionLike | null | undefined, lg: SnapLedgerLike | null | undefined,
                             hidden = false, meta?: SnapMetaLike | null): SnapRow {
   const st = rowState(s?.status);
-  const src: SnapMetaLike | null | undefined = s ?? meta;
-  const todos = Array.isArray(s?.userTodos) ? s!.userTodos!.length : 0;
+  const src: { name?: string; color?: SnapColor | null } | null | undefined = s ?? meta;   // the two fields both shapes share (the frame's todos are rows, the meta's a count)
+  // THE TODO COUNT reads the roster FIRST (meta.userTodos, the tabOrder row's count of open todos, 2026-09-22) and the
+  // session's rows second (an older kernel's roster carries no count). Roster first on purpose, not rows first: render.ts
+  // hands this row sessions.get(id) for every member, and on a redial that is the stale pre-outage entry for a skeleton
+  // member, the very thing liveSession exists to dodge, so rows-first would show that entry's old rows over the kernel's
+  // current count. (That seam, the snapshot reading sessions.get rather than liveSession, predates this line and is not
+  // fixed here; a later reader must not "simplify" this to rows-first.)
+  const todos = typeof meta?.userTodos === "number" ? meta.userTodos : Array.isArray(s?.userTodos) ? s!.userTodos!.length : 0;
   // NEEDS YOU is the feed's call: the tab's rule (tab-state.ts) knows only the live states the chip carries
   // (a permission or picker prompt, an on-you API error), so a judge-filed block on a session that went idle
   // after asking would show a plain idle row here while the feed shows a red card. lg.needsInput is that
