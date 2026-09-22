@@ -54,6 +54,8 @@ MID = "1788299000.000001_1.TESTHOST"
 REMOTE = "a11f0001-1111-4222-8333-000000000003"   # a sid live on ANOTHER host: the bus hears its heartbeat
 REMOTE2 = "a11f0001-1111-4222-8333-000000000004"  # a second remote session, on a host that stays reachable
 HOST, HOST2 = "TESTHOST", "TESTHOST2"             # synthetic peer hosts (path-safe names, as the bus keys them)
+CARRIED = "a11f0001-1111-4222-8333-000000000005"  # the sid HOST last named before its bus restarted (a peer row)
+OTHER = "a11f0001-1111-4222-8333-000000000006"    # the sid HOST2 names: the first host the restarted bus hears
 
 RULE_5 = (True, 5, "no-reachable-host-names-it")               # the ladder's verdicts, (closed, rule, why), as
 RULE_4 = (False, 4, "named-by-reachable-host")                 # _presumed_closed_verdict spells them; a fixture
@@ -325,7 +327,7 @@ class ReaderFollowsTheWriter(unittest.TestCase):
     reader (_presumed_closed) run in one fresh interpreter over one temp root, under each of the two
     root shapes the constants bind from (XDG_STATE_HOME, and ROMP_STATE_DIR, which outranks it), and the
     bus's document is read back and its rows asserted, so the fixtures' restatement of the shape
-    (_bus_wrote) is held to the writer here. Six phases, in the order a bus lives them:
+    (_bus_wrote) is held to the writer here. Seven phases, in the order a bus lives them:
       first write   one live remote heartbeat; a sid nothing knows is presumed closed (rule 5), the
                     heartbeating one is not (rule 4);
       restart       a second bus process over the same root (a fresh module object: empty HEARTBEATS and
@@ -340,6 +342,16 @@ class ReaderFollowsTheWriter(unittest.TestCase):
                     at the round's head pruned the sid and settled it;
       beside a live beat  a second host's live beat: rule 5 fires for a sid nothing knows, rule 4 holds
                     the live one, and the expired one is still protected by its host's last word;
+      another host heard first  peer mode's rows, a host under its name with the roster its exchange
+                    reported: an exchange from host A naming its sid lands, the bus restarts a second time,
+                    and an exchange from host B, naming B's sid alone, is the new process's first write. A
+                    is carried unreachable and its last word holds its sid at cannot-determine; B's sid is
+                    rule 4's; a sid nothing names is rule 5's. A's exchange arriving makes it reachable
+                    (rule 4), and A's next exchange without the sid lets rule 5 presume it closed. The one
+                    composition in which the carry-forward changes the VERDICT rather than the file alone
+                    (round 2 of fork PR #897, a verifier's finding): a writer that carried nothing leaves
+                    A's sid to rule 5 here, True, a live session settled because its bus restarted, while
+                    every earlier phase's verdict pins hold under that writer;
       legacy shape  the whitespace list a bus before 2026-09-22 wrote, at the bus's path: the reader
                     answers cannot-determine for the sid it does not name AND for the one it does, and
                     says once in the judge's log that the file is not the shape the bus writes; it is
@@ -384,7 +396,7 @@ class ReaderFollowsTheWriter(unittest.TestCase):
         # floor does not arm, so the environment above is the whole of it). The phases the class docstring
         # names, each recording the bus's document (`hosts`: key -> (heard, expired, sids), or the raw text when
         # the file is not a document, so a writer of another shape fails the frame pin by its message rather
-        # than crashing the child) and the reader's answers. The restart is a second load of the bus module
+        # than crashing the child) and the reader's answers. Each restart is a further load of the bus module
         # under a private name: a fresh module object over the same root, its memory empty, as a restarted
         # process's is. A missing bus file is reported, not raised, so a moved writer fails the pins by their
         # own messages. The source sits as a literal in the argv slot after "-c": the shape the hosts-on census
@@ -394,7 +406,7 @@ class ReaderFollowsTheWriter(unittest.TestCase):
         # unaccounted (the sweep red of 2026-09-22).
         out = subprocess.run([sys.executable, "-c", r"""
 import contextlib, io, json, os, sys, time
-tests_dir, bin_dir, remote, remote2, dead = sys.argv[1:6]
+tests_dir, bin_dir, remote, remote2, dead, host_a, host_b, carried, other = sys.argv[1:10]
 sys.path.insert(0, tests_dir)
 from romp_load import load_source
 pm = load_source("romp_postal_oneroot", os.path.join(bin_dir, "romp-postal-service"))
@@ -435,6 +447,24 @@ out["expired"] = phase()
 pm2.HEARTBEATS[remote2] = ("api", time.time())     # a second host's live beat beside the expired one
 pm2._write_remote_sids()
 out["besideLive"] = phase()
+def verdict(sid):
+    return list(jd._presumed_closed_verdict(sid, now))          # [closed, rule, why]: the verdict and its reason
+def peer_phase():
+    return {"hosts": hosts(), "carried": verdict(carried), "other": verdict(other), "nobody": verdict(dead)}
+def exchange(bus, host, sids):                     # one exchange landing: what peer_exchange_handle/apply record, then write
+    bus.PEER_STATE[host] = {"presence": [{"id": s, "name": "api"} for s in sids], "epoch": 1, "holds": [],
+                            "seenAt": int(time.time())}
+    bus._write_remote_sids()
+exchange(pm2, host_a, [carried])                   # host A's exchange names its sid in the running bus
+out["peerHeard"] = peer_phase()
+pm3 = load_source("romp_postal_oneroot_restarted_twice", os.path.join(bin_dir, "romp-postal-service"))
+out["restartMemory2"] = {"heartbeats": len(pm3.HEARTBEATS), "peers": len(pm3.PEER_STATE), "freshObject": pm3 is not pm2}
+exchange(pm3, host_b, [other])                     # host B is heard FIRST: the new process's first write, nothing from A yet
+out["otherHeardFirst"] = peer_phase()
+exchange(pm3, host_a, [carried])                   # A's exchange arrives in the new process, its roster unchanged
+out["carriedHeard"] = peer_phase()
+exchange(pm3, host_a, [])                          # A's next exchange no longer names the sid: it ended there
+out["carriedHostNamesNobody"] = peer_phase()
 bus_file.write_text(remote + "\n")                 # the shape a bus before 2026-09-22 wrote
 err = io.StringIO()
 with contextlib.redirect_stderr(err):
@@ -449,13 +479,19 @@ out["oldPath"] = str(old_path)
 out["oldPathText"] = old_path.read_text()
 out["controlOldPathOnly"] = ask(dead)
 print(json.dumps(out))
-""", HERE, BIN, REMOTE, REMOTE2, DEAD], capture_output=True, text=True, env=full, cwd=str(home), timeout=120)
+""", HERE, BIN, REMOTE, REMOTE2, DEAD, HOST, HOST2, CARRIED, OTHER], capture_output=True, text=True, env=full,
+                             cwd=str(home), timeout=120)
         assert out.returncode == 0, "%s child failed: %s" % (shape, out.stderr[-2000:])
         got = json.loads(out.stdout.strip().splitlines()[-1])
         got["root"] = str(root)
         return got
 
     HB = "heartbeat:"       # the bus keys a legacy heartbeat's row heartbeat:<sid> (postal_service.py REMOTE_SIDS_HEARTBEAT)
+
+    @staticmethod
+    def _v(phase, key):
+        """A recorded verdict, (closed, rule, why), as the RULE_5 / RULE_4 / LOST constants spell them."""
+        return tuple(phase[key])
 
     def test_both_modules_bound_the_one_root_the_test_prepared(self):
         for shape, got in self.got.items():
@@ -516,6 +552,48 @@ print(json.dumps(out))
                                 "a sid nothing knows")
                 self.assertFalse(got["besideLive"]["named2"], "rule 4 holds the live sid")
                 self.assertFalse(got["besideLive"]["named"], "the expired host's last word still protects its sid")
+
+    def test_another_host_heard_first_after_a_restart_does_not_settle_the_carried_hosts_sid(self):
+        """The composition in which the carry-forward changes the VERDICT, not only the file (round 2 of fork PR
+        #897, a verifier's finding: the phases above reach each restart with one host, so a writer that carried
+        nothing passed every verdict pin there and was red only at the document pins). Host A, a peer, names a
+        sid; the bus restarts; host B is heard first. Without the carry-forward B's row is the whole mirror, B
+        is reachable and names only its own sid, and rule 5 presumes A's sid closed: a live session settled
+        because its bus restarted. With it A's row is carried unreachable and its last word holds the sid at
+        cannot-determine until A is heard; A's next exchange without the sid is the event that lets rule 5
+        answer. The verdict and its reason at every step, then the document."""
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                self.assertEqual(self._v(got["peerHeard"], "carried"), RULE_4,
+                                 "before the restart the peer host names its sid: live on another host")
+                self.assertEqual(got["restartMemory2"], {"heartbeats": 0, "peers": 0, "freshObject": True},
+                                 "the second restart is a fresh module object too, its memory empty")
+                first = got["otherHeardFirst"]
+                self.assertEqual(self._v(first, "carried"), LOST,
+                                 "another host was heard first, reachable, naming its own sid alone; the host that last "
+                                 "named this sid has not been heard by the new process, so its carried word stands: "
+                                 "cannot-determine (a writer carrying nothing leaves this sid to rule 5, True, a live "
+                                 "session settled because its bus restarted)")
+                self.assertEqual(self._v(first, "other"), RULE_4, "the heard host's own sid: rule 4")
+                self.assertEqual(self._v(first, "nobody"), RULE_5,
+                                 "a reachable host exists and no row names this sid: rule 5 answers beside the carried "
+                                 "host; the carried row protects its own sids, it is not a gate on the mirror")
+                self.assertEqual(first["hosts"], {self.HB + REMOTE: [False, True, [REMOTE]],
+                                                  self.HB + REMOTE2: [False, False, [REMOTE2]],
+                                                  HOST: [False, False, [CARRIED]], HOST2: [True, False, [OTHER]]},
+                                 "the document: every row of the previous file carried, heard false, its marks kept, "
+                                 "beside the heard host's row")
+                heard = got["carriedHeard"]
+                self.assertEqual(self._v(heard, "carried"), RULE_4,
+                                 "the carried host's exchange arriving in the new process is the event that makes it "
+                                 "reachable: its sid is rule 4's")
+                self.assertEqual(heard["hosts"][HOST], [True, False, [CARRIED]], "heard, the roster it reported")
+                gone = got["carriedHostNamesNobody"]
+                self.assertEqual(self._v(gone, "carried"), RULE_5,
+                                 "the host that named the sid, reachable, no longer names it, and no unreachable host "
+                                 "does: rule 5 presumes it closed, on that exchange and nothing else")
+                self.assertEqual(self._v(gone, "other"), RULE_4, "the other host's sid stays rule 4's")
+                self.assertEqual(gone["hosts"][HOST], [True, False, []], "heard, naming nobody")
 
     def test_a_mirror_of_the_legacy_shape_is_cannot_determine_and_said_once(self):
         for shape, got in self.got.items():
