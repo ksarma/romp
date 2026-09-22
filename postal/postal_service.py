@@ -3717,7 +3717,14 @@ def peer_update(data):
         return {"error": uerr}, 400
     PEERS[host] = {"port": port, "up": up, "at": int(time.time()),
                    "token": tok, "trust": trust}
+    if not up and host in PEER_STATE:
+        # Heard before the link dropped: the roster its last exchange reported is not the host's word for
+        # what runs there now, so the row carries the mark _link_down reads until the host is heard again.
+        # The next exchange from it REPLACES the row (peer_exchange_handle, peer_exchange_apply) and so
+        # clears the mark: the event, not the up notify (round 2 of fork PR #897, the reviewer's ruling).
+        PEER_STATE[host]["linkDown"] = True
     _peer_threads_reconcile(host)                    # an up peer gets its dialer; a down one is woken to exit
+    _write_remote_sids()                             # the link state gates reachability: the mirror follows the notify at once
     return {"ok": True, "up": sum(1 for p in PEERS.values() if p["up"])}, 200
 
 def _direct_bus_ids():
@@ -3867,6 +3874,37 @@ def _remote_sids_previous(path):
     return {}
 
 
+def _link_down(host):
+    """True when the kernel holds `host`'s tunnel DOWN, or has since this bus last heard the host. Two reads,
+    either sufficient: PEERS[host]["up"] is False on a DIALABLE row (a row with a port; the kernel's /peer
+    notify writes it through peer_update, transitions being the events, and _peer_loop exits on it), or
+    PEER_STATE[host] carries the mark the down notify set, which the next exchange from the host clears by
+    replacing the row (peer_exchange_handle, peer_exchange_apply). So a host is out of link-down from its
+    first exchange heard with the link up, never from the up notify alone: the roster it reported before
+    the link dropped says nothing about a session started there since. A host with no dialable PEERS row
+    has no link state and is gated by heard and the TTL alone: the kernel never notified it (the row is
+    absent), or its row is origin-only (no port: a tier for a host this machine has no tunnel to, so
+    there is no link to be down)."""
+    p = PEERS.get(host) or {}
+    if p.get("port") and not p.get("up"):
+        return True
+    return bool((PEER_STATE.get(host) or {}).get("linkDown"))
+
+
+def _source_link_down(key, row):
+    """The link state that gates one mirror row: a peer host's own (_link_down of its key); for a far host
+    gossiped through a hub (kind via) the HUB's, since the far host is reached through it and a hub the kernel
+    holds down cannot carry fresh word about anyone (the hub the row names in `via`; a second hub gossiping
+    the same far host does not lift it, the conservative side); none for a legacy heartbeat or the legacy
+    list, whose keys carry a colon no PEERS row can match (heard and the TTL alone)."""
+    kind = row.get("kind")
+    if kind == "via":
+        return _link_down(str(row.get("via") or ""))
+    if kind == "peer":
+        return _link_down(str(key))
+    return False
+
+
 def _remote_sids_document(now, previous):
     """The mirror's content, {"v": 2, "busStarted", "writtenAt", "hosts": {key: row}}: one row per PRESENCE
     SOURCE, the roster it last reported and whether THIS bus process can vouch for it.
@@ -3876,12 +3914,22 @@ def _remote_sids_document(now, previous):
       heard    a heartbeat or an exchange from it arrived in this bus process (never carried over a restart)
       expired  its presence is past HEARTBEAT_TTL; legacy heartbeats only: a peer's presence has no TTL, its
                age is shown to the user as staleness and its roster stands until the next exchange
+      linkDown the kernel holds its link down, or has since it was last heard (_source_link_down: a peer
+               host's own link, a far host's hub's; a legacy heartbeat has no link state)
+      reachable  heard and not expired and not linkDown: computed HERE, the one home of the gate, and the
+               one flag the reader's verdict reads
       seenAt   the last heartbeat or exchange time, kept across processes
-    The reader (kernel/judge.py _presumed_closed_verdict) counts a source REACHABLE when heard and not
-    expired; a sid a reachable source names is live on another host (rule 4); a sid no source names is
-    presumed closed only when a reachable source exists (rule 5); a sid only an unreachable source names,
-    or a mirror with no reachable source, is cannot-determine. Two roads to a false settle, both shown in
-    fork PR #897's round 1 by the reviewer's refuters, are closed here rather than by the reader alone:
+    The reader (kernel/judge.py _presumed_closed_verdict) reads `reachable` per row: a sid a reachable
+    source names is live on another host (rule 4); a sid no source names is presumed closed only when a
+    reachable source exists (rule 5); a sid only an unreachable source names, or a mirror with no reachable
+    source, is cannot-determine. The kernel's link state gates reachability too (round 2 of fork PR #897,
+    the reviewer's ruling): a session started on a host after its last heard roster is in no roster, so a
+    host counted reachable while its link is down would let rule 5 presume that session closed; a host
+    that is down cannot vouch for absence. The down notify (peer_update) makes the source unreachable at
+    once, that write included, its last roster kept, and the source is reachable again on its first
+    heartbeat or exchange heard with the link up, not on the up notify (_link_down). Two roads to a false
+    settle, both shown in fork PR #897's round 1 by the reviewer's refuters, are closed here rather than by
+    the reader alone:
       (1) a bus restarted from empty memory wrote its first mirror from that memory, so until its first
           exchange every sid live on another host was absent from the file: every key the previous file
           named that this process has not heard is CARRIED FORWARD with its last roster and heard=false,
@@ -3939,8 +3987,10 @@ def _remote_sids_document(now, previous):
             if not row["sids"]:
                 continue
         hosts[key] = row
-    for row in hosts.values():
+    for key, row in hosts.items():
         row["sids"] = sorted({str(s) for s in row["sids"]})
+        row["linkDown"] = _source_link_down(key, row)         # the link state at THIS write, heard or carried
+        row["reachable"] = bool(row["heard"] and not row["expired"] and not row["linkDown"])
     return {"v": 2, "busStarted": BUS_EPOCH, "writtenAt": int(now), "hosts": hosts}
 
 
@@ -3950,11 +4000,15 @@ def _write_remote_sids():
     roster it reported and whether this bus process has heard it (_remote_sids_document has the shape and
     the reasons). A sid absent from the local registry but named by a reachable source is a live REMOTE
     session whose local mirror store must never be presumed closed; a sid no source names is presumed
-    closed only when a reachable source exists. The FILE alone no longer means the bus has spoken: a bus
-    restarted from empty memory writes a first mirror whose hosts are all unreachable (carried from the
-    previous file) until their heartbeats and exchanges arrive. This module's STATE is the romp state
-    root plus `postal`, so the file's one home is <state root>/postal/remote-sids; the bus owns that home
-    and the shape, and its reader (kernel/judge.py _presumed_closed_verdict, rules 4 and 5) reads it there,
+    closed only when a reachable source exists. Reachable is computed here, per row (`reachable`: heard,
+    not expired, and its link not held down by the kernel), and the reader reads that flag. The FILE alone
+    no longer means the bus has spoken: a bus restarted from empty memory writes a first mirror whose
+    hosts are all unreachable (carried from the previous file) until their heartbeats and exchanges
+    arrive; a host whose link the kernel reports down is unreachable from that notify until its next
+    heartbeat or exchange arrives with the link up (round 2 of fork PR #897, the reviewer's ruling). This
+    module's STATE is the romp state root plus `postal`, so the file's one home is
+    <state root>/postal/remote-sids; the bus owns that home and the shape, and its reader
+    (kernel/judge.py _presumed_closed_verdict, rules 4 and 5) reads it there,
     as its own STATE / "postal" / "remote-sids", answering cannot-determine, once and loudly in its log,
     for a file of any other shape (a whitespace list from a bus before 2026-09-22 among them). Until
     2026-09-22 the judge read <state root>/remote-sids, a path nothing wrote, so its rule 5 never fired
@@ -3962,12 +4016,14 @@ def _write_remote_sids():
     root: the first write, the restart, the expiry, the legacy shape).
 
     The TTL is applied at WRITE time, so an expired heartbeat is MARKED only when something writes:
-    every recorded heartbeat, every peer exchange, and (since 2026-09-06) every _monitor poll. In peer
-    mode (the default) a local session's beats end once its bus confirms it local, and remote presence
-    arrives through the peer exchange, which writes here. In legacy singleton mode the beats continue;
-    the poll-time write is the backstop for a hub whose local sessions have all gone quiet while a dead
-    remote's beat ages past its TTL. Under _REMOTE_SIDS_LOCK: the write reads the file it replaces, and
-    the heartbeat, exchange and monitor threads all write."""
+    every recorded heartbeat, every peer exchange, (since 2026-09-06) every _monitor poll, and every
+    kernel /peer notify (peer_update: a link transition changes reachability, so the mirror follows it at
+    once rather than at the next poll). In peer mode (the default) a local session's beats end once its
+    bus confirms it local, and remote presence arrives through the peer exchange, which writes here. In
+    legacy singleton mode the beats continue; the poll-time write is the backstop for a hub whose local
+    sessions have all gone quiet while a dead remote's beat ages past its TTL. Under _REMOTE_SIDS_LOCK:
+    the write reads the file it replaces, and the heartbeat, exchange, monitor and notify threads all
+    write."""
     with _REMOTE_SIDS_LOCK:
         try:
             path = STATE / "remote-sids"

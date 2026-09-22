@@ -19375,11 +19375,12 @@ def _remote_sids_mirror():
     """The postal bus's presence mirror, STATE/postal/remote-sids: the bus's STATE is this module's plus
     `postal`, and postal_service.py _write_remote_sids owns the file's home and its shape (its
     _remote_sids_document: a JSON object whose `hosts` table has one row per presence source, {"sids":
-    [...], "heard": bool, "expired": bool, ...}); this reader follows both. Returns (hosts, None) with the
-    table as the bus wrote it; (None, "no-mirror") when there is no file (the bus has not written under
-    this root); (None, "mirror-unparsable") when the file is not a document of that shape, a whitespace
-    list written by a bus from before 2026-09-22 among them, said once per distinct text in this
-    process's log, so a shape drift between the two modules is seen and never read as an empty roster."""
+    [...], "heard": bool, "expired": bool, "linkDown": bool, "reachable": bool, ...}); this reader follows
+    both. Returns (hosts, None) with the table as the bus wrote it; (None, "no-mirror") when there is no
+    file (the bus has not written under this root); (None, "mirror-unparsable") when the file is not a
+    document of that shape, a whitespace list written by a bus from before 2026-09-22 among them, said once
+    per distinct text in this process's log, so a shape drift between the two modules is seen and never
+    read as an empty roster."""
     path = STATE / "postal" / "remote-sids"
     try:
         text = path.read_text()
@@ -19393,7 +19394,7 @@ def _remote_sids_mirror():
         for key, row in hosts.items():
             if not (isinstance(row, dict) and isinstance(row.get("sids"), list)
                     and all(isinstance(s, str) for s in row["sids"])
-                    and isinstance(row.get("heard"), bool) and isinstance(row.get("expired"), bool)):
+                    and all(isinstance(row.get(k), bool) for k in ("heard", "expired", "linkDown", "reachable"))):
                 raise ValueError("host %r is not a roster row" % (key,))
     except (ValueError, KeyError, TypeError) as e:
         _say_once_judge("romp-judge: the postal bus's presence mirror %s is not the shape the bus writes (%s: %s); "
@@ -19409,7 +19410,9 @@ Deadness = collections.namedtuple("Deadness", "closed rule why")
 #   why     one token per arm, matched by value in tests/test_dead_session_staleness.py and
 #           tests/test_judge_propagate_loads.py: parsed, parse-failed (rules 1 and 2); ext (3);
 #           named-by-reachable-host (4); no-reachable-host-names-it (5); and the cannot-determine arms
-#           no-mirror, mirror-unparsable, named-by-unreachable-host, no-reachable-host
+#           no-mirror, mirror-unparsable, named-by-unreachable-host, no-reachable-host. Unreachable is one
+#           arm whatever made the source so (not heard since the bus started, expired, its link held down
+#           by the kernel): the row's flags say which, where the bus wrote them
 
 
 def _presumed_closed_verdict(sid, now):
@@ -19424,18 +19427,31 @@ def _presumed_closed_verdict(sid, now):
       4. a sid a REACHABLE host names in the postal bus's presence mirror (STATE/postal/remote-sids,
          _remote_sids_mirror) → NOT closed: live on another host, and a live remote session's local
          mirror store must never be presumed settled (the premature-settle flicker the gate exists to
-         prevent). Reachable is the bus's word, per row: heard in the bus's current process and its
-         presence not expired (a legacy heartbeat past HEARTBEAT_TTL; a peer's presence has no TTL);
+         prevent). Reachable is the bus's word, per row, the `reachable` flag its writer computes and
+         this reader only reads: heard in the bus's current process, its presence not expired (a legacy
+         heartbeat past HEARTBEAT_TTL; a peer's presence has no TTL), and its link not held down by the
+         kernel (`linkDown`: from the kernel's down notify until the host's next heartbeat or exchange
+         arrives with the link up; a host the kernel never notified has no link state and is gated by
+         heard alone);
       5. at least one reachable host, none names it, and no unreachable host's last roster names it
          either → a dead determination, True.
     Cannot determine, False, in four arms: no mirror file (the bus has not written under this root); a
     mirror not in the bus's shape (said once in this process's log; never read as an empty roster); the
     sid named only by an UNREACHABLE host, whose last roster stands until the host is heard again; no
-    reachable host at all (a bus that has heard nobody since it started, a mirror carried from before).
-    The last two close the two roads to a false settle that arming this rule opened (fork PR #897,
-    round 1, the reviewer's refuters): (1) a bus restarted from empty memory wrote its first mirror from
-    that memory, so until its first exchange every sid live on another host was absent from the file and
-    its local mirror store settled; the bus now carries every host it has not heard forward, unreachable,
+    reachable host at all (a bus that has heard nobody since it started, a mirror carried from before, or
+    every heard host expired or held down). Unreachable is one arm whatever made the host so: rule 4 is a
+    positive determination, live on another host, that only a host the bus can vouch for makes, and the
+    closed field is False either way. The link-down gate is round 2's ruling by the reviewer (fork PR
+    #897): a session started on a host after its last heard roster is in no roster, so a host counted
+    reachable while the kernel holds its link down would let rule 5 presume that session closed; a host
+    that is down cannot vouch for absence. Event-keyed at both ends: the down notify makes the host
+    unreachable at once (the bus writes the mirror from the notify), and the first heartbeat or exchange
+    heard with the link up makes it reachable again, not the up notify, whose roster is the one from
+    before the drop. The unreachable and no-reachable arms close the two roads to a false settle that
+    arming this rule opened (fork PR #897, round 1, the reviewer's refuters): (1) a bus restarted from
+    empty memory wrote its first mirror from that memory, so until its first exchange every sid live on
+    another host was absent from the file and its local mirror store settled; the bus now carries every
+    host it has not heard forward, unreachable,
     and the event that closes the road is that host's heartbeat or exchange arriving in the new process;
     (2) under the legacy singleton scheme the bus pruned an expired heartbeat's sid from the file, so a
     tunnel drop or a stalled peer longer than the TTL settled a live session on no new information; the
@@ -19450,8 +19466,8 @@ def _presumed_closed_verdict(sid, now):
     and every sid reaching it answered cannot-determine (the conservative side: nothing settled
     early, a dead sender's card only took longer to settle). tests/test_dead_session_staleness.py
     (ReaderFollowsTheWriter) runs the bus writer and this reader over one root, under both root
-    shapes, through the first write, a restart, an expiry and the legacy shape, and holds the two
-    modules together by execution."""
+    shapes, through the first write, a restart, an expiry, a link the kernel holds down and the legacy
+    shape, and holds the two modules together by execution."""
     for f, p, _a, _n in discover(now):
         if f == sid:
             try:
@@ -19470,13 +19486,13 @@ def _presumed_closed_verdict(sid, now):
     if hosts is None:
         return Deadness(False, None, why)               # the bus has not spoken in a shape this reader knows
     sid = str(sid)
-    reachable = [row for row in hosts.values() if row["heard"] and not row["expired"]]
+    reachable = [row for row in hosts.values() if row["reachable"]]      # the writer's flag: one home for the gate
     if any(sid in row["sids"] for row in reachable):
         return Deadness(False, 4, "named-by-reachable-host")
     if any(sid in row["sids"] for row in hosts.values()):
         return Deadness(False, None, "named-by-unreachable-host")   # its host's last word stands until heard again
     if not reachable:
-        return Deadness(False, None, "no-reachable-host")           # a bus that has heard nobody since it started
+        return Deadness(False, None, "no-reachable-host")           # none heard since start, or every heard host expired or held down
     return Deadness(True, 5, "no-reachable-host-names-it")
 
 
