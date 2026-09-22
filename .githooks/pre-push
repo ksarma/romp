@@ -728,7 +728,7 @@ make_scratch() {
 # status to read (the tip judging nothing; a commit passing unjudged), the
 # function's status being its LAST file's alone, and the newline count read a
 # failed pipeline as zero. A tool that failed is status 2, apart from the
-# newline case, with the tool and its status in rewrite_failure for the
+# newline case, the tool and its status named in the refusal printed for the
 # caller's line (the count's pipeline status is the failing stage's, pipefail).
 # Each ANSWER is read as well as each status (the header's second class): a tr
 # that exits 0 and writes nothing, or too little, would hand a join an empty
