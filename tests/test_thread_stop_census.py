@@ -334,7 +334,9 @@ says cleanup), the joins whose receiver is an element of what a for or a compreh
 element of a tuple target or a subscript of the iterated name by the target (`[t.join(5) for t in ts]`, `for t in (a, b):
 t.join(5)`, `for i, t in enumerate(ts): t.join(5)`, `ts[i].join()`, guarded or not: the ninth pass widened the shape from a
 Name target), in the registration's own arguments or in the body of the lambda, local function, module function or method
-it names, and a tree test pins that list EMPTY (before the pin the tree carried ten such joins in five modules, derived by
+it names or, one level down, of the module function or method a call in those bodies names (`self.addCleanup(lambda:
+_stop_all(ts))`, a local def that calls a self-method: round 3 of PR 891's review, 2026-09-22, which found the walk one
+call short of this sentence), and a tree test pins that list EMPTY (before the pin the tree carried ten such joins in five modules, derived by
 this function over the tree as it stood: six in tests/test_codex_backend.py, three of them the nested proofs' own, and one
 each in tests/test_file_read_memos.py, tests/test_post_push_coalescing.py, tests/test_free_threaded_caches.py and
 tests/test_sdk_backend.py, every one now a call of join_started but the second nested case's unguarded contrast, which
@@ -4298,8 +4300,13 @@ def _helper_bodies(unit, call, nodes):
 def _cleanup_nodes(unit, call, helpers=True):
     """The nodes a cleanup registration runs, read for its stop: its arguments; the local function (of the unit or its
     parent), the module function or the lambda a name among them is bound to; the methods of the class a `self.x` /
-    `cls.x` among them names; and, one level down (`helpers`), the bodies of the helper-module functions any of those
-    run, bound to the arguments handed (_helper_bodies)."""
+    `cls.x` among them names; ONE LEVEL DOWN inside those bodies (round 3 of PR 891's review, 2026-09-22), the local
+    function, module function or method of the class a Call in a collected lambda, local function or method names
+    (`self.addCleanup(lambda: _stop_all(ts))`: _stop_all's body; `def end(): self._end_all()` registered: _end_all's body),
+    the way _helper_bodies follows a call to a helper module's function, each body once and not walked further; and, one
+    level down (`helpers`), the bodies of the helper-module functions any of those run, bound to the arguments handed
+    (_helper_bodies). Before the widening the walk stopped at the lambda or the local def, so a list join one call behind
+    it was not the list-join pin's finding while the same join named directly (`self.addCleanup(_stop_all, ts)`) was."""
     nodes = []
     for a in list(call.args) + [k.value for k in call.keywords]:
         nodes.append(a)
@@ -4313,6 +4320,24 @@ def _cleanup_nodes(unit, call, helpers=True):
                 nodes.append(b[1])
         if isinstance(a, ast.Attribute) and isinstance(a.value, ast.Name) and a.value.id in ("self", "cls") and unit.cls is not None:
             nodes += unit.module.methods_of(unit.cls, a.attr)
+    seen = {id(n) for n in nodes}
+    for body in [n for n in nodes if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))]:
+        for sub in ast.walk(body):
+            if not isinstance(sub, ast.Call):
+                continue
+            called = []
+            if isinstance(sub.func, ast.Name):
+                fn = unit.local_defs.get(sub.func.id) or (unit.parent.local_defs.get(sub.func.id) if unit.parent is not None else None) \
+                    or unit.module.functions.get(sub.func.id)
+                if fn is not None:
+                    called.append(fn)
+            elif isinstance(sub.func, ast.Attribute) and isinstance(sub.func.value, ast.Name) and sub.func.value.id in ("self", "cls") \
+                    and unit.cls is not None:
+                called += unit.module.methods_of(unit.cls, sub.func.attr)
+            for fn in called:
+                if id(fn) not in seen:
+                    seen.add(id(fn))
+                    nodes.append(fn)
     return nodes + (_helper_bodies(unit, call, nodes) if helpers else [])
 
 
@@ -4380,7 +4405,8 @@ def _list_joins(node):
 
 def list_join_cleanups(paths, helpers=None, modules=None):
     """Every cleanup registration in the modules under `paths` that joins a LIST of threads inline (_list_joins over the
-    registration's own arguments and the bodies of the lambda, local function, module function or method it names, the
+    registration's own arguments and the bodies of the lambda, local function, module function or method it names, and,
+    one level down, of the module function or method a call in those bodies names (round 3 of PR 891's review); the
     helper-module bodies excluded): [(file, line, unit qualname, the join's text)]. THE PROPERTY THE TREE HOLDS (round 2
     of PR 891's review, 2026-09-22): this is EMPTY, because every such cleanup goes through tests/thread_ends.py's
     join_started, the guard on a thread never started written once (a cleanup registered before a start loop runs on
@@ -7547,14 +7573,19 @@ class PlantedShapes(unittest.TestCase):
         range(len(ts))`) and a for that joins `ts[i]` by the enumerate index; a cleanup through tests/thread_ends.py's
         join_started, by the registration or by a lambda, a cleanup joining single threads and subscript joins written out
         one by one (`(ts[0].join(2), ts[1].join(2))`, the shape of the unguarded contrast in tests/test_codex_backend.py) are
-        not."""
+        not. ONE CALL DOWN (round 3 of PR 891's review, 2026-09-22): a lambda that calls a module function which joins the
+        list (`self.addCleanup(lambda: _end_all(ts))`) and a local def that calls a method of the class which joins the
+        list stored on self (`def end(): self._join_all()`) are named too, with the join's text from the body one call
+        behind the registration; before the widening of _cleanup_nodes both were silent while `self.addCleanup(_stop_all,
+        ts)` was named."""
         with open(os.path.join(HERE, "thread_ends.py"), encoding="utf-8") as f:
             real = f.read()
         head = self.HEAD.replace("import unittest\n", "import unittest\nfrom tests.thread_ends import join_started\n")
-        head = head.replace("class T(", "def _stop_all(ts):\n    [t.join(1) for t in ts]\n\nclass T(")
+        head = head.replace("class T(", "def _stop_all(ts):\n    [t.join(1) for t in ts]\n\ndef _end_all(ts):\n    for t in ts:\n        t.join(4)\n\nclass T(")
         pair = "        ts = [threading.Thread(target=_once) for _ in range(2)]\n"
         starts = "        for t in ts:\n            t.start()\n        self.assertTrue(False)\n"
         body = ("    def _end(self):\n        for t in self.ts:\n            t.join()\n"
+                "    def _join_all(self):\n        for t in self.ts:\n            t.join(3)\n"
                 "    def test_comprehension(self):\n" + pair + "        self.addCleanup(lambda: [t.join(5) for t in ts])\n" + starts +
                 "    def test_genexp(self):\n" + pair + "        self.addCleanup(lambda: list(t.join(1) for t in ts))\n" + starts +
                 "    def test_for_def(self):\n" + pair + "        def end():\n            for t in ts:\n                t.join(2)\n        self.addCleanup(end)\n" + starts +
@@ -7564,6 +7595,10 @@ class PlantedShapes(unittest.TestCase):
                 "    def test_method(self):\n        self.ts = [threading.Thread(target=_once) for _ in range(2)]\n        self.addCleanup(self._end)\n"
                 "        for t in self.ts:\n            t.start()\n        self.assertTrue(False)\n"
                 "    def test_module_fn(self):\n" + pair + "        self.addCleanup(_stop_all, ts)\n" + starts +
+                "    def test_lambda_module_fn(self):\n" + pair + "        self.addCleanup(lambda: _end_all(ts))\n" + starts +
+                "    def test_def_method(self):\n        self.ts = [threading.Thread(target=_once) for _ in range(2)]\n"
+                "        def end():\n            self._join_all()\n        self.addCleanup(end)\n"
+                "        for t in self.ts:\n            t.start()\n        self.assertTrue(False)\n"
                 "    def test_enumerate(self):\n" + pair + "        def end():\n            for i, t in enumerate(ts):\n                t.join(5)\n        self.addCleanup(end)\n" + starts +
                 "    def test_index(self):\n" + pair + "        self.addCleanup(lambda: [ts[i].join(3) for i in range(len(ts))])\n" + starts +
                 "    def test_enumerate_index(self):\n" + pair + "        def end():\n            for i, _t in enumerate(ts):\n                ts[i].join()\n        self.addCleanup(end)\n" + starts +
@@ -7578,11 +7613,13 @@ class PlantedShapes(unittest.TestCase):
         self.assertEqual(sorted((u, t) for _f, _l, u, t in found),
                          sorted([("T.test_comprehension", "t.join(5)"), ("T.test_genexp", "t.join(1)"), ("T.test_for_def", "t.join(2)"),
                                  ("T.test_tuple_for", "t.join(5)"), ("T.test_method", "t.join()"), ("T.test_module_fn", "t.join(1)"),
+                                 ("T.test_lambda_module_fn", "t.join(4)"), ("T.test_def_method", "t.join(3)"),
                                  ("T.test_enumerate", "t.join(5)"), ("T.test_index", "ts[i].join(3)"), ("T.test_enumerate_index", "ts[i].join()")]), found)
         self.assertTrue(all(f == _p for f, _l, _u, _t in found), found)
         self.assertEqual(sorted(w.split(".")[1] for s, sh, w in rows if sh == "cleanup-before-start"),
                          sorted(["test_comprehension", "test_genexp", "test_for_def", "test_tuple_for", "test_tuple_for", "test_method",
-                                 "test_module_fn", "test_enumerate", "test_index", "test_enumerate_index", "test_indexed_out",
+                                 "test_module_fn", "test_lambda_module_fn", "test_def_method", "test_enumerate", "test_index",
+                                 "test_enumerate_index", "test_indexed_out",
                                  "test_helper", "test_helper_lambda", "test_single", "test_single"]),   # a.start(); b.start(): two rows
                          [(w, sh) for s, sh, w in rows])
         self.assertEqual((tails, unread, stale), ([], [], []))
