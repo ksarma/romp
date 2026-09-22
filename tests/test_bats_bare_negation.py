@@ -231,9 +231,12 @@ or, the pop figure's, by `.pop("ROMP_STATE_DIR"`, and the module count the files
 figures at the fourteenth commit. The six were MEASURED at those heads and are NOT ENFORCED: nothing executed here re-derives
 them, and the instrument that would is the module-level environment walker of tests/test_hermetic_kernel_postal.py
 (_module_level_env_writes, which reads every shape such a write takes, a subscript, setdefault, update, pop or putenv
-through os.environ under any name), which a sibling change extends to a census; no walker is built here. Two figures over every
-.py under tests/ that stood here through the eleventh commit are dropped, since the grep behind each counted this docstring's own
-lines). A column-0 write runs when pytest COLLECTS the module, before any test runs and whether or not one of the module's tests
+through os.environ under any name), which fork PR #894, the sibling change that builds that instrument, extends to a census; its
+walker derives WIDER figures than these column-0 greps, over every .py under tests/ recursively and every write shape the walker
+reads, not only a line beginning at column 0 with os.environ, because a census is keyed on the property, a write to the process
+environment at import, and not on one spelling of it; no walker is built here. Two figures over every .py under tests/ that
+stood here through the eleventh commit are dropped, since the grep behind each counted this docstring's own lines). A column-0
+write runs when pytest COLLECTS the module, before any test runs and whether or not one of the module's tests
 is selected, in every process that collects it (each xdist worker collects), so a subprocess started with a pass-through of the
 process's environment sees the union of those writes. bats saw ROMP_SERVE_TOKEN, which bin/romp reads over the state file (its
 _romp_token), and romp-sessions.bats's serve-token test, whose grep wants the token its setup wrote to the state file, failed
@@ -4519,6 +4522,12 @@ class BatsCorpus(unittest.TestCase):
             beyond = sorted(k for k in os.environ if not k.startswith("BATS_") and k not in BATS_ENV_KEYS)
             differs = _control_verdict("inert", [ok, ok], control([bad(3), ok]))
             moved = _control_verdict("undecided", [bad(2), bad(2)], control([bad(5), bad(5)]))
+        # the keys first, held by a computed message naming the extra or missing ones (round 3 of fork PR #871's review: the whole-
+        # sentence equality below is multi-kilobyte and reds with the keys elided past maxDiff, the shape tests-3 of round 2 ruled
+        # against); the sentence's key list stands between two fixed texts of its template
+        named = differs.split("the environment difference is ", 1)[1].split("; a variable bats legitimately needs", 1)[0].split(", ")
+        self.assertEqual(named, beyond, "the differing sentence names keys the process does not hold beyond the rule's, %s, and misses keys it "
+                                        "holds, %s" % (sorted(set(named) - set(beyond)), sorted(set(beyond) - set(named))))
         self.assertEqual(differs, CONTROL_ENVIRONMENT_DIFFERS % ("READ", "the test's outcome turns on this negation", len(BATS_ENV_KEYS),
                                                                  ", ".join(BATS_ENV_KEYS), "INERT", ", ".join(beyond)))
         self.assertIn("PLANTED_FOR_THE_SENTENCE", beyond)
@@ -5180,6 +5189,8 @@ class BatsRoad(unittest.TestCase):
                 self.assertEqual(decision.verdict, "inert", decision.message)
                 cut, said = control_under_bats(decision, tree, lines, extents, d, timeout=20, repeats=1, deadline=Deadline(time.monotonic() + 1, 1))
                 whole, _ = control_under_bats(decision, tree, lines, extents, d, timeout=20, repeats=1)
+                emitted = []
+                decide_corpus(tree, [relpath], d, emit=emitted.append, timeout=20, repeats=1, budget=1)
         self.assertIsNone(cut.control)
         self.assertRegex(said, r"^no control ran under the process environment: the control arm's budget \(1 s for every control of the corpus together\) "
                                r"ended run 1 of the side under `! true` after [0-9]+ s, bounded at [01] s by what was left of the budget and not at the run's "
@@ -5190,6 +5201,18 @@ class BatsRoad(unittest.TestCase):
         self.assertNotIn("control", _row(cut))
         self.assertIsNotNone(whole.control)
         self.assertTrue(whole.message.endswith(": " + CONTROL_SAME), whole.message)
+        # the composition (round 3 of fork PR #871's review, on the sixteenth commit: every budget pin hands the arm a Deadline of
+        # the test's own, so the driver's hand-off, decide_corpus building the Deadline from its `budget` argument, was pinned by
+        # nothing, and a driver building it from CONTROL_BUDGET left every pin green): the same tree through decide_corpus under a
+        # budget of 1 s, the one control withheld by a sentence naming 1 s and the arm's line counting 0 run and 1 withheld under
+        # 1 s. Which budget sentence withholds is the box's load (the first run cut at what was left of the budget, or the budget
+        # spent before that run or before the control started); each is the budget's and names 1 s
+        self.assertRegex("\n".join(l for l in emitted if l.startswith(relpath + ":3 no control ran") or l.startswith("controls on ")),
+                         r"^tests/slow\.bats:3 no control ran under the process environment: the control arm's budget \(1 s for every control of the "
+                         r"corpus together\) (ended run 1 of the side under `! true` after [0-9]+ s, bounded at [01] s by what was left of the budget "
+                         r"and not at the run's bound \(20 s\)|was spent before run 1 of the side under `! true` started|was spent before this "
+                         r"candidate's control started): nothing is said of the environment\ncontrols on 1 candidates not read: 0 ran, 1 withheld, "
+                         r"in [0-9.]+ s \(CONTROL_BUDGET 1 s\)$")
 
 
 class Counts(unittest.TestCase):
