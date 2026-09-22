@@ -77,8 +77,12 @@ atexit.register(_remove_run_dirs)
 # controller's session end reads /proc for every live process whose environment carries a value that is one of this
 # run's roots or a path under one (a ':'-joined value counted per component), or whose cwd is under one, and if any
 # remain the run is RED and each is named: pid, parent, command line, the names it holds the root through, and the
-# test that started it (PYTEST_CURRENT_TEST, inherited from the test process's environment at the spawn). Keyed on that
-# PROPERTY and never on a binary's name: a bus, a kernel, a session host, a mock ssh's sleep are all the same leak.
+# test PHASE current when it was spawned (PYTEST_CURRENT_TEST, inherited from the test process's environment at the
+# spawn). That phase is a pointer, not the culprit's name: a child a background thread spawns lands wherever the thread
+# happened to run, so it may carry a later phase, another test's, or none (the reproduction's bus carried the guard test
+# on 3.10 and no PYTEST_CURRENT_TEST at all on 3.12, its spawn falling after the call phase ended); the witness is the
+# pid and the command line, which the property gives every time. Keyed on that PROPERTY and never on a binary's name: a
+# bus, a kernel, a session host, a mock ssh's sleep are all the same leak.
 # The roots are the controller's and every root a nested process minted beside it and listed in the controller's
 # `romp-tests-children` (an xdist worker, a nested pytest), read recursively, so a worker's leaked child is the
 # controller's finding; the workers themselves skip the check, and are gone when it runs (xdist's DSession tears its
@@ -123,7 +127,8 @@ def _processes_holding(roots, skip_pids=()):
     """(holders, unreadable, procfs read): every live process (not this one, not a zombie, not in `skip_pids`) whose
     environment carries a value that is one of `roots` or a path under one (a ':'-joined value counted per component),
     or whose cwd is under one. Each holder is a dict: pid, ppid, cmd, via (the environment names, and "cwd"), cwd, test
-    (its PYTEST_CURRENT_TEST, or ""). The environment read is the one the process was STARTED with (/proc shows the
+    (the PYTEST_CURRENT_TEST in its environment, the test phase current at its spawn, or "" when it carries none). The
+    environment read is the one the process was STARTED with (/proc shows the
     initial block, not later putenv calls), which is what a child inherits and so exactly the property judged.
     `unreadable` counts the processes whose environ could not be read (another user's), which are counted and not
     judged; the third value is False where there is no procfs to read."""
@@ -222,9 +227,10 @@ def _report_leaked_run_processes(session):
              "them to exit: a test started them and did not stop them; the run is red. %d environment(s) of other users' "
              "processes could not be read and were not judged." % (len(leaked), LEAK_EXIT_BOUND_S, unreadable)]
     for h in leaked:
-        lines.append("[tests]   pid %d (parent %d): %s | holds the root through %s | started under %s" % (
+        lines.append("[tests]   pid %d (parent %d): %s | holds the root through %s | spawned during %s" % (
             h["pid"], h["ppid"], h["cmd"][:240] or "(no command line)", ", ".join(h["via"]),
-            h["test"] or "no test (PYTEST_CURRENT_TEST is not in its environment)"))
+            h["test"] or "no test phase (PYTEST_CURRENT_TEST is not in its environment: spawned between phases, as a "
+                         "background thread's child can be, or outside a test)"))
     _say_at_run_end(session, "\n".join(lines))
     session.exitstatus = max(int(session.exitstatus or 0), 1)
 

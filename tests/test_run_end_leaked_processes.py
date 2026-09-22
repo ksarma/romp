@@ -3,8 +3,11 @@
 session end tests/conftest.py reads /proc for every live process whose environment carries one of the run's temp roots
 (or a path under one, a ':'-joined value counted per component) or whose cwd is under one, waits for the one event it
 can observe (each holder's exit) up to a bound, and if any still hold a root the run is red and each is named with its
-pid, parent, command line, the names it holds the root through and the test that started it (PYTEST_CURRENT_TEST, in the
-environment it inherited). Keyed on that property, never on a binary's name. The case that wrote this: a real postal
+pid, parent, command line, the names it holds the root through and the test PHASE current at its spawn
+(PYTEST_CURRENT_TEST in the environment it inherited). The phase is a pointer and not the culprit's name: a child a
+background thread spawns may carry a later phase, another test's, or none (the fork PR #813 reproduction's bus carried
+the guard test on 3.10 and no PYTEST_CURRENT_TEST at all on 3.12), so the witness is the pid and the command line, which
+the property gives every time. Keyed on that property, never on a binary's name. The case that wrote this: a real postal
 bus started from the peer-notify guard test's revive road with the environment of the test process (another module's
 module-level port and client-only, and a third module's sessions-file seam), detached, so the test's end never reached
 it; it kept writing into a shared state root every 30 s and turned another module's snapshot test red in one CI cell;
@@ -12,12 +15,13 @@ at the same commit the run ended green.
 
 Pinned by execution, each half where it lives: the scan over a stand-in root handed to it alone (a child holding the root
 through TMPDIR, through another name, through one component of a ':'-joined value, through its cwd; a sibling path with
-the root's name as a prefix is not the root; a child that exited is not reported), the wait (a holder that exits ends it
-before the bound; one that never exits is reported at the bound), the roots (the controller's and its recorded
-children's, recursively), and the run end itself in a child pytest process: a test that leaves a detached child ends
-the run red with the process and the test named and "1 passed" still in the summary, and a test that leaves nothing
-ends it green with nothing said. Synthetic throughout: the leaked processes are `sleep`s this module starts and stops by
-the pid it recorded."""
+the root's name as a prefix is not the root; a child that exited is not reported; a child with no PYTEST_CURRENT_TEST is
+reported with an empty phase), the wait (a holder that exits ends it before the bound; one that never exits is reported
+at the bound), the roots (the controller's and its recorded children's, recursively), and the run end itself in a child
+pytest process: a test that leaves a detached child ends the run red with the process and the phase named and "1 passed"
+still in the summary, one that leaves a child carrying no phase ends it red naming the pid and the command line and
+saying the phase is unknown, and a test that leaves nothing ends it green with nothing said. Synthetic throughout: the
+leaked processes are `sleep`s this module starts and stops by the pid it recorded."""
 import json
 import os
 import shutil
@@ -76,8 +80,10 @@ class Scanner(unittest.TestCase):
         self.root = tempfile.mkdtemp()                 # a stand-in root inside the run's root: the scan is handed this one alone
         self.addCleanup(shutil.rmtree, self.root, True)
 
-    def _sleeper(self, cwd=None, **env_over):
+    def _sleeper(self, cwd=None, drop=(), **env_over):
         env = dict(os.environ)
+        for k in drop:
+            env.pop(k, None)
         env.update(env_over)
         p = subprocess.Popen(["sleep", "120"], env=env, cwd=cwd, stdin=DEVNULL, stdout=DEVNULL, stderr=DEVNULL)
         self.addCleanup(lambda: (_stop(p.pid), _gone(p.pid)))
@@ -88,17 +94,22 @@ class Scanner(unittest.TestCase):
         self.assertTrue(ok, "procfs is readable here")
         return holders
 
-    def test_a_child_holding_the_root_is_reported_with_the_test_that_started_it_and_not_once_it_has_exited(self):
+    def test_a_child_holding_the_root_is_reported_with_the_test_phase_at_its_spawn_or_none_and_not_once_it_has_exited(self):
         p = self._sleeper(TMPDIR=self.root)
         mine = [h for h in self._holders() if h["pid"] == p.pid]
         self.assertEqual(len(mine), 1, "the child holding the stand-in root through TMPDIR is reported")
         self.assertEqual(mine[0]["via"], ["TMPDIR"])
         self.assertEqual(mine[0]["ppid"], os.getpid())
         self.assertIn("sleep 120", mine[0]["cmd"])
-        self.assertEqual(mine[0]["test"], os.environ["PYTEST_CURRENT_TEST"], "the test that started it, from the environment it inherited")
+        self.assertEqual(mine[0]["test"], os.environ["PYTEST_CURRENT_TEST"], "the test phase current at its spawn, from the environment it inherited")
         self.assertEqual([h for h in self._holders() if h["pid"] != p.pid], [], "nothing else holds a stand-in root nobody else was handed")
+        q = self._sleeper(TMPDIR=self.root, drop=("PYTEST_CURRENT_TEST",))
+        theirs = [h for h in self._holders() if h["pid"] == q.pid]
+        self.assertEqual(len(theirs), 1, "a child carrying no phase is reported all the same: the property is the root, not the name")
+        self.assertEqual(theirs[0]["test"], "", "...with an empty phase, never a guess")
         _stop(p.pid)
-        self.assertTrue(_gone(p.pid))
+        _stop(q.pid)
+        self.assertTrue(_gone(p.pid) and _gone(q.pid))
         self.assertEqual(self._holders(), [], "a child that exited holds nothing")
 
     def test_a_path_under_the_root_in_any_name_a_colon_joined_component_or_the_cwd_counts(self):
@@ -187,9 +198,28 @@ class RunEnd(unittest.TestCase):
         self.assertIn("[tests]   pid %d (parent " % pid, out)
         self.assertIn("sleep 120", out)
         self.assertRegex(out, r"holds the root through [^|\n]*\bTMPDIR\b", "the run's TMPDIR, among the floor's other names under the root")
-        self.assertIn("started under tests/test_run_end_leaked_processes.py::Leaker::test_leaves_a_detached_child (call)", out)
+        self.assertIn("spawned during tests/test_run_end_leaked_processes.py::Leaker::test_leaves_a_detached_child (call)", out)
         _stop(pid)
         self.assertTrue(_gone(pid), "the sleeper is stopped by the pid the child recorded")
+
+    @unittest.skipIf(os.environ.get(MARKER_ENV), "child mode")
+    def test_a_process_carrying_no_test_phase_is_still_reported_by_pid_and_command_line(self):
+        """The phase is best-effort and the report says so (the fixup of 2026-09-22, the verifier's finding: the fork PR
+        #813 reproduction's bus on 3.12 carried no PYTEST_CURRENT_TEST, its spawn falling after the call phase): a child
+        spawned with the name removed from its environment is named by pid and command line, the run is red, and the
+        phase reads as unknown rather than as any test's."""
+        r, pid = self._child_run("test_leaves_a_detached_child_with_no_test_phase")
+        out = r.stdout + r.stderr
+        self.assertIsNotNone(pid, "the child run's test left its sleeper's pid: " + out)
+        self.assertEqual(r.returncode, 1, out)
+        self.assertIn("1 passed", out)
+        self.assertIn("[tests]   pid %d (parent " % pid, out)
+        self.assertIn("sleep 120", out)
+        self.assertIn("spawned during no test phase (PYTEST_CURRENT_TEST is not in its environment: spawned between phases, as a "
+                      "background thread's child can be, or outside a test)", out)
+        self.assertNotIn("spawned during tests/", out, "no phase is guessed for it")
+        _stop(pid)
+        self.assertTrue(_gone(pid))
 
     @unittest.skipIf(os.environ.get(MARKER_ENV), "child mode")
     def test_a_run_that_leaves_nothing_ends_green_and_says_nothing(self):
@@ -208,6 +238,13 @@ class Leaker(unittest.TestCase):
     @unittest.skipUnless(os.environ.get(MARKER_ENV), "child mode only: RunEnd runs this in a child pytest process")
     def test_leaves_a_detached_child(self):
         p = subprocess.Popen(["sleep", "120"], start_new_session=True, stdin=DEVNULL, stdout=DEVNULL, stderr=DEVNULL)
+        Path(os.environ[MARKER_ENV]).write_text(str(p.pid))
+
+    @unittest.skipUnless(os.environ.get(MARKER_ENV), "child mode only: RunEnd runs this in a child pytest process")
+    def test_leaves_a_detached_child_with_no_test_phase(self):
+        env = dict(os.environ)
+        env.pop("PYTEST_CURRENT_TEST", None)          # what a background thread's spawn between phases inherits
+        p = subprocess.Popen(["sleep", "120"], env=env, start_new_session=True, stdin=DEVNULL, stdout=DEVNULL, stderr=DEVNULL)
         Path(os.environ[MARKER_ENV]).write_text(str(p.pid))
 
     @unittest.skipUnless(os.environ.get(MARKER_ENV), "child mode only: RunEnd runs this in a child pytest process")

@@ -83,25 +83,38 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   The import-time half is pinned for every `.py` under `tests/`, walked recursively
   so `fixtures/` is read too (the test checks its glob against an independent walk,
   so no file is silently unscanned), by `tests/test_hermetic_kernel_postal.py`: the
-  set of names the test modules write at module level, module-level `if`, `try`,
-  `for` and `with` bodies included, in every shape a write takes (a subscript
-  assignment, `setdefault`, `update` of a dict literal, of keywords or of a
-  module-level name bound to a dict literal, `|=`, `os.putenv`, through `os.environ`
-  or any name bound to it, a subscript whose key a `for` over string literals binds),
-  EQUALS the licensed set `LICENSED_MODULE_LEVEL_WRITES` there, an equality and never
-  a floor, and every write meets its licence's condition. The licences are per name
-  and checkable: the state preamble (`XDG_STATE_HOME`, `ROMP_STATE_DIR`, which
-  `tests/test_state_isolation_order.py` mandates), `ROMP_SERVE_TOKEN` and
-  `ROMP_KERNEL_NO_OPEN` (dated 2026-09-22 and pointed at the class item fork PR #871
-  filed in the notes: import-time writers migrate into fixtures or the floor), the
-  dead ports and the catalog, scope, claude-config and service-env floors (one value,
-  and `tests/conftest.py` re-asserts the name in an autouse fixture, so the module
-  value cannot outlive collection), and `ROMP_MODELS_URL` (read at kernel import, a
-  dead loopback URL). The two floor modules, `tests/conftest.py` and
-  `tests/__init__.py`, are the one home of run-wide values and are licensed
-  wholesale. A write whose keys the scan cannot read fails the test naming the file
-  and line rather than passing unread. A module-level `pop` is outside that pin:
-  unset is the production default and what a clean shell gives every module.
+  set of names the test modules write in everything that EXECUTES AT IMPORT
+  (module-level `if`, `try`, `for` and `with` bodies and their header expressions,
+  class bodies, the decorators and default argument values of a def, the decorators
+  and bases of a class, and the writes reached through a call at import the scan can
+  resolve to a def or class under `tests/`: a module-local helper, a name imported
+  from a tests-local module, a bare decorator, an instantiation), in every shape a
+  write takes (a subscript assignment, `setdefault`, `update` of a dict literal, of
+  keywords or of a module-level name bound to a dict literal, `|=`, `os.putenv`,
+  through `os.environ` or any name bound to it, a subscript whose key a `for` over
+  string literals binds), EQUALS the licensed set `LICENSED_MODULE_LEVEL_WRITES`
+  there, an equality and never a floor, and every write meets its licence's
+  condition. Outside the scan, named in the module: a callee it cannot resolve
+  (product code loaded by path, the standard library, a method on an instance, a
+  lambda, `exec`). The licences are per name and checkable, each with a condition on
+  the written value (read through a module-level name bound once, so
+  `_ROOT = tempfile.mkdtemp()` is read as the mkdtemp): the state preamble
+  (`XDG_STATE_HOME` a mkdtemp, `ROMP_STATE_DIR` a private root or the shell's value
+  put back; `tests/test_state_isolation_order.py` mandates the preamble),
+  `ROMP_SERVE_TOKEN` (a string literal, or the shell's value put back) and
+  `ROMP_KERNEL_NO_OPEN` (the value "1"), the four of them dated 2026-09-22 and
+  pointed at the class item fork PR #871 filed in the notes (import-time writers
+  migrate into fixtures or the floor), the dead ports and the catalog, scope,
+  claude-config and service-env floors (one value or a path under the module's
+  root, and `tests/conftest.py` re-asserts the name in an autouse fixture, so the
+  module value cannot outlive collection), and `ROMP_MODELS_URL` (read at kernel
+  import, a dead loopback URL); a check over the table itself holds every licence to
+  a per-write condition and every temporary one to a since date and a named item.
+  The two floor modules, `tests/conftest.py` and `tests/__init__.py`, are the one
+  home of run-wide values and are licensed wholesale. A write whose keys the scan
+  cannot read fails the test naming the file and line rather than passing unread. A
+  module-level `pop` is outside that pin: unset is the production default and what a
+  clean shell gives every module.
   `python -m tests.test_hermetic_kernel_postal --census` prints the counts by name
   and shape. The per-test half, set in setUp and put back by a cleanup registered
   right after the write (`restore_env` from `tests/conftest.py`, or a method of the
@@ -127,8 +140,11 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   observe, each holder's exit, up to `LEAK_EXIT_BOUND_S` (5 s: a signalled child exits
   well inside it, a clean run pays nothing because the wait starts only when a holder
   is seen), and if any still hold a root the run is RED and each is named: pid,
-  parent, command line, the names it holds the root through, and the test that
-  started it (`PYTEST_CURRENT_TEST` in the environment it inherited). Keyed on that
+  parent, command line, the names it holds the root through, and the test phase
+  current at its spawn (`PYTEST_CURRENT_TEST` in the environment it inherited; a
+  child a background thread spawns may carry a later phase or none, so the pid and
+  the command line are the witness and the phase is a pointer when there is one).
+  Keyed on that
   property, never on a binary's name: a postal bus, a kernel, a session host and a
   mock ssh's orphaned `sleep` are the same leak (the tunnels module's mocks `exec`
   their trailing sleep since the check found the orphans). The check never kills; it
