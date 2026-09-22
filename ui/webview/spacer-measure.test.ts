@@ -461,8 +461,8 @@ test("a frame holding one row of the active view and one of a view switched away
 test("spacerRow mints the `view` marker only when handed one, and only the one word (the owner 2026-09-21, who approved the field)", () => {
   // the marker is spread only when handed the one word: the shown view's row carries none, a null row handed nothing carries none, the
   // switched-away view's row carries the word, and a value the parameter's type does not name, handed past the type, mints nothing (the
-  // type is gone at run time; the builder's guard holds the word there, and the kernel admits the key and checks no value, so the guard is
-  // the one hold on the word). The three foreign values below are a SAMPLE of what the type does not name, not the population: another word
+  // type is gone at run time; the builder's guard holds the word there, and the kernel bounds the value to the same word, CLIENT_DIAG_VALUES, so the guard is
+  // the page's hold on the word and the kernel's refusal is the store's). The three foreign values below are a SAMPLE of what the type does not name, not the population: another word
   // answers a guard on truthiness, a case variant of the word answers a guard that lowers before comparing (that guard left every leg and
   // tsc green before the case variant was asserted), a truthy non-string answers a guard that holds strings to the word and lets a non-string
   // through; the guard's equality with the one word is what holds the rest. scroll-movers.test.ts and scroll-journal-audit.test.ts read the
