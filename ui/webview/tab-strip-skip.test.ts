@@ -50,6 +50,7 @@ test("every input the strip renders is in the signature", () => {
     'surfaceLens(effViews(), "chat")', "unions",
     "snapView",   // the section the pane shows at a glance: a header's mark, its way-back act and its words derive from it
     "m?.name", "m?.color?.bg", "m?.color?.fg", "m?.emoji",
+    "!!m?.userTodos",   // the roster row's user-todo count, the flag's input in the skeleton AND placeholder rows (2026-09-22); one includes over the whole signature, so this reads red only when the term leaves both rows: the census below and tab-usertodo-skeleton.test.ts hold each row
     "s.name", "s.color?.bg", "s.color?.fg", "s.emoji ?? tabMeta.get(id)?.emoji", "st.state", "tabStateClass(st)", "!!st.faded",
     "st.ctx", "st.ctxColor", "st.ctxTone", "!!s.sub", "!!(s.userTodos && s.userTodos.length)", "hostIsDown(id)", "hostDownNote(id)",
     "ledgers.get(id)?.needsInput === true",   // the feed's needs-you verdict: a header's stand-in pip over its hidden members reads it (tab-snapshot.ts standInPip)
