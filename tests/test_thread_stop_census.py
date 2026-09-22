@@ -45,9 +45,11 @@ never passed in silence.
 
 THE KIND of a thread, read from its target: what it does if the test never stops it.
   loop:    it runs until told: serve_forever / run_forever; a function of the test module whose body has a `while`
-           (a `while` bounded by a clock reading is not one), or that iterates `iter(f, sentinel)`, or that calls a
-           product function that has one; a product function (kernel/, postal/, cli/, the bin scripts) whose body has
-           a `while` (km._producer, _pusher, _heartbeat, _jobs_loop, _ws_sender, _apply_pending_ops, pm._heartbeat_loop).
+           (a `while` bounded by a clock reading, in its test or by an `if <clock>: break` in its body, is not one), or
+           that iterates `iter(f, sentinel)`, or that calls a product function that has one (INDIRECT evidence the walk
+           cannot weigh: the product loop may well return, so for the timed-join rule below such a thread is read as
+           bounded); a product function (kernel/, postal/, cli/, the bin scripts) whose body has a `while` (km._producer,
+           _pusher, _heartbeat, _jobs_loop, _ws_sender, _apply_pending_ops, pm._heartbeat_loop).
   waits:   it blocks until the test releases it: the target is an untimed Event.wait / Lock.acquire / Queue.get / join,
            or a function of the test module that calls one with no timeout (or reads a socket or a pipe).
   bounded: everything else: a function of the test module with no loop and only timed waits, a product function with
@@ -77,9 +79,14 @@ fail, and the shape this census forbids is a stop that stands BEHIND an assertio
     runs cleanups after tearDown, LIFO, on every exit path.
   cleanup-before-first-assertion: such a cleanup registered by a statement the walk forward meets before any assertion
     (`Thread(target=srv.serve_forever).start()` then `self.addCleanup(srv.shutdown)`).
-  stop-before-first-assertion: the walk forward meets the stop itself before any assertion: a join, shutdown or cancel
-    of the same receiver or the same list (`for t in ts: t.start()` then `for t in ts: t.join()`), or, for a thread that
-    waits or polls, a set or release of what it waits on (`go.set()`).
+  stop-before-first-assertion: the walk meets the stop itself before any assertion, in the start's own statement first
+    (`t.start(), t.join()` in one) and then forward: a join of the same receiver or the same list (`for t in ts:
+    t.start()` then `for t in ts: t.join()`), a shutdown / stop / cancel of it or of the object the target runs on
+    (srv.shutdown() for srv.serve_forever; loop.stop handed to call_soon_threadsafe), a set or release of what the thread
+    waits on or polls (`go.set()`), or the loops' seam set for a loop outside the module (km._LOOPS_STOP.set() for
+    km._producer). A TIMED join of a loop thread is a wait the loop may outlive, not its stop: alone it is passed over,
+    and the walk goes on to a release, a shutdown or the seam; an untimed join counts (a loop that did not end would
+    hang the test, loudly).
   class-hook: the thread, the object its target runs on (target=self.srv.serve_forever), a local receiver the body
     stores on self (self.loops.append(loop)), or the attribute a helper's result is assigned to (self.bus = _serve(...))
     is on self or cls, and a hook of the class or a base in the same file (tearDown, tearDownClass, a cleanup registered
@@ -99,8 +106,10 @@ hooks), and the site is named at the caller.
 
 WHAT THIS CENSUS DOES NOT SEE. The shape rules read constructs and not their meaning: a cleanup that names the
 thread and a stop verb whose stop does not reach it (a set of an event the loop stopped reading), a finally that does
-not join, a tearDown whose join bound the thread outlives, an end method no test calls, are all classed as guaranteed
-here and caught only by the runtime oracle. A thread started
+not join, a tearDown or a cleanup whose only stop of a loop thread is a timed join (the thread is waited for on every
+exit path; whether the loop ended within the bound is the oracle's to say: the timed-join rule reads the body's forward
+walk, not the hooks), an end method no test calls, are all classed as guaranteed here and caught only by the runtime
+oracle. A thread started
 by code outside tests/*.py (a kernel helper that spawns its own worker; a product object's own start(), as
 sb.SdkSession(...).start()) is the product's to end. Run the module directly for the table (`--table`; `--tail` prints
 only the tail-only and unreadable rows).
@@ -879,6 +888,9 @@ class _Start:
         self.line = call.lineno
         self._words = {}
         self.kind, self.why = ("?", "") if ctor is None else _kind(self)
+        # a test function that CALLS a product function with a while (run -> em.hydrate) is loop-kind by evidence the
+        # walk cannot weigh (the product loop may well return): for the timed-join rule it is read as bounded
+        self.indirect = self.kind == "loop" and self.why.startswith("calls ") and "product function" in self.why
 
     def words(self, extra=()):
         """_thread_words, memoised per caller binding (`extra`)."""
@@ -902,7 +914,7 @@ def _body_kind(unit, fn_body_nodes, loops, depth):
     """The kind a function body gives its thread: loop, waits or bounded, with the reason."""
     for sub in fn_body_nodes:
         if isinstance(sub, ast.While):
-            if CLOCK.search(ast.unparse(sub.test)):
+            if CLOCK.search(ast.unparse(sub.test)) or _clock_break(sub):
                 continue
             return "loop", "a while loop"
         if isinstance(sub, (ast.For, ast.AsyncFor)) and isinstance(sub.iter, ast.Call) and _callee_name(sub.iter) == "iter" and len(sub.iter.args) == 2:
@@ -931,6 +943,16 @@ def _body_kind(unit, fn_body_nodes, loops, depth):
                 elif nm in loops and nm not in BUILTIN_METHODS and _product_call(unit, sub):
                     return "loop", "calls %s, a product function with a while loop" % nm
     return "bounded", "no loop, no untimed wait"
+
+
+def _clock_break(loop):
+    """The while's body leaves it on a clock reading (`if time.monotonic() > deadline: break`): bounded, as a while whose
+    test reads the clock is."""
+    for sub in ast.walk(loop):
+        if isinstance(sub, ast.If) and CLOCK.search(ast.unparse(sub.test)) \
+                and any(isinstance(n, (ast.Break, ast.Return)) for b in sub.body for n in ast.walk(b)):
+            return True
+    return False
 
 
 def _is_module_alias(unit, node):
@@ -1177,37 +1199,57 @@ def _in_try_finally(stack):
 
 
 def _stop_in(unit, stmt, names, releases, start, extra=()):
-    """The stop one statement holds for the thread: a cleanup naming its stop ('cleanup-before-first-assertion'); a join,
-    shutdown or cancel of the same receiver or the same list, or a set / release of what it waits on
-    ('stop-before-first-assertion')."""
+    """The stop one statement holds for the thread: a cleanup naming its stop ('cleanup-before-first-assertion'); a join
+    of the same receiver or list, a shutdown / stop / cancel of it or of the object its target runs on (called, or handed
+    over as loop.call_soon_threadsafe(loop.stop)), a set / release of what it waits on, or the loops' seam set for a
+    product loop ('stop-before-first-assertion'). A TIMED join of a loop thread is a wait, not its stop: when it returns
+    the loop runs on unless something else ended it, so it counts only beside a release, a shutdown or the seam."""
     loop_vars = {}
     for loop in ast.walk(stmt):
         if isinstance(loop, (ast.For, ast.comprehension)) and isinstance(loop.target, ast.Name):
             loop_vars[loop.target.id] = ast.unparse(loop.iter)
+    target_recvs = _target_receivers(start) if start is not None else set()
+    seam_ok = start is not None and start.kind == "loop" and _outside_target(start)
+    loop_kind = start is not None and start.kind == "loop" and not start.indirect
+    timed_join, ended = False, False
     for sub in ast.walk(stmt):
-        if not isinstance(sub, ast.Call):
-            continue
-        if _is_cleanup_call(unit, sub) and _cleanup_stops(unit, sub, start, extra):
-            return "cleanup-before-first-assertion"
-        if isinstance(sub.func, ast.Attribute):
-            r = ast.unparse(sub.func.value)
-            if sub.func.attr in ("join", "shutdown", "cancel") and (r in names or (r in loop_vars and loop_vars[r] in names)):
+        if isinstance(sub, ast.Call):
+            if _is_cleanup_call(unit, sub) and _cleanup_stops(unit, sub, start, extra):
+                return "cleanup-before-first-assertion"
+            if not isinstance(sub.func, ast.Attribute):
+                continue
+            f = sub.func
+            r = ast.unparse(f.value)
+            same = r in names or (r in loop_vars and loop_vars[r] in names)
+            if f.attr == "join" and same:
+                if loop_kind and (sub.args or sub.keywords):
+                    timed_join = True
+                    continue
                 return "stop-before-first-assertion"
-            if sub.func.attr in ("set", "release") and r in releases:
-                return "stop-before-first-assertion"
-    return None
+            if f.attr in ("shutdown", "stop", "cancel", "close", "server_close") and (same or r in target_recvs):
+                ended = True
+            if f.attr in ("set", "release") and (r in releases or (seam_ok and STOP_SEAM in r)):
+                ended = True
+        elif isinstance(sub, ast.Attribute) and sub.attr in ("stop", "shutdown", "cancel", "close") and ast.unparse(sub.value) in target_recvs:
+            ended = True                                    # handed over: loop.call_soon_threadsafe(loop.stop)
+    if ended:
+        return "stop-before-first-assertion"
+    return "timed-join" if timed_join else None
 
 
 def _guard_ahead(unit, stmt, names, releases, start, extra=()):
     """The shape the walk forward from `stmt` meets before the first assertion: 'finally', 'cleanup-before-first-assertion',
-    'stop-before-first-assertion', or None."""
-    for nxt in unit.forward(stmt):
-        if isinstance(nxt, ast.Try) and nxt.finalbody:
-            return "finally"
-        if _is_assertion(nxt):
-            return None
+    'stop-before-first-assertion', or None. The start's own statement is read first (`t.start(), t.join()` in one), then
+    the statements after it. A timed join of a loop thread is passed over: the walk goes on to a release, a shutdown or
+    the seam, and finds none before the assertion, the stop is behind it."""
+    for nxt in [stmt] + list(unit.forward(stmt)):
+        if nxt is not stmt:
+            if isinstance(nxt, ast.Try) and nxt.finalbody:
+                return "finally"
+            if _is_assertion(nxt):
+                return None
         r = _stop_in(unit, nxt, names, releases, start, extra)
-        if r:
+        if r and r != "timed-join":
             return r
     return None
 
@@ -1723,7 +1765,7 @@ class PlantedShapes(unittest.TestCase):
             "    def test_x(self):\n"
             "        t = threading.Thread(target=_loop)\n"
             "        t.start()\n"
-            "        t.join(5)\n"
+            "        t.join()\n"
             "        self.assertTrue(False)\n"
             "    def test_many(self):\n"
             "        ts = [threading.Thread(target=_loop) for _ in range(3)]\n"
@@ -1751,6 +1793,46 @@ class PlantedShapes(unittest.TestCase):
             "            srv.shutdown()\n")
         self.assertEqual(tails, [])
         self.assertEqual(sorted(s for _s, s, _w in rows), ["finally"] + ["stop-before-first-assertion"] * 3)
+
+    def test_a_join_in_the_starts_own_statement_counts_and_a_timed_join_alone_does_not_stop_a_loop(self):
+        """The start statement's remaining nodes are read first (`t.start(), t.join()` in one statement is a stop, not
+        tail-only); a TIMED join of a loop thread is a wait the loop outlives, so alone it is not the stop (test_y is
+        named), while the loops' seam set beside it (a product loop), a shutdown of the object the target runs on, or a
+        release of what the thread waits on is."""
+        rows, (tails, unread, stale, bounded), _p = self._census(
+            "    def test_x(self):\n"
+            "        t = threading.Thread(target=_loop)\n"
+            "        t.start(), t.join()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_y(self):\n"
+            "        t = threading.Thread(target=_loop)\n"
+            "        t.start()\n"
+            "        t.join(5)\n"
+            "        self.assertTrue(False)\n"
+            "    def test_z(self):\n"
+            "        t = threading.Thread(target=km._producer, daemon=True)\n"
+            "        t.start()\n"
+            "        km._LOOPS_STOP.set(); km._producer_wake.set()\n"
+            "        t.join(10)\n"
+            "        self.assertTrue(False)\n"
+            "    def test_w(self):\n"
+            "        srv = object()\n"
+            "        t = threading.Thread(target=srv.serve_forever)\n"
+            "        t.start()\n"
+            "        srv.shutdown(); t.join(5)\n"
+            "        self.assertTrue(False)\n"
+            "    def test_v(self):\n"
+            "        go = threading.Event()\n"
+            "        def run():\n"
+            "            while not go.is_set():\n"
+            "                time.sleep(0.01)\n"
+            "        t = threading.Thread(target=run)\n"
+            "        t.start()\n"
+            "        go.set(); t.join(5)\n"
+            "        self.assertTrue(False)\n", head=self.HEAD_KM)
+        self.assertEqual(self._tails(tails), [("_loop", "T.test_y")])
+        self.assertEqual(sorted((w, s) for _s, s, w in rows if w != "T.test_y"),
+                         [(w, "stop-before-first-assertion") for w in ("T.test_v", "T.test_w", "T.test_x", "T.test_z")])
 
     def test_a_cleanup_registered_in_set_up_and_a_helpers_result_stored_on_self_count_for_the_class(self):
         rows, (tails, unread, stale, bounded), _p = self._census(
