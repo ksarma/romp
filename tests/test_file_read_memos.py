@@ -371,6 +371,7 @@ class MemoEviction(_Memo):
             return go
         threads = [threading.Thread(target=wrap(i, fn), name="fill-%d" % i, daemon=True)
                    for i, fn in enumerate(targets)]
+        self.addCleanup(lambda: [t.join(timeout=self.JOIN_S) for t in threads])    # on every exit path (the joins below are the success path's)
         for t in threads:
             t.start()
         for t in threads:
