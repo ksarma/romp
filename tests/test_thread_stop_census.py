@@ -4183,24 +4183,47 @@ def _cleanup_stops(unit, call, start, extra=()):
     return any(_word_in(w, text) for w in start.words(extra))
 
 
+def _target_names(t):
+    """The names a for or comprehension target binds: the Name itself, the elements of a tuple or list target (`for i, t in
+    enumerate(ts)`), a starred element's name."""
+    if isinstance(t, ast.Name):
+        return {t.id}
+    if isinstance(t, ast.Starred):
+        return _target_names(t.value)
+    if isinstance(t, (ast.Tuple, ast.List)):
+        return {n for e in t.elts for n in _target_names(e)}
+    return set()
+
+
 def _list_joins(node):
-    """The join calls in `node` whose receiver is the target of the for or the comprehension enclosing them (`[t.join(5)
-    for t in ts]`, `for t in (a, b): t.join(5)`, `list(t.join(1) for t in ts)`): a join of every element of a collection,
-    THE LIST-JOIN SHAPE, guarded on ident or not."""
+    """The join calls in `node` whose receiver is an element of the collection the for or the comprehension enclosing them
+    iterates: the target itself (`[t.join(5) for t in ts]`, `for t in (a, b): t.join(5)`, `list(t.join(1) for t in ts)`), an
+    element of a tuple target (`for i, t in enumerate(ts): t.join(5)`), or a subscript, by a target, of a name the iterable
+    is built over (`for i in range(len(ts)): ts[i].join(5)`, `for i, _t in enumerate(ts): ts[i].join()`): a join of every
+    element of a collection, THE LIST-JOIN SHAPE, guarded on ident or not (a Name target alone until the ninth pass,
+    2026-09-22, the refuter's nit). Subscript joins written out one by one (`callers[0].join(2), callers[1].join(2), ...`)
+    are no loop and not this shape."""
     out = []
     for sub in ast.walk(node):
         if isinstance(sub, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
-            targets = {g.target.id for g in sub.generators if isinstance(g.target, ast.Name)}
-            scope = [sub.elt]
+            gens, scope = [(g.target, g.iter) for g in sub.generators], [sub.elt]
         elif isinstance(sub, ast.For):
-            targets = {sub.target.id} if isinstance(sub.target, ast.Name) else set()
-            scope = sub.body
+            gens, scope = [(sub.target, sub.iter)], sub.body
         else:
             continue
+        targets, iterated = set(), set()
+        for t, it in gens:
+            targets |= _target_names(t)
+            iterated |= {n.id for n in ast.walk(it) if isinstance(n, ast.Name)}
         for s in scope:
             for c in ast.walk(s):
-                if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "join" \
-                        and isinstance(c.func.value, ast.Name) and c.func.value.id in targets:
+                if not (isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "join"):
+                    continue
+                r = c.func.value
+                if isinstance(r, ast.Name) and r.id in targets:
+                    out.append(c)
+                elif isinstance(r, ast.Subscript) and isinstance(r.value, ast.Name) and r.value.id in iterated \
+                        and any(isinstance(n, ast.Name) and n.id in targets for n in ast.walk(r.slice)):
                     out.append(c)
     return out
 
@@ -6859,8 +6882,12 @@ class PlantedShapes(unittest.TestCase):
         """The list-join pin (round 2 of PR 891's review, 2026-09-22) on a planted module: an inline comprehension join in the
         registration (`self.addCleanup(lambda: [t.join(5) for t in ts])`), a generator expression, a for in a local def, a
         for over a tuple with the ident guard written inline, a method of the class and a module function are each named
-        with their unit and text; a cleanup through tests/thread_ends.py's join_started, by the registration or by a lambda,
-        and a cleanup joining single threads are not."""
+        with their unit and text, and so are (the ninth pass, the refuter's nit) a for with a tuple target over enumerate
+        (`for i, t in enumerate(ts): t.join(5)`), a comprehension that joins the list by index (`ts[i].join(3) for i in
+        range(len(ts))`) and a for that joins `ts[i]` by the enumerate index; a cleanup through tests/thread_ends.py's
+        join_started, by the registration or by a lambda, a cleanup joining single threads and subscript joins written out
+        one by one (`(ts[0].join(2), ts[1].join(2))`, the shape of the unguarded contrast in tests/test_codex_backend.py) are
+        not."""
         with open(os.path.join(HERE, "thread_ends.py"), encoding="utf-8") as f:
             real = f.read()
         head = self.HEAD.replace("import unittest\n", "import unittest\nfrom tests.thread_ends import join_started\n")
@@ -6877,6 +6904,10 @@ class PlantedShapes(unittest.TestCase):
                 "    def test_method(self):\n        self.ts = [threading.Thread(target=_once) for _ in range(2)]\n        self.addCleanup(self._end)\n"
                 "        for t in self.ts:\n            t.start()\n        self.assertTrue(False)\n"
                 "    def test_module_fn(self):\n" + pair + "        self.addCleanup(_stop_all, ts)\n" + starts +
+                "    def test_enumerate(self):\n" + pair + "        def end():\n            for i, t in enumerate(ts):\n                t.join(5)\n        self.addCleanup(end)\n" + starts +
+                "    def test_index(self):\n" + pair + "        self.addCleanup(lambda: [ts[i].join(3) for i in range(len(ts))])\n" + starts +
+                "    def test_enumerate_index(self):\n" + pair + "        def end():\n            for i, _t in enumerate(ts):\n                ts[i].join()\n        self.addCleanup(end)\n" + starts +
+                "    def test_indexed_out(self):\n" + pair + "        self.addCleanup(lambda: (ts[0].join(2), ts[1].join(2)))\n" + starts +
                 "    def test_helper(self):\n" + pair + "        self.addCleanup(join_started, None, ts, 5)\n" + starts +
                 "    def test_helper_lambda(self):\n" + pair + "        go = threading.Event()\n        self.addCleanup(lambda: join_started(go, ts, 5))\n" + starts +
                 "    def test_single(self):\n        a, b = threading.Thread(target=_once), threading.Thread(target=_once)\n"
@@ -6886,11 +6917,13 @@ class PlantedShapes(unittest.TestCase):
         found = list_join_cleanups([os.path.join(ROOT, _p)], helpers={"thread_ends": os.path.join(d, "thread_ends.py")})
         self.assertEqual(sorted((u, t) for _f, _l, u, t in found),
                          sorted([("T.test_comprehension", "t.join(5)"), ("T.test_genexp", "t.join(1)"), ("T.test_for_def", "t.join(2)"),
-                                 ("T.test_tuple_for", "t.join(5)"), ("T.test_method", "t.join()"), ("T.test_module_fn", "t.join(1)")]), found)
+                                 ("T.test_tuple_for", "t.join(5)"), ("T.test_method", "t.join()"), ("T.test_module_fn", "t.join(1)"),
+                                 ("T.test_enumerate", "t.join(5)"), ("T.test_index", "ts[i].join(3)"), ("T.test_enumerate_index", "ts[i].join()")]), found)
         self.assertTrue(all(f == _p for f, _l, _u, _t in found), found)
         self.assertEqual(sorted(w.split(".")[1] for s, sh, w in rows if sh == "cleanup-before-start"),
                          sorted(["test_comprehension", "test_genexp", "test_for_def", "test_tuple_for", "test_tuple_for", "test_method",
-                                 "test_module_fn", "test_helper", "test_helper_lambda", "test_single", "test_single"]),   # a.start(); b.start(): two rows
+                                 "test_module_fn", "test_enumerate", "test_index", "test_enumerate_index", "test_indexed_out",
+                                 "test_helper", "test_helper_lambda", "test_single", "test_single"]),   # a.start(); b.start(): two rows
                          [(w, sh) for s, sh, w in rows])
         self.assertEqual((tails, unread, stale), ([], [], []))
 
