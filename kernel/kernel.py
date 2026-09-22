@@ -10363,6 +10363,16 @@ def _reopen_user_todo(sid, tid):
     return True
 
 
+def _user_todo_open(t):
+    """The ONE spelling of "an open user todo" for every surface that shows or counts one: a record (a dict) with an
+    id and no clearing stamp (`resolved`). _open_user_todos (the rows the chat payload ships), the boot notice
+    (_user_todos_off_boot_notice) and the tab roster's count (_tab_meta) all ask this, so a loaded tab's rows and a
+    skeleton tab's count can never disagree on what counts as open (the fix brief of 2026-09-22, requirement 1). The
+    store's mutators are not display surfaces and keep their own lookups: _resolve_user_todo finds a row by id, and
+    _prune_user_todos keeps every unstamped row, id or not."""
+    return isinstance(t, dict) and bool(t.get("id")) and not t.get("resolved")
+
+
 def _open_user_todos(sid):
     """The still-open todos for one session, oldest first — the exact shape the chat payload ships
     (id, text, createdT, optional detail, optional file — the absolute path of the file the todo is
@@ -10379,7 +10389,7 @@ def _open_user_todos(sid):
         return []
     out = []
     for t in _user_todos().get(sid) or []:
-        if not isinstance(t, dict) or t.get("resolved") or not t.get("id"):
+        if not _user_todo_open(t):                       # the one predicate (_tab_meta counts by the same one)
             continue
         rec = {"id": str(t["id"]), "text": str(t.get("text") or ""), "createdT": t.get("createdT") or 0}
         if str(t.get("detail") or "").strip():
@@ -10458,6 +10468,15 @@ def _user_todo_session_ended(sid):
         return False
     last = _last_states_row(sid)
     return not (int((last or {}).get("t") or 0) > int(m.get("t") or 0))
+
+
+def _user_todos_shown(sid):
+    """The ONE ended gate for every surface that shows a session's open user todos: an ENDED session (corroborated,
+    _user_todo_session_ended) hides its todos from every surface, hidden and not cleared, so they return with a revive
+    (a dead session's asks should neither nag from beyond the grave nor be silently lost). build_session's rows, the
+    feed's rows (_feed_session_key) and the tab roster's count (_tab_meta) all ask this, and only when open rows exist,
+    so the common case pays no registry read (the fix brief of 2026-09-22, requirement 1)."""
+    return not _user_todo_session_ended(sid)
 
 
 def _prune_user_todos():
@@ -12012,7 +12031,7 @@ def _user_todos_off_boot_notice():
     if _user_todos_on():
         return 0
     n = sum(1 for rows in _user_todos().values() if isinstance(rows, list)
-            for t in rows if isinstance(t, dict) and t.get("id") and not t.get("resolved"))
+            for t in rows if _user_todo_open(t))         # the one predicate
     if n:
         sys.stderr.write("romp-kernel: %d user todo(s) are stored but the feature is off. Turn it on in "
                          "the gear (User todos) to see them.\n" % n)
@@ -43937,9 +43956,10 @@ def build_session(sid, now, live_map=None, path_override=None, tail_cap_t=None, 
     # dead tmux session's todos kept a live Reply that fire-and-forgot answers into a nonexistent
     # pane; that backend left 2026-09-11). A dormant session (alive:true, no thread) still shows
     # them: it is addressable, and
-    # answering auto-revives it. Checked only when open todos exist (the common case skips it).
+    # answering auto-revives it. Checked only when open todos exist (the common case skips it). The gate is
+    # _user_todos_shown, the ONE every surface asks (the feed's rows, the tab roster's count), since 2026-09-22.
     _user_todos_open = _open_user_todos(sid)
-    if _user_todos_open and _user_todo_session_ended(sid):
+    if _user_todos_open and not _user_todos_shown(sid):
         _user_todos_open = []
     _todo_ev = None
     if todo is None:                                  # authoritative store unreadable — never silently fold
@@ -46489,7 +46509,7 @@ def _feed_session_key(s, tm, ctx, prev_entry):
       interrupting: _interrupting(fsid, ps or {}, now, tm), computed here (the stamp's 120 s cap and its settle).
       closer: _closer_pending(fsid, path, now, store) under the body's exact gate (live, warm parse, idle, no judge
         call in flight), the settle gap the Analyzing swirl reads.
-      todos: the session's open user todos by value (_open_user_todos after _user_todo_session_ended: id, text,
+      todos: the session's open user todos by value (_open_user_todos behind _user_todos_shown, the ended gate: id, text,
         createdT, detail, file, link), None when none; the floor, the marker map and the Waiting pane rows (the
         fork's plans/user-todos.md, re-applied inside the memo at the 2026-09-15 pull-in). A hidden session reads
         none, as the loop's `continue` skipped them; the read's switch (_user_todos_on) rides the value.
@@ -46572,10 +46592,10 @@ def _feed_session_key(s, tm, ctx, prev_entry):
         # USER TODOS (plans/user-todos.md, slice 2): the open asks this session registered with the person it
         # works for, read here ONCE per build so they ride the key by value (`todos`) and reach the body through
         # ctx; ENDED sessions hide theirs from every surface and aggregate (build_session's exact corroborated
-        # gate, _user_todo_session_ended). Store values only: the component compares equal across builds when
-        # nothing changed.
+        # gate, _user_todos_shown, the ONE every surface asks). Store values only: the component compares equal
+        # across builds when nothing changed.
         ut_open = _open_user_todos(fsid)
-        if ut_open and _user_todo_session_ended(fsid):
+        if ut_open and not _user_todos_shown(fsid):
             ut_open = []
     ctx.update(ps=ps, who_working=who_working, interrupting=interrupting, store=st, closer=closer, hide=hide,
                ut_open=ut_open)
