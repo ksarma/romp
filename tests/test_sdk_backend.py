@@ -11348,8 +11348,9 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         worker to hold, and fails) runs both cleanups. The worker's write lasts until the cleanup has decided (`decided`, the
         plant's stand-in for the write's duration, set after the release decision and before the join), so the road is
         deterministic. With the fixed cleanup the run records the planted failure, no error, nothing raised in the worker's
-        thread (threading.excepthook captured for the run) and the lock free once the worker is done; with the old shape the
-        same failure and a RuntimeError from the worker's thread."""
+        thread (threading.excepthook swapped for the run: the hook is process-wide, so it records only an exception whose
+        thread is the plant's worker and hands any other thread's to the hook it replaced) and the lock free once the worker
+        is done; with the old shape the same failure and a RuntimeError from the worker's thread."""
         def case(track_own_hold):
             raised, state = [], {}
 
@@ -11374,6 +11375,7 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
                     real_lock.acquire()
                     held = [True]
                     t = threading.Thread(target=mirror, daemon=True)
+                    state["worker"] = t
 
                     def end():
                         if track_own_hold:
@@ -11393,7 +11395,13 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
                     self.fail("planted: the body fails while the mirror holds the lock")
 
             saved = threading.excepthook
-            threading.excepthook = lambda args: raised.append("%s: %s" % (args.exc_type.__name__, args.exc_value))
+
+            def hook(args):                                          # process-wide while the case runs: the plant's worker's
+                if args.thread is state.get("worker"):               # exceptions are recorded, any other thread's go to the
+                    raised.append("%s: %s" % (args.exc_type.__name__, args.exc_value))     # hook that was installed
+                else:
+                    saved(args)
+            threading.excepthook = hook
             try:
                 res = unittest.TestResult()
                 _Case("test_fails").run(res)
