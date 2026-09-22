@@ -186,7 +186,7 @@ class FakeEl {
   querySelectorAll(sel: string): FakeEl[] { return this.select(sel); }   // the patch reads a run's nodes by position (PR E)
 }
 type FootHooks = { FakeEl: typeof FakeEl; workedFooterPlan: typeof workedFooterPlan };
-type Patch = (v: any, s: any, from: number, working: boolean, items?: any[] | null) => void;
+type Patch = (v: any, s: any, from: number, working: boolean, items?: any[]) => void;   // the harness defaults `items` to normal mode's list, one item per event (footWorld); production hands a list at every site
 
 function liftPatch(): (hooks: FootHooks) => Patch {
   const js = liftBetween("function patchWorkedFooters(", "// prevEpoch for event i");
@@ -207,7 +207,10 @@ const reply = (t: number) => ({ kind: "assistant", t });
 const tool = (t: number) => ({ kind: "tool", t });
 /** A rendered window: one node per unit tagged data-unit, unit `spotOn` carrying a fork spot. */
 function footWorld(events: any[], units: number, spotOn: number) {
-  const patch = liftPatch()({ FakeEl, workedFooterPlan });
+  const lifted = liftPatch()({ FakeEl, workedFooterPlan });
+  // production hands the unit list at every site since the maintainer's round 5 ruling (regression-1; the no-list arm, which mapped the
+  // event index onto data-unit, is gone): a call here without one gets normal mode's list, one item per event, the world's units
+  const patch: Patch = (v, s, from, working, items) => lifted(v, s, from, working, items ?? events.map((_, index) => ({ kind: "event", index })));
   const el = new FakeEl("div");
   const nodes: FakeEl[] = [];
   for (let u = 0; u < units; u++) { const n = new FakeEl("div", "turn"); n.dataset.unit = String(u); el.appendChild(n); nodes.push(n); }

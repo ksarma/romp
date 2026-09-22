@@ -33,7 +33,7 @@ test("units unify both modes: one per event (normal) or the folded compactDispla
 
 test("every rendered row is tagged data-unit, so the scroll↔unit map can locate it", () => {
   assert.match(RENDER, /node\.dataset\.unit = String\(u\);/);          // appendItem (window build)
-  assert.match(RENDER, /node\.dataset\.unit = String\(i\);\s*\/\/ unit === event/); // normal incremental append
+  assert.match(RENDER, /node\.dataset\.unit = String\(u\);\s*\/\/ the event's UNIT, its index in the list/); // normal incremental append: the list's unit, not the event index (the maintainer's round 5 ruling, regression-1)
 });
 
 test("renderWindowItems renders [unitStart, unitEnd) with a TOP and a BOTTOM spacer", () => {
@@ -123,7 +123,7 @@ test("syncView: compact paints its tail by unit, else compact / an in-place chan
   // …and any stale (tool-group toggle, off-screen update) or a plan the trim cannot serve re-renders where the user is
   assert.match(RENDER, /if \(settings\.compact \|\| v\.stale\) \{[\s\S]*?renderWindowItems\(v, s, items, ws, we, working, anchored\);/);
   // browsing history away from the tail: appended events land below the window → grow the bottom spacer only
-  assert.match(RENDER, /if \(!wasAtTail\) \{\s*\n\s*patchWorkedFooters\(v, s, v\.rendered, working\);\s*\n\s*v\.spacerCountBot = total - \(v\.winEnd \?\? total\);/);   // the browse branch patches the window's footers first (the maintainer's round 3 ruling B; compact-seam-exec.test.ts and the differential's normal-mode leg execute it)
+  assert.match(RENDER, /if \(!wasAtTail\) \{\s*\n\s*patchWorkedFooters\(v, s, v\.rendered, working, items\);\s*\n\s*v\.spacerCountBot = total - \(v\.winEnd \?\? total\);/);   // the browse branch patches the window's footers first (the maintainer's round 3 ruling B; compact-seam-exec.test.ts and the differential's normal-mode leg execute it)
 });
 
 test("a new message while scrolled UP keeps the viewport put (no backwards jump)", () => {

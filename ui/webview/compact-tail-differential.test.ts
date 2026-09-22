@@ -139,6 +139,11 @@ const itemsFor = (s: { events: Ev[]; gapBefore?: number }, compact: boolean): Di
   return out;
 };
 const itemsOf = (s: { events: Ev[]; gapBefore?: number }): DisplayItem[] => itemsFor(s, true);   // compact mode's list, the fold-state tests'
+/** The UNIT of the first event at or past event `i` in a list: its index in the list, which carries the regions' gaps (a head gap makes every
+ *  event's unit its index plus one); the list's length when no event is at or past `i`. The rule normal mode's exact tail derives its trim
+ *  from since the maintainer's round 5 ruling (regression-1); the compare below checks the DOM, so this copy cannot make a mis-tagged tail
+ *  green on its own. */
+const unitOfEvent = (items: DisplayItem[], i: number): number => { const u = items.findIndex((it) => it.kind !== "gap" && firstEventOf(it) >= i); return u < 0 ? items.length : u; };
 
 /** render.ts lifted over the stand-in DOM. `open` is the set of fold keys that stand open ("tg:<uuid>" / "ng:<uuid>"); `plans` records
  *  every plan the seam asks for. The renderers record the inputs a reader can see: the row's text as data-text, the rail reference on a
@@ -328,7 +333,7 @@ function frame(w: World, label: string, mutate: (events: Ev[]) => Ev[], expect: 
     // is that event, bounded below by the window's start), the fast path replaces no node, and a stale view takes the rebuild
     assert.equal(asked.length, 0, label + ": normal mode asks no plan: " + JSON.stringify(asked));
     const total = w.items().length;
-    if (expect === "append") executed(Math.max(from, w.v.winStart ?? 0), total, "normal mode's trim from the first changed event");
+    if (expect === "append") executed(Math.max(unitOfEvent(w.items(), from), w.v.winStart ?? 0), total, "normal mode's trim from the first changed event's unit (its index in the list, past any gap)");
     else if (expect === "fast") for (const c of (w.v.el as FakeEl).children) assert.ok(before.has(c), label + ": a status-only tail replaces no node");
     else executed(w.v.winStart ?? 0, total, "the rebuild renders every unit anew");
   }
@@ -641,6 +646,81 @@ test("normal mode, a change below a browsed window: the browse branch patches th
   assert.equal(footerOn(w2, "a4"), String(at(10, 4, 20) - at(10, 0, 0)), "idle: the footer is on the turn's last reply");
   spacerFrame(w2, "a reply joins the turn below the window", (ev) => ev.concat([reply("a6", at(10, 5, 30), "second answer, continued")]));
   assert.equal(footerOn(w2, "a4"), null, "no longer the turn's last reply: the footer came off, below a browsed window");
+});
+
+// ── normal mode under a HEAD GAP (the maintainer's round 5 ruling, regression-1) ──────────────────────────────────────────────────────
+// The list carries the regions' gaps in normal mode too (displayItems runs withGapItems in both modes), so with a head gap the list's
+// unit 0 is the gap and every event's unit is its index plus one. At the head that round ruled on, normal mode's sites handed the footer
+// patch NO unit list and its no-list arm mapped the event index onto data-unit, so the footer landed on the row above the reply (the fast
+// path and the browse branch) or on none, and the exact tail tagged its rows by event index and trimmed from one, so the window's rows
+// (appendItem's, by unit) and the tail's disagreed and the trim dropped a row. The three cells below drive both: the footer's row is
+// asserted by the UNIT it names, and every frame's DOM is compared with a rebuild of the same state.
+
+test("normal mode under a head gap, the footer lands on the row whose unit names the turn's last reply: the fast path's patch after a window build, then the exact tail's appends, a reply landing while idle, a prompt completing the turn, a shrink and the next append; every frame equals a rebuild (the maintainer's round 5 ruling, regression-1)", () => {
+  const w = world(base(), new Set(), true, 0, false);
+  const items = w.items();
+  assert.equal(items[0].kind, "gap", "the head gap is the list's unit 0");
+  // the window as production first builds it (renderWindowItems, rows tagged by unit through appendItem), so the fast path's patch below
+  // runs over correctly tagged rows and the footer's landing is the one thing under test
+  w.L.renderWindowItems(w.v, w.s, items, 0, items.length, workingOf(w, "the window build"));
+  w.frames.push("window build [0, " + items.length + ")");
+  compare(w, "the window build");
+  const unitOfUuid = (uuid: string): number => w.items().findIndex((it) => it.kind === "event" && w.s.events[it.index].uuid === uuid);
+  /** The row carrying `uuid`, its unit checked against the list's, and the footer on it (null: none); the row above it has none, since the
+   *  footer that used to land there (the event index onto data-unit, one unit above under a head gap) is the ruled defect's shape. */
+  const footerByUnit = (uuid: string): string | null => {
+    const rows = units(project(w.v.el)), r = rows.find((x) => x.uuid === uuid);
+    assert.ok(r, uuid + " has a row"); assert.equal(r!.unit, unitOfUuid(uuid), uuid + "'s row carries the unit the list gives it (its event index plus the head gap)");
+    const above = rows.find((x) => x.unit === r!.unit - 1 && !x.cls.includes("day-divider"));
+    if (above && above.uuid !== uuid) assert.equal(above.footer, null, "the row above " + uuid + "'s (unit " + above.unit + ", " + above.cls + ") carries no footer: at the head the maintainer's round 5 ruled on, the event index onto data-unit put it there");
+    return r!.footer;
+  };
+  frame(w, "idle", (ev) => ev, "fast", { working: false });
+  assert.equal(footerByUnit("a4"), String(at(10, 4, 20) - at(10, 0, 0)), "idle: the footer is on the row whose unit names the turn's last reply, a4's, with the turn's seconds");
+  frame(w, "working again", (ev) => ev, "fast", { working: true });
+  assert.equal(footerByUnit("a4"), null, "back at work: no footer on a4's row");
+  for (let i = 1; i <= 2; i++) frame(w, "reply grows " + i, (ev) => { ev[ev.length - 1] = reply("a4", at(10, 4, 20), "second answer, more words " + i); return ev; }, "append");
+  frame(w, "a reply after a tool", (ev) => ev.concat([tool("t6", at(10, 5, 0), "Bash"), reply("a9", at(10, 6, 40), "third answer")]), "append");
+  frame(w, "idle again", (ev) => ev, "fast", { working: false });
+  assert.equal(footerByUnit("a9"), String(at(10, 6, 40) - at(10, 0, 0)), "the footer on the tail-appended reply's row, by the unit the list gives it");
+  frame(w, "a reply lands while idle", (ev) => ev.concat([reply("a10", at(10, 7, 10), "third answer, continued")]), "append");
+  assert.equal(footerByUnit("a10"), String(at(10, 7, 10) - at(10, 0, 0)), "the footer moved to the new last reply's row, by unit");
+  assert.equal(footerByUnit("a9"), null, "…and came off the reply before it");
+  frame(w, "a prompt completes the turn", (ev) => ev.concat([user("u11", at(10, 8, 0), "third question")]), "append", { working: true });
+  assert.equal(footerByUnit("a10"), String(at(10, 7, 10) - at(10, 0, 0)), "complete: the footer stays on a10's row");
+  frame(w, "the tail shrinks", (ev) => ev.slice(0, -1), "rebuild");
+  frame(w, "a prompt lands again", (ev) => ev.concat([user("u12", at(10, 9, 30), "third question, again")]), "append");
+});
+
+test("normal mode under a head gap, a change below a browsed window: the browse branch's patch lands the footer on the row whose unit names the window's last reply, in both directions, and the window equals a rebuild (the maintainer's round 5 ruling, regression-1)", () => {
+  // the normal-mode browse test above under a head gap: a4 is event 6 and unit 7, the injected line event 7 and unit 8
+  const w = world(base().concat([sysNotice("x5", at(10, 5, 0))]), new Set(), true, 0, false);
+  browse(w, 0, 8);
+  assert.equal(footerOn(w, "a4"), null, "the open turn's reply carries no footer while the session works");
+  spacerFrame(w, "a prompt completes the turn below the window", (ev) => ev.concat([user("u6", at(10, 6, 0), "third question")]), { working: true });
+  const rows = units(project(w.v.el)), row = rows.find((x) => x.uuid === "a4");
+  assert.ok(row && row.unit === 7 && row.footer != null, "the footer on a4's row, unit 7 (event 6 plus the head gap): " + JSON.stringify(row));
+  assert.equal(rows.find((x) => x.unit === 6 && !x.cls.includes("day-divider"))?.footer, null, "the row above it (unit 6, the thinking row) carries none: at the head the maintainer's round 5 ruled on, the event index onto data-unit put it there");
+  assert.equal(footerOn(w, "a4"), String(at(10, 4, 20) - at(10, 0, 0)), "the completing prompt below the window put the footer on the window's last reply");
+  const w2 = world(base().concat([sysNotice("x5", at(10, 5, 0))]), new Set(), false, 0, false);
+  browse(w2, 0, 8);
+  assert.equal(footerOn(w2, "a4"), String(at(10, 4, 20) - at(10, 0, 0)), "idle: the footer is on the turn's last reply");
+  spacerFrame(w2, "a reply joins the turn below the window", (ev) => ev.concat([reply("a6", at(10, 5, 30), "second answer, continued")]));
+  assert.equal(footerOn(w2, "a4"), null, "no longer the turn's last reply: the footer came off, below a browsed window");
+});
+
+test("normal mode under a MID gap (turns the page does not hold between two runs it does), a change above the gap: the exact tail's trim drops the gap's element with the rows below it and the re-render draws the gap again as its unit, tagging the rows after it by unit, so every frame equals a rebuild (at the head the maintainer's round 5 ruled on, the loop walked the events and drew no gap, so the gap vanished from the DOM until the next window build)", () => {
+  // the gap stands before event 3 (the first tool), unit 3 of eight; an edit of a1 (event 1) puts the first changed event's unit, 1, above it
+  const w = world(base(), new Set(), true, 3, false);
+  const items = w.items();
+  assert.equal(items[3].kind, "gap", "the gap is unit 3");
+  compare(w, "the first build");
+  frame(w, "the first answer is edited above the gap", (ev) => { ev[1] = reply("a1", at(9, 58, 30), "first answer, edited"); return ev; }, "append");
+  assert.equal(units(project(w.v.el)).filter((r) => r.cls.includes("tx-gap")).map((r) => r.unit).join(","), "3", "the gap stands again at unit 3 after the re-render from unit 1");
+  assert.deepEqual(units(project(w.v.el)).filter((r) => !r.cls.includes("day-divider")).map((r) => r.unit), items.map((_, u) => u), "every unit 0 to the list's end, the gap among them (a divider shares its turn's unit and is left out here)");
+  frame(w, "a reply lands below the gap", (ev) => ev.concat([reply("a7", at(10, 5, 0), "third answer")]), "append");
+  frame(w, "idle", (ev) => ev, "fast", { working: false });
+  assert.equal(footerOn(w, "a7"), String(at(10, 5, 0) - at(10, 0, 0)), "the footer on the reply below the gap, found by its unit");
 });
 
 test("normal mode, a hover held through a streamed frame: the band and its rings come off with the paint, the glow stays on the kept units and the ruler stands as applyGlow left it (the maintainer's round 3 ruling D on the other side of the switch: normal mode's tail took the rings and the glow off unconditionally since the author's pass 3)", () => {

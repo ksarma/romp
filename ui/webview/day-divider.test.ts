@@ -71,7 +71,7 @@ test("every append path emits the divider, so scrolling back can't disagree with
 
 test("the windowed divider carries data-unit so the scroll-to-unit map still resolves it", () => {
   // appendItem tags via tag(); the tail path sets it explicitly
-  assert.match(RENDER, /dv\.dataset\.unit = String\(i\)/);
+  assert.match(RENDER, /if \(dv\) \{ dv\.dataset\.unit = String\(u\); v\.el\.appendChild\(dv\); \}/, "normal mode's tail tags its divider with the turn's UNIT, the list's index (the maintainer's round 5 ruling, regression-1)");
 });
 
 test("the incremental tail trim goes by data-unit, not by child count", () => {
@@ -144,8 +144,10 @@ test("every day walk decides against a DayWalk mark and never a raw epoch; windo
   assert.match(ue, /const open = openFolds\.has\(toolGroupKey\(s\.events\[it\.indices\[0\]\]\)\);\s*\n\s*if \(!open\) return eventEpoch\(s\.events\[it\.indices\[0\]\]\);/, "a collapsed tool run: its first member");
   // an expanded run: its HIGH-WATER member (the walk passes every row and never rewinds), so the seed matches the walk for any row order
   assert.match(ue, /for \(const i of it\.indices\) \{ const ep = eventEpoch\(s\.events\[i\]\); if \(ep != null && \(mx == null \|\| ep > mx\)\) mx = ep; \}\s*\n\s*return mx;/);
-  // the normal-mode tail: the mark seeded over the events before `from`, passed per row; the rail keeps its raw chain
-  assert.match(RENDER, /const walk = dayWalkBeforeEvent\(s\.events, from\);[^\n]*\n\s*for \(let i = from; i < len; i\+\+\) \{\s*\n\s*const prev = prevTimedEpoch\(s\.events, i\);/);
+  // the normal-mode tail: the mark seeded over the units before `from` (the list's, a gap leaving it where it was: the maintainer's round 5
+  // ruling, regression-1, where it walked the events before an event index), passed per row; the rail keeps its raw chain
+  assert.match(RENDER, /const walk = dayWalkBefore\(s, items, from\);[^\n]*\n\s*for \(let u = from; u < total; u\+\+\) \{\s*\n\s*const it = items\[u\];\s*\n\s*if \(it\.kind === "gap"\)[^\n]*\n\s*const i = itemFirstEvent\(it\);[^\n]*\n\s*const prev = prevTimedEpoch\(s\.events, i\);/);
+  assert.doesNotMatch(RENDER, /function dayWalkBeforeEvent\(/, "the event-indexed walk is gone with its one caller");
   assert.match(RENDER, /v\.el\.appendChild\(node\);\s*\n\s*walk\.pass\(ep\);\s*\n\s*stampWalkDay\(node, walk\);\s*\n\s*\}/, "…and passes each row, stamping it with the walk's day (T342)");
   // the cleared-episode fold and the comment popover carry their own walk
   assert.match(RENDER, /const walk = new DayWalk\(\);   \/\/ the fold divides days/);

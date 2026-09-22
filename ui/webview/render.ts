@@ -13599,7 +13599,7 @@ function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBot
   // way. Nothing marks the view stale from here: until PR E the folded case did, and every second paint became a
   // rebuild whenever a tool run preceded the streaming reply.)
   if (workFlip && v.rendered === len && !v.stale && v.el.childNodes.length > 0) {
-    patchWorkedFooters(v, s, len, working, settings.compact ? items : null);
+    patchWorkedFooters(v, s, len, working, items);
   }
   if (v.rendered === len && !v.stale && v.el.childNodes.length > 0) return v;
   const wasAtTail = (v.winEnd ?? total) >= (v.unitTotal ?? total);   // window was covering the OLD end
@@ -13672,13 +13672,15 @@ function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBot
   // the first changed event (v.rendered, still the pre-append value), as compact mode's spacer branch and this mode's tail do: a
   // prompt completing the turn below the window put no footer on the window's last reply, and a later reply joining the turn took none
   // off, until the maintainer's round 3 ruling B (the compact branch was fixed for this in the author's pass 1b, applying the maintainer's
-  // round 1 addendum, and this branch was not: the same defect on the other side of the compact switch)
+  // round 1 addendum, and this branch was not: the same defect on the other side of the compact switch). The patch is handed the unit
+  // list here as at every site (the maintainer's round 5 ruling, regression-1): this mode's list carries the regions' gaps too
+  // (displayItems runs withGapItems in both modes), so an event's unit is its index in the list, not its event index.
   if (!wasAtTail) {
-    patchWorkedFooters(v, s, v.rendered, working);
+    patchWorkedFooters(v, s, v.rendered, working, items);
     v.spacerCountBot = total - (v.winEnd ?? total); v.unitTotal = total; v.rendered = len; sizeSpacers(v); return v;
   }
-  // Normal mode, append AT the tail (unit === event, top spacer only): the cheap incremental hot path —
-  // re-render EXACTLY from the first changed event, tagging data-unit so the scroll↔unit map stays valid.
+  // Normal mode, append AT the tail (a unit is one event, or a gap the regions hold; top spacer only): the cheap incremental hot
+  // path: re-render EXACTLY from the first changed event's unit, tagging data-unit so the scroll↔unit map stays valid.
   // v.rendered is exact: the kernel's chatTail names the first changed index (its _chat_diff compares by
   // identity first, then equality, and the fold never writes an event in place), and every client pass that
   // touches a prefix event marks the view stale instead — reconcileRewind (the editable set, the rewind dim),
@@ -13686,7 +13688,15 @@ function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBot
   // A trailing window of 25 events re-rendered on every tail used to stand in for those signals, and was
   // most of a tail's render. The one render that depends on LATER events, the "worked …" footer of a turn's
   // last reply, is patched by unit after the loop (patchWorkedFooters).
-  const from = Math.max(v.rendered, v.winStart ?? 0);
+  // The units are the LIST's (the maintainer's round 5 ruling, regression-1): under a head gap the list's unit 0 is the gap and every
+  // event's unit is its index plus one, and this block tagged its rows by EVENT index and trimmed from one, so the window's rows (built
+  // by appendItem, tagged by unit) and the tail's disagreed, the trim dropped one row too many, and the footer patch, told no list, put
+  // the footer on the row above the reply or on none. Now the first changed event's unit is looked up in the list, the trim and the tags
+  // are by that unit, a gap item at or past it is re-drawn as appendItem draws it, and the patch is told the list.
+  const winStart = v.winStart ?? 0;
+  let u0 = total;   // the first changed event's unit: the first event item at or past v.rendered (the list's end when none is)
+  for (let u = 0; u < total; u++) { const it = items[u]; if (it.kind !== "gap" && itemFirstEvent(it) >= v.rendered) { u0 = u; break; } }
+  const from = Math.max(u0, winStart);
   // Drop every node from unit `from` onward, then re-render that span. Trim by DATA-UNIT, never by
   // child COUNT: a unit can put more than one node in the thread (a day divider precedes the turn
   // that opens a new day), so `keep = spacer + (from - winStart)` counted one node per unit and the
@@ -13699,21 +13709,26 @@ function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBot
   // the turns is applyGlow's and stays, as in the seam (the maintainer's round 3 ruling D).
   clearRailRings(v.el);
   trimUnitsFrom(v.el, from);
-  const walk = dayWalkBeforeEvent(s.events, from);   // the day walk's high-water mark up to here (T339)
-  for (let i = from; i < len; i++) {
+  const walk = dayWalkBefore(s, items, from);   // the day walk's high-water mark up to here (T339): a gap leaves it where it was
+  for (let u = from; u < total; u++) {
+    const it = items[u];
+    if (it.kind === "gap") { const g = gapElement(s, it, v); g.dataset.unit = String(u); v.el.appendChild(g); continue; }   // empty space: no divider, no epoch, as appendItem draws it
+    const i = itemFirstEvent(it);   // this mode's other units are single events (displayItems)
     const prev = prevTimedEpoch(s.events, i);   // the rail's raw previous epoch (the same-minute rule)
     const ep = eventEpoch(s.events[i]);
     if (ep != null) {   // a day boundary opens with its divider here too, or the tail append would drop it
       const dv = dayDividerFor(ep, walk);
-      if (dv) { dv.dataset.unit = String(i); v.el.appendChild(dv); }
+      if (dv) { dv.dataset.unit = String(u); v.el.appendChild(dv); }
     }
     const node = renderEvent(s.events[i], prev, turnWorkedSecs(s.events, i, working));
-    node.dataset.unit = String(i);   // unit === event in normal mode
+    node.dataset.unit = String(u);   // the event's UNIT, its index in the list (a head gap shifts it by one)
     v.el.appendChild(node);
     walk.pass(ep);
     stampWalkDay(node, walk);
   }
-  patchWorkedFooters(v, s, from, working);
+  // the footer patch names the last reply BEFORE the first changed event, or before the first re-rendered unit's first event when that is
+  // earlier (the change above the window: nothing re-rendered below it), with the list, as compact mode's append does
+  patchWorkedFooters(v, s, Math.min(v.rendered, from < total ? itemFirstEvent(items[from]) : len), working, items);
   v.winEnd = total; v.spacerCount = v.winStart ?? 0; v.spacerCountBot = 0; v.unitTotal = total; v.rendered = len;
   return v;
 }
@@ -13726,19 +13741,21 @@ function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBot
 // postal push) changes it with no event at all, which syncViewInner's fast path hands here with from = len.
 // worked-footer.ts names the reply and the seconds; the footer goes on or comes off by unit. applyForkSpots
 // homes a turn's fork spot inside its elapsed row when the turn has one, so the spot moves with the footer
-// either way. `items` is compact mode's unit list: there a unit is a display item (a folded run, or one event),
-// so the window's start maps to its first event and the reply's event index back to the node that carries it: a
+// either way. `items` is the mode's unit list (displayItems: every event its own item in normal mode, the folded stream in compact
+// mode, and the regions' gaps in both), handed at EVERY site, so the window's start maps to its first event and the reply's event
+// index back to the node that carries it by its UNIT, its index in the list, never by its event index (the maintainer's round 5
+// ruling, regression-1: normal mode's sites handed no list and the patch's no-list arm mapped the event index onto data-unit, which
+// a head gap shifts by one, so the footer landed on the row above the reply or on none): a
 // lone event's own; a run's row by POSITION, the run's head and, when expanded, its rows in member order all carrying
 // the run's unit (appendItem), so member k's row is the (k+1)th node of that unit, and a collapsed run shows no row
 // for it. Marking the view stale for a folded reply, the rule until PR E, made the paint after every incremental
 // tail a full rebuild whenever the event before the streaming reply was a tool inside a run (the everyday agentic
 // shape); a hidden event (a thinking block compact mode never shows) has no node either. Nothing on screen, nothing
 // to patch.
-function patchWorkedFooters(v: View, s: Session, from: number, working: boolean, items: DisplayItem[] | null = null): void {
+function patchWorkedFooters(v: View, s: Session, from: number, working: boolean, items: DisplayItem[]): void {
   const winStart = v.winStart ?? 0;
-  const winEv = items ? (items[winStart] ? itemFirstEvent(items[winStart]) : s.events.length) : winStart;
+  const winEv = items[winStart] ? itemFirstEvent(items[winStart]) : s.events.length;
   const nodeOfEvent = (i: number): HTMLElement | null => {
-    if (!items) return v.el.querySelector(`:scope > [data-unit="${i}"]:not(.day-divider)`) as HTMLElement | null;
     for (let u = 0; u < items.length; u++) {
       const it = items[u];
       if (it.kind === "gap") continue;
@@ -13836,16 +13853,11 @@ function stampWalkDay(node: HTMLElement, walk: DayWalk): void {
   const m = node.firstChild as HTMLElement | null;
   if (walk.mark != null && m && m.nodeType === 1 && m.classList && m.classList.contains("time-marker")) m.dataset.day = String(walk.mark);
 }
-// the day walk's high-water mark a walk from the top would hold before unit `unitStart` (compact units) …
+// the day walk's high-water mark a walk from the top would hold before unit `unitStart` (both modes' units: an event, a folded item, a
+// gap; normal mode's exact tail walks the list too since the maintainer's round 5 ruling, regression-1, where it walked the events)
 function dayWalkBefore(s: Session, items: DisplayItem[], unitStart: number): DayWalk {
   const w = new DayWalk();
   for (let u = 0; u < unitStart && u < items.length; u++) w.pass(unitExit(s, items[u]));
-  return w;
-}
-// … and before event `i` in normal mode, where every unit is one event
-function dayWalkBeforeEvent(events: ChatEvent[], i: number): DayWalk {
-  const w = new DayWalk();
-  for (let j = 0; j < i && j < events.length; j++) w.pass(eventEpoch(events[j]));
   return w;
 }
 
