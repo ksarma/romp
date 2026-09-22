@@ -345,8 +345,7 @@ _BUILTIN_NAMES = frozenset(dir(builtins))     # range(...), slice(...), object()
 # Servers whose server_close has no handler threads to join: a plain socketserver / HTTPServer handles in the accept
 # thread; ThreadingHTTPServer's handlers are daemon threads, which ThreadingMixIn.server_close does not join. A
 # ThreadingTCPServer / ThreadingUDPServer under its defaults (block_on_close=True, daemon_threads=False) joins every live
-# handler: the runtime probe of 2026-09-22 (parked-ops-notes/prelens/probe-server-close.txt) had one not return within
-# 2 s with a handler parked in recv.
+# handler: a runtime probe on 2026-09-22 had one not return within 2 s with a handler parked in recv.
 DAEMON_HANDLER_SERVERS = ("TCPServer", "UDPServer", "HTTPServer", "ThreadingHTTPServer")
 # Receivers whose start() is known not to be a thread of ours: a mock patcher (mock.patch, patch.object, patch.dict), a
 # regex match (re.finditer / match / search), the tracemalloc module. Any other call the walk cannot read is UNREADABLE.
