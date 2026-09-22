@@ -1009,16 +1009,19 @@ const UNKNOWN_SLOT_CUT = 32;
 // literals however wrapped or spaced (the feed branch, its twin in the except arm and the warm gate's pair), a singleton
 // of any name (the chat and the timeline), or a value formatted into text (the send log line), names every other form (a
 // named constant, a list, a non-literal member, a negated test, a bound read, a call's argument) and asserts none occurs,
-// asserts no local name in the body is bound to the "app" literal, asserts the union of the read apps IS this set, and
-// drives each member through the manager on the channel its audience names (a tuple naming feed is the feed payload's,
-// one naming chat the tab list's, one naming timeline the lanes'), with the other two channels' frames leaving it pending.
-// So a pane the kernel adds to any of _push's audiences, in any spelling of the key as a literal, reads red there (in the
-// roster, or as a named form the census cannot read), a member here the kernel never pushes to reads red, and a non-feed
-// member that pendingFor's selector below would fall to the per-host feed reads red. Two shapes are outside that census
-// and disclosed rather than detected: a read of the key held in a name (a subscript by a constant, `c[APP_KEY]`; a .get
-// of a variable, `c.get(key)`), which no pattern over literals reads and which a detector keyed on any name would confuse
-// with every read of _push's other keys, and a pane pushed only by a sender outside _push's body. Exported for that
-// census. Kept an ALLOWLIST on purpose: a denylist of settings and files
+// asserts no subscript or .get in the body keys on a bare name and no "app" literal sits in a position the census does
+// not read (bound to a name in any shape, a default, a keyword argument, a passed value), asserts the union of the read
+// apps IS this set, and drives each member through the manager on the channel its audience names (a tuple naming feed
+// is the feed payload's, one naming chat the tab list's, one naming timeline the lanes'), with the other two channels'
+// frames leaving it pending. So a pane the kernel adds to any of _push's audiences, in any spelling of the key as a
+// literal, reads red there (in the roster, or as a named form the census cannot read), a key held in a name reads red at
+// both ends (a subscript or a .get whose key is a bare name, `c[APP_KEY]` or `c.get(key)`, is listed whatever the name,
+// and every key _push reads today is written as a literal; the "app" literal a name would be bound to is listed in any
+// binding's spelling), a member here the kernel never pushes to reads red, and a non-feed member that pendingFor's
+// selector below would fall to the per-host feed reads red. What stays outside that census and disclosed rather than
+// detected: a key held in a dict or a list, reached through an attribute or returned by a call (`c[KEYS[0]]`,
+// `c[self.key]`), whose value the body never spells as a literal, and a pane pushed only by a sender outside _push's
+// body. Exported for that census. Kept an ALLOWLIST on purpose: a denylist of settings and files
 // would pend every host forever again for the next app added to the fan-out with no pushed view (the class the project's
 // change closed).
 export const PANE_CHANNELS = new Set(["chat", "feed", "fleet", "timeline", "waiting"]);

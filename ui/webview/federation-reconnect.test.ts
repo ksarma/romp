@@ -833,13 +833,16 @@ function pyNormalise(src: string, firstLine: number): { text: string; inStr: boo
 // enumerates what its card census cannot read (review round 3, 2026-09-21: both refuters defeated a wider regex with a
 // named constant, `c["app"] in NOTE_APPS`, which no pattern over literals can read; the enumeration turns it red instead of
 // invisible). Keyed on the KEY written as a string literal, however spaced or wrapped (a subscript or a .get with any
-// whitespace around the literal; a subscript wrapped over a line, which pyNormalise folds to the spaced form), so a
-// renamed loop variable is still read. A key held in a NAME (a subscript by a constant, `c[APP_KEY]`; a .get of a
-// variable, `c.get(key)`) is outside this census and disclosed, not detected (review round 5, 2026-09-21: a detector
-// keyed on any name would fire on every read of _push's other keys, and quieting it takes a spelling allowlist, the
-// class this fold was ruled on); the one road to that shape from inside the body, a local name bound to the literal
-// (`KEY = "app"`), is scanned for below and asserted absent, while a key passed in as a parameter or held in a dict
-// stays disclosed.
+// whitespace around the literal and around the call's dot, name and paren; a subscript wrapped over a line, which
+// pyNormalise folds to the spaced form), so a renamed loop variable is still read. A key that is NOT a literal is keyed
+// on the shape of its read, never on its spelling (review round 6, 2026-09-21): a subscript or a .get whose key is a
+// bare name (`c[APP_KEY]`, `c.get(key)`) is the ninth named form, NAME_KEY_FORM, listed with its statement and asserted
+// absent whatever the name (every key _push reads at the head is written as a literal, so the form has nothing to fire
+// on until a key is held in a name); and every "app" literal in the body that no detector read (bound to a name in any
+// shape, a default, a keyword argument, a passed value) is listed under UNREAD_LITERAL and asserted absent, so the road
+// from inside the body to a key held in a name is red at both ends, the literal and the read. What stays disclosed, not
+// detected: a key held in a dict or a list, reached through an attribute or returned by a call (`c[KEYS[0]]`,
+// `c[self.key]`, `c[pick()]`), whose value the body never spells as a literal.
 const READ_TUPLE = "a tuple of string literals (the audience, read)";
 const READ_SINGLE = "a singleton, == a string literal (the audience, read)";
 const READ_TEXT = "a value formatted into text (a % format's operand, a .format argument, a field inside a string literal): no audience";
@@ -853,21 +856,32 @@ const OTHER_FORMS = [
   "the read bound to a name (an assignment or a walrus)",
   "a read in any other position (a call's argument, a returned value, a comparison's right operand, a yield): not followed",
 ] as const;
-type Audiences = { tuples: string[][]; singles: string[]; text: string[]; other: Map<string, string[]>; reads: number; bound: string[] };
+// The ninth named form, keyed on the SHAPE of the read rather than on the key: a subscript or a .get whose key is a bare
+// name. Listed whatever the name (the census cannot tell it from a read of the app key) and asserted absent.
+const NAME_KEY_FORM = "a subscript or a .get whose key is a bare name (a constant, a variable, a parameter): which key it reads is not known here";
+// The one label for every "app" literal in the body that none of the detectors read, whatever holds it.
+const UNREAD_LITERAL = "the app literal in a position the census does not read (bound to a name in any shape, a default, a keyword argument, a passed value)";
+type Audiences = { tuples: string[][]; singles: string[]; text: string[]; other: Map<string, string[]>; reads: number; unread: string[]; byName: string[] };
 function pushAudiences(kernel: string): Audiences {
   const at = kernel.indexOf("\ndef _push(targets");
   assert.ok(at >= 0, "kernel.py's _push(targets, ...) is the pusher's send loop");
   const body = kernel.slice(at + 1, kernel.indexOf("\ndef ", at + 1));   // _push's own body, up to the next top-level def
   const { text, inStr, encl, line } = pyNormalise(body, kernel.slice(0, at + 1).split("\n").length);
-  const a: Audiences = { tuples: [], singles: [], text: [], other: new Map(OTHER_FORMS.map((f) => [f, []])), reads: 0, bound: [] };
+  const a: Audiences = { tuples: [], singles: [], text: [], other: new Map(OTHER_FORMS.map((f) => [f, []])), reads: 0, unread: [], byName: [] };
   const lit = /(["'])([^"'\\]*)\1/g;
-  for (const m of text.matchAll(/\[\s*(["'])app\1\s*\]|\.get\(\s*(["'])app\2/g)) {   // the KEY as a literal, however spaced (a wrapped subscript is one space here)
+  const whereAt = (p: number) => {   // kernel.py:line and the statement, for the failure messages
+    const ls = text.lastIndexOf("\n", p) + 1;
+    const le = text.indexOf("\n", p);
+    return "kernel.py:" + line[p] + " " + text.slice(ls, le < 0 ? text.length : le).trim().slice(0, 120);
+  };
+  const consumed = new Set<number>();   // the positions of the "app" literals the detectors below read: the key, a tuple's members, a singleton's operand
+  for (const m of text.matchAll(/\[\s*(["'])app\1\s*\]|\.\s*get\s*\(\s*(["'])app\2/g)) {   // the KEY as a literal, however spaced (a wrapped subscript is one space here; any whitespace around a .get's dot, name and paren)
     const p = m.index!;
     let e = p + m[0].length;
     a.reads++;
+    consumed.add(p + m[0].indexOf(m[1] ?? m[2]));
     const ls = text.lastIndexOf("\n", p) + 1;
-    const le = text.indexOf("\n", p);
-    const where = "kernel.py:" + line[p] + " " + text.slice(ls, le < 0 ? text.length : le).trim().slice(0, 120);
+    const where = whereAt(p);
     const other = (form: string) => a.other.get(form)!.push(where);
     if (inStr[p]) { a.text.push(where); continue; }
     if (m[2]) {                                            // `.get("app"`: closed at once, or a default follows
@@ -877,10 +891,10 @@ function pushAudiences(kernel: string): Audiences {
     }
     const after = text.slice(e);
     let mm: RegExpExecArray | null;
-    if ((mm = /^\s*==\s*(["'])([^"'\\]+)\1/.exec(after))) { a.singles.push(mm[2]); continue; }
+    if ((mm = /^\s*==\s*(["'])([^"'\\]+)\1/.exec(after))) { consumed.add(e + mm[0].indexOf(mm[1])); a.singles.push(mm[2]); continue; }   // the compared value is read
     if (/^\s*==/.test(after)) { other(OTHER_FORMS[4]); continue; }
     if (/^\s*!=/.test(after) || /^\s+not\s+in\b/.test(after)) { other(OTHER_FORMS[3]); continue; }
-    if ((mm = /^\s+in\s+\(/.exec(after))) {
+    if ((mm = /^\s+in\s*\(/.exec(after))) {                  // zero or more spaces after the keyword (review round 6)
       const q = e + mm[0].length - 1;                      // the tuple's "(": its members run to the matching ")"
       let d = 0, r = q;
       for (; r < text.length; r++) {
@@ -889,31 +903,46 @@ function pushAudiences(kernel: string): Audiences {
         else if (text[r] === ")" && --d === 0) break;
       }
       const inner = text.slice(q + 1, r);
-      const members = [...inner.matchAll(lit)].map((l) => l[2]);
+      const lits = [...inner.matchAll(lit)];
+      for (const l of lits) consumed.add(q + 1 + l.index!);   // the members are read, into the roster or to refuse the tuple
+      const members = lits.map((l) => l[2]);
       if (members.length >= 1 && inner.replace(lit, "").replace(/[\s,]/g, "") === "") { a.tuples.push(members); continue; }
       other(OTHER_FORMS[2]); continue;
     }
-    if (/^\s+in\s+[\[{]/.test(after)) { other(OTHER_FORMS[1]); continue; }
+    if (/^\s+in\s*[\[{]/.test(after)) { other(OTHER_FORMS[1]); continue; }   // zero or more spaces after the keyword (review round 6)
     if (/^\s+in\b/.test(after)) { other(OTHER_FORMS[0]); continue; }
-    if (/(?:^|[\s,(])[A-Za-z_]\w*\s*(?::\s*[\w\[\], ]+)?\s*:?=\s*[A-Za-z_][\w.]*(?:\[[^\]]*\])*$/.test(text.slice(ls, p))) { other(OTHER_FORMS[6]); continue; }   // `name = <receiver>` before the key
+    if (/(?:^|[\s,(])[A-Za-z_]\w*\s*(?::\s*[\w\[\], ]+)?\s*:?=\s*[A-Za-z_][\w.]*(?:\[[^\]]*\])*\s*$/.test(text.slice(ls, p))) { other(OTHER_FORMS[6]); continue; }   // `name = <receiver>` before the key (any whitespace before a .get's dot)
     const enc = encl[p];
     if (enc >= 0 && text[enc] === "(" && /(?:(["'])\s*%|\.format)\s*$/.test(text.slice(0, enc))) { a.text.push(where); continue; }
     other(OTHER_FORMS[7]);
   }
-  // the one road from inside the body to a key held in a name: a local name bound to the literal (an assignment, an
-  // annotated assignment, a walrus, a parameter default), listed with its statement so the census case can assert none.
-  // A comparison (`== "app"`) has no name before its `=`; a literal inside a string (a docstring's prose) is skipped.
-  for (const m of text.matchAll(/(?:^|[\s(,])[A-Za-z_]\w*\s*(?::\s*[\w\[\], .]+)?\s*:?=\s*(["'])app\1/gm)) {
-    const p = m.index! + m[0].search(/[A-Za-z_]/);
+  // Every "app" literal in the body that none of the detectors above read (the key, a tuple's members, a singleton's
+  // compared value), listed under one label whatever holds it: a binding of any shape (an assignment, a tuple unpacking,
+  // an annotated one however the annotation is spelled, a walrus, a for target, a parameter default), a keyword argument,
+  // a passed value, a parenthesised or a call-wrapped literal. Keyed on the PROPERTY (a literal the census did not read),
+  // not on a binding's spelling (review round 6, 2026-09-21: a scan keyed on four binding spellings missed a tuple
+  // unpacking, a parenthesised literal, an unspaced union annotation and a string annotation, and listed a keyword
+  // argument as a bound name), so the road from inside the body to a key held in a name starts red at the literal,
+  // whatever binds it. A literal inside a string (a docstring's prose) is skipped: its opening quote follows a character
+  // inside the string, where a literal of its own follows code (or a prefix letter, which pyNormalise emits as code).
+  for (const m of text.matchAll(/(["'])app\1/g)) {
+    const p = m.index!;
+    if (consumed.has(p) || (p > 0 && inStr[p - 1])) continue;
+    a.unread.push(whereAt(p));
+  }
+  // The ninth named form, keyed on the SHAPE of the read: a subscript or a .get whose key is a bare name, outside a
+  // string, whatever the name (a constant, a variable, a parameter). Which key it reads is not known here, so it is
+  // listed and asserted absent (every key _push reads at the head is written as a literal, so the form has nothing to
+  // fire on until a key is held in a name) rather than disclosed. Tolerates the whitespace the literal read tolerates.
+  for (const m of text.matchAll(/\[\s*[A-Za-z_]\w*\s*\]|\.\s*get\s*\(\s*[A-Za-z_]\w*\s*[,)]/g)) {
+    const p = m.index!;
     if (inStr[p]) continue;
-    const ls = text.lastIndexOf("\n", p) + 1;
-    const le = text.indexOf("\n", p);
-    a.bound.push("kernel.py:" + line[p] + " " + text.slice(ls, le < 0 ? text.length : le).trim().slice(0, 120));
+    a.byName.push(whereAt(p));
   }
   return a;
 }
 
-test("every app the kernel's _push addresses is a pushed-channel pane here, on the channel its audience names: the roster is derived from every read of the app key written as a string literal in _push's body, however spaced or wrapped (a tuple of string literals however wrapped or spaced, a singleton of any name, or a value formatted into text), every other form is named and asserted absent, and no local name is bound to the literal, so a pane added to any of _push's audiences in any spelling of the key as a literal reads red here, in the roster or as a named form, a key held in a name is disclosed as outside, and a member _push never addresses reads red (review rounds 1 to 5, 2026-09-21)", async () => {
+test("every app the kernel's _push addresses is a pushed-channel pane here, on the channel its audience names: the roster is derived from every read of the app key written as a string literal in _push's body, however spaced or wrapped (a tuple of string literals however wrapped or spaced, a singleton of any name, or a value formatted into text), every other form is named and asserted absent, a subscript or a .get whose key is a bare name is named and asserted absent, and every app literal the census did not read is listed and asserted absent, so a pane added to any of _push's audiences in any spelling of the key as a literal reads red here, in the roster or as a named form, a key held in a name reads red at the name or at the literal a name would be bound to, a key held in a dict or reached through an attribute is disclosed as outside, and a member _push never addresses reads red (review rounds 1 to 6, 2026-09-21)", async () => {
   // Keyed on the PRODUCER, not on the compliant sites: a set that names the panes it knows cannot see the one it misses,
   // and the project's four-name set missed this fork's fifth. Round 1 read the first `if c["app"] in (...):` alone, the
   // feed branch, so a pane added to the timeline's or the chat's audience (a `==` widened to a tuple) took no verdict.
@@ -935,16 +964,20 @@ test("every app the kernel's _push addresses is a pushed-channel pane here, on t
   // SCOPE: this census reads _push's body, the pusher's send loop. Senders outside it test the app key on their own
   // (_feed_first's cold first feed frame, _send_feed_now's ready-time frame, the tab strips of _push_session_now and
   // _confirm_close_now), each addressing a pane _push also addresses; none is read here, so a pane pushed ONLY by a route
-  // outside _push's body is outside this case's claim. And the key is read as a STRING LITERAL, however spaced or wrapped:
-  // a read of the key held in a name (a subscript by a constant, c[APP_KEY]; a .get of a variable, c.get(key)) is outside
-  // it too, disclosed rather than detected (review round 5, 2026-09-21; the OTHER_FORMS comment says why no detector
-  // closes it); the one road to that shape from inside the body, a local name bound to the literal, is asserted absent here.
+  // outside _push's body is outside this case's claim. And the key is read as a STRING LITERAL, however spaced or wrapped;
+  // a key held in a name is caught by the shape of its read, at both ends (review round 6, 2026-09-21): a subscript or a
+  // .get whose key is a bare name (c[APP_KEY], c.get(key)) is listed whatever the name, and so is every "app" literal in
+  // the body the census did not read (the literal a name would be bound to, in any binding's spelling); both are asserted
+  // absent here. What stays disclosed, not detected: a key held in a dict or a list, reached through an attribute or
+  // returned by a call (c[KEYS[0]], c[self.key]), whose value the body never spells as a literal.
   const kernel = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
-  const { tuples, singles, other, bound } = pushAudiences(kernel);
+  const { tuples, singles, other, unread, byName } = pushAudiences(kernel);
   assert.deepEqual([...other].filter(([, hits]) => hits.length), [],
     "a read of the app key in _push's body the census cannot read, as [form, [kernel.py:line statement]]: write the audience as a tuple of string literals or a singleton, or teach pushAudiences the form and say what it reads");
-  assert.deepEqual(bound, [],
-    "a local name bound to the app literal in _push's body, as kernel.py:line statement: a read of the key through that name is one this census cannot see, so read the key as a literal, or name the shape in the SCOPE note above");
+  assert.deepEqual(byName, [],
+    NAME_KEY_FORM + ", in _push's body, as kernel.py:line statement: the census cannot tell it from a read of the app key, so write the key as a string literal, or teach pushAudiences what the name holds");
+  assert.deepEqual(unread, [],
+    UNREAD_LITERAL + ", in _push's body, as kernel.py:line statement: a name bound to it carries the key past every detector here, so read the key as a literal where it is used, or say in the SCOPE note what the literal is for");
   assert.ok(tuples.length >= 1, "the send loop's `c[\"app\"] in (...)` feed branch is an audience");
   const union = new Set<string>([...tuples.flat(), ...singles]);
   assert.ok(union.has("feed") && union.has("waiting"), "the feed audience carries the feed pane and this fork's Waiting-on-you pane (" + [...union].sort().join(", ") + ")");
@@ -994,18 +1027,20 @@ test("every app the kernel's _push addresses is a pushed-channel pane here, on t
   }
 });
 
-test("the census's premise, shown to hold for a reason: on a planted _push every named form the census cannot read fires exactly where planted, the roster reads the wrapped, unspaced, hyphenated, digit-carrying and continued spellings and the key spaced inside its subscript or its .get call or wrapped over a line, a formatted value and a docstring's prose read as text, no binding is listed, and every read lands in exactly one form (review rounds 3 and 5, 2026-09-21)", () => {
+test("the census's premise, shown to hold for a reason: on a planted _push every named form the census cannot read fires exactly where planted, the roster reads the wrapped, unspaced, hyphenated, digit-carrying and continued spellings, a tuple with no space after its in, and the key spaced inside its subscript or its .get call, around the call's dot, name and paren, or wrapped over a line, a formatted value and a docstring's prose read as text, a subscript by a bare name is listed where planted, no app literal is listed as unread, and every read of the key lands in exactly one form (review rounds 3, 5 and 6, 2026-09-21)", () => {
   // the synthetic body, one read per tagged line: T a tuple the roster reads, S a singleton, X text, a number the
   // OTHER_FORMS index that must fire there, null a line with no read of its own (a wrapped tuple's continuation lines)
-  const T = READ_TUPLE, S = READ_SINGLE, X = READ_TEXT;
+  const T = READ_TUPLE, S = READ_SINGLE, X = READ_TEXT, N = NAME_KEY_FORM;
   const plant: [string, string | number | null][] = [
     ["def _push(targets, connect=False, live_map=None):", null],
-    ['    """prose naming c["app"] in NOTE_APPS is text, not a test"""', X],
+    ['    """prose naming c["app"] in NOTE_APPS or c[KEY] is text, not a test or a read by a name"""', X],   // a bare-name subscript inside a string is no ninth form (review round 6)
     ['    if c["app"] in ("feed",   # a wrapped tuple, a comment inside it, a hyphen, a digit, a trailing comma', T],
     ['                    "outline",', null],
     ['                    "waiting-2", "x9",):', null],
     ["        pass", null],
     ['    if c["app"] in ("timeline","notes"):', T],
+    ["        pass", null],
+    ['    if c["app"] in("chat", "tight"):', T],                    // no space after the keyword (review round 6)
     ["        pass", null],
     ['    ok = any(c["app"] \\', S],
     ['             == "chat" for c in targets)', null],
@@ -1013,6 +1048,7 @@ test("the census's premise, shown to hold for a reason: on a planted _push every
     ["    if c[ 'app' ] in (\"chat\", \"spaced\"):", T],           // the key spaced inside its subscript (review round 5)
     ["        pass", null],
     ['    sp = [t for t in targets if t.get( "app" ) == "feed"]', S],   // the key spaced inside its .get call
+    ['    sq = [t for t in targets if t.get ("app") == "chat"]', S],    // the .get call spaced between its name and its paren (review round 6)
     ["    if c[", T],                                              // the key wrapped over a line inside its subscript:
     ['        "app"] in ("timeline", "wrapped"):', null],           // pyNormalise folds the newline to one space
     ["        pass", null],
@@ -1021,6 +1057,8 @@ test("the census's premise, shown to hold for a reason: on a planted _push every
     ['    if c["app"] in NOTE_APPS:', 0],
     ["        pass", null],
     ['    if c["app"] in ["feed", "outline"]:', 1],
+    ["        pass", null],
+    ['    if c["app"] in["feed", "tight"]:', 1],                   // no space after the keyword (review round 6)
     ["        pass", null],
     ['    if c["app"] in ("feed", OUTLINE_APP):', 2],
     ["        pass", null],
@@ -1035,6 +1073,9 @@ test("the census's premise, shown to hold for a reason: on a planted _push every
     ['    app = c["app"]', 6],
     ['    if (a := c.get("app")) == "x":', 6],
     ["        pass", null],
+    ['    b = c . get("app")', 6],                                 // the read bound to a name, through a .get spaced around its dot (review round 6)
+    ['    if c[APP_KEY] in ("feed", "outline"):', N],              // the key held in a name: the ninth form, keyed on the shape (review round 6)
+    ["        pass", null],
     ['    _serve(c["app"])', 7],
     ['    return c["app"]', 7],
   ];
@@ -1042,9 +1083,10 @@ test("the census's premise, shown to hold for a reason: on a planted _push every
   const a = pushAudiences(src);
   const lineOf = (w: string) => parseInt(w.slice("kernel.py:".length), 10);
   const linesTagged = (tag: string | number) => plant.flatMap(([, t], i) => (t === tag ? [i + 2] : []));   // the leading newline: plant[0] is line 2
-  assert.deepEqual(a.tuples, [["feed", "outline", "waiting-2", "x9"], ["timeline", "notes"], ["chat", "spaced"], ["timeline", "wrapped"]], T);
-  assert.deepEqual(a.singles, ["chat", "timeline", "feed"], S);
-  assert.deepEqual(a.bound, [], "the plant binds no local name to the literal: OTHER_FORMS[6]'s `app = c[\"app\"]` binds a name to the READ, not to the key");
+  assert.deepEqual(a.tuples, [["feed", "outline", "waiting-2", "x9"], ["timeline", "notes"], ["chat", "tight"], ["chat", "spaced"], ["timeline", "wrapped"]], T);
+  assert.deepEqual(a.singles, ["chat", "timeline", "feed", "chat"], S);
+  assert.deepEqual(a.unread, [], "the plant leaves no app literal unread: OTHER_FORMS[6]'s `app = c[\"app\"]` binds a name to the READ, not to the key, and every tuple member and every compared value is a read");
+  assert.deepEqual(a.byName.map(lineOf), linesTagged(N), N);
   assert.deepEqual(a.text.map(lineOf), linesTagged(X), X);
   OTHER_FORMS.forEach((form, k) => {
     assert.ok(linesTagged(k).length >= 1, form + ": planted at least once, so the detector is known to fire");
@@ -1052,12 +1094,12 @@ test("the census's premise, shown to hold for a reason: on a planted _push every
   });
   assert.equal(a.reads, a.tuples.length + a.singles.length + a.text.length + [...a.other.values()].flat().length,
     "every read of the app key landed in exactly one form");
-  assert.equal(a.reads, plant.filter(([, t]) => t !== null).length, "and the plant's reads were all seen");
+  assert.equal(a.reads, plant.filter(([, t]) => t !== null && t !== N).length, "and the plant's reads were all seen (the ninth form's read is of a key the census does not know)");
   // the message a red carries names the form, the line and the statement
   assert.match(a.other.get(OTHER_FORMS[0])![0], /^kernel\.py:\d+ if c\["app"\] in NOTE_APPS:$/);
 });
 
-test("a local name bound to the app literal in _push's body is listed with its statement, in each binding form (an assignment, an annotated one, a walrus, a parameter default) and never from a docstring's prose, another literal or a comparison, and the read through such a name is no read the census sees: the road to a key held in a name starts red at the binding (review round 5, 2026-09-21)", () => {
+test("an app literal in _push's body in a position the census does not read is listed with its statement, whatever holds it (an assignment, a tuple unpacking, an annotated one with a spaced, an unspaced union or a string annotation, a walrus, a parameter default, a for target, a parenthesised target, a parenthesised or a call-wrapped literal, a keyword argument, a passed value) and never from a docstring's prose, another literal, a read key, a compared value or a tuple's member, and a read through a bare name is listed as a subscript or a .get by a name: the road to a key held in a name is red at both ends (review rounds 5 and 6, 2026-09-21)", () => {
   const src = [
     "",
     "def _push(targets, connect=False, live_map=None):",
@@ -1073,6 +1115,18 @@ test("a local name bound to the app literal in _push's body is listed with its s
     '    tag = "app-2"',
     '    if c["app"] == "app":',
     "        pass",
+    '    k5, k6 = "x", "app"',                 // a tuple unpacking (review round 6: the shapes a scan keyed on a binding's spelling missed)
+    '    k7 = ("app")',                        // a parenthesised literal
+    '    k8: str|None = "app"',                // an unspaced union annotation
+    '    k9: "str" = "app"',                   // a string annotation
+    '    for k10 in ("app",):',                // a for target
+    "        pass",
+    '    k11 = str("app")',                    // a call-wrapped literal
+    '    (k12) = "app"',                       // a parenthesised target
+    '    opts = dict(kind="app")',             // a keyword argument (round 5 listed it too, as a bound local name: the wrong cause)
+    '    _serve("app")',                       // a passed value
+    '    if c["app"] in ("app", "feed"):',     // a tuple's member is read into the roster, not listed
+    "        pass",
     "",
     "def _next():",
     "    pass",
@@ -1080,10 +1134,14 @@ test("a local name bound to the app literal in _push's body is listed with its s
   ].join("\n");
   const a = pushAudiences(src);
   const lineOf = (w: string) => parseInt(w.slice("kernel.py:".length), 10);
-  assert.deepEqual(a.bound.map(lineOf), [4, 7, 8, 10], "the four bindings, and neither the docstring's prose, the other literal nor the comparison");
-  assert.match(a.bound[0], /^kernel\.py:4 KEY = "app"$/);
-  assert.equal(a.reads, 1, "c[KEY], c.get(k3) and c.get(k4) are no reads the census sees; the literal read is the one");
+  assert.deepEqual(a.unread.map(lineOf), [4, 7, 8, 10, 15, 16, 17, 18, 19, 21, 22, 23, 24],
+    "the thirteen literals the census does not read, and neither the docstring's prose, the other literal, the read key, the compared value nor the tuple's member");
+  assert.match(a.unread[0], /^kernel\.py:4 KEY = "app"$/);
+  assert.deepEqual(a.byName.map(lineOf), [5, 8, 11], "c[KEY], c.get(k3) and c.get(k4): each read through a bare name is listed as the ninth form");
+  assert.match(a.byName[0], /^kernel\.py:5 if c\[KEY\] in \("feed", "outline"\):$/);
+  assert.equal(a.reads, 2, "the three reads through a name are no reads of the app key the census knows; the literal reads are the two");
   assert.deepEqual(a.singles, ["app"]);
+  assert.deepEqual(a.tuples, [["app", "feed"]]);
 });
 
 test("a pane's FIRST publish posts even an empty list, so a reloaded pane replaces the list its predecessor left (2026-09-18)", async () => {
