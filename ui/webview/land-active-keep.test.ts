@@ -76,7 +76,10 @@ function styleOf(name: string, read: () => number, write: (h: number) => void): 
   });
 }
 /** A model object that FAILS CLOSED on any property it lacks: a read or a write of a key that is neither an own property nor on the
- *  prototype throws, naming the object and the key, and a delete of any key throws (the DOM's nodes have no deletable geometry), so a
+ *  prototype throws, naming the object and the key, and a delete or a DEFINE of any key throws (the DOM's nodes have no deletable geometry,
+ *  and a define, Object.defineProperty's, Object.defineProperties' or Reflect.defineProperty's, reaches the defineProperty trap and not the
+ *  set trap, so a define of `style` replaced the instrumented style in silence until the author's fixer pass over the pass after the
+ *  maintainer's round 5, the door its verifier (a) found still open beside the refused write of the object), so a
  *  production-shaped change the model has no figure for reds with the model's message instead of passing as a silent no-op. The JS internals
  *  a dump or an await reads (symbols, `then`, `toJSON`) read undefined. `hideEdges` runs on the raw object before it is wrapped, so the
  *  projection is the raw object's and the ratchet in test-dom-shim.test.ts reads the call. */
@@ -86,10 +89,14 @@ function failClosed<T extends object>(o: T, name: string): T {
     get: (t, k, r) => { if (known(k)) return Reflect.get(t, k, r); throw new Error(name + "." + String(k) + " read: the model has no such property, so this fails closed rather than reading undefined"); },
     set: (t, k, v, r) => {
       if (!known(k)) throw new Error(name + "." + String(k) + " written as " + JSON.stringify(v) + ": the model has no such property, so this fails closed rather than passing as a silent no-op");
-      if (Reflect.set(t, k, v, r)) return true;
+      // the TARGET as the receiver, as the view record's set trap below has it: with the proxy as the receiver an ordinary write of an existing
+      // data property ends in the proxy's defineProperty trap, which refuses every define; the model's classes have no setter that reads
+      // `this`, so the receiver changes nothing else
+      if (Reflect.set(t, k, v)) return true;
       throw new Error(name + "." + String(k) + " written as " + JSON.stringify(v) + ": read-only in the model as in the DOM (a getter with no setter, or the instrumented style object, which the DOM's element.style also refuses to replace), so this fails closed rather than passing as a silent no-op");
     },
     deleteProperty: (_t, k) => { throw new Error(name + "." + String(k) + " deleted: the model has nothing to delete, so this fails closed rather than passing as a silent no-op"); },
+    defineProperty: (_t, k) => { throw new Error(name + "." + String(k) + " defined: the model has nothing to define (a define of `style` would replace the instrumented style, where the DOM's element takes an own property over its accessor), so this fails closed rather than passing as a silent no-op"); },
   });
 }
 class Content {
@@ -347,7 +354,7 @@ test("the reload restore's raw write, the ordering its exception rests on: the t
   }
 });
 
-test("the model refuses a write of the `style` OBJECT itself on a row, on the head spacer and on the view element, not only of its keys: the instrumented style is installed non-writable, so the set trap's throw fires, and a replaced style cannot disable the height routing in silence for every later write; the members still route (the maintainer's round 5 ruling, extra8-3: closure-6's second named witness was still green)", () => {
+test("the model refuses a write of the `style` OBJECT itself on a row, on the head spacer and on the view element, not only of its keys: the instrumented style is installed non-writable, so the set trap's throw fires, and a replaced style cannot disable the height routing in silence for every later write; a DEFINE of the object (Object.defineProperty, Object.defineProperties, Reflect.defineProperty), which reaches the defineProperty trap and not the set trap, is refused the same way; the members still route (the maintainer's round 5 ruling, extra8-3: closure-6's second named witness was still green; the define door is the author's fixer pass over the pass after that round, its verifier (a))", () => {
   // until this pass `style` was an own writable data property on Node and Host, so `row.style = {...}` and `v.el.style = {...}` passed the set
   // trap through Reflect.set and the model's height routing went to a plain object: a silent no-op inside the ordering window, the shape the
   // model exists to refuse (the members were refused, the object was not)
@@ -357,7 +364,16 @@ test("the model refuses a write of the `style` OBJECT itself on a row, on the he
   assert.throws(() => { (w.spacer as any).style = { height: "3px" }; }, /<tx-spacer tx-spacer-top>\.style written as .*read-only in the model/, "the head spacer's neither");
   assert.throws(() => { (w.host as any).style = {}; }, /v\.el\.style written as .*read-only in the model/, "nor the view element's");
   assert.throws(() => { Reflect.set(w.rows[1] as any, "style", {}); }, /read-only in the model/, "…through Reflect.set too (the trap throws where the DOM would ignore the write)");
-  assert.equal(w.rows[0].h, 100, "the row's height is untouched"); assert.equal(w.trace.length, before, "nothing traced: no write landed");
+  // the DEFINE door (the author's fixer pass over the pass after the maintainer's round 5, its verifier (a)): Object.defineProperty and
+  // Reflect.defineProperty reach a proxy's defineProperty trap, never its set trap, and the style is configurable (hideEdges redefines it
+  // before the wrap), so with no such trap a redefinition replaced the instrumented style in silence, Reflect's returned true, and every
+  // later height write was the silent no-op this cell exists to refuse; the DOM's element takes an own property there too. The trap throws
+  // for every key, as the view record's does (Object.defineProperty, Object.defineProperties, Reflect.defineProperty)
+  assert.throws(() => { Object.defineProperty(w.rows[0], "style", { value: {}, writable: true, configurable: true }); }, /<turn>\.style defined: the model has nothing to define/, "a row's style object cannot be redefined");
+  assert.throws(() => { Reflect.defineProperty(w.host, "style", { value: {}, configurable: true }); }, /v\.el\.style defined: the model has nothing to define/, "nor the view element's, through Reflect.defineProperty, which returns true where the DOM's element takes an own property");
+  assert.throws(() => { Object.defineProperties(w.spacer, { style: { value: {} } }); }, /<tx-spacer tx-spacer-top>\.style defined/, "nor the head spacer's, through Object.defineProperties");
+  assert.throws(() => { Object.defineProperty(w.rows[1], "h", { value: 1 }); }, /<turn>\.h defined: the model has nothing to define/, "…and no other key either: a define is not a write the model represents, whatever the key");
+  assert.equal(w.rows[0].h, 100, "the row's height is untouched"); assert.equal(w.rows[1].h, 100, "the other row's too"); assert.equal(w.trace.length, before, "nothing traced: no write landed");
   w.rows[0].style.height = "120px";
   assert.equal(w.rows[0].h, 120, "a height written through the instrumented style still routes into the model");
   assert.deepEqual(w.trace.slice(before), ["style turn height=120 (was 100)"], "…and is traced");
