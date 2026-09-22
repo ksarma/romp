@@ -351,9 +351,11 @@ collapsed (_text), never ast.unparse, a renderer whose spelling differs between 
 matched against each other (UNPARSE_ROADS names every such function with its reason, and a test parses this module to
 assert there is no other). THE POPULATION is the non-recursive listing of tests/test_*.py (module_paths), a count with ONE
 HOME, the table the census prints: NO LITERAL MODULE COUNT stands in this docstring, in the oracle bullet's denominator
-above or in the ledger entry, and a tree test pins the absence (romp-manager's ruling on the ninth pass, 2026-09-22: CI
-tests a pull request's MERGE with main, so a docstring pinned to the count read went red the day main gained a test module,
-and would every time; the oracle's own figure beside it stays pinned to the derivation); tests/conftest.py,
+above, in tests/test_kernel_parked_ops_liveness.py's docstring or in the ledger entry, and a tree test pins the absence over
+those THREE HOMES, the prose that carried the figure (romp-manager's ruling on the ninth pass, 2026-09-22: CI tests a pull
+request's MERGE with main, so a docstring pinned to the count read went red the day main gained a test module, and would
+every time; the oracle's own figure beside it stays pinned to the derivation; the ninth pass's pin read this docstring
+alone, the tenth's reads the three, the reviewer's ruling of 2026-09-22); tests/conftest.py,
 tests/__init__.py, the helper modules under tests/ and tests/fixtures/ are read only for a returned Thread
 (helper_modules). The listing is
 what pytest collects under tests/ only while two things hold, both PINNED by a tree test
@@ -367,7 +369,8 @@ directly for the table (`--table`; `--tail` prints only the tail-only and unread
 
 HOW THE TREE IS READ ONCE (the ninth pass, 2026-09-22: CI's 3.10 and 3.11 cells had been cancelled at their 25-minute cap
 with this module's serial cost in them). Every file the census reads, a test module, a helper module, a product file, goes
-through tests/parse_cache.py, ONE PARSE PER FILE PER PROCESS (keyed on the file's realpath, size and mtime_ns; one module
+through tests/parse_cache.py, ONE PARSE PER FILE PER PROCESS (keyed on the file's realpath and its size, mtime_ns, inode and
+ctime_ns, under the helper's one lock; one module
 object every census in the process shares, imported as `from . import parse_cache` under pytest, where tests/ is a package,
 and as `import parse_cache` when this module runs as a script), and the whole derivation over the tree, the product loops
 and thread classes, the helper modules, the product index, every module's units, the rows, the informational rows, the
@@ -390,16 +393,20 @@ import re
 import shutil
 import sys
 import tempfile
+import threading
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 if __package__:                                   # under pytest tests/ is a package: THE SAME parse_cache module object every
     from . import parse_cache as PC               # census in the process shares (one parse per file, one derivation per key)
+    from .thread_ends import join_started         # the one cleanup shape for the threads ParseCacheKeyAndLock starts
 else:                                             # `python3 tests/test_thread_stop_census.py --table`: a script, the module by name
     if HERE not in sys.path:
         sys.path.insert(0, HERE)
     import parse_cache as PC
+    from thread_ends import join_started
 
 THREAD_CTORS = ("Thread", "Timer")
 STOP_VERBS = ("join", "set", "shutdown", "stop", "close", "cancel", "terminate", "kill", "server_close", "release")
@@ -4664,7 +4671,8 @@ def _literal_module_counts(text):
     """The literal module counts in a prose text, the shapes the population figure has taken: a number of three or more
     digits before `modules` or `test modules`, after `of` or `of the` when a comma, a semicolon, a period, a parenthesis, the
     word modules or the end follows (not a date, a time, a decimal or a quantity with a unit: `a sleep of 3600 s`), or in a
-    parenthesis after `modules`. The population has one home, the table; a tree test pins this empty over the docstring."""
+    parenthesis after `modules`. The population has one home, the table; a tree test pins this empty over the prose's three
+    homes: this module's docstring, the liveness module's docstring and the ledger entry."""
     return [m.group(0) for m in _MODULE_COUNT.finditer(text)]
 
 
@@ -4848,23 +4856,55 @@ class ThreadStopCensus(unittest.TestCase):
             self.assertIn(name, oracle)
         self.assertNotIn("tests/test_thread_stop_census.py", oracle, "this module names the oracle in its docstring only")
 
-    def test_no_literal_module_count_stands_in_the_docstring(self):
+    def test_no_literal_module_count_stands_in_any_of_the_three_homes(self):
         """romp-manager's ruling on the ninth pass (2026-09-22): the population count has ONE home, the table the census
         prints, and no literal module count stands in prose. The pin this replaces held the docstring's figure to the count
         read; CI tests a pull request's MERGE with main, so it went red the day main gained a test module
         (tests/test_docs_stylesheet.py), and would every time. This pins the ABSENCE: no number of three or more digits
-        stands beside the word modules in the docstring, in the shapes the population figure took (`NNN modules`, `NNN test
-        modules`, `(of NNN,`, `of the NNN`, `modules (NNN`); the oracle bullet's `5 test modules` is the oracle's own figure,
-        derived and held by the test above, and the reach figure of the 2026-09-21 probe is phrased as callers. The sentences
-        the docstring carried red the regex (planted, with the count the census read written into their shapes, so this test
-        carries no literal either), and a date, a commit, a quantity with a unit or a two-digit figure is not a count."""
-        self.assertEqual(_literal_module_counts(__doc__), [], "a literal module count in the docstring: the table is its one home")
+        stands beside the word modules, in the shapes the population figure took (`NNN modules`, `NNN test modules`,
+        `(of NNN,`, `of the NNN`, `modules (NNN`), in ANY of the prose's THREE HOMES (the reviewer's ruling on the tenth
+        pass, 2026-09-22; the ninth's pin read this docstring alone): this module's docstring, the liveness module's
+        docstring (tests/test_kernel_parked_ops_liveness.py, whose reach sentence carried the figure) and the ledger entry
+        (upstream/2026-09-21-parked-ops-liveness-boot-hold.md, which carried ten); the failure message names the three.
+        The liveness module's docstring is read from its PARSED FILE (parse_cache.source_and_tree, the parse the tree
+        derivation already holds, so this test parses nothing, held on the counter; ast.get_docstring of the module,
+        uncleaned, which is the module's __doc__ verbatim: asserted on this module, where both roads are in hand) and NOT
+        by importing it: its import sets XDG_STATE_HOME to a fresh directory for the whole process and loads bin/romp-kernel
+        under a module name of its own, side effects a census that reads the tree by parse must not take in the middle of
+        a run (this module alone under pytest, or as a script, has not imported it, and every test after it in the process
+        would read the liveness module's state root). The ledger entry is read by path, as text. The oracle bullet's `5
+        test modules` is the oracle's own figure, derived and held by the test above, and the reach figure of the
+        2026-09-21 probe is phrased as callers in both docstrings. THE RED, planted in each home: the sentences the
+        docstring carried, with the count the census read written into their shapes (so this test carries no literal
+        either), appended to the home's text one at a time, and the regex names exactly the plant and nothing of the home;
+        and a date, a commit, a quantity with a unit or a two-digit figure is not a count."""
+        own = PC.source_and_tree(__file__)[1]
+        self.assertEqual(ast.get_docstring(own, clean=False), __doc__,
+                         "the parse road reads this module's docstring as its __doc__: the liveness module's is read the same way")
+        parses = PC.stats()["parses"]
+        liveness = os.path.join(HERE, "test_kernel_parked_ops_liveness.py")
+        ledger = os.path.join(ROOT, "upstream", "2026-09-21-parked-ops-liveness-boot-hold.md")
+        with open(ledger, encoding="utf-8") as f:
+            ledger_text = f.read()
+        homes = (("tests/test_thread_stop_census.py (its docstring)", __doc__),
+                 ("tests/test_kernel_parked_ops_liveness.py (its docstring)",
+                  ast.get_docstring(PC.source_and_tree(liveness)[1], clean=False)),
+                 ("upstream/2026-09-21-parked-ops-liveness-boot-hold.md", ledger_text))
+        self.assertEqual(PC.stats()["parses"], parses, "the liveness module's docstring came from the parse the tree holds")
+        names = ", ".join(name for name, _text in homes)
+        for name, text in homes:
+            self.assertTrue(text and "modules" in text, "%s: the text read carries the word the regex looks beside" % name)
+            self.assertEqual(_literal_module_counts(text), [], "a literal module count in %s: the table is its one home; the "
+                             "three prose homes this pin reads are %s" % (name, names))
         n = self.extras["modules"]
         for planted in ("the listing of tests/test_*.py (module_paths; %d modules at this head, a figure the table prints" % n,
                         "call it: 5 test modules at this head (of %d, 2026-09-22: test_codex_backend" % n,
                         "the runtime oracle called by 5 of the %d" % n, "the runtime oracle called by 5 of the %d; the liveness module" % n,
                         "a population of %d test modules" % (n + 63), "the modules (%d at this head)" % n):
-            self.assertTrue(_literal_module_counts(planted), planted)
+            named = _literal_module_counts(planted)
+            self.assertTrue(named, planted)
+            for name, text in homes:                              # the red in each home: the plant, and only the plant, is named
+                self.assertEqual(_literal_module_counts(text + "\n" + planted), named, "%s with the plant %r" % (name, planted))
         for fine in ("5 test modules at this head (of the modules the census reads, a count the table prints; 2026-09-22:",
                      "the probe of 2026-09-22", "kernel commit 3421c94d0", "13 modules save stores", "141 callers of jd._rebind_state()",
                      "on 20000 random payloads", "round 2 of PR 891's review", "a sleep of 3600 s, or of a name", "a bound of 107 bytes"):
@@ -4945,7 +4985,10 @@ class ThreadStopCensus(unittest.TestCase):
         the helper's counters: the entry point run twice more answers the object setUpClass holds and builds nothing (the
         key's build count stays 1, the process's derivation count does not move, the hit count moves by two); no file is
         parsed by those calls; every module of the population and every product file the index holds was parsed exactly
-        once; and the parse count over the population equals the module count. THE RED, planted on a key of this test's own
+        once; and the parse count over the population equals the module count (the helper's one lock keeps that so under
+        threads, and its four-field key under a rewrite, each planted in ParseCacheKeyAndLock; the key's stated blind
+        spot, a same-size in-place rewrite within the timestamp granularity, is named in the message). THE RED, planted
+        on a key of this test's own
         beside the census's (clearing the census's own cache here would only make the next test derive again): a copy of the
         entry point that forgets its key between two calls builds twice, and the counters show it, because clear() leaves
         them alone; the same counters would show a second parse or derivation of the tree."""
@@ -4960,7 +5003,9 @@ class ThreadStopCensus(unittest.TestCase):
         self.assertEqual(after["parses"], before["parses"], "the two calls parsed nothing")
         files = list(self.tree.paths) + sorted(self.tree.product.trees)
         self.assertEqual([os.path.relpath(p, ROOT) for p in files if PC.parses_of(p) != 1], [],
-                         "a module of the population or a product file was parsed other than once in this process")
+                         "a module of the population or a product file was parsed other than once in this process (the key is the "
+                         "file's size, mtime_ns, inode and ctime_ns: a rewrite that keeps all four, a same-size in-place write within "
+                         "the timestamp granularity, is the stated blind spot, served the old tree and never a second parse here)")
         self.assertEqual(sum(PC.parses_of(p) for p in self.tree.paths), self.extras["modules"],
                          "one parse per module: the parse count over the population is the module count")
         key = ("tests/test_thread_stop_census.py", "a planted key: the red of this pin")
@@ -4984,9 +5029,10 @@ class ThreadStopCensus(unittest.TestCase):
         file through tests/parse_cache.py gets THIS census's parse: stated from this side, after the derivation
         source_and_tree over every product file the index holds answers the very tree object the index holds, counts a hit
         and no parse, and kernel/kernel.py was parsed once in the process. The state-root censuses adopt the helper in their
-        own pull request; their derivation then reads these entries. The key holds the file's size and mtime_ns, so a file
-        REWRITTEN between two calls is parsed again (shown on a planted file: two texts of different sizes, two parses) and
-        an unchanged one is not (a third call, one more hit and no parse)."""
+        own pull request; their derivation then reads these entries. The key holds the file's size, mtime_ns, inode and
+        ctime_ns, so a file REWRITTEN between two calls is parsed again (shown on a planted file: two texts of different
+        sizes, two parses; a restored mtime and a rename-over are ParseCacheKeyAndLock's plants) and an unchanged one is not
+        (a third call, one more hit and no parse)."""
         before = PC.stats()
         for p, tree in sorted(self.tree.product.trees.items()):
             _text_, again = PC.source_and_tree(p)
@@ -5008,6 +5054,188 @@ class ThreadStopCensus(unittest.TestCase):
         self.assertIsNot(first, second, "a rewritten file is parsed again")
         self.assertIs(second, third, "an unchanged file is not")
         self.assertEqual(PC.parses_of(p), 2)
+        PC.clear(p)
+
+
+class ParseCacheKeyAndLock(unittest.TestCase):
+    """tests/parse_cache.py's key and lock, each property planted on a file or a key of this class's own, never on a
+    population module or a product file (the counter pin holds those to one parse in the process), so these run in any
+    worker and need no tree. The tenth pass's probe of the helper (2026-09-22) verified each by execution on a copy; the two
+    it found wanting were the lock, which the helper lacked, and the key, which could not see a rewrite that kept size and
+    mtime_ns. Every thread a case starts ends on every exit path in the T282 shape: join_started registered as a cleanup
+    before the start loop, a bounded join in the body, and no thread alive after it; the bodies are bounded (a timed
+    barrier, one read or one build)."""
+    KEY = ("tests/test_thread_stop_census.py", "a planted key of ParseCacheKeyAndLock")
+
+    def _planted_dir(self):
+        d = tempfile.mkdtemp(prefix="romp-tests-census-")
+        self.addCleanup(shutil.rmtree, d, True)
+        return d
+
+    @staticmethod
+    def _write(path, text):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def test_a_symlink_and_its_target_are_one_cache_entry_with_one_parse(self):
+        """The key's first element is the realpath: a symlinked copy of a module (a copy of tests/thread_ends.py, a link
+        beside it, and the copy reached through a symlinked directory) is one entry, parsed once, the same tree object on
+        every spelling, and the counters say one parse and two hits; clear(link) drops the target's entry (one realpath),
+        the next read parses again and the counter, left alone by clear, counts it."""
+        d = self._planted_dir()
+        target = os.path.join(d, "copy.py")
+        shutil.copyfile(os.path.join(HERE, "thread_ends.py"), target)
+        link = os.path.join(d, "link.py")
+        os.symlink(target, link)
+        os.symlink(d, os.path.join(d, "dir"))
+        through_dir = os.path.join(d, "dir", "copy.py")
+        before = PC.stats()
+        by_link = PC.source_and_tree(link)[1]
+        by_target = PC.source_and_tree(target)[1]
+        by_dir = PC.source_and_tree(through_dir)[1]
+        self.assertIs(by_target, by_link, "the symlink and its target are one entry")
+        self.assertIs(by_dir, by_link, "the copy through a symlinked directory is the same entry")
+        self.assertEqual((PC.parses_of(link), PC.parses_of(target), PC.parses_of(through_dir)), (1, 1, 1))
+        after = PC.stats()
+        self.assertEqual((after["parses"] - before["parses"], after["parse_hits"] - before["parse_hits"]), (1, 2))
+        PC.clear(link)
+        self.assertIsNot(PC.source_and_tree(target)[1], by_target, "clear(link) dropped the one entry, by realpath")
+        self.assertEqual(PC.parses_of(target), 2, "the counter is left as it was and counts the second parse")
+        PC.clear(target)
+
+    def test_a_build_that_raises_is_not_memoised_is_counted_and_releases_the_lock(self):
+        """derived() counts a build before it runs, so a build that raises is counted and memoised as nothing: the next
+        call builds again, lands its value, and the call after hits. The raise leaves the lock released: a second thread's
+        derivation of another key completes after it, joined with a bound, so a lock still held would be a failure here
+        and not a hang."""
+        key = self.KEY + ("a build that raises",)
+        calls = []
+
+        def build():
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("the first build fails")
+            return object()
+        with self.assertRaises(RuntimeError):
+            PC.derived(key, build)
+        self.assertEqual((len(calls), PC.builds_of(key)), (1, 1), "the raise was a build attempt, counted")
+        other = self.KEY + ("another key, asked from a second thread after the raise",)
+        got = []
+
+        def derive_other():
+            got.append(PC.derived(other, object))
+        t = threading.Thread(target=derive_other, name="census-derive-after-raise")
+        self.addCleanup(join_started, None, [t], 5)
+        t.start()
+        t.join(5)
+        self.assertFalse(t.is_alive(), "the second thread's derivation waited on a lock the raise should have released")
+        self.assertEqual(len(got), 1)
+        before = PC.stats()
+        a = PC.derived(key, build)
+        b = PC.derived(key, build)
+        self.assertIs(a, b, "the second build's value is the memo")
+        self.assertEqual((len(calls), PC.builds_of(key)), (2, 2), "the raise memoised nothing: the next call built")
+        self.assertEqual(PC.stats()["derived_hits"] - before["derived_hits"], 1)
+        PC.clear(key, other)
+
+    def test_two_threads_on_one_path_parse_once_and_on_one_key_build_once(self):
+        """THE LOCK (the gap the tenth pass's probe found: without it two threads reading kernel/kernel.py both missed and
+        both parsed, five trials of five under 3.12 and 3.10, two tree objects and the parse counter moving by two, and two
+        threads on derived() built twice; a threaded reader of a product file would then have shown the counter pin a
+        second parse that was no defect of the census). Two threads released together by a barrier read one path, a copy
+        of kernel/kernel.py of this test's own (its parse takes seconds, so the second thread arrives while the first is
+        parsing): one parse, the same tree object to both. Two threads on derived() with one key, the build sleeping
+        inside the lock: one build, the same object to both. A build that reads files and derives through the cache
+        re-enters the lock from its own thread (the shape of the census's own tree derivation, which ThreadStopCensus's
+        setUpClass runs under the lock): shown on a planted key."""
+        d = self._planted_dir()
+        p = os.path.join(d, "kernel_copy.py")
+        shutil.copyfile(os.path.join(ROOT, "kernel", "kernel.py"), p)
+        gate = threading.Barrier(2)
+        got = {}
+
+        def read(name):
+            gate.wait(5)
+            got[name] = PC.source_and_tree(p)[1]
+        readers = [threading.Thread(target=read, args=(n,), name="census-reader-%s" % n) for n in ("a", "b")]
+        self.addCleanup(join_started, None, readers, 5)
+        before = PC.stats()
+        for t in readers:
+            t.start()
+        for t in readers:
+            t.join(60)
+        self.assertEqual([t.name for t in readers if t.is_alive()], [], "a reader did not finish")
+        self.assertIs(got["a"], got["b"], "two threads on one path: one tree object")
+        self.assertEqual(PC.parses_of(p), 1, "two threads on one path: one parse")
+        self.assertEqual(PC.stats()["parses"] - before["parses"], 1)
+        key = self.KEY + ("two threads",)
+        built = []
+        gate2 = threading.Barrier(2)
+
+        def build():
+            built.append(object())
+            time.sleep(0.05)                                     # inside the lock: the second asker waits on it, builds nothing
+            return built[-1]
+
+        def ask(name):
+            gate2.wait(5)
+            got[name] = PC.derived(key, build)
+        askers = [threading.Thread(target=ask, args=(n,), name="census-asker-%s" % n) for n in ("c", "d")]
+        self.addCleanup(join_started, None, askers, 5)
+        for t in askers:
+            t.start()
+        for t in askers:
+            t.join(10)
+        self.assertEqual([t.name for t in askers if t.is_alive()], [], "an asker did not finish")
+        self.assertIs(got["c"], got["d"], "two threads on one key: one object")
+        self.assertEqual((len(built), PC.builds_of(key)), (1, 1), "two threads on one key: one build")
+        nested = self.KEY + ("a re-entrant build",)
+        inner = self.KEY + ("a re-entrant build: the inner key",)
+        value = PC.derived(nested, lambda: (PC.source_and_tree(p)[1], PC.derived(inner, object)))
+        self.assertIs(value[0], got["a"], "the build read the cache from inside the lock: the same tree")
+        self.assertEqual((PC.builds_of(nested), PC.builds_of(inner)), (1, 1))
+        PC.clear(p, key, nested, inner)
+
+    def test_the_key_sees_a_restored_mtime_and_a_rename_over_and_names_its_blind_spot(self):
+        """THE KEY (size, mtime_ns, inode, ctime_ns; the ninth pass's held size and mtime_ns alone, and its docstring said
+        a rewrite re-parses, which the tenth pass's probe showed false twice). A same-size rewrite whose mtime is put back
+        with os.utime keeps the two old fields and moves ctime: re-parsed, the new text served. A rename-over of a file
+        carrying a copied mtime keeps them too and moves the inode: re-parsed. Unchanged after both: a hit. THE BLIND
+        SPOT, stated in the helper's docstring and in the counter pin's message: a rewrite that keeps the inode and the
+        size within the timestamp granularity is served the old tree. On a kernel with coarse timestamps the restored
+        write below can land in the tick of the file's creation, which is that blind spot exactly, so the plant repeats
+        the write until ctime has moved (bounded) and asserts the fields it relies on before each read."""
+        d = self._planted_dir()
+        p = os.path.join(d, "planted.py")
+        self._write(p, "x = 1\n")
+        st0 = os.stat(p)
+        first_text, first = PC.source_and_tree(p)
+        self.assertEqual(first_text, "x = 1\n")
+        for _attempt in range(200):                              # a coarse clock: wait out the tick the file was created in
+            self._write(p, "x = 2\n")
+            os.utime(p, ns=(st0.st_atime_ns, st0.st_mtime_ns))
+            st1 = os.stat(p)
+            if st1.st_ctime_ns != st0.st_ctime_ns:
+                break
+            time.sleep(0.005)
+        self.assertEqual((st1.st_size, st1.st_mtime_ns, st1.st_ino), (st0.st_size, st0.st_mtime_ns, st0.st_ino),
+                         "the restored rewrite kept the size, the mtime and the inode")
+        self.assertNotEqual(st1.st_ctime_ns, st0.st_ctime_ns, "ctime moved: the clock ticked")
+        second_text, second = PC.source_and_tree(p)
+        self.assertIsNot(second, first, "a restored mtime hides nothing: ctime moved, re-parsed")
+        self.assertEqual(second_text, "x = 2\n")
+        side = os.path.join(d, "planted.py.new")
+        self._write(side, "x = 3\n")
+        os.utime(side, ns=(st1.st_atime_ns, st1.st_mtime_ns))
+        os.replace(side, p)
+        st2 = os.stat(p)
+        self.assertEqual((st2.st_size, st2.st_mtime_ns), (st1.st_size, st1.st_mtime_ns), "the rename-over carried the copied mtime")
+        self.assertNotEqual(st2.st_ino, st1.st_ino, "the rename-over moved the inode")
+        third_text, third = PC.source_and_tree(p)
+        self.assertIsNot(third, second, "a rename-over with a copied mtime: the inode moved, re-parsed")
+        self.assertEqual(third_text, "x = 3\n")
+        self.assertIs(PC.source_and_tree(p)[1], third, "unchanged after both: a hit")
+        self.assertEqual(PC.parses_of(p), 3)
         PC.clear(p)
 
 
