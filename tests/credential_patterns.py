@@ -153,9 +153,12 @@ expected value (the assert line still shows that value, whole or cut).
 Every rule reads one alphabet, base64url (`A-Za-z0-9_-`, `_TOKEN_CHARS`), so a standard-base64 value
 (`+`, `/`, `=`) or a percent-escaped one is redacted only up to its first character outside that
 alphabet, under every rule, the prefixed ones and the generic one alike: `k=sk-ant-<body>+<rest>` is
-the marker and `+<rest>`. Widening the alphabet has a cost in sentences and paths that is not measured
-here; tests/test_env_value_redaction.py witnesses this sentence on one such value, so a widening that
-lands takes the sentence with it.
+the marker and `+<rest>`. A mid-value `=` opens a value position of its own (`(?<==)` in
+_VALUE_POSITION), so a qualifying rest after it is the generic rule's: `k=sk-ant-<body>=<24 with a
+digit>` is the marker, `=` and the marker; `=` as trailing padding stays outside the alphabet and is
+where the witness reads it. Widening the alphabet has a cost in sentences and paths that is not
+measured here; tests/test_env_value_redaction.py witnesses this sentence on one value per character it
+names, so a widening that lands takes the sentence with it.
 
 Nothing here is a credential: the file holds prefixes and character classes only.
 """

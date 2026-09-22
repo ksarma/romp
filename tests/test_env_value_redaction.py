@@ -898,16 +898,25 @@ class CredentialPattern(_WithConftest):
         cut_groups = [g for g in (_leading_group_literals(a) for a in alternatives) if g]
         self.assertEqual(cut_groups, [listed], "the cut-key rule's prefixes are KEY_FORMATS, in one group")
 
-    def test_the_alphabet_is_base64url_so_a_value_is_redacted_up_to_its_first_plus(self):
-        # the limit the module docstring states, witnessed: every rule reads the base64url alphabet, so a key
-        # holding a standard-base64 `+` past its body minimum is the marker and then the rest from the `+`.
-        # A red here means the alphabet widened: the docstring's sentence must go with the widening (which is
-        # a change of its own, with its sentence-and-path costs to measure; round 1 of fork PR #899)
+    def test_the_alphabet_is_base64url_so_a_value_is_redacted_up_to_its_first_character_outside_it(self):
+        # the limit the module docstring states, witnessed on every character its sentence names: every rule
+        # reads the base64url alphabet, so a key holding a standard-base64 `+` or `/`, a percent-escape
+        # (`%2B`) or `=` past its body minimum is the marker and then the rest from that character (for `=`
+        # as trailing padding, the marker and then the padding). A red here means the alphabet widened: the
+        # docstring's sentence must go with the widening (which is a change of its own, with its
+        # sentence-and-path costs to measure; rounds 1 and 2 of fork PR #899)
         red, R = self.cf.redact_credential_tokens, self.cf.CREDENTIAL_REDACTED
-        rest = uuid.uuid4().hex[:16]
-        tok = "sk-ant-" + uuid.uuid4().hex[:24] + "+" + rest
-        self.assertEqual(red("k=%s" % tok), "k=%s+%s" % (R, rest),
-                         "the alphabet widened past base64url: remove the module docstring's sentence that says it is base64url only")
+        body, rest = uuid.uuid4().hex[:24], uuid.uuid4().hex[:16]
+        for outside, tail in (("+", "+" + rest), ("/", "/" + rest), ("%2B", "%2B" + rest), ("=", "==")):
+            with self.subTest(outside=outside):
+                self.assertEqual(red("k=sk-ant-%s%s" % (body, tail)), "k=%s%s" % (R, tail),
+                                 "the alphabet widened past base64url: remove the module docstring's sentence that says it is base64url only")
+        # the padding form is the witness's because a mid-value `=` is not the sentence's limit: it opens a
+        # value position of its own (`(?<==)` in _VALUE_POSITION), so a qualifying rest after it is the
+        # generic rule's, a second marker (the docstring's clause, round 2 of fork PR #899)
+        qualifying = uuid.uuid4().hex[:23] + "7"                    # 24 token characters with a digit, every draw
+        self.assertEqual(red("k=sk-ant-%s=%s" % (body, qualifying)), "k=%s=%s" % (R, R),
+                         "a mid-value `=` opens a value position: a qualifying rest after it is the generic rule's")
 
     def test_a_cut_identifier_or_date_is_redacted_when_it_has_a_digit_or_an_interior_capital(self):
         # the fragment rule cannot tell a camelCase or PascalCase name from a base64 tail without a digit

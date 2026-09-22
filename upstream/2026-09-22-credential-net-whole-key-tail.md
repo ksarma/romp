@@ -1,7 +1,7 @@
 ---
 title: Test-suite credential redaction: every provider-prefix rule takes the whole key, its dotted rest included, so a key that begins like a provider token is never redacted only up to its first underscore or its first dot
 status: candidate
-where: fork branch `quickfix-redaction-prefix-tail`: `tests/credential_patterns.py` (`KEY_FORMATS`, `_REST` with its dotted rest and dotted cut tail, `_PREFIX_ELLIPSIZED`'s dotted tail, the whole-key rules and the cut-key rule built from one list, the docstring's alphabet paragraph), `tests/test_env_value_redaction.py` (the two deterministic pins, the property pin read from the pattern source with its dotted-rest positions, and the alphabet witness)
+where: fork branch `quickfix-redaction-prefix-tail`: `tests/credential_patterns.py` (`KEY_FORMATS`, `_REST` with its dotted rest and dotted cut tail, `_PREFIX_ELLIPSIZED`'s dotted tail, the whole-key rules and the cut-key rule built from one list, the docstring's alphabet paragraph), `tests/test_env_value_redaction.py` (the two deterministic pins, the property pin read from the pattern source with its dotted-rest positions, and the alphabet witness), upstream/2026-09-22-credential-net-whole-key-tail.md (this entry)
 added: 2026-09-22
 pr:
 tier: docs
