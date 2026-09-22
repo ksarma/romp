@@ -67,20 +67,26 @@ ends the tail with a newline or a space, not the quote the fragment rule below n
 rules took the tail, such a line showed it). The bound is there so a prefix inside a long run that
 never reaches a cut costs a bounded scan (an unbounded head made the scrub quadratic: 80 seconds on
 a 200 KB line of repeated `hf_`, which is what the tests/test_env_value_redaction.py timing case
-guards). What a format rule cannot take whole is a body of characters its key does not have. A
-Hugging Face token is `hf_` and 34 letters (gitleaks' rule is `hf_(?i:[a-z]{34})`, and every token that
-rule is tested against is letters only); the `hf_` rule here takes letters and digits, wider than that
-on purpose: narrowing it to letters would exclude nothing more (what ends a match in an identifier is
-the `_` it carries, not a digit), and a token that did carry a digit would show. RunPod publishes the
-`rpa_` prefix and nothing of the body (checked 2026-09-06; gitleaks has no rule for it), and the
-`rpa_` rule is the same class. A body with `_` or `-` in it, whole or cut, is therefore taken up to
-that character under either prefix. Past the bound the rest of such a head shows in bare text, and in
-a quoted repr too once 20 letters and digits precede the `_` or `-` (with fewer the format rule
-fails, the whole head is a fragment between the quote and the cut, and the fragment rule takes it);
-within the bound the cut rule's head class takes it. That shape is no Hugging Face token; a real
-RunPod key carrying `_` or `-` would be the reason to widen the `rpa_` class, and the whole key in
-bare text, not the cut one, is what widening would fix first. The class stays narrow so an
-`hf_`-prefixed identifier of 20 characters or more (`hf_hub_download_to_cache_dir`) is not redacted.
+guards). A format rule's body class decides where its match begins, never where it ends: every
+format rule ends with the rest of its run, token characters of any kind, so no rule's match stops
+inside a key (`_REST` below says what stopping there cost). A Hugging Face token is `hf_` and 34
+letters (gitleaks' rule is `hf_(?i:[a-z]{34})`, and every token that rule is tested against is
+letters only); the `hf_` rule here asks for 20 letters and digits after the prefix, wider than that
+on purpose: narrowing it to letters would exclude nothing more (what ends a match in an identifier
+is the `_` it carries, not a digit), and a token that did carry a digit would show. RunPod publishes
+the `rpa_` prefix and nothing of the body (checked 2026-09-06; gitleaks has no rule for it), and the
+`rpa_` rule is the same class. The class is narrow so that an `hf_`-prefixed identifier of 20
+characters or more (`hf_hub_download_to_cache_dir`) is not redacted: the `_` within its first 20
+characters is where the rule fails. A key with 20 letters and digits before its first `_` or `-` is
+the rule's match and is taken whole, the rest of its run with it, wherever it sits and whatever the
+width of its head against a cut (until 2026-09-22 such a key was taken up to that character and the
+rest of it showed: on CI the marker and 60 characters of a randomized 86-character key that had
+begun `hf_` or `rpa_`, and past the bound the rest of a cut key's head). A key with a `_` or `-`
+within its first 20 body characters is no format rule's match and is a token of unknown format:
+whole where a value sits, alone on a line, on a diff line and against a cut (within the bound, or
+quoted at any width), and left in bare text, as any such token is. That shape is no Hugging Face
+token; a real RunPod key of that shape would be the reason to widen the `rpa_` class, and the whole
+key in bare text is what widening would fix.
 A cut JWT is the same with dotted segments in its head and tail
 (`'eyJ<header>.eyJ<payload>...<payload>.<signature>'`, and unittest's `['eyJ[35 chars]<rest>']`,
 whose head is the prefix alone). Its header is bounded at JWT_HEADER_MAX, as the whole token's is,
@@ -212,8 +218,9 @@ _QUOTED_LINE = r"^(?P<pfxq>E[ \t]+['\"])" + _GENERIC + r"(?=['\"]$)"
 # is tried at every occurrence of its prefix, and inside a long run that never reaches a cut an unbounded
 # head consumed the rest of the run and backtracked through it, once per occurrence. For `sk-ant-`,
 # `sk-or-`, `sk-proj-` and `AIza` the format rule then took the run in one match, so the cost was paid
-# once; for `hf_` and `rpa_` the format rule (`[A-Za-z0-9]{20,}`) fails on a run holding `_` or `-`, the
-# run was never consumed, and every occurrence paid again: 80 seconds for a 200 KB line of repeated `hf_`.
+# once; for `hf_` and `rpa_` the format rule (`[A-Za-z0-9]{20,}`) fails on a run with `_` or `-` in its first
+# 20 characters (repeated `hf_` has one at its third), the run was never consumed, and every occurrence paid
+# again: 80 seconds for a 200 KB line of repeated `hf_`.
 # A head past the bound is the format rule's match, and _CUT_TAIL (below) gives that match the cut and the
 # run after it, so a cut key of any head width is one match.
 _ELLIPSIS = r"(?:\.\.\.|\[\d+ chars\])"
@@ -233,7 +240,33 @@ _CUT_HEAD_BOUNDS = r"{1,%d}" % CUT_HEAD_MAX
 # dotted rest is inside the optional cut group.
 _CUT_TAIL = r"(?:" + _ELLIPSIS + _TOKEN_CHARS + r"*)?"
 _CUT_TAIL_DOTTED = r"(?:" + _ELLIPSIS + _TOKEN_CHARS + r"*" + _DOTTED + r")?"
-_PREFIX_ELLIPSIZED = (r"(?:sk-ant-|sk-or-|sk-proj-|hf_|AIza|rpa_)" + _atomic_run("hk", _CUT_HEAD_BOUNDS)
+# The key formats, each the prefix its provider fixed and the body class the whole-key rule asks for after
+# it (the module docstring says why the two letters-and-digits classes are what they are). The whole-key
+# rules and the cut-key rule below are both built from this list, so a prefix is never in one and not the
+# other; the prefixes are token characters, nothing a pattern reads specially.
+KEY_FORMATS = (
+    ("sk-ant-", r"[A-Za-z0-9_\-]{20,}"),    # Anthropic API keys
+    ("sk-or-", r"[A-Za-z0-9_\-]{20,}"),     # OpenRouter
+    ("sk-proj-", r"[A-Za-z0-9_\-]{20,}"),   # OpenAI project keys
+    ("hf_", r"[A-Za-z0-9]{20,}"),           # Hugging Face (a token is 34 letters; the class is wider, the docstring says why)
+    ("AIza", r"[A-Za-z0-9_\-]{30,}"),       # Google API keys
+    ("rpa_", r"[A-Za-z0-9]{20,}"),          # RunPod (the prefix is published, the body is not; the same class)
+)
+# The rest of a key past the body its rule asked for: token characters of any kind, then a cut and the run
+# after it. Appended to every whole-key rule, so that a body class decides where a match begins and never
+# where it ends: no rule's match stops inside a key with a token character next to it. Until 2026-09-22 the
+# two letters-and-digits rules did stop there: a key that began `hf_` or `rpa_` with 20 letters and digits
+# before its first `_` or `-` was matched up to that character, the scan resumed after the match, and the
+# rest of the key was no rule's (mid-key nothing marks a value position, and the generic rule, which takes
+# such a key whole where a value sits, alone on a line and on a diff line, loses to a whole-key rule that
+# matches at the same start). A randomized 86-character base64url key that happened to begin that way came
+# out on CI as the marker and 60 characters of the key (2026-09-22), and a cut such key wider than
+# CUT_HEAD_MAX showed the rest of its head. The run before the tail is greedy and the tail's class is the
+# same or wider, so the tail is tried once where the run ends and the scrub stays linear (ScrubCost times
+# the shape).
+_REST = _TOKEN_CHARS + r"*" + _CUT_TAIL
+_WHOLE_KEYS = r"|".join(prefix + body + _REST for prefix, body in KEY_FORMATS)
+_PREFIX_ELLIPSIZED = (r"(?:" + r"|".join(prefix for prefix, _ in KEY_FORMATS) + r")" + _atomic_run("hk", _CUT_HEAD_BOUNDS)
                       + _ELLIPSIS + _TOKEN_CHARS + r"*")
 # A JWT's head is `eyJ` and up to three dotted segments: the header, bounded at JWT_HEADER_MAX like the
 # whole-token rule's, so a cut inside any header an installation meets is taken (atomic: it is the one
@@ -274,12 +307,7 @@ _DIFF_LINE_CUT = r"^(?P<pfxc>E[ \t]+[-+][ \t]+)" + _FRAGMENT + r"(?=\.\.\.$)"
 TOKEN_RE = re.compile(
     _PREFIX_ELLIPSIZED +                            # a key of a known format that pytest or unittest cut
     r"|" + _JWT_ELLIPSIZED +                        # a JWT so cut
-    r"|sk-ant-[A-Za-z0-9_\-]{20,}" + _CUT_TAIL +    # Anthropic API keys, each format whole or with a cut and its tail
-    r"|sk-or-[A-Za-z0-9_\-]{20,}" + _CUT_TAIL +     # OpenRouter
-    r"|sk-proj-[A-Za-z0-9_\-]{20,}" + _CUT_TAIL +   # OpenAI project keys
-    r"|hf_[A-Za-z0-9]{20,}" + _CUT_TAIL +           # Hugging Face (a token is 34 letters; the class is wider, the docstring says why)
-    r"|AIza[A-Za-z0-9_\-]{30,}" + _CUT_TAIL +       # Google API keys
-    r"|rpa_[A-Za-z0-9]{20,}" + _CUT_TAIL +          # RunPod (the prefix is published, the body is not; the same class)
+    r"|" + _WHOLE_KEYS +                            # a key of each known format (KEY_FORMATS), whole or with a cut and its tail
     r"|" + _JWT + _CUT_TAIL_DOTTED +                # a JWT (JWS, unsecured or JWE), by its shape, whole or cut with its dotted tail
     r"|" + _VALUE_POSITION + _GENERIC +             # a token of unknown format where a value sits...
     r"|^" + _GENERIC + r"$"                         # ...or alone on its line (an apiKeyHelper's stdout)...

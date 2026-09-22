@@ -29,7 +29,10 @@ for the assertion nobody wrote that way. Pinned here:
     shape wherever it sits, cut or whole (a cut inside its header up to the header bound, and the stated
     limit past it); the dotted rest of a token that qualifies; the head of a cut
     key bounded at the widest cut a tool makes, and a wider head taken with its cut and tail by the
-    format rule, quoted or bare; the `hf_` and `rpa_` rules' letters-and-digits class and its cost;
+    format rule, quoted or bare; the `hf_` and `rpa_` rules' letters-and-digits class, and the rest of its
+    run every whole-key rule takes past its body, pinned over every prefixed rule read from the pattern's
+    source (a key that began like an `hf_` or `rpa_` token showed 60 of its 86 characters after the
+    marker: a CI red, 2026-09-22);
     the fragment rule's documented costs (a camelCase name or a digit-bearing run against a cut is
     redacted, a Capitalised word or a single-case identifier is not); the two runs on the sides of one
     cut taken together when either qualifies, whatever the other's alphabet (a letters-only hex tail
@@ -77,6 +80,7 @@ import hashlib
 import json
 import os
 import pprint
+import re
 import shutil
 import subprocess
 import sys
@@ -162,6 +166,63 @@ def _hex_letters(n):
     """`n` characters from the hex alphabet's letters alone (`abcdef`, cycled): the shape of a hex piece
     with no digit, which the fragment rule's digit test cannot see."""
     return ("abcdef" * (n // 6 + 1))[:n]
+
+
+def _top_level_alternatives(pattern):
+    """The top-level alternatives of a pattern's source: its text split at each `|` at group depth zero and
+    outside a character class, a backslash escaping the character after it."""
+    out, buf, depth, in_class, i = [], [], 0, False, 0
+    while i < len(pattern):
+        c = pattern[i]
+        if c == "\\":
+            buf.append(pattern[i:i + 2])
+            i += 2
+            continue
+        if in_class:
+            in_class = c != "]"
+        elif c == "[":
+            in_class = True
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+        elif c == "|" and depth == 0:
+            out.append("".join(buf))
+            buf = []
+            i += 1
+            continue
+        buf.append(c)
+        i += 1
+    out.append("".join(buf))
+    return out
+
+
+def _leading_group_literals(alternative):
+    """The members of a `(?:a|b|c)` group an alternative begins with, when every member is a run of token
+    characters; None when it begins with anything else or the group holds anything else."""
+    if not alternative.startswith("(?:"):
+        return None
+    depth, in_class, i = 0, False, 0
+    while i < len(alternative):
+        c = alternative[i]
+        if c == "\\":
+            i += 2
+            continue
+        if in_class:
+            in_class = c != "]"
+        elif c == "[":
+            in_class = True
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    else:
+        return None
+    members = alternative[3:i].split("|")
+    return members if all(re.fullmatch(r"[A-Za-z0-9_\-]+", m) for m in members) else None
 
 
 def _copy_hook(d):
@@ -678,14 +739,15 @@ class CredentialPattern(_WithConftest):
 
     def test_the_hf_and_rpa_rules_take_a_real_tokens_letters_and_the_wider_class_they_keep(self):
         # a Hugging Face token is `hf_` and 34 letters (gitleaks' rule: `hf_` then 34 letters of either
-        # case); RunPod publishes the `rpa_` prefix and no body format. Both rules take letters and digits,
-        # wider than gitleaks' class on purpose (the module docstring says why): a real token is one marker
-        # whole, cut within the bound and cut past it, bare or quoted, and so is a body of the same width
-        # with digits in it — pinned so that narrowing the class, or widening it, is a deliberate change.
-        # The class is narrow in the other direction, so an `hf_`-prefixed identifier is not redacted; its
-        # cost is a body no real token has, with `_` or `-` in it: the format rule stops at that character,
-        # so past the bound the rest of such a head shows, while within it the cut rule's head class takes
-        # the whole head
+        # case); RunPod publishes the `rpa_` prefix and no body format. Both rules ask for 20 letters and
+        # digits after the prefix, wider than gitleaks' class on purpose (the module docstring says why): a
+        # real token is one marker whole, cut within the bound and cut past it, bare or quoted, and so is a
+        # body of the same width with digits in it, pinned so that narrowing the class, or widening it, is a
+        # deliberate change. The class is narrow in the other direction, so an `hf_`-prefixed identifier is
+        # not redacted: the `_` within its first 20 characters is where the rule fails. A body that does
+        # begin with 20 letters and digits is the rule's match, and what the rule takes past them is the
+        # rest of the run, as every whole-key rule does
+        # (test_every_format_rule_takes_the_rest_of_its_run_whatever_its_body_class)
         red, R = self.cf.redact_credential_tokens, self.cf.CREDENTIAL_REDACTED
         alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
         letters = "".join(alphabet[b % 52] for b in uuid.uuid4().bytes + uuid.uuid4().bytes + uuid.uuid4().bytes)[:34]
@@ -700,12 +762,108 @@ class CredentialPattern(_WithConftest):
                                    ("%s...%s" % (long[:135], long[-118:]), R), ("'%s[88 chars]%s'" % (long[:135], long[-5:]), "'%s'" % R)):
                     self.assertEqual(red(text), want, text[:12])
         self.assertEqual(red("at hf_hub_download_to_cache_dir()"), "at hf_hub_download_to_cache_dir()")
+        # a body with `_` after 40 letters and digits is the rule's match, and the rule takes the rest of the
+        # run: one marker at every cut width, quoted or bare (until 2026-09-22 the match ended at the `_`, and
+        # past the bound the rest of the head showed, quoted and bare, and the tail with it in bare text)
         body = uuid.uuid4().hex * 10
         fake = "hf_%s_%s" % (body[:40], body[41:])                  # an underscore after 40 letters and digits
         tail = body[-40:]
         self.assertEqual(red("'%s...%s'" % (fake[:123], tail)), "'%s'" % R, "120 of head: the cut rule's")
-        self.assertEqual(red("'%s...%s'" % (fake[:124], tail)), "'%s_%s...%s'" % (R, fake[44:124], R), "121: the rest of the head shows")
-        self.assertEqual(red("%s...%s" % (fake[:124], tail)), "%s_%s...%s" % (R, fake[44:124], tail), "and bare, the tail too")
+        self.assertEqual(red("'%s...%s'" % (fake[:124], tail)), "'%s'" % R, "121: the whole-key rule's, the rest of the head with it")
+        self.assertEqual(red("%s...%s" % (fake[:124], tail)), R, "and bare, the tail too")
+        # and a body with `_` within its first 20 is no whole-key rule's match: a token of unknown format,
+        # whole where a value sits and left in bare text, as any such token is
+        early = "hf_%s_%s" % (body[:10], body[11:60])
+        self.assertEqual(red("k=%s" % early), "k=" + R)
+        self.assertEqual(red("x %s y" % early), "x %s y" % early)
+
+    def test_a_key_that_begins_like_an_hf_or_rpa_token_is_taken_whole_past_its_first_underscore(self):
+        # a CI red on fork PR #862 (2026-09-22): the drawn 86-character base64url key after `k=` in the
+        # vapid header case below came out as the marker and 60 characters of the key. It had begun `hf_`
+        # or `rpa_` with 20 or more letters and digits before its first `_`, so the whole-key rule for that
+        # prefix, tried before the generic rule, matched the 26 characters up to the `_` and the scan resumed
+        # inside the key, where no rule saw the rest (a red of the same test on 2026-09-13 fits the shape).
+        # The two shapes, deterministic: a head of the width the marker covered on CI and a 60-character
+        # tail that carries a `_` and a `-`, one marker wherever the key sits. The diff line was whole
+        # before too (pytest's diff rule is anchored at the line's start and is tried there before any
+        # whole-key rule reaches the key) and is pinned so it stays
+        red, R = self.cf.redact_credential_tokens, self.cf.CREDENTIAL_REDACTED
+        for prefix in ("hf_", "rpa_"):
+            head = prefix + uuid.uuid4().hex[:26 - len(prefix)]                # 26 characters: what the marker covered
+            tail = "_" + uuid.uuid4().hex[:31] + "-" + uuid.uuid4().hex[:27]    # the 60 that showed
+            key = head + tail
+            self.assertEqual(len(key), 86, key)
+            for text, want in (("k=%s" % key, "k=" + R), ("token=%s" % key, "token=" + R), (key, R), (key + "\n", R + "\n"),
+                               ("E         - %s" % key, "E         - " + R), ("['%s']" % key, "['%s']" % R),
+                               ("Authorization: vapid t=x, k=%s" % key, "Authorization: vapid t=x, k=" + R),
+                               ("x %s y" % key, "x %s y" % R)):
+                out = red(text)
+                self.assertEqual(out, want, (prefix, text[:14]))
+                for i in range(0, len(tail) - 8 + 1):
+                    self.assertFalse(tail[i:i + 8] in out, (prefix, "a piece of the tail past the underscore reached the output: " + out))
+
+    def test_every_format_rule_takes_the_rest_of_its_run_whatever_its_body_class(self):
+        # the property behind the case above, over every rule rather than the two spellings: a whole-key
+        # rule's body class decides where its match begins and never where it ends, so a key of any known
+        # prefix whose body carries `_` and `-` past the body minimum is one marker in every position. The
+        # population is read from TOKEN_RE's source, not from a list this test holds: every top-level
+        # alternative that begins with a literal run of token characters (the prefix, its body class and
+        # the class's minimum are read from the text), and the leading group of the cut-key rule, held
+        # equal to KEY_FORMATS. Today that is the six provider prefixes and the JWT's `eyJ` (a format fixed
+        # by its shape, so its key here is a JWT whose header carries `_` and `-` before its dotted
+        # segments). A rule added by hand outside KEY_FORMATS is found here too, without the rest-of-run
+        # tail the list appends, and fails below on the first key whose body outruns its class
+        red, R, cp = self.cf.redact_credential_tokens, self.cf.CREDENTIAL_REDACTED, self.cf._credpat
+        alternatives = _top_level_alternatives(cp.TOKEN_RE.pattern)
+        rules = {}                                                   # prefix -> (body class, minimum); None for the JWT
+        for alt in alternatives:
+            m = re.match(r"[A-Za-z0-9_\-]+", alt)
+            if not m:
+                continue
+            prefix = m.group(0)
+            if prefix == "eyJ":
+                rules.setdefault(prefix, None)
+                continue
+            body = re.match(r"(\[[^\]]+\])\{(\d+),\}", alt[m.end():])
+            self.assertTrue(body, "a prefixed alternative this test cannot read: " + alt[:40])
+            self.assertNotIn(prefix, rules, "one whole-key rule per prefix")
+            rules[prefix] = (body.group(1), int(body.group(2)))
+        self.assertGreaterEqual(len(rules), 2, "the census read no whole-key rule from the pattern's source")
+        alnum = (uuid.uuid4().hex + uuid.uuid4().hex.upper()) * 4        # letters and digits: every body class takes them
+        _hdr, pay, sig = _jwt_parts()
+
+        def key_of(prefix, rest):
+            """`prefix`, the body minimum in letters and digits (the JWT's header minimum for `eyJ`), then `rest`,
+            which carries a `_` and a `-`; a JWT gets two dotted segments after that."""
+            rule = rules[prefix]
+            if rule is None:
+                return prefix + alnum[:10] + rest + ".%s.%s" % (pay, sig)
+            self.assertTrue(re.fullmatch(rule[0] + "{%d}" % rule[1], alnum[:rule[1]]), (prefix, rule))
+            return prefix + alnum[:rule[1]] + rest
+
+        for prefix in sorted(rules):
+            key = key_of(prefix, "_" + alnum[:10] + "-" + alnum[:10])
+            wide = key_of(prefix, "_" + alnum[:100] + "-" + alnum[:20])          # a head past CUT_HEAD_MAX
+            cut = len(prefix) + 124
+            for text, want, secret in (("k=%s" % key, "k=" + R, key), ("token=%s" % key, "token=" + R, key), (key, R, key),
+                                       (key + "\n", R + "\n", key), ("E         - %s" % key, "E         - " + R, key),
+                                       ("['%s']" % key, "['%s']" % R, key), ("E       assert '%s' == 'x'" % key, "E       assert '%s' == 'x'" % R, key),
+                                       ("x %s y" % key, "x %s y" % R, key),
+                                       ("'%s...%s'" % (key[:12], key[-13:]), "'%s'" % R, key),
+                                       ("'%s...%s'" % (wide[:cut], wide[-40:]), "'%s'" % R, wide),
+                                       ("%s...%s" % (wide[:cut], wide[-40:]), R, wide)):
+                out = red(text)
+                self.assertEqual(out, want, (prefix, text[:16]))
+                rest = secret[secret.index("_", len(prefix)):]
+                for i in range(0, len(rest) - 8 + 1):
+                    self.assertFalse(rest[i:i + 8] in out, (prefix, "a piece of the key past its first underscore reached the output: " + out))
+        # the population is the module's own list: every prefixed alternative is a KEY_FORMATS entry or the
+        # JWT's, and the cut-key rule's leading group is that list, so a rule the list does not build is a red
+        # here whatever its class
+        listed = [prefix for prefix, _ in cp.KEY_FORMATS]
+        self.assertEqual(sorted(rules), sorted(listed + ["eyJ"]), "every prefixed alternative is a KEY_FORMATS entry or the JWT's")
+        cut_groups = [g for g in (_leading_group_literals(a) for a in alternatives) if g]
+        self.assertEqual(cut_groups, [listed], "the cut-key rule's prefixes are KEY_FORMATS, in one group")
 
     def test_a_cut_identifier_or_date_is_redacted_when_it_has_a_digit_or_an_interior_capital(self):
         # the fragment rule cannot tell a camelCase or PascalCase name from a base64 tail without a digit
@@ -851,7 +1009,12 @@ class CredentialPattern(_WithConftest):
                            ("Authorization: WebPush %s" % jwt, "Authorization: WebPush " + R),     # a scheme no value position knows
                            ("token=%s. Next" % jwt, "token=%s. Next" % R)):                        # a sentence's dot is not a segment
             self.assertEqual(red(text), want, text[:24])
-        # the header the kernel's push code mints: a JWT after `t=`, a public key after `k=`
+        # the header the kernel's push code mints: a JWT after `t=`, a public key after `k=`. The key is drawn
+        # on purpose: 86 base64url characters of no fixed shape probe every rule at once, and the draw caught
+        # the whole-key rules' tail (a CI red on fork PR #862, 2026-09-22): a key that began `hf_` or `rpa_`
+        # with 20 letters and digits before its first `_` came out as the marker and 60 characters of the
+        # key. The deterministic pins of that shape are
+        # test_a_key_that_begins_like_an_hf_or_rpa_token_is_taken_whole_past_its_first_underscore
         self.assertEqual(red("Authorization: vapid t=%s, k=%s" % (jwt, _b64url(hashlib.sha512(uuid.uuid4().bytes).digest()))),
                          "Authorization: vapid t=%s, k=%s" % (R, R))
         # two segments (unsecured), five (JWE), a 20-character header ({"alg":"ES256"}), the shortest ({"alg":"none"})
@@ -987,6 +1150,8 @@ class ScrubCost(_WithConftest):
             # a format match and then a cut, or a `..` or `[x chars]` that is not one, repeated; one huge key cut once
             "sk-ant- + 121 + ...": rep("sk-ant-" + "a" * 121 + "..."), "hf_ + 121 + [1 chars]": rep("hf_" + "a" * 121 + "[1 chars]"),
             "sk-ant- + 20 + ..": rep("sk-ant-" + "a" * 20 + ".."), "sk-ant- + 20 + [x chars]": rep("sk-ant-" + "a" * 20 + "[x chars]"),
+            # the rest-of-run tail: a key-shaped run whose body outruns its class, one per space, and one to the end
+            "hf_ + 20 + _-, one per space": rep("hf_" + "a" * 20 + "_- "), "hf_ + 20, then _- to the end": rep("hf_" + "a" * 20 + "_-"),
             "eyJ + 300 + ...": rep("eyJ" + "a" * 300 + ".b" + "..."), "one huge cut key": "sk-ant-" + "a" * (n // 2) + "..." + "b" * (n // 2),
             # the two runs around one cut as a pair: a hex head and a one-case tail, closed by a quote and not
             "hex head, one-case tail": "'" + hexrun[:n // 2] + "..." + rep("a")[:n // 2] + "'",
