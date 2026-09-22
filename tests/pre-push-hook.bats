@@ -2811,7 +2811,9 @@ third_path_committed() {   # the merge committed, then the file removed at the t
 # the listing names, a type change's two reads (the empty tree's name, the
 # numstat against it), a merge's combined patch (a read that fails; one that
 # prints no verdict for a path the merge changes; the addition numstat for its
-# renames answering short), a path with a newline, the hidden blob's content
+# renames answering short), a path with a newline, the listings' rewrite for
+# the joins (a tr that fails on one file and runs on the next; the newline
+# test's pipeline), the hidden blob's content
 # read; and the label's check-attr, which cannot lift a refusal git's verdict
 # made. The
 # replace-ref listing (refuse_replace_refs) is here too. The round 3 refuters
@@ -3096,6 +3098,113 @@ merge_with_hidden_link() {   # a merge whose own change is a symlink at a -diff 
     [[ "$output" == *"a path at the tip of refs/heads/main (${sha:0:10}) holds a newline, which the BINARY VERDICT check cannot judge"* ]]
     [[ "$output" == *"a path commit ${sha:0:10} changes holds a newline, which the BINARY VERDICT check cannot judge"* ]]
     [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+}
+
+# The listings are joined in POSIX awk over newline-for-NUL rewrites (as_lines:
+# a tr per file, and a tr piped to wc for the newline test). Before round 3g
+# the rewrite carried no status arm and the function returned its LAST file's
+# status, so a tr that failed on an earlier file and ran on the last handed the
+# join an empty rewrite with no status to read: an empty tip listing emptied
+# the tip's skip set and blob set (the tip half judged nothing, and a hidden
+# text file the remote already held passed), an empty post listing emptied a
+# commit's population (the commit passed unjudged by that half, a banned string
+# under -diff published), and a merge's empty listing left its rename
+# candidates underived (a short read claimed, the wrong cause); the newline
+# test read a failed pipeline as a count of zero. Each test and each rewrite
+# now reads its own status and the caller names the read. The fault is a tr
+# first on the hook's PATH that refuses the Nth invocation of ONE argument
+# shape (the rewrite; the newline test) and execs the real tr for every other,
+# counting in a file since each invocation is its own process; the joins' own
+# tr (newline to NUL) is neither shape and runs through. Once per test, like
+# git_refusing.
+tr_refusing() {   # <rewrite|test> <N>: the Nth tr of that shape exits 1, the real tr runs otherwise
+    local real_tr
+    real_tr="$(command -v tr)"
+    mkdir -p "$TEST_DIR/shim"
+    echo 0 > "$TEST_DIR/tr-calls"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'real_tr=%q; counter=%q; want=%q; n=%d\n' "$real_tr" "$TEST_DIR/tr-calls" "$1" "$2"
+        cat <<'SHIM'
+shape=""
+if [ $# -eq 2 ] && [ "$1" = '\0' ] && [ "$2" = '\n' ]; then shape=rewrite; fi
+if [ $# -eq 2 ] && [ "$1" = -cd ] && [ "$2" = '\n' ]; then shape=test; fi
+if [ "$shape" = "$want" ]; then
+    seen=$(( $(cat "$counter") + 1 )); echo "$seen" > "$counter"
+    if [ "$seen" -eq "$n" ]; then echo "shim: tr refused ($shape $n)" >&2; exit 1; fi
+fi
+exec "$real_tr" "$@"
+SHIM
+    } > "$TEST_DIR/shim/tr"
+    chmod 755 "$TEST_DIR/shim/tr"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+
+@test "a tip listing whose rewrite for the joins fails (the first rewrite tr exiting 1, the read list's rewrite untouched) refuses the push as unscanned, naming the tip and the tool: an empty rewrite is not an empty tip, and a hidden text file the remote already holds is not passed by it" {
+    attributes 'notes.txt -diff'
+    commit_file notes.txt "seen on TESTHOST" "a banned string in a -diff file"
+    add_remote
+    git -C "$REPO" push -q origin main                        # the remote holds the hidden file: no new commit adds it, so the tip half alone can judge it
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file other.txt "nothing to see" "a clean commit"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    tr_refusing rewrite 1                                     # the tip's listing is the first file as_lines rewrites
+    run_hook "$BASE"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"shim: tr refused (rewrite 1)"* ]]
+    [[ "$output" == *"the LISTINGS of the tip of refs/heads/main (${sha:0:10}) could not be rewritten for the BINARY VERDICT check (tr exited 1)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"holds a newline"* ]]
+    [[ "$output" != *"is text that"* ]]                      # the tip was not judged: refused for the read, not for the blob
+    [ "$(cat "$TEST_DIR/tr-calls")" -ge 1 ]
+}
+
+@test "a commit's listing whose rewrite fails (the third rewrite tr exiting 1: the tip's two listings rewritten, the commit's post-images not) refuses the push as unscanned, naming the commit and the tool, where a hidden text file carrying a banned string in that commit and gone at the tip would otherwise pass unjudged" {
+    # one commit with a listing to rewrite besides the removal, whose listing is empty and is never rewritten: the attribute and the
+    # file in one commit, so the failing rewrite is that commit's whatever order the range is read in
+    printf 'notes.txt -diff\n' > "$REPO/.gitattributes"
+    printf 'seen on TESTHOST\n' > "$REPO/notes.txt"
+    git -C "$REPO" add .gitattributes notes.txt
+    git -C "$REPO" commit -qm "a banned string in a -diff file, with its attribute"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file notes.txt "remove it"                          # the tip is clean: only the per-commit half can name it
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" -- notes.txt' _ "$leak"
+    [[ "$output" == *"Binary files"* ]]                        # the road: the diff prints no hunk, so the added-lines pass sees nothing
+    tr_refusing rewrite 3
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"shim: tr refused (rewrite 3)"* ]]
+    [[ "$output" == *"the LISTINGS of commit ${leak:0:10} could not be rewritten for the BINARY VERDICT check (tr exited 1)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"holds a newline"* ]]
+    [[ "$output" != *"is text that"* ]]
+    [[ "$output" != *"personal identifier"* ]]
+}
+
+@test "a MERGE's listing whose rewrite for its rename candidates fails (the third rewrite tr exiting 1: the merge's post-images, read before its deletions) refuses the push as unscanned, naming the merge and the tool, and claims no short read: the candidates were not derived, not absent" {
+    third_path_merge "nothing to see" pushed                  # the sources on the remote: the merge is the one new commit with a listing to rewrite, the removal at the tip has none
+    third_path_committed
+    tr_refusing rewrite 3
+    run_hook "$BASE"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"shim: tr refused (rewrite 3)"* ]]
+    [[ "$output" == *"the LISTINGS of commit ${merge:0:10} could not be rewritten for the BINARY VERDICT check (tr exited 1)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"holds a newline"* ]]
+    [[ "$output" != *"printed no verdict"* ]]                 # the short-read line, the wrong cause: the merge's candidates were never derived
+    [[ "$output" != *"is text that"* ]]
+}
+
+@test "a newline test that fails (the first test tr exiting 1 under the pipe to wc) is a failed test and not a count of zero: the push is refused as unscanned, naming the tip and the test" {
+    commit_file file.txt "nothing to see" "clean"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    tr_refusing test 1
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"shim: tr refused (test 1)"* ]]
+    [[ "$output" == *"the LISTINGS of the tip of refs/heads/main (${sha:0:10}) could not be rewritten for the BINARY VERDICT check (the newline test's tr or wc exited 1)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"holds a newline"* ]]
 }
 
 @test "a hidden blob whose content cannot be read refuses the push as unscanned, naming the path: an unread blob is not a binary one" {

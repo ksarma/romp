@@ -324,6 +324,7 @@ hidden_paths=0          # a subset of failed_scan: git calls a text file binary 
 hidden_unnamed=0        # a subset of hidden_paths: no diff attribute accounts for the verdict, so the advice names the configuration key too
 hidden_prior=0          # a subset of hidden_paths: a one-parent commit's changed file whose previous version is binary by its bytes, with the fetch remedy
 scratch=""              # a directory for the NUL-delimited listings the binary-verdict check reads (refuse_hidden_paths); made on first use, removed by scan_identifiers
+rewrite_failure=""      # as_lines' report when it returns 2: the tool that failed and its status, for the caller's unscanned line
 
 # The commits THIS push publishes for one ref: what no remote already has.
 # "Already has" means reachable from the remote ref's current value or from ANY
@@ -526,11 +527,21 @@ refuse_replace_refs() {
 # is first checked to hold no newline byte, then rewritten with a newline for
 # each NUL. A path with a newline (legal to git, seen nowhere) fails the check,
 # and the caller refuses the push as unscanned rather than judge it by nothing.
-as_lines() {   # <file>...: rewrites each as <file>.nl; status 1 when one holds a newline
-    local f
+# Each test and each rewrite reads its own status: a tr that failed on one file
+# and ran on the next would otherwise hand a join an empty rewrite with no
+# status to read (the tip judging nothing; a commit passing unjudged), the
+# function's status being its LAST file's alone, and the newline count read a
+# failed pipeline as zero. A tool that failed is status 2, apart from the
+# newline case, with the tool and its status in rewrite_failure for the
+# caller's line (the count's pipeline status is the failing stage's, pipefail).
+as_lines() {   # <file>...: rewrites each as <file>.nl; status 1 when one holds a newline, 2 when a test or a rewrite failed (rewrite_failure says which)
+    local f n rc
     for f in "$@"; do
-        [ "$(( $(tr -cd '\n' < "$f" | wc -c) ))" -eq 0 ] || return 1
-        tr '\0' '\n' < "$f" > "$f.nl"
+        rc=0; n=$(tr -cd '\n' < "$f" | wc -c) || rc=$?
+        [ "$rc" -eq 0 ] || { rewrite_failure="the newline test's tr or wc exited $rc"; return 2; }
+        [ "$(( n ))" -eq 0 ] || return 1
+        rc=0; tr '\0' '\n' < "$f" > "$f.nl" || rc=$?
+        [ "$rc" -eq 0 ] || { rewrite_failure="tr exited $rc"; return 2; }
     done
 }
 
@@ -705,7 +716,8 @@ combined_rows() {   # <patch file>
 # merge's symlink reads its path's attribute as a file does, since the
 # combined patch applied it. A read that fails (a listing, the grep, the
 # numstats, the combined patch, the empty tree's name, a cat-file, the
-# scratch directory) refuses as unscanned, naming the read; whatever was
+# scratch directory, a listing's rewrite for the joins) refuses as
+# unscanned, naming the read; whatever was
 # listed is still judged; a check-attr that fails or answers about another
 # path leaves the refusal standing, the failure in the attribute's place. The
 # tip is not listed again when its first listing (the symlink pass) failed or
@@ -730,20 +742,29 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs> <tip listed: 1 or 0>
         rc=0; git grep --no-color -I -l -z -e '' "$local_sha" -- > "$scratch/read" 2>/dev/null || rc=$?
         if [ "$rc" -gt 1 ]; then
             unscanned "the FILES the grep of the tip of $local_ref (${local_sha:0:10}) reads could not be listed for the BINARY VERDICT check (git grep exited $rc)"
-        elif ! as_lines "$scratch/listing" "$scratch/read"; then
-            unscanned "a path at the tip of $local_ref (${local_sha:0:10}) holds a newline, which the BINARY VERDICT check cannot judge"
         else
-            # The tip's blobs, for the per-commit half: a candidate blob the tip
-            # holds under any path was judged here, by the grep (read, or skipped
-            # and refused below) or by the symlink pass, and is not judged again.
-            LC_ALL=C awk '{ i = index($0, "\t"); split(substr($0, 1, i - 1), f, " "); if (f[1] == "100644" || f[1] == "100755" || f[1] == "120000") print f[3] }' "$scratch/listing.nl" > "$scratch/tipblobs"
-            # "<mode> blob <sha> <size>\t<path>" against "<tree-ish>:<path>": a
-            # regular file with bytes that the grep did not list is one it skipped.
-            LC_ALL=C awk -v sha="$local_sha" '
-                FILENAME == ARGV[1] { if (substr($0, 1, length(sha) + 1) == sha ":") read[substr($0, length(sha) + 2)] = 1; next }
-                { i = index($0, "\t"); split(substr($0, 1, i - 1), f, " "); path = substr($0, i + 1)
-                  if ((f[1] == "100644" || f[1] == "100755") && f[4] + 0 > 0 && !(path in read)) printf "tip\t%s\t%s\n", f[3], path }' \
-                "$scratch/read.nl" "$scratch/listing.nl" | tr '\n' '\0' >> "$scratch/entries"
+            # The two listings rewritten for the joins: as_lines returns 1 for a
+            # path holding a newline and 2 for a test or a rewrite that failed
+            # (rewrite_failure says which); either is refused as unscanned rather
+            # than judged by an empty rewrite.
+            rc=0; as_lines "$scratch/listing" "$scratch/read" || rc=$?
+            if [ "$rc" -eq 1 ]; then
+                unscanned "a path at the tip of $local_ref (${local_sha:0:10}) holds a newline, which the BINARY VERDICT check cannot judge"
+            elif [ "$rc" -ne 0 ]; then
+                unscanned "the LISTINGS of the tip of $local_ref (${local_sha:0:10}) could not be rewritten for the BINARY VERDICT check ($rewrite_failure)"
+            else
+                # The tip's blobs, for the per-commit half: a candidate blob the tip
+                # holds under any path was judged here, by the grep (read, or skipped
+                # and refused below) or by the symlink pass, and is not judged again.
+                LC_ALL=C awk '{ i = index($0, "\t"); split(substr($0, 1, i - 1), f, " "); if (f[1] == "100644" || f[1] == "100755" || f[1] == "120000") print f[3] }' "$scratch/listing.nl" > "$scratch/tipblobs"
+                # "<mode> blob <sha> <size>\t<path>" against "<tree-ish>:<path>": a
+                # regular file with bytes that the grep did not list is one it skipped.
+                LC_ALL=C awk -v sha="$local_sha" '
+                    FILENAME == ARGV[1] { if (substr($0, 1, length(sha) + 1) == sha ":") read[substr($0, length(sha) + 2)] = 1; next }
+                    { i = index($0, "\t"); split(substr($0, 1, i - 1), f, " "); path = substr($0, i + 1)
+                      if ((f[1] == "100644" || f[1] == "100755") && f[4] + 0 > 0 && !(path in read)) printf "tip\t%s\t%s\n", f[3], path }' \
+                    "$scratch/read.nl" "$scratch/listing.nl" | tr '\n' '\0' >> "$scratch/entries"
+            fi
         fi
     fi
     for rev in $revs; do
@@ -808,8 +829,12 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs> <tip listed: 1 or 0>
                 fields=($meta)
                 [ "${fields[1]}" != 000000 ] || printf '%s\0' "${fields[2]}" >> "$scratch/gone"
             done < "$scratch/parents"
-            if ! as_lines "$scratch/post" "$scratch/gone"; then
+            rc=0; as_lines "$scratch/post" "$scratch/gone" || rc=$?
+            if [ "$rc" -eq 1 ]; then
                 unscanned "a path commit ${rev:0:10} changes holds a newline, which the BINARY VERDICT check cannot judge"
+                continue
+            elif [ "$rc" -ne 0 ]; then
+                unscanned "the LISTINGS of commit ${rev:0:10} could not be rewritten for the BINARY VERDICT check ($rewrite_failure)"
                 continue
             fi
             LC_ALL=C awk 'FILENAME == ARGV[1] { gone[$0] = 1; next } { i = index($0, "\t"); if (substr($0, 1, i - 1) in gone) print substr($0, i + 1) }' "$scratch/gone.nl" "$scratch/post.nl" | tr '\n' '\0' > "$scratch/tpaths"
@@ -851,8 +876,12 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs> <tip listed: 1 or 0>
                 [ "$rc" -eq 0 ] || { numstat_ok=0; unscanned "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git diff-tree --numstat against the empty tree exited $rc)"; }
             fi
         fi
-        if ! as_lines "$scratch/post" "$scratch/gone" "$scratch/rows" "$scratch/rows2" "$scratch/links" "$scratch/tpaths" "$scratch/rows3"; then
+        rc=0; as_lines "$scratch/post" "$scratch/gone" "$scratch/rows" "$scratch/rows2" "$scratch/links" "$scratch/tpaths" "$scratch/rows3" || rc=$?
+        if [ "$rc" -eq 1 ]; then
             unscanned "a path commit ${rev:0:10} changes holds a newline, which the BINARY VERDICT check cannot judge"
+            continue
+        elif [ "$rc" -ne 0 ]; then
+            unscanned "the LISTINGS of commit ${rev:0:10} could not be rewritten for the BINARY VERDICT check ($rewrite_failure)"
             continue
         fi
         # The join. A post-image whose blob the tip's tree holds is set aside
