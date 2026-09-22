@@ -186,8 +186,10 @@ class OriginMidJoin(World):
 # (a `-c` program: romp_load's direct-run floor does not arm, so the parent's environment is the whole
 # of it). The bus's writer is given one live remote heartbeat and called; the judge's reader is asked
 # about a sid nothing knows (rule 5) and about the heartbeating one (rule 4), before and after the
-# write; then the control: the writer's line for that sid put at the judge's read path until 2026-09-22.
-# A missing bus file is reported, not raised, so a moved writer fails the pins by their own messages.
+# write; then the control, isolated: the bus's file removed, the writer's line for that sid put at the
+# judge's read path until 2026-09-22 (STATE/remote-sids), and the reader asked again, so the answer can
+# come from nothing but that old path. A missing bus file is reported, not raised, so a moved writer
+# fails the pins by their own messages.
 _ONE_ROOT_CHILD = r"""
 import json, os, sys, time
 tests_dir, bin_dir, remote, dead = sys.argv[1:5]
@@ -208,8 +210,13 @@ out["busFile"] = str(bus_file)
 out["busFileText"] = bus_file.read_text() if bus_file.exists() else None
 out["fire"] = jd._presumed_closed(dead, now)
 out["named"] = jd._presumed_closed(remote, now)
-(jd.STATE / "remote-sids").write_text(remote + "\n")
-out["controlOldPath"] = jd._presumed_closed(dead, now)
+bus_file.unlink(missing_ok=True)
+out["busFileGoneForControl"] = not bus_file.exists()
+old_path = jd.STATE / "remote-sids"
+old_path.write_text(remote + "\n")
+out["oldPath"] = str(old_path)
+out["oldPathText"] = old_path.read_text()
+out["controlOldPathOnly"] = jd._presumed_closed(dead, now)
 print(json.dumps(out))
 """
 
@@ -223,9 +230,17 @@ class ReaderFollowsTheWriter(unittest.TestCase):
     to settle. Pinned by EXECUTION, not by spelling: the real writer (_write_remote_sids) and the
     real reader (_presumed_closed) run in one fresh interpreter over one temp root, under each of
     the two root shapes the constants bind from (XDG_STATE_HOME, and ROMP_STATE_DIR, which outranks
-    it), and a sid nothing knows is presumed closed once the bus has written. The control keeps the
-    proof that the rule itself was sound: the same bytes at the judge's old read path also answer
-    True (at the base that was the only way rule 5 could fire). The root carries `session-hosts`
+    it), and a sid nothing knows is presumed closed once the bus has written. The control isolates
+    the old path: with the bus's file removed and the same line at STATE/remote-sids, the judge's
+    read path until 2026-09-22, the reader answers cannot-determine, so the read MOVED to the bus's
+    file rather than widening to both, and a reverted read fails this pin by its own message. The
+    proof that the rule itself was sound, and only its path dead, is the same control run at the
+    base: there the bytes at the old path answered True, the only way rule 5 could fire then. That
+    run is recorded in the review round's red-before log for this change (the fire and rule-4 pins
+    red under both root shapes, the control and the frame green); it is not asserted here, where it
+    can no longer hold. The bus's file is removed FIRST: this control's first form left it in place
+    and asserted True, which held because the bus's file was read, not the old path's (a pin true
+    for a reason other than its message; the fix-up of 2026-09-22). The root carries `session-hosts`
     off, the repo rule for a test that mints its own state root, and the child reads that file back
     through the judge's STATE, so the root the test prepared is the root both modules bound."""
 
@@ -281,11 +296,17 @@ class ReaderFollowsTheWriter(unittest.TestCase):
                                 "not cannot-determine's")
                 self.assertFalse(got["named"], "live on another host: never presumed settled")
 
-    def test_the_control_the_rule_was_sound_at_the_judges_old_path(self):
+    def test_the_control_the_old_path_alone_is_no_longer_read(self):
         for shape, got in self.got.items():
             with self.subTest(shape=shape):
-                self.assertTrue(got["controlOldPath"], "the same bytes at the judge's read path until "
-                                "2026-09-22 answer True: the rule was sound, only its path was dead")
+                self.assertTrue(got["busFileGoneForControl"], "the control isolates the old path: the "
+                                "bus's file %s is removed before the old path is written" % got["busFile"])
+                self.assertEqual(got["oldPathText"], REMOTE + "\n", "the writer's line sits at %s, the "
+                                 "judge's read path until 2026-09-22" % got["oldPath"])
+                self.assertFalse(got["controlOldPathOnly"], "with only the old path populated the judge "
+                                 "answers cannot-determine: the read moved to the bus's file and no longer "
+                                 "reaches %s (at the base the same bytes there answered True; that run is "
+                                 "the round's red-before log)" % got["oldPath"])
 
 
 class PlantDedupe(unittest.TestCase):
