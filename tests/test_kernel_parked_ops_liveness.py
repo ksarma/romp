@@ -25,7 +25,8 @@ test starts km._producer against judge tiers stuck on a gate. Two things went wr
      at c7e51ae47) and one did (box 2's control at 65f1895f6). An isolated-level certainty and a sweep-level flake at the
      same time, decided by which tests ran before it in that worker's process; never in CI (serial). The red-before
      measurement is the single test alone, serially. setUp neutralises the hold with the stub tests/test_judges_process.py
-     uses (a lambda returning True), here as one of setUp's patchers so tearDown restores it.
+     uses (a lambda returning True), here as one of setUp's patchers, each stopped by a cleanup registered as it starts
+     (unittest skips tearDown when setUp raises, and runs the cleanups), so every road restores it.
   2. The stop on the tail. The stop seam, the gate release and the join were the body's LAST lines, so the failed
      assertion skipped them, the with-block's eleven patches were undone on the way out while the producer was still in
      its hold, and a live, fully unpatched judge loop ran for the rest of the worker's life, wherever that failure fired;
@@ -121,7 +122,21 @@ class DeliveryRidesTheSettle(unittest.TestCase):
         # every stop a body registers (the producer's, in _pass_in_flight) has run before the census reads the threads.
         self.addCleanup(self._census_check)
         self.be = _FakeBackend()
-        self._patches = [
+        # Each patcher's stop is a cleanup registered AS IT STARTS (2026-09-22): unittest does not run tearDown when setUp
+        # raises, but it runs the cleanups, so a failure inside this loop unwinds exactly the patchers that started and
+        # leaves km unpatched; a stop list walked in tearDown left every patcher installed on that road, process-wide.
+        for p in self._patchers():
+            p.start()
+            self.addCleanup(p.stop)
+        km._pending_ops.clear()
+        km._moving.clear()
+        km._drain_hold.clear()
+        km._pusher_wake.clear()
+        km._producer_wake.clear()
+
+    def _patchers(self):
+        """setUp's patchers, in the order they start (a nested case overrides this to plant a failure among them)."""
+        return [
             mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: self.be)),
             mock.patch.object(km, "_compacting_now", lambda sid, **k: False),
             mock.patch.object(km, "_mark_compacting", lambda sid: None),
@@ -129,22 +144,14 @@ class DeliveryRidesTheSettle(unittest.TestCase):
             mock.patch.object(km, "_live_map", lambda: {SID: {"state": "waiting", "backend": "sdk"}}),
             # The boot hold (kernel 3421c94d0): the producer's FIRST pass waits up to BOOT_JUDGE_HOLD_S for attachDone,
             # which nothing in this module fires (km._sdk is stubbed: the one side-effect latcher is gone). Released with
-            # the stub tests/test_judges_process.py uses (a lambda returning True), here as one of setUp's patchers so
-            # tearDown restores it; the hold is a boot-time gate on the first pass, orthogonal to everything asserted
-            # here. The 5 s poll for the pass below stays as it was.
+            # the stub tests/test_judges_process.py uses (a lambda returning True), here as one of setUp's patchers, each
+            # stopped by a cleanup registered as it starts, so it is restored on every road (a setUp that raises included:
+            # unittest skips tearDown then and runs the cleanups); the hold is a boot-time gate on the first pass,
+            # orthogonal to everything asserted here. The 5 s poll for the pass below stays as it was.
             mock.patch.object(km, "_wait_boot_attached", lambda timeout=None: True),
         ] + [mock.patch.object(km, name, lambda *a, **k: None) for name in _OTHER_JOBS]
-        for p in self._patches:
-            p.start()
-        km._pending_ops.clear()
-        km._moving.clear()
-        km._drain_hold.clear()
-        km._pusher_wake.clear()
-        km._producer_wake.clear()
 
     def tearDown(self):
-        for p in self._patches:
-            p.stop()
         km._pending_ops.clear()
         km._moving.clear()
         km._drain_hold.clear()
@@ -243,6 +250,45 @@ class DeliveryRidesTheSettle(unittest.TestCase):
                          "the drain ran on this cycle and never on the producer")
         self._end_producer()                         # the same end the cleanup holds; here it is also what is asserted
         self.assertFalse(producer.is_alive(), "the producer ended on the stop seam once its pass finished")
+
+    def test_a_set_up_that_raises_after_the_third_patcher_leaves_no_patcher_installed(self):
+        """The patchers' restore, run rather than read (2026-09-22). Each patcher's stop is a cleanup registered as it
+        starts, and unittest runs the cleanups when setUp raises (it skips tearDown then), so a failure inside the loop
+        unwinds exactly the patchers that started. A nested case with this class's setUp whose FOURTH patcher raises on
+        start is run here, under this test's own patches: its run records the planted error alone, and every attribute
+        setUp patches reads the same object before and after the run (the first three restored, the rest never
+        installed). Before this the stops lived in tearDown and that road left all of them installed for the rest of the
+        worker."""
+        names = ("_compacting_now", "_mark_compacting", "_names_snapshot", "_live_map", "_wait_boot_attached") + _OTHER_JOBS
+        before = {n: getattr(km, n) for n in names}
+        before["Sessions.backend_for"] = getattr(km.Sessions, "backend_for")
+        started = []
+
+        class _Raiser:
+            def start(self):
+                raise RuntimeError("planted: the fourth patcher fails to start")
+
+            def stop(self):
+                started.append("stopped a patcher that never started")
+
+        class _SetUpRaises(DeliveryRidesTheSettle):
+            def _patchers(self):
+                ps = super()._patchers()
+                ps.insert(3, _Raiser())
+                return ps
+
+            def test_body(self):
+                self.fail("never reached: setUp raised")
+
+        res = unittest.TestResult()
+        _SetUpRaises("test_body").run(res)
+        self.assertEqual(len(res.errors), 1, "the planted error and nothing beside it: %r" % (res.errors,))
+        self.assertIn("planted: the fourth patcher", res.errors[0][1])
+        self.assertEqual(res.failures, [])
+        self.assertEqual(started, [], "a stop is registered only for a patcher that started")
+        after = {n: getattr(km, n) for n in names}
+        after["Sessions.backend_for"] = getattr(km.Sessions, "backend_for")
+        self.assertEqual(after, before, "every attribute setUp patches reads as it did before the nested run")
 
     def test_a_body_that_fails_before_its_tail_leaves_no_producer_behind(self):
         """Both stop shapes, run rather than read. A nested case with this class's shape starts the producer the same way
