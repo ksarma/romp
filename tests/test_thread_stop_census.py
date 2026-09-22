@@ -369,6 +369,7 @@ product file through the helper gets this census's parse (a tree test holds that
 """
 import ast
 import builtins
+import collections
 import copy
 import os
 import re
@@ -466,14 +467,50 @@ def _text(node, module):
     interpreters (Python 3.10 writes `lambda : f()`, 3.12 `lambda: f()`): with the source segment the difference is
     impossible by construction. A node the walk SYNTHESISED over a hand (`s._do_set_mode`, the method a body calls on a
     parameter, written over the argument as the caller wrote it: _given_kind) carries its text as `_shown`, the hand's
-    segment and the chain. A node with no segment (none should reach here) reads as its type and position."""
+    segment and the chain. A node with no segment (none should reach here) reads as its type and position. The segment is
+    sliced from the module's lines split ONCE (_segment, _source_lines), the same slicing ast.get_source_segment does over a
+    split it repeats per call (on Python 3.10 a per-character loop over the whole file, 5 MB for kernel/kernel.py, for every
+    product target or callee the census names: this module's 3.10 cost before the ninth pass, 2026-09-22)."""
     shown = getattr(node, "_shown", None)
     if shown is not None:
         return shown
-    seg = ast.get_source_segment(module.src, node) if module is not None and getattr(module, "src", None) else None
+    seg = _segment(module, node) if module is not None and getattr(module, "src", None) else None
     if seg is None:
         return "<%s at %s:%s>" % (type(node).__name__, getattr(node, "lineno", "?"), getattr(node, "col_offset", "?"))
     return " ".join(seg.split())
+
+
+_LINE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+\Z")   # a line with its ending, as the parser splits them (a form feed breaks none)
+
+
+def _source_lines(module):
+    """`module.src` split into lines as the parser splits it (on \\n, \\r\\n and \\r, each line keeping its ending), computed once
+    per module and kept on it."""
+    lines = getattr(module, "_lines", None)
+    if lines is None:
+        lines = _LINE.findall(module.src)
+        try:
+            module._lines = lines
+        except AttributeError:
+            pass
+    return lines
+
+
+def _segment(module, node):
+    """What ast.get_source_segment(module.src, node) answers, from the cached lines: the same slicing (a node's column
+    offsets are UTF-8 byte offsets into its line), None for a node without positions."""
+    try:
+        if node.end_lineno is None or node.end_col_offset is None:
+            return None
+        lineno, end_lineno, col, end_col = node.lineno - 1, node.end_lineno - 1, node.col_offset, node.end_col_offset
+    except AttributeError:
+        return None
+    lines = _source_lines(module)
+    if end_lineno == lineno:
+        return lines[lineno].encode()[col:end_col].decode()
+    first = lines[lineno].encode()[col:].decode()
+    last = lines[end_lineno].encode()[:end_col].decode()
+    return "".join([first] + lines[lineno + 1:end_lineno] + [last])
 
 
 # The functions that still call ast.unparse, each with the reason: every one renders a text only to MATCH it against
@@ -670,14 +707,6 @@ def _stop_shaped(node):
     return False
 
 
-def _expr_children(stmt):
-    """The expression nodes of one statement, not descending into the statements it holds."""
-    for child in ast.iter_child_nodes(stmt):
-        if isinstance(child, ast.stmt):
-            continue
-        yield from ast.walk(child)
-
-
 def _run_nodes(stmt):
     """The nodes of a statement that run when it does: not the bodies of the functions, lambdas and classes it defines."""
     if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -814,6 +843,7 @@ class _Product:
                     self.functions.setdefault(n.name, []).append((p, holder.get(id(n)), n))
         self.modules = {}
         self._spawners = None
+        self._globals = None
 
     def spawners(self):
         """{name: [(path, class name or None, FunctionDef, guards)]} for every product function whose OWN body (not the
@@ -887,15 +917,21 @@ class _Product:
         return None
 
     def global_value(self, name):
-        """The value a product file binds the module-level `name` to (km._LOOPS_STOP is threading.Event()), else None."""
-        first = None
-        for tree in self.trees.values():
-            for n in tree.body:
-                if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in n.targets):
-                    if isinstance(n.value, ast.Call):
-                        return n.value
-                    first = n.value if first is None else first
-        return first
+        """The value a product file binds the module-level `name` to (km._LOOPS_STOP is threading.Event()), else None: the
+        first construction bound to the name across the product files in order, else the first value (indexed once)."""
+        if self._globals is None:
+            calls, firsts = {}, {}
+            for tree in self.trees.values():
+                for n in tree.body:
+                    if isinstance(n, ast.Assign):
+                        for t in n.targets:
+                            if isinstance(t, ast.Name):
+                                firsts.setdefault(t.id, n.value)
+                                if isinstance(n.value, ast.Call):
+                                    calls.setdefault(t.id, n.value)
+            self._globals = (calls, firsts)
+        calls, firsts = self._globals
+        return calls.get(name, firsts.get(name))
 
 
 def _product_files(root):
@@ -934,7 +970,14 @@ class _Module:
         self.import_names = {}               # local name -> the dotted name it imports (lab_dist; tests.fs_clock.move_ctime)
         self.thread_aliases = set()          # names bound at module level to threading.Thread / Timer
         self.timer_aliases = set()           # of those, the ones bound to threading.Timer (its callable is function=)
+        self.calls_oracle = False            # the module imports or calls the runtime oracle (ORACLE_NAMES), read in this one walk
+        self._appends_index = None           # name -> the values .append()ed to it anywhere in the module (appended)
+        self._class_attrs = {}               # id(class) -> {attribute: the values bound to <x>.<attribute> in it} (class_attr_bindings)
+        self._bases = {}                     # id(class) -> bases_of's answer
         for n in ast.walk(self.tree):
+            if not self.calls_oracle and ((isinstance(n, ast.alias) and n.name in ORACLE_NAMES) or (isinstance(n, ast.Name) and n.id in ORACLE_NAMES)
+                                          or (isinstance(n, ast.Attribute) and n.attr in ORACLE_NAMES)):
+                self.calls_oracle = True
             if isinstance(n, ast.Import):
                 self.imports.update((a.asname or a.name).split(".")[0] for a in n.names)
                 for a in n.names:            # import a.b as c -> c: a.b; import a.b -> a: a
@@ -1017,7 +1060,10 @@ class _Module:
         return False
 
     def bases_of(self, cls):
-        """The class and its bases in this file, nearest first."""
+        """The class and its bases in this file, nearest first (answered once per class; the callers read the list)."""
+        out = self._bases.get(id(cls))
+        if out is not None:
+            return out
         out, q, seen = [], [cls], set()
         while q:
             c = q.pop(0)
@@ -1029,6 +1075,7 @@ class _Module:
                 nm = ast.unparse(b).split(".")[-1]
                 if nm in self.classes:
                     q.append(self.classes[nm])
+        self._bases[id(cls)] = out
         return out
 
     def is_testcase(self, cls):
@@ -1036,6 +1083,27 @@ class _Module:
 
     def methods_of(self, cls, name):
         return [f for c in self.bases_of(cls) for f in c.body if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)) and f.name == name]
+
+    def class_attr_bindings(self, cls):
+        """{attribute: [values]} for every `<x>.<attribute>` bound anywhere in `cls` by an assignment, an element assigned by
+        subscript or a += of a list, plus every `.append(v)` / `.add(v)` into one, in the class's walk order: what
+        _Unit.class_bindings reads per attribute, the class walked once."""
+        idx = self._class_attrs.get(id(cls))
+        if idx is None:
+            idx = self._class_attrs[id(cls)] = {}
+            for sub in ast.walk(cls):
+                if isinstance(sub, ast.Assign):
+                    for t in sub.targets:
+                        if isinstance(t, ast.Attribute):
+                            idx.setdefault(t.attr, []).append(sub.value)
+                        elif isinstance(t, ast.Subscript) and isinstance(t.value, ast.Attribute):
+                            idx.setdefault(t.value.attr, []).append(sub.value)
+                elif isinstance(sub, ast.AugAssign) and isinstance(sub.target, ast.Attribute):
+                    idx.setdefault(sub.target.attr, []).extend(sub.value.elts if isinstance(sub.value, (ast.List, ast.Tuple)) else [sub.value])
+                elif isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr in ("append", "add") \
+                        and isinstance(sub.func.value, ast.Attribute) and sub.args:
+                    idx.setdefault(sub.func.value.attr, []).append(sub.args[0])
+        return idx
 
     def units(self):
         """Every function the walk classes on its own: module-level functions and every method of every class, a class
@@ -1196,15 +1264,17 @@ class _Module:
 
     def appended(self, name):
         """The values `.append`ed to the module-level name anywhere in the module (`_KM.append(load_source(...))` inside
-        the function that fills the cache), for a global bound to an empty container."""
+        the function that fills the cache), for a global bound to an empty container; the module walked once for every
+        name asked."""
         if name not in self.globals:
             return []
-        out = []
-        for n in ast.walk(self.tree):
-            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "append" and n.args \
-                    and isinstance(n.func.value, ast.Name) and n.func.value.id == name:
-                out.append(n.args[0])
-        return out
+        if self._appends_index is None:
+            self._appends_index = {}
+            for n in ast.walk(self.tree):
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "append" and n.args \
+                        and isinstance(n.func.value, ast.Name):
+                    self._appends_index.setdefault(n.func.value.id, []).append(n.args[0])
+        return list(self._appends_index.get(name, []))
 
     def tests_module(self, dotted):
         """The _Module of another module under tests/ named by its import spelling (`tests.test_x`, `test_x`,
@@ -1338,16 +1408,22 @@ class _Unit:
         self.rows = []
         _stmts(fn.body, [], self.rows)
         self.row_of = {id(s): (s, block, i, stack) for s, block, i, stack in self.rows}
-        self.owner, self.parent_node = {}, {}
-        for s, _b, _i, _st in self.rows:
-            for child in ast.iter_child_nodes(s):
+        self.parent_node = {}           # id(expression node) -> the node, or the statement, that holds it
+        self.exprs = {}                 # id(statement) -> its expression nodes (not those of the statements it holds), in
+        for s, _b, _i, _st in self.rows:                                    # ast.walk's order: walked ONCE here and read by _bind,
+            nodes, todo = [], collections.deque()                           # starts, product_starts, callers and the cleanup
+            for child in ast.iter_child_nodes(s):                           # readers instead of a walk per reader
                 if isinstance(child, ast.stmt):
                     continue
                 self.parent_node.setdefault(id(child), s)
-                for node in ast.walk(child):
-                    self.owner.setdefault(id(node), s)
+                todo.append(child)
+                while todo:                                                 # ast.walk's own order: breadth first, per child
+                    node = todo.popleft()
+                    nodes.append(node)
                     for sub in ast.iter_child_nodes(node):
                         self.parent_node.setdefault(id(sub), node)
+                        todo.append(sub)
+            self.exprs[id(s)] = nodes
         # Bindings are kept PER SCOPE: a function defined in the body binds its own names (a nested `t = Thread(target=_once)`
         # rebinds nothing of the enclosing body's `t`), and a use reads its own scope first, then the enclosing ones out to
         # the unit's body (a closure), then the parent unit's. A name declared nonlocal or global in a nested def binds in
@@ -1448,7 +1524,7 @@ class _Unit:
             for it in s.items:
                 if it.optional_vars is not None:
                     self._bind_target(it.optional_vars, ("with", it.context_expr), s.lineno, scope)
-        for sub in _expr_children(s):
+        for sub in self.exprs[id(s)]:
             if isinstance(sub, ast.NamedExpr):
                 self._bind_target(sub.target, sub.value, s.lineno, scope)
             elif isinstance(sub, ast.comprehension):
@@ -1493,19 +1569,8 @@ class _Unit:
         if self.cls is None:
             return []
         out = []
-        for c in self.module.bases_of(self.cls):
-            for sub in ast.walk(c):
-                if isinstance(sub, ast.Assign):
-                    for t in sub.targets:
-                        if isinstance(t, ast.Attribute) and t.attr == attr:
-                            out.append(sub.value)
-                        elif isinstance(t, ast.Subscript) and isinstance(t.value, ast.Attribute) and t.value.attr == attr:
-                            out.append(sub.value)
-                elif isinstance(sub, ast.AugAssign) and isinstance(sub.target, ast.Attribute) and sub.target.attr == attr:
-                    out += sub.value.elts if isinstance(sub.value, (ast.List, ast.Tuple)) else [sub.value]
-                elif isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr in ("append", "add") \
-                        and isinstance(sub.func.value, ast.Attribute) and sub.func.value.attr == attr and sub.args:
-                    out.append(sub.args[0])
+        for c in self.module.bases_of(self.cls):                     # each class walked once (class_attr_bindings)
+            out += self.module.class_attr_bindings(c).get(attr, [])
         return out
 
     # ── what a call constructs ──
@@ -1808,7 +1873,7 @@ class _Unit:
         element: `self._load_watched(before=writer.start)`), a start the callee makes, classed at the handing statement."""
         out = []
         for s, block, i, stack in self.rows:
-            for sub in _expr_children(s):
+            for sub in self.exprs[id(s)]:
                 if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr == "start" \
                         and not sub.args and not sub.keywords:
                     if self._value_used(sub):
@@ -1868,7 +1933,7 @@ class _Unit:
         names = prod.spawners() if prod is not None else {}
         out = []
         for s, _b, _i, _st in self.rows:
-            for sub in _expr_children(s):
+            for sub in self.exprs[id(s)]:
                 if not isinstance(sub, ast.Call):
                     continue
                 f, nm = sub.func, _callee_name(sub)
@@ -1959,7 +2024,7 @@ class _Unit:
             if self.cls is not None and (u.cls is None or self.cls not in self.module.bases_of(u.cls)):
                 continue
             for s, block, i, stack in u.rows:
-                for sub in _expr_children(s):
+                for sub in u.exprs[id(s)]:
                     if isinstance(sub, ast.Call) and _callee_name(sub) == self.fn.name:
                         out.append((u, sub, s, block, i, stack))
         return out
@@ -2197,18 +2262,6 @@ def _alias_file(unit, func, line):
         call = _object_of(unit, func.value, line)
         return m.product_file_of(call) if call is not None else None
     return None
-
-
-def _calls_oracle(tree):
-    """The module imports or calls the runtime oracle (ORACLE_NAMES) by name."""
-    for n in ast.walk(tree):
-        if isinstance(n, ast.alias) and n.name in ORACLE_NAMES:
-            return True
-        if isinstance(n, ast.Name) and n.id in ORACLE_NAMES:
-            return True
-        if isinstance(n, ast.Attribute) and n.attr in ORACLE_NAMES:
-            return True
-    return False
 
 
 # ── the kind of a thread ────────────────────────────────────────────────────────────────────────────────
@@ -4116,7 +4169,7 @@ def list_join_cleanups(paths, helpers=None, modules=None):
             m = _Module(p, set(), helpers=helpers, helper_cache=cache)
         for u in m.units():
             for s, _b, _i, _st in u.rows:
-                for sub in _expr_children(s):
+                for sub in u.exprs[id(s)]:
                     if isinstance(sub, ast.Call) and _is_cleanup_call(u, sub):
                         for n in _cleanup_nodes(u, sub, helpers=False):
                             for j in _list_joins(n):
@@ -4195,7 +4248,7 @@ def _cleanup_before(unit, line, start, extra=()):
     """A cleanup that names a stop of THIS thread, registered at or before `line` in the unit, or in the class's setUp /
     setUpClass (which run before every test body)."""
     for s, _b, _i, _st in unit.rows:
-        for sub in _expr_children(s):
+        for sub in unit.exprs[id(s)]:
             if isinstance(sub, ast.Call) and _is_cleanup_call(unit, sub) and sub.lineno <= line and _cleanup_stops(unit, sub, start, extra):
                 return True
     if unit.cls is not None and unit.fn.name not in ("setUp", "setUpClass"):
@@ -4429,7 +4482,7 @@ def census(paths, loops=None, thread_classes=None, helpers=None, product=None, e
             modules[p] = m
         if extras is not None:
             extras["modules"] += 1
-            if _calls_oracle(m.tree):
+            if m.calls_oracle:
                 extras["oracle"].append(os.path.relpath(p, ROOT))
         for u in m.units():
             if extras is not None:
