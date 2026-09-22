@@ -89,6 +89,19 @@ This repo may go public; assume every commit is permanent and world-readable.
   for that path, or keep the file text on purpose with an explicit `diff`
   line for it that outranks the `-diff`; a rename or copy of such a file is
   refused the same way, since its bytes reach the remote under the new path;
+  the same refusal covers any other text blob that git's own read calls
+  binary, whatever rule made it so, when that blob is absent from the pushed
+  tip (one the tip holds is read by the tip's own scan): a blob over
+  `core.bigFileThreshold`, where the refusal names the blob's size and the
+  key's value, since no attribute of the path accounts for the verdict, and
+  the remedy: an explicit `diff` line for the path, which outranks the key,
+  or the key raised above the size or unset (for a symlink's target only the
+  key helps); and a commit that turns a file binary by its bytes into text,
+  where the refusal names the previous version's bytes as the cause, since
+  git prints no text diff for such a pair and the scan could not read the
+  new text, and the remedy: fetch the remote whose history already holds the
+  commit and push again, or, when no remote holds it yet, check the new text
+  yourself before pushing with `--no-verify`;
   and the maintainer's clone carries an UNTRACKED
   `tests/test_no_personal_identifiers.py` that scans the working tree for the
   same strings plus that machine's hostname and home path. The pytest file is
@@ -113,24 +126,29 @@ so there is no list to write. **gitleaks** covers them, in two places:
   diff from the scanner's log: the hook passes `--root` on the scanner's log so
   a root commit's diff is scanned whatever `log.showRoot` says, and a count that
   comes up short beside that key and a root commit is refused with the key named
-  as a candidate cause and its remedy. `ROMP_NO_GITLEAKS=1` skips the credential
-  scan for one push, and `ROMP_GITLEAKS` points at a binary. A clone that
-  carries any replace ref (`git replace`) is refused before either scan runs
-  when either scan is armed, whatever the ref replaces and whether or not that
-  object is in the push: under a replacement what a scan reads and what the push
-  transfers can differ, so a clean report could be false; the remedy is
-  `git replace -d <object>`, or a push from a clone that carries none. This is
-  the same hook as the identifier scan and both report before it refuses, so
-  one push tells you about both.
+  as a candidate cause and its remedy. The scanner's log carries `--text` as
+  well, so a diff attribute cannot hide a credential from it: a path git would
+  otherwise call binary (a `-diff` line or the `binary` macro in an attributes
+  file, or a blob over `core.bigFileThreshold`) is diffed as text and scanned
+  like any other, while a plain patch stream prints no hunk for it.
+  `ROMP_NO_GITLEAKS=1` skips the credential scan for one push, and
+  `ROMP_GITLEAKS` points at a binary. A clone that carries any replace ref
+  (`git replace`) is refused before either scan runs when either scan is armed,
+  whatever the ref replaces and whether or not that object is in the push: under
+  a replacement what a scan reads and what the push transfers can differ, so a
+  clean report could be false; the remedy is `git replace -d <object>`, or a
+  push from a clone that carries none. This is the same hook as the identifier
+  scan and both report before it refuses, so one push tells you about both.
 - **CI's `Secret scan (gitleaks)` job** scans all of history, every branch and
   tag the checkout brings, on every PR and every push to `main`, from a
   pinned, checksummed binary. It needs `fetch-depth: 0`: a default checkout
-  scans one commit and reports clean. It reads the patch stream as the runner's
-  git shapes it: a committed `-diff` attribute hides that path's credential from
-  the job once the file is gone from `HEAD`, where the hook's `--text` still
-  finds it (verified 2026-09-21 on the pinned scanner; the tree's one
-  `.gitattributes` sets `-text`, not `-diff`, so the road is latent rather than
-  live). Closing that home is its own fix-tier PR, not the hook's.
+  scans one commit and reports clean. Its history scan carries `--text` too,
+  so a committed `-diff` attribute cannot hide a path's credential from it: a
+  plain patch stream prints no hunk for such a path, and the job's tree scan
+  reads `HEAD` alone, where a removed file is gone (the road was verified
+  2026-09-21 on the pinned scanner and closed by the fork's PR 890; the tree's
+  one `.gitattributes` sets `-text`, not `-diff`, so no commit here was
+  hidden).
 
 Three things follow for anyone touching this:
 - **A hit means rotate, not amend.** A credential that reached a commit is
