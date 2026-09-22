@@ -33,8 +33,28 @@ km = load_source("romp_kernel", KPATH)
 class TabsFirst(unittest.TestCase):
     # The three strip senders, as the frame builder's docstring names them (_tab_order_frame): the pusher's tabs-first
     # send (the connect push a `ready` triggers included), the off-cycle session push and the close confirmation. The
-    # census below is derived over this tuple: a fourth sender is added here or fails the whole-text count.
+    # tuple is the EXPECTED set; the actual set is DERIVED from the kernel's calls to _send_tab_order by AST
+    # (_strip_senders: every def in the module, methods included), and the census asserts the two equal before it walks
+    # the senders, so a fourth sender of any spelling, one that builds its own rows included, is named in that red
+    # (tests-2 and extra6-2, 2026-09-22). The whole-text count on the canonical call spelling further down is a second
+    # pin, for that spelling alone.
     SENDERS = ("_push", "_push_session_now", "_confirm_close_now")
+
+    @staticmethod
+    def _strip_senders(text):
+        """Every function whose body calls _send_tab_order, by AST over the whole module: the innermost enclosing def (a
+        FunctionDef or an AsyncFunctionDef, a method included) of each call whose callee is the bare name."""
+        out = set()
+
+        def visit(node, enclosing):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                enclosing = node.name
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_send_tab_order":
+                out.add(enclosing or "<module>")
+            for ch in ast.iter_child_nodes(node):
+                visit(ch, enclosing)
+        visit(ast.parse(text), None)
+        return out
 
     @staticmethod
     def _tab_meta_bindings(fn):
@@ -54,12 +74,21 @@ class TabsFirst(unittest.TestCase):
         # 2026-09-22: the rows moved into _tab_meta, the ONE row builder (name, colour, emoji and the count of the
         # session's open user todos, so a tab a page holds as a skeleton paints its flag from the strip;
         # tests/test_user_todos_roster.py proves the rows by execution over all three senders). The census here is over
-        # the SENDERS: each binds its tab_meta from the helper exactly once and builds no row literal of its own, and
-        # the kernel has no other binding of that name (a fourth inline dict would drop a field again).
+        # the SENDERS, derived from _send_tab_order's callers first: each binds its tab_meta from the helper exactly once
+        # and builds no row literal of its own, and the kernel has no other binding of that name (a fourth inline dict
+        # would drop a field again).
+        text = open(KPATH).read()
+        self.assertEqual(self._strip_senders(text), set(self.SENDERS),
+                         "the strip's senders are _send_tab_order's callers, derived: a fourth caller is named here")
+        planted = text + ('\n\ndef _probe_fourth_sender(c, order, live):\n'
+                          '    _send_tab_order(c, order, [{"id": s} for s in order], live)\n'
+                          '\n\nclass _Probe:\n    def sender_method(self, c, order, live):\n'
+                          '        _send_tab_order(c, order, [], live)\n')
+        self.assertEqual(self._strip_senders(planted) - set(self.SENDERS), {"_probe_fourth_sender", "sender_method"},
+                         "the walk names a planted sender, a method included (the census lists a plant, by execution)")
         for name in self.SENDERS:
             self.assertEqual(self._tab_meta_bindings(getattr(km, name)), [(1, 0)],
                              "%s binds tab_meta once, from _tab_meta, with no row literal of its own" % name)
-        text = open(KPATH).read()
         self.assertEqual(text.count("tab_meta = _tab_meta(chat_list)"), len(self.SENDERS),
                          "the helper's callers are the senders and nothing else")
         self.assertEqual(text.count("tab_meta = [{"), 0, "no inline tab_meta rows anywhere in the kernel")
