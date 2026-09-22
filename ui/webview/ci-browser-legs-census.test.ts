@@ -1,6 +1,7 @@
 // The browser-legs census, held to the tree and to the planted forms. The gating vscode-extension job runs the legs named in
 // vscode-extension/ci-browser-legs.txt after its Chromium install (the step "Browser legs (node --test over
-// ci-browser-legs.txt)", scripts/ci-browser-legs.sh); every other browser leg is in ci-browser-legs-excluded.txt with a reason.
+// ci-browser-legs.txt)", scripts/ci-browser-legs.sh); every other browser leg of the extension's test build is in
+// ci-browser-legs-excluded.txt with a reason, and the census's directory list is held equal to that build here, by execution.
 // The census that decides what a browser leg IS lives in vscode-extension/scripts/browser-legs-census.mjs, which reads each
 // test module's tree with the TypeScript compiler (its header states the rule), and the compiler is installed only under
 // vscode-extension/node_modules, so this test, in the extension's own suite (npm test, this job), is where the completeness
@@ -27,6 +28,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
 const EXT = process.cwd();                                                  // npm test runs in vscode-extension
@@ -254,6 +256,66 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p74-text-names-playwright.test.ts", leg: false, cls: "none", gap: null, launcherImported: false },
 ];
 const bundleOf = (p: Plant): string => "out-tests/" + p.dir + "/" + p.file.replace(/\.test\.ts$/, ".test.js");
+
+/** The census's population against esbuild's test build: `built` is bundle -> entry point from a metafile build of the
+ *  config's own entry points (the mapping is esbuild's, by its outbase, never restated here), `read` the bundles census() read.
+ *  Each direction is a sentence naming the modules and the directories they fall in (derived from the bundle paths), or null. */
+function scopeDiff(built: Map<string, string>, read: Set<string>): { builtNotRead: string | null; readNotBuilt: string | null } {
+  const dirs = (bs: string[]) => [...new Set(bs.map((b) => path.dirname(b.replace(/^out-tests\//, ""))))].sort();
+  const bnr = [...built.keys()].filter((b) => !read.has(b)).sort();
+  const rnb = [...read].filter((b) => !built.has(b)).sort();
+  return {
+    builtNotRead: bnr.length ? "esbuild.js testBuild compiles these modules and the census never reads them, so a browser leg among them is in neither file with every check green: add their directories (" + dirs(bnr).join(", ") + ", relative to the repo root) to LEG_DIRS in scripts/browser-legs-census.mjs: " + bnr.map((b) => built.get(b) + " -> " + b).join(", ") : null,
+    readNotBuilt: rnb.length ? "the census reads these modules and esbuild.js testBuild does not compile them, so npm test never runs them and a roster line naming one has no bundle: remove their directories (" + dirs(rnb).join(", ") + ") from LEG_DIRS in scripts/browser-legs-census.mjs, or add each to testBuild's entry list: " + rnb.join(", ") : null,
+  };
+}
+/** esbuild's own mapping of a test-build config to bundles: a metafile build of `entryPoints` with the config's outdir, outbase,
+ *  format, platform and target and no bundling (the mapping depends on the entry points and the outbase alone; bundling 1065
+ *  entries in memory costs gigabytes), nothing written. esbuild.js and the esbuild package are required at run time
+ *  (createRequire, as src/esbuild-build.test.ts does) because this test module is itself bundled. */
+async function builtBundles(cwd: string, cfg: { entryPoints: string[]; outdir: string; outbase?: string; format: string; platform: string; target: string }): Promise<Map<string, string>> {
+  const esbuild = createRequire(path.join(EXT, "package.json"))("esbuild");
+  const res = await esbuild.build({ entryPoints: cfg.entryPoints, outdir: cfg.outdir, outbase: cfg.outbase, format: cfg.format, platform: cfg.platform, target: cfg.target, bundle: false, write: false, metafile: true, logLevel: "silent", absWorkingDir: cwd });
+  const built = new Map<string, string>();
+  for (const [out, o] of Object.entries(res.metafile.outputs as Record<string, { entryPoint?: string }>)) if (o.entryPoint) built.set(out, o.entryPoint);
+  return built;
+}
+
+test("scope equals walk, by execution: the entry points esbuild.js testBuild compiles, mapped to bundles by esbuild's own metafile, are exactly the modules the census reads, in both directions; every LEG_DIRS entry is a directory under the repo root; this test's source mapping is esbuild's entry point for every bundle; census() reads no esbuild.js; and each direction's sentence is exercised over a synthetic config, a fourth directory the build compiles and a directory the build does not", async (t) => {
+  const { census, LEG_DIRS } = await load();
+  const { testBuild } = createRequire(path.join(EXT, "package.json"))(path.join(EXT, "esbuild.js"));
+  const cfg = testBuild();
+  const built = await builtBundles(EXT, cfg);
+  assert.equal(built.size, cfg.entryPoints.length, "esbuild reports one output with an entry point per entry point of the test build (" + cfg.entryPoints.length + ")");
+  const c = census(REPO);
+  const d = scopeDiff(built, new Set(c.byBundle.keys()));
+  assert.equal(d.builtNotRead, null, d.builtNotRead as string);
+  assert.equal(d.readNotBuilt, null, d.readNotBuilt as string);
+  // an absent LEG_DIRS entry contributes no bundle, so the equality above cannot see it (census() skips a directory that is not there)
+  for (const dir of LEG_DIRS) assert.ok(fs.existsSync(path.join(REPO, dir)) && fs.statSync(path.join(REPO, dir)).isDirectory(), "LEG_DIRS in scripts/browser-legs-census.mjs names " + dir + ", which is not a directory under the repo root: the census walks nothing there, and the set equality above cannot see it because census() skips an absent directory");
+  for (const [b, entry] of built) assert.equal(sourceOf(b), path.resolve(EXT, entry), "this test's source mapping for " + b + " is esbuild's entry point (" + entry + ")");
+  assert.ok(!read(MODULE).split("\n").some((l) => !/^\s*\/\//.test(l) && /esbuild/.test(l)), "scripts/browser-legs-census.mjs names esbuild on no code line: the population is held equal to the test build here, by execution, never derived at run time (census() runs over synthetic roots that carry no esbuild.js, so a run-time derivation would need a fallback and the fallback is the silent skip this pin closes)");
+  t.diagnostic("scope: " + built.size + " entry points built, " + c.byBundle.size + " modules read, directories " + JSON.stringify([...new Set([...built.keys()].map((b) => path.dirname(b)))].sort()));
+  // both sentences, over a synthetic root and a synthetic config of testBuild's shape: four directories, the fourth (ui/panes)
+  // holding a test module the census never reads; then a config of one directory while the census reads two
+  const { root } = syntheticRoot(t, ["p01-alias.test.ts", "p22-from-src.test.ts"]);
+  fs.mkdirSync(path.join(root, "ui", "panes"), { recursive: true });
+  fs.writeFileSync(path.join(root, "ui", "panes", "probe-panes.test.ts"), 'import { test } from "node:test";\ntest("a leg in a fourth directory", () => {});\n');
+  const ext = path.join(root, "vscode-extension");
+  const entriesOf = (dirs: string[]) => dirs.flatMap((dir) => fs.readdirSync(path.join(ext, dir)).filter((f) => f.endsWith(".test.ts")).map((f) => dir + "/" + f));
+  const four = await builtBundles(ext, { ...cfg, entryPoints: entriesOf(["src", "../ui", "../ui/webview", "../ui/panes"]) });
+  const readSyn = new Set(census(root).byBundle.keys());
+  const s1 = scopeDiff(four, readSyn);
+  assert.ok(s1.builtNotRead !== null && s1.builtNotRead.includes("add their directories (ui/panes, relative to the repo root) to LEG_DIRS") && s1.builtNotRead.includes("../ui/panes/probe-panes.test.ts -> out-tests/ui/panes/probe-panes.test.js"), "a fourth directory in the config is red naming the directory and the module: " + s1.builtNotRead);
+  assert.equal(s1.readNotBuilt, null, "and nothing the census read is unbuilt: " + s1.readNotBuilt);
+  // esbuild's outbase is the entry points' common ancestor (a config of one directory alone would map its bundles directly under
+  // out-tests/), so the second synthetic config keeps two directories under the root, one the census reads and one it does not
+  const two = await builtBundles(ext, { ...cfg, entryPoints: entriesOf(["src", "../ui/panes"]) });
+  const s2 = scopeDiff(two, readSyn);
+  assert.ok(s2.readNotBuilt !== null && s2.readNotBuilt.includes("remove their directories (ui/webview) from LEG_DIRS") && s2.readNotBuilt.includes("out-tests/ui/webview/p01-alias.test.js"), "a directory the census reads and the config does not compile is red naming it: " + s2.readNotBuilt);
+  assert.ok(s2.builtNotRead !== null && s2.builtNotRead.includes("(ui/panes, relative to the repo root)"), "and the fourth directory is still named in the other direction: " + s2.builtNotRead);
+  assert.deepEqual(scopeDiff(four, new Set(four.keys())), { builtNotRead: null, readNotBuilt: null }, "equal sets: neither sentence");
+});
 
 test("every grandfather row's source existed at the commit the exclusions header binds the reason to: the header holds one bound line; the commit is fetched at depth 1 when the checkout lacks it, and a fetch or object read that fails is a red hold-off naming the reason, never a pass; a source absent at that commit is refused with the remedy", (t) => {
   const text = read(path.join(EXT, EXCLUDED));

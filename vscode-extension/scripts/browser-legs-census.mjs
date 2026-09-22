@@ -6,8 +6,10 @@
 // parse-free checks (file shape, duplicates, both files, reasons, the ci.yml pins) and says so in its messages. Without the
 // compiler this module exits 1 naming that job and judges nothing.
 //
-// For every test module esbuild's test build bundles (a .test.ts directly in vscode-extension/src, ui or ui/webview, the
-// three directories esbuild.js testBuild reads) it derives:
+// For every test module esbuild's test build bundles (a .test.ts directly in vscode-extension/src, ui or ui/webview: LEG_DIRS,
+// the list's one home, which ui/webview/ci-browser-legs-census.test.ts holds equal to the directories esbuild.js testBuild
+// compiles by building that config's entry points with a metafile and comparing, in both directions, with what census() read)
+// it derives:
 //   launcher:  the module imports ui/webview/real-viewer-leg.ts by RESOLVED path (relative to the module, .js read as .ts, the
 //              suffix added when absent) under any binding form (named, aliased, namespace, default, import-equals, require(),
 //              await import(), a createRequire-bound loader or the launcher's own exported requireCjs, declared or assigned,

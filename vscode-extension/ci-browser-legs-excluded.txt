@@ -1,6 +1,6 @@
 # The browser legs the gating CI job does NOT run, each with its reason. The step "Browser legs (node --test over
 # ci-browser-legs.txt)" in .github/workflows/ci.yml runs the legs in ci-browser-legs.txt with a browser; every other
-# browser leg in the tree is listed here, so a leg added later takes a verdict: it is in the roster or in this file,
+# browser leg of the extension's test build is listed here, so a leg added later takes a verdict: it is in the roster or in this file,
 # never neither. A browser leg is what the census, scripts/browser-legs-census.mjs, reads from a test module's tree
 # with the TypeScript compiler: it calls the shared launcher (inBrowser in ui/webview/real-viewer-leg.ts) through its
 # import under any binding, or names a playwright package by any specifier, or holds a driver string that loads one; a

@@ -6,7 +6,8 @@
 // naming the switch and the reason instead of skipping.
 // WHICH GATE HOLDS WHICH. The census (what a browser leg IS) lives in vscode-extension/scripts/browser-legs-census.mjs and
 // reads each test module's tree with the TypeScript compiler, which is installed only under vscode-extension/node_modules.
-// So the completeness property, the roster PLUS vscode-extension/ci-browser-legs-excluded.txt EQUALS the tree's browser legs
+// So the completeness property, the roster PLUS vscode-extension/ci-browser-legs-excluded.txt EQUALS the browser legs of the
+// extension's test build (what esbuild.js testBuild bundles; the census test holds its directory list equal to that build)
 // with every roster line passing the roster gate and every reason's engine and driver words true of its source, is EXECUTED
 // in ui/webview/ci-browser-legs-census.test.ts, in the vscode-extension job's test leg (npm test), and by the script's own
 // pre-run check in that job; this module cannot run the census and does not claim it. A green here is the parse-free half:
@@ -290,6 +291,19 @@ test('both files are well formed: each line is a bundle path naming a source in 
   }
   const rostered = new Set(roster.map((e) => e.bundle));
   for (const e of excluded) assert.ok(!rostered.has(e.bundle), where(EXCLUDED, e) + ' is also in ' + ROSTER + ': a leg is in one file or the other, keep one');
+});
+
+test('the completeness sentence is scoped to the extension\'s test build on every reader surface (the roster header, the exclusions header, the step\'s comment in ci.yml, CONTRIBUTING.md, the census test\'s header), and none of them copies the census\'s directory list, which has one home, the census header, held equal to esbuild.js testBuild by the census test in the vscode-extension job', () => {
+  const PHRASE = 'browser leg of the extension\'s test build';
+  const LIST = 'vscode-extension/src, ui or ui/webview';
+  const surfaces = [path.join(EXT, ROSTER), path.join(EXT, EXCLUDED), CI, path.join(REPO, 'CONTRIBUTING.md'), CENSUS_TEST];
+  for (const f of surfaces) {
+    const text = read(f);
+    assert.ok(text.includes(PHRASE), path.relative(REPO, f) + ' states the completeness bound over the extension\'s test build (the phrase ' + JSON.stringify(PHRASE) + '), not over the whole repository, whose other browser legs carry their own switches');
+    assert.ok(!text.includes(LIST), path.relative(REPO, f) + ' copies the census\'s directory list (' + LIST + '); the list has one home, the header of ' + path.relative(REPO, CENSUS) + ', and the census test holds it equal to esbuild.js testBuild by execution, so a copy here would be a second thing to drift');
+  }
+  assert.ok(read(CENSUS).includes(LIST), path.relative(REPO, CENSUS) + ' spells the directory list in its header (the one home): ' + LIST);
+  assert.ok(read(CENSUS_TEST).includes('metafile'), path.relative(REPO, CENSUS_TEST) + ' holds the list to esbuild\'s test build by a metafile build (a presence pin: the executed equality lives there, in the vscode-extension job, which has esbuild)');
 });
 
 test('the grep the exclusions header spells for the pending lines lists exactly the pending rows when run as written from the repo root, and CONTRIBUTING.md spells the same command (residual 1 of the landing condition: a pending line whose PR closes without the leg is found by this command and removed by hand)', () => {

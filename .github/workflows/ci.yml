@@ -329,7 +329,7 @@ jobs:
         # adds its legs to, one compiled bundle path per line; a leg the job does not run is in ci-browser-legs-excluded.txt
         # with a reason. What a browser leg is, scripts/browser-legs-census.mjs reads from each test module's tree with
         # the TypeScript compiler this job's npm ci installs; ui/webview/ci-browser-legs-census.test.ts, in this job's
-        # Test step, holds every browser leg in the tree to one file or the other, and the script checks the same here
+        # Test step, holds every browser leg of the extension's test build to one file or the other, and the script checks the same here
         # before it runs a leg (tools/ci-browser-legs.test.mjs, in the shell job, holds the files' shape without the
         # compiler). The step sits directly after the Chromium install with nothing before the Test step moved, so
         # plans/markdown-viewer.md's CI sentence and the pin that reads it (tools/markdown-viewer-plan-gate-adopt.test.mjs)

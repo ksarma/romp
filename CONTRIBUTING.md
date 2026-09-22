@@ -43,8 +43,10 @@ worker count, build the tests and start the runner yourself, from `vscode-extens
 `node esbuild.js --tests && node --max-old-space-size=2048 --test --test-concurrency=N
 'out-tests/**/*.test.js'`.
 
-CI's vscode-extension job runs `npm test` before it installs a browser, so every browser leg
-(a test module that launches a Playwright browser) skips at launch there. The legs named in
+CI's vscode-extension job runs `npm test` before it installs a browser, so every browser leg of the
+extension's test build (a test module `vscode-extension/esbuild.js` testBuild bundles into `out-tests/`
+that launches a Playwright browser; `tests/ui-bench.test.mjs` under `ROMP_UI_BENCH_REQUIRE` and the served
+pytest files under `ROMP_SERVED_TESTS_REQUIRE` carry their own switch) skips at launch there. The legs named in
 `vscode-extension/ci-browser-legs.txt`, one compiled bundle path per line, run again after the
 job's Chromium install with `ROMP_BROWSER_LEGS_REQUIRE=1`. The one shared launcher, `inBrowser`
 in `ui/webview/real-viewer-leg.ts`, reads the switch (any non-empty value arms it): under it a
@@ -60,7 +62,7 @@ its import under any name, a playwright package named by any specifier, or a dri
 loads one; a form it cannot classify is refused with file and line). A PR that wants its legs
 run moves them to the roster (a leg already in the exclusions loses its line there in the same
 commit). `ui/webview/ci-browser-legs-census.test.ts`, in the extension's `npm test`, holds every
-browser leg in the tree to one file or the other and fails on a line whose source is gone, and
+browser leg of the extension's test build to one file or the other and fails on a line whose source is gone, and
 the step's script checks the same before it runs a leg; `tools/ci-browser-legs.test.mjs`, which
 CI's shell job runs without `npm ci`, holds the two files' shape and reasons and runs the script
 over synthetic trees.
