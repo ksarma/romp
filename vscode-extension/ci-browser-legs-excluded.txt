@@ -3,13 +3,14 @@
 # browser leg of the extension's test build is listed here, so a leg added later takes a verdict: it is in the roster or in this file,
 # never neither. A browser leg is what the census, scripts/browser-legs-census.mjs, reads from a test module's tree
 # with the TypeScript compiler: it calls the shared launcher (inBrowser in ui/webview/real-viewer-leg.ts) through its
-# import under any binding, or names a playwright package by any specifier, or holds a driver string that loads one; a
-# form the census cannot classify is refused with file and line, never counted absent, and so is a module that reaches
-# inBrowser or playwright only through another module of the tree it loads (the census reads a loaded module for what it
-# binds or calls, transitively, and follows nothing through it). ui/webview/ci-browser-legs-census.test.ts
-# (the vscode-extension job) holds the roster plus this file to that census and scripts/ci-browser-legs.sh checks the
-# same before it runs a leg; tools/ci-browser-legs.test.mjs (the Shell job) holds the two files' shape and reasons
-# without the compiler. A line whose source moved or was deleted turns all three red.
+# import under any binding, or names a playwright package by any specifier other than a type-only import or export (erased
+# at build time, it binds nothing), or holds a driver string that loads one; a form the census cannot classify is refused
+# with file and line, never counted absent, and so is a module that reaches inBrowser or playwright only through another
+# module of the tree it loads (the census reads a loaded module for what it binds or calls, transitively, and follows
+# nothing through it). ui/webview/ci-browser-legs-census.test.ts (the vscode-extension job) holds the roster plus this
+# file to that census and scripts/ci-browser-legs.sh checks the same before it runs a leg; tools/ci-browser-legs.test.mjs
+# (the Shell job) holds the two files' shape and reasons without the compiler. A line whose source moved or was deleted
+# turns all three red.
 #
 # Format: one compiled bundle path per line, relative to vscode-extension/, as the Test step's npm test builds it
 # (ui/webview/<name>.test.ts builds to out-tests/ui/webview/<name>.test.js), then a TAB, then the reason. Blank

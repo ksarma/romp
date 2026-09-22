@@ -34,7 +34,9 @@
 //   loaded:    every module of the tree the test loads by a relative specifier (an import, an export from, import =, require(),
 //              await import(), a loader bound by createRequire or a createRequire(...) call applied directly; a specifier that
 //              names no file beside the module resolves
-//              against the repo root and vscode-extension/, the bases loaders in this tree are anchored to) is read by this same
+//              against the repo root and vscode-extension/, the bases loaders in this tree are anchored to, under the root alone:
+//              a candidate outside it is never looked up, so a sibling directory beside the checkout is neither read nor an
+//              ambiguity) is read by this same
 //              walker, transitively, for what it BINDS OR CALLS: a module that binds the launcher's inBrowser (imports it,
 //              imports the launcher whole, or re-exports it) or calls it (on a binding, or on a load where it stands) while the
 //              test itself never calls inBrowser, names a playwright package, holds a driver string, or holds a form the walker
@@ -45,10 +47,17 @@
 //   playwright: the module names a playwright package (playwright, playwright-core, @playwright/test, or a subpath) by any
 //              specifier form, either quote, in any position (an import, a loader call bound to a name, or a loader call whose
 //              result is used where it stands: `require("playwright").chromium.launch()`, `(await import("playwright"))`,
-//              `import("playwright").then(...)`); the engines it reaches from a playwright-derived expression (chromium, firefox,
+//              `import("playwright").then(...)`), other than a type-only import or export (`import type`, `export type ... from`,
+//              or named bindings every one inline type-only, `import { type Page }`: erased at build time, it binds nothing and
+//              is carried by typeOnly, not a leg; a default or namespace binding beside an inline type is a value binding and
+//              stays a load; an empty clause, `import {} from`, and a value import whose bindings are used in type positions
+//              only are also erased by the bundler and still read as loads here, on the safe side); the engines it reaches from
+//              a playwright-derived expression (chromium, firefox,
 //              webkit: a property, a bracketed literal, a destructured binding, a named import, or a computed name FOLDED by
 //              lexical scope through four closed forms: a const bound to a literal (a let or var too, when no statement of the
-//              module assigns to it), a for-of over an array literal, a parameter
+//              module writes to it: an assignment with the name as its target or inside a destructuring target, a for-of or
+//              for-in head over it, ++ or --, or a second var declaration of it with an initializer), a for-of over an array
+//              literal, a parameter
 //              typed as a union of string literals, a string-typed parameter whose every direct call site in the module passes a
 //              literal; and two the launcher's own exports supply, read from its source by resolved path: a for-of over a name
 //              imported from the launcher whose export is a const array literal of literals, and a parameter typed by a type
@@ -70,7 +79,8 @@
 //              closed form, bound or where it stands); the inBrowser binding used as a value, not called (an
 //              initializer `const f = inBrowser` and a default value `{ x = inBrowser }` included; the exempt uses are the
 //              NAME position of a declaration or import specifier and an assignment's target); the launcher's whole-module or
-//              default binding handed on as a value (aliased, destructured, passed as an argument, read for inBrowser
+//              default binding handed on as a value (aliased, destructured, passed as an argument, called as a function or
+//              constructed with new, which the launcher's module is not, read for inBrowser
 //              without a call, `.bind` included, handed to a promise callback through .then, .catch or .finally, read for a
 //              default member, or awaited into a name; reading another member off it is not a hand-on, and the refusal names
 //              the position the line holds); the launcher loaded where it stands and handed on through .then, .catch,
@@ -87,7 +97,8 @@
 // THE INVARIANT (the parse's own state against its record; run at the end of every classify, so census() holds it over every
 // module it reads, test modules and the modules they load alike, whatever the class): the census may not resolve a tracked
 // specifier or a launcher binding and return a record that carries nothing of it. Three clauses. (1) A playwright package the
-// parse resolved (an import, an export from, import =, a loader call in ANY position) is in `playwright`. (2) The launcher the
+// parse resolved (an import, an export from, import =, a loader call in ANY position) is in `playwright`, or, for a type-only
+// import or export, in typeOnly. (2) The launcher the
 // parse resolved is carried as an import (launcherImported), a type-only import (typeOnly), or a FOLLOWED load: a loader call
 // bound by a binding's initializer or an assignment's right side, standing as a statement of its own, or the object of a
 // member the walker read (`require(launcher).inBrowser(...)` counted as a shared call, another member read as an import,
@@ -268,8 +279,10 @@ export function classify(ts, file, src, opts = {}) {
     const decl = declOfUse(id);
     if (!decl) return null;
     if (ts.isVariableDeclaration(decl)) {
-      // a let or var the module assigns to elsewhere (=, a compound assignment, ++ or --) is not bound to its initializer: null
-      if (!(decl.parent && ts.isVariableDeclarationList(decl.parent) && (decl.parent.flags & ts.NodeFlags.Const)) && assignedSomewhere(name)) return null;
+      // a let or var the module writes to elsewhere (assignedSomewhere: an assignment with the name as its target or inside a
+      // destructuring target, a for-of or for-in head over it, ++ or --, a second var declaration with an initializer) is not
+      // bound to its initializer: null
+      if (!(decl.parent && ts.isVariableDeclarationList(decl.parent) && (decl.parent.flags & ts.NodeFlags.Const)) && assignedSomewhere(name, decl)) return null;
       if (decl.initializer) { const v = literalName(unwrap(decl.initializer)); if (v !== null) return [v]; return null; }
       const p = decl.parent, fo = p && p.parent;
       if (fo && ts.isForOfStatement(fo) && fo.initializer === p) {
@@ -330,13 +343,32 @@ export function classify(ts, file, src, opts = {}) {
     const vals = node.types.map((t) => ts.isLiteralTypeNode(t) && ts.isStringLiteral(t.literal) ? t.literal.text : null);
     return vals.every((v) => v !== null) ? vals : null;
   };
-  /** Does any statement in the module assign to the identifier `name` (=, a compound assignment, ++ or --)? */
-  const assignedSomewhere = (name) => {
+  /** Does any statement in the module WRITE to the identifier `name`, so that a let or var is not bound to its initializer? A
+   *  write is (a) the name in a BINDING position of an assignment's target: the target itself (=, or a compound assignment) or,
+   *  under =, inside an array or object literal target at any depth (an element, a spread, a default's left side, a shorthand
+   *  property, a property assignment's value, a spread assignment, through parentheses); (b) a for-of or for-in head whose
+   *  initializer is not a declaration list and holds the name in such a position; (c) ++ or --; (d) a second var declaration of
+   *  the name that carries an initializer and resolves, by scope, to the declaration the use reaches (`decl`, the first in source
+   *  order, the one declsOf keeps; a same-named let of an inner block is its own declaration and no write to this one). A member
+   *  access on the name (`o[name] = 1`, `name.x = y`) is a read of it, not a write. The predicate is the rule, not a list of
+   *  spellings: the plants p31 and p133 to p141 record its outcomes. */
+  const assignedSomewhere = (name, decl) => {
+    const bindsName = (t) => {
+      t = unwrap(t);
+      if (ts.isIdentifier(t)) return t.text === name;
+      if (ts.isArrayLiteralExpression(t)) return t.elements.some(bindsName);
+      if (ts.isObjectLiteralExpression(t)) return t.properties.some((q) => ts.isShorthandPropertyAssignment(q) ? q.name.text === name : ts.isPropertyAssignment(q) ? bindsName(q.initializer) : ts.isSpreadAssignment(q) ? bindsName(q.expression) : false);
+      if (ts.isSpreadElement(t)) return bindsName(t.expression);
+      if (ts.isBinaryExpression(t) && t.operatorToken.kind === ts.SyntaxKind.EqualsToken) return bindsName(t.left);   // a default inside a pattern: [name = "x"] = arr
+      return false;   // a member access or any other target: no write to the name
+    };
     let hit = false;
     const look = (n) => {
       if (hit) return;
-      if (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment && ts.isIdentifier(n.left) && n.left.text === name) { hit = true; return; }
+      if (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment && bindsName(n.left)) { hit = true; return; }
+      if ((ts.isForOfStatement(n) || ts.isForInStatement(n)) && !ts.isVariableDeclarationList(n.initializer) && bindsName(n.initializer)) { hit = true; return; }
       if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken) && ts.isIdentifier(n.operand) && n.operand.text === name) { hit = true; return; }
+      if (decl && ts.isVariableDeclaration(n) && n !== decl && n.initializer && ts.isIdentifier(n.name) && n.name.text === name && declOfUse(n.name) === decl) { hit = true; return; }
       ts.forEachChild(n, look);
     };
     look(sf);
@@ -515,12 +547,17 @@ export function classify(ts, file, src, opts = {}) {
       else {
         const r = resolveSpec(spec);
         noteResolved(n, r.kind, spec, "import");
-        if (r.kind === "playwright") playwright.add(spec);
         const c = n.importClause;
-        if (r.kind === "launcher" && !(c && c.isTypeOnly)) launcherImported.push(lineOf(n));
-        if (c && c.isTypeOnly && ["launcher", "playwright"].includes(r.kind)) typeOnly.push({ line: lineOf(n), spec });
-        if (!(c && c.isTypeOnly)) noteLocal(n, r);
-        if (c && !c.isTypeOnly) {
+        // a clause that binds nothing at run time, erased by the bundler: `import type ...`, or named bindings every one inline
+        // type-only (`import { type Page }`); a default or namespace binding beside an inline type is a value binding, so
+        // `import pw, { type Page }` stays a load. One predicate, read by the playwright add, the typeOnly record and
+        // launcherImported, so the three agree (a bare `import "x"` has no clause and is a load)
+        const clauseTypeOnly = !!c && (!!c.isTypeOnly || (!c.name && !!c.namedBindings && ts.isNamedImports(c.namedBindings) && c.namedBindings.elements.length > 0 && c.namedBindings.elements.every((el) => el.isTypeOnly)));
+        if (r.kind === "playwright" && !clauseTypeOnly) playwright.add(spec);
+        if (r.kind === "launcher" && !clauseTypeOnly) launcherImported.push(lineOf(n));
+        if (clauseTypeOnly && ["launcher", "playwright"].includes(r.kind)) typeOnly.push({ line: lineOf(n), spec });
+        if (!clauseTypeOnly) noteLocal(n, r);
+        if (c && !clauseTypeOnly) {
           if (c.name) track(bindings, c, { name: c.name.text, module: r.kind, member: "default" });
           if (c.namedBindings) {
             if (ts.isNamespaceImport(c.namedBindings)) track(bindings, c.namedBindings, { name: c.namedBindings.name.text, module: r.kind, member: null });
@@ -536,12 +573,15 @@ export function classify(ts, file, src, opts = {}) {
       else {
         const r = resolveSpec(spec);
         noteResolved(n, r.kind, spec, "import");
-        if (r.kind === "playwright") playwright.add(spec);
-        if (n.isTypeOnly && ["launcher", "playwright"].includes(r.kind)) typeOnly.push({ line: lineOf(n), spec });
-        if (!n.isTypeOnly) {
+        const ec = n.exportClause;
+        // `export type { X } from`, or named exports every one inline type-only: erased by the bundler, binds nothing, recorded
+        const exportTypeOnly = !!n.isTypeOnly || (!!ec && ts.isNamedExports(ec) && ec.elements.length > 0 && ec.elements.every((el) => el.isTypeOnly));
+        if (r.kind === "playwright" && !exportTypeOnly) playwright.add(spec);
+        if (exportTypeOnly && ["launcher", "playwright"].includes(r.kind)) typeOnly.push({ line: lineOf(n), spec });
+        if (!exportTypeOnly) {
           noteLocal(n, r);
           // export * from the launcher, export * as ns from it, or a named export of inBrowser: the module hands inBrowser on
-          if (r.kind === "launcher") { launcherImported.push(lineOf(n)); const ec = n.exportClause; if (!ec || ts.isNamespaceExport(ec) || ec.elements.some((el) => !el.isTypeOnly && (el.propertyName || el.name).text === "inBrowser")) launcherReexport = true; }
+          if (r.kind === "launcher") { launcherImported.push(lineOf(n)); if (!ec || ts.isNamespaceExport(ec) || ec.elements.some((el) => !el.isTypeOnly && (el.propertyName || el.name).text === "inBrowser")) launcherReexport = true; }
         }
       }
     } else if (ts.isVariableDeclaration(n) && n.initializer) {
@@ -562,6 +602,10 @@ export function classify(ts, file, src, opts = {}) {
     const l = loaderCall(e);
     if (l) followed.add(e);   // bound, or refused below: the walker read this load
     if (l && l.kind !== "refused") {
+      // a package or local load binds nothing the walker reads (every arm that reads a binding's module filters on launcher or
+      // playwright, and a local module is read transitively by census() through localImports, not through its binding), so its
+      // target is not read here: an array or nested destructuring of `require("node:os")` is no form to refuse
+      if (!["playwright", "launcher"].includes(l.kind)) return false;
       if (l.kind === "launcher") launcherImported.push(lineOf(holder));
       // members is never null here: a computed member the walker cannot fold breaks the peel with e at the access node, so l is
       // null and the value falls through to pwChain below, whose computed-member arm refuses it by name when the chain stands on
@@ -658,7 +702,7 @@ export function classify(ts, file, src, opts = {}) {
     if (ts.isConditionalExpression(pp) || isLogical(pp)) return "read through a conditional or logical expression the walker does not follow: bind the module in a statement of its own";
     if (ts.isVariableDeclaration(pp) && pp.initializer === q) return ts.isIdentifier(pp.name) ? "aliased by a declaration" : "destructured";
     if (ts.isBinaryExpression(pp) && pp.right === q) return "aliased by an assignment";
-    if (ts.isCallExpression(pp) || ts.isNewExpression(pp)) return "passed as an argument";
+    if (ts.isCallExpression(pp) || ts.isNewExpression(pp)) return pp.expression === q ? "called as a function, which the launcher's module is not: call its inBrowser" : "passed as an argument";
     if (ts.isArrayLiteralExpression(pp) || ts.isPropertyAssignment(pp) || ts.isShorthandPropertyAssignment(pp)) return "held in an array or an object literal";
     if (ts.isReturnStatement(pp) || ts.isArrowFunction(pp)) return "returned from a function";
     return "in a position the walker does not read (" + ts.SyntaxKind[pp.kind] + ")";
@@ -789,7 +833,7 @@ export function classify(ts, file, src, opts = {}) {
   // that breaks one is refused naming the line and what was resolved, so no resolution ends as a silent class none
   const importedLines = new Set([...launcherImported, ...typeOnly.map((t) => t.line)]);
   for (const [n, r] of resolved) {
-    if (r.kind === "playwright" && !playwright.has(r.spec)) refuse(n, "THE INVARIANT: the census resolved the playwright package " + r.spec + " here and its record carries no playwright package, a position the walker does not read; the census refuses rather than guesses");
+    if (r.kind === "playwright" && !playwright.has(r.spec) && !(r.how === "import" && typeOnly.some((t) => t.line === r.line && t.spec === r.spec))) refuse(n, "THE INVARIANT: the census resolved the playwright package " + r.spec + " here and its record carries no playwright package, a position the walker does not read; the census refuses rather than guesses");
     else if (r.kind === "launcher" && r.how === "import" && !importedLines.has(r.line)) refuse(n, "THE INVARIANT: the census resolved the shared launcher (" + r.spec + ") here and its record carries neither an import nor a type-only import of it; the census refuses rather than guesses");
     else if (r.kind === "launcher" && r.how === "load" && !followed.has(n)) refuse(n, "THE INVARIANT: the census resolved the shared launcher (" + r.spec + ") here and its record carries nothing of the load, which stands in a position the walker does not read (not a binding's initializer, an assignment's right side, a statement of its own, or the object of a member the walker read: here it is returned, passed, held in a field, a property or an array, read for inBrowser without a call, or read for a default member, which is not an export of the launcher); the census refuses rather than guesses: bind the load to a name, or call inBrowser on it directly");
   }
@@ -814,13 +858,18 @@ const candidatesOf = (raw) => /\.[cm]?js$/.test(raw) ? [raw.replace(/\.[cm]?js$/
 /** The file a local specifier names. A relative specifier resolves against the loading module's directory; a specifier that
  *  names no file there (a loader bound elsewhere by createRequire, a path expression folded to its literal pieces with the
  *  non-literal pieces dropped) resolves against the two bases loaders in this tree are anchored to, the repo root and
- *  vscode-extension/ (process.cwd() under npm test). Returns { abs } (a file that is not a script, json or css, is returned
- *  and read by nobody), { ambiguous: [a, b] } when the two bases name different files, or null when none does. */
+ *  vscode-extension/ (process.cwd() under npm test), UNDER THE ROOT ALONE: a candidate a base resolution carries outside the
+ *  root (`../ui/<f>` against the root lands beside the checkout) is dropped before it is looked up, so a sibling directory beside
+ *  the checkout is never read as a module of the tree and never an ambiguity, and the population is derived from the tree alone.
+ *  The first resolution, beside the module, is the module's own relative path and may name a file outside the checkout (a test
+ *  that loads one does so by its spelling): stated, not clamped. Returns { abs } (a file that is not a script, json or css, is
+ *  returned and read by nobody), { ambiguous: [a, b] } when the two bases name different files, or null when none does. */
 export function resolveLocal(fromFile, spec, root) {
   const clean = spec.replace(/<[^>]*>/g, "").replace(/\/{2,}/g, "/").replace(/^\/+/, "");
   const first = candidatesOf(path.resolve(path.dirname(fromFile), spec)).map(fileAt).find(Boolean);
   if (first) return { abs: first };
-  const hits = [...new Set([root, path.join(root, "vscode-extension")].map((b) => candidatesOf(path.resolve(b, clean)).map(fileAt).find(Boolean)).filter(Boolean))];
+  const underRoot = (p) => { const rel = path.relative(root, p); return rel !== "" && rel !== ".." && !rel.startsWith(".." + path.sep) && !path.isAbsolute(rel); };
+  const hits = [...new Set([root, path.join(root, "vscode-extension")].map((b) => candidatesOf(path.resolve(b, clean)).filter(underRoot).map(fileAt).find(Boolean)).filter(Boolean))];
   if (hits.length === 1) return { abs: hits[0] };
   if (hits.length > 1) return { ambiguous: hits };
   return null;

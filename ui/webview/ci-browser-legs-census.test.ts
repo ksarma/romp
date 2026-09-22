@@ -26,10 +26,11 @@
 // census before round 3 (the round-2 base), 7 hold something else and say what in the table's holds field (a stated residual
 // boundary, the no-refusal half of a pair whose partner reds, a guard of round 3's own scoping), and 3 of the 44 red on a property
 // other than their section's and name the plant that carries it (carried); the plant-table test holds the table to that statement,
-// a count of this file's rows and not a figure from the run. Of the round-4 rows (p89 onward, the forms the round-3 review's class
-// ruling named: a load, an engine or a launch the walker could not fold and classed none instead of refusing), every row is red
-// under the census before round 4 (the module at the round-3 head) unless its holds field says what else it holds, and the same
-// test holds the table to that statement. Population figures are derived from the run and printed as
+// a count of this file's rows and not a figure from the run. Of the 53 round-4 rows (p89 to p141: the forms the round-3 review's
+// class ruling named, a load, an engine or a launch the walker could not fold and classed none instead of refusing, and the round-3
+// lows, a type-only import read as a load, a called launcher binding misnamed, a destructuring of an untracked load that stopped the
+// census, a rebound name folded to its initializer), 49 are red under the census before round 4 (the module at the round-3 head)
+// and 4 say in their holds field what else they hold, and the same test holds the table to that statement. Population figures are derived from the run and printed as
 // diagnostics, never asserted as constants. Synthetic: the fixtures' invented modules and a stub launcher.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -59,6 +60,7 @@ type Census = {
   rosterGap(r: Rec): string | null;
   engineNames(r: Rec): string[];
   classOf(r: Rec): string;
+  resolveLocal(fromFile: string, spec: string, root: string): { abs: string } | { ambiguous: string[] } | null;
   EMBEDDED_PHRASE: string;
   ENGINE_PHRASE: string;
   LEG_DIRS: string[];
@@ -279,6 +281,7 @@ const COND_LAUNCHER_REFUSAL = "the shared launcher loaded inside a conditional o
 const COND_BINDING_HANDOFF = "read through a conditional or logical expression the walker does not follow: bind the module in a statement of its own";
 const COMPUTED_REFUSAL = "a computed member with a name the walker cannot fold on a playwright or launcher binding or load";
 const SPREAD_TAIL = "a spread element at or before the engine position, an argument list the walker cannot read (an engine may be passed in it): spell each argument out";
+const CALLED_HANDOFF = "called as a function, which the launcher's module is not: call its inBrowser";
 const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p01-alias.test.ts", leg: true, cls: "shared", gap: null },                                                     // tests-1, extra7-2, extra7-3: an aliased import, called
   { dir: W, file: "p02-single-quote-require.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["chromium"], playwright: ["playwright"], launches: [".launch("] }, // extra5-1
@@ -416,6 +419,40 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p119-spread-after-engine.test.ts", leg: true, cls: "shared", gap: null, engines: ["firefox"], holds: "the no-refusal half of a pair whose partner reds: p115, p116, p117 and p118 (a spread at or before the engine position, refused) red under the census before round 4, which read a spread after the engine as this row does, engines [firefox] with no refusal" }, // (inBrowser as any)(t, body, "firefox", ...extra): the engine is read at its index and the spread after it is no engine argument, green before and after
   // extra6-1's fourth hand-on spelling: requireCjs read off the launcher loaded where it stands, not called
   { dir: W, file: "p120-requirecjs-member-off-load-handed.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p120-requirecjs-member-off-load-handed.test.ts:3: " + REQUIRECJS_LOAD_HANDOFF }, // go(require(the launcher).requireCjs): the member read without a call hands the loader on, refused by name with the load followed (before: read as an import of another export, class none, no refusal, launcherImported true)
+  // correctness-1 (round 3): a type-only import or export of a playwright package (`import type`, `export type ... from`, or named
+  // bindings every one inline type-only) is erased at build time, binds nothing and is carried by typeOnly, not a load: the module
+  // is no leg for it. Rows p121 to p124 red before on leg and class (read as a load of playwright); p125 the control (a default
+  // binding beside an inline type stays a load); p126 the same predicate on launcherImported (the inline type-only launcher import
+  // read as p16's clause-level form does)
+  { dir: W, file: "p121-type-only-shared-leg.test.ts", leg: true, cls: "shared", gap: null, playwright: [], launcherImported: true }, // import type { Browser } from playwright beside a call of inBrowser: a shared leg that passes the gate (before round 4: class both, gap "loads playwright itself")
+  { dir: W, file: "p122-type-only-playwright-alone.test.ts", leg: false, cls: "none", gap: null, playwright: [], launcherImported: false }, // import type { chromium } from playwright alone: no leg (before: leg 1, class own)
+  { dir: W, file: "p123-type-only-inline.test.ts", leg: false, cls: "none", gap: null, playwright: [], launcherImported: false }, // import { type Page } from playwright, the all-inline form: no leg (before: leg 1, class own, the inline form recorded nowhere but the playwright set)
+  { dir: W, file: "p124-type-only-export-from.test.ts", leg: false, cls: "none", gap: null, playwright: [], launcherImported: false }, // export type { Browser } from playwright: no leg (before: leg 1, class own)
+  { dir: W, file: "p125-default-and-inline-type.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["chromium"], launches: [".launch("], playwright: ["playwright"], holds: "the no-refusal half of a pair whose partner reds: p122, p123 and p124 (a type-only import or export of playwright, no longer a load) red under the census before round 4, which read this row's default binding beside an inline type as a load, as the census does now: class own, engines [chromium], the launch read, no refusal" }, // import pw, { type Page } from playwright, then pw.chromium.launch(): the default binding is a value binding, so the import stays a load, green before and after
+  { dir: W, file: "p126-type-only-inline-launcher.test.ts", leg: false, cls: "none", gap: null, launcherImported: false }, // import { type Opened } from the launcher: binds nothing, recorded as type-only, as p16's clause-level form is (before: launcherImported true with the never-calls gap, the asymmetry between the two spellings)
+  // correctness-3 (round 3): a launcher module binding CALLED as a function (or constructed) is refused naming that position, not
+  // "passed as an argument" (p61 holds the true argument position)
+  { dir: W, file: "p127-default-called.test.ts", leg: false, cls: "none", gap: "never calls its inBrowser through that import", launcherImported: true, refused: "p127-default-called.test.ts:3: the launcher's module binding handed on as a value (" + CALLED_HANDOFF + ")" }, // import leg from the launcher, then leg(t, ...) (before: the parenthetical read "passed as an argument")
+  { dir: W, file: "p128-namespace-called-cast.test.ts", leg: false, cls: "none", gap: "never calls its inBrowser through that import", launcherImported: true, refused: "p128-namespace-called-cast.test.ts:3: the launcher's module binding handed on as a value (" + CALLED_HANDOFF + ")" }, // import * as leg, then (leg as any)(t, ...): the callee through a cast (before: as p127)
+  { dir: W, file: "p129-default-constructed.test.ts", leg: false, cls: "none", gap: "never calls its inBrowser through that import", launcherImported: true, refused: "p129-default-constructed.test.ts:3: the launcher's module binding handed on as a value (" + CALLED_HANDOFF + ")" }, // new (leg as any)(t): the constructed form lands in the same arm and reads as called (before: as p127)
+  // correctness-4 (round 3): only a playwright or launcher load reaches bindName, so a destructuring of an UNTRACKED loaded module
+  // (a package, a local helper) is read by no arm and refuses nothing; a local helper is still read transitively for what it names
+  { dir: W, file: "p130-array-destructure-package.test.ts", leg: false, cls: "none", gap: null, launcherImported: false }, // const [a, b] = require of node:os: no leg, no refusal (before round 4: refused as an array destructuring of a loaded module, the whole census stopped)
+  { dir: W, file: "p131-nested-destructure-package.test.ts", leg: false, cls: "none", gap: null, launcherImported: false }, // const { constants: { signals } } = require of node:os: an object pattern, which the one-line gate the fixlist proposed would still have handed to bindName (before: refused as a nested destructuring the walker does not follow)
+  { dir: W, file: "p132-array-destructure-pw-helper.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p132-array-destructure-pw-helper.test.ts:2: loads ui/webview/pw-helper.ts, which names a playwright package (playwright)" }, // const [h] = require of the helper that loads playwright: the helper's refusal alone, the gate opens no road (before: a second refusal beside it, the array destructuring, so the module carried two refusals and the one-refusal-per-refused-plant count below was red)
+  // fresh-2 (round 3): a let or var WRITTEN anywhere in the module is not bound to its initializer, whatever the write's form: a
+  // for-of or for-in head over the name, a destructuring assignment holding it at any depth, a second var declaration with an
+  // initializer, beside the plain reassignment (p31) and ++ or --; a read of the name inside a literal or as a computed key
+  // (p140, p141) is no write
+  { dir: W, file: "p133-for-of-rebind.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], playwright: ["playwright"], refused: "p133-for-of-rebind.test.ts:5: " + COMPUTED_REFUSAL }, // let name = "chromium", for (name of ["firefox"]) {}, then pw[name].launch() (before round 4: folded to the initializer, engines [chromium], no refusal, the Firefox launch read as Chromium)
+  { dir: W, file: "p134-for-in-rebind.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], playwright: ["playwright"], refused: "p134-for-in-rebind.test.ts:5: " + COMPUTED_REFUSAL }, // for (name in { firefox: 1 }) {} (before: as p133)
+  { dir: W, file: "p135-array-destructure-assign.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], playwright: ["playwright"], refused: "p135-array-destructure-assign.test.ts:5: " + COMPUTED_REFUSAL }, // [name] = ["webkit"] (before: as p133)
+  { dir: W, file: "p136-nested-array-destructure-assign.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], playwright: ["playwright"], refused: "p136-nested-array-destructure-assign.test.ts:5: " + COMPUTED_REFUSAL }, // [[name]] = [["webkit"]]: the name one level down, which a predicate over the literal's own elements alone would miss (before: as p133)
+  { dir: W, file: "p137-object-destructure-assign.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], playwright: ["playwright"], refused: "p137-object-destructure-assign.test.ts:5: " + COMPUTED_REFUSAL }, // ({ name } = { name: "webkit" }), the shorthand property as a target (before: as p133)
+  { dir: W, file: "p138-var-redeclared.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], playwright: ["playwright"], refused: "p138-var-redeclared.test.ts:5: " + COMPUTED_REFUSAL }, // var name = "chromium", then var name = "firefox": a second declaration of the same var with an initializer, no assignment expression at all (before: as p133)
+  { dir: W, file: "p139-for-of-rebind-engine-shared.test.ts", leg: true, cls: "shared", gap: null, engines: [], refused: "p139-for-of-rebind-engine-shared.test.ts:5: an engine argument to the shared launcher the walker cannot fold" }, // let engine = "chromium", for (engine of ["firefox"]) {}, inBrowser(t, body, engine): the same fold feeds the engine read, so the roster gate saw a Chromium leg (before: engines [chromium], gap null, no refusal, rosterable while it reaches Firefox at run time)
+  { dir: W, file: "p140-read-in-literal-control.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["chromium"], launches: [".launch("], playwright: ["playwright"], strictRefused: true, holds: "the no-refusal half of a pair whose partner reds: p133 to p138 (a write to the name in a for-of or for-in head, a destructuring assignment or a second var declaration) red under the census before round 4, which folded this row's read of the name inside an object literal as the census does now: engines [chromium], no refusal" }, // const seen = { name }: a shorthand property in a literal that is no assignment target is a read, green before and after
+  { dir: W, file: "p141-computed-key-write-control.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["chromium"], launches: [".launch("], playwright: ["playwright"], strictRefused: true, holds: "the no-refusal half of a pair whose partner reds: p133 to p138 (a write to the name) red under the census before round 4, which read this row's o[name] = 1 as a write to o, not to the name, as the census does now: engines [chromium], no refusal (a predicate over every reference inside the target would refuse it)" }, // o[name] = 1: the name as a computed key of the target is a read of it, green before and after
 ];
 const bundleOf = (p: Plant): string => "out-tests/" + p.dir + "/" + p.file.replace(/\.test\.ts$/, ".test.js");
 
@@ -564,6 +601,7 @@ test("every planted form under tests/fixtures/browser-legs-plants is classified 
     if (p.refused) {
       assert.ok(r.refusals.some((x) => x.includes(p.refused as string)), at + "refused with file and line; expected a refusal containing " + JSON.stringify(p.refused) + ", got " + JSON.stringify(r.refusals) + ((p.refused as string).includes(SHADOW_REFUSAL) ? " (this row holds the SENTENCE through SHADOW_REFUSAL: a reword of the module's shadow refusal moves that constant and this row too)" : ""));
       assert.ok(c.refusals.some((x) => x.includes(p.refused as string)), at + "the refusal reaches the census's own list (the CLI exits 2 on it)");
+      assert.equal(r.refusals.length, 1, at + "one refusal, the one the row holds (a second refusal on the same module is a form the census still refuses beside it, as the array destructuring of an untracked load was beside p132's helper refusal before round 4): " + JSON.stringify(r.refusals));
     } else {
       assert.deepEqual(r.refusals, [], at + "no refusal");
     }
@@ -609,14 +647,50 @@ test("every planted form under tests/fixtures/browser-legs-plants is classified 
   assert.ok(header.includes("is unread by the walker: class none, no refusal"), "the census header's leading comment block states the third residual's outcome, unread by the walker: class none, no refusal (the outcome the p68 to p71 rows record; holds the sentence: a reword moves this pin too)");
 });
 
-test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminate against the census before round 3 and what the others hold: 44 red under that census, 7 hold one of four stated reasons instead (holds), and 3 of the 44 red on a property other than their section's and name the plant that carries it (carried); and which of its 32 round-4 rows (p89 to p120) discriminate against the census before round 4: 31 red under that census and 1 holds a stated reason instead; the discrimination itself was established by running each earlier census over the plants, recorded in the PR's notes, and is not re-run here, since neither census is in the tree at test time, so this test holds the TABLE's statement, not the fact", () => {
+test("resolveLocal's two fallback bases (the repo root and vscode-extension/) resolve under the root alone: a folded specifier that lands outside the root against a base (../ui/<f> from the root is beside the checkout) is never looked up, so a sibling directory beside the checkout is neither read as a module of the tree nor an ambiguity, and the population is derived from the tree alone; executed over a root minted one level inside a temp parent with a sibling ui/ holding a file that loads playwright: with the tree's own copy absent the load names no file in the tree, with it present the tree's copy is the one file; the beside resolution is the module's own relative path and may name a file outside the checkout, stated in the function's comment, not clamped", async (t) => {
+  const { census, resolveLocal } = await load();
+  // the root one level inside the parent, so the sibling ui/ is the parent's and not a shared temp directory's (a root minted
+  // directly under os.tmpdir() would put the sibling beside every other test's temp files)
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "cbl-nested-"));
+  t.after(() => fs.rmSync(parent, { recursive: true, force: true }));
+  const root = path.join(parent, "root");
+  fs.mkdirSync(path.join(root, "ui", "webview"), { recursive: true });
+  fs.mkdirSync(path.join(parent, "ui"), { recursive: true });
+  // the sibling's text is assembled from pieces: this module is itself read by the census, and a string literal here that loads
+  // playwright by its text would make this test an embedded-driver leg
+  const loadsPlaywright = ["export const pw = requ", "ire(", JSON.stringify("playwright"), ");\n"].join("");
+  fs.writeFileSync(path.join(parent, "ui", "outside-helper.ts"), loadsPlaywright);
+  const plant = path.join(root, "ui", "webview", "p-outside-fallback.test.ts");
+  fs.writeFileSync(plant, 'import { test } from "node:test";\nconst h = require("../ui/outside-helper");\ntest("outside", () => { void h; });\n');
+  const bundle = "out-tests/ui/webview/p-outside-fallback.test.js";
+  const sibling = path.join(parent, "ui", "outside-helper.ts"), own = path.join(root, "ui", "outside-helper.ts");
+  // case A: the tree's copy absent. Beside the module ../ui/outside-helper names root/ui/ui/outside-helper (no file); against the
+  // root it names the SIBLING, outside the root, which the clamp drops; against vscode-extension/ it names root/ui/outside-helper,
+  // absent. So the load names no file in the tree, and the census says so at the import line rather than reading the sibling
+  assert.equal(resolveLocal(plant, "../ui/outside-helper", root), null, "case A (the tree's copy absent): resolveLocal names no file for ../ui/outside-helper (the candidate against the root, " + sibling + ", is outside the root and is dropped before it is looked up); a result naming the sibling means the base resolution read past the root");
+  const a = census(root);
+  const recA = a.byBundle.get(bundle) as Rec;
+  assert.ok(recA.refusals.some((x) => x.startsWith("ui/webview/p-outside-fallback.test.ts:2: loads ../ui/outside-helper, which names no file in the tree (tried beside ui/webview/p-outside-fallback.test.ts, under the repo root and under vscode-extension/)")), "case A: the census refuses the plant at its import line with the no-file sentence naming the three places it tried, none of them beside the checkout; a refusal naming ../ui/outside-helper.ts as a module that names playwright means the sibling was read as a module of the tree: " + JSON.stringify(recA.refusals));
+  assert.ok(!recA.refusals.some((x) => x.includes("names a playwright package")), "case A: the sibling beside the checkout is not read as a module of the tree: " + JSON.stringify(recA.refusals));
+  // case B: the tree's own copy present too (a clean module). Against vscode-extension/ the specifier names it; against the root
+  // it would name the sibling, dropped by the clamp: one file, no ambiguity
+  fs.writeFileSync(own, "export const pw = null;\n");
+  assert.deepEqual(resolveLocal(plant, "../ui/outside-helper", root), { abs: own }, "case B (both present): resolveLocal names the tree's own copy alone; an ambiguity naming the sibling means the base resolution read past the root");
+  const b = census(root);
+  assert.deepEqual((b.byBundle.get(bundle) as Rec).refusals, [], "case B: no refusal, the tree's copy is the one file the load names (an ambiguity refusal naming two files means the sibling beside the checkout was counted as one of them)");
+  // the boundary the comment states: the beside resolution is the module's own relative path and is not clamped, so a specifier
+  // that genuinely climbs out of the checkout names the outside file by its spelling (here through the sibling, read as itself)
+  assert.deepEqual(resolveLocal(plant, "../../../ui/outside-helper", root), { abs: sibling }, "the beside resolution (the module's own relative path) may name a file outside the checkout and is stated, not clamped: ../../../ui/outside-helper from root/ui/webview names the sibling");
+});
+
+test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminate against the census before round 3 and what the others hold: 44 red under that census, 7 hold one of four stated reasons instead (holds), and 3 of the 44 red on a property other than their section's and name the plant that carries it (carried); and which of its 53 round-4 rows (p89 to p141) discriminate against the census before round 4: 49 red under that census and 4 hold a stated reason instead; the discrimination itself was established by running each earlier census over the plants, recorded in the PR's notes, and is not re-run here, since neither census is in the tree at test time, so this test holds the TABLE's statement, not the fact", () => {
   const idOf = (p: Plant) => (/^p\d+/.exec(p.file) || [""])[0];
   const num = (p: Plant) => Number(idOf(p).slice(1));
   const inRound3 = (p: Plant) => num(p) >= 38 && num(p) <= 88;
   // the round-4 rows: p89 to R4_LAST, one row each; a round-4 builder that adds a row moves R4_LAST and, when the row stays green
   // under the census before round 4, adds it to R4_HELD with holds set (the round-3 population above is closed and does not move)
-  const R4_LAST = 120;
-  const R4_HELD = ["p119"];
+  const R4_LAST = 141;
+  const R4_HELD = ["p119", "p125", "p140", "p141"];
   const R4_CARRIED: string[] = [];
   const inRound4 = (p: Plant) => num(p) >= 89 && num(p) <= R4_LAST;
   const byNum = (a: string, b: string) => Number(a.slice(1)) - Number(b.slice(1));

@@ -30,11 +30,11 @@
 #     a pending reason that names no PR is red.
 # THE CENSUS is scripts/browser-legs-census.mjs, run once here (--tsv) for the population and every per-line verdict: it
 # reads each test module's tree with the TypeScript compiler (a leg calls the shared launcher through its import under
-# any binding, or names a playwright package by any specifier, or holds a driver string that does; engines and launches
-# from playwright-derived expressions; skips and todos from the tree, so a comment holds none; a module of the tree a leg
-# loads is read for what it binds or calls, transitively, and a leg that reaches inBrowser or playwright only through one is
-# refused) and REFUSES, with file and line, a form it cannot classify, on which this script exits 1 having judged
-# nothing. The compiler lives under
+# any binding, or names a playwright package by any specifier other than a type-only import or export, or holds a driver
+# string that does; engines and launches from playwright-derived expressions; skips and todos from the tree, so a comment
+# holds none; a module of the tree a leg loads is read for what it binds or calls, transitively, and a leg that reaches
+# inBrowser or playwright only through one is refused) and REFUSES, with file and line, a form it cannot classify, on
+# which this script exits 1 having judged nothing. The compiler lives under
 # vscode-extension/node_modules, present in the vscode-extension job after its npm ci; without it the census exits 1
 # naming CI's Shell job and this script stops the same way. ui/webview/ci-browser-legs-census.test.ts (the job's test
 # leg) holds the roster plus the exclusions to the census and runs the planted forms; tools/ci-browser-legs.test.mjs

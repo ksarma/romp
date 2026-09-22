@@ -58,8 +58,9 @@ launcher; after the run a skipped test, or a leg that registered no test, is red
 browser leg is listed in `vscode-extension/ci-browser-legs-excluded.txt`
 with a reason. What a browser leg is, `vscode-extension/scripts/browser-legs-census.mjs` reads
 from each test module's tree with the TypeScript compiler (a call of the shared launcher through
-its import under any name, a playwright package named by any specifier, or a driver string that
-loads one; a form it cannot classify is refused with file and line). A PR that wants its legs
+its import under any name, a playwright package named by any specifier other than a type-only
+import or export, or a driver string that loads one; a form it cannot classify is refused with
+file and line). A PR that wants its legs
 run moves them to the roster (a leg already in the exclusions loses its line there in the same
 commit). `ui/webview/ci-browser-legs-census.test.ts`, in the extension's `npm test`, holds every
 browser leg of the extension's test build to one file or the other and fails on a line whose source is gone, and
