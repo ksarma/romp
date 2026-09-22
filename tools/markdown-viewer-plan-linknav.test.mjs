@@ -593,39 +593,72 @@ const codeLines = (src) => {
  *  property access, an optional chain, a bracket holding a string literal) followed by a call is refused; a launch reached
  *  through a name computed at run time (`pw.chromium["la" + "unch"]()`) is outside this read, and a `launch` key in an object is
  *  no call and passes. A stand-down is the pair's other half (the file review's round 10, tests-2: the guard had refused the
- *  launch alone), and this half is keyed on seven spellings of the leg's own comment-stripped source, never on the property
- *  of standing itself down: a `skip` or `todo` call under the launch's access spellings (`t.skip(`, `test.skip(`, `it.skip(`
- *  and `.todo(`, through a property, an optional chain or a bracketed literal), a `skip:` or `todo:` option with its value
- *  written out, a `skip` or `todo` standing as a shorthand property between braces (node:test's `test(name, { skip }, fn)`
- *  form with the value declared under the option's own name, and the destructuring `const { skip } = t` that takes the
- *  method off the context), and a bare `skip(` or `todo(` call (the destructured method called; the author's closing pass
- *  after the file review's round 10, mechanism-1: the option read had needed the colon, so the shorthand the docstring itself
- *  named as the form passed, and so did the destructured call). Any of them defeats a roster's switch as a private launch
- *  does, since the switch turns the shared helper's launch skip into a failure and a leg that skips itself never reaches it;
- *  the convention's road for a leg that must not run is the exclusions file, not a private skip. So a green here says that
- *  no leg carries one of the seven, not that no leg stands itself down; the bound of the read, each side pinned by execution
- *  in the test below (the maintainer's reading of the author's closing pass after the file review's round 10: both halves
- *  were keyed on spellings, and a reader who saw the green took no leg to stand down privately): a conditional call
- *  (`if (x) t.skip(`) is within it, since the spelling stands whatever the condition; strings are not stripped, so `skip:` or
- *  `{ skip }` inside a message reds too, the safe side; and three forms are outside it, the method bound to a name of its
- *  own and called by that name (`const s = t.skip; s(...)`, a read without a call followed by a call of another name), a
- *  computed member with a name that is not a literal (`t[name](...)`, as for launch), and a stand-down inside a helper module
- *  the leg calls (outside the leg's source, which is all this reads). The definition to come is the census PR 887 brings
- *  (vscode-extension/scripts/browser-legs-census.mjs), which reads a leg's skip or todo from the compiler's tree, so one in a
- *  comment or a string is none; at that branch's head when this was written its read was a call by member with a literal
- *  name or one its closed forms fold and the `skip:` or `todo:` option property, and the same three forms passed it too
- *  (measured on plants in a scratch copy of that head), so a leg standing itself down by one of the three is outside both
- *  reads until that census widens; the interim here is this stated scope, not a wider regex. The helper is the road a
- *  browser-legs roster's switch reaches (ci-browser-legs.txt's header names it), so a leg with a launch or a stand-down of
- *  its own would skip under such a step as it does without one. */
-/** The stand-down half's refusal opens with what it is keyed on, so a red or a green is read for what this half covers: seven
- *  spellings of the leg's own source, never the property (the docstring above names the forms outside them). */
-const STAND_DOWN = 'a stand-down outside the helper, read as one of seven spellings of the leg\'s own source and not as the property (a method bound to a name of its own, a computed name or a helper module\'s skip is outside this read): ';
+ *  launch alone), and this half is keyed on nine spellings of the leg's own comment-stripped source, never on the property
+ *  of standing itself down, one entry of STAND_DOWN_SPELLINGS below per spelling, from which the regex and the number word
+ *  are built (the file review's round 10, extra6-1 with correctness-3 and tests-4: the word had been typed in every home and
+ *  derived in none, and it had counted the two brace forms as two spellings where one arm reads both): a `skip` or `todo`
+ *  call through a property (`t.skip(`, `test.skip(`, `it.skip(`, `.todo(`), through an optional chain (`t?.skip(`) or
+ *  through a bracketed literal (`t["skip"](`); the `skip:` or `todo:` option with its value written out, its key bare or
+ *  quoted (`{ skip: true }`, `{ "skip": true }`); the option under a computed string-literal key (`{ ["skip"]: true }`); the
+ *  option assigned onto an options object through a bracketed literal (`opts["skip"] = true`) or through a dot
+ *  (`opts.skip = true`) before the object is handed to the test (the file review's round 10, extra6-2: the quoted key and
+ *  the three assignment and computed forms had passed the read, and each stands a leg down with its body never run, measured
+ *  under node 22); a `skip` or `todo` standing between braces, whether node:test's shorthand option (`test(name, { skip }, fn)`,
+ *  the value declared under the option's own name) or the destructuring `const { skip } = t` that takes the method off the
+ *  context, one arm and one spelling for both since the matched text is the same; and a bare `skip(` or `todo(` call (the
+ *  destructured method called; the author's closing pass after the file review's round 10, mechanism-1: the option read had
+ *  needed the colon, so the shorthand the docstring itself named as the form passed, and so did the destructured call). Any
+ *  of them defeats a roster's switch as a private launch does, since the switch turns the shared helper's launch skip into a
+ *  failure and a leg that skips itself never reaches it; the convention's road for a leg that must not run is the exclusions
+ *  file, not a private skip. So a green here says that no leg carries one of the nine, not that no leg stands itself down;
+ *  the bound of the read, each side pinned by execution in the test below (the maintainer's reading of the author's closing
+ *  pass after the file review's round 10: both halves were keyed on spellings, and a reader who saw the green took no leg to
+ *  stand down privately): a conditional call (`if (x) t.skip(`) is within it, since the spelling stands whatever the
+ *  condition; strings are not stripped, so `skip:` or `{ skip }` inside a message reds too, the safe side; and outside it is
+ *  a stand-down that never spells skip or todo in the leg's own source (a computed member name, a value built from parts, an
+ *  options object built elsewhere), a class no read of spellings closes, so no widening of this regex is its remedy. The
+ *  method bound to a name of its own and called by that name is in that class, the call spelling only the name: the unbound
+ *  alias (`const s = t.skip; s(...)`) throws a TypeError under node:test and fails the leg loudly rather than skipping, while
+ *  the family is live through `.bind(t)` or an aliased `test.skip` (`const s = test.skip; s(name, fn)`), each of which skips
+ *  with the body never run and passes this read (the file review's round 10, extra6-3; every form named here is planted in
+ *  the test below). What refuses that class is execution, not a read of the source: the step PR 887 brings to the
+ *  vscode-extension job, directly after its Chromium install, runs the rostered legs with a browser and reads the run's
+ *  record, and a test skipped there is red naming the test, its reason and the switch's state, whatever spelled the skip;
+ *  the census beside it (vscode-extension/scripts/browser-legs-census.mjs) reads a leg's skip or todo from the compiler's
+ *  tree, so one in a comment or a string is none. Until that step is in the tree the interim here is this stated scope, not
+ *  a wider regex. The helper is the road a browser-legs roster's switch reaches (ci-browser-legs.txt's header names it): a
+ *  leg with a launch or a stand-down of its own never reaches the switch, and it is the step's read of the record that turns
+ *  its skip red there. */
+/** The stand-down half's spellings, one entry per spelling as the docstring above and the plan's disclosure enumerate them: a
+ *  name, and the source of the arm that reads it. The regex offRoute runs and the number word STAND_DOWN_COUNT are built from
+ *  this list, and the convention test below parses the word out of every home that states it (the docstring above, STAND_DOWN,
+ *  the plan's two sentences), holds each to the list's length, and holds every entry to a refused row that its arm alone
+ *  matches, so an arm added or dropped without its prose, a home reworded to another count, or an entry no row reaches reds
+ *  by name. Each arm's quote group is named after its entry so the backreferences hold once the sources are joined. */
+const STAND_DOWN_SPELLINGS = [
+  ['a skip or todo call through a property', String.raw`\.\s*(?:skip|todo)\s*\(`],
+  ['a skip or todo call through an optional chain', String.raw`\?\.\s*(?:skip|todo)\s*\(`],
+  ['a skip or todo call through a bracketed literal', String.raw`\[\s*(?<qCall>["'\`])(?:skip|todo)\k<qCall>\s*\]\s*\(`],
+  ['the skip or todo option with its value written out, its key bare or quoted', String.raw`(?<qKey>["'\`]?)\b(?:skip|todo)\b\k<qKey>\s*:`],
+  ['the option under a computed string-literal key', String.raw`\[\s*(?<qComputed>["'\`])(?:skip|todo)\k<qComputed>\s*\]\s*:`],
+  ['the option assigned onto an options object through a bracketed literal', String.raw`\[\s*(?<qAssigned>["'\`])(?:skip|todo)\k<qAssigned>\s*\]\s*=`],
+  ['the option assigned onto an options object through a dot', String.raw`(?:\.|\?\.)\s*(?:skip|todo)\s*=`],
+  ['a skip or todo standing between braces, the shorthand option or the destructuring that takes the method off the context', String.raw`[{,]\s*(?:skip|todo)\s*[,}]`],
+  ['a bare skip or todo call', String.raw`\b(?:skip|todo)\s*\(`],
+];
+/** The number word for the list's length, from NUMBER_WORDS: the count every home states, derived here and typed nowhere. */
+const STAND_DOWN_COUNT = Object.keys(NUMBER_WORDS).find((w) => NUMBER_WORDS[w] === STAND_DOWN_SPELLINGS.length);
+assert.ok(STAND_DOWN_COUNT, 'NUMBER_WORDS has a word for the ' + STAND_DOWN_SPELLINGS.length + ' stand-down spellings');
+const STAND_DOWN_RE = new RegExp(STAND_DOWN_SPELLINGS.map(([, source]) => source).join('|'));
+/** The stand-down half's refusal opens with what it is keyed on, so a red or a green is read for what this half covers: nine
+ *  spellings of the leg's own source, never the property (the docstring above states the class outside them, and the test
+ *  below holds this sentence's count, like the docstring's, to STAND_DOWN_SPELLINGS). */
+const STAND_DOWN = 'a stand-down outside the helper, read as one of ' + STAND_DOWN_COUNT + ' spellings of the leg\'s own source and not as the property (a stand-down that never spells skip or todo in the leg\'s own source is outside this read): ';
 const offRoute = (code) => {
   if (!/^import \{[^}]*\binBrowser\b[^}]*\} from "\.\/real-viewer-leg";/m.test(code)) return 'no import of inBrowser from real-viewer-leg.ts at a line\'s start';
   const launch = /(?:\.|\?\.)\s*launch\s*\(|\[\s*(["'`])launch\1\s*\]\s*\(/.exec(code);
   if (launch) return 'a launch outside the helper: ' + launch[0];
-  const standDown = /(?:\.|\?\.)\s*(?:skip|todo)\s*\(|\[\s*(["'`])(?:skip|todo)\1\s*\]\s*\(|\b(?:skip|todo)\s*:|[{,]\s*(?:skip|todo)\s*[,}]|\b(?:skip|todo)\s*\(/.exec(code);
+  const standDown = STAND_DOWN_RE.exec(code);
   return standDown ? STAND_DOWN + standDown[0] : null;
 };
 /** The browser legs among `files` (paths from the repo root, the delta's) that `legs` (the derived legs, basenames) does not hold:
@@ -764,6 +797,16 @@ const NAME_CLAUSES = [
   ['ui/webview/file-trail.test.ts', 'the first module the property reaches and the name does not'],
   ['ui/webview/file-view-text-size.test.ts', 'the second module the property reaches and the name does not'],
 ];
+/** The stand-down half's clauses in the disclosure (the file review's round 10, extra6-1: the disclosure's stand-down sentences
+ *  were held by nothing, so a retext of the count, of the bound or of the forms outside stayed green): the count, the derived
+ *  word; the property the read is not keyed on; the class outside the read, stated as the class; and the executed guard that
+ *  refuses that class, the step PR 887 brings. */
+const STAND_DOWN_CLAUSES = [
+  ['the stand-down read as ' + STAND_DOWN_COUNT + ' spellings of the leg\'s own comment-stripped source', 'the count of spellings the stand-down half is keyed on, the word derived from STAND_DOWN_SPELLINGS'],
+  ['not as the property of standing itself down', 'that the read is of spellings and not of the property'],
+  ['a stand-down that never spells skip or todo in the leg\'s own source', 'the class outside the read, stated as the class and not as a closed list of forms'],
+  ['a test skipped there is red naming the test', 'the executed guard that refuses the class, the step PR 887 brings, reading the run\'s record'],
+];
 const DISCLOSURE_CLAUSES = [
   ['which runs before that job installs Chromium', 'why they skip there'],
   ['so none of their browser scenarios runs where landing is gated', 'that none of their browser scenarios runs where landing is gated (a source pin in a leg runs there without a browser)'],
@@ -771,11 +814,12 @@ const DISCLOSURE_CLAUSES = [
   ['the shared roster of browser legs, ' + ROSTER.join('/'), 'the road that runs them with a browser, the shared roster by its file name'],
   ['a change of its own that this branch does not carry', 'that the roster is not this branch\'s to add'],
   ...NAME_CLAUSES,
+  ...STAND_DOWN_CLAUSES,
 ];
 /** The clauses of DISCLOSURE_CLAUSES a disclosure sentence lacks, each with what it says. */
 const missingClauses = (sentence) => DISCLOSURE_CLAUSES.filter(([clause]) => !sentence.includes(clause));
 
-test('the follow-on\'s browser legs and the job that gates a landing, a two-state pin over the shared convention: the legs are derived by name from the tree (the -browser.test.ts modules whose own text names the follow-on; the property-keyed definition of a browser leg is PR 887\'s compiler census, once it lands) and each launches through real-viewer-leg.ts\'s inBrowser, the helper a roster\'s switch reaches, read comment-stripped under any launch spelling, with no launch and no stand-down (a skip or todo call or option, read as seven spellings of the leg\'s own source and not as the property) of its own; where the tree carries the roster, the exclusions, the step directly after the Chromium install in the vscode-extension job and the helper\'s switch (state A) every leg is a roster line and no exclusions line and the roster\'s tree test exists, and the Tests paragraph no longer says none of their browser scenarios runs where landing is gated; where it carries none of the four (state B) the Tests paragraph discloses that the legs skip in the gating job\'s Test step, what gates the follow-on there and the roster by name as the road, with no count of the legs in any wording; a tree with some of the four is refused, naming them; behind L6\'s gate every browser leg the delta adds or modifies is among the derived legs', (t) => {
+test('the follow-on\'s browser legs and the job that gates a landing, a two-state pin over the shared convention: the legs are derived by name from the tree (the -browser.test.ts modules whose own text names the follow-on; the property-keyed definition of a browser leg is PR 887\'s compiler census, once it lands) and each launches through real-viewer-leg.ts\'s inBrowser, the helper a roster\'s switch reaches, read comment-stripped under any launch spelling, with no launch and no stand-down (a skip or todo call, option or option assignment, read as \' + STAND_DOWN_COUNT + \' spellings of the leg\'s own source and not as the property) of its own; where the tree carries the roster, the exclusions, the step directly after the Chromium install in the vscode-extension job and the helper\'s switch (state A) every leg is a roster line and no exclusions line and the roster\'s tree test exists, and the Tests paragraph no longer says none of their browser scenarios runs where landing is gated; where it carries none of the four (state B) the Tests paragraph discloses that the legs skip in the gating job\'s Test step, what gates the follow-on there and the roster by name as the road, with no count of the legs in any wording; a tree with some of the four is refused, naming them; behind L6\'s gate every browser leg the delta adds or modifies is among the derived legs', (t) => {
   const legs = browserLegs();
   assert.ok(legs.length > 0, 'browser legs naming the follow-on are on disk');
   const tests = section.slice(section.indexOf('**Tests.**'));
@@ -792,17 +836,48 @@ test('the follow-on\'s browser legs and the job that gates a landing, a two-stat
   assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\nconst b = 1; // pw.chromium.launch()\n')), 'a launch outside the helper: .launch(', 'a launch quoted in a comment after code reds too: the stripper reads line shapes, and this is its safe side');
   // the pair's other half: a stand-down of the leg's own, under the launch spellings and node:test's option form (the file review's
   // round 10, tests-2)
+  const armsHit = new Set();
   for (const [spelling, want] of [['test("y", (t) => { t.skip("no browser here"); });', '.skip('], ['t?.skip("no browser here");', '?.skip('], ['t["skip"]("no browser here");', '["skip"]('], ["t['todo']('later');", "['todo']("], ['test.todo("later");', '.todo('], ['test("y", { skip: !pw }, () => {});', 'skip:'], ['test("y", { todo: true }, () => {});', 'todo:'],
     // the shorthand property and the destructured call (the author's closing pass after the file review's round 10, mechanism-1:
     // both had passed the option read, which needed the colon)
-    ['const skip = !process.env.PW;\ntest("y", { skip }, () => {});', '{ skip }'], ['test("y", { only: false, todo }, () => {});', ', todo }'], ['test("y", {skip,only: false}, () => {});', '{skip,'], ['const { skip } = t;\nskip("no browser here");', '{ skip }'], ['skip("no browser here");', 'skip('], ['todo ("later");', 'todo (']]) {
+    ['const skip = !process.env.PW;\ntest("y", { skip }, () => {});', '{ skip }'], ['test("y", { only: false, todo }, () => {});', ', todo }'], ['test("y", {skip,only: false}, () => {});', '{skip,'], ['const { skip } = t;\nskip("no browser here");', '{ skip }'], ['skip("no browser here");', 'skip('], ['todo ("later");', 'todo ('],
+    // the quoted option key, the computed string-literal key and the option assigned onto an options object through a bracketed
+    // literal or a dot (the file review's round 10, extra6-2: each had passed the read, and each stands a leg down with its body
+    // never run, measured under node 22)
+    ['test("y", { "skip": true }, () => {});', '"skip":'], ["test('y', { 'todo': true }, () => {});", "'todo':"], ['test("y", { ["skip"]: true }, () => {});', '["skip"]:'],
+    ['const opts = {}; opts["skip"] = true; test("y", opts, () => {});', '["skip"] ='], ['const opts = {}; opts.skip = true; test("y", opts, () => {});', '.skip =']]) {
     assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\n' + spelling + '\n')), STAND_DOWN + want, 'a private stand-down is refused under the spelling ' + spelling);
+    // the matched text is one entry's alone, and (below the loop) every entry has a row: the derived count counts no arm the rows
+    // never reach and no two entries reading the same text
+    const arms = STAND_DOWN_SPELLINGS.filter(([, source]) => new RegExp('^(?:' + source + ')$').test(want)).map(([name]) => name);
+    assert.equal(arms.length, 1, 'the refused text ' + JSON.stringify(want) + ' is read by one entry of STAND_DOWN_SPELLINGS: ' + arms.join(' | '));
+    armsHit.add(arms[0]);
   }
+  assert.deepEqual([...armsHit].sort(), STAND_DOWN_SPELLINGS.map(([name]) => name).sort(), 'every entry of STAND_DOWN_SPELLINGS is driven by a refused row above (an entry no row reaches would inflate the derived count)');
   assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\nconst skip = !process.env.PW; const t = { todo: 1 }.todo; void skip; void t;\n')), STAND_DOWN + 'todo:', 'a bare declaration of the name is no stand-down by itself, and the object property with its colon is the option read (the read\'s bound is stated in offRoute\'s docstring: the method bound to a name of its own is outside it)');
   // the bound the refusal states, each side by execution (the maintainer's reading of the author's closing pass after the file
-  // review's round 10): the three forms outside the seven spellings pass this read, and the conditional call is within it
-  for (const outside of ['const s = t.skip; s("no browser here");', 'const name = process.env.STAND_DOWN as string; (t as any)[name]("no browser here");', 'import { standDown } from "./figure-state-stand-down";\nstandDown(t);']) {
-    assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\n' + outside + '\n')), null, 'outside the seven spellings, so this read passes it and the docstring names it (the census PR 887 brings is the definition to come): ' + outside);
+  // review's round 10): witnesses of the class outside the spellings pass this read (a stand-down that never spells skip or todo
+  // in the leg's own source: the method bound to a name of its own and called by that name, unbound, bound with .bind(t) or an
+  // aliased test.skip (the file review's round 10, extra6-3: the unbound alias throws a TypeError under node:test and fails the
+  // leg loudly, the other two skip with the body never run), a computed member, a helper module's skip), and the conditional
+  // call is within it
+  for (const outside of ['const s = t.skip; s("no browser here");', 'const s = t.skip.bind(t); s("no browser here");', 'const s = test.skip; s("y", () => {});', 'const name = process.env.STAND_DOWN as string; (t as any)[name]("no browser here");', 'import { standDown } from "./figure-state-stand-down";\nstandDown(t);']) {
+    assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\n' + outside + '\n')), null, 'outside the ' + STAND_DOWN_COUNT + ' spellings: this read passes it, the docstring states the class it is in, and the step PR 887 brings refuses it by execution (a test skipped in its run is red): ' + outside);
+  }
+  // the stated bound is derived (the file review's round 10, extra6-1 with correctness-3 and tests-4): the count word in every
+  // home that states it, parsed out and held to STAND_DOWN_SPELLINGS's length, so a home that keeps an old count when an entry is
+  // added or dropped reds by name. The module's docstrings are read by path, since this module's comments are its prose.
+  const ownProse = read(...THIS_MODULE.split('/')).replace(/\n \*  /g, ' ');
+  for (const [home, m] of [
+    ['offRoute\'s docstring, the keyed-on clause', /this half is keyed on (\w+) spellings of the leg's own comment-stripped source/.exec(ownProse)],
+    ['offRoute\'s docstring, the green clause', /a green here says that no leg carries one of the (\w+), not that no leg stands itself down/.exec(ownProse)],
+    ['STAND_DOWN\'s docstring', /what this half covers: (\w+) spellings of the leg's own source/.exec(ownProse)],
+    ['STAND_DOWN', /read as one of (\w+) spellings of the leg's own source/.exec(STAND_DOWN)],
+    ['the plan\'s disclosure, the read clause', /the stand-down read as (\w+) spellings of the leg's own comment-stripped source/.exec(tests)],
+    ['the plan\'s disclosure, the green clause', /its green says that no leg carries one of the (\w+) and not that no leg stands itself down/.exec(tests)],
+  ]) {
+    assert.ok(m, home + ' states the count of stand-down spellings in the sentence this pin parses');
+    assert.equal(NUMBER_WORDS[m[1]], STAND_DOWN_SPELLINGS.length, home + ' says ' + m[1] + ' spellings; STAND_DOWN_SPELLINGS has ' + STAND_DOWN_SPELLINGS.length + ' (' + STAND_DOWN_COUNT + ')');
   }
   assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\nif (!process.env.PW) t.skip("no browser here");\n')), STAND_DOWN + '.skip(', 'a conditional call is within the read: the spelling stands whatever the condition');
   assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\nconst skip = !process.env.PW; void skip; const skipped = { skipTo: 1, myskip: 2 }; void skipped;\n')), null, 'the name declared or standing inside a longer identifier, with neither a call, an option colon nor a shorthand place between braces, is no stand-down');
@@ -850,6 +925,11 @@ test('the follow-on\'s browser legs and the job that gates a landing, a two-stat
   assert.deepEqual(missingClauses(synthetic), [], 'a disclosure carrying every clause lacks none');
   const round9 = DISCLOSURE + ', ' + DISCLOSURE_CLAUSES.filter((c) => !NAME_CLAUSES.includes(c)).map(([clause]) => clause).join(', ') + ', derives the legs from the tree, as the browser modules whose own text names this follow-on, holds each to a launch through inBrowser as SKIP).';
   assert.deepEqual(missingClauses(round9), NAME_CLAUSES, 'the file review\'s round 9\'s wording of the derivation lacks exactly the clauses on the key, the census and the two modules');
+  // the same sentence with the stand-down half in the wording the file review's round 10 read (a typed count of seven, three forms
+  // outside it as a closed list, no executed guard) lacks exactly the count, the class and the guard clauses; its property clause
+  // stands, since that wording carried it
+  const round10 = DISCLOSURE + ', ' + DISCLOSURE_CLAUSES.filter((c) => !STAND_DOWN_CLAUSES.includes(c)).map(([clause]) => clause).join(', ') + ', the stand-down read as seven spellings of the leg\'s own comment-stripped source and not as the property of standing itself down, so its green says that no leg carries one of the seven and not that no leg stands itself down, and three forms are outside it, the method bound to a name of its own and called by that name, a computed member with a name that is not a literal, and a skip inside a helper module the leg calls as SKIP).';
+  assert.deepEqual(missingClauses(round10), [STAND_DOWN_CLAUSES[0], STAND_DOWN_CLAUSES[2], STAND_DOWN_CLAUSES[3]], 'the file review\'s round 10\'s wording of the stand-down half lacks exactly the count, the class and the executed guard');
   assert.deepEqual(rosterLines('# a comment\n\nout-tests/ui/webview/a-browser.test.js\n  # indented comment\nout-tests/ui/webview/b-browser.test.js\n'), ['out-tests/ui/webview/a-browser.test.js', 'out-tests/ui/webview/b-browser.test.js'], 'roster lines: comments and blanks dropped, lines as written');
   assert.deepEqual(excludedBundles('# c\nout-tests/ui/webview/a-browser.test.js\tlaunches Firefox\n'), ['out-tests/ui/webview/a-browser.test.js'], 'exclusions: the bundle before the tab');
   // the tree's state
