@@ -47259,13 +47259,14 @@ def _feed_session_entry(s, ctx):
         parked_rows = _parked_rows(nodes, children)
     # USER TODOS (plans/user-todos.md, slice 2): the open needs this session registered with the
     # person it works for, read ONCE per build by _feed_session_key (the `todos` component, by value)
-    # and handed here through ctx with the ENDED gate already applied (build_session's exact
-    # corroborated gate, _user_todo_session_ended). The entry's userTodos row (below) feeds the quiet
+    # and handed here through ctx with the ENDED gate already applied (_user_todos_shown: build_session's
+    # gate, and the ONE every surface asks since 2026-09-22). The entry's userTodos row (below) feeds the quiet
     # per-card marker and the widened badge (build_feed aggregates the rows), and a muted session
     # never reaches here (the hideFromFeed return above), so the marker, the floor and the badge all
     # go quiet for it. THE MUTE ASYMMETRY IS DESIGNED
-    # (review call, 2026-08-22 — do not "fix"): the TAB GLYPH reads build_session's userTodos
-    # field, which mute does not touch — mute means "stop interrupting me about this session"
+    # (review call, 2026-08-22; do not "fix"): the TAB GLYPH has two sources, build_session's userTodos
+    # field on a loaded tab and _tab_meta's count on the tabOrder row for a skeleton or placeholder tab
+    # (since 2026-09-22), and mute touches neither: mute means "stop interrupting me about this session"
     # and quiets the feed and its aggregates; the tab stays truthful about what its session
     # holds. Store values only: the row must serialize identically across builds when nothing
     # changed.
