@@ -208,6 +208,7 @@ class WedgedClientCannotStallTheSendLoop(unittest.TestCase):
                 got.extend(b)
 
         t = threading.Thread(target=drain, daemon=True)
+        self.addCleanup(t.join, 10)          # the drain ends on its own (the peer's 5 s timeout); the join is on every exit path (T282)
         t.start()
         c["send"](body)
         t.join(10)
