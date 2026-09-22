@@ -208,7 +208,14 @@ class WedgedClientCannotStallTheSendLoop(unittest.TestCase):
                 got.extend(b)
 
         t = threading.Thread(target=drain, daemon=True)
-        self.addCleanup(t.join, 10)          # the drain ends on its own (the peer's 5 s timeout); the join is on every exit path (T282)
+
+        def end():                           # on every exit path (T282): wake a recv still parked (tearDown's close of the
+            try:                             # sockets runs first and usually already did), then a bounded join
+                peer.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            t.join(10)
+        self.addCleanup(end)
         t.start()
         c["send"](body)
         t.join(10)
@@ -266,7 +273,14 @@ class WedgedClientCannotStallTheSendLoop(unittest.TestCase):
                 got.extend(b)
 
         t = threading.Thread(target=drain, daemon=True)
-        self.addCleanup(t.join, 10)          # the drain ends on its own (the peer's 5 s timeout); the join is on every exit path (T282)
+
+        def end():                           # on every exit path (T282): wake a recv still parked (tearDown's close of the
+            try:                             # sockets runs first and usually already did), then a bounded join
+                peer.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            t.join(10)
+        self.addCleanup(end)
         t.start()
         try:
             c["send"](body)
