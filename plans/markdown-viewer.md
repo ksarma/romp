@@ -8308,7 +8308,12 @@ with the exceptions this decision names (a picture with nothing to open, a gated
 under the size floor, a figure inside a link holding more than it), wears an "Open the picture" control (file-view.ts
 `decideFigureControl`, the one place a control is added or removed, over the verdict `figureWantsControl`): a glyph
 button of the bar's family (icons.ts `ICON_EXPAND`, two arrows out of opposite
-corners; `button.fileview-btn.fileview-icon.fv-figopen`, the words in its title and aria-label, found by its mark
+corners, for a picture from the file tree, and `ICON_OUTBOUND`, an arrow leaving a box, for a picture from the web, whose
+control names the host in its title and aria-label and wears `fv-figopen-web` beside the class below, the sheets' dashed
+rule for an open that leaves for another host, the picture's own title carrying the address after an author's title, the
+dress re-decided with the control (`dressFigureControl`; the file review's round 11, ui-1 with extra8-1: a remote and a
+local picture had presented one surface before the click); `button.fileview-btn.fileview-icon.fv-figopen`, the words in its
+title and aria-label, found by its mark
 `data-fv-figopen` and never by its class), in the tab order as any button is. Whether the control stands is decided
 from the figure AS IT IS NOW, by that one function, and decided again at every event that changes what it reads: the
 paint (mdBlock, `addFigureControls`), the picture's load and its error (`armFigureControls`) and each change of the
