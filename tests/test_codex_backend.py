@@ -1507,9 +1507,11 @@ class Lifecycle(unittest.TestCase):
         first = threading.Thread(target=be.set_model, args=(sid, "gpt-a"))
         second = threading.Thread(target=be.set_model, args=(sid, "gpt-b"))
 
-        def end():                          # on every exit path: release the gated snapshot, wait for both writers
-            release.set()
-            first.join(2); second.join(2)
+        def end():                          # on every exit path: release the gated snapshot, wait for both writers; a
+            release.set()                   # writer never started (the body failed before its start: ident None) is not joined
+            for t in (first, second):
+                if t.ident is not None:
+                    t.join(2)
         self.addCleanup(end)
         first.start()
         self.assertTrue(snapshotted.wait(2))
@@ -1623,9 +1625,11 @@ class Lifecycle(unittest.TestCase):
         first = threading.Thread(target=be.send, args=(sid, "first"))
         second = threading.Thread(target=be.send, args=(sid, "second"))
 
-        def end():                          # on every exit path: release the gated save, wait for both writers
-            release.set()
-            first.join(2); second.join(2)
+        def end():                          # on every exit path: release the gated save, wait for both writers; a
+            release.set()                   # writer never started (the body failed before its start: ident None) is not joined
+            for t in (first, second):
+                if t.ident is not None:
+                    t.join(2)
         self.addCleanup(end)
         first.start()
         self.assertTrue(entered.wait(2))
@@ -1642,6 +1646,48 @@ class Lifecycle(unittest.TestCase):
         self.assertEqual(registry_queue_texts(rows, sid), ["first", "second"])
 
     def test_registry_queue_appends_are_atomic_across_processes(self):
+    def test_a_body_that_fails_before_the_second_writer_starts_leaves_one_failure_and_no_cleanup_error(self):
+        """The two-writer cleanup above, run rather than read (2026-09-22). It is registered before the first writer starts
+        and joins BOTH writers, and the body's first assertion stands between the two starts, so on that failure road the
+        second writer was never started: Thread.join raises RuntimeError on a thread never started, and an unguarded
+        cleanup turned the one planted failure into a failure and an error. A nested case with the guarded shape fails
+        there and its run records the planted failure and nothing beside it; a second nested case with the unguarded
+        shape records the planted failure and the cleanup's error, which is what the guard removes. Both start the first
+        writer (a real set_model) and join it in the cleanup, so nothing outlives either run."""
+        def case(guarded):
+            class _Case(unittest.TestCase):
+                def test_fails(self):
+                    be, _, _tmp = build()
+                    sid = be.spawn("web", "/TESTDIR")
+                    release = threading.Event()
+                    first = threading.Thread(target=be.set_model, args=(sid, "gpt-a"))
+                    second = threading.Thread(target=be.set_model, args=(sid, "gpt-b"))
+
+                    def end():
+                        release.set()
+                        if guarded:
+                            for t in (first, second):
+                                if t.ident is not None:
+                                    t.join(2)
+                        else:
+                            first.join(2); second.join(2)
+                    self.addCleanup(end)
+                    first.start()
+                    self.fail("planted: the body fails before the second writer starts")
+                    second.start()                                  # never reached
+            res = unittest.TestResult()
+            _Case("test_fails").run(res)
+            return res
+
+        res = case(guarded=True)
+        self.assertEqual((len(res.failures), res.errors), (1, []), "the planted failure and nothing beside it: %r %r" % (res.failures, res.errors))
+        self.assertIn("planted", res.failures[0][1])
+        res = case(guarded=False)
+        self.assertEqual(len(res.failures), 1, res.failures)
+        self.assertIn("planted", res.failures[0][1])
+        self.assertEqual(len(res.errors), 1, "the unguarded join of the never-started writer is the cleanup's error: %r" % (res.errors,))
+        self.assertIn("cannot join thread before it is started", res.errors[0][1])
+
         be, _, tmp = build()
         sid = be.spawn("web", "/TESTDIR")
         self.assertTrue(be.kill(sid))       # child backends load it without starting queue workers
