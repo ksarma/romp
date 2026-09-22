@@ -197,9 +197,17 @@ test('the step is bounded twice: its own timeout-minutes fits the margin under t
   const took = /in a job of (\d+) min (\d+) s/.exec(comment);
   assert.ok(took, 'the step\'s comment states the measured job time as "in a job of N min N s"');
   const marginSeconds = cap * 60 - (Number(took[1]) * 60 + Number(took[2]));
-  assert.ok(bound * 60 <= marginSeconds, 'the step\'s bound (' + bound + ' min) fits the margin under the cap at the measured head (' + marginSeconds + ' s): a step that runs to its bound still ends the job under ' + cap + ' minutes; a larger roster raises the bound and the cap together');
+  assert.ok(bound * 60 <= marginSeconds, 'the step\'s bound (' + bound + ' min) fits the margin under the cap at the measured head (' + marginSeconds + ' s): a step that runs to its bound still ends the job under ' + cap + ' minutes; a larger roster raises the bound and the cap together; a job whose other phases grow under an unchanged cap re-measures the margin the same way (the step comment states the same)');
+  assert.ok(comment.includes('re-measures here'), 'the step\'s comment names the re-measure condition for growth outside the roster (the job\'s other phases toward the cap), not only the roster-growth trigger');
   const jobComment = job.lines.slice(0, job.lines.indexOf(capLine)).filter((l) => /^\s*#/.test(l)).join('\n');
   assert.ok(new RegExp('\\b' + bound + ' minutes \\(its timeout-minutes\\)').test(jobComment), 'the job\'s cap comment derives the step\'s bound and names the same number (' + bound + ' minutes (its timeout-minutes)): a changed bound rewrites the sentence');
+  // the job comment's sentence about this step (from "The Browser legs step below" to its end) points at this pin for the margin
+  // and carries no copy of the measured job time or the margin in seconds: the measured time has one home, the step comment
+  // above, which this pin reads (the job comment's other sentences record the served step's own history and are not read here)
+  const about = /The Browser legs step below[\s\S]*?in the same PR\./.exec(jobComment.replace(/\n\s*#\s?/g, ' '));
+  assert.ok(about, 'the job comment holds one sentence about the Browser legs step, from "The Browser legs step below" to "in the same PR."');
+  assert.ok(!/\d+ min \d+ s/.test(about[0]) && !/\b\d+ s\b/.test(about[0]), 'the job comment\'s sentence about this step carries no copy of the measured job time or the margin in seconds (one home: the step comment, read by this pin): ' + about[0]);
+  assert.ok(about[0].includes('tools/ci-browser-legs.test.mjs'), 'that sentence names this file as where the margin is derived: ' + about[0]);
   // node's per-file bound: above every own { timeout: N } a rostered source passes (else a legitimate slow leg is cut), under
   // the step's bound (else the step is cut nameless first)
   const ms = testTimeoutMs();
