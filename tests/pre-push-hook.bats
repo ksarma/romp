@@ -65,10 +65,16 @@
 # no size rule and applies a path's attribute to a symlink, its rename
 # candidates read from its deletions against each parent; and a blob the tip
 # holds is the tip's to judge, read there or refused there, never the commit's.
-# A one-parent commit that turns a file binary by its bytes into a text one is
+# A commit that turns a file binary by its bytes into a text one (a one-parent
+# commit's change or rename; a merge's result against a parent's version) is
 # refused with the previous version named as the cause, key or no key, the
 # header's disclosed fail-closed shape, and the tip reads the file where the
-# tip keeps it.
+# tip keeps it. The check's reads fail closed in two classes, each with its
+# cases at the end: a read whose status is non-zero, and a read that exits 0
+# with an empty or a short answer where a second read in hand shows it short
+# (the changed-path listing against its verdicts, the tip's listing against
+# the symlink pass's count and the grep's read list, a rewrite against its
+# input's bytes, the byte judge's zero against the blob's size).
 
 ROMP_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 HOOK="$ROMP_DIR/.githooks/pre-push"
@@ -1955,6 +1961,9 @@ attributes() {   # <line>: a committed .gitattributes
 # hidden path is refused, the line saying the earlier path counted.
 
 @test "the explicit diff line for the NEW path lifts a pure rename's refusal: the same rename with a later \"notes-b.txt diff\" line passes, the tip's grep reading the file" {
+    # the tip holds the renamed blob and its grep reads it under the explicit line: the tip-owns rule decides this case, and the
+    # exception itself (the addition verdict of the new path lifting a pure rename's binary pair verdict) is pinned by the two
+    # cases below, which move the blob off the tip
     add_remote
     attributes 'notes-*.txt -diff'
     commit_file notes-a.txt "nothing to see" "a clean file under a pattern -diff"
@@ -1974,6 +1983,51 @@ attributes() {   # <line>: a committed .gitattributes
     run_hook "$before"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
+}
+
+@test "the same lifted rename with notes-b.txt GONE at the tip passes: the blob is on the remote and not at the tip, so the per-commit half judges the rename commit, where the pair verdict is binary (the old path under the pattern) and the addition verdict of the new path is text under the explicit line; the exception is what passes it" {
+    add_remote
+    attributes 'notes-*.txt -diff'
+    commit_file notes-a.txt "nothing to see" "a clean file under a pattern -diff"
+    git -C "$REPO" push -q origin main
+    before="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" mv notes-a.txt notes-b.txt
+    git -C "$REPO" commit -qm "rename"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    printf '%s\n' 'notes-*.txt -diff' 'notes-b.txt diff' > "$REPO/.gitattributes"
+    git -C "$REPO" add .gitattributes
+    git -C "$REPO" commit -qm "keep notes-b.txt text on purpose"
+    remove_file notes-b.txt "remove it"                                            # gone at the tip: the rename commit's blob is the per-commit half's to judge
+    run _hook_in "$REPO" -c 'git diff-tree -r --numstat -M --root --no-commit-id "$1"' _ "$sha"          # the pair: binary (the old path under the pattern)
+    [ "$output" = "-"$'\t'"-"$'\t'"notes-a.txt => notes-b.txt" ]
+    run _hook_in "$REPO" -c 'git diff-tree -r --numstat --no-renames --root --no-commit-id "$1"' _ "$sha"   # the addition of the new path: text under the explicit line (one line added), the old path binary under the pattern
+    [[ "$output" == *"1"$'\t'"0"$'\t'"notes-b.txt"* ]]
+    [[ "$output" == *"-"$'\t'"-"$'\t'"notes-a.txt"* ]]
+    run_hook "$before"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "the refusing twin: the same rename gone at the tip with NO later diff line for the new path is refused as hidden, the line naming the new path in the rename commit and the attribute: the addition verdict of the new path is binary under the pattern, so the exception does not apply" {
+    add_remote
+    attributes 'notes-*.txt -diff'
+    commit_file notes-a.txt "nothing to see" "a clean file under a pattern -diff"
+    git -C "$REPO" push -q origin main
+    before="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" mv notes-a.txt notes-b.txt
+    git -C "$REPO" commit -qm "rename"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file notes-b.txt "remove it"
+    run _hook_in "$REPO" -c 'git diff-tree -r --numstat --no-renames --root --no-commit-id "$1"' _ "$sha"   # the addition of the new path: binary under the pattern
+    [[ "$output" == *"-"$'\t'"-"$'\t'"notes-b.txt"* ]]
+    run_hook "$before"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: notes-b.txt in commit ${sha:0:10} is text that its diff attribute (unset) hides from the identifier scan, so the push is refused rather than scanned"* ]]
+    [[ "$output" != *"at the tip of"* ]]
+    [[ "$output" != *"notes-a.txt"* ]]
+    [[ "$output" != *"printed no verdict"* ]]
+    [[ "$output" != *"answered for fewer paths"* ]]
+    [[ "$output" != *"personal identifier"* ]]
 }
 
 @test "a file under -diff renamed to a plain path AND changed in the same commit, the change carrying the string, removed before the tip, is refused: the diff judged the pair by the path it came from and printed no hunk" {
@@ -2182,13 +2236,14 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
     [[ "$output" != *"hides from the identifier scan"* ]]
 }
 
-@test "a binary file replaced by a symlink (a TYPE change) whose target is clean passes: the diff prints the change as a deletion and an addition and printed the target in full, so the link is judged as the addition it is, though the pair's stat calls the pair binary" {
+@test "a binary file replaced by a symlink (a TYPE change) whose target is clean, the link GONE at the tip, passes: the diff prints the change as a deletion and an addition and printed the target in full, so the link is judged as the addition it is by the numstat of its new object alone (text), though the pair's stat calls the pair binary; off the tip, that addition verdict is what decides" {
     printf 'ab\0cd\n' > "$REPO/thing"
     git -C "$REPO" add thing
     git -C "$REPO" commit -qm "a binary file"
     rm "$REPO/thing"
     symlink_commit thing "nothing to see" "replaced by a symlink"
     sha="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file thing "remove it"                                             # gone at the tip: with the link at the tip the tip-owns rule would set the blob aside before the type-change rule is reached
     run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" -- thing' _ "$sha"
     [[ "$output" == *"Binary files a/thing and /dev/null differ"* ]]      # the deletion, judged alone
     [[ "$output" == *"+nothing to see"* ]]                                # the addition, printed in full
@@ -2199,7 +2254,7 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
     [ -z "$output" ]
 }
 
-@test "a text file under -diff replaced by a symlink whose target carries the string is a HIT, not hidden: the addition the diff printed is what the link is judged as" {
+@test "a text file under -diff replaced by a symlink whose target carries the string, the link GONE at the tip, is a HIT by the added-lines pass and not hidden: the addition the diff printed is what the link is judged as, and the addition verdict of the new object is text whatever the path's attribute says (the pairwise diff applies none to a link); off the tip, that verdict is what decides" {
     add_remote
     attributes 'thing -diff'
     commit_file thing "nothing to see" "a clean -diff file"
@@ -2208,13 +2263,17 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
     rm "$REPO/thing"
     symlink_commit thing "seen on TESTHOST" "replaced by a symlink"
     sha="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file thing "remove it"                               # gone at the tip: the tip's symlink pass reads no link, and the tip-owns rule sets nothing aside
+    run _hook_in "$REPO" -c 'git diff-tree -r -m -M --numstat --root --no-commit-id "$1" -- thing' _ "$sha"
+    [ "$output" = "-"$'\t'"-"$'\t'"thing" ]                              # the pair's stat: binary (the old side under -diff)
     run_hook "$before"
     [ "$status" -eq 1 ]
-    [[ "$output" == *"the tip of refs/heads/main (${sha:0:10}) would publish a personal identifier"* ]]
-    [[ "$output" == *"in the SYMLINK TARGET of thing -> seen on TESTHOST"* ]]
     [[ "$output" == *"commit ${sha:0:10} ADDS a personal identifier in:"* ]]
     [[ "$output" == *"  thing"* ]]
     [[ "$output" != *"is text that"* ]]
+    [[ "$output" != *"at the tip of"* ]]
+    [[ "$output" != *"would publish"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
 }
 
 @test "a file replaced by a symlink whose target is over the key and carries the string, gone at the tip, is refused, the line naming the commit and the link: the addition the diff judged alone is the one it printed no target for" {
@@ -2237,6 +2296,8 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
 }
 
 @test "a MODE-ONLY change of a text file over the key, the denylist armed, passes through a real push: the same blob under a new mode has no hunk and no Binary line, and the remote holds main" {
+    # the tip holds the blob: the tip-owns rule sets it aside before the skip for an unchanged blob is reached, so the skip
+    # itself is pinned by the sibling below, which removes the file before the tip
     add_remote
     git -C "$REPO" config core.bigFileThreshold 100
     big_text_file big.txt "nothing to see"
@@ -2256,6 +2317,33 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
     [ "$status" -eq 0 ]
     [[ "$output" != *"romp pre-push"* ]]
     [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$sha" ]
+}
+
+@test "the same MODE-ONLY change with the file GONE at the tip passes through a real push: the blob is on the remote and not at the tip, so the skip for an unchanged blob alone decides (the pair's stat is binary under the key, and judged by it the change would be refused as hidden); the remote holds main" {
+    add_remote
+    git -C "$REPO" config core.bigFileThreshold 100
+    big_text_file big.txt "nothing to see"
+    git -C "$REPO" add big.txt
+    git -C "$REPO" commit -qm "a clean big text file"
+    git -C "$REPO" push -q origin main                          # the blob is on the remote
+    chmod +x "$REPO/big.txt"                                    # the working tree's mode, then the index's: update-index --chmod alone leaves the working tree behind and the removal below refused
+    git -C "$REPO" add big.txt
+    git -C "$REPO" commit -qm "a mode-only change"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" rm -qf big.txt
+    git -C "$REPO" commit -qm "remove it"                       # gone at the tip: the blob is nowhere the tip half reads, so the per-commit half alone judges the mode-only commit
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1"' _ "$sha"       # mode lines alone
+    [[ "$output" == *"old mode 100644"* ]]
+    [[ "$output" == *"new mode 100755"* ]]
+    [[ "$output" != *"Binary files"* ]]
+    run _hook_in "$REPO" -c 'git diff-tree -r -m -M --numstat --root --no-commit-id "$1"' _ "$sha"           # the pair's stat: a dash for each count all the same
+    [ "$output" = "-"$'\t'"-"$'\t'"big.txt" ]
+    run _hook_in "$REPO" -c 'git ls-tree -r HEAD -- big.txt'
+    [ -z "$output" ]
+    push_main_through_installed_hook
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse HEAD)" ]
 }
 
 @test "the control: the same file with one changed byte under the key, gone at the tip, is refused as hidden, the row kept, and the remote holds the blob's first commit alone" {
@@ -2331,7 +2419,15 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
 # hook scans only commits new to every fetched remote, so a commit some remote
 # holds is out of range once that remote is fetched. Three commits in this
 # repository's own history have the shape, refused when a clone with no
-# remote-tracking refs pushes the history as a new ref (2026-09-22).
+# remote-tracking refs pushes the history as a new ref (2026-09-22). The
+# merge twin (a parent's version binary, the merge's result text: the combined
+# patch prints Binary the same way) and the rename twin (the file renamed in
+# the same change, the diff reading the pair from the old path) name their
+# cause the same way since round 5, the parent or the old path named in the
+# line; before, each was refused with the two-fact line and the key's advice,
+# the cause unnamed and the fetch remedy absent (the round 4 refuters,
+# 2026-09-22). A type change and a merge's rename candidate read no previous
+# version: the addition verdict of the new object alone decided them.
 
 @test "a one-parent commit turning a NUL-carrying file into a text file carrying the string, gone at the tip, is refused rather than scanned, the line naming the previous version's bytes as the cause and the advice the fetch remedy; the key's facts and the key advice are absent, since the key is not the cause" {
     printf 'ab\0cd\n' > "$REPO/thing"
@@ -2389,6 +2485,69 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
     [[ "$output" == *"Where a line names the previous version's bytes as the cause, the hook scans only commits new to every fetched remote"* ]]
     [[ "$output" != *"a configuration key can be what makes git call the file binary"* ]]   # the key's advice: absent, the key being no cause here
     [[ "$output" != *"raise the key above the size"* ]]
+    [[ "$output" != *"at the tip of"* ]]
+    [[ "$output" != *"personal identifier"* ]]
+    [[ "$output" == *"git push --no-verify"* ]]
+}
+
+@test "a MERGE whose result turns a NUL-carrying file both parents hold into a text file carrying the string, gone at the tip, is refused rather than scanned, the line naming a parent's version as the cause and the advice the fetch remedy; the key advice is absent: the merge twin of the disclosed shape" {
+    add_remote
+    printf 'ab\0cd\n' > "$REPO/thing"
+    git -C "$REPO" add thing
+    git -C "$REPO" commit -qm "a binary file"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" checkout -q -b side
+    commit_file side.txt "the web session's line" "side"
+    git -C "$REPO" checkout -q main
+    commit_file main.txt "the api session's line" "main side"
+    git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1
+    commit_file thing "seen on TESTHOST" "merge side, thing now a text file carrying the string"
+    merge="$(git -C "$REPO" rev-parse HEAD)"
+    is_merge "$merge"
+    remove_file thing "remove it"                            # gone at the tip: only the per-commit half can name it
+    # the road as git applies it: both parents' versions are binary by their bytes, so the combined patch prints no hunk for the new text
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" -- thing' _ "$merge"
+    [[ "$output" == *"Binary files differ"* ]]
+    [[ "$output" != *"TESTHOST"* ]]
+    run _hook_in "$REPO" -c 'git check-attr diff thing'
+    [[ "$output" == *"diff: unspecified"* ]]
+    run_hook "$BASE"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: thing in commit ${merge:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict; the previous version of the file in parent 1 of the merge is binary by its bytes (a NUL in its first 8000), which made git print no text diff for the change, and the identifier scan could not read the new text, so the push is refused rather than scanned"* ]]
+    [[ "$output" == *"Where a line names the previous version's bytes as the cause, the hook scans only commits new to every fetched remote: if the commit is already on some remote, fetch that remote first and push again, or push from a clone that has fetched it."* ]]
+    [[ "$output" != *"core.bigFileThreshold is not set"* ]]   # the key is not the cause here: the line states the cause, not the key's facts
+    [[ "$output" != *"a configuration key can be what makes git call the file binary"* ]]
+    [[ "$output" != *"at the tip of"* ]]
+    [[ "$output" != *"personal identifier"* ]]
+    [[ "$output" != *"printed no verdict"* ]]
+    [[ "$output" == *"git push --no-verify"* ]]
+}
+
+@test "a one-parent commit RENAMING a NUL-carrying file into a text file carrying the string in the same change, gone at the tip, is refused rather than scanned, the line naming the previous version at the path the diff read it from as the cause and the advice the fetch remedy; the key advice and the rename clause are absent: the rename twin of the disclosed shape" {
+    { printf 'line %s\n' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; printf 'x\0y\n'; } > "$REPO/old.txt"   # twenty lines and a NUL: binary by its bytes, and similar enough to the text version for -M to pair them
+    git -C "$REPO" add old.txt
+    git -C "$REPO" commit -qm "a file binary by its bytes"
+    git -C "$REPO" mv old.txt new.txt
+    { printf 'line %s\n' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; printf 'seen on TESTHOST\n'; } > "$REPO/new.txt"
+    git -C "$REPO" add new.txt
+    git -C "$REPO" commit -qm "renamed and made text, the string in the change"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file new.txt "remove it"                          # gone at the tip: only the per-commit half can name it
+    # the road as git applies it: a rename pair whose old side is binary, so the diff prints no hunk for the new text
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1"' _ "$leak"
+    [[ "$output" == *"rename from old.txt"* ]]
+    [[ "$output" == *"Binary files a/old.txt and b/new.txt differ"* ]]
+    [[ "$output" != *"TESTHOST"* ]]
+    run _hook_in "$REPO" -c 'git diff-tree -r --raw -M -z --root --no-commit-id "$1" | tr "\0" "|"' _ "$leak"      # the report re-derives the old path from this listing's R row
+    [[ "$output" == *" R"*"|old.txt|new.txt|"* ]]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: new.txt in commit ${leak:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict; the previous version of the file (at old.txt, the path the diff read it from) is binary by its bytes (a NUL in its first 8000), which made git print no text diff for the change, and the identifier scan could not read the new text, so the push is refused rather than scanned"* ]]
+    [[ "$output" == *"Where a line names the previous version's bytes as the cause, the hook scans only commits new to every fetched remote"* ]]
+    [[ "$output" != *"the diff read it as a rename, so the attribute of the path it came from counted too"* ]]   # the cause line names the old path itself
+    [[ "$output" != *"core.bigFileThreshold is not set"* ]]
+    [[ "$output" != *"a configuration key can be what makes git call the file binary"* ]]
     [[ "$output" != *"at the tip of"* ]]
     [[ "$output" != *"personal identifier"* ]]
     [[ "$output" == *"git push --no-verify"* ]]
@@ -2820,6 +2979,16 @@ third_path_committed() {   # the merge committed, then the file removed at the t
 # deleted each such arm alone and together and the suite stayed green, which is
 # why each has a case: a refusal that never fires cannot be told from an arm
 # that is not there.
+# The second class (the hook header): a read that exits 0 with an empty or a
+# short answer, refused where a second read in hand shows it short, each with
+# its cases below: the tip's -z listing against the symlink pass's entry count
+# and the grep's read list; the changed-path listing against the paths its
+# verdicts name (a one-parent commit's and a merge's, the reference read
+# chosen by the parent count the caller read); each scratch listing's rewrite
+# against its input's byte count, and every count against the digits; and the
+# byte judge's zero against the blob's size. Each was red at the round 4 head
+# by execution before its gate landed, the string published through a real
+# push or the wrong cause named (the round 4 refuters, 2026-09-22).
 
 fail_for_each_ref()      { git_refusing '[ "${1:-}" = for-each-ref ]' 128 "fatal: shim: for-each-ref refused"; }
 fail_ls_tree_z()         { git_refusing '[ "${1:-}" = ls-tree ] && [ "${3:-}" = -z ]' 128 "fatal: shim: ls-tree -z refused"; }   # the verdict check's listing alone: a plain ls-tree shim clears tip_listed in the symlink pass first
@@ -2902,6 +3071,85 @@ check_attr_answering() {   # <printf format of the answer, NUL-delimited>: a git
     [[ "$output" != *"could not be fully scanned"* ]]
 }
 
+# The tip's -z listing answering with a clean status and too few (or too many)
+# entries: the tip's complement and blob set are built from it alone, so an
+# emptied or shortened listing left a hidden text file the remote already
+# holds judged by nothing, and a real push published it (the round 4
+# refuters, 2026-09-22). The gate is the entry count of the symlink pass's
+# plain listing of the same tree, read anyway, and the grep's read list, whose
+# every file must be one listed. The fixture is the hidden file ON the remote
+# and a clean commit pushed after it, so only the tip half can judge the file.
+empty_ls_tree_z() { git_refusing '[ "${1:-}" = ls-tree ] && [ "${3:-}" = -z ]' 0 ""; }   # the verdict check's listing answering nothing with a clean status; the symlink pass's plain ls-tree untouched
+ls_tree_z_dropping() {   # <path>: a git whose ls-tree -r -z -l answers without that path's record and exits 0, the real git for every other command
+    local real_git
+    real_git="$(command -v git)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [ "${1:-}" = ls-tree ] && [ "${3:-}" = -z ]; then %q "$@" | tr "\\0" "\\n" | grep -vF -e %q | tr "\\n" "\\0"; exit 0; fi\n' "$real_git" "$(printf '\t%s' "$1")"
+        printf 'exec %q "$@"\n' "$real_git"
+    } > "$TEST_DIR/shim/git"
+    chmod 755 "$TEST_DIR/shim/git"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+hidden_file_on_remote_then_clean_commit() {   # the shape: .gitattributes and a -diff file carrying the string on the remote (BASE), then one clean commit; sha is the tip
+    attributes 'notes.txt -diff'
+    commit_file notes.txt "seen on TESTHOST" "a banned string in a -diff file"
+    add_remote
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file other.txt "nothing to see" "a clean commit"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+}
+
+@test "a tip listing for the verdict check that answers NOTHING (ls-tree -r -z -l exiting 0 with no entry, the symlink pass's plain ls-tree untouched) is a short read, refused as unscanned with both counts through a real push: an empty listing is not an empty tree, and the hidden text file the remote already holds is not passed by it; the remote stays at the base" {
+    hidden_file_on_remote_then_clean_commit
+    empty_ls_tree_z
+    run _hook_in "$REPO" -c 'git ls-tree -r -z -l "$1"' _ "$sha"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run _hook_in "$REPO" -c 'git ls-tree -r "$1" | grep -c .' _ "$sha"       # the symlink pass's listing: .gitattributes, notes.txt, other.txt
+    [ "$output" = 3 ]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the TREE of the tip of refs/heads/main (${sha:0:10}) was listed short or long for the BINARY VERDICT check (git ls-tree -r -z -l exited 0 and listed 0 entries where the symlink pass's git ls-tree -r of the same tree listed 3)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"exited 128"* ]]
+    [[ "$output" != *"is text that"* ]]                      # judged by nothing: refused for the read, not for the blob
+    [[ "$output" != *"personal identifier"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
+@test "a tip listing that DROPS one record, the hidden file's, is refused the same way with the counts 2 and 3: the grep's read list agrees with what was listed (the hidden file is one the grep skipped), so the count is the gate that closes a dropped record; the remote stays at the base" {
+    hidden_file_on_remote_then_clean_commit
+    ls_tree_z_dropping notes.txt
+    run _hook_in "$REPO" -c 'git ls-tree -r -z -l "$1" | tr "\0" "\n"' _ "$sha"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"notes.txt"* ]]
+    [[ "$output" == *"other.txt"* ]]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the TREE of the tip of refs/heads/main (${sha:0:10}) was listed short or long for the BINARY VERDICT check (git ls-tree -r -z -l exited 0 and listed 2 entries where the symlink pass's git ls-tree -r of the same tree listed 3)"* ]]
+    [[ "$output" != *"its listing lacks"* ]]                 # the read-list arm is silent: every file the grep read is listed
+    [[ "$output" != *"is text that"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
+@test "a tip listing that DROPS a record the grep READ (other.txt) is refused on both arms, the count and the read list, the second naming the file: a file the grep read is one the tree holds; the remote stays at the base" {
+    hidden_file_on_remote_then_clean_commit
+    ls_tree_z_dropping other.txt
+    run _hook_in "$REPO" -c 'git ls-tree -r -z -l "$1" | tr "\0" "\n"' _ "$sha"
+    [[ "$output" != *"other.txt"* ]]
+    run _hook_in "$REPO" -c 'git grep --no-color -I -l -z -e "" "$1" -- | tr "\0" "\n"' _ "$sha"          # the grep's read list names it
+    [[ "$output" == *":other.txt"* ]]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"was listed short or long for the BINARY VERDICT check (git ls-tree -r -z -l exited 0 and listed 2 entries where the symlink pass's git ls-tree -r of the same tree listed 3)"* ]]
+    [[ "$output" == *"the TREE of the tip of refs/heads/main (${sha:0:10}) was listed short for the BINARY VERDICT check (git ls-tree -r -z -l exited 0 and its listing lacks other.txt, a file the grep of the tip lists as read)"* ]]
+    [[ "$output" == *"notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that its diff attribute (unset) hides"* ]]   # whatever was listed is still judged: the hidden file's record stayed
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
 @test "a commit whose changed paths cannot be listed for the verdict check (diff-tree --raw exiting 128, the added-lines diff untouched) refuses the push as unscanned, naming the read" {
     commit_file file.txt "nothing to see" "clean"
     sha="$(git -C "$REPO" rev-parse HEAD)"
@@ -2915,7 +3163,8 @@ check_attr_answering() {   # <printf format of the answer, NUL-delimited>: a git
     [[ "$output" == *"the CHANGED PATHS of commit ${sha:0:10} could not be listed for the BINARY VERDICT check (git diff-tree exited 128)"* ]]
     [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
     [[ "$output" != *"ADDED LINES"* ]]
-    [[ "$output" != *"BINARY VERDICTS of commit"* ]]      # an empty listing names no post-image, so the numstat reads are not reached: one cause
+    [[ "$output" != *"BINARY VERDICTS of commit"* ]]      # the numstat reads run (the listing is checked against them since round 5) and answer whole; the listing was refused on its status
+    [[ "$output" != *"were listed short"* ]]              # and the population gate stands down for a listing that failed on its status: one cause, not two
 }
 
 @test "a commit whose binary verdicts cannot be read (diff-tree --numstat exiting 128, the added-lines diff untouched) refuses the push as unscanned, naming that read and not the short-answer one" {
@@ -3087,6 +3336,63 @@ merge_with_hidden_link() {   # a merge whose own change is a symlink at a -diff 
     [[ "$output" != *"is text that"* ]]
 }
 
+# The changed-path listing (diff-tree --raw -c) answering with a clean status
+# and no entry: the per-commit population is built from it alone, so an
+# emptied listing named no post-image and the commit was passed over unjudged,
+# a banned string in a -diff file published through a real push (the round 4
+# refuters, 2026-09-22), for a one-parent commit and for a merge alike. The
+# gate is the verdicts, read for every commit since: a path a numstat row or
+# a combined-patch section names that the listing did not name is a listing
+# that answered short. The reference read is chosen by the parent count the
+# caller read, never by the listing's shape: a merge whose listing was emptied
+# would otherwise read as a one-parent commit, whose pair numstat prints
+# nothing for a merge, and the two empty answers would agree.
+empty_diff_tree_raw_c() { git_refusing 'case " $* " in *" --raw "*" -c "*) true ;; *) false ;; esac' 0 ""; }   # the combined changed-path listing alone (--raw and -c both present, in that order): the per-parent listing carries -m and no -c, the numstats no --raw, the added-lines patch no --raw
+
+@test "a commit whose changed-path listing answers NOTHING (diff-tree --raw -c exiting 0 with no entry) is a short read, refused as unscanned naming the listing and the first path its verdicts name, through a real push: a listing that came up short is not a commit that changed nothing, and the remote stays at the base" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'notes.txt -diff\n' > "$REPO/.git/info/attributes"       # the attribute outside the tree, so the commit changes one path
+    commit_file notes.txt "seen on TESTHOST" "a banned string in a -diff file"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file notes.txt "remove it"                                # gone at the tip: only the per-commit half can name it
+    empty_diff_tree_raw_c
+    run _hook_in "$REPO" -c 'git diff-tree -r --raw --no-renames --root -c -z --no-commit-id "$1"' _ "$leak"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run _hook_in "$REPO" -c 'git diff-tree -r --numstat -z --no-commit-id -M --root "$1" | tr "\0" "|"' _ "$leak"    # the verdicts still name the path
+    [[ "$output" == *"notes.txt|"* ]]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the CHANGED PATHS of commit ${leak:0:10} were listed short for the BINARY VERDICT check (git diff-tree --raw exited 0 and its listing lacks notes.txt, a path git diff-tree --numstat answered for)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"exited 128"* ]]
+    [[ "$output" != *"is text that"* ]]                      # judged by nothing: refused for the read, not for the blob
+    [[ "$output" != *"answered for fewer paths"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
+@test "a MERGE whose combined listing answers NOTHING (diff-tree --raw -c exiting 0 with no entry) is refused the same way, the reference read chosen by the parent count and not by the listing's shape: the combined patch names the path the listing lacks, and the remote stays at the base" {
+    merge_with_hidden_link
+    empty_diff_tree_raw_c
+    run _hook_in "$REPO" -c 'git diff-tree -r --raw --no-renames --root -c -z --no-commit-id "$1"' _ "$sha"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run _hook_in "$REPO" -c 'git diff-tree -r --raw --no-renames -m -z --no-commit-id "$1" | tr "\0" "|"' _ "$sha"   # the per-parent listing is untouched (no -c), and is never compared
+    [[ "$output" == *"link|"* ]]
+    run _hook_in "$REPO" -c 'git diff-tree -r --numstat -z --no-commit-id -M --root "$1"' _ "$sha"                   # the pair numstat prints nothing for a merge: read as a one-parent commit, the two empty answers would agree
+    [ -z "$output" ]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the CHANGED PATHS of commit ${sha:0:10} were listed short for the BINARY VERDICT check (git diff-tree --raw -c exited 0 and its listing lacks link, a path the merge's combined patch printed a section for)"* ]]
+    [[ "$output" != *"printed no verdict"* ]]
+    [[ "$output" != *"is text that"* ]]
+    [[ "$output" != *"exited 128"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
 @test "a path holding a newline byte is refused as unscanned at the tip and in the commit: the listings are joined line by line, and such a path would be judged by nothing" {
     commit_file file.txt "nothing to see" "clean"
     printf 'x\n' > "$REPO/"$'odd\nname.txt'
@@ -3116,7 +3422,14 @@ merge_with_hidden_link() {   # a merge whose own change is a symlink at a -diff 
 # shape (the rewrite; the newline test) and execs the real tr for every other,
 # counting in a file since each invocation is its own process; the joins' own
 # tr (newline to NUL) is neither shape and runs through. Once per test, like
-# git_refusing.
+# git_refusing. Since round 5 every commit's scratch files are rewritten, a
+# deletion-only commit's too (its listing is checked against its verdicts), so
+# the count of a rewrite is the tip's two, then eight per one-parent commit
+# (post, gone, rows, rows2, links, tpaths, rows3, listed), read newest first.
+# The second class has its own shims: a tr whose rewrite of the ONE input
+# holding a marker exits 0 and writes nothing (tr_silent_on, keyed on the
+# content and not on a count, so the same fault reaches the same file at any
+# hook text), and a wc that reads its input and answers nothing.
 tr_refusing() {   # <rewrite|test> <N>: the Nth tr of that shape exits 1, the real tr runs otherwise
     local real_tr
     real_tr="$(command -v tr)"
@@ -3159,9 +3472,10 @@ SHIM
     [ "$(cat "$TEST_DIR/tr-calls")" -ge 1 ]
 }
 
-@test "a commit's listing whose rewrite fails (the third rewrite tr exiting 1: the tip's two listings rewritten, the commit's post-images not) refuses the push as unscanned, naming the commit and the tool, where a hidden text file carrying a banned string in that commit and gone at the tip would otherwise pass unjudged" {
-    # one commit with a listing to rewrite besides the removal, whose listing is empty and is never rewritten: the attribute and the
-    # file in one commit, so the failing rewrite is that commit's whatever order the range is read in
+@test "a commit's listing whose rewrite fails (the eleventh rewrite tr exiting 1: the tip's two listings and the removal commit's eight scratch files rewritten, the leak commit's post-images not) refuses the push as unscanned, naming the commit and the tool, where a hidden text file carrying a banned string in that commit and gone at the tip would otherwise pass unjudged" {
+    # the range is the removal (read first: rev-list names a child before its parent) and the leak commit, each rewriting eight
+    # scratch files after the tip's two, so the leak commit's post-images are the eleventh rewrite; the attribute and the file in
+    # one commit, so that commit alone holds the hidden blob
     printf 'notes.txt -diff\n' > "$REPO/.gitattributes"
     printf 'seen on TESTHOST\n' > "$REPO/notes.txt"
     git -C "$REPO" add .gitattributes notes.txt
@@ -3170,10 +3484,10 @@ SHIM
     remove_file notes.txt "remove it"                          # the tip is clean: only the per-commit half can name it
     run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" -- notes.txt' _ "$leak"
     [[ "$output" == *"Binary files"* ]]                        # the road: the diff prints no hunk, so the added-lines pass sees nothing
-    tr_refusing rewrite 3
+    tr_refusing rewrite 11
     run_hook
     [ "$status" -eq 1 ]
-    [[ "$output" == *"shim: tr refused (rewrite 3)"* ]]
+    [[ "$output" == *"shim: tr refused (rewrite 11)"* ]]
     [[ "$output" == *"the LISTINGS of commit ${leak:0:10} could not be rewritten for the BINARY VERDICT check (tr exited 1)"* ]]
     [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
     [[ "$output" != *"holds a newline"* ]]
@@ -3181,13 +3495,13 @@ SHIM
     [[ "$output" != *"personal identifier"* ]]
 }
 
-@test "a MERGE's listing whose rewrite for its rename candidates fails (the third rewrite tr exiting 1: the merge's post-images, read before its deletions) refuses the push as unscanned, naming the merge and the tool, and claims no short read: the candidates were not derived, not absent" {
-    third_path_merge "nothing to see" pushed                  # the sources on the remote: the merge is the one new commit with a listing to rewrite, the removal at the tip has none
+@test "a MERGE's listing whose rewrite for its rename candidates fails (the eleventh rewrite tr exiting 1: the merge's post-images, read before its deletions, after the tip's two rewrites and the removal commit's eight) refuses the push as unscanned, naming the merge and the tool, and claims no short read: the candidates were not derived, not absent" {
+    third_path_merge "nothing to see" pushed                  # the sources on the remote: the range is the removal at the tip (read first, eight rewrites) and the merge
     third_path_committed
-    tr_refusing rewrite 3
+    tr_refusing rewrite 11
     run_hook "$BASE"
     [ "$status" -eq 1 ]
-    [[ "$output" == *"shim: tr refused (rewrite 3)"* ]]
+    [[ "$output" == *"shim: tr refused (rewrite 11)"* ]]
     [[ "$output" == *"the LISTINGS of commit ${merge:0:10} could not be rewritten for the BINARY VERDICT check (tr exited 1)"* ]]
     [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
     [[ "$output" != *"holds a newline"* ]]
@@ -3207,6 +3521,109 @@ SHIM
     [[ "$output" != *"holds a newline"* ]]
 }
 
+# The rewrite answering nothing with a clean status (the second class): as_lines
+# read tr's status alone, so a rewrite that exited 0 and wrote nothing handed a
+# join an empty file, and each caller passed on it: the tip judging nothing (a
+# hidden text file the remote already holds passed), a one-parent commit's
+# post-images empty (the commit passed unjudged, a banned string under -diff
+# published), a merge's post-images empty (the candidates underived, the
+# commit passed or the short read named, the wrong cause). The byte count of
+# each rewrite is now compared with its input's, and every count read as a
+# number first: a wc answering nothing read as a newline count of zero, the
+# count of a clean file, and passed the newline test (the round 4 refuters,
+# 2026-09-22).
+tr_silent_on() {   # <marker>: a tr whose rewrite (the '\0' '\n' shape) of an input holding the marker exits 0 and writes nothing; the real tr for every other input and shape
+    local real_tr
+    real_tr="$(command -v tr)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'real_tr=%q; marker=%q; tmp=%q\n' "$real_tr" "$1" "$TEST_DIR/tr-input"
+        cat <<'SHIM'
+if [ $# -eq 2 ] && [ "$1" = '\0' ] && [ "$2" = '\n' ]; then
+    cat > "$tmp"
+    if grep -a -q -F -e "$marker" "$tmp"; then exit 0; fi
+    exec "$real_tr" "$@" < "$tmp"
+fi
+exec "$real_tr" "$@"
+SHIM
+    } > "$TEST_DIR/shim/tr"
+    chmod 755 "$TEST_DIR/shim/tr"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+wc_silent() {   # a wc that reads its input and answers nothing, exit 0
+    mkdir -p "$TEST_DIR/shim"
+    printf '#!/usr/bin/env bash\ncat > /dev/null\nexit 0\n' > "$TEST_DIR/shim/wc"
+    chmod 755 "$TEST_DIR/shim/wc"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+
+@test "a tip listing whose rewrite answers NOTHING (a tr exiting 0 and writing nothing for the tip's listing) is a short rewrite, refused as unscanned naming the tip, the rewrite and both byte counts: an empty rewrite is not an empty tip, and the hidden text file the remote already holds is not passed by it" {
+    hidden_file_on_remote_then_clean_commit
+    blob="$(git -C "$REPO" rev-parse "$sha:notes.txt")"
+    expected="$(git -C "$REPO" ls-tree -r -z -l "$sha" | wc -c)"                # the listing's bytes: the input the rewrite must match
+    tr_silent_on "$blob"                                                        # the hidden blob's sha is in the tip's listing and in no other scratch file of this push
+    run _hook_in "$REPO" -c 'printf "a\\0b" | tr "\\0" "\\n" | wc -c'          # a clean input runs through the real tr
+    [ "$output" = 3 ]
+    run_hook "$BASE"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the LISTINGS of the tip of refs/heads/main (${sha:0:10}) could not be rewritten for the BINARY VERDICT check (the rewrite of listing wrote 0 bytes for $expected read; tr exited 0)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"holds a newline"* ]]
+    [[ "$output" != *"exited 1"* ]]
+    [[ "$output" != *"is text that"* ]]                      # the tip was not judged: refused for the read, not for the blob
+}
+
+@test "a commit's listing whose rewrite answers NOTHING (the leak commit's post-images) is refused the same way naming the commit, where a hidden text file carrying a banned string in that commit and gone at the tip would otherwise pass unjudged" {
+    printf 'notes.txt -diff\n' > "$REPO/.gitattributes"
+    printf 'seen on TESTHOST\n' > "$REPO/notes.txt"
+    git -C "$REPO" add .gitattributes notes.txt
+    git -C "$REPO" commit -qm "a banned string in a -diff file, with its attribute"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    blob="$(git -C "$REPO" rev-parse "$leak:notes.txt")"
+    remove_file notes.txt "remove it"                          # the tip is clean: only the per-commit half can name it
+    attrs="$(git -C "$REPO" rev-parse "$leak:.gitattributes")"
+    expected="$(printf '%s\t%s\0%s\t%s\0' "$attrs" .gitattributes "$blob" notes.txt | wc -c)"   # the post-images file holds the commit's two records
+    tr_silent_on "$(printf '%s\t%s' "$blob" notes.txt)"        # the blob and the path: the leak commit's post-images, and no other scratch file (the removal's deletions hold the blob alone)
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the LISTINGS of commit ${leak:0:10} could not be rewritten for the BINARY VERDICT check (the rewrite of post wrote 0 bytes for $expected read; tr exited 0)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"holds a newline"* ]]
+    [[ "$output" != *"is text that"* ]]
+    [[ "$output" != *"personal identifier"* ]]
+}
+
+@test "a MERGE's listing whose rewrite for its rename candidates answers NOTHING (the merge's post-images) is refused the same way naming the merge, and claims no short read: the candidates were not derived, not absent" {
+    third_path_merge "nothing to see" pushed
+    third_path_committed
+    blob="$(git -C "$REPO" rev-parse "$merge:b.txt")"
+    expected="$(printf '%s\t%s\0' "$blob" b.txt | wc -c)"
+    tr_silent_on "$(printf '%s\t%s' "$blob" b.txt)"            # the merge's post-images alone: the sources are on the remote, the removal's deletions hold the blob without the path
+    run_hook "$BASE"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the LISTINGS of commit ${merge:0:10} could not be rewritten for the BINARY VERDICT check (the rewrite of post wrote 0 bytes for $expected read; tr exited 0)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"holds a newline"* ]]
+    [[ "$output" != *"printed no verdict"* ]]                 # the short-read line, the wrong cause: the merge's candidates were never derived
+    [[ "$output" != *"is text that"* ]]
+}
+
+@test "a wc that answers NOTHING (exit 0, no count) is not a newline count of zero: the push is refused as unscanned, naming the tip, the test and the empty answer, where a clean commit would otherwise pass on a test that read nothing" {
+    commit_file file.txt "nothing to see" "clean"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    wc_silent
+    run _hook_in "$REPO" -c 'printf "abc" | wc -c'
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the LISTINGS of the tip of refs/heads/main (${sha:0:10}) could not be rewritten for the BINARY VERDICT check (the newline test's wc answered \"\" for listing, not a count)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"holds a newline"* ]]
+    [[ "$output" != *"exited"* ]]
+}
+
 @test "a hidden blob whose content cannot be read refuses the push as unscanned, naming the path: an unread blob is not a binary one" {
     attributes 'notes.txt -diff'
     commit_file notes.txt "nothing to see" "a clean -diff file"
@@ -3220,6 +3637,83 @@ SHIM
     [[ "$output" == *"the CONTENT of notes.txt at the tip of refs/heads/main (${sha:0:10}), which git calls binary and the identifier scan therefore skipped, could not be read (git cat-file exited 128)"* ]]
     [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
     [[ "$output" != *"is text that"* ]]                      # unread, so not called text either
+}
+
+# The byte judge's count of zero (the second class): a cat-file that exits 0
+# and prints nothing, or an od that fails inside the counting group (whose
+# status is the drain's), left awk a count of zero bytes for a blob with
+# bytes, and the blob passed as empty content, a banned string in a -diff file
+# published through a real push (the round 4 refuters, 2026-09-22). The gate
+# is the blob's size (cat-file -s), read apart: zero bytes read is empty
+# content only when the size is zero. The fixture puts the attribute in
+# .git/info/attributes so the leak commit changes one path, and the leak is a
+# middle commit gone at the tip.
+silent_cat_file_blob() {   # <blob>: a git whose `cat-file blob <blob>` exits 0 and prints nothing, the real git for every other command (cat-file -s included)
+    git_refusing "[ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = blob ] && [ \"\${3:-}\" = $1 ]" 0 ""
+}
+od_failing() {   # an od that reads its input and exits 1
+    mkdir -p "$TEST_DIR/shim"
+    printf '#!/usr/bin/env bash\ncat > /dev/null\necho "shim: od refused" >&2\nexit 1\n' > "$TEST_DIR/shim/od"
+    chmod 755 "$TEST_DIR/shim/od"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+hidden_file_in_middle_commit_after_base() {   # a base on the remote (BASE), then a -diff file (the attribute in .git/info/attributes) carrying the string, removed at the tip; leak, blob and size are its commit, blob and byte size
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'notes.txt -diff\n' > "$REPO/.git/info/attributes"
+    commit_file notes.txt "seen on TESTHOST" "a banned string in a -diff file"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    blob="$(git -C "$REPO" rev-parse "$leak:notes.txt")"
+    size="$(git -C "$REPO" cat-file -s "$blob")"
+    remove_file notes.txt "remove it"
+}
+
+@test "a hidden blob whose content read answers NOTHING (cat-file blob exiting 0 with no output, the size read untouched) is refused as unscanned naming the path, the zero bytes read and the size, through a real push: an empty answer is empty content only when the blob is empty; the remote stays at the base" {
+    hidden_file_in_middle_commit_after_base
+    [ "$size" -gt 0 ]
+    silent_cat_file_blob "$blob"
+    run _hook_in "$REPO" -c 'git cat-file blob "$1"' _ "$blob"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run _hook_in "$REPO" -c 'git cat-file -s "$1"' _ "$blob"
+    [ "$output" = "$size" ]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the CONTENT of notes.txt in commit ${leak:0:10}, which git calls binary and the identifier scan therefore skipped, was read as 0 bytes while git cat-file -s gives its size as $size bytes, so the read answered short (git cat-file blob exited 0)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"is text that"* ]]                      # judged by nothing: refused for the read, not for the blob
+    [[ "$output" != *"could not be read (git cat-file exited"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
+@test "an od that FAILS inside the counting group (exit 1, no git shim) leaves the same count of zero and is refused the same way through a real push: the group's status is the drain's, so the size is the gate; the remote stays at the base" {
+    hidden_file_in_middle_commit_after_base
+    od_failing
+    run _hook_in "$REPO" -c 'printf "ab" | od -An -v -tu1'
+    [ "$status" -eq 1 ]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the CONTENT of notes.txt in commit ${leak:0:10}, which git calls binary and the identifier scan therefore skipped, was read as 0 bytes while git cat-file -s gives its size as $size bytes, so the read answered short (git cat-file blob exited 0)"* ]]
+    [[ "$output" != *"is text that"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
+@test "the control: a genuinely EMPTY file under -diff in a middle commit, gone at the tip, still passes: the numstat calls the empty blob binary, the byte judge reads 0 bytes and the size read agrees" {
+    printf 'empty.txt -diff\n' > "$REPO/.git/info/attributes"
+    : > "$REPO/empty.txt"
+    git -C "$REPO" add empty.txt
+    git -C "$REPO" commit -qm "an empty file under -diff"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file empty.txt "remove it"
+    run _hook_in "$REPO" -c 'git diff-tree -r --numstat -M --root --no-commit-id "$1" -- empty.txt' _ "$sha"     # a candidate: a dash for each count
+    [ "$output" = "-"$'\t'"-"$'\t'"empty.txt" ]
+    run _hook_in "$REPO" -c 'git cat-file -s "$(git rev-parse "$1:empty.txt")"' _ "$sha"
+    [ "$output" = 0 ]
+    run_hook
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
 }
 
 # The label's read: check-attr answers for the report line alone, after git's

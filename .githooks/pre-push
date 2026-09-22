@@ -89,6 +89,27 @@
 # a dirty tip, tag or commit through a real push with nothing printed but git's
 # own error line where it printed one; the per-commit diff failed that way with
 # the real git once the added file's blob was gone from the store.
+# Two classes of fail-open are closed that way, and the guarantee is stated per
+# class. The STATUS-KEYED class: a read whose failure returns a non-zero status
+# (or prints an error line), refused as above on every read the hook makes.
+# The EXIT-0 EMPTY-OR-SHORT-ANSWER class: a read that exits 0 with an empty or
+# a short answer the check would read as "nothing to judge" (a listing with no
+# entry, a rewrite with no bytes, a count of zero). It has no status to read,
+# so it is closed by a second read already in hand that the answer must agree
+# with, and a disagreement refuses the push as unscanned, naming the read and
+# both answers. The reads gated that way, all in the binary-verdict check
+# (refuse_hidden_paths): the numstats and the combined patch against the paths
+# a commit changes (round 3: a post-image no verdict answers for is a short
+# read); check-attr's answer against the path asked; the per-commit
+# changed-path listing against the paths its verdicts name; each scratch
+# listing's rewrite against its input's bytes (as_lines); the tip's listing
+# against the symlink pass's listing of the same tree and the grep's read
+# list; and the byte judge's count against the blob's size. The content reads
+# themselves (the tip's grep, the added-lines diff, the address and message
+# logs, a tag's fields) have empty answers that are the object's own (a clean
+# tree, a commit adding no line, a tag with no message) and no second read to
+# check them against: those pass as absent, as the paragraph above says, and a
+# git that exits 0 while printing nothing there is outside this guarantee.
 #
 # Both content checks read what git calls TEXT: the tip's grep skips a blob
 # git calls binary (-I), and the per-commit diff prints no line for one. git
@@ -185,8 +206,12 @@
 # words and also names a driver may take, and a verdict read from the value
 # missed a driver so named) and, where no attribute accounts for the verdict,
 # the blob's size and the clone's core.bigFileThreshold, as facts a reader
-# needs and not as a cause, or, for a one-parent commit's changed file, the
-# previous version's bytes where a NUL among them is the cause, key or no
+# needs and not as a cause, or, for a changed file, the previous version's
+# bytes (in a one-parent commit's parent, at the path the diff read it from
+# when it read the change as a rename; in any parent of a merge, for a path
+# whose combined section printed Binary; never for a type change or a rename
+# candidate, judged by the addition of the new object alone) where a NUL
+# among them is the cause, key or no
 # key (either side binary makes the pair binary), the two facts kept beside
 # that cause where the key is set and the key's advice not printed for it,
 # since raising the key lifts nothing there (with the key set the line named
@@ -200,7 +225,11 @@
 # "Binary files differ" for the pair (either side binary makes the pair
 # binary), so the new text was read by neither check and the commit is
 # refused as hidden, its line naming the previous version's bytes as the
-# cause. Three commits in this repository's own history have that shape (a
+# cause; a merge whose result is such a text file while a parent's version is
+# binary is refused the same way, its line naming that parent's version (the
+# combined patch prints Binary for it too), and so is a one-parent commit
+# that renames the file in the same change, its line naming the path the
+# diff read it from. Three commits in this repository's own history have that shape (a
 # source file that once held a raw NUL byte, replaced by a text version): a
 # clone that has fetched any remote excludes them from every range, and a
 # clone with no remote-tracking refs pushing the history as a new ref is
@@ -322,7 +351,7 @@ failed_scan=0           # a read or scan that could not complete: refused as uns
 failed_creds=0          # a subset of failed_scan: gitleaks itself could not scan, with advice of its own
 hidden_paths=0          # a subset of failed_scan: git calls a text file binary and the identifier scan skipped it, with a remedy of its own
 hidden_unnamed=0        # a subset of hidden_paths: no diff attribute accounts for the verdict, so the advice names the configuration key too
-hidden_prior=0          # a subset of hidden_paths: a one-parent commit's changed file whose previous version is binary by its bytes, with the fetch remedy
+hidden_prior=0          # a subset of hidden_paths: a changed file whose previous version (in the commit's parent, at the path a rename came from, or in any parent of a merge) is binary by its bytes, with the fetch remedy
 scratch=""              # a directory for the NUL-delimited listings the binary-verdict check reads (refuse_hidden_paths); made on first use, removed by scan_identifiers
 rewrite_failure=""      # as_lines' report when it returns 2: the tool that failed and its status, for the caller's unscanned line
 
@@ -534,14 +563,32 @@ refuse_replace_refs() {
 # failed pipeline as zero. A tool that failed is status 2, apart from the
 # newline case, with the tool and its status in rewrite_failure for the
 # caller's line (the count's pipeline status is the failing stage's, pipefail).
-as_lines() {   # <file>...: rewrites each as <file>.nl; status 1 when one holds a newline, 2 when a test or a rewrite failed (rewrite_failure says which)
-    local f n rc
+# Each ANSWER is read as well as each status (the header's second class): a tr
+# that exits 0 and writes nothing, or too little, would hand a join an empty
+# or truncated rewrite under a clean status, so the rewrite's byte count is
+# compared with its input's (wc -c on each; a newline for each NUL keeps the
+# count), and every count, the newline count first, must be a run of digits
+# before any arithmetic reads it, since bash reads an empty operand as zero,
+# the count of a clean file (a wc answering nothing passed the newline test).
+# A count that is not a number, or a rewrite whose count differs from its
+# input's, is status 2 with the rewrite and both raw answers in
+# rewrite_failure.
+as_lines() {   # <file>...: rewrites each as <file>.nl; status 1 when one holds a newline, 2 when a test, a rewrite or a count failed or answered short (rewrite_failure says which)
+    local f n a b rc
     for f in "$@"; do
         rc=0; n=$(tr -cd '\n' < "$f" | wc -c) || rc=$?
         [ "$rc" -eq 0 ] || { rewrite_failure="the newline test's tr or wc exited $rc"; return 2; }
-        [ "$(( n ))" -eq 0 ] || return 1
+        case "${n//[[:space:]]/}" in ''|*[!0-9]*) rewrite_failure="the newline test's wc answered \"$n\" for ${f##*/}, not a count"; return 2 ;; esac
+        [ "${n//[[:space:]]/}" -eq 0 ] || return 1
         rc=0; tr '\0' '\n' < "$f" > "$f.nl" || rc=$?
         [ "$rc" -eq 0 ] || { rewrite_failure="tr exited $rc"; return 2; }
+        rc=0; a=$(wc -c < "$f") || rc=$?
+        [ "$rc" -eq 0 ] || { rewrite_failure="the byte count's wc exited $rc for ${f##*/}"; return 2; }
+        rc=0; b=$(wc -c < "$f.nl") || rc=$?
+        [ "$rc" -eq 0 ] || { rewrite_failure="the byte count's wc exited $rc for the rewrite of ${f##*/}"; return 2; }
+        case "${a//[[:space:]]/}" in ''|*[!0-9]*) rewrite_failure="the byte count's wc answered \"$a\" for ${f##*/}, not a count"; return 2 ;; esac
+        case "${b//[[:space:]]/}" in ''|*[!0-9]*) rewrite_failure="the byte count's wc answered \"$b\" for the rewrite of ${f##*/}, not a count"; return 2 ;; esac
+        [ "${a//[[:space:]]/}" -eq "${b//[[:space:]]/}" ] || { rewrite_failure="the rewrite of ${f##*/} wrote ${b//[[:space:]]/} bytes for ${a//[[:space:]]/} read; tr exited 0"; return 2; }
     done
 }
 
@@ -624,7 +671,12 @@ combined_rows() {   # <patch file>
 # content grep applies), the empty ones set aside by their size. Each new
 # commit: the post-image BLOBS of its changed-path listing (--raw --no-renames
 # -c, so a rename is a deletion and an addition, and a merge lists the paths
-# that differ from every parent): a regular file or a symlink (modes 100644,
+# that differ from every parent; every path it names, any status and mode, is
+# kept as the population its verdicts below must agree with, the header's
+# second class: a path a numstat or the combined patch answers for that the
+# listing did not name is a listing that answered short, refused as unscanned
+# naming the listing and that path, so an emptied listing cannot pass a
+# commit as one that changed nothing): a regular file or a symlink (modes 100644,
 # 100755 and 120000; a gitlink, 160000, names a commit, and a tree is no
 # post-image), less a MODE-ONLY change, whose post-image blob is every
 # pre-image blob (the diff prints its mode lines and no hunk and no Binary
@@ -701,14 +753,22 @@ combined_rows() {   # <patch file>
 # reserved words are also names a driver may take, so no answer decides
 # anything here) names no attribute the hook can point at, and the line states
 # the blob's size and the clone's core.bigFileThreshold instead, facts and not
-# a cause, unless the file is a one-parent commit's change of a file whose
-# previous version is binary by its bytes (the pair is binary when either
-# side is, whatever the key says, so the diff printed no text for the new
-# version): that line names the previous version as the cause, with the two
-# facts beside it where the key is set, and the advice names the fetch
-# remedy (the header) and not the key's, which lifts nothing there. The
-# previous version is read for the report alone, as the attribute is, key
-# or no key; a read that fails, or a path
+# a cause, unless the file is a changed file whose previous version is binary
+# by its bytes (the pair is binary when either side is, whatever the key
+# says, so the diff printed no text for the new version; a merge's combined
+# patch prints Binary the same way when a parent's version is binary): that
+# line names the previous version as the cause, with the two facts beside it
+# where the key is set, and the advice names the fetch remedy (the header)
+# and not the key's, which lifts nothing there. The previous version is read
+# for the report alone, as the attribute is, key or no key: for a one-parent
+# commit in its parent, at the path the diff read the change from when it
+# read it as a rename (the old path re-derived at report time from the
+# commit's raw listing with -M, an R row's two path records, never carried as
+# a field of the rows, since a path may hold a tab); for a merge in each
+# parent in turn, the parent count the caller read (rev-list --parents), the
+# first parent whose version holds a NUL named; never for a type change or a
+# merge's rename candidate, judged by the addition of the new object alone,
+# where the previous version is no cause. A read that fails, or a path
 # with no previous version (an addition, a root commit), leaves the line
 # with its two facts. A one-parent commit's symlink reads no attribute (the
 # pairwise diff applies none to a symlink) and its line says so, with the
@@ -719,14 +779,26 @@ combined_rows() {   # <patch file>
 # scratch directory, a listing's rewrite for the joins) refuses as
 # unscanned, naming the read; whatever was
 # listed is still judged; a check-attr that fails or answers about another
-# path leaves the refusal standing, the failure in the attribute's place. The
+# path leaves the refusal standing, the failure in the attribute's place. A
+# read that exits 0 and answers SHORT refuses as unscanned too, where a
+# second read in hand shows it short (the header's second class), naming the
+# read and both answers: the tip's -z listing against the entry count of the
+# symlink pass's listing of the same tree (a different number, long or
+# short) and against the grep's read list (a file read must be one listed);
+# a commit's changed-path listing against the paths its numstats or its
+# combined patch name; a listing's rewrite against its input's byte count
+# (as_lines); the byte judge's count of zero against the blob's size
+# (cat-file -s: an empty answer is empty content only when the blob is). Each
+# is gated on the read's own status 0 and, for the listing, on its verdicts
+# having exited 0, so a read that failed is refused once, on its status, and
+# not again with a wrong cause; whatever was listed is still judged. The
 # tip is not listed again when its first listing (the symlink pass) failed or
 # found no tree: the failure is reported there once, and a pushed object that
 # peels to a blob has no path an attribute could name.
-refuse_hidden_paths() {   # <local_ref> <local_sha> <revs> <tip listed: 1 or 0>
-    local local_ref="$1" local_sha="$2" revs="$3" tip_listed="$4"
-    local rc rev entry meta path mode blob place fields k i how says size threshold apath attr value counts bytes nuls numstat_ok renamed
-    local status unchanged islink merge prior facts empty_tree=""
+refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent count>" per line> <tip listed: 1 or 0> <the symlink pass's entry count>
+    local local_ref="$1" local_sha="$2" revs="$3" tip_listed="$4" tip_entries="$5"
+    local rc rev n entry meta path mode blob place fields k i how says size threshold apath attr value counts bytes nuls numstat_ok renamed
+    local status unchanged islink merge prior facts empty_tree="" listing_rc count typed prev where rsrc rdst at
     local -a tpaths
     if [ -z "$scratch" ]; then
         scratch=$(mktemp -d "${TMPDIR:-/tmp}/romp-pre-push.XXXXXX") \
@@ -735,8 +807,8 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs> <tip listed: 1 or 0>
     : > "$scratch/entries"      # "<tip, or the commit's sha>\t<blob>\t<path>", one per NUL: the blobs git called binary
     : > "$scratch/tipblobs"     # the blob shas of the tip's tree, one per line: a per-commit candidate among them is the tip half's to judge
     if [ "$tip_listed" -ne 0 ]; then
-        rc=0; git ls-tree -r -z -l "$local_sha" > "$scratch/listing" || rc=$?
-        [ "$rc" -eq 0 ] || unscanned "the TREE of the tip of $local_ref (${local_sha:0:10}) could not be listed for the BINARY VERDICT check (git ls-tree exited $rc)"
+        listing_rc=0; git ls-tree -r -z -l "$local_sha" > "$scratch/listing" || listing_rc=$?
+        [ "$listing_rc" -eq 0 ] || unscanned "the TREE of the tip of $local_ref (${local_sha:0:10}) could not be listed for the BINARY VERDICT check (git ls-tree exited $listing_rc)"
         # The files the tip's grep reads, by the same grep: exit 1 is a tree it
         # read nothing from (empty, or of empty files), not a failure.
         rc=0; git grep --no-color -I -l -z -e '' "$local_sha" -- > "$scratch/read" 2>/dev/null || rc=$?
@@ -753,6 +825,28 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs> <tip listed: 1 or 0>
             elif [ "$rc" -ne 0 ]; then
                 unscanned "the LISTINGS of the tip of $local_ref (${local_sha:0:10}) could not be rewritten for the BINARY VERDICT check ($rewrite_failure)"
             else
+                # The -z listing against the two reads in hand (the header's second
+                # class), when it exited 0: its record count against the entry count
+                # of the symlink pass's plain listing of the same tree (a different
+                # number either way: a listing can answer long as well as short), and
+                # every file the grep lists as read against the paths it names. An
+                # emptied or shortened listing would otherwise empty the tip's
+                # complement and its blob set, and a hidden text file at the tip, the
+                # remote already holding it, would be judged by nothing. Each count
+                # is a run of digits before -eq reads it.
+                if [ "$listing_rc" -eq 0 ]; then
+                    count=$(grep -c . "$scratch/listing.nl") || true
+                    if [ -z "$count" ] || [ -n "${count//[0-9]/}" ] || [ -z "$tip_entries" ] || [ -n "${tip_entries//[0-9]/}" ]; then
+                        unscanned "the TREE of the tip of $local_ref (${local_sha:0:10}) could not be counted for the BINARY VERDICT check (the -z listing's entries counted as \"$count\" and the symlink pass's as \"$tip_entries\", not two counts)"
+                    elif [ "$count" -ne "$tip_entries" ]; then
+                        unscanned "the TREE of the tip of $local_ref (${local_sha:0:10}) was listed short or long for the BINARY VERDICT check (git ls-tree -r -z -l exited 0 and listed $count entries where the symlink pass's git ls-tree -r of the same tree listed $tip_entries)"
+                    fi
+                    path=$(LC_ALL=C awk -v sha="$local_sha" '
+                        FILENAME == ARGV[1] { i = index($0, "\t"); listed[substr($0, i + 1)] = 1; next }
+                        { if (substr($0, 1, length(sha) + 1) == sha ":") { p = substr($0, length(sha) + 2); if (!(p in listed)) { print p; exit } } }' \
+                        "$scratch/listing.nl" "$scratch/read.nl")
+                    [ -z "$path" ] || unscanned "the TREE of the tip of $local_ref (${local_sha:0:10}) was listed short for the BINARY VERDICT check (git ls-tree -r -z -l exited 0 and its listing lacks $path, a file the grep of the tip lists as read)"
+                fi
                 # The tip's blobs, for the per-commit half: a candidate blob the tip
                 # holds under any path was judged here, by the grep (read, or skipped
                 # and refused below) or by the symlink pass, and is not judged again.
@@ -767,20 +861,32 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs> <tip listed: 1 or 0>
             fi
         fi
     fi
-    for rev in $revs; do
-        rc=0; git diff-tree -r --raw --no-renames --root -c -z --no-commit-id "$rev" > "$scratch/listing" || rc=$?
-        [ "$rc" -eq 0 ] || unscanned "the CHANGED PATHS of commit ${rev:0:10} could not be listed for the BINARY VERDICT check (git diff-tree exited $rc)"
+    : > "$scratch/pcount"       # "<sha> <parent count>", one per line: the count the report below reads a commit's previous versions by
+    while read -r -u 3 rev n; do
+        [ -n "$rev" ] || continue
+        listing_rc=0; git diff-tree -r --raw --no-renames --root -c -z --no-commit-id "$rev" > "$scratch/listing" || listing_rc=$?
+        [ "$listing_rc" -eq 0 ] || unscanned "the CHANGED PATHS of commit ${rev:0:10} could not be listed for the BINARY VERDICT check (git diff-tree exited $listing_rc)"
         # Two records per listing entry: ":<modes> <shas> <status>" (a merge's
         # combined line has one more mode, sha and leading colon per parent; the
         # post-image mode and sha come last of their kind) and then the path.
+        : > "$scratch/listed"    # every path the listing names, any status and mode, one per NUL: the population the verdicts below must agree with
         : > "$scratch/post"      # "<blob>\t<path>", one per NUL: the post-image blobs (a regular file or a symlink), a mode-only change left out
         : > "$scratch/gone"      # the pre-image blobs of the deletions, one per NUL: a pure rename's new path has its blob here
         : > "$scratch/links"     # the paths of the symlinks among a one-parent commit's post-images, one per NUL: the line for one names no attribute
         : > "$scratch/tpaths"    # the paths judged as the addition of their new object, one per NUL: a one-parent commit's type changes (status T) here; a merge's rename candidates below
-        merge=0                  # more than one parent: the combined patch's own verdict, not the pair's
+        # More than one parent: the combined patch's own verdict, not the pair's.
+        # Decided by the parent count the caller read (rev-list --parents, once
+        # per commit for the added-lines pass), not by the listing's shape: a
+        # listing that answered nothing for a merge would read as a one-parent
+        # commit's, whose pair numstat prints nothing for a merge, and the two
+        # empty answers would agree. The listing's shape decides only when that
+        # read failed (refused there, so any verdict here is on a refused push).
+        merge=0; k=1
+        case "$n" in ''|*[!0-9]*) n="" ;; *) [ "$n" -le 1 ] || merge=1 ;; esac
         while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
+            printf '%s\0' "$path" >> "$scratch/listed"
             k=${meta%%[^:]*}; k=${#k}
-            [ "$k" -le 1 ] || merge=1
+            [ -n "$n" ] || [ "$k" -le 1 ] || merge=1
             # shellcheck disable=SC2206  # the record is deliberately word-split
             fields=($meta)
             mode=${fields[k]}; blob=${fields[2 * k + 1]}; status=${fields[2 * k + 2]}
@@ -796,7 +902,11 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs> <tip listed: 1 or 0>
                 000000) for ((i = k + 1; i <= 2 * k; i++)); do printf '%s\0' "${fields[i]}" >> "$scratch/gone"; done ;;
             esac
         done < "$scratch/listing"
-        [ -s "$scratch/post" ] || continue
+        printf '%s %s\n' "$rev" "${n:-$k}" >> "$scratch/pcount"
+        # The verdicts are read for every commit, a deletion-only or mode-only
+        # one included, since the listing is checked against them below before
+        # a commit with no post-image is passed over: an emptied listing names
+        # no post-image either, and passing on that alone was the hole.
         numstat_ok=1
         : > "$scratch/rows"; : > "$scratch/rows2"
         if [ "$merge" -ne 0 ]; then
@@ -876,7 +986,7 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs> <tip listed: 1 or 0>
                 [ "$rc" -eq 0 ] || { numstat_ok=0; unscanned "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git diff-tree --numstat against the empty tree exited $rc)"; }
             fi
         fi
-        rc=0; as_lines "$scratch/post" "$scratch/gone" "$scratch/rows" "$scratch/rows2" "$scratch/links" "$scratch/tpaths" "$scratch/rows3" || rc=$?
+        rc=0; as_lines "$scratch/post" "$scratch/gone" "$scratch/rows" "$scratch/rows2" "$scratch/links" "$scratch/tpaths" "$scratch/rows3" "$scratch/listed" || rc=$?
         if [ "$rc" -eq 1 ]; then
             unscanned "a path commit ${rev:0:10} changes holds a newline, which the BINARY VERDICT check cannot judge"
             continue
@@ -884,6 +994,30 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs> <tip listed: 1 or 0>
             unscanned "the LISTINGS of commit ${rev:0:10} could not be rewritten for the BINARY VERDICT check ($rewrite_failure)"
             continue
         fi
+        # The listing against its verdicts (the header's second class): every
+        # path a numstat row or a combined-patch section names must be one the
+        # listing named, whatever its status or mode (a rename's row keeps the
+        # new path, listed as an addition under --no-renames; the addition
+        # numstat's paths are the listing's own). The first path missing names
+        # the listing as short, and the push is refused as unscanned; whatever
+        # was listed is still judged below. Gated on the listing's own status 0
+        # and on every verdict read having exited 0, so a read that failed is
+        # refused once, above, and not again here with a wrong cause. The
+        # per-parent listing of a merge (-m) is never compared: it names paths
+        # that differ from one parent alone, which the combined listing leaves
+        # out by design.
+        if [ "$listing_rc" -eq 0 ] && [ "$numstat_ok" -ne 0 ]; then
+            path=$(LC_ALL=C awk 'FILENAME == ARGV[1] { listed[$0] = 1; next } { p = substr($0, 4); if (!(p in listed)) { print p; exit } }' \
+                "$scratch/listed.nl" "$scratch/rows.nl" "$scratch/rows2.nl" "$scratch/rows3.nl")
+            if [ -n "$path" ]; then
+                if [ "$merge" -ne 0 ]; then
+                    unscanned "the CHANGED PATHS of commit ${rev:0:10} were listed short for the BINARY VERDICT check (git diff-tree --raw -c exited 0 and its listing lacks $path, a path the merge's combined patch printed a section for)"
+                else
+                    unscanned "the CHANGED PATHS of commit ${rev:0:10} were listed short for the BINARY VERDICT check (git diff-tree --raw exited 0 and its listing lacks $path, a path git diff-tree --numstat answered for)"
+                fi
+            fi
+        fi
+        [ -s "$scratch/post" ] || continue      # no post-image blob (a deletion, a mode-only change; a listing that agreed with its verdicts): nothing to join
         # The join. A post-image whose blob the tip's tree holds is set aside
         # first: the tip half judged it. For a one-parent commit, a post-image
         # the pair verdict calls binary is a candidate, unless it is a pure
@@ -897,7 +1031,10 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs> <tip listed: 1 or 0>
         # patch owed and did not print when it has none. A candidate the diff
         # read as a rename is marked (+rename)
         # so the line can say the earlier path counted; a one-parent commit's
-        # symlink is marked (+link) so the line reads no attribute. One a read
+        # symlink is marked (+link) so the line reads no attribute; a path
+        # judged as the addition of its new object (+typed: a type change, a
+        # merge's rename candidate) reads no previous version, since the
+        # addition verdict alone decided it. One a read
         # did not answer for is a short read (awk exits 3 for the pair
         # numstats or the combined patch, 4 for the addition numstat), refused
         # as unscanned when every read exited 0: a read that failed on its
@@ -926,7 +1063,7 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs> <tip listed: 1 or 0>
                   else {
                       if (!(path in binm)) next
                       if ((path in ren) && (blob in gone) && !(path in binn)) next } }
-              printf "%s%s%s\t%s\n", rev, ((path in ren) ? "+rename" : ""), ((path in link) ? "+link" : ""), $0 }
+              printf "%s%s%s%s\t%s\n", rev, ((path in ren) ? "+rename" : ""), ((path in link) ? "+link" : ""), ((path in typed) ? "+typed" : ""), $0 }
             END { if (short) exit short }' "$scratch/rows.nl" "$scratch/rows2.nl" "$scratch/gone.nl" "$scratch/links.nl" "$scratch/tpaths.nl" "$scratch/rows3.nl" "$scratch/tipblobs" "$scratch/post.nl" | tr '\n' '\0' >> "$scratch/entries" || rc=$?
         if [ "$rc" -ne 0 ] && [ "$numstat_ok" -ne 0 ]; then
             if [ "$merge" -eq 0 ]; then
@@ -937,12 +1074,14 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs> <tip listed: 1 or 0>
                 unscanned "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git diff-tree -p -c, the merge's combined patch, printed no verdict for a path the merge changes)"
             fi
         fi
-    done
+    done 3<<< "$revs"
     [ -s "$scratch/entries" ] || return 0
     while IFS= read -r -d '' entry; do
         place=${entry%%$'\t'*}; blob=${entry#*$'\t'}; blob=${blob%%$'\t'*}; path=${entry#*$'\t'*$'\t'}
+        typed=0; case "$place" in *+typed) place=${place%+typed}; typed=1 ;; esac
         islink=0; case "$place" in *+link) place=${place%+link}; islink=1 ;; esac
         renamed=""; case "$place" in *+rename) place=${place%+rename}; renamed=" (the diff read it as a rename, so the attribute of the path it came from counted too)" ;; esac
+        if [ "$place" = tip ]; then at="at the tip of $local_ref (${local_sha:0:10})"; else at="in commit ${place:0:10}"; fi
         # The first 8000 bytes, counted with their NULs; the rest is drained so
         # the cat-file is never cut off mid-write (its status is the pipe's).
         rc=0; counts=$(git cat-file blob "$blob" | { head -c 8000 | LC_ALL=C od -An -v -tu1 | awk '{ for (i = 1; i <= NF; i++) { b++; if ($i == 0) z++ } } END { print b + 0, z + 0 }'; cat > /dev/null; }) || rc=$?
@@ -954,10 +1093,30 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs> <tip listed: 1 or 0>
             fi
             continue
         fi
+        # The two counts are runs of digits before -eq reads them, and a count
+        # of ZERO bytes is empty content only when the blob is empty (the
+        # header's second class): a cat-file that exits 0 and prints nothing, or
+        # an od that fails inside the group (whose status is the drain's), leaves
+        # awk a count of zero for a blob with bytes, and the blob passed as
+        # empty. The size is read apart (cat-file -s), and a size that is not
+        # zero, or could not be read, refuses the push as unscanned naming both.
         read -r bytes nuls <<< "$counts"
-        if [ "$bytes" -eq 0 ] || [ "$nuls" -gt 0 ]; then
-            continue        # empty: nothing hidden; a NUL: binary, which the scan never read
+        if [ -z "$bytes" ] || [ -n "${bytes//[0-9]/}" ] || [ -z "$nuls" ] || [ -n "${nuls//[0-9]/}" ]; then
+            unscanned "the CONTENT of $path $at, which git calls binary and the identifier scan therefore skipped, could not be counted (od and awk answered \"$counts\", not two counts)"
+            continue
         fi
+        if [ "$bytes" -eq 0 ]; then
+            rc=0; size=$(git cat-file -s "$blob" 2>/dev/null) || rc=$?
+            if [ "$rc" -ne 0 ]; then
+                unscanned "the CONTENT of $path $at, which git calls binary and the identifier scan therefore skipped, was read as 0 bytes while its SIZE could not be read (git cat-file -s exited $rc), so whether the blob is empty is unknown"
+            elif [ -z "$size" ] || [ -n "${size//[0-9]/}" ]; then
+                unscanned "the CONTENT of $path $at, which git calls binary and the identifier scan therefore skipped, was read as 0 bytes while its SIZE reads \"$size\" (git cat-file -s), not a size, so whether the blob is empty is unknown"
+            elif [ "$size" -ne 0 ]; then
+                unscanned "the CONTENT of $path $at, which git calls binary and the identifier scan therefore skipped, was read as 0 bytes while git cat-file -s gives its size as $size bytes, so the read answered short (git cat-file blob exited 0)"
+            fi
+            continue        # empty (the size agrees): nothing hidden
+        fi
+        [ "$nuls" -eq 0 ] || continue       # a NUL: binary, which the scan never read
         # Text git called binary. The report's label comes from the path's diff
         # attribute, read for this line alone (the header: never a decision); a
         # one-parent commit's symlink reads none, since the pairwise diff applies
@@ -994,30 +1153,63 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs> <tip listed: 1 or 0>
         else
             size=$(git cat-file -s "$blob" 2>/dev/null || echo unknown)
             threshold=$(git config core.bigFileThreshold 2>/dev/null || true)
-            # No attribute: for a one-parent commit's changed file (not a
-            # rename, whose earlier path this entry does not hold; not a
-            # symlink, judged by its own bytes), the PREVIOUS version's first
-            # 8000 bytes are read as the blob's were above, key or no key,
-            # since a pre-image binary by its bytes makes the pair binary
-            # whatever the key says and the diff prints no text for the new
-            # version (the header). For the report alone, like the attribute:
-            # a read that fails or a path with no previous version (an
-            # addition, a root commit) leaves the two-fact line, where the key
-            # is the candidate cause. A NUL found names the previous version
-            # as the cause, with the two facts beside it where the key is set;
-            # the key's advice is for the two-fact lines alone, since raising
-            # the key lifts nothing here (with the key set, the line named the
-            # key's facts and its remedy while the certain cause went unnamed;
-            # the round 3 auditor, 2026-09-22).
-            prior=0
-            if [ "$place" != tip ] && [ "$islink" -eq 0 ] && [ -z "$renamed" ] \
-                && [ "$(git rev-list --parents -n 1 "$place" 2>/dev/null | awk '{ print NF - 1 }')" = 1 ]; then
-                rc=0; counts=$(git cat-file blob "$place^:$path" 2>/dev/null | { head -c 8000 | LC_ALL=C od -An -v -tu1 | awk '{ for (i = 1; i <= NF; i++) { b++; if ($i == 0) z++ } } END { print b + 0, z + 0 }'; cat > /dev/null; }) || rc=$?
-                if [ "$rc" -eq 0 ]; then read -r bytes nuls <<< "$counts"; [ "$nuls" -eq 0 ] || prior=1; fi
+            # No attribute: for a commit's changed file (not a symlink, judged by
+            # its own bytes; not a type change or a merge's rename candidate,
+            # +typed, judged by the addition of the new object alone), the
+            # PREVIOUS version's first 8000 bytes are read as the blob's were
+            # above, key or no key, since a pre-image binary by its bytes makes
+            # the pair binary whatever the key says and the diff prints no text
+            # for the new version (the header); a merge's combined patch prints
+            # Binary the same way when a parent's version is, so each parent's
+            # version is read in turn, the count the one the caller read
+            # (pcount), never the listing's shape. For a one-parent commit the
+            # version in its parent, at the path the diff read the change from:
+            # for a rename the old path, re-derived here from the commit's raw
+            # listing with -M (an R row's two path records), never carried in
+            # the rows or the entries, since a path may hold a tab. For the
+            # report alone, like the attribute: a read that fails or a path with
+            # no previous version (an addition, a root commit) leaves the
+            # two-fact line, where the key is the candidate cause. A NUL found
+            # names the previous version as the cause (the parent, or the old
+            # path, named where it is not the commit's own path), with the two
+            # facts beside it where the key is set; the key's advice is for the
+            # two-fact lines alone, since raising the key lifts nothing here
+            # (with the key set, the line named the key's facts and its remedy
+            # while the certain cause went unnamed; the round 3 auditor,
+            # 2026-09-22; a merge's line named the key's facts and remedy with
+            # no cause and no fetch remedy, and a rename's the rename clause and
+            # the key's remedy, the round 4 refuters 2026-09-22).
+            prior=0; where=""
+            if [ "$place" != tip ] && [ "$islink" -eq 0 ] && [ "$typed" -eq 0 ]; then
+                k=$(LC_ALL=C awk -v r="$place" '$1 == r { print $2; exit }' "$scratch/pcount")
+                if [ -z "$k" ] || [ -n "${k//[0-9]/}" ]; then k=0; fi
+                if [ "$k" -eq 1 ]; then
+                    prev=$path
+                    if [ -n "$renamed" ]; then
+                        prev=""; rc=0; git diff-tree -r --raw -M -z --root --no-commit-id "$place" > "$scratch/renames" 2>/dev/null || rc=$?
+                        if [ "$rc" -eq 0 ]; then
+                            while IFS= read -r -d '' meta && IFS= read -r -d '' rsrc; do
+                                case "${meta##* }" in R*|C*) IFS= read -r -d '' rdst || rdst=""; [ "$rdst" != "$path" ] || prev=$rsrc ;; esac
+                            done < "$scratch/renames"
+                        fi
+                    fi
+                    if [ -n "$prev" ]; then
+                        rc=0; counts=$(git cat-file blob "$place^:$prev" 2>/dev/null | { head -c 8000 | LC_ALL=C od -An -v -tu1 | awk '{ for (i = 1; i <= NF; i++) { b++; if ($i == 0) z++ } } END { print b + 0, z + 0 }'; cat > /dev/null; }) || rc=$?
+                        if [ "$rc" -eq 0 ]; then read -r bytes nuls <<< "$counts"; case "$nuls" in ''|*[!0-9]*) ;; 0) ;; *) prior=1 ;; esac; fi
+                        [ "$prior" -eq 0 ] || [ "$prev" = "$path" ] || where=" (at $prev, the path the diff read it from)"
+                    fi
+                elif [ "$k" -gt 1 ]; then
+                    for ((i = 1; i <= k; i++)); do
+                        rc=0; counts=$(git cat-file blob "$place^$i:$path" 2>/dev/null | { head -c 8000 | LC_ALL=C od -An -v -tu1 | awk '{ for (i = 1; i <= NF; i++) { b++; if ($i == 0) z++ } } END { print b + 0, z + 0 }'; cat > /dev/null; }) || rc=$?
+                        [ "$rc" -eq 0 ] || continue
+                        read -r bytes nuls <<< "$counts"
+                        case "$nuls" in ''|*[!0-9]*) ;; 0) ;; *) prior=1; where=" in parent $i of the merge"; break ;; esac
+                    done
+                fi
             fi
             if [ "$prior" -ne 0 ]; then
                 facts=""; [ -z "$threshold" ] || facts=" whatever the key says (the blob is $size bytes; core.bigFileThreshold is $threshold in this clone's configuration)"
-                echo "romp pre-push: $path in commit ${place:0:10} is text that git calls binary although $says, so no attribute of its path accounts for the verdict; the previous version of the file is binary by its bytes (a NUL in its first 8000), which made git print no text diff for the change$facts, and the identifier scan could not read the new text, so the push is refused rather than scanned" >&2
+                echo "romp pre-push: $path in commit ${place:0:10} is text that git calls binary although $says, so no attribute of its path accounts for the verdict; the previous version of the file$where is binary by its bytes (a NUL in its first 8000), which made git print no text diff for the change$facts, and the identifier scan could not read the new text, so the push is refused rather than scanned" >&2
                 hidden_prior=1
             elif [ "$place" = tip ]; then
                 echo "romp pre-push: $path at the tip of $local_ref (${local_sha:0:10}) is text that git calls binary although $says, so no attribute of its path accounts for the verdict (the blob is $size bytes; core.bigFileThreshold is ${threshold:-not set} in this clone's configuration); the identifier scan did not read it, so the push is refused rather than scanned" >&2
@@ -1035,7 +1227,7 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs> <tip listed: 1 or 0>
 # ── identifiers ───────────────────────────────────────────────────────────
 scan_identifiers() {
     local strings_file line grep_args local_ref local_sha _remote_ref remote_sha lines role email obj tagger chosen
-    local rc out errs hits listing links link blob link_path target revs rev n msg addrs inner kind tip_listed
+    local rc out errs hits listing links link blob link_path target revs rev n msg addrs inner kind tip_listed tip_entries rev_counts
     strings_file="$(private_strings_file)"
     identifier_scan_armed || return 0
 
@@ -1115,6 +1307,10 @@ scan_identifiers() {
                 unscanned "the SYMLINKS of the tip of $local_ref (${local_sha:0:10}) could not be listed"
             fi
         }
+        # Its entry count, for the -z listing refuse_hidden_paths makes of the same
+        # tree to agree with (the header's second class). grep -c over the lines,
+        # never wc -l over the printf: an empty listing is one empty line to wc.
+        tip_entries=$(printf '%s\n' "$listing" | grep -c .) || true
         if links=$(printf '%s\n' "$listing" | grep '^120000 '); then
             while IFS= read -r link; do
                 blob=${link#* * }; blob=${blob%%[[:space:]]*}
@@ -1147,9 +1343,11 @@ scan_identifiers() {
         # shellcheck disable=SC2046  # the range is deliberately word-split
         revs=$(git rev-list $(rev_range "$local_sha" "$remote_sha") 2>/dev/null \
                || git rev-list "$local_sha")
+        rev_counts=""           # "<sha> <parent count>" per line, for refuse_hidden_paths: the count read here decides a merge there, not a listing's shape
         for rev in $revs; do
             rc=0; n=$(parent_count "$rev") || rc=$?
             [ "$rc" -eq 0 ] || unscanned "the ADDED LINES of commit ${rev:0:10} could not be read (git rev-list --parents exited $rc)"
+            rev_counts="$rev_counts$rev $n"$'\n'
             rc=0; out=$(added_lines "$rev" "$n") || rc=$?
             [ "$rc" -eq 0 ] || unscanned "the ADDED LINES of commit ${rev:0:10} could not be read (git diff-tree exited $rc)"
             if hits=$(printf '%s\n' "$out" | grep -i -F "${grep_args[@]}" | cut -f1 | sort -u) && [ -n "$hits" ]; then
@@ -1191,7 +1389,7 @@ scan_identifiers() {
         # The blobs the two content checks above skipped as binary while their
         # bytes are text (the header): refused rather than scanned, whatever
         # they carry.
-        refuse_hidden_paths "$local_ref" "$local_sha" "$revs" "$tip_listed"
+        refuse_hidden_paths "$local_ref" "$local_sha" "$rev_counts" "$tip_listed" "$tip_entries"
 
         # An annotated tag's own tagger and message (the header note): the pushed
         # object, peeled tag by tag down to the commit, which the loop above read.
