@@ -40,9 +40,13 @@
 # (it does not check that the bundles are built, which the step's run does).
 # After node --test it reads the run's record from scripts/ci-browser-legs-reporter.mjs (one line per result, attributed to
 # its bundle by node's own record of the file; node's TAP record names no file for a pass, so it cannot say which leg a pass
-# belongs to) and derives, per rostered leg, DID THIS LEG RUN: at least one result attributed to it is a pass that carries no
-# skip or todo, is a test and not a suite, and is not node's file-level result (node reports a file that registered nothing as
-# one pass named by its path). A leg with none is red naming the leg and what the record held instead (skips, todos, suites,
+# belongs to) and derives, per rostered leg, that A TEST OF ITS BUNDLE PASSED: at least one result attributed to it is a pass
+# that carries no skip or todo, is a test and not a suite, and is not node's file-level result (node reports a file that
+# registered nothing as one pass named by its path). That is the whole of what the record can prove: node's events carry no
+# launch, so a bundle that mixes source pins with its browser tests satisfies the property by a pin's pass alone, and a
+# browser test behind an unmet condition, which registers nothing and emits no event, leaves no line to read; the skip and
+# lost-browser reads below see inBrowser's own skip and failure by name when the launch is reached, and nothing here proves
+# it was reached. A leg with no pass at all is red naming the leg and what the record held instead (skips, todos, suites,
 # the file-level result), since the step would otherwise claim coverage it did not run; a leg whose results all fail is
 # node's red, passed through. Beside that property: a test skipped is red naming the test, its reason and the switch's state
 # in the run (with the switch unset, as a local run may have it, the remedy is to run with it set); a failure inside a todo is
@@ -235,7 +239,7 @@ while IFS=$'\t' read -r kind leg a b c d e f g; do
   case "$kind" in
     TALLY)   # $a passes that count, $b fails that count, $c skips, $d todos, $e todo failures, $f suites, $g file-level results
       if [ "$a" -eq 0 ] && [ "$b" -eq 0 ]; then
-        echo "ci-browser-legs: $leg: no test of this leg passed in this run (the record holds $c skipped, $d todo, $f suite and $g file-level results for it), so the step claims coverage it did not run: a rostered leg holds a test that runs and passes here; a leg whose tests skip, are todo, or sit behind an unmet condition runs none when it is unmet, so move it to $EXCLUDED with that reason until one runs" >&2
+        echo "ci-browser-legs: $leg: no test of this leg passed in this run (the record holds $c skipped, $d todo, $f suite and $g file-level results for it), so the step claims coverage it did not run: a rostered leg holds a test that runs and passes here (a pass is the most the record proves: a pass from a test needing no browser satisfies this check, and the browser part's own run is read only by the skip and lost-browser lines when its launch is reached); a leg whose tests skip, are todo, or sit behind an unmet condition runs none when it is unmet, so move it to $EXCLUDED with that reason until one runs" >&2
         [ "$status" -ne 0 ] || status=1
       fi;;
     SKIP)
