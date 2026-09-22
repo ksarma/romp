@@ -1206,8 +1206,10 @@ test("the fourth class the census cannot name, witnessed through its own walker:
 
 /** The CLIENT_DIAG_VALUES table's body read by a BALANCED parse (the maintainer's round 6 ruling, extra8-1): the text tokenized over
  *  parentheses, brackets and braces and over double- and single-quoted strings (a `#` comment runs to its line's end and is dropped), split
- *  into entries at depth-0 commas; per entry the string literals before its top-level colon are the surface and the key (any text, a hyphen
- *  included), the string literals inside the frozenset(...) argument are its words, and `container` says what that argument opens with (a
+ *  into entries at depth-0 commas; per entry the tuple before its top-level colon is read element by element, a string literal's text (any
+ *  text, a hyphen included) or the label `<not a string literal>` for an element that is not one (a name, a call, a concatenation), as the
+ *  surface and the key, so an entry keyed by a name is named by position and not by whichever literal follows; the string literals inside
+ *  the frozenset(...) argument are its words, and `container` says what that argument opens with (a
  *  tuple, a set, a list, a single word in parentheses with no trailing comma, which Python reads as a string, or a bare string, whose
  *  frozenset is its letters too). `frozensets` counts
  *  `frozenset(` over the body with comments and string contents removed, the number of entries the parse must read. */
@@ -1226,10 +1228,26 @@ function parseValuesTable(body: string): { entries: Array<{ surface: string; key
     cur += ch;
   }
   if (cur.trim()) { chunks.push(cur); colons.push(colon); }
+  // the key tuple's elements at its own depth-0 commas (the outer parentheses dropped): a string literal's text, or the label for any other
+  // expression, so the entry `(CHAT_SURFACE, "view")` reads as <not a string literal>/view, the name's position labelled, and not as
+  // view/undefined, the one literal shifted into the surface's place
+  const keyParts = (k: string): string[] => {
+    let t = k.trim(); if (t.startsWith("(") && t.endsWith(")")) t = t.slice(1, -1);
+    const parts: string[] = []; let d = 0, cur = "", qq: string | null = null;
+    for (let i = 0; i < t.length; i++) {
+      const c = t[i];
+      if (qq) { cur += c; if (c === "\\" && i + 1 < t.length) cur += t[++i]; else if (c === qq) qq = null; continue; }
+      if (c === '"' || c === "'") qq = c; else if ("([{".includes(c)) d++; else if (")]}".includes(c)) d--;
+      if (d === 0 && c === ",") { parts.push(cur); cur = ""; continue; }
+      cur += c;
+    }
+    if (cur.trim()) parts.push(cur);
+    return parts.map((x) => /^\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*$/.test(x) ? strings(x)[0] : "<not a string literal>");
+  };
   const entries = chunks.map((e, i) => {
     const at = colons[i];
     assert.ok(at >= 0, "an entry of the table has a top-level colon: " + e.trim());
-    const [surface, key] = strings(e.slice(0, at));
+    const [surface = "<missing>", key = "<missing>"] = keyParts(e.slice(0, at));
     const value = e.slice(at + 1), m = /frozenset\s*\(/.exec(value);
     assert.ok(m, "an entry's value is a frozenset(...): " + e.trim());
     const argStart = m!.index + m![0].length;
@@ -1254,7 +1272,8 @@ test("the page's guard literal is a member of the set the kernel admits for the 
   // that bounds a privacy value is a silent shape). The regex is kept as the strict form the table is written in (a `\w+` surface and key, a
   // tuple of double-quoted words each followed by a comma); the parse reads any spelling (parseValuesTable above), its entry count is the
   // count of `frozenset(` in the body, and the two reads must agree entry for entry, so an entry the regex cannot read (a hyphenated surface
-  // or key, a set or list literal, a single word in parentheses with no trailing comma) is a red here NAMING the entry, never a silent miss
+  // or key, a surface or key that is not a string literal, named by position, a set or list literal, a single word in parentheses with no
+  // trailing comma) is a red here NAMING the entry, never a silent miss
   // that leaves the one-entry assertion below green. tests/test_client_diag_allowlist.py reads the runtime object and reds on a second entry
   // or a list too; this cell is the tree-side read of the table's text.
   const balanced = parseValuesTable(table![1]);
@@ -1262,7 +1281,7 @@ test("the page's guard literal is a member of the set the kernel admits for the 
   const entryName = (e: { surface: string; key: string }): string => e.surface + "/" + e.key;
   for (const nm of [...new Set([...entries.map(entryName), ...balanced.entries.map(entryName)])]) {
     const r = entries.find((e) => entryName(e) === nm), p = balanced.entries.find((e) => entryName(e) === nm);
-    assert.ok(r && p, "the regex and the balanced parse disagree on the entry " + nm + ": the regex read " + (r ? JSON.stringify(r.words) : "nothing") + ", the parse read " + (p ? JSON.stringify(p.words) + " in " + p.container : "nothing") + " (a spelling one read cannot see: a hyphenated surface or key, a set or list literal, a tuple with no trailing comma, a bare string)");
+    assert.ok(r && p, "the regex and the balanced parse disagree on the entry " + nm + ": the regex read " + (r ? JSON.stringify(r.words) : "nothing") + ", the parse read " + (p ? JSON.stringify(p.words) + " in " + p.container : "nothing") + " (a spelling one read cannot see: a hyphenated surface or key, a surface or key that is not a string literal, a set or list literal, a tuple with no trailing comma, a bare string)");
     assert.deepEqual(r!.words, p!.words, "the entry " + nm + ": the two reads agree on its words (" + p!.container + ")");
   }
   assert.deepEqual(entries.map((e) => e.surface + "/" + e.key), ["chat/view"], "one bounded key, chat's `view` (every entry of the table is read: a second is named here)");
