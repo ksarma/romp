@@ -2262,10 +2262,12 @@ _TREE_COPIERS = {"test_lab_dist.py", "test_github_repo.py",             # test_g
                  # dist for upstream's own labs, called by none here (_TWIN_CALLERS); test_dist_copy_staging.py copies a
                  # scratch tree to prove the staging names are skipped, never the extension's dist
                  "dist_copy.py", "test_dist_copy_staging.py",
-                 # test_bats_bare_negation.py (fork PR #871) copies the checkout, less .git, node_modules and the python caches,
-                 # into a scratch tree per rewrite so bats can run a rewritten test alone without touching the checkout; the
-                 # copy is removed after its run. It builds no dist and names none: a shell job's checkout holds no dist, and a
-                 # built one on a developer's box rides along unread (the ratchet named it in CI's Python cells, 2026-09-20)
+                 # test_bats_bare_negation.py (fork PR #871) copies the checkout, less .git, node_modules, the python caches and
+                 # the extension's build outputs (dist, out-tests: its COPY_EXCLUDES, every name one git ignores and no tracked
+                 # path has), into a scratch tree per rewrite so bats can run a rewritten test alone without touching the
+                 # checkout; the copy is removed after its run. It builds no dist and names none as a source: a shell job's
+                 # checkout holds no dist, and a built one on a developer's box is left out of the copy (the ratchet named the
+                 # module in CI's Python cells, 2026-09-20)
                  "test_bats_bare_negation.py"}
 _KEY_READERS = {"test_kernel_bundle_staleness.py",                     # imports lab_dist for the input parity pin
                 "test_kernel_bundle_vendor_inputs.py"}                 # and for the BUILD_TIMEOUT pin; neither serves
@@ -2364,10 +2366,9 @@ class ServedModulesUseTheHelper(unittest.TestCase):
         self.assertEqual(offences("test_perf_bench.py", 'shutil.copytree(os.path.join(ROOT, "kernel"), os.path.join(scratch, "kernel"), '
                                                         'ignore=shutil.ignore_patterns("__pycache__"))\n'), [])
         self.assertEqual(offences("test_perf_bench.py", "shutil.copytree(os.path.join(EXT, 'dist'), lab)\n"), ["copytree(dist"])
-        # the bats bare-negation module's per-rewrite copy of the checkout into a scratch tree (fork PR #871) is allowlisted, and
-        # refused the extension's dist like every tree copier
-        self.assertEqual(offences("test_bats_bare_negation.py", 'shutil.copytree(root, tree, symlinks=True, ignore=shutil.ignore_patterns('
-                                                                '".git", "node_modules", "__pycache__", ".pytest_cache"))\n'), [])
+        # the bats bare-negation module's per-rewrite copy of the checkout into a scratch tree (fork PR #871, its _copy_tree over
+        # COPY_EXCLUDES) is allowlisted, and refused the extension's dist like every tree copier
+        self.assertEqual(offences("test_bats_bare_negation.py", 'shutil.copytree(root, tree, symlinks=True, ignore=shutil.ignore_patterns(*COPY_EXCLUDES))\n'), [])
         self.assertEqual(offences("test_bats_bare_negation.py", "shutil.copytree(os.path.join(EXT, 'dist'), lab)\n"), ["copytree(dist"])
 
     def test_every_served_module_calls_copy_dist(self):

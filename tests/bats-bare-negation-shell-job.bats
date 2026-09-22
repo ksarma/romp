@@ -19,24 +19,29 @@
 # test fails.
 #
 # One test per class or module test, not one for all: the job's BATS_TEST_TIMEOUT is a per-test bound of 180 s, and a single test
-# running the register and the corpus took 139 s under it on a loaded box (2:19.14 total); apart, each of the three stays well
-# inside the bound (the register's and the corpus's measured times, under both bats versions the record is verified against, are
-# in the module docstring, the one home of those figures; the road's tests each bound the runs they start themselves). Every
-# bats run the module starts is bounded itself (RUN_TIMEOUT, 60 s per corpus run), and the corpus prints each candidate's row as
-# it is decided, so a run the outer bound ends still names its candidate in the output bats shows. Since fork PR #871's round 2
-# each rewrite of a candidate runs twice (REPEATS) and four candidates are decided at a time (CORPUS_WORKERS), each run in its own
-# copy of the tree; the corpus's time under that is in the module docstring.
+# running the register and the corpus took 139 s under it on a loaded box (2:19.14 total); apart, each test this file defines
+# stays well inside the bound (the register's and the corpus's measured times, under both bats versions the record is verified
+# against, are in the module docstring, the one home of those figures; the routes pin is seconds, as that docstring says; the
+# road's tests each bound the runs they start themselves). Every bats run the module starts is bounded itself (RUN_TIMEOUT, 60 s
+# per corpus run), and the corpus prints each candidate's row as it is decided, so a run the outer bound ends still names its
+# candidate in the output bats shows. Since fork PR #871's round 2 each rewrite of a candidate runs twice (REPEATS) and four
+# candidates are decided at a time (CORPUS_WORKERS), each run in its own copy of the tree; the corpus's time under that is in the
+# module docstring, and the control arm on a red corpus runs after every verdict and report is out, bounded together at
+# CONTROL_BUDGET (60 s), so what the per-test bound can end mid-arm is diagnostics.
 #
 # Every BATS_* variable is unset for the inner run. Under the job's BATS_TEST_TIMEOUT bats's timeout watcher is a background child
 # of each test, and a bare `wait` in a test waits on it: the register's D_bg shape hung to a 40 s kill with the variable set
 # (exit 124) and passed in 0.07 s without it. A nested bats must also not read the outer run's BATS_ROOT, BATS_RUN_TMPDIR and the
 # rest. Since fork PR #871's round 2, tenth commit, the module builds the environment of every bats run it starts from a rule
-# (BATS_ENV_KEYS: PATH, a fresh HOME and TMPDIR, LANG) and from nothing else of its process, so no BATS_* variable and no
-# import-time write of a test module reaches a run a verdict is read from, by construction (since the thirteenth commit every
-# candidate whose verdict is not `read` runs both rewrites once more under the process environment less BATS_*, a CONTROL whose
-# verdict is never the candidate's and whose sentence names the rule and where a key is added when the verdict or an outcome
-# differs; the twelfth ran it on one shape, both sides failing on one line); the scrub here keeps the python process itself
-# clean, so nothing else it starts (its bash probes run under its own environment) inherits them either. The module also drops the outer's
+# (BATS_ENV, one mapping from key to derivation: PATH from the process less every bats libexec directory, a fresh HOME and TMPDIR,
+# LANG fixed to `C`) and from nothing else of its process, so no BATS_* variable and no import-time write of a test module reaches
+# a run a verdict is read from, by construction, PATH excepted, the one key the rule passes through, which the module docstring
+# says and pins (since the thirteenth commit every candidate whose verdict is not `read` runs both rewrites once more under the
+# process environment less BATS_*, a CONTROL whose verdict is never the candidate's; since the fourteenth the controls run after
+# every verdict and report is out, and the control's sentence names the mapping and where a key is added when the verdict or an
+# outcome differs, or states what it observed and what that cannot tell apart; the twelfth ran it on one shape, both sides
+# failing on one line); the scrub here keeps the python process itself clean, so nothing else it starts (its bash probes run
+# under its own environment) inherits them either. The module also drops the outer's
 # libexec directory from the inner run's PATH (bats puts it first there, and the `bats` in it expects the BATS_ROOT this scrub
 # removes: left on PATH, the inner bats ran with BATS_ROOT empty and did not load at all under CI's /usr/local layout, measured
 # with 1.11.1 from a scratch prefix as the outer and the inner bats).
