@@ -1,7 +1,7 @@
 ---
 title: docs/reference.md documents the feed memo's coldLive and coldFlip counters
 status: candidate
-where: docs/reference.md (section Kernel performance counters, the builds bullet's memo paragraph, the per-session card memo inside build_feed: the coldLive and coldFlip sentence after the failed and failing sentence; lines 3418 to 3423 on the fold branch after the 1846 paragraph above it was deferred, 3455 to 3460 at the fold's merge commit)
+where: docs/reference.md (section Kernel performance counters, the builds bullet's memo paragraph, the per-session card memo inside build_feed: the coldLive and coldFlip sentence after the failed and failing sentence); upstream/2026-09-20-perf-cold-counters-docs.md (this entry)
 added: 2026-09-20
 pr:
 tier: docs

@@ -1,7 +1,7 @@
 ---
 title: The vertical-split drag lab's 15 s dragstart wait rethrows a non-TimeoutError
 status: candidate
-where: tests/test_chat_vsplit_served.py (the pointer driver's dragstart wait: the waitForFunction on window.__vsplitDragStarted with the 15000 ms timeout and its catch, line 272 at the fold's head; upstream's line 238 in PR 1832)
+where: tests/test_chat_vsplit_served.py (the pointer driver's dragstart wait: the waitForFunction on window.__vsplitDragStarted with the 15000 ms timeout and its catch); upstream/2026-09-20-vsplit-dragstart-wait-rethrows.md (this entry)
 added: 2026-09-20
 pr:
 tier: docs

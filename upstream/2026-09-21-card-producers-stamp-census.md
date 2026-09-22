@@ -1,7 +1,7 @@
 ---
 title: The card boards test censuses the producers: every card-shaped literal stamps board and category
 status: candidate
-where: tests/test_card_boards.py _card_literals and the census case (CardsCarryTheirBoard), _other_card_forms and the premise case (test_the_kernel_builds_no_card_in_a_form_the_census_cannot_see); kernel/kernel.py _user_todo_placeholder (fork-only)
+where: tests/test_card_boards.py _card_literals and the census case (CardsCarryTheirBoard), _other_card_forms and the premise case (test_the_kernel_builds_no_card_in_a_form_the_census_cannot_see); kernel/kernel.py _user_todo_placeholder (fork-only); upstream/2026-09-21-card-producers-stamp-census.md (this entry)
 added: 2026-09-21
 pr:
 tier: docs

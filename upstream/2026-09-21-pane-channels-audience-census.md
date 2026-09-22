@@ -1,7 +1,7 @@
 ---
 title: The reconnect test censuses the kernel's push audiences: every app _push addresses is in PANE_CHANNELS and every member is addressed, each on the channel its audience names
 status: candidate
-where: ui/webview/federation-reconnect.test.ts (pyNormalise, pushAudiences and OTHER_FORMS, the census case over _push's audiences and the premise case over a planted _push), ui/webview/federation.ts (PANE_CHANNELS, exported for the census), kernel/kernel.py (_push, whose reads of the app key the census classifies)
+where: ui/webview/federation-reconnect.test.ts (pyNormalise, pushAudiences with its binding scan, and OTHER_FORMS, the census case over _push's audiences, the premise case over a planted _push, and the binding-forms case over a planted _push), ui/webview/federation.ts (PANE_CHANNELS, exported for the census), kernel/kernel.py (_push, whose reads of the app key the census classifies), upstream/2026-09-21-pane-channels-audience-census.md (this entry)
 added: 2026-09-21
 pr:
 tier: docs

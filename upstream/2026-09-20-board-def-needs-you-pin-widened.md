@@ -1,7 +1,7 @@
 ---
 title: board-def.test.ts and test_card_boards.py: the needs-you count pins accept either spelling of the pair
 status: candidate
-where: ui/webview/board-def.test.ts (the sort, grouping and notification-set test, which reads the kernel's feed table: the either-spelling needs-you pin); tests/test_card_boards.py (BellAndBadgeReadTheBoard: the _needs_you_count either-spelling pin and the _feed_notifications_diff needs_you literal pin)
+where: ui/webview/board-def.test.ts (the sort, grouping and notification-set test, which reads the kernel's feed table: the either-spelling needs-you pin); tests/test_card_boards.py (BellAndBadgeReadTheBoard: the _needs_you_count either-spelling pin and the _feed_notifications_diff needs_you literal pin); upstream/2026-09-20-board-def-needs-you-pin-widened.md (this entry)
 added: 2026-09-20
 pr:
 tier: docs

@@ -1,7 +1,7 @@
 ---
 title: The postal bus ensure reports its road and the kernel arms its ensured flag only when it owns a bus
 status: candidate
-where: postal/postal_service.py ensure_road and the ensure verb; kernel/kernel.py _BUS_OWNED_ROADS, _ensure_road, _ensure_postal_bus, _BUS_ROAD_SAID, the _revive_postal_bus gate and _bus_port (the docstring and the inline trust comment); tests/test_kernel_trust.py, tests/test_postal_bus_revive_guard.py (KernelReadsTheRoad, the said-once latch case); docs/reference.md (the ROMP_POSTAL_PORT paragraph)
+where: postal/postal_service.py ensure_road and the ensure verb; kernel/kernel.py _BUS_OWNED_ROADS, _ensure_road, _ensure_postal_bus, _BUS_ROAD_SAID, the _revive_postal_bus gate and _bus_port (the docstring and the inline trust comment); tests/test_kernel_trust.py; tests/test_postal_bus_revive_guard.py (KernelReadsTheRoad, the said-once latch case); docs/reference.md (the ROMP_POSTAL_PORT paragraph); upstream/2026-09-21-postal-bus-ensure-roads-guard.md (this entry)
 added: 2026-09-21
 pr:
 tier: fix
