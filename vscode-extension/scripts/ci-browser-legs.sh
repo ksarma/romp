@@ -6,7 +6,8 @@
 # instead of skipping. Before node --test this script checks that the roster and the tree agree, and every red names
 # the line and what to do:
 #   - a roster or exclusions line whose source is not in the tree (the source moved or was deleted): fix the line;
-#   - a browser leg in neither file: add it to the roster, or to ci-browser-legs-excluded.txt with a tab and a reason;
+#   - a browser leg in neither file: red with the remedy the census derives from its source, the same remedy an arrived
+#     pending line gets (below), never a bare add-or-exclude;
 #   - a line in both files, a duplicate line, an exclusions line with no reason, a line naming no browser leg: fix it;
 #   - a malformed line (trailing whitespace or a carriage return counts) or an exclusions line with no reason: printed with
 #     the whitespace visible (as bash's %q spells it), and the leg it names (the line's first word after its leading
@@ -22,13 +23,16 @@
 #   - an exclusions reason "pending #<PR>: <why>" names a leg an open PR brings: allowed while the leg's source is absent
 #     from the tree (the line is then in neither the roster nor the census, and the census pass below is over the roster
 #     plus the exclusions lines whose source is present); once the source is present the line is red with the promotion
-#     remedy the census derives from the source (a roster line, a reason of its own, or no line), and the leg is not also
-#     called missing from both files; a pending reason that names no PR is red.
+#     remedy the census derives from the source (remedy_kind: a roster line for a leg that passes the gate and reaches
+#     Chromium alone; the engine form for one reaching Firefox or WebKit; the embedded-driver sentence for a driver string;
+#     the gate's own remedy, pass it and roster the leg, for a Chromium-only leg that misses it, since the exclusions admit
+#     no reason of its own; no line for a module that is no leg), and the leg is not also called missing from both files;
+#     a pending reason that names no PR is red.
 # THE CENSUS is scripts/browser-legs-census.mjs, run once here (--tsv) for the population and every per-line verdict: it
 # reads each test module's tree with the TypeScript compiler (a leg calls the shared launcher through its import under
 # any binding, or names a playwright package by any specifier, or holds a driver string that does; engines and launches
 # from playwright-derived expressions; skips and todos from the tree, so a comment holds none; a module of the tree a leg
-# loads is read for what it binds, transitively, and a leg that reaches inBrowser or playwright only through one is
+# loads is read for what it binds or calls, transitively, and a leg that reaches inBrowser or playwright only through one is
 # refused) and REFUSES, with file and line, a form it cannot classify, on which this script exits 1 having judged
 # nothing. The compiler lives under
 # vscode-extension/node_modules, present in the vscode-extension job after its npm ci; without it the census exits 1
@@ -91,15 +95,41 @@ is_leg() { [ "$(census_field "$1" 2)" = "1" ]; }
 gap_of() { local g; g=$(census_field "$1" 3); if [ "$g" != "-" ]; then printf '%s' "$g"; fi; return 0; }
 engines_of() { local e; e=$(census_field "$1" 4); if [ "$e" != "-" ]; then printf '%s' "$e"; fi; return 0; }
 census() { awk -F '\t' '$2 == "1" { print $1 }' <<<"$census_tsv"; }
+# The class of remedy the census's row derives for a source, one rule for an arrived pending line (promotion_of) and for a
+# leg in neither file (neither_remedy); ui/webview/ci-browser-legs-census.test.ts's remedyKind states the same rule over the
+# census's record. Every remedy names a row one of the exclusions' four forms admits, or the roster: none (no leg),
+# embedded (the embedded-driver sentence), engine (the engine form; the engine alone is why the gating job cannot run it),
+# roster (passes the gate and reaches Chromium alone), gate (Chromium alone and misses the gate: no form admits such a leg,
+# so it passes the gate and is rostered).
+remedy_kind() {   # $1 the bundle
+  if ! is_leg "$1"; then printf none; return 0; fi
+  if [ "$(census_field "$1" 5)" = "embedded" ]; then printf embedded; return 0; fi
+  if [ -n "$(engines_of "$1")" ]; then printf engine; return 0; fi
+  if [ -z "$(gap_of "$1")" ]; then printf roster; return 0; fi
+  printf gate
+}
+engine_form() { printf '%s' "launches $(engines_of "$1"); the gating job installs Chromium only"; }
+gate_remedy() { printf '%s' "pass the roster gate (the source $(gap_of "$1"): launch through inBrowser alone, with no playwright, launch, skip or todo of the leg's own)"; }
+NO_OWN_REASON="the exclusions admit no reason of its own, so a leg that reaches Chromium alone is rostered once it passes the gate"
+EMBEDDED_REMEDY="the embedded-driver sentence the header of $EXCLUDED states (the leg's only playwright is in a driver string it runs as a child process, which the switch never reaches)"
+neither_remedy() {   # $1 a browser leg in neither file: the remedy its census row derives (the pending-row remedy, never a bare add-or-exclude)
+  case "$(remedy_kind "$1")" in
+    roster) printf '%s' "add '$1' to $ROSTER (the source launches through inBrowser alone and reaches no engine but Chromium), with the step's measured seconds in the PR body";;
+    engine) printf '%s' "add it to $EXCLUDED with a tab and the engine form its header admits, \"$(engine_form "$1")\"";;
+    embedded) printf '%s' "add it to $EXCLUDED with a tab and $EMBEDDED_REMEDY";;
+    gate) printf '%s' "$(gate_remedy "$1") and add '$1' to $ROSTER with the step's measured seconds in the PR body: $NO_OWN_REASON";;
+    *) printf '%s' "not a browser leg by the census rule (the census pass lists legs only)";;
+  esac
+}
 promotion_of() {   # $1 the bundle of a pending line whose source is present: the remedy the census derives from that source
-  local gap engines cls why=""
-  gap=$(gap_of "$1"); engines=$(engines_of "$1"); cls=$(census_field "$1" 5)
-  if ! is_leg "$1"; then printf '%s' "remove the line (the source reaches no browser by the census rule${gap:+; $gap})"; return 0; fi
-  if [ "$cls" = "embedded" ]; then printf '%s' "keep the line and replace the reason with the embedded-driver sentence the header of $EXCLUDED states (the leg's only playwright is in a driver string it runs as a child process, which the switch never reaches)"; return 0; fi
-  if [ -z "$gap" ] && [ -z "$engines" ]; then printf '%s' "delete this line and add '$1' to $ROSTER (the source launches through inBrowser alone and reaches no engine but Chromium), with the step's measured seconds in the PR body"; return 0; fi
-  if [ -n "$engines" ]; then why="launches $engines; the gating job installs Chromium only"; fi
-  if [ -n "$gap" ]; then why="${why:+$why; }$gap"; fi
-  printf '%s' "keep the line and replace the reason with why the gating job does not run it ($why)"
+  local gap; gap=$(gap_of "$1")
+  case "$(remedy_kind "$1")" in
+    none) printf '%s' "remove the line (the source reaches no browser by the census rule${gap:+; $gap})";;
+    embedded) printf '%s' "keep the line and replace the reason with $EMBEDDED_REMEDY";;
+    engine) printf '%s' "keep the line and replace the reason with the engine form the header of $EXCLUDED admits, \"$(engine_form "$1")\"";;
+    roster) printf '%s' "delete this line and add '$1' to $ROSTER (the source launches through inBrowser alone and reaches no engine but Chromium), with the step's measured seconds in the PR body";;
+    gate) printf '%s' "$(gate_remedy "$1"), then delete this line and add '$1' to $ROSTER with the step's measured seconds in the PR body: $NO_OWN_REASON";;
+  esac
 }
 pending_re='^[[:space:]]*pending #([0-9]+): [^[:space:]]'
 if [ "${1:-}" = "--list-legs" ]; then census; exit 0; fi
@@ -195,7 +225,7 @@ while IFS= read -r leg; do
     if [ -n "$at" ]; then
       red "browser leg '$leg' is named by a line refused above ($at): fix that line"
     else
-      red "browser leg '$leg' is in neither $ROSTER nor $EXCLUDED: add it to the roster (the gating job runs it with a browser), or to the exclusions with a tab and a reason"
+      red "browser leg '$leg' is in neither $ROSTER nor $EXCLUDED: $(neither_remedy "$leg")"
     fi
   fi
 done < <(census)

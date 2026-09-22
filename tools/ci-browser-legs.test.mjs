@@ -27,10 +27,12 @@
 //     whole and exact; an engine reason, "launches <Firefox|WebKit|Firefox and WebKit>; the gating job installs Chromium
 //     only", a tail after the phrase allowed; the embedded-driver sentence the header quotes, whole and exact; a pending
 //     line), a reason of no form refused by name and one that reads as a form while carrying another form's phrase refused
-//     as ambiguous (whether the source reaches the engine named, is an embedded driver, or names a browser leg at all, is
-//     the census test's to say); an exclusions reason "pending #<PR>: <why>" (a leg an open PR brings) names a PR and its
-//     source is ABSENT from the tree: a present source is red here as arrived, and the promotion remedy derived from that
-//     source (a roster line, a reason of its own, or no line) is the census test's and the script's to print; the header
+//     as ambiguous (whether the source reaches the engine named, is
+//     an embedded driver, or names a browser leg at all, is the census test's to say); an exclusions reason "pending #<PR>:
+//     <why>" (a leg an open PR brings) names a PR and its source is ABSENT from the tree: a present source is red here as
+//     arrived, and the promotion remedy derived from that source (a roster line, the engine form, the embedded-driver
+//     sentence, the gate's own remedy for a Chromium-only leg that misses it, or no line) is the census test's and the
+//     script's to print; the header
 //     binds the grandfather reason to one commit in one line and whether each grandfather row's source existed at that
 //     commit is the census test's history read (this job's checkout is depth 1 and fetches nothing);
 //   - the script the step calls (vscode-extension/scripts/ci-browser-legs.sh) exists, is executable, calls the census
@@ -287,7 +289,7 @@ test('both files are well formed: each line is a bundle path naming a source in 
       const src = sourceOf(e.bundle);
       if (e.pending) {   // a leg an open PR brings: the reason names the PR, and the line stands only while the source is absent
         assert.ok(e.pending.pr !== null, where(file, e) + ' has a pending reason that names no PR (' + JSON.stringify(e.reason) + '): a pending line reads \'pending #<PR>: <why>\', the PR whose merge of main brings the leg and promotes the line');
-        assert.ok(!fs.existsSync(src), where(file, e) + ' is pending #' + e.pending.pr + ' and its source ' + path.relative(REPO, src) + ' is in the tree, so the leg has arrived (#' + e.pending.pr + ' merged main, or this is #' + e.pending.pr + '\'s branch) and the line\'s condition has passed: promote it (a roster line, a reason of its own, or no line: the remedy derived from the source is printed by ' + path.relative(REPO, CENSUS_TEST) + ' in the vscode-extension job and by scripts/ci-browser-legs.sh --check)');
+        assert.ok(!fs.existsSync(src), where(file, e) + ' is pending #' + e.pending.pr + ' and its source ' + path.relative(REPO, src) + ' is in the tree, so the leg has arrived (#' + e.pending.pr + ' merged main, or this is #' + e.pending.pr + '\'s branch) and the line\'s condition has passed: promote it (a roster line, the engine form, the embedded-driver sentence, the gate\'s own remedy for a Chromium-only leg that misses it, or no line: the remedy derived from the source is printed by ' + path.relative(REPO, CENSUS_TEST) + ' in the vscode-extension job and by scripts/ci-browser-legs.sh --check)');
         continue;
       }
       assert.ok(fs.existsSync(src), where(file, e) + ' names ' + path.relative(REPO, src) + ', which is not in the tree (the source moved or was deleted): fix the line');
@@ -562,7 +564,13 @@ test('the script refuses, naming the line and the remedy, on: a missing file, a 
   const missing = run(null, B + '\treason\n' + rest);
   assert.equal(missing.status, 1); assert.ok(missing.err.includes(ROSTER) && missing.err.includes('restore it'), missing.err); assert.equal(missing.node, null);
   refused(run('# header\n' + A + '\n' + C + '\n', B + '\treason\n' + rest), ROSTER + ' line 3: \'' + C + '\' names ui/webview/c-browser.test.ts, which is not in the tree (the source moved or was deleted): fix the roster line');
-  refused(run(A + '\n', '# nothing excluded but the rest\n' + rest), 'browser leg \'' + B + '\' is in neither ' + ROSTER + ' nor ' + EXCLUDED, 'add it to the roster', 'or to the exclusions with a tab and a reason');
+  // a leg in neither file: the red carries the remedy the census's row derives (b passes the gate: the roster), never a bare add-or-exclude
+  const neither = run(A + '\n', '# nothing excluded but the rest\n' + rest);
+  refused(neither, 'browser leg \'' + B + '\' is in neither ' + ROSTER + ' nor ' + EXCLUDED + ': add \'' + B + '\' to ' + ROSTER + ' (the source launches through inBrowser alone and reaches no engine but Chromium), with the step\'s measured seconds in the PR body');
+  assert.ok(!neither.err.includes('or to the exclusions with a tab and a reason'), 'no bare add-or-exclude:\n' + neither.err);
+  // m (inBrowser beside its own playwright, Chromium alone) and f (Firefox) in neither file: the gate's own remedy, and the engine form
+  const neitherMF = run(A + '\n', EXCLUDE_REST('a', 'm', 'f'));
+  refused(neitherMF, 'browser leg \'' + M + '\' is in neither ' + ROSTER + ' nor ' + EXCLUDED + ': pass the roster gate (the source ' + GAP_M + ': launch through inBrowser alone, with no playwright, launch, skip or todo of the leg\'s own) and add \'' + M + '\' to ' + ROSTER + ' with the step\'s measured seconds in the PR body: the exclusions admit no reason of its own, so a leg that reaches Chromium alone is rostered once it passes the gate', 'browser leg \'' + F + '\' is in neither ' + ROSTER + ' nor ' + EXCLUDED + ': add it to ' + EXCLUDED + ' with a tab and the engine form its header admits, "launches Firefox; ' + ENGINE_PHRASE + '"');
   refused(run(A + '\n', A + '\treason\n' + B + '\treason\n' + rest), EXCLUDED + ' line 1: \'' + A + '\' is also ' + ROSTER + ' line 1: a leg is in one file or the other, keep one');
   // a line without a reason (no tab; a tab and a blank reason): the LINE is shown as bash's %q spells it, so the blank reason's
   // whitespace is visible, and the leg it names is attributed to that line, not called missing from both files
@@ -620,8 +628,8 @@ test('the script refuses, naming the line and the remedy, on: a missing file, a 
   refused(stale, EXCLUDED + ' line 2: \'' + C + '\' names ui/webview/c-browser.test.ts, which is not in the tree (the source moved or was deleted): fix the line');
 });
 
-test('the script allows a pending line while its source is absent, reds a pending reason that names no PR, and once the source is present reds the line with the promotion remedy the census derives (a roster line for a shared Chromium leg; the real reason for a private or engine leg; no line for a non-leg) and not as "in neither" too', (t) => {
-  const { run, root, rec, A, P, F, PLAIN, GAP_P, TABLE } = syntheticTree(t);
+test('the script allows a pending line while its source is absent, reds a pending reason that names no PR, and once the source is present reds the line with the promotion remedy the census derives (a roster line for a shared Chromium leg; the engine form for an engine leg; the gate\'s own remedy for a Chromium-only leg that misses the gate, private or beside its own playwright, since no form admits it; no line for a non-leg) and not as "in neither" too', (t) => {
+  const { run, root, rec, A, P, M, F, PLAIN, GAP_P, GAP_M, TABLE } = syntheticTree(t);
   const C = 'out-tests/ui/webview/c-browser.test.js';
   const rest = EXCLUDE_REST('a');
   const absent = run(A + '\n', C + '\tpending #860: a leg an open PR brings\n' + rest, { report: rec(A, 'pass', 'test', '-', 'test', 'leg a opens the page', '', '-') });
@@ -641,17 +649,24 @@ test('the script allows a pending line while its source is absent, reds a pendin
   assert.ok(present.err.includes(EXCLUDED + ' line 1: \'' + C + '\' is pending #860 and its source ui/webview/c-browser.test.ts is in the tree, so the leg has arrived (#860 merged main, or this is #860\'s branch) and the line\'s condition has passed: promote it: delete this line and add \'' + C + '\' to ' + ROSTER + ' (the source launches through inBrowser alone and reaches no engine but Chromium), with the step\'s measured seconds in the PR body'), present.err);
   assert.ok(!present.err.includes('is in neither'), 'the arrived leg is not also called missing from both files:\n' + present.err);
   assert.equal(present.node, null, 'no leg ran');
-  // a private leg (p: never imports the launcher), an engine leg (f: Firefox) and a non-leg (plain) arriving under pending lines
+  // a private leg (p: never imports the launcher) and one calling inBrowser beside its own playwright (m), both Chromium alone:
+  // no form of the exclusions admits them, so the remedy is the gate's own; an engine leg (f: Firefox): the engine form; a
+  // non-leg (plain): no line
+  const GATE = (gap, bundle) => 'promote it: pass the roster gate (the source ' + gap + ': launch through inBrowser alone, with no playwright, launch, skip or todo of the leg\'s own), then delete this line and add \'' + bundle + '\' to ' + ROSTER + ' with the step\'s measured seconds in the PR body: the exclusions admit no reason of its own, so a leg that reaches Chromium alone is rostered once it passes the gate';
   const priv = run(A + '\n', P + '\tpending #859: a private leg\n' + EXCLUDE_REST('a', 'p'));
   assert.equal(priv.status, 1, priv.err);
-  assert.ok(priv.err.includes('\'' + P + '\' is pending #859') && priv.err.includes('promote it: keep the line and replace the reason with why the gating job does not run it (' + GAP_P + ')'), priv.err);
+  assert.ok(priv.err.includes('\'' + P + '\' is pending #859') && priv.err.includes(GATE(GAP_P, P)), priv.err);
+  const both = run(A + '\n', M + '\tpending #853: calls inBrowser beside a playwright load of its own\n' + EXCLUDE_REST('a', 'm'));
+  assert.equal(both.status, 1, both.err);
+  assert.ok(both.err.includes('\'' + M + '\' is pending #853') && both.err.includes(GATE(GAP_M, M)), both.err);
+  assert.ok(!both.err.includes('why the gating job does not run it'), 'the old remedy, a bare gap sentence the closed set refuses, is gone:\n' + both.err);
   const eng = run(A + '\n', F + '\tpending #859: an engine leg\n' + EXCLUDE_REST('a', 'f'));
   assert.equal(eng.status, 1, eng.err);
-  assert.ok(eng.err.includes('\'' + F + '\' is pending #859') && eng.err.includes('promote it: keep the line and replace the reason with why the gating job does not run it (launches Firefox; the gating job installs Chromium only)'), eng.err);
+  assert.ok(eng.err.includes('\'' + F + '\' is pending #859') && eng.err.includes('promote it: keep the line and replace the reason with the engine form the header of ' + EXCLUDED + ' admits, "launches Firefox; ' + ENGINE_PHRASE + '"'), eng.err);
   const none = run(A + '\n', PLAIN + '\tpending #861: a module that is no leg\n' + rest);
   assert.equal(none.status, 1, none.err);
   assert.ok(none.err.includes('\'' + PLAIN + '\' is pending #861') && none.err.includes('promote it: remove the line (the source reaches no browser by the census rule)'), none.err);
-  for (const r of [priv, eng, none]) assert.ok(!r.err.includes('is in neither'), 'no second red:\n' + r.err);
+  for (const r of [priv, both, eng, none]) assert.ok(!r.err.includes('is in neither'), 'no second red:\n' + r.err);
 });
 
 test('after node --test the script derives per rostered leg that at least one attributable pass ran, red otherwise (todo-only, a describe() that registers none, a file that registered nothing, a failure inside a todo); reds a skipped test naming the test, its reason and the switch\'s state; reds a failure inside a todo and a file that failed as a whole by name; prints the lost-browser remedy beside a leg whose failure names the switch; passes node\'s status through', (t) => {

@@ -69,15 +69,18 @@ over synthetic trees.
 A PR that adds a browser leg files its roster or exclusions line after merging main; until then
 an exclusions line reading `pending #<PR>: <why>` names the leg, allowed while its source is absent
 from the tree, and once the source is present (the PR merged main, or the checkers run on its
-branch) every checker turns the line red with the promotion remedy (a roster line, a reason of its
-own, or no line), so the owner promotes it in that merge. A pending line whose PR closes without the
+branch) every checker turns the line red with the promotion remedy derived from the source (a roster
+line for a leg that passes the gate and reaches Chromium alone; the engine form, or the embedded-driver
+sentence, when one is true of it; for a Chromium-only leg that misses the gate, pass the gate and roster
+it, since the exclusions admit no reason of its own; no line for a module that is no leg), so the owner
+promotes it in that merge; a leg in neither file is red with the same derived remedy. A pending line whose PR closes without the
 leg never turns red on its own and is removed by hand;
 `grep '^out-tests.*pending #' vscode-extension/ci-browser-legs-excluded.txt` lists the pending lines (the rows; the
 file's header spells the form too, which a grep for the bare prefix would list). The rows at the roster's creation
 were derived, not recalled: the fork's open PRs listed with `gh api "repos/<owner>/<repo>/pulls?state=open&per_page=100" --paginate`,
 each PR's added or modified `.test.ts` files under the census's directories read with
 `gh api "repos/<owner>/<repo>/pulls/<N>/files?per_page=100" --paginate`, and each candidate's content at the PR's head
-classified by the census module's `classify()` (the exclusions header records the date); a PR opened after that read
+classified by the census module's `classify()` (the exclusions header records the date and time of the read); a PR opened after that read
 takes the pending-row remedy when its leg arrives. A pending row alone does not clear a PR whose module the census
 refuses: the census refuses before the equality runs, so that PR stays red until the form is rewritten or the census is
 taught it.
