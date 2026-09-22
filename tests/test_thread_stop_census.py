@@ -402,6 +402,22 @@ _bound_body) while 3.12, 3.13 and 3.14t passed the same tree. A tree test walks 
 derivation (parse_cache.cached_trees) and holds each to its _fields and _attributes, the pin the contract names; a
 foreign attribute planted on a copy is shown red by the same check.
 
+THE PARSER'S SINGLETONS (the twelfth pass, 2026-09-22; the mechanism read back by CI's diagnostic run 35740276523). The
+parser hands out ONE instance of each expression context (Load, Store, Del) and of each operator per process, shared by
+every tree it builds; an attribute written on one rides on every tree parsed afterwards in the process. In CI's serial
+cell tests/test_hosts_path_census.py ran before this module and marked every node of its own trees with `_fn` and
+`_parent`, the shared nodes among them, so every cached tree here carried both on its Load, Store, Del and operator
+nodes, and copy.deepcopy of a hand (a Name and its Load) followed `_parent` into that census's whole graph: the
+RecursionError of the 3.10 and 3.11 cells at 7e084a002, and on 3.12 a completed copy of the graph, 147 s in setUpClass
+and a minute in one plant. The iterative copier above makes this census immune, the hosts census guards its marks since,
+and THE SINGLETON PIN makes any such writer visible: tests/parse_cache.py's check_singletons (raising, naming each
+singleton, attribute and value type, the site and the remedy; never repairing) runs on the first parse of the process
+and before and after every build, so every consumer of the cache inherits it; setUpClass calls it before the tree
+derivation as the visible site; a tree test holds the singletons clean after the derivation; the read-only pin walks
+them too, each named once per tree with the words that say it is shared. Order-dependent by nature: red exactly when a
+writer ran earlier in the same process, CI's serial shape, green for a module run alone. The mechanism is reproduced by
+a plant in IterativeHandCopier on the process's real Load, the restore registered before the write.
+
 """
 import ast
 import builtins
@@ -4177,16 +4193,34 @@ def _ast_copy(node):
     return out
 
 
-def _foreign_attributes(tree):
+_SHARED_NOTE = " (the parser's shared instance)"   # _foreign_attributes' words for a node that IS one of the helper's probed singletons
+
+
+def _foreign_attributes(tree, shared=True):
     """Every node of `tree` carrying an attribute outside its `_fields` and `_attributes`, one line each (the node's type,
-    its line and the attribute names): the check of the no-foreign-attribute pin over the cached trees, and of its planted
-    red. ast.walk is iterative, so the check runs under any recursion limit over any depth of tree."""
-    out = []
+    its line, `?` for a context or operator node, and the attribute names): the check of the no-foreign-attribute pin over
+    the cached trees, and of its planted red. THE PARSER'S SINGLETONS ARE IN THE WALK (the twelfth pass, 2026-09-22): the
+    expression contexts and operators are one instance each per process, shared by every tree, so a write on one by any
+    module that ran earlier in the process shows on every cached tree; ast.walk yields such a node at every use, so a
+    context or operator node is named ONCE per tree, and one that IS the parser's shared instance (by identity against
+    the helper's probe, PC.parser_singletons, never by type: a fresh Load a copier built is not shared) carries the words
+    that say so, since its writer is another module and not this tree's reader. `shared=False` leaves the parser's
+    instances out, for a plant that reads a node's own attribute in a process another module may have polluted. ast.walk
+    is iterative, so the check runs under any recursion limit over any depth of tree."""
+    out, seen = [], set()
+    parsers = {id(n) for n in PC.parser_singletons()}
     for n in ast.walk(tree):
+        where = type(n).__name__
+        if isinstance(n, PC.SINGLETON_TYPES):
+            if id(n) in seen or (not shared and id(n) in parsers):
+                continue
+            seen.add(id(n))
+            if id(n) in parsers:
+                where += _SHARED_NOTE
         keys = _ast_keys(n)
         extra = [k for k in vars(n) if k not in keys]
         if extra:
-            out.append("%s at line %s carries %s" % (type(n).__name__, getattr(n, "lineno", "?"), ", ".join(sorted(extra))))
+            out.append("%s at line %s carries %s" % (where, getattr(n, "lineno", "?"), ", ".join(sorted(extra))))
     return out
 
 
@@ -4826,6 +4860,7 @@ def tree_census(root=ROOT):
 class ThreadStopCensus(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        PC.check_singletons("at ThreadStopCensus.setUpClass, before the tree derivation")   # the visible site of the helper's singleton pin
         cls.tree = tree_census()
         cls.loops, cls.thread_classes = cls.tree.loops, cls.tree.thread_classes
         cls.extras, cls.rows = cls.tree.extras, cls.tree.rows
@@ -5138,26 +5173,72 @@ class ThreadStopCensus(unittest.TestCase):
         which copy.deepcopy followed from a hand into the whole unit graph (CI's 3.11 cell at 7e084a002: a RecursionError
         inside copy.py under _bound_body); it is a side table now (_LITERAL_UNITS, _literal_unit). THE RED, planted on a
         COPY of one cached tree and never on the cached tree (the copy is _ast_copy's): a foreign attribute set on one node
-        of the copy is named by the same check, type, line and name, and the cached tree it was copied from stays clean."""
+        of the copy is named by the same check, type, line and name, and the cached tree it was copied from stays clean. THE
+        PARSER'S SINGLETONS ARE IN THE WALK (the twelfth pass, 2026-09-22): a Load, Store, Del or operator node named here
+        as the parser's shared instance (by identity against the helper's probe) carries what another module wrote on the
+        one instance the parser hands to every tree, named ONCE with the count of cached trees it was met in (the same
+        object in each; one line per use had made a message of a hundred megabytes in the polluted run at e3cc626b2), and
+        the message then carries the helper's singleton pin's text with the remedy
+        (tests/parse_cache.py's check_singletons, which setUpClass called before the derivation and which refuses first); the
+        context and operator nodes of a cached tree are asserted to BE the instances the helper's probe reads, so the walk
+        inspects the shared instances and not fresh ones."""
         cached = PC.cached_trees()
         held = {real for real, _tree in cached}
         files = [os.path.realpath(p) for p in list(self.tree.paths) + sorted(self.tree.product.trees)]
         self.assertEqual([os.path.relpath(p, ROOT) for p in files if p not in held], [],
                          "every module of the population and every product file the index read is in the cache")
-        found = ["%s: %s" % (os.path.relpath(real, ROOT), line) for real, tree in cached for line in _foreign_attributes(tree)]
+        found, on_shared = [], {}
+        for real, tree in cached:
+            for line in _foreign_attributes(tree):
+                if _SHARED_NOTE in line:                     # one object in every tree: named once, with the count of trees
+                    on_shared[line] = on_shared.get(line, 0) + 1
+                else:
+                    found.append("%s: %s" % (os.path.relpath(real, ROOT), line))
+        found += ["%s, met in %d cached trees" % (line, n) for line, n in sorted(on_shared.items())]
+        polluted = PC.singleton_attributes()
         self.assertEqual(found, [], "tests/parse_cache.py's contract for every consumer: a cached tree is READ-ONLY (no attribute "
                          "written on a cached node, no in-place transformer over a cached tree; copy first, with an iterative copier), "
                          "per-node data lives in a side table keyed by id(node) that the consumer owns and clears with its derivation, "
-                         "and this pin walks every cached node after a derivation. These cached nodes carry more than their _fields "
-                         "and _attributes:\n%s" % "\n".join(found))
+                         "and this pin walks every cached node after a derivation, the parser's shared singletons among them. These "
+                         "cached nodes carry more than their _fields and _attributes:\n%s%s"
+                         % ("\n".join(found), ("\n" + PC.singleton_message("in the read-only pin over the cached nodes", polluted)) if polluted else ""))
         real = os.path.realpath(os.path.join(HERE, "thread_ends.py"))
         original = dict(cached)[real]
+        probe = {type(n): n for n in PC.parser_singletons()}
+        met = {type(n): n for n in ast.walk(original) if isinstance(n, PC.SINGLETON_TYPES)}
+        self.assertTrue(met, "a cached tree holds context nodes")
+        self.assertEqual([t.__name__ for t, n in sorted(met.items(), key=lambda x: x[0].__name__) if probe.get(t) is not n], [],
+                         "the context and operator nodes of a cached tree ARE the parser's shared instances the helper's probe reads, "
+                         "so this walk inspects the shared instances, not fresh ones")
         planted = _ast_copy(original)
         node = planted.body[-1]
         node._planted = object()
         self.assertEqual(_foreign_attributes(planted), ["%s at line %d carries _planted" % (type(node).__name__, node.lineno)],
                          "the red: the check names the planted attribute by node type, line and name")
         self.assertEqual(_foreign_attributes(original), [], "the plant is on the copy alone; the cached tree stays clean")
+
+    def test_the_parsers_singletons_carry_no_attribute_after_the_derivation(self):
+        """THE SINGLETON PIN from the census's side (the twelfth pass, 2026-09-22; tests/parse_cache.py holds it for every
+        consumer of the cache: check_singletons on the first parse of the process and before and after every build, and
+        setUpClass's own visible call before the tree derivation). The parser hands out ONE instance of each expression
+        context (Load, Store, Del) and of each operator per process, shared by every tree it builds, so an attribute written
+        on one by a module that ran earlier in the process rides on every tree parsed afterwards: CI's diagnostic run
+        35740276523 read that back, tests/test_hosts_path_census.py's `_fn` and `_parent` marks on the shared nodes, which
+        copy.deepcopy of a hand followed into that census's whole graph (the mechanism plant in IterativeHandCopier
+        reproduces it). ORDER-DEPENDENT BY NATURE: this reds only when such a writer ran EARLIER in the same process, which
+        is CI's serial shape (one process, every test module in collection order), and is green when the module runs
+        alone; a red here names the attributes, their value types and the remedy (grep tests/ for the write over AST walks
+        and guard singleton nodes), and the writer is the module to fix, not this one. After the derivation the singletons
+        are clean (setUpClass held the same before it, so the derivation wrote nothing on them either), and the probe sees
+        one node of each of the 32 singleton types, the same objects on a second probe."""
+        PC.check_singletons("after the tree derivation (ThreadStopCensus)")
+        first, second = PC.parser_singletons(), PC.parser_singletons()
+        self.assertEqual(sorted(type(n).__name__ for n in first),
+                         sorted(["Load", "Store", "Del", "Add", "Sub", "Mult", "MatMult", "Div", "Mod", "Pow", "LShift", "RShift",
+                                 "BitOr", "BitXor", "BitAnd", "FloorDiv", "And", "Or", "Invert", "Not", "UAdd", "USub",
+                                 "Eq", "NotEq", "Lt", "LtE", "Gt", "GtE", "Is", "IsNot", "In", "NotIn"]))
+        self.assertEqual([id(n) for n in first], [id(n) for n in second], "one instance each per process: the parser's, not fresh ones")
+        self.assertEqual([vars(n) for n in first], [{}] * len(first))
 
     def test_the_product_files_parse_is_shared_with_any_other_census_in_the_process(self):
         """The cross-module property (the cross-PR ruling of 2026-09-22: one shared parse cache per process, in a tests-local
@@ -5212,6 +5293,66 @@ class ParseCacheKeyAndLock(unittest.TestCase):
     def _write(path, text):
         with open(path, "w", encoding="utf-8") as f:
             f.write(text)
+
+    @staticmethod
+    def _unplant(node, name):
+        """Remove the attribute a plant wrote on `node`, if it is there: the cleanup a plant registers BEFORE its write."""
+        vars(node).pop(name, None)
+
+    def test_the_singleton_pin_names_a_planted_attribute_on_each_road_and_repairs_nothing(self):
+        """tests/parse_cache.py's singleton pin (the twelfth pass, 2026-09-22), exercised on the parser's real Load (from a
+        small parse: ast.Load() would be a fresh, unshared object), with the restore registered as a cleanup BEFORE the write
+        so a failing plant leaves the process clean. check_singletons raises AssertionError naming the node, the attribute
+        and its value's type (`Load carries _planted (object)`), the site it ran at, the remedy with the grep for this
+        attribute's write and the order-dependence; the first-parse road (its once-per-process flag reset for this test and
+        restored by cleanup) refuses a planted file's parse before opening it, the counters unmoved and the flag set, so the
+        check ran once whatever its outcome; a build is refused BEFORE it runs when the singletons are dirty (not called,
+        not counted); a build that itself writes on a singleton is refused AFTER it ran (counted, not memoised, so the next
+        call builds again); and the helper removes nothing it found, the attribute is there after every raise until the
+        cleanup. With the Load clean again the same key builds and memoises."""
+        PC.check_singletons("at the plant's entry (ParseCacheKeyAndLock)")
+        load = ast.parse("x").body[0].value.ctx
+        self.assertIs(load, ast.parse("y").body[0].value.ctx, "the parser's Load is one object per process")
+        self.addCleanup(self._unplant, load, "_planted")            # BEFORE the write
+        load._planted = object()
+        with self.assertRaises(AssertionError) as cm:
+            PC.check_singletons("in ParseCacheKeyAndLock's plant")
+        msg = str(cm.exception)
+        for part in ("Load carries _planted (object)", "in ParseCacheKeyAndLock's plant", "grep tests/ for `._planted =`",
+                     "guard singleton nodes", "order-dependent"):
+            self.assertIn(part, msg)
+        self.assertIn("_planted", vars(load), "the helper repaired nothing: the writer stays visible")
+        p = os.path.join(self._planted_dir(), "planted.py")
+        self._write(p, "v = 1\n")
+        self.addCleanup(setattr, PC, "_PARSE_CHECKED", PC._PARSE_CHECKED)
+        PC._PARSE_CHECKED = False
+        before = PC.stats()
+        with self.assertRaises(AssertionError) as cm:
+            PC.source_and_tree(p)
+        self.assertIn("at the first parse of this process", str(cm.exception))
+        self.assertEqual((PC.parses_of(p), PC.stats(), PC._PARSE_CHECKED), (0, before, True), "refused before the read; the check ran once")
+        key = self.KEY + ("the singleton pin's plant",)
+        calls = []
+        with self.assertRaises(AssertionError) as cm:
+            PC.derived(key, lambda: calls.append("clean build"))
+        self.assertIn("before the build", str(cm.exception))
+        self.assertEqual((calls, PC.builds_of(key)), ([], 0), "a build refused before it runs is neither called nor counted")
+        self._unplant(load, "_planted")
+
+        def dirty_build():
+            calls.append("dirty build")
+            load._planted = object()
+            return object()
+        with self.assertRaises(AssertionError) as cm:
+            PC.derived(key, dirty_build)
+        self.assertIn("after the build", str(cm.exception))
+        self.assertEqual((calls, PC.builds_of(key)), (["dirty build"], 1), "counted, not memoised")
+        self.assertIn("_planted", vars(load))
+        self._unplant(load, "_planted")
+        a = PC.derived(key, lambda: calls.append("landed") or object())
+        self.assertIs(PC.derived(key, object), a, "clean again: the build lands and the next call hits")
+        self.assertEqual((calls[-1], PC.builds_of(key)), ("landed", 2))
+        PC.clear(key)
 
     def test_a_symlink_and_its_target_are_one_cache_entry_with_one_parse(self):
         """The key's first element is the realpath: a symlinked copy of a module (a copy of tests/thread_ends.py, a link
@@ -5379,8 +5520,10 @@ class IterativeHandCopier(unittest.TestCase):
     """_ast_copy, the census's copier for the hands and the helper bodies (the eleventh pass, 2026-09-22), each property on
     a node of this class's own, no tree needed: a deep hand copies under a recursion limit the stdlib's recursive copier
     exceeds on the same node (the plant asserts both, so it proves the copier and not the limit); a foreign attribute on
-    a node is neither copied nor followed; and over a real module's tree the copy is ast.dump-equal, with attributes, to
-    the source and to copy.deepcopy's, and shares no node with the source."""
+    a node is neither copied nor followed; over a real module's tree the copy is ast.dump-equal, with attributes, to the
+    source and to copy.deepcopy's, and shares no node with the source; and THE MECHANISM CI's diagnostic run 35740276523
+    read back (the twelfth pass), a polluted parser singleton, is reproduced on the process's real Load with the restore
+    registered before the write: copy.deepcopy of a two-node hand recurses into a foreign tree, _ast_copy does not."""
 
     @staticmethod
     def _chain(terms):
@@ -5435,11 +5578,74 @@ class IterativeHandCopier(unittest.TestCase):
         dt = time.perf_counter() - t0
         self.assertFalse(hasattr(copied, "_graph"))
         self.assertEqual(_foreign_attributes(copied), [])
-        self.assertEqual(_foreign_attributes(node), ["Call at line 1 carries _graph"], "the check names the source's attribute")
+        self.assertEqual(_foreign_attributes(node, shared=False), ["Call at line 1 carries _graph"],
+                         "the check names the source's attribute (the parser's shared nodes left out: a write on them by another module "
+                         "is the singleton pin's finding, not this plant's)")
         self.assertEqual(ast.dump(copied, include_attributes=True), ast.dump(node, include_attributes=True))
         self.assertLess(dt, 2.0, "the copy is bounded by the hand, not by what its foreign attribute points at")
         with self.assertRaises(RecursionError):
             copy.deepcopy(node)
+
+    @staticmethod
+    def _restore(node, held):
+        """Put `node`'s own attributes back to exactly `held`, the vars() snapshot a plant took before writing on it."""
+        for k in list(vars(node)):
+            if k not in held:
+                delattr(node, k)
+        for k, v in held.items():
+            setattr(node, k, v)
+
+    @staticmethod
+    def _timed(f, x):
+        t0 = time.perf_counter()
+        f(x)
+        return time.perf_counter() - t0
+
+    def test_a_polluted_parser_singleton_sends_the_stdlib_copier_into_a_foreign_tree_and_the_census_copier_not(self):
+        """THE MECHANISM CI's diagnostic run 35740276523 read back, reproduced on the process's real Load and undone by a
+        cleanup registered BEFORE the write (a failing plant leaves nothing behind; the recursion limit is restored the same
+        way). The parser hands out one ast.Load per process (asserted: the hand's ctx is the ctx of another parse and the
+        instance the helper's probe reads; a constructed ast.Load() is fresh and unshared, so the plant never uses one). In
+        CI's serial cell tests/test_hosts_path_census.py had written `_fn` and `_parent` on every
+        node it walked, that Load among them, so every tree parsed afterwards carried them and copy.deepcopy of a two-node
+        hand (a Name and its Load) followed `_parent` into that census's whole graph: RecursionError on 3.10 and 3.11, a
+        completed copy of the graph on 3.12 (147 s in this module's tree derivation there). Here the Load gets `_parent` =
+        kernel/kernel.py's cached tree (the largest the cache holds, 387805 nodes, 94 deep) and `_fn` = an object; under
+        sys.setrecursionlimit(1000), the default, copy.deepcopy of the hand either raises RecursionError or runs for over a
+        second (the whole tree copied; both arms measured, one asserted: on the box it completes in about three seconds
+        under each of 3.10, 3.11 and 3.12), while _ast_copy copies the same hand in under a millisecond (the least of five
+        runs, so a collection pause does not stand for the copier) and its copy carries nothing beyond the Name's fields
+        and a fresh, clean Load. A completed copy is cyclic (its Load's `_parent` leads back to its Names), so the plant
+        clears the copied Load's attributes and the copy frees by reference count, no full collection over the retained
+        trees needed."""
+        tree = PC.source_and_tree(os.path.join(ROOT, "kernel", "kernel.py"))[1]
+        hand = ast.parse("f(v)").body[0].value.args[0]
+        load = hand.ctx
+        self.assertIs(load, ast.parse("w").body[0].value.ctx, "the parser's Load is one object per process: the plant pollutes "
+                      "the PARSED instance, never a constructed ast.Load(), which is fresh and unshared")
+        self.assertIs(load, [n for n in PC.parser_singletons() if isinstance(n, ast.Load)][0], "the helper's probe reads the same instance")
+        self.addCleanup(self._restore, load, dict(vars(load)))       # BEFORE the write: exactly the state found
+        self.addCleanup(sys.setrecursionlimit, sys.getrecursionlimit())
+        load._parent, load._fn = tree, object()
+        best = min(self._timed(_ast_copy, hand) for _ in range(5))
+        copied = _ast_copy(hand)
+        self.assertEqual(_foreign_attributes(copied), [], "the census's copy carries no foreign attribute")
+        self.assertIsNot(copied.ctx, load)
+        self.assertEqual(vars(copied.ctx), {}, "a fresh, clean Load on the copy")
+        self.assertEqual(ast.dump(copied, include_attributes=True), ast.dump(hand, include_attributes=True))
+        self.assertLess(best, 0.001, "the census's copier took %.6f s on a two-node hand" % best)
+        sys.setrecursionlimit(1000)
+        t0 = time.perf_counter()
+        try:
+            c = copy.deepcopy(hand)
+            outcome = "completed"
+            vars(c.ctx).clear()                                      # the copied Load's `_parent`: the cycle through the copied Names
+            del c
+        except RecursionError:
+            outcome = "RecursionError"
+        dt = time.perf_counter() - t0
+        self.assertTrue(outcome == "RecursionError" or dt > 1.0,
+                        "copy.deepcopy of the polluted hand %s in %.3f s: neither the recursion error nor a copy of the foreign tree" % (outcome, dt))
 
     def test_over_a_real_module_the_copy_equals_the_source_and_the_stdlib_copy(self):
         """This module's own tree (the parse cache's, a hit when the tree derivation ran first): _ast_copy's copy is ast.dump-equal,
