@@ -1385,7 +1385,9 @@ class Lifecycle(unittest.TestCase):
 
         be._work = parked_worker
         callers = [threading.Thread(target=be._ensure_worker, args=(s,)) for _ in range(20)]
-        self.addCleanup(lambda: (release.set(), [t.join(2) for t in callers]))   # on every exit path: release the parked worker, wait for the callers
+        self.addCleanup(lambda: (release.set(), [t.join(2) for t in callers if t.ident is not None]))   # on every exit path: release
+        # the parked worker, wait for the callers that started (a start that raised midway leaves the rest unstarted, and
+        # Thread.join raises on a thread never started)
         for t in callers:
             t.start()
         for t in callers:
@@ -1686,6 +1688,44 @@ class Lifecycle(unittest.TestCase):
         self.assertEqual(len(res.failures), 1, res.failures)
         self.assertIn("planted", res.failures[0][1])
         self.assertEqual(len(res.errors), 1, "the unguarded join of the never-started writer is the cleanup's error: %r" % (res.errors,))
+        self.assertIn("cannot join thread before it is started", res.errors[0][1])
+
+    def test_a_body_that_fails_after_some_but_not_all_callers_started_leaves_one_failure_and_no_cleanup_error(self):
+        """The twenty-caller cleanup above, run rather than read (round 2 of PR 891's review, 2026-09-22): its list join is
+        guarded on ident, so a body that fails after starting some of the callers records the planted failure and nothing
+        beside it. A nested case builds three callers, starts two, fails; its cleanup releases the parked worker and joins
+        the two that started; the third, never started, is skipped rather than joined (Thread.join raises RuntimeError on
+        it). A second nested case with the unguarded list join records the failure and that RuntimeError."""
+        def case(guarded):
+            class _Case(unittest.TestCase):
+                def test_fails(self):
+                    be, _, _tmp = build()
+                    sid = be.spawn("web", "/TESTDIR")
+                    s = be._sessions[sid]
+                    release = threading.Event()
+
+                    def parked_worker(session):
+                        release.wait(5)
+                    be._work = parked_worker
+                    callers = [threading.Thread(target=be._ensure_worker, args=(s,)) for _ in range(3)]
+                    if guarded:
+                        self.addCleanup(lambda: (release.set(), [t.join(2) for t in callers if t.ident is not None]))
+                    else:
+                        self.addCleanup(lambda: (release.set(), [t.join(2) for t in callers]))
+                    callers[0].start()
+                    callers[1].start()
+                    self.fail("planted: the body fails after two of the three callers started")
+                    callers[2].start()                              # never reached
+            res = unittest.TestResult()
+            _Case("test_fails").run(res)
+            return res
+
+        res = case(guarded=True)
+        self.assertEqual((len(res.failures), res.errors), (1, []), "the planted failure and nothing beside it: %r %r" % (res.failures, res.errors))
+        self.assertIn("planted", res.failures[0][1])
+        res = case(guarded=False)
+        self.assertEqual(len(res.failures), 1, res.failures)
+        self.assertEqual(len(res.errors), 1, "the unguarded join of the never-started caller is the cleanup's error: %r" % (res.errors,))
         self.assertIn("cannot join thread before it is started", res.errors[0][1])
 
     def test_registry_queue_appends_are_atomic_across_processes(self):
