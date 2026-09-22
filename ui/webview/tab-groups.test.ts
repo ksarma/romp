@@ -806,8 +806,9 @@ test("executed: the folded header's user-todo flag counts HIDDEN members only �
   const both = setPinned(st, ARCH, "old3", true);
   const none = headsOf(planStrip(["web", "old1", "old2", "old3"], unions, both, "web", false)).find((h) => h.head.name === "archived")!;
   assert.equal(sectionTodoFlag(none.hidden.map((id) => sessions.get(id))), null, "every flagged member shown → no header flag");
-  // render.ts reads the plan's hidden list for the flag, as for the count and the pip
-  assert.match(MAKE_HEAD, /const flag = sectionTodoFlag\(hidden\.map\(\(id\) => sessions\.get\(id\)\)\);/);
+  // render.ts reads the plan's hidden list for the flag, as for the count and the pip: the live session's rows, else the strip
+  // meta's count for a skeleton or placeholder member (tab-group-flags.test.ts executes the count cases, 2026-09-22)
+  assert.match(MAKE_HEAD, /const flag = sectionTodoFlag\(hidden\.map\(\(id\) => liveSession\(id\) \?\? tabMeta\.get\(id\)\)\);/);
 });
 
 test("executed: LOCAL ONLY — the entry carries the name and the id; a rename the client watched follows by name, one it missed matches by id; delete, a member moved out and a closed session prune it", () => {

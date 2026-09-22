@@ -178,6 +178,7 @@ function lift(): (H: Hooks) => Api {
     const settings = { stripGroupRows: false };   // the fork's default (W1); no case here paints the untagged trail, the one reader
     let order = H.order, lastStripItems = H.lastStripItems, collapsedTabIds = H.collapsed;
     const sessions = H.sessions, ledgers = H.ledgers, tabMeta = H.tabMeta, closingTabs = H.closingTabs, views = H.views;
+    const liveSession = (id) => id && !skeletonTabs.ids.has(id) ? sessions.get(id) : undefined;   // render.ts's own body: the header's flag reads it (2026-09-22)
     const el = (tag, cls) => new H.FakeEl(tag, cls);
     class HTMLButtonElement extends H.FakeEl {}   // the header's door is a real button (this fork): createElement("button") answers the instanceof
     const document = {
