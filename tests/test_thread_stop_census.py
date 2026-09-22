@@ -5782,18 +5782,27 @@ def _is_free_threaded_build():
 
 
 class _FullCollections:
-    """A gc.callbacks hook that counts the collector's FULL collections while it is armed: generation 2 on the classic
-    collector (a build with the GIL through 3.13); every collection on the free-threaded build (_is_free_threaded_build:
-    one generation, automatic collections reported as 0); and generation 1 or more on a build with the GIL from 3.14 on,
-    whose incremental collector runs the old generation in increments and reports no automatic generation 2 (that branch
-    follows the collector's design and was not run on this pass: no such interpreter was at hand; the calibration's cap
-    names it if it is wrong). `count` is what the pins read. The caller appends the hook to gc.callbacks itself, with
-    disarm registered as a cleanup BEFORE the append, so a failing pin leaves gc.callbacks as it found it."""
+    """A gc.callbacks hook that counts the collector's FULL collections while it is armed: generation 2 on the generational
+    collector (every build with the GIL but the four named next); every collection on the free-threaded build
+    (_is_free_threaded_build: one generation, automatic collections reported as 0); and generation 1 or more on the GIL
+    builds 3.14.0 through 3.14.4 alone, whose incremental collector ran the old generation in increments and reported no
+    automatic generation 2. 3.14.5 reverted to 3.13's generational collector (the 3.14 What's New: the incremental
+    collector shipped in 3.14.0 to 3.14.4 and was reverted in 3.14.5 and later), which the fifteenth pass's verification
+    probed on the installed interpreters (2026-09-22) with a gc.callbacks histogram over chunks of ten thousand lists
+    allocated with the collector on: 3.14.0 and 3.14.4 report generation 1 alone, thresholds (2000, 10, 0), and no
+    generation 2 in four hundred chunks; 3.13.14, 3.14.5 and 3.14.6 report generations 0, 1 and 2 with thresholds
+    (2000, 10, 10), the first generation 2 after 27 chunks (3.10 and 3.12: after 10, thresholds (700, 10, 10)); 3.15.0b4
+    the same as 3.13. Through the fourteenth pass this branch read `>= (3, 14)` and said no such interpreter was at hand,
+    both wrong: on 3.14.5 and later it counted every generation-1 collection as full, so the collection pin's calibration
+    found three chunks where the generational rule needs 27 and its premise named a generation-1 collection a full one
+    (the pin still discriminated: its mutation reds on every build). `count` is what the pins read. The caller appends
+    the hook to gc.callbacks itself, with disarm registered as a cleanup BEFORE the append, so a failing pin leaves
+    gc.callbacks as it found it."""
     def __init__(self):
         self.count = 0
         if _is_free_threaded_build():
             self._least = 0
-        elif sys.version_info >= (3, 14):
+        elif (3, 14, 0) <= sys.version_info[:3] <= (3, 14, 4):
             self._least = 1
         else:
             self._least = 2
