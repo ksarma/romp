@@ -210,7 +210,17 @@ fail, and the shape this census forbids is a stop that stands BEHIND an assertio
     seam for a loop outside the module, or the attribute on self that holds it. A cleanup that stops another thread
     excuses nothing about this one: setUp's addCleanup(self.srv.shutdown) covers the server's serve_forever thread and no
     other start in the class. Registered at or before the start in the same function or in the class's setUp. unittest
-    runs cleanups after tearDown, LIFO, on every exit path. THE TIMED-JOIN DECISION for cleanups (round 2 of PR 891's
+    runs cleanups after tearDown, LIFO, on every exit path. THE HELPER ROAD (round 2 of PR 891's review, 2026-09-22): a
+    cleanup that runs a function of a HELPER MODULE under tests/ (`self.addCleanup(join_started, release, ts, 5)`; a
+    lambda, a local function or a method that calls one; the imported name, the imported module or the dotted package
+    spelling) is read by that function's BODY through the import, with its parameters standing for the arguments the
+    call handed (_helper_bodies, _bound_body: positional, keyword or default; a parameter handed the constant None
+    applies no verb, so `release.set()` for release=None is no release), one level down: tests/thread_ends.py's
+    join_started sets the release and joins each started thread of the list it is handed, so a cleanup that hands it
+    the list is a stop that names the list (its body's for-join) and, when the release is an Event, a release of it;
+    a helper whose body joins a list the cleanup did not hand it, or only timed-joins an outright loop, is no stop.
+    The name rule (a bare name that says stop) stands only for a callable whose body the walk has not: with a helper's
+    body in hand the body decides. THE TIMED-JOIN DECISION for cleanups (round 2 of PR 891's
     review, 2026-09-22; a rule each way, stated here): for a LOOP the walk read OUTRIGHT (kind loop, not a loop found
     only in a product callee) a cleanup whose only stop is a TIMED JOIN (`self.addCleanup(t.join, 10)`, `lambda: [t.join(2)
     for t in ts]`) is NOT the stop, the body rule below applied to cleanups: the join runs on every exit path but the loop
@@ -286,7 +296,12 @@ object and not a thread of ours (known_non_thread), with the exceptions the walk
 whose functions are read for a returned Thread as a module function's are, so a factory there is a start the census
 sees and not a call passed in silence. No helper module returns a Thread at this head (helper_thread_factories() is
 empty, pinned by a test; grep finds one Thread construction outside the test modules, tests/fixtures/fake_claude.py:192,
-a chained start inside the fake claude the tests run as a subprocess, not a factory). The fakes' roads have edges the
+a chained start inside the fake claude the tests run as a subprocess, not a factory). One helper module ENDS threads:
+tests/thread_ends.py's join_started(release, threads, timeout), the guarded list join written once (set the release, join
+only the threads whose ident is not None: a cleanup registered before a start loop runs on the exit path where the body
+failed between two starts, and Thread.join raises on a thread never started), read as a stop through the import (the
+helper road above) and run by a nested case in tests/test_codex_backend.py whose planted failure between two starts reds
+when the guard is stripped. The fakes' roads have edges the
 walk states rather than reads: `self.fake` bound to two classes across the class reads the first (class_bindings); a
 class of the module shadows a local of the same name (class_named); a fake's release and receiver names (`self.go`,
 `self._srv`) are read from the target method's own body, not from the methods it delegates to (its KIND follows the
@@ -3894,11 +3909,103 @@ def _bare_word(start, name, owners):
     return True
 
 
-def _cleanup_stops(unit, call, start, extra=()):
-    """The cleanup names a stop (an attribute or call of a stop verb, the loops' seam, or a name that says stop, in its own
-    arguments or in the body of the local function, lambda or method of the class it names) AND that text mentions the
-    started thread (_thread_words): a cleanup that stops another thread excuses nothing about this one. With no start the
-    stop shape alone is read."""
+def _imported_function(unit, func):
+    """(FunctionDef, its _Module) for a callee that is a function of a HELPER MODULE under tests/ or of another test module,
+    reached through the imports: the imported name (`join_started(...)` under `from tests.thread_ends import
+    join_started`), the imported module (`thread_ends.join_started(...)`) or the dotted package spelling
+    (`tests.thread_ends.join_started(...)`); None for any other callee (a local def, a module function, a lambda, a
+    method: each read where it is defined)."""
+    m = unit.module
+    if isinstance(func, ast.Name):
+        hf = m.helper_function(func.id) or m.tests_function(func.id)
+        return (hf[1], hf[0]) if hf is not None else None
+    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+        hm = m.helper_module(func.value.id) or m.tests_module_for(func.value.id)
+        if hm is not None and func.attr in hm.functions:
+            return hm.functions[func.attr], hm
+        return None
+    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Attribute):
+        hm = m.helper_module_dotted(func.value)
+        if hm is not None and func.attr in hm.functions:
+            return hm.functions[func.attr], hm
+    return None
+
+
+class _Bound(ast.NodeTransformer):
+    """A helper's body with its parameters standing for the arguments a call handed it: a Name that is a parameter becomes a
+    copy of the argument; an attribute over a parameter handed the constant None (`release.set()` for release=None)
+    becomes None itself, so no verb is read as applied to it; a name the body binds itself (its for-target `t`) is
+    renamed `_<helper>__<name>`, so the helper's own words are never taken for the test's (a test's thread `t` is not
+    mentioned by the helper's `t.join`)."""
+    def __init__(self, given, renamed):
+        self.given, self.renamed = given, renamed
+
+    def visit_Attribute(self, node):
+        if isinstance(node.value, ast.Name) and node.value.id in self.given:
+            arg = self.given[node.value.id]
+            if isinstance(arg, ast.Constant) and arg.value is None:
+                return ast.copy_location(ast.Constant(value=None), node)
+        return self.generic_visit(node)
+
+    def visit_Name(self, node):
+        if node.id in self.renamed:
+            return ast.copy_location(ast.Name(id=self.renamed[node.id], ctx=node.ctx), node)
+        if isinstance(node.ctx, ast.Load) and node.id in self.given:
+            return copy.deepcopy(self.given[node.id])
+        return node
+
+
+def _bound_body(fn, args, keywords):
+    """An ast.Module holding a copy of `fn`'s body with each parameter replaced by the argument the call handed it: by
+    position (up to a starred argument), by keyword, else by the parameter's default; a parameter no argument reaches, or
+    one the body rebinds, keeps its name; the body's own bindings are renamed (_Bound)."""
+    params = [a.arg for a in fn.args.posonlyargs + fn.args.args]
+    given = {}
+    for name, arg in zip(params, args):
+        if isinstance(arg, ast.Starred):
+            break
+        given[name] = arg
+    for kw in keywords:
+        if kw.arg is not None:
+            given[kw.arg] = kw.value
+    defaults = fn.args.defaults
+    for name, d in zip(params[len(params) - len(defaults):], defaults):
+        given.setdefault(name, d)
+    for a, d in zip(fn.args.kwonlyargs, fn.args.kw_defaults):
+        if d is not None:
+            given.setdefault(a.arg, d)
+    body = ast.Module(body=copy.deepcopy(fn.body), type_ignores=[])
+    stored = {n.id for n in ast.walk(body) if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del))}
+    for name in stored:
+        given.pop(name, None)
+    renamed = {name: "_%s__%s" % (fn.name, name) for name in stored}
+    return ast.fix_missing_locations(_Bound(given, renamed).visit(body))
+
+
+def _helper_bodies(unit, call, nodes):
+    """The bodies of the helper-module (or other-test-module) functions a cleanup runs, each bound to the arguments handed
+    (THE HELPER ROAD): a registration whose callable is such a function runs it with the registration's remaining
+    arguments (`self.addCleanup(join_started, release, ts, 5)`); a lambda, local function or method the cleanup names
+    runs it where it calls it. One level down: the helper's own calls are not followed."""
+    out = []
+    if call.args:
+        found = _imported_function(unit, call.args[0])
+        if found is not None:
+            out.append(_bound_body(found[0], list(call.args[1:]), call.keywords))
+    for n in nodes:
+        for sub in ast.walk(n):
+            if isinstance(sub, ast.Call):
+                found = _imported_function(unit, sub.func)
+                if found is not None:
+                    out.append(_bound_body(found[0], list(sub.args), sub.keywords))
+    return out
+
+
+def _cleanup_nodes(unit, call, helpers=True):
+    """The nodes a cleanup registration runs, read for its stop: its arguments; the local function (of the unit or its
+    parent), the module function or the lambda a name among them is bound to; the methods of the class a `self.x` /
+    `cls.x` among them names; and, one level down (`helpers`), the bodies of the helper-module functions any of those
+    run, bound to the arguments handed (_helper_bodies)."""
     nodes = []
     for a in list(call.args) + [k.value for k in call.keywords]:
         nodes.append(a)
@@ -3912,6 +4019,16 @@ def _cleanup_stops(unit, call, start, extra=()):
                 nodes.append(b[1])
         if isinstance(a, ast.Attribute) and isinstance(a.value, ast.Name) and a.value.id in ("self", "cls") and unit.cls is not None:
             nodes += unit.module.methods_of(unit.cls, a.attr)
+    return nodes + (_helper_bodies(unit, call, nodes) if helpers else [])
+
+
+def _cleanup_stops(unit, call, start, extra=()):
+    """The cleanup names a stop (an attribute or call of a stop verb, the loops' seam, or a name that says stop, in its own
+    arguments, in the body of the local function, lambda or method of the class it names, or in the body of the
+    helper-module function it runs, bound to the arguments handed: _cleanup_nodes) AND that text mentions the started
+    thread (_thread_words): a cleanup that stops another thread excuses nothing about this one. With no start the stop
+    shape alone is read."""
+    nodes = _cleanup_nodes(unit, call)
     if not any(_stop_shaped(n) for n in nodes):
         return False
     if start is None:
@@ -3948,11 +4065,12 @@ def _cleanup_ends(call, nodes, start):
     lambda or method it names; a SENTINEL PUT (`put` / `put_nowait`) into a queue handed to the thread or one it reads
     (`q.put_nowait(None)` for km._ws_sender: the handler's own teardown sentinel); an UNTIMED join (`self.addCleanup(t.join)`
     with nothing after it; `t.join()` in the body); or a bare name that says stop whose body the walk does not have (a
-    parameter, a returned callable: the name is the evidence, as before). A timed join alone (`self.addCleanup(t.join,
-    10)`, `lambda: t.join(5)`, `lambda: [t.join(2) for t in ts]`) waits for the thread on every exit path and lets a loop
-    run on when the bound passes: not the stop. The strict probe of 2026-09-22 found three such sites on the tree, all in
-    tests/test_ws_send_bounded.py: the sender helper's cleanup, which already put the sentinel the walk had no verb for,
-    and two socket drains, whose cleanups now shut the socket down before the join."""
+    parameter, a returned callable: the name is the evidence, as before; not for a helper-module function, whose BOUND
+    BODY is among the nodes and decides: join_started handed an Event releases, handed None it only joins). A timed join
+    alone (`self.addCleanup(t.join, 10)`, `lambda: t.join(5)`, `lambda: [t.join(2) for t in ts]`) waits for the thread on
+    every exit path and lets a loop run on when the bound passes: not the stop. The strict probe of 2026-09-22 found three
+    such sites on the tree, all in tests/test_ws_send_bounded.py: the sender helper's cleanup, which already put the
+    sentinel the walk had no verb for, and two socket drains, whose cleanups now shut the socket down before the join."""
     fed = _handed_names(start) | _release_names(start)
     for n in nodes:
         for sub in ast.walk(n):
@@ -3968,7 +4086,7 @@ def _cleanup_ends(call, nodes, start):
     if call.args and isinstance(call.args[0], ast.Attribute) and call.args[0].attr == "join" and len(call.args) == 1 and not call.keywords:
         return True                                     # self.addCleanup(t.join): the join itself, untimed
     named = [n for n in nodes if isinstance(n, ast.Name) and _says_stop(n.id)]
-    bodies = [n for n in nodes if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))]
+    bodies = [n for n in nodes if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.Module))]
     return bool(named) and not bodies
 
 
@@ -6273,6 +6391,48 @@ class PlantedShapes(unittest.TestCase):
         self.assertEqual(by["test_drain_timed"], ("loop", "tail-only"))
         self.assertEqual(sorted(w.split(".")[1] for s, w in tails), ["test_after_start_timed", "test_drain_timed", "test_end_def_timed", "test_lambda_timed", "test_timed"])
         self.assertEqual((unread, bounded, stale), ([], [], []))
+
+    def test_a_cleanup_that_runs_a_helper_modules_function_is_read_by_the_helpers_body_bound_to_the_arguments(self):
+        """THE HELPER ROAD (round 2 of PR 891's review, 2026-09-22). A cleanup that runs a function of a helper module under
+        tests/ is read by that function's body with the parameters standing for the arguments handed. Proven on a helper
+        named `settle`, a name that says no stop word, so the name rule cannot pass it: through the registration
+        (`self.addCleanup(settle, go, ts, 5)`), a lambda, a local def, the imported module and the dotted package spelling,
+        each a cleanup-before-start of the list it is handed; handed None for the release and an outright loop, the body is
+        a timed join alone and the row is tail-only (named); handed a list the test did not start, the body mentions no
+        thread of this start and the row is tail-only; for an unreadable kind the timed join through the helper is the
+        documented acceptance. The tree's own helper, tests/thread_ends.py's join_started, read from its source, gives the
+        same verdicts with a name that also says join."""
+        helper = ("def settle(release, threads, timeout):\n    if release is not None:\n        release.set()\n"
+                  "    for t in threads:\n        if t.ident is not None:\n            t.join(timeout)\n")
+        with open(os.path.join(HERE, "thread_ends.py"), encoding="utf-8") as f:
+            real = f.read()
+        head = self.HEAD.replace("import unittest\n", "import unittest\nimport helper_mod\nimport tests.helper_mod\nfrom helper_mod import settle\n"
+                                                    "from tests.thread_ends import join_started\n")
+        loop = "        go = threading.Event()\n        ts = [threading.Thread(target=_loop) for _ in range(2)]\n"
+        starts = "        for t in ts:\n            t.start()\n        self.assertTrue(False)\n"
+        body = ("    def test_registration(self):\n" + loop + "        self.addCleanup(settle, go, ts, 5)\n" + starts +
+                "    def test_lambda(self):\n" + loop + "        self.addCleanup(lambda: settle(go, ts, 5))\n" + starts +
+                "    def test_local_def(self):\n" + loop + "        def after():\n            settle(go, ts, timeout=5)\n        self.addCleanup(after)\n" + starts +
+                "    def test_module_road(self):\n" + loop + "        self.addCleanup(helper_mod.settle, go, ts, 5)\n" + starts +
+                "    def test_dotted_road(self):\n" + loop + "        self.addCleanup(lambda: tests.helper_mod.settle(go, ts, 5))\n" + starts +
+                "    def test_none_release(self):\n" + loop + "        self.addCleanup(settle, None, ts, 5)\n" + starts +
+                "    def test_other_list(self):\n" + loop + "        others = [threading.Thread(target=_once)]\n        self.addCleanup(settle, go, others, 5)\n" + starts +
+                "    def test_unreadable_none_release(self, cb=None):\n        ts = [threading.Thread(target=cb) for _ in range(2)]\n"
+                "        self.addCleanup(settle, None, ts, 5)\n" + starts +
+                "    def test_real_helper(self):\n" + loop + "        self.addCleanup(join_started, go, ts, 5)\n" + starts +
+                "    def test_real_helper_none(self):\n" + loop + "        self.addCleanup(join_started, None, ts, 5)\n" + starts)
+        rows, (tails, unread, stale, bounded), _p = self._census(body, head=head, helpers={"helper_mod": helper, "thread_ends": real})
+        by = {}
+        for s, sh, w in rows:
+            by.setdefault(w.split(".")[1], set()).add((s.kind, sh))
+        for name in ("registration", "lambda", "local_def", "module_road", "dotted_road", "real_helper"):
+            self.assertEqual(by["test_" + name], {("loop", "cleanup-before-start")}, (name, by["test_" + name]))
+        for name in ("none_release", "other_list", "real_helper_none"):
+            self.assertEqual(by["test_" + name], {("loop", "tail-only")}, (name, by["test_" + name]))
+        self.assertEqual(by["test_unreadable_none_release"], {(KIND_UNREAD, "cleanup-before-start")}, "the documented acceptance")
+        self.assertEqual(sorted({w.split(".")[1] for s, w in tails}), ["test_none_release", "test_other_list", "test_real_helper_none"])
+        self.assertEqual((unread, bounded, stale), ([], [], []))
+        self.assertEqual(len(rows), 10, [(s.recv_shown, sh, w) for s, sh, w in rows])   # one start statement per test
 
     def test_no_displayed_or_compared_target_text_is_rendered_by_ast_unparse(self):
         """The text a row displays, an ALLOW entry is keyed on or a plant compares is the source segment (_text), never
