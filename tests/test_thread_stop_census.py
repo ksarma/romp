@@ -46,39 +46,78 @@ list appended to, an element of a dict or a list assigned by subscript, a condit
 a helper's return), through an attribute bound on self or cls anywhere in the class or a base in the same file, through
 a module name, or through a HELPER whose return is such a construction (a module function, a method of the class, a
 function of the body, a lambda, a function of a HELPER MODULE under tests/ reached through the imported module
-(`git_fixture.spawn()`) or the imported name (`spawn()`): the target is read where the construction sits). The binding
+(`git_fixture.spawn()`), the imported name (`spawn()`) or the dotted spelling of a package import (`import
+tests.git_fixture` then `tests.git_fixture.spawn()`), or a function of ANOTHER TEST MODULE reached through its import
+(`import test_asm_checkpoint as TA`, `TA.kernel_module()`): the target is read where the construction sits). The binding
 in force at a start is the last one at or before it (`[... for t in range(8)]` and then `for t in threads: t.start()`
 reads the for's), in the start's own scope: a def in the body binds its own names, a use reads its scope and then the
-enclosing ones (a closure), and a name a nested def declares nonlocal binds one scope out. A receiver
+enclosing ones (a closure), and a name a nested def declares nonlocal binds in the NEAREST enclosing function that binds
+it (Python's rule: `def outer(): def inner(): nonlocal t; t = Thread(...)` binds the body's t when outer binds no t of
+its own), the body's when none does. A receiver
 bound to a known non-thread (a mock patcher, a regex match, tracemalloc, an object of a product or library module such
 as sb.SdkSession(...), whose start() is its own) is not a thread start; a receiver the walk cannot resolve (a parameter,
 a call it cannot classify, a method the class does not define, a product Thread subclass) is UNREADABLE and LISTED,
 never passed in silence.
 
-THE KIND of a thread, read from its target: what it does if the test never stops it. A target that is a METHOD of a
-class of the test module, reached through an instance (`f.run`, `self.fake.run`, `_Fake().run`, the `as` name of a
-`with` over one whose __enter__ returns self), through the class (`_Child._pump`, its instance the first of args=), or
-through a lambda that calls one (`lambda: f.run()`), is read by that method's body, found in the class or a base in the
-module, whatever the method is called; a method's `self.go` is the test's `f.go` (or `self.fake.go`) for the release
-and stop rules below, and nothing when the fake is constructed inline.
-  loop:    it runs until told: serve_forever / run_forever; a function of the test module whose body has a `while`
-           (a `while` bounded by a clock reading, in its test or by an `if <clock>: break` in its body, is not one; a
-           `while True` that searches local data, tests/test_view_deltas.py's _py_maps positional-key search, IS one to the
-           walk, which cannot tell it from a spin on a flag: such a site is excused by an ALLOW entry, by name, with its
-           reason), or
-           that iterates `iter(f, sentinel)`, or that calls a product function that has one (INDIRECT evidence the walk
-           cannot weigh: the product loop may well return, so for the timed-join rule below such a thread is read as
-           bounded); a product function (kernel/, postal/, cli/, the bin scripts) whose body has a `while` (km._producer,
-           _pusher, _heartbeat, _jobs_loop, _ws_sender, _apply_pending_ops, pm._heartbeat_loop).
-  waits:   it blocks until the test releases it: the target is an untimed Event.wait / Lock.acquire / Queue.get / join,
-           or a function of the test module that calls one with no timeout (or reads a socket or a pipe).
-  bounded: everything else: a function of the test module with no loop and only timed waits, a product function with
-           no `while`, a Timer (it fires once). Such a thread ends on its own whatever the test does, within its own
-           bound, so its join is a convenience of the body and not the stop; the shape rule BOUNDED excuses it, with
-           this as the reason. What the walk does not read: a product function that blocks in a read (km._login_reader
-           reads a pty until its fd is closed) or in a lock is classed bounded because it has no `while`; the runtime
-           oracle, tests/conftest.py's thread_census and wait_for_census in a module's own teardown, is what catches
-           those.
+THE KIND of a thread, read from its target: what it does if the test never stops it. THE RULE: EVERY CASE THE WALK
+CANNOT READ FALLS TO THE RESTRICTED SIDE, NEVER TO EXCUSED. `bounded` comes ONLY from a body the walk READ and found free
+of loops and untimed waits, or from a call of the stdlib the STDLIB_RETURNS table says returns (Event.set, time.sleep:
+each entry with its reason); the name rules (serve_forever, an untimed wait, a read) classify the other way, to loop or
+waits; a target the walk cannot read is UNREADABLE, never bounded, and its tail-only stop is listed with the unreadable
+receivers (the pin asserts that bucket empty; ALLOW may excuse one by name with its reason). A structural test hands
+_kind a table of unknown targets and asserts none reads bounded; another asserts every bounded row of the tree carries
+a read-body reason. The bodies the walk reads: a function of the test module (a def of the body, a module function, a
+lambda, a name bound to one, a for-target over a tuple of them: each read, joined on the restricted side); a METHOD of
+a class of the test module, reached through an instance (`f.run`, `self.fake.run`, `_Fake().run`, an element of a list
+of fakes: `for f in fakes`, `fakes[0].run`, `self.fakes[0].run`; the `as` name of a `with` over one whose __enter__
+returns self), through the class (`_Child._pump`, its instance the first of args= when that is a name; a @staticmethod
+has no instance; a @classmethod's cls is the class), or through a lambda that calls one (`lambda: f.run()`): read by the
+method's body, found in the class or a base in the module, whatever the method is called, in the CLASS'S OWN unit, so
+its `self.x()` is the class's x and not the test's (a `run` that delegates to `self._pump()` reads _pump's loop); a
+fake's `self.go` (a classmethod's `cls.go`) is the test's `f.go` / `self.fake.go` / `_Cls.go` for the release and stop
+rules below, and nothing when the fake is constructed inline; a method handed an instance the walk cannot write as a
+name (`args=(*kids,)`, a literal, a lambda) is UNREADABLE, and the name it would have synthesised is never parsed (the
+parse of one that is a name chain is guarded, so no synthesised text can raise out of the census); a Thread subclass's
+run() (the construction's target when it has none); the def or lambda a helper of the test returns (`wrap(i, fn)`); a
+PRODUCT function (kernel/, postal/, cli/, the bin scripts: _Product), reached through a product module (km, sb, jd, pm,
+em, cb: a module-level name bound to load_source(...), to a call returning one (TA.kernel_module()), to an attribute of
+one (jd = km.jd) or imported from another test module; a local so bound; an import from those directories) as
+`km._push_all`, or as a method of a product object (`be._boot_reconcile`, be bound to sb.SdkBackend(...), to a helper
+returning one, or unpacked from one's tuple): the module-level functions of that name, or the method of that class in
+its file, else every product function of that name, each read in its own module's unit and joined on the restricted
+side (any loop is a loop, else any waits, else bounded: read). A body read is read for its own whiles, iter(f, sentinel)
+loops, untimed waits, reads and serve_forever calls and, one level down, for the bodies of the fakes' methods, the
+class's own methods, the module's and the body's functions and the product functions it calls; a call it does not
+resolve (a parameter's, a library's) is not followed. A parameter target of a helper (`_build_on(self, runner)`) is
+read at each CALLER from the argument handed in, in the caller's unit (a lambda's body, a def), and is unreadable in
+the helper's own row.
+  loop:    it runs until told: serve_forever / run_forever by name; a body with a `while` (a `while` bounded by a clock
+           reading, in its test or by an `if <clock>: break` in its body, is not one; a `while True` that searches local
+           data, tests/test_view_deltas.py's _py_maps positional-key search, IS one to the walk, which cannot tell it from
+           a spin on a flag: such a site is excused by an ALLOW entry, by name, with its reason), or that iterates
+           `iter(f, sentinel)`, or that calls a function with one. A loop found in a PRODUCT function a callee reached
+           (run -> em.hydrate; km._git_branch -> _tree_of -> _dotgit_on_chain; be.send -> _registry_queue_entries) is
+           INDIRECT evidence the walk cannot weigh (the product loop may well return: a walk over data, a retry with a
+           bound), so for the timed-join rule below such a thread is read as bounded, while its tail-only stop is still
+           pinned; a product function whose OWN body has a `while` (km._producer, _pusher, _heartbeat, _jobs_loop,
+           _ws_sender, _apply_pending_ops, pm._heartbeat_loop) is a loop outright, by name (product_loops) or by its body.
+  waits:   it blocks until the test releases it: the target is an untimed Event.wait / Lock.acquire / Queue.get / join or
+           a read (recv, accept, readline, read), by name or in a body the walk reads with no timeout (km._login_reader
+           -> _login_reader_loop reads a pty: waits; a test's `self.post()` helper reading its HTTP response: waits).
+  bounded: a body the walk read with no loop and only timed waits, a stdlib call the table says returns, a Thread with
+           no target (the default run() does nothing). Such a thread ends on its own whatever the test does, within its
+           own bound, so its join is a convenience of the body and not the stop; the shape rule BOUNDED excuses it, with
+           this as the reason. What the read does not see: a body that blocks in a lock (`with lock:`), in a call the
+           walk does not follow (a parameter's, a library's, a product callee two levels down), or in a product function
+           the test REBOUND (tests/test_post_push_coalescing.py's `km._push_all = slow_build` is read as the product's);
+           the runtime oracle, tests/conftest.py's thread_census and wait_for_census in a module's own teardown, is what
+           catches those.
+  unreadable: a target the walk cannot read: a parameter in the helper's own row, a function of a module it does not
+           read (a third-party import), a stdlib function or method with no STDLIB_RETURNS entry (a shutdown blocks until
+           the serve loop ends; a put can block on a full queue), a method run on an instance it cannot name, a product
+           attribute no product function defines, a callable built by a call it does not read (functools.partial(f),
+           factory()), a target hidden in * / ** arguments, any other expression (an element of a list, a conditional).
+           Read as a loop for the timed-join rule; a tail-only stop of one is listed in the unreadable bucket.
 
 THE SHAPE of the stop, read in this order; the first match names it. The walk forward from a start reads the
 statements that follow it (climbing out of the for, the comprehension or the with that did the starting) up to the
@@ -106,7 +145,8 @@ fail, and the shape this census forbids is a stop that stands BEHIND an assertio
     t.start()` then `for t in ts: t.join()`), a shutdown / stop / cancel of it or of the object the target runs on
     (srv.shutdown() for srv.serve_forever; loop.stop handed to call_soon_threadsafe), a set or release of what the thread
     waits on or polls (`go.set()`), or the loops' seam set for a loop outside the module (km._LOOPS_STOP.set() for
-    km._producer). A TIMED join of a loop thread is a wait the loop may outlive, not its stop: alone it is passed over,
+    km._producer). A TIMED join of a loop thread (or of one of unreadable kind) is a wait the loop may outlive, not its
+    stop: alone it is passed over,
     and the walk goes on to a release, a shutdown or the seam; an untimed join counts (a loop that did not end would
     hang the test, loudly).
   class-hook: the thread, the object its target runs on (target=self.srv.serve_forever), a local receiver the body
@@ -119,8 +159,8 @@ fail, and the shape this census forbids is a stop that stands BEHIND an assertio
     ends it when the test ends the fake. The second hop, that every test ends the fake on every path, is not read here.
   allowlisted: an entry in ALLOW, one site each, with its reason; an entry that matches no tail-only site is STALE and
     fails the census, so the list cannot outlive the sites it excuses.
-  tail-only: none of the above: the stop, if the body has one, stands behind an assertion. For a loop or a waits thread
-    this set is asserted EMPTY.
+  tail-only: none of the above: the stop, if the body has one, stands behind an assertion. For a loop, a waits or an
+    unreadable thread this set is asserted EMPTY (an unreadable one is listed with the unreadable receivers).
 A helper that starts a thread and is not itself a test (a `_start`, a `_pass`, a `_wire`) is classed in its own body
 first; when its own body has no guarantee, each caller in the same class is classed at its call (a cleanup registered
 before the call, the walk forward from the call, the attribute the call's result is stored on against the caller's
@@ -131,18 +171,30 @@ thread and a stop verb whose stop does not reach it (a set of an event the loop 
 not join, a tearDown or a cleanup whose only stop of a loop thread is a timed join (the thread is waited for on every
 exit path; whether the loop ended within the bound is the oracle's to say: the timed-join rule reads the body's forward
 walk, not the hooks), an end method no test calls, are all classed as guaranteed here and caught only by the runtime
-oracle. A thread started
-by code outside tests/*.py (a kernel helper that spawns its own worker; a product object's own start(), as
-sb.SdkSession(...).start()) is the product's to end. A call through an imported name is that module's object and not
-a thread of ours (known_non_thread), with one exception the walk parses: the HELPER MODULES under tests/ (tests/*.py
-and tests/fixtures/*.py that are not test modules: helper_modules), whose functions are read for a returned Thread as
-a module function's are, so a factory there is a start the census sees and not a call passed in silence. None returns
-a Thread at this head (helper_thread_factories() is empty, pinned by a test; grep finds one Thread construction outside
-the test modules, tests/fixtures/fake_claude.py:192, a chained start inside the fake claude the tests run as a
-subprocess, not a factory). Run the module directly for the table (`--table`; `--tail` prints
-only the tail-only and unreadable rows).
+oracle. A thread started by code outside tests/*.py (a kernel helper that spawns its own worker; a product object's own
+start(), as sb.SdkSession(...).start()) is the product's to end. A call through an imported name is that module's
+object and not a thread of ours (known_non_thread), with the exceptions the walk parses: the HELPER MODULES under tests/
+(tests/*.py and tests/fixtures/*.py that are not test modules: helper_modules) and the other TEST MODULES a test imports,
+whose functions are read for a returned Thread as a module function's are, so a factory there is a start the census
+sees and not a call passed in silence. No helper module returns a Thread at this head (helper_thread_factories() is
+empty, pinned by a test; grep finds one Thread construction outside the test modules, tests/fixtures/fake_claude.py:192,
+a chained start inside the fake claude the tests run as a subprocess, not a factory). The fakes' roads have edges the
+walk states rather than reads: `self.fake` bound to two classes across the class reads the first (class_bindings); a
+class of the module shadows a local of the same name (class_named); a fake's release and receiver names (`self.go`,
+`self._srv`) are read from the target method's own body, not from the methods it delegates to (its KIND follows the
+delegation, its names do not); a product function defined in several files is read in all of them and joined; a product
+method not on the object's class in its file is read by name across the product; a product attribute the test REBINDS
+(`km._push_all = slow_build`, mock.patch.object) is read as the product's. THE TEXT of a target the table shows, an
+ALLOW entry is keyed on and a plant compares is the SOURCE SEGMENT of the expression as the author wrote it, whitespace
+collapsed (_text), never ast.unparse, a renderer whose spelling differs between interpreters (Python 3.10 writes
+`lambda : f()`, 3.12 `lambda: f()`); ast.unparse is used only where two texts it rendered under ONE interpreter are
+matched against each other (UNPARSE_ROADS names every such function with its reason, and a test parses this module to
+assert there is no other). Run the module directly for the table (`--table`; `--tail` prints only the tail-only and
+unreadable rows).
+
 """
 import ast
+import copy
 import os
 import re
 import shutil
@@ -170,6 +222,24 @@ FOREVER = ("serve_forever", "run_forever")
 CLOCK = re.compile(r"\btime\.|monotonic|perf_counter|deadline|thread_time")
 PRODUCT_DIRS = ("kernel", "postal", "cli")
 KINDS_PINNED = ("loop", "waits")
+KIND_UNREAD = "unreadable"       # the kind of a target the walk cannot read: never excused, listed unless its stop is guaranteed
+# Methods of a stdlib object (an Event, a Queue, a Timer, a file, a socket built through a stdlib module) that return on
+# their own, by name, each with the reason: a Timer(0.5, km._LOOPS_STOP.set) is bounded because Event.set returns. Any
+# other method of a stdlib object used as a target is UNREADABLE (a shutdown blocks until the serve loop ends; a put can
+# block on a full queue); the module functions the tests hand a thread (time.sleep) are here too.
+STDLIB_RETURNS = {
+    "set": "Event.set raises the flag and returns",
+    "clear": "Event.clear lowers the flag and returns",
+    "is_set": "Event.is_set reads the flag and returns",
+    "sleep": "time.sleep returns when its argument elapses",
+    "put_nowait": "Queue.put_nowait raises or returns at once",
+    "get_nowait": "Queue.get_nowait raises or returns at once",
+    "cancel": "Timer.cancel returns at once",
+    "release": "Lock.release returns at once",
+    "notify": "Condition.notify returns at once",
+    "notify_all": "Condition.notify_all returns at once",
+    "server_close": "server_close closes the listening socket and returns",
+}
 # Receivers whose start() is known not to be a thread of ours: a mock patcher (mock.patch, patch.object, patch.dict), a
 # regex match (re.finditer / match / search), the tracemalloc module. Any other call the walk cannot read is UNREADABLE.
 NON_THREAD_HEADS = ("re", "regex", "tracemalloc")
@@ -188,6 +258,54 @@ ALLOW = {
         "over local data the walk cannot tell from a spin on a flag, so it reads it as a loop; the body's t.join(5) and "
         "assertFalse(t.is_alive()) are the test. In the failure it guards against (a non-reentrant client lock) the thread "
         "deadlocks inside km._send_slot, and no cleanup can end a deadlock: the assertion names it (2026-09-22).",
+}
+
+
+def _text(node, module):
+    """The text of an expression AS THE AUTHOR WROTE IT: its source segment in `module`, whitespace collapsed to single
+    spaces (a target spanning lines reads as one line). Every target text the census DISPLAYS, keys an ALLOW entry on or
+    compares in a plant comes from here and never from ast.unparse, a renderer whose spelling differs between
+    interpreters (Python 3.10 writes `lambda : f()`, 3.12 `lambda: f()`): with the source segment the difference is
+    impossible by construction. A node with no segment (none should reach here) reads as its type and position."""
+    seg = ast.get_source_segment(module.src, node) if module is not None and getattr(module, "src", None) else None
+    if seg is None:
+        return "<%s at %s:%s>" % (type(node).__name__, getattr(node, "lineno", "?"), getattr(node, "col_offset", "?"))
+    return " ".join(seg.split())
+
+
+# The functions that still call ast.unparse, each with the reason: every one renders a text only to MATCH it against
+# another text rendered by the same interpreter (a binding key, a receiver name, a cleanup's words), never to display it,
+# key an ALLOW entry on it or compare it in a plant (that is _text's road). A test parses this module and asserts the set
+# of functions calling ast.unparse is exactly this one, so a new use must be registered here with its reason.
+UNPARSE_ROADS = {
+    "_Module.derives_thread": "a base's last dotted part, matched against the module's class names",
+    "_Module.bases_of": "a base's last dotted part, matched against the module's class names",
+    "_Module.is_testcase": "a base's last dotted part, matched against TestCase",
+    "_Unit._bind": "the holder text of an append / += target: the key of appends",
+    "_Unit._bind_target": "the text of an attribute or subscript target: the key of a binding",
+    "_Unit.known_non_thread": "the dotted parts of a callee, matched against import names",
+    "_Unit.method_of": "a base's last dotted part, matched against class names",
+    "_Unit.resolve": "the text of a name chain: the key its binding is looked up under",
+    "_Unit.thread_of": "the text of a name chain: the key its binding is looked up under",
+    "_Start.__init__": "recv_text, the receiver as a NAME matched against join / shutdown receivers (recv_shown is displayed)",
+    "_applies_stop": "the receiver a hook applies a stop verb to, matched against the stored attribute names",
+    "_body_kind": "a while's test, searched for a clock reading",
+    "_body_waits_on": "a wait's receiver, rewritten by _own and matched against a set / release call's receiver",
+    "_class_of": "a bound attribute's text: the key of its binding",
+    "_cleanup_stops": "a cleanup's nodes, searched for the thread's words",
+    "_clock_break": "an if's test, searched for a clock reading",
+    "_forever_receivers": "a serve_forever's receiver, rewritten by _own and matched against a shutdown's receiver",
+    "_handed_names": "the names in args= / kwargs=, matched against a cleanup's text",
+    "_hook_stops": "a setUp cleanup's text, searched for the stored attribute names",
+    "_method_call": "the owner a fake's self is rewritten to (f, self.fake, child), matched against release texts",
+    "_object_of": "a bound attribute's text: the key of its binding",
+    "_release_names": "a wait's receiver, matched against a set / release call's receiver",
+    "_start_names": "the iterated list's text, matched against a join's receiver",
+    "_stop_in": "a call's receiver, matched against the start's names and release names",
+    "_stored_attrs": "a holder's text, matched against the attributes on self",
+    "_target_receivers": "the target's receiver, matched against a shutdown's receiver",
+    "_thread_words": "the words a stop of the thread would mention, matched against a cleanup's text",
+    "classify": "the names a caller binds a helper's result to, matched against a cleanup's text",
 }
 
 
@@ -229,7 +347,10 @@ def _target_expr(call):
 
 
 def _has_args(call):
-    return any(kw.arg in ("args", "kwargs") for kw in call.keywords) or len(call.args) > 1
+    """The construction hands the target arguments: args= / kwargs=, or positionals past the target (a Timer's are
+    interval and function: only a third is the target's)."""
+    n = 2 if _callee_name(call) == "Timer" else 1
+    return any(kw.arg in ("args", "kwargs") for kw in call.keywords) or len(call.args) > n
 
 
 _TOKEN = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+")
@@ -385,13 +506,96 @@ def helper_thread_factories(root=ROOT, helpers=None):
     return out
 
 
+class _Product:
+    """The product sources (kernel/, postal/, cli/, the bin scripts that are files of their own) indexed for the kind
+    reading: every function by name, every class by name, and the _Module of each file built on first use, so a
+    target that is a product function (km._push_all, be._boot_reconcile through sb.SdkBackend(...)) is READ in its own
+    module's unit and not classed by its name alone. A name defined in several product files is read in all of them and
+    the answers joined on the restricted side (any loop is a loop, else any waits is waits, else bounded: read)."""
+    def __init__(self, root=ROOT, files=None):
+        self.root = root
+        self.files = list(_product_files(root)) if files is None else list(files)
+        self.functions = {}              # name -> [(path, ClassDef or None, FunctionDef)]
+        self.classes = {}                # name -> [(path, ClassDef)]
+        self.trees = {}
+        for p in self.files:
+            try:
+                tree = ast.parse(open(p, encoding="utf-8").read(), p)
+            except (SyntaxError, UnicodeDecodeError, OSError):
+                continue
+            self.trees[p] = tree
+            holder = {}
+            for n in ast.walk(tree):
+                if isinstance(n, ast.ClassDef):
+                    self.classes.setdefault(n.name, []).append((p, n))
+                    for f in n.body:
+                        if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            holder[id(f)] = n
+            for n in ast.walk(tree):
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    self.functions.setdefault(n.name, []).append((p, holder.get(id(n)), n))
+        self.modules = {}
+
+    def module(self, path, like):
+        """The _Module of one product file (built once), sharing `like`'s loops, thread classes, helpers and product."""
+        m = self.modules.get(path)
+        if m is None:
+            m = self.modules[path] = _Module(path, like.loops, thread_classes=like.product_thread_classes,
+                                             helpers=like.helpers, helper_cache=like.helper_cache, product=self)
+        return m
+
+    def methods(self, class_name, method, like):
+        """[(path, the class that defines it, FunctionDef)] for `method` of the product class `class_name`, in the class
+        or a base of it in the same file (nearest first, per definition of the class); [] when none defines it."""
+        out = []
+        for p, cls in self.classes.get(class_name, []):
+            m = self.module(p, like)
+            for c in m.bases_of(cls):
+                for f in c.body:
+                    if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)) and f.name == method:
+                        out.append((p, c, f))
+                if out:
+                    break
+        return out
+
+    def global_value(self, name):
+        """The value a product file binds the module-level `name` to (km._LOOPS_STOP is threading.Event()), else None."""
+        first = None
+        for tree in self.trees.values():
+            for n in tree.body:
+                if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in n.targets):
+                    if isinstance(n.value, ast.Call):
+                        return n.value
+                    first = n.value if first is None else first
+        return first
+
+
+def _product_files(root):
+    files = []
+    for d in PRODUCT_DIRS:
+        p = os.path.join(root, d)
+        if os.path.isdir(p):
+            files += [os.path.join(p, f) for f in sorted(os.listdir(p)) if f.endswith(".py")]
+    b = os.path.join(root, "bin")
+    if os.path.isdir(b):
+        for f in sorted(os.listdir(b)):
+            p = os.path.join(b, f)
+            if os.path.isfile(p) and not os.path.islink(p):
+                with open(p, "rb") as fh:
+                    head = fh.readline()
+                if head.startswith(b"#!") and b"python" in head:
+                    files.append(p)
+    return files
+
+
 class _Module:
-    def __init__(self, path, loops, src=None, thread_classes=None, helpers=None, helper_cache=None):
+    def __init__(self, path, loops, src=None, thread_classes=None, helpers=None, helper_cache=None, product=None):
         self.path = path
         self.loops = loops
         self.product_thread_classes = set() if thread_classes is None else thread_classes
         self.helpers = {} if helpers is None else helpers            # helper key -> path (helper_modules)
         self.helper_cache = {} if helper_cache is None else helper_cache   # path -> _Module, shared across the census
+        self.product = product                                        # _Product, shared across the census (None: no product read)
         self.src = open(path, encoding="utf-8").read() if src is None else src
         self.tree = ast.parse(self.src, path)
         self.classes = {n.name: n for n in self.tree.body if isinstance(n, ast.ClassDef)}
@@ -495,18 +699,123 @@ class _Module:
                             out.append(_Unit(self, c, f))
             self._units = out
             for u in out:
-                self._unit_of[id(u.fn)] = u
+                self._unit_of.setdefault(id(u.fn), u)
         return self._units
 
     def unit_for(self, fn, cls=None, parent=None):
-        """The unit that reads `fn`: the module's own for a top-level function or a method, else one built for a function
-        defined inside another (its free names resolve through `parent`)."""
-        self.units()
+        """The unit that reads `fn`, built once per function: with `cls` for a method (its self.x() is the class's x), with
+        `parent` for a function defined inside another (its free names resolve through the parent). Lazy: a product
+        module's one function is read without building a unit for every function of the file."""
         u = self._unit_of.get(id(fn))
         if u is None:
             u = _Unit(self, cls, fn, parent=parent)
             self._unit_of[id(fn)] = u
         return u
+
+    def is_stdlib_alias(self, name):
+        """The local name imports a module of the standard library (`import time`; `from unittest import mock`)."""
+        dotted = self.import_names.get(name)
+        return bool(dotted) and dotted.split(".")[0] in getattr(sys, "stdlib_module_names", ())
+
+    def is_product_alias(self, name, depth=0):
+        """The module-level name is a product module (km, sb, jd, pm, em, cb): an import from kernel/, postal/ or cli/,
+        a name imported from another test module that is one there (`from tests.test_x import km`), or a global whose
+        value is a product module (product_module_value)."""
+        if depth > 6:
+            return False
+        dotted = self.import_names.get(name)
+        if dotted:
+            if dotted.split(".")[0] in PRODUCT_DIRS:
+                return True
+            if "." in dotted:
+                mod, last = dotted.rsplit(".", 1)
+                m = self.tests_module(mod)
+                if m is not None:
+                    return m.is_product_alias(last, depth + 1)
+            return False
+        g = self.globals.get(name)
+        return g is not None and self.product_module_value(g, depth + 1)
+
+    def product_module_value(self, node, depth=0):
+        """The module-level value is a product module: load_source(...); a call of a function of this module or of an
+        imported test module whose return is one (km = TA.kernel_module()); an attribute of a product module that its
+        file binds to one (jd = km.jd: the kernel's jd = load_source(...)); an attribute of an imported test module
+        that is one there (em = TA.em); a name that is one."""
+        if depth > 6 or node is None:
+            return False
+        if isinstance(node, ast.Call):
+            if _callee_name(node) == "load_source":
+                return True
+            f = node.func
+            if isinstance(f, ast.Name) and f.id in self.functions:
+                return any(self.product_module_value(v, depth + 1) for v in _returns(self.functions[f.id]))
+            if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name):
+                m = self.tests_module_for(f.value.id)
+                if m is not None and f.attr in m.functions:
+                    return any(m.product_module_value(v, depth + 1) for v in _returns(m.functions[f.attr]))
+            return False
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            if self.is_product_alias(node.value.id, depth + 1):
+                g = self.product.global_value(node.attr) if self.product is not None else None
+                return g is not None and self.product_module_value(g, depth + 1)
+            m = self.tests_module_for(node.value.id)
+            if m is not None:
+                g = m.globals.get(node.attr)
+                return g is not None and m.product_module_value(g, depth + 1)
+            return False
+        if isinstance(node, ast.Subscript):                                     # return _KM[0]
+            return self.product_module_value(node.value, depth + 1)
+        if isinstance(node, ast.Name):
+            if self.is_product_alias(node.id, depth + 1):
+                return True
+            return any(self.product_module_value(v, depth + 1) for v in self.appended(node.id))   # a global list filled once
+        return False
+
+    def appended(self, name):
+        """The values `.append`ed to the module-level name anywhere in the module (`_KM.append(load_source(...))` inside
+        the function that fills the cache), for a global bound to an empty container."""
+        if name not in self.globals:
+            return []
+        out = []
+        for n in ast.walk(self.tree):
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "append" and n.args \
+                    and isinstance(n.func.value, ast.Name) and n.func.value.id == name:
+                out.append(n.args[0])
+        return out
+
+    def tests_module(self, dotted):
+        """The _Module of another module under tests/ named by its import spelling (`tests.test_x`, `test_x`,
+        `tests.fixtures.y`), built once per census; None when there is no such file or it is this module."""
+        rel = dotted[6:] if dotted.startswith("tests.") else dotted
+        p = os.path.join(ROOT, "tests", rel.replace(".", os.sep) + ".py")
+        if not os.path.isfile(p) or os.path.realpath(p) == os.path.realpath(self.path):
+            return None
+        m = self.helper_cache.get(p)
+        if m is None:
+            try:
+                m = self.helper_cache[p] = _Module(p, self.loops, thread_classes=self.product_thread_classes,
+                                                   helpers=self.helpers, helper_cache=self.helper_cache, product=self.product)
+            except (SyntaxError, UnicodeDecodeError):
+                return None
+        return m
+
+    def tests_module_for(self, local):
+        """The module under tests/ a local name imports (`import test_asm_checkpoint as TA`; `from tests import
+        test_kernel_file_comments_save as tks`), else None."""
+        dotted = self.import_names.get(local)
+        return self.tests_module(dotted) if dotted else None
+
+    def tests_function(self, local):
+        """(_Module, FunctionDef) when a local name imports a function of another module under tests/ (`from
+        test_asm_checkpoint import kernel_module`), else None: its returns are read there (a product module it builds)."""
+        dotted = self.import_names.get(local)
+        if not dotted or "." not in dotted:
+            return None
+        mod, name = dotted.rsplit(".", 1)
+        m = self.tests_module(mod)
+        if m is not None and name in m.functions:
+            return m, m.functions[name]
+        return None
 
     def _helper(self, dotted):
         """The _Module of the helper module under tests/ that `dotted` names (built once per census), else None."""
@@ -524,6 +833,18 @@ class _Module:
         dotted = self.import_names.get(local)
         return self._helper(dotted) if dotted else None
 
+    def helper_module_dotted(self, node):
+        """The helper module a dotted expression names through an import of its package (`import tests.fs_clock` and then
+        `tests.fs_clock.move_ctime(...)`; `import tests.fixtures.fake_claude`), else None."""
+        parts = []
+        while isinstance(node, ast.Attribute):
+            parts.insert(0, node.attr)
+            node = node.value
+        if not isinstance(node, ast.Name) or not parts:
+            return None
+        base = self.import_names.get(node.id)
+        return self._helper(".".join([base] + parts)) if base else None
+
     def helper_function(self, local):
         """(helper _Module, FunctionDef) when a local name imports a function of a helper module (`from git_fixture import
         git`), else None."""
@@ -535,6 +856,40 @@ class _Module:
         if m is not None and name in m.functions:
             return m, m.functions[name]
         return None
+
+
+def _declares(fn, name):
+    """'nonlocal' / 'global' when the function's own body (not a nested def's) declares `name` so, else None."""
+    for s in fn.body:
+        for n in _run_nodes(s):
+            if isinstance(n, ast.Nonlocal) and name in n.names:
+                return "nonlocal"
+            if isinstance(n, ast.Global) and name in n.names:
+                return "global"
+    return None
+
+
+def _binds_name(fn, name):
+    """The function binds `name` in its own scope: a parameter, an assignment or a for / with / walrus / except target of
+    its own body (not of a nested def's, not a comprehension's), or a def or class of that name in its body."""
+    a = fn.args
+    if any(x.arg == name for x in a.args + a.kwonlyargs + a.posonlyargs) or (a.vararg and a.vararg.arg == name) \
+            or (a.kwarg and a.kwarg.arg == name):
+        return True
+    for s in fn.body:
+        for n in _run_nodes(s):
+            if isinstance(n, ast.Name) and n.id == name and isinstance(n.ctx, ast.Store):
+                return True
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n.name == name:
+                return True
+            if isinstance(n, ast.ExceptHandler) and n.name == name:
+                return True
+            if isinstance(n, (ast.Import, ast.ImportFrom)) and any((al.asname or al.name.split(".")[0]) == name for al in n.names):
+                return True
+        for n in ast.walk(s):                                   # a def nested anywhere in the statement binds its name here
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n.name == name:
+                return True
+    return False
 
 
 def _stmts(body, stack, out):
@@ -630,16 +985,26 @@ class _Unit:
         return out
 
     def _binding_scope(self, name, scope):
-        """The scope a Name assigned in `scope` binds in: `scope` itself, or the one out from it when the def declares the
-        name nonlocal, or the unit's own when it declares it global."""
+        """The scope a Name assigned in `scope` binds in: `scope` itself; the unit's own when the def declares the name
+        global; when it declares it nonlocal, the NEAREST enclosing function that binds the name itself (Python's rule:
+        `def outer(): def inner(): nonlocal t; t = ...` binds the t of the function enclosing outer when outer binds no t
+        of its own), the unit's own body when none does."""
         fn = self.scope_fn.get(id(scope), self.fn)
         if fn is self.fn:
             return scope
-        for s in fn.body:
-            if isinstance(s, ast.Nonlocal) and name in s.names:
-                return self.enclosing.get(id(fn), self.fn)
-            if isinstance(s, ast.Global) and name in s.names:
-                return self.fn
+        decl = _declares(fn, name)
+        if decl == "global":
+            return self.fn
+        if decl == "nonlocal":
+            outer = self.enclosing.get(id(fn), self.fn)
+            while outer is not self.fn:
+                d = _declares(outer, name)
+                if d == "global":
+                    return self.fn
+                if d != "nonlocal" and _binds_name(outer, name):
+                    return outer
+                outer = self.enclosing.get(id(outer), self.fn)
+            return self.fn
         return scope
 
     def _bind(self, s, scope):
@@ -796,7 +1161,7 @@ class _Unit:
             g = self.module.globals.get(f.id)
             if isinstance(g, ast.Lambda):
                 return g, self
-            hf = self.module.helper_function(f.id)
+            hf = self.module.helper_function(f.id) or self.module.tests_function(f.id)
             if hf is not None:
                 return hf[1], hf[0].unit_for(hf[1])
             return None
@@ -805,7 +1170,11 @@ class _Unit:
                 ms = self.module.methods_of(self.cls, f.attr)
                 if ms:
                     return ms[0], self.module.unit_for(ms[0], self.cls)
-            hm = self.module.helper_module(f.value.id)
+            hm = self.module.helper_module(f.value.id) or self.module.tests_module_for(f.value.id)
+            if hm is not None and f.attr in hm.functions:
+                return hm.functions[f.attr], hm.unit_for(hm.functions[f.attr])
+        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Attribute):     # tests.helper_mod.spawn(): the dotted road
+            hm = self.module.helper_module_dotted(f.value)
             if hm is not None and f.attr in hm.functions:
                 return hm.functions[f.attr], hm.unit_for(hm.functions[f.attr])
         return None
@@ -1079,21 +1448,41 @@ class _Start:
         self.unit, self.call, self.recv, self.ctor, self.ctor_unit = unit, call, recv, ctor, ctor_unit
         self.stmt, self.block, self.index, self.stack = stmt, block, index, stack
         self.is_thread = is_thread
-        self.recv_text = ast.unparse(recv)
+        self.recv_text = ast.unparse(recv)                          # the receiver as a NAME: matched, never displayed
+        self.recv_shown = _text(recv, unit.module)                  # the receiver as written: displayed and compared
         self.subclass = ctor_unit.thread_class_of(ctor) if ctor is not None else None
         if self.subclass is not None:                 # a Thread subclass: its run() is what the thread does
             run = ctor_unit.run_method_of(self.subclass)
-            self.target_expr = run
-            self.target = "%s.run" % self.subclass.name if run is not None else "%s (no run)" % self.subclass.name
+            if run is not None:
+                self.target_expr = run
+                self.target = "%s.run" % self.subclass.name
+            else:                                     # no run() of its own: Thread.run calls the construction's target
+                self.target_expr = _target_expr(ctor)
+                self.target = _text(self.target_expr, ctor_unit.module) if self.target_expr is not None else "%s (no run)" % self.subclass.name
         else:
             self.target_expr = _target_expr(ctor) if ctor is not None else None
-            self.target = ast.unparse(self.target_expr) if self.target_expr is not None else "?"
+            self.target = _text(self.target_expr, ctor_unit.module) if self.target_expr is not None else "?"
         self.line = call.lineno
         self._words = {}
         self.kind, self.why = ("?", "") if ctor is None else _kind(self)
-        # a test function that CALLS a product function with a while (run -> em.hydrate) is loop-kind by evidence the
-        # walk cannot weigh (the product loop may well return): for the timed-join rule it is read as bounded
-        self.indirect = self.kind == "loop" and self.why.startswith("calls ") and "product function" in self.why
+        self.indirect = _indirect(self.kind, self.why)
+
+    def at_caller(self, unit, call):
+        """This start as read at a caller of its helper: when the target is a PARAMETER of the helper, the kind is read
+        from the argument the caller hands in (`self._build_on(lambda build: ...)`: the lambda's body), in the caller's
+        unit; the same start otherwise. A copy: the start's own row keeps its own kind."""
+        expr = self.target_expr
+        if not (isinstance(expr, ast.Name) and expr.id in self.unit.params):
+            return self
+        arg = _argument_for(self.unit.fn, expr.id, call)
+        if arg is None:
+            return self
+        view = copy.copy(self)
+        view._words = {}
+        view.kind, view.why = _expr_kind(unit, arg, call.lineno, 0)
+        view.why = "%s, handed in by the caller" % view.why
+        view.indirect = _indirect(view.kind, view.why)
+        return view
 
     def words(self, extra=()):
         """_thread_words, memoised per caller binding (`extra`)."""
@@ -1107,14 +1496,51 @@ class _Start:
 
     def describe(self):
         if self.ctor is None:
-            return "%s:%d %s calls %s.start()" % (self.file(), self.line, self.unit.qualname, self.recv_text)
-        return "%s:%d %s starts Thread(target=%s) via %s.start()" % (self.file(), self.line, self.unit.qualname, self.target, self.recv_text)
+            return "%s:%d %s calls %s.start()" % (self.file(), self.line, self.unit.qualname, self.recv_shown)
+        return "%s:%d %s starts Thread(target=%s) via %s.start()" % (self.file(), self.line, self.unit.qualname, self.target, self.recv_shown)
+
+
+def _indirect(kind, why):
+    """A loop the walk found in a PRODUCT function a callee reached (run -> em.hydrate; km._git_branch -> _tree_of ->
+    _dotgit_on_chain) is evidence it cannot weigh: the product loop may well return (a walk over data, a retry with a
+    bound), so for the timed-join rule such a thread is read as bounded; a loop in the target's own body, or in a
+    function of the test module, is not."""
+    return kind == "loop" and "calls " in why and "product function" in why
+
+
+def _argument_for(fn, param, call):
+    """The expression a call hands to the function's parameter `param`: by keyword, else by position (the first
+    parameter of a method being self or cls), else the parameter's default; None when the walk cannot tell (a * or **
+    argument before it)."""
+    for kw in call.keywords:
+        if kw.arg == param:
+            return kw.value
+    if any(kw.arg is None for kw in call.keywords):
+        return None
+    names = [a.arg for a in fn.args.posonlyargs + fn.args.args]
+    if names and names[0] in ("self", "cls"):
+        names = names[1:]
+    if param not in names:
+        return None
+    pos = names.index(param)
+    if any(isinstance(a, ast.Starred) for a in call.args[:pos + 1]):
+        return None
+    if pos < len(call.args):
+        return call.args[pos]
+    defaults = fn.args.defaults
+    off = len(names) - len(defaults)
+    return defaults[pos - off] if pos >= off and pos - off < len(defaults) else None
 
 
 # ── the kind of a thread ────────────────────────────────────────────────────────────────────────────────
 
 def _body_kind(unit, fn_body_nodes, loops, depth):
-    """The kind a function body gives its thread: loop, waits or bounded, with the reason."""
+    """The kind a function body gives its thread: loop, waits or bounded, with the reason. The body is READ: its own
+    whiles (not those a clock bounds), iter(f, sentinel) loops, untimed waits, reads and serve_forever calls, and, one
+    level down, the bodies of the fakes' methods it calls, of the class's own methods (self.x() in a method read in its
+    class's unit), of the module's and the body's functions, and of the product functions it calls (read in the
+    product sources). A call the walk does not resolve (a parameter's, a library's) is not followed: bounded then says
+    the body itself, and what the walk followed, has no loop and no untimed wait."""
     for sub in fn_body_nodes:
         if isinstance(sub, ast.While):
             if CLOCK.search(ast.unparse(sub.test)) or _clock_break(sub):
@@ -1137,9 +1563,15 @@ def _body_kind(unit, fn_body_nodes, loops, depth):
                 methods = _method_calls_in(unit, [sub], sub.lineno)              # f.run(), where f is a fake of the module
                 if methods:
                     for m, _owner in methods:
-                        k, why = _body_kind(unit, list(ast.walk(m)), loops, depth + 1)
+                        k, why = _body_kind(_reader(unit, m), list(ast.walk(m)), loops, depth + 1)
                         if k != "bounded":
-                            return k, "calls %s, %s" % (ast.unparse(sub.func), why)
+                            return k, "calls %s, %s" % (_text(sub.func, unit.module), why)
+                    continue
+                own = _own_method(unit, sub)                                     # self._serve(), in a method read in its class
+                if own is not None:
+                    k, why = _body_kind(_reader(unit, own), list(ast.walk(own)), loops, depth + 1)
+                    if k != "bounded":
+                        return k, "calls %s, %s" % (_text(sub.func, unit.module), why)
                     continue
                 fn = unit.local_defs.get(nm) or (unit.parent.local_defs.get(nm) if unit.parent is not None else None)
                 if fn is not None:
@@ -1150,9 +1582,22 @@ def _body_kind(unit, fn_body_nodes, loops, depth):
                     k, why = _body_kind(unit, list(ast.walk(unit.module.functions[nm])), loops, depth + 1)
                     if k != "bounded":
                         return k, "calls %s, %s" % (nm, why)
-                elif nm in loops and nm not in BUILTIN_METHODS and _product_call(unit, sub):
+                elif nm in loops and nm not in BUILTIN_METHODS and _module_call(unit, sub):
                     return "loop", "calls %s, a product function with a while loop" % nm
+                elif nm not in BUILTIN_METHODS and _product_call(unit, sub):    # km.x(): the product function, read
+                    r = _product_kind(unit, sub.func, sub.lineno, depth + 1)
+                    if r is not None and r[0] in ("loop", "waits"):
+                        return r[0], "calls %s, %s" % (nm, r[1])
     return "bounded", "no loop, no untimed wait"
+
+
+def _own_method(unit, call):
+    """The method `self.x()` / `cls.x()` names in a unit that reads a method of a class: the class's own x (or a base's
+    in this module); None for a call that is not such, or in a unit without a class."""
+    f = call.func
+    if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id in ("self", "cls") and unit.cls is not None:
+        return unit.method_of(unit.cls, f.attr)
+    return None
 
 
 def _clock_break(loop):
@@ -1173,14 +1618,28 @@ def _is_module_alias(unit, node):
     return node.id in unit.module.imports or isinstance(g, (ast.Call, ast.Attribute))
 
 
-def _product_call(unit, call):
-    """The call reaches a product function: a bare name the module imported (not one it defines), or an attribute of a
-    module alias (km = load_source(...), sb, jd, pm: a module-level name bound to a call or imported)."""
+def _module_call(unit, call):
+    """The call reaches a function outside the test module: a bare name the module imported (not one it defines), or an
+    attribute of a module alias (a name imported or bound at module level to a call or an attribute). The road of the
+    by-name loops rule: a name in product_loops reached this way is a loop (restricted, whatever the alias is)."""
     f = call.func
     if isinstance(f, ast.Name):
         return f.id not in unit.local_defs and f.id not in unit.module.functions and f.id in unit.module.imports
     if isinstance(f, ast.Attribute):
         return _is_module_alias(unit, f.value)
+    return False
+
+
+def _product_call(unit, call):
+    """The call reaches a PRODUCT function the walk can read: a bare name imported from kernel/, postal/ or cli/ (not one
+    the module defines), or an attribute of a product module (km = load_source(...), sb, jd, pm, a local km =
+    kernel_module(); not time, not a third-party module)."""
+    f = call.func
+    if isinstance(f, ast.Name):
+        return f.id not in unit.local_defs and f.id not in unit.module.functions and f.id in unit.module.imports \
+            and unit.module.is_product_alias(f.id)
+    if isinstance(f, ast.Attribute):
+        return _product_module(unit, f.value, call.lineno)
     return False
 
 
@@ -1197,9 +1656,21 @@ def _class_of(unit, node, line, depth=0):
             enter = unit.method_of(c, "__enter__") if c is not None else None
             if enter is not None and any(isinstance(v, ast.Name) and v.id == "self" for v in _returns(enter)):
                 return c
+        if node[0] == "for":                                    # for f in fakes: f is an element of what fakes holds
+            return _class_of(unit, node[1], line, depth + 1)
         return None
     if isinstance(node, ast.Call):
         return unit.class_named(node.func.id) if isinstance(node.func, ast.Name) else None
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):        # [_Fake(), _Fake()]: the first element the walk reads
+        for e in node.elts:
+            c = _class_of(unit, e, line, depth + 1)
+            if c is not None:
+                return c
+        return None
+    if isinstance(node, (ast.ListComp, ast.GeneratorExp, ast.SetComp)):
+        return _class_of(unit, node.elt, line, depth + 1)
+    if isinstance(node, ast.Subscript):                         # fakes[0].run, self.fakes[0].run: an element of the holder
+        return _class_of(unit, node.value, line, depth + 1)
     if isinstance(node, ast.Name):
         c = unit.class_named(node.id)
         if c is not None:
@@ -1235,11 +1706,71 @@ def _method_call(unit, func, args, line):
     fn = unit.method_of(cls, func.attr)
     if fn is None:
         return None, None
-    if isinstance(recv, ast.Name) and unit.class_named(recv.id) is cls:          # the class itself: an unbound method
-        return fn, (ast.unparse(args[0]) if args else None)
+    if _decorated(fn, "staticmethod"):                                             # no instance at all
+        return fn, None
+    if isinstance(recv, ast.Name) and unit.class_named(recv.id) is cls:          # the class itself
+        if _decorated(fn, "classmethod"):                                          # cls is the class: cls.go is _Cls.go
+            return fn, recv.id
+        inst = args[0] if args else None                                           # an unbound method: its instance is the
+        return fn, (ast.unparse(inst) if inst is not None and _is_chain(inst) else None)   # first of args=, when a name
     if isinstance(recv, ast.Call):                                                 # _Fake().run: nothing in the test names it
         return fn, None
     return fn, ast.unparse(recv)
+
+
+def _decorated(fn, name):
+    return any(isinstance(d, ast.Name) and d.id == name for d in fn.decorator_list)
+
+
+def _is_chain(node):
+    """A Name, or an Attribute / Subscript chain down to one (`f`, `self.fake`, `fakes[0]`, `h[k].x`): a name the walk
+    can write another name against."""
+    while isinstance(node, (ast.Attribute, ast.Subscript)):
+        node = node.value
+    return isinstance(node, ast.Name)
+
+
+def _parse_chain(text):
+    """The expression `text` parses to, when it is a name chain (_is_chain); None for anything else and for text no
+    parser accepts (`*kids.go`, `0.go`), so a name the walk synthesises can never raise out of the census."""
+    if not text:
+        return None
+    try:
+        node = ast.parse(text, mode="eval").body
+    except (SyntaxError, ValueError):
+        return None
+    return node if _is_chain(node) else None
+
+
+def _handed(start):
+    """The elements of the construction's args= tuple or list, in order; [] when none or not a literal."""
+    if start.ctor is None:
+        return []
+    for kw in start.ctor.keywords:
+        if kw.arg == "args" and isinstance(kw.value, (ast.Tuple, ast.List)):
+            return list(kw.value.elts)
+    return []
+
+
+def _unwritable_instance(start):
+    """The first of args= when the target is a method reached through the class (not a staticmethod or a classmethod) and
+    that first argument is not a name chain nor a construction: `*kids`, `0`, a lambda. The thread runs the method on
+    something the walk cannot name, so it cannot read what the thread waits on: the row is UNREADABLE. None otherwise."""
+    expr = start.target_expr
+    if not isinstance(expr, ast.Attribute) or start.ctor is None or not isinstance(expr.value, ast.Name):
+        return None
+    unit = start.ctor_unit
+    cls = unit.class_named(expr.value.id)
+    if cls is None:
+        return None
+    fn = unit.method_of(cls, expr.attr)
+    if fn is None or _decorated(fn, "staticmethod") or _decorated(fn, "classmethod"):
+        return None
+    handed = _handed(start)
+    if not handed:
+        return None
+    inst = handed[0]
+    return None if _is_chain(inst) or isinstance(inst, ast.Call) else inst
 
 
 def _target_method(start):
@@ -1248,11 +1779,7 @@ def _target_method(start):
     expr = start.target_expr
     if not isinstance(expr, ast.Attribute) or start.ctor is None:
         return None, None
-    handed = []
-    for kw in start.ctor.keywords:
-        if kw.arg == "args" and isinstance(kw.value, (ast.Tuple, ast.List)):
-            handed = kw.value.elts
-    return _method_call(start.ctor_unit, expr, handed, start.ctor.lineno)
+    return _method_call(start.ctor_unit, expr, _handed(start), start.ctor.lineno)
 
 
 def _method_calls_in(unit, nodes, line):
@@ -1269,10 +1796,14 @@ def _method_calls_in(unit, nodes, line):
 
 def _own(text, owner):
     """A name read in a fake's method body as the test would write it: `self.go` in _Fake.run is `f.go` when the thread
-    runs on f, `self.fake.go` when it runs on self.fake; None when nothing in the test names the fake (`_Fake().run`).
-    A name that is not the fake's `self` is returned as it is."""
-    if text == "self" or text.startswith("self."):
-        return None if owner is None else owner + text[4:]
+    runs on f, `self.fake.go` when it runs on self.fake, `cls.go` in a classmethod is `_Cls.go`; None when nothing in the
+    test names the fake (`_Fake().run`) or the owner is not a name chain the walk can write (`*kids`). A name that is
+    not the fake's `self` or `cls` is returned as it is."""
+    head, _sep, rest = text.partition(".")
+    if head in ("self", "cls"):
+        if owner is None or _parse_chain(owner) is None:
+            return None
+        return owner + ("." + rest if rest else "")
     return text
 
 
@@ -1301,7 +1832,45 @@ def _target_fn(start):
             ms = unit.module.methods_of(unit.cls, expr.attr)
             if ms:
                 return ms[0]
+    if isinstance(expr, ast.Call):                      # wrap(i, fn): a helper of the test returning a def or a lambda
+        built = _call_target(unit, expr, start.ctor.lineno)
+        if built is not None:
+            return built[0]
     return None
+
+
+def _call_target(unit, call, line):
+    """(the def or lambda, the unit that reads it) that a helper call builds as a target (`wrap(i, fn)` returning its
+    nested `go`; a helper returning a lambda): the helper's returns, read in the helper's own unit; None otherwise."""
+    callee = unit.callee_of(call, line)
+    if callee is None:
+        return None
+    fn, u = callee
+    for v in (_returns(fn) if not isinstance(fn, ast.Lambda) else [fn.body]):
+        if isinstance(v, ast.Lambda):
+            return v, u
+        if isinstance(v, ast.Name):
+            inner = u.local_defs.get(v.id) or (u.parent.local_defs.get(v.id) if u.parent is not None else None) \
+                or u.module.functions.get(v.id)
+            if inner is not None:
+                return inner, u
+    return None
+
+
+def _reader(unit, fn):
+    """The unit that reads a function's body: for a method, its class's own unit (so `self.x()` in it is the class's x and
+    not the test's; a class defined in the body reads through the body's unit as its parent); `unit` itself otherwise."""
+    if fn is None:
+        return unit
+    for scope in (unit, unit.parent):
+        if scope is not None:
+            for c in scope.local_classes.values():
+                if any(f is fn for f in c.body):
+                    return unit.module.unit_for(fn, c, parent=scope)
+    for c in unit.module.classes.values():
+        if any(f is fn for f in c.body):
+            return unit.module.unit_for(fn, c)
+    return unit
 
 
 def _body_waits_on(unit, body, owner, lambda_depth=True):
@@ -1321,39 +1890,303 @@ def _body_waits_on(unit, body, owner, lambda_depth=True):
 
 
 def _kind(start):
+    """(kind, reason) for the thread: loop, waits, bounded or UNREADABLE. THE RULE: every case the walk cannot read falls
+    to the restricted side. `bounded` comes ONLY from a body the walk read (_body_kind: a function of the test module, a
+    fake's method, a helper's returned def, a Thread subclass's run(), a product function found in the product sources
+    and read in its own module) and found free of loops and untimed waits, or from a stdlib call STDLIB_RETURNS says
+    returns, each with its reason; the name rules (FOREVER, BLOCKING, READS) classify the other way, to loop or waits,
+    and apply when the body the walk read says bounded (a body it cannot see through: asyncio.run(self._main()),
+    self.fut.result()); a target it cannot resolve (a parameter, a function of a module it does not read, a stdlib
+    method with no rule, a method run on an instance it cannot name, a call or an expression it does not read) is
+    UNREADABLE, never bounded."""
     unit, expr, ctor = start.ctor_unit, start.target_expr, start.ctor
     loops = unit.module.loops
     if expr is None:
-        return "bounded", "no target"
+        if any(kw.arg is None for kw in ctor.keywords) or any(isinstance(a, ast.Starred) for a in ctor.args):
+            return KIND_UNREAD, "the target is hidden in a * or ** argument of the construction"
+        return "bounded", "no target: the default run() does nothing"
     if isinstance(expr, (ast.FunctionDef, ast.AsyncFunctionDef)):          # a Thread subclass: what its run() does
-        return _body_kind(unit, list(ast.walk(expr)), loops, 0)
+        return _body_kind(_reader(unit, expr), list(ast.walk(expr)), loops, 0)
     if isinstance(expr, ast.Lambda):
         return _body_kind(unit, list(ast.walk(expr.body)), loops, 0)
     if isinstance(expr, ast.Attribute):
-        fn, _owner = _target_method(start)         # a method of a class of the module (f.run, self.fake.run, _Fake().run,
-        if fn is not None:                         # _Child._pump): its body is what the thread does, whatever its name
-            return _body_kind(unit, list(ast.walk(fn)), loops, 0)
+        bad = _unwritable_instance(start)
+        if bad is not None:
+            return KIND_UNREAD, "a method reached through the class on `%s`, an instance the walk cannot name" % _text(bad, unit.module)
+        fn = _target_fn(start)                     # a method of a class of the module (f.run, self.fake.run, _Fake().run,
+        body = _body_kind(_reader(unit, fn), list(ast.walk(fn)), loops, 0) if fn is not None else None   # _Child._pump, self.x)
+        if body is not None and body[0] != "bounded":   # its body is what the thread does, whatever the method is called
+            return body
         if expr.attr in FOREVER:
             return "loop", expr.attr
         if expr.attr in BLOCKING and not _has_args(ctor):
             return "waits", "the target is an untimed .%s" % expr.attr
         if expr.attr in READS:
             return "waits", "the target is a read"
-        fn = _target_fn(start)
-        if fn is not None:
-            return _body_kind(unit, list(ast.walk(fn)), loops, 0)
+        if body is not None:
+            return body
         if expr.attr in loops and expr.attr not in BUILTIN_METHODS:
             return "loop", "a product function with a while loop"
-        return "bounded", "a function outside the test module with no while loop"
+        prod = _product_kind(unit, expr, ctor.lineno, 0)
+        if prod is not None:
+            return prod
+        lib = _library_kind(unit, expr, ctor.lineno)
+        if lib is not None:
+            return lib
+        return KIND_UNREAD, _unread_reason(unit, expr, ctor.lineno)
     if isinstance(expr, ast.Name):
-        fn = _target_fn(start)
-        if fn is not None:
-            body = fn.body if isinstance(fn, ast.Lambda) else fn
-            return _body_kind(unit, list(ast.walk(body)), loops, 0)
-        if expr.id in loops:
-            return "loop", "a product function with a while loop"
-        return "bounded", "a function outside the test module with no while loop"
-    return "bounded", "a callable the walk does not read"
+        return _name_kind(start, expr, ctor.lineno, 0)
+    if isinstance(expr, ast.Call):
+        built = _call_target(unit, expr, ctor.lineno)
+        if built is not None:
+            fn, u = built
+            return _body_kind(u, list(ast.walk(fn.body if isinstance(fn, ast.Lambda) else fn)), loops, 0)
+        return KIND_UNREAD, "a callable built by %s(), a call the walk does not read" % _text(expr.func, unit.module)
+    return KIND_UNREAD, "a target expression the walk does not read (%s)" % _text(expr, unit.module)
+
+
+def _name_kind(start, node, line, depth):
+    return _expr_kind(start.ctor_unit, node, line, depth)
+
+
+def _expr_kind(unit, node, line, depth):
+    """The kind of a Name target (or of an argument a caller hands a helper's parameter): a function of the body or the
+    module or a lambda bound to the name is read; a for-target over a tuple of such (`for target in (a, b, c)`) is each
+    of them, joined on the restricted side; a product function imported by name is read in the product sources; a
+    stdlib function is looked up in STDLIB_RETURNS; a parameter, a function of a module the walk does not read, or
+    anything else is UNREADABLE."""
+    loops = unit.module.loops
+    if depth > 8:
+        return KIND_UNREAD, "a name bound too deep to follow"
+    if isinstance(node, ast.Lambda):
+        return _body_kind(unit, list(ast.walk(node.body)), loops, 0)
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return _join_kind_answers([_expr_kind(unit, e, line, depth + 1) for e in node.elts])
+    if not isinstance(node, ast.Name):
+        return KIND_UNREAD, "a target the walk does not read as a callable (%s)" % _text(node, unit.module)
+    fn = unit.local_defs.get(node.id) or (unit.parent.local_defs.get(node.id) if unit.parent is not None else None) \
+        or unit.module.functions.get(node.id)
+    if fn is not None:
+        return _body_kind(unit, list(ast.walk(fn)), loops, 0)
+    b = unit.binding_at(node.id, line)
+    if b is not None:
+        v = b[1]
+        if isinstance(v, tuple):
+            if v[0] == "for":
+                return _expr_kind(unit, v[1], b[0], depth + 1)
+            return KIND_UNREAD, "a name bound by a %s the walk does not read as a callable" % v[0]
+        if isinstance(v, (ast.Lambda, ast.Name, ast.Tuple, ast.List, ast.Set)):
+            return _expr_kind(unit, v, b[0], depth + 1)
+        return KIND_UNREAD, "a name bound to `%s`, which the walk does not read as a callable" % _text(v, unit.module)
+    if node.id in loops:
+        return "loop", "a product function with a while loop"
+    if node.id in unit.params or (unit.parent is not None and node.id in unit.parent.params):
+        return KIND_UNREAD, "a parameter (%s): what the caller hands in is not read here" % node.id
+    if node.id in unit.module.imports:
+        if unit.module.is_product_alias(node.id):
+            prod = _product_kind(unit, node, line, 0)
+            if prod is not None:
+                return prod
+        if unit.module.is_stdlib_alias(node.id):
+            r = STDLIB_RETURNS.get(node.id)
+            return ("bounded", r) if r else (KIND_UNREAD, "%s: a stdlib function the walk has no rule for" % node.id)
+        return KIND_UNREAD, "%s: imported from %s, a module the walk does not read" % (node.id, unit.module.import_names.get(node.id, "?"))
+    return KIND_UNREAD, "%s: a name the walk cannot resolve" % node.id
+
+
+def _join_kind_answers(answers):
+    """One answer for several read bodies, on the restricted side: any loop is a loop, else any waits, else any
+    unreadable, else bounded (every one read)."""
+    for k in ("loop", "waits", KIND_UNREAD):
+        for a in answers:
+            if a[0] == k:
+                return a
+    if not answers:
+        return KIND_UNREAD, "nothing to read"
+    return "bounded", answers[0][1] if len(answers) == 1 else "each of %d read: no loop, no untimed wait" % len(answers)
+
+
+def _product_kind(unit, expr, line, depth):
+    """(kind, reason) for a target or a callee that is a PRODUCT function, read in the product sources (_Product): an
+    attribute of a product module alias (km._push_all: the module-level functions of that name), or a method of a
+    product object (be._boot_reconcile, be built by sb.SdkBackend(...) or by a helper returning one: the method of that
+    class in its file, else every product function of that name), each read in its own module's unit and joined on the
+    restricted side. None when the receiver is not a product module or object; UNREADABLE when it is one but no product
+    function of that name exists (an attribute that is not a function)."""
+    prod = unit.module.product
+    if prod is None:
+        return None
+    if isinstance(expr, ast.Name):                                   # from kernel.x import f; Thread(target=f)
+        heads = [(p, c, f) for p, c, f in prod.functions.get(expr.id, []) if c is None] or prod.functions.get(expr.id, [])
+        what = expr.id
+    else:
+        recv, what = expr.value, _text(expr, unit.module)
+        obj = "module" if isinstance(recv, ast.Name) and unit.module.is_product_alias(recv.id) else _product_object(unit, recv, line)
+        if obj is None:
+            return None
+        if obj == "module":                                                  # km.x: the module-level functions of that name
+            heads = [(p, c, f) for p, c, f in prod.functions.get(expr.attr, []) if c is None]
+        else:                                                                # be.x: the method of be's class, else by name
+            heads = prod.methods(obj, expr.attr, unit.module) if isinstance(obj, str) else []
+            heads = heads or prod.functions.get(expr.attr, [])
+    if not heads:
+        return KIND_UNREAD, "%s: a product attribute no product function defines" % what
+    answers = []
+    for p, c, f in heads:
+        m = prod.module(p, unit.module)
+        answers.append(_body_kind(m.unit_for(f, c), list(ast.walk(f)), unit.module.loops, depth))
+    k, why = _join_kind_answers(answers)
+    if k == "loop":
+        return k, "a product function with a while loop" if why == "a while loop" else "a product function: %s" % why
+    if k == "bounded":
+        return k, "a product function read in %d definition%s: no loop, no untimed wait" % (len(answers), "" if len(answers) == 1 else "s")
+    return k, "a product function: %s" % why
+
+
+def _object_of(unit, node, line, depth=0):
+    """The construction (a Call the walk does not resolve further) behind an expression, following the roads resolve
+    does: a name's binding, a for or with target, a container's first element, a subscript's holder, self.x across the
+    class, a module global, a helper's return, a product module's global (km._LOOPS_STOP). None when there is none."""
+    if depth > 8 or node is None:
+        return None
+    if isinstance(node, tuple):
+        if node[0] in ("for", "with"):
+            return _object_of(unit, node[1], line, depth + 1)
+        if node[0] == "unpack" and isinstance(node[1], ast.Call):          # be, fake, _ = build(): the tuple's element
+            callee = unit.callee_of(node[1], line)
+            if callee is not None:
+                fn, u = callee
+                for v in (_returns(fn) if not isinstance(fn, ast.Lambda) else [fn.body]):
+                    if isinstance(v, (ast.Tuple, ast.List)) and len(v.elts) > node[2]:
+                        r = _object_of(u, v.elts[node[2]], v.lineno, depth + 1)
+                        if r is not None:
+                            return r
+        return None
+    if isinstance(node, ast.Call):
+        callee = unit.callee_of(node, line)
+        if callee is None:
+            return node
+        fn, u = callee
+        for v in (_returns(fn) if not isinstance(fn, ast.Lambda) else [fn.body]):
+            r = _object_of(u, v, v.lineno, depth + 1)
+            if r is not None:
+                return r
+        return None
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        for e in node.elts:
+            r = _object_of(unit, e, line, depth + 1)
+            if r is not None:
+                return r
+        return None
+    if isinstance(node, (ast.ListComp, ast.GeneratorExp, ast.SetComp)):
+        return _object_of(unit, node.elt, line, depth + 1)
+    if isinstance(node, ast.Subscript):
+        return _object_of(unit, node.value, line, depth + 1)
+    if isinstance(node, ast.Name):
+        b = unit.binding_at(node.id, line)
+        if b is not None:
+            r = _object_of(unit, b[1], b[0], depth + 1)
+            if r is not None:
+                return r
+        g = unit.module.globals.get(node.id)
+        if g is not None:
+            r = _object_of(unit, g, g.lineno, depth + 1)
+            if r is not None:
+                return r
+        for v in unit.appends.get(node.id, []) + unit.module.appended(node.id):   # _KM = []; _KM.append(load_source(...))
+            r = _object_of(unit, v, v.lineno, depth + 1)
+            if r is not None:
+                return r
+        return None
+    if isinstance(node, ast.Attribute):
+        b = unit.binding_at(ast.unparse(node), line)
+        if b is not None:
+            r = _object_of(unit, b[1], b[0], depth + 1)
+            if r is not None:
+                return r
+        if isinstance(node.value, ast.Name) and node.value.id in ("self", "cls"):
+            for v in unit.class_bindings(node.attr):
+                r = _object_of(unit, v, v.lineno, depth + 1)
+                if r is not None:
+                    return r
+            return None
+        if unit.module.product is not None and _product_module(unit, node.value, line, depth + 1):
+            g = unit.module.product.global_value(node.attr)              # km._LOOPS_STOP: the kernel's threading.Event()
+            return g if isinstance(g, ast.Call) else None
+        return None
+    return None
+
+
+def _product_module(unit, node, line, depth=0):
+    """The expression is a product module: a module-level product alias (km), or a name whose value resolves to
+    load_source(...) (a local `km = kernel_module()`; `self.km` so bound in the class)."""
+    if isinstance(node, ast.Name) and unit.module.is_product_alias(node.id):
+        return True
+    call = _object_of(unit, node, line, depth)
+    return call is not None and _callee_name(call) == "load_source"
+
+
+def _product_object(unit, node, line):
+    """The product class an expression is an instance of, by name (`be` bound to sb.SdkBackend(...), to a helper
+    returning one, or to self.be so bound in the class); "module" when the expression is itself a product module
+    (a local km = kernel_module() whose return is load_source(...)); True for an object built through a product module
+    whose class the sources do not name (km.make_thing()); None when it is not a product object the walk can see."""
+    call = _object_of(unit, node, line)
+    if call is None or unit.module.product is None:
+        return None
+    if _callee_name(call) == "load_source":
+        return "module"
+    f = call.func
+    if isinstance(f, ast.Attribute) and _product_module(unit, f.value, line):
+        return f.attr if f.attr in unit.module.product.classes else True
+    if isinstance(f, ast.Name):
+        dotted = unit.module.import_names.get(f.id, "")
+        if dotted.split(".")[0] in PRODUCT_DIRS and f.id in unit.module.product.classes:
+            return f.id
+    return None
+
+
+_STDLIB_CTORS = ("Event", "Queue", "LifoQueue", "PriorityQueue", "SimpleQueue", "Lock", "RLock", "Condition", "Semaphore",
+                 "BoundedSemaphore", "Barrier", "Timer")
+
+
+def _library_ctor(call):
+    """The construction is of a stdlib object: through a stdlib module (threading.Event(), queue.Queue(), socket.socket())
+    or a bare stdlib class name imported from one (Event())."""
+    f = call.func
+    head = f
+    while isinstance(head, ast.Attribute):
+        head = head.value
+    if isinstance(f, ast.Attribute) and isinstance(head, ast.Name):
+        return head.id in getattr(sys, "stdlib_module_names", ())
+    return isinstance(f, ast.Name) and f.id in _STDLIB_CTORS
+
+
+def _library_kind(unit, expr, line):
+    """(kind, reason) for a target that is a function of a stdlib module (time.sleep) or a method of a stdlib object
+    (km._LOOPS_STOP.set, gate.clear): bounded when STDLIB_RETURNS says the call returns, with its reason; UNREADABLE for
+    any other; None when the receiver is neither."""
+    recv = expr.value
+    if isinstance(recv, ast.Name) and unit.module.is_stdlib_alias(recv.id):
+        r = STDLIB_RETURNS.get(expr.attr)
+        return ("bounded", r) if r else (KIND_UNREAD, "%s: a stdlib function the walk has no rule for" % _text(expr, unit.module))
+    call = _object_of(unit, recv, line)
+    if call is not None and _library_ctor(call):
+        r = STDLIB_RETURNS.get(expr.attr)
+        return ("bounded", r) if r else (KIND_UNREAD, "%s: a method of a %s() the walk has no rule for" % (_text(expr, unit.module), _callee_name(call)))
+    return None
+
+
+def _unread_reason(unit, expr, line):
+    recv = expr.value
+    if isinstance(recv, ast.Name):
+        if recv.id in unit.params or (unit.parent is not None and recv.id in unit.parent.params):
+            return "a method of the parameter %s: what the caller hands in is not read here" % recv.id
+        if recv.id in unit.module.imports:
+            return "a function of %s, a module the walk does not read" % unit.module.import_names.get(recv.id, recv.id)
+        if unit.binding_at(recv.id, line) is None and recv.id not in unit.module.globals:
+            return "a method of %s, a name the walk cannot resolve" % recv.id
+    return "a method of `%s`, an object the walk does not read" % _text(recv, unit.module)
 
 
 def _release_names(start):
@@ -1366,7 +2199,10 @@ def _release_names(start):
         return out
     method, owner = _target_method(start)
     if method is not None:                              # a fake's method: its self.go is the test's f.go (or nothing, inline)
-        return _body_waits_on(start.ctor_unit, method, owner, lambda_depth=False)
+        out = _body_waits_on(start.ctor_unit, method, owner, lambda_depth=False)
+        if not out and isinstance(expr, ast.Attribute) and expr.attr in BLOCKING:   # w.wait whose body the walk sees no
+            out.add(ast.unparse(expr.value))                                       # wait in: the name's own receiver
+        return out
     if isinstance(expr, ast.Attribute) and expr.attr in BLOCKING:
         out.add(ast.unparse(expr.value))
         return out
@@ -1460,11 +2296,11 @@ def _thread_words(start, extra=()):
             words.add(ast.unparse(b[1][1]))
             if isinstance(b[1][1], ast.Attribute):
                 words.add(b[1][1].attr)
-    _method, owner = _target_method(start)
+    owners = _owners(start)
     for nm in _release_names(start):
         words.add(nm)
-        if "." in nm and not (owner and nm.startswith(owner + ".")):   # a fake's f.go is f's alone: `go` names every
-            words.add(nm.rsplit(".", 1)[1])                             # fake's, so a release of g.go says nothing of f
+        if _bare_word(start, nm, owners):                # a fake's f.go is f's alone: `go` names every fake's, so a
+            words.add(nm.rsplit(".", 1)[1])              # release of g.go says nothing of f; a test's self.stop is `stop`
     expr = start.target_expr
     if isinstance(expr, (ast.Name, ast.Attribute)):
         words.add(ast.unparse(expr))
@@ -1472,12 +2308,43 @@ def _thread_words(start, extra=()):
             words.add(expr.attr)
     for r in _target_receivers(start) | _handed_names(start):
         words.add(r)
-        if "." in r:
+        if _bare_word(start, r, owners):                 # f._srv is f's alone: g._srv.shutdown says nothing of f
             words.add(r.rsplit(".", 1)[1])
     if start.kind == "loop" and _outside_target(start):
         words.add(STOP_SEAM)
     words.update(_stored_attrs(start))
     return {w for w in words if w and w not in ("self", "cls")}
+
+
+def _owners(start):
+    """The texts that stand for a fake's `self` in what the target reaches: the target method's owner (`f` for f.run,
+    `self.fake` for self.fake.run, `_Cls` for a classmethod through the class) and the owners of the fakes' methods a
+    lambda or a function of the test calls (`f` for lambda: f.wait())."""
+    method, owner = _target_method(start)
+    out = {owner} if owner else set()
+    if method is None:
+        body = _target_fn(start)
+        if body is not None:
+            out |= {o for _fn, o in _method_calls_in(start.ctor_unit, list(ast.walk(body)), body.lineno) if o}
+    return out
+
+
+def _bare_word(start, name, owners):
+    """The last attribute of a dotted `name` may stand alone as a word of the thread (`stop` for self.stop, `_LOOPS_STOP`
+    for km._LOOPS_STOP): not when a proper prefix of it is a fake's name (an owner, or a name bound to a class of the
+    module), whose attributes are that fake's alone."""
+    if "." not in name:
+        return False
+    parts = name.split(".")
+    for i in range(1, len(parts)):
+        prefix = ".".join(parts[:i])
+        if prefix in owners:
+            return False
+        node = _parse_chain(prefix)
+        if node is not None and not (isinstance(node, ast.Name) and node.id in ("self", "cls")) \
+                and _class_of(start.ctor_unit, node, start.line) is not None:
+            return False
+    return True
 
 
 def _cleanup_stops(unit, call, start, extra=()):
@@ -1552,7 +2419,7 @@ def _stop_in(unit, stmt, names, releases, start, extra=()):
             loop_vars[loop.target.id] = ast.unparse(loop.iter)
     target_recvs = _target_receivers(start) if start is not None else set()
     seam_ok = start is not None and start.kind == "loop" and _outside_target(start)
-    loop_kind = start is not None and start.kind == "loop" and not start.indirect
+    loop_kind = start is not None and ((start.kind == "loop" and not start.indirect) or start.kind == KIND_UNREAD)
     timed_join, ended = False, False
     for sub in ast.walk(stmt):
         if isinstance(sub, ast.Call):
@@ -1626,14 +2493,14 @@ def _stored_attrs(start):
     if isinstance(expr, ast.Attribute):
         holders.append(expr.value)
     for nm in _release_names(start):
-        holders.append(ast.parse(nm, mode="eval").body if nm.isidentifier() or "." in nm else None)
+        holders.append(_parse_chain(nm))
     body = _target_fn(start)
     if body is not None and not isinstance(expr, (ast.FunctionDef, ast.AsyncFunctionDef)):   # not a subclass's run()
         method, owner = _target_method(start)                   # a fake's self.go is the test's f.go, or nothing (inline)
         for sub in ast.walk(body):
             if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr in FOREVER + BLOCKING + ("is_set",):
                 nm = _own(ast.unparse(sub.func.value), owner if method is not None else "self")
-                holders.append(ast.parse(nm, mode="eval").body if nm and (nm.isidentifier() or "." in nm) else None)
+                holders.append(_parse_chain(nm))
     for h in holders:
         if h is None:
             continue
@@ -1729,16 +2596,18 @@ def classify(start, at=None):
     return "tail-only"
 
 
-def census(paths, loops=None, thread_classes=None, helpers=None):
+def census(paths, loops=None, thread_classes=None, helpers=None, product=None):
     """Every thread start under `paths`: rows (start, shape, where) with `where` the unit the shape was read in (the
     start's own, or a caller's); a receiver the walk cannot read is a row with shape 'unreadable'. `helpers` maps the
-    helper modules under tests/ a test may import (helper_modules) so a thread one of their functions returns is read."""
+    helper modules under tests/ a test may import (helper_modules) so a thread one of their functions returns is read;
+    `product` is the _Product index of the product sources a product target is read in (built here when None)."""
     loops = product_loops() if loops is None else loops
     thread_classes = product_thread_classes() if thread_classes is None else thread_classes
     helpers = helper_modules() if helpers is None else helpers
+    product = _Product() if product is None else product
     out, cache = [], {}
     for p in paths:
-        m = _Module(p, loops, thread_classes=thread_classes, helpers=helpers, helper_cache=cache)
+        m = _Module(p, loops, thread_classes=thread_classes, helpers=helpers, helper_cache=cache, product=product)
         for u in m.units():
             for st in u.starts():
                 if not st.is_thread:
@@ -1753,13 +2622,25 @@ def census(paths, loops=None, thread_classes=None, helpers=None):
                     out.append((st, shape, u.qualname))
                     continue
                 for (cu, call, s, block, i, stack) in callers:
-                    out.append((st, classify(st, at=(cu, s, stack, call.lineno)), cu.qualname))
+                    view = st.at_caller(cu, call)                # a parameter target: its kind from the caller's argument
+                    out.append((view, classify(view, at=(cu, s, stack, call.lineno)), cu.qualname))
     return out
 
 
+def bounded_reason_is_read(why):
+    """The reason of a bounded row says a body was READ (or a stdlib call is in the table): _body_kind's own verdict, a
+    tuple's elements each read, a product function read, a Thread with no target, a STDLIB_RETURNS entry; at a caller,
+    the same with the caller's suffix."""
+    suffix = ", handed in by the caller"
+    base = why[:-len(suffix)] if why.endswith(suffix) else why
+    return base in ("no loop, no untimed wait", "no target: the default run() does nothing") \
+        or base.startswith(("each of ", "a product function read in ")) or base in STDLIB_RETURNS.values()
+
+
 def tail_only(rows, allow=None):
-    """(loop/waits sites whose stop is tail-only and not excused, unreadable sites, stale allow entries, the bounded
-    tail-only sites the BOUNDED rule excuses)."""
+    """(loop/waits sites whose stop is tail-only and not excused, the UNREADABLE sites (a receiver the walk cannot read,
+    or a thread of unreadable KIND whose stop is tail-only and not excused), stale allow entries, the bounded tail-only
+    sites the BOUNDED rule excuses). Only a bounded kind is ever excused by the shape alone."""
     allow = ALLOW if allow is None else allow
     tails, unread, bounded, seen = [], [], [], set()
     for st, shape, where in rows:
@@ -1768,7 +2649,10 @@ def tail_only(rows, allow=None):
         elif shape == "tail-only":
             key = (st.file(), where, st.target)
             seen.add(key)
-            if st.kind not in KINDS_PINNED:
+            if st.kind == KIND_UNREAD:
+                if key not in allow:
+                    unread.append((st, where))
+            elif st.kind not in KINDS_PINNED:
                 bounded.append((st, where))
             elif key not in allow:
                 tails.append((st, where))
@@ -1783,7 +2667,7 @@ def module_paths(root=HERE):
 def _report(rows, only_tail=False):
     lines = []
     for st, shape, where in sorted(rows, key=lambda r: (r[0].file(), r[0].line)):
-        if only_tail and (shape not in ("tail-only", "unreadable") or (shape == "tail-only" and st.kind not in KINDS_PINNED)):
+        if only_tail and (shape not in ("tail-only", "unreadable") or (shape == "tail-only" and st.kind not in KINDS_PINNED + (KIND_UNREAD,))):
             continue
         lines.append("%-8s %-24s %s  [at %s]  (%s)" % (st.kind, shape, st.describe(), where, st.why))
     return "\n".join(lines)
@@ -1805,6 +2689,13 @@ class ThreadStopCensus(unittest.TestCase):
                             "thread on self and stop it in tearDown, or start it inside a try whose finally stops it."
                             % (st.kind, st.why, st.describe(), where))
         for st, where in unread:
+            if st.is_thread:
+                problems.append("UNREADABLE target: %s (classed at %s): %s. The walk could not read what the thread does, so "
+                                "its tail-only stop is not excused as bounded. Make the target a function of the test module or "
+                                "a product function the walk can find, stop it on every exit path (a cleanup registered before "
+                                "the start, tearDown, a finally), or excuse it by name in ALLOW with the reason."
+                                % (st.describe(), where, st.why))
+                continue
             problems.append("UNREADABLE receiver: %s: the walk could not resolve what .start() is called on; bind the receiver "
                             "in the same function (t = threading.Thread(...)) or on self, or return the construction from the "
                             "helper that builds it." % st.describe())
@@ -1851,6 +2742,31 @@ class ThreadStopCensus(unittest.TestCase):
         self.assertIn(("sample", "finally"), [(t, s) for t, k, s, w in cs], cs)
         aw = by_file.get("tests/test_atomic_write.py", [])
         self.assertIn(("hammer", "bounded", "stop-before-first-assertion"), [(t, k, s) for t, k, s, w in aw], aw)
+        # the product road (pass 4): km._login_reader's body is read (its _login_reader_loop reads a pty: waits, no longer
+        # 'bounded, no while'); jd.serve iterates iter(f, sentinel); be.set_model reaches a while through the class's own
+        # methods, and the cleanup registered before the start is its stop; a parameter target is read at each caller
+        lf = by_file.get("tests/test_login_flow.py", [])
+        self.assertIn(("km._login_reader", "waits", "stop-before-first-assertion"), [(t, k, s) for t, k, s, w in lf], lf)
+        js = by_file.get("tests/test_judge_serve.py", [])
+        self.assertIn(("jd.serve", "loop", "cleanup-before-start"), [(t, k, s) for t, k, s, w in js], js)
+        cbk = by_file.get("tests/test_codex_backend.py", [])
+        self.assertIn(("be.set_model", "loop", "cleanup-before-start"), [(t, k, s) for t, k, s, w in cbk], cbk)
+        sm = by_file.get("tests/test_stage_marks.py", [])
+        self.assertIn(("runner", "bounded", "tail-only", "BuildsCountUnderTheThreadsStage.test_a_pool_workers_build_lands_under_the_tier_that_submitted_it"), sm, sm)
+        ps = by_file.get("tests/test_perf_stats.py", [])
+        self.assertIn(("target", "bounded", "stop-before-first-assertion"), [(t, k, s) for t, k, s, w in ps], ps)
+        fc = by_file.get("tests/test_first_cycle_stage_split.py", [])     # km = kernel_module() through another test module's
+        self.assertIn(("km._LOOPS_STOP.set", "bounded", "finally"), [(t, k, s) for t, k, s, w in fc], fc)   # function; Event.set
+
+    def test_every_bounded_kind_comes_from_a_read_body_or_the_stdlib_table(self):
+        """THE RULE over the tree: no bounded row carries a reason other than a body the walk read (its own, each of a
+        tuple's, a product function's), the default run() of a Thread with no target, or a STDLIB_RETURNS entry; and
+        every unreadable-kind row is either guaranteed by its shape or listed."""
+        bad = [(st.describe(), st.why) for st, _s, _w in self.rows if st.kind == "bounded" and not bounded_reason_is_read(st.why)]
+        self.assertEqual(bad, [])
+        for st, shape, where in self.rows:
+            if st.kind == KIND_UNREAD and shape == "tail-only":
+                self.assertIn((st.file(), where, st.target), ALLOW, st.describe())
 
     def test_the_bounded_rule_excuses_at_least_one_site_or_it_is_stale(self):
         _tails, _unread, _stale, bounded = tail_only(self.rows)
@@ -1874,9 +2790,10 @@ class PlantedShapes(unittest.TestCase):
             "def _once():\n    return 1\n\nclass T(unittest.TestCase):\n")
     HEAD_KM = HEAD.replace("class T(", "km = __import__('types').ModuleType('km')   # a module alias, as km = load_source(...)\nclass T(")
 
-    def _census(self, body, allow=None, head=None, helpers=None):
-        """The census of one planted module; `helpers` maps helper module names to sources planted beside it (item 4:
-        the default is none, so the tree's own helper modules are not consulted for a plant)."""
+    def _census(self, body, allow=None, head=None, helpers=None, product=None):
+        """The census of one planted module; `helpers` maps helper module names to sources planted beside it, `product`
+        maps product file names to sources planted beside it (the defaults are none, so neither the tree's helper
+        modules nor its product sources are consulted for a plant)."""
         d = tempfile.mkdtemp(prefix="romp-tests-census-")
         self.addCleanup(shutil.rmtree, d, True)
         p = os.path.join(d, "test_planted.py")
@@ -1888,7 +2805,13 @@ class PlantedShapes(unittest.TestCase):
             with open(hp, "w", encoding="utf-8") as f:
                 f.write(src)
             paths[name] = hp
-        rows = census([p], loops={"_producer"}, thread_classes={"KernelWorker"}, helpers=paths)
+        prod_files = []
+        for name, src in (product or {}).items():
+            pp = os.path.join(d, name + ".py")
+            with open(pp, "w", encoding="utf-8") as f:
+                f.write(src)
+            prod_files.append(pp)
+        rows = census([p], loops={"_producer"}, thread_classes={"KernelWorker"}, helpers=paths, product=_Product(files=prod_files))
         return rows, tail_only(rows, allow={} if allow is None else allow), os.path.relpath(p, ROOT)
 
     def _tails(self, tails):
@@ -2029,7 +2952,7 @@ class PlantedShapes(unittest.TestCase):
             "        b.start()\n"
             "        self.assertTrue(False)\n")
         self.assertEqual(self._tails(tails), [("_loop", "T.test_y"), ("_loop", "T.test_z")])
-        self.assertEqual(sorted((s.recv_text, sh, w) for s, sh, w in rows if sh == "cleanup-before-start"),
+        self.assertEqual(sorted((s.recv_shown, sh, w) for s, sh, w in rows if sh == "cleanup-before-start"),
                          [("a", "cleanup-before-start", "T.test_z"), ("b", "cleanup-before-start", "T.test_w"),
                           ("threading.Thread(target=self.srv.serve_forever, daemon=True)", "cleanup-before-start", "T.test_x")])
 
@@ -2266,7 +3189,7 @@ class PlantedShapes(unittest.TestCase):
             "    def _context(self, text, m, width=40):\n"
             "        return text[max(0, m.start() - width):m.end() + width]\n")
         self.assertEqual(tails, [])
-        self.assertEqual([(s.recv_text, w) for s, w in unread], [("worker", "T.test_y")])
+        self.assertEqual([(s.recv_shown, w) for s, w in unread], [("worker", "T.test_y")])
         self.assertEqual([(s.target, sh) for s, sh, w in rows if sh != "unreadable"], [("_once", "stop-before-first-assertion")])
 
     def test_a_helper_built_thread_a_subclass_an_alias_and_a_container_element_are_read_as_threads(self):
@@ -2343,7 +3266,7 @@ class PlantedShapes(unittest.TestCase):
             "        if th is not None:\n"
             "            th.start()\n"
             "        self.assertTrue(False)\n", head=head)
-        self.assertEqual(unread, [], [(s.recv_text, w) for s, w in unread])
+        self.assertEqual(unread, [], [(s.recv_shown, w) for s, w in unread])
         self.assertEqual(self._tails(tails), sorted([
             ("_loop", "T.test_helper"), ("_loop", "T.test_method"), ("_loop", "T.test_local"), ("_loop", "T.test_unpack"),
             ("W2.run", "T.test_subclass"), ("L.run", "T.test_local_subclass"), ("_loop", "T.test_local_subclass"),
@@ -2369,7 +3292,7 @@ class PlantedShapes(unittest.TestCase):
             "        def nothing():\n"
             "            return None\n"
             "        self.addCleanup(nothing)\n", head=self.HEAD_KM)
-        self.assertEqual(sorted((s.recv_text, w) for s, w in unread),
+        self.assertEqual(sorted((s.recv_shown, w) for s, w in unread),
                          [("factory()", "T.test_x"), ("km.KernelWorker()", "T.test_x"), ("self.other()", "T.test_x")])
         self.assertEqual([sh for _s, sh, _w in rows if sh != "unreadable"], [])
 
@@ -2390,27 +3313,38 @@ class PlantedShapes(unittest.TestCase):
     HEAD_FAKES = ("import threading\nimport time\nimport unittest\n"
                   "def _loop():\n    while True:\n        time.sleep(0.01)\n"
                   "def _once():\n    return 1\n"
+                  "class _Srv:\n    def serve_forever(self):\n        while True:\n            time.sleep(0.01)\n"
+                  "    def shutdown(self):\n        pass\n"
                   "class _Base:\n    def run(self):\n        while True:\n            time.sleep(0.01)\n"
                   "class _Fake(_Base):\n"
-                  "    def __init__(self):\n        self.go = threading.Event()\n"
-                  "    def wait(self):\n        self.go.wait()\n"
+                  "    def __init__(self):\n        self.go = threading.Event()\n        self._srv = _Srv()\n"
+                  "    def block(self):\n        self.go.wait()\n"
                   "    def step(self):\n        return _once()\n"
+                  "    def serve(self):\n        self._srv.serve_forever()\n"
+                  "    def relay(self):\n        self._pump()\n"
+                  "    def _pump(self):\n        while True:\n            time.sleep(0.01)\n"
                   "    def __enter__(self):\n        return self\n"
                   "    def __exit__(self, *a):\n        self.go.set()\n"
                   "class _Child:\n"
                   "    def _pump(self):\n        while True:\n            time.sleep(0.01)\n"
                   "    def _drain(self):\n        self.go.wait()\n"
+                  "class _Cls:\n    go = threading.Event()\n"
+                  "    @classmethod\n    def block(cls):\n        cls.go.wait()\n"
+                  "    @staticmethod\n    def pump(sink):\n        while True:\n            time.sleep(0.01)\n"
                   "class T(unittest.TestCase):\n"
                   "    def setUp(self):\n        self.fake = _Fake()\n")
 
     def test_a_method_of_a_class_of_the_module_is_read_by_its_body_however_the_thread_reaches_it(self):
         """The target is a method of a fake defined in the module, reached through an instance (`f.run`), through the
         test's own attribute (`self.fake.run`), through an inline construction (`_Fake().run`), through the class with the
-        instance handed as the first of args= (`_Child._pump`), or through a lambda that calls one (`lambda: f.run()`), and
-        the method's body is what the thread does: a while (in the class or a base) is a loop, an untimed wait is waits,
-        and a tail-only stop of either is NAMED. Before this the method's body was not read, the thread was classed bounded
-        as 'a function outside the test module', and the tail-only stop was excused. A method with no loop and no wait is
-        bounded, as before."""
+        instance handed as the first of args= (`_Child._pump`), through a lambda that calls one (`lambda: f.run()`), or
+        through an element of a list of fakes (`for f in fakes`, `fakes[0].run`, `self.fakes[0].run`), and the method's
+        body is what the thread does: a while (in the class or a base, or in the method it delegates to through
+        `self._pump()`) is a loop, an untimed wait is waits, and a tail-only stop of either is NAMED. The methods are
+        called run, block, _pump, _drain, relay: no name rule reaches them (a method called `wait` was waits before by the
+        BLOCKING name rule, which is why the fake's is not), so before this each was classed bounded as 'a function
+        outside the test module' and the tail-only stop was excused. A method with no loop and no wait is bounded, as
+        before."""
         rows, (tails, unread, stale, bounded), _p = self._census(
             "    def test_inst_loop(self):\n"
             "        f = _Fake()\n"
@@ -2420,7 +3354,7 @@ class PlantedShapes(unittest.TestCase):
             "        t.join(5)\n"
             "    def test_inst_waits(self):\n"
             "        f = _Fake()\n"
-            "        t = threading.Thread(target=f.wait, daemon=True)\n"
+            "        t = threading.Thread(target=f.block, daemon=True)\n"
             "        t.start()\n"
             "        self.assertTrue(False)\n"
             "        f.go.set(); t.join(5)\n"
@@ -2438,14 +3372,14 @@ class PlantedShapes(unittest.TestCase):
             "        threading.Thread(target=_Fake().run, daemon=True).start()\n"
             "        self.assertTrue(False)\n"
             "    def test_inline_waits(self):\n"
-            "        threading.Thread(target=_Fake().wait, daemon=True).start()\n"
+            "        threading.Thread(target=_Fake().block, daemon=True).start()\n"
             "        self.assertTrue(False)\n"
             "    def test_self_loop(self):\n"
             "        t = threading.Thread(target=self.fake.run, daemon=True)\n"
             "        t.start()\n"
             "        self.assertTrue(False)\n"
             "    def test_self_waits(self):\n"
-            "        t = threading.Thread(target=self.fake.wait, daemon=True)\n"
+            "        t = threading.Thread(target=self.fake.block, daemon=True)\n"
             "        t.start()\n"
             "        self.assertTrue(False)\n"
             "    def test_lambda_loop(self):\n"
@@ -2455,7 +3389,27 @@ class PlantedShapes(unittest.TestCase):
             "        self.assertTrue(False)\n"
             "    def test_lambda_waits(self):\n"
             "        f = _Fake()\n"
-            "        t = threading.Thread(target=lambda: f.wait(), daemon=True)\n"
+            "        t = threading.Thread(target=lambda: f.block(), daemon=True)\n"
+            "        t.start()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_for_fakes(self):\n"
+            "        fakes = [_Fake(), _Fake()]\n"
+            "        for f in fakes:\n"
+            "            threading.Thread(target=f.run, daemon=True).start()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_indexed(self):\n"
+            "        fakes = [_Fake()]\n"
+            "        t = threading.Thread(target=fakes[0].run, daemon=True)\n"
+            "        t.start()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_self_indexed(self):\n"
+            "        self.fakes = [_Fake()]\n"
+            "        t = threading.Thread(target=self.fakes[0].run, daemon=True)\n"
+            "        t.start()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_relay(self):\n"
+            "        f = _Fake()\n"
+            "        t = threading.Thread(target=f.relay, daemon=True)\n"
             "        t.start()\n"
             "        self.assertTrue(False)\n"
             "    def test_with_loop(self):\n"
@@ -2469,55 +3423,180 @@ class PlantedShapes(unittest.TestCase):
             "        t.start()\n"
             "        self.assertTrue(False)\n"
             "        t.join()\n", head=self.HEAD_FAKES)
-        self.assertEqual(unread, [], [(s.recv_text, w) for s, w in unread])
+        self.assertEqual(unread, [], [(s.recv_shown, w) for s, w in unread])
         self.assertEqual(sorted((s.target, s.kind, w) for s, w in tails), sorted([
-            ("f.run", "loop", "T.test_inst_loop"), ("f.wait", "waits", "T.test_inst_waits"),
+            ("f.run", "loop", "T.test_inst_loop"), ("f.block", "waits", "T.test_inst_waits"),
             ("_Child._pump", "loop", "T.test_class_loop"), ("_Child._drain", "waits", "T.test_class_waits"),
-            ("_Fake().run", "loop", "T.test_inline_loop"), ("_Fake().wait", "waits", "T.test_inline_waits"),
-            ("self.fake.run", "loop", "T.test_self_loop"), ("self.fake.wait", "waits", "T.test_self_waits"),
-            ("lambda: f.run()", "loop", "T.test_lambda_loop"), ("lambda: f.wait()", "waits", "T.test_lambda_waits"),
+            ("_Fake().run", "loop", "T.test_inline_loop"), ("_Fake().block", "waits", "T.test_inline_waits"),
+            ("self.fake.run", "loop", "T.test_self_loop"), ("self.fake.block", "waits", "T.test_self_waits"),
+            ("lambda: f.run()", "loop", "T.test_lambda_loop"), ("lambda: f.block()", "waits", "T.test_lambda_waits"),
+            ("f.run", "loop", "T.test_for_fakes"), ("fakes[0].run", "loop", "T.test_indexed"),
+            ("self.fakes[0].run", "loop", "T.test_self_indexed"), ("f.relay", "loop", "T.test_relay"),
             ("f.run", "loop", "T.test_with_loop")]))
         self.assertEqual([(s.target, s.kind) for s, w in bounded], [("f.step", "bounded")])
+        self.assertEqual({s.why for s, w in tails if s.target == "f.relay"}, {"calls self._pump, a while loop"},
+                         "the delegation is read in the fake's own unit: self._pump is _Fake._pump, not the test's")
 
     def test_a_fakes_stop_is_read_as_the_test_writes_it(self):
         """The fake's `self.go` in its method is the test's `f.go` (or `self.fake.go`): a release of it before the first
         assertion, a cleanup naming it or the fake, a tearDown that sets it, or an end method of the fake called before
-        the assertion, is this thread's stop; a lambda's call of the method is read one level down for the same names."""
+        the assertion, is this thread's stop; a lambda's call of the method is read one level down for the same names.
+        A fake's attributes are that fake's alone: a cleanup that releases ANOTHER fake's `g.go`, or shuts down another
+        fake's `g._srv`, excuses nothing about f's thread, whether the target is `f.block`, `lambda: f.block()` (the
+        owner is read through the lambda) or `f.serve` (whose `self._srv.serve_forever()` runs on f._srv); a cleanup
+        naming f's own `_srv` is its stop."""
         rows, (tails, unread, stale, bounded), _p = self._census(
             "    def tearDown(self):\n"
             "        self.fake.go.set()\n"
             "    def test_release(self):\n"
             "        f = _Fake()\n"
-            "        t = threading.Thread(target=f.wait, daemon=True)\n"
+            "        t = threading.Thread(target=f.block, daemon=True)\n"
             "        t.start()\n"
             "        f.go.set()\n"
             "        self.assertTrue(False)\n"
             "    def test_lambda_release(self):\n"
             "        f = _Fake()\n"
-            "        t = threading.Thread(target=lambda: f.wait(), daemon=True)\n"
+            "        t = threading.Thread(target=lambda: f.block(), daemon=True)\n"
             "        t.start()\n"
             "        f.go.set()\n"
             "        self.assertTrue(False)\n"
             "    def test_cleanup(self):\n"
             "        f = _Fake()\n"
             "        self.addCleanup(f.go.set)\n"
-            "        t = threading.Thread(target=f.wait, daemon=True)\n"
+            "        t = threading.Thread(target=f.block, daemon=True)\n"
             "        t.start()\n"
             "        self.assertTrue(False)\n"
             "    def test_hook(self):\n"
-            "        t = threading.Thread(target=self.fake.wait, daemon=True)\n"
+            "        t = threading.Thread(target=self.fake.block, daemon=True)\n"
             "        t.start()\n"
             "        self.assertTrue(False)\n"
             "    def test_other_fake(self):\n"
             "        f, g = _Fake(), _Fake()\n"
             "        self.addCleanup(g.go.set)\n"
-            "        t = threading.Thread(target=f.wait, daemon=True)\n"
+            "        t = threading.Thread(target=f.block, daemon=True)\n"
+            "        t.start()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_other_fake_lambda(self):\n"
+            "        f, g = _Fake(), _Fake()\n"
+            "        self.addCleanup(g.go.set)\n"
+            "        t = threading.Thread(target=lambda: f.block(), daemon=True)\n"
+            "        t.start()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_other_fakes_server(self):\n"
+            "        f, g = _Fake(), _Fake()\n"
+            "        self.addCleanup(g._srv.shutdown)\n"
+            "        t = threading.Thread(target=f.serve, daemon=True)\n"
+            "        t.start()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_own_server(self):\n"
+            "        f = _Fake()\n"
+            "        self.addCleanup(f._srv.shutdown)\n"
+            "        t = threading.Thread(target=f.serve, daemon=True)\n"
             "        t.start()\n"
             "        self.assertTrue(False)\n", head=self.HEAD_FAKES)
-        self.assertEqual(self._tails(tails), [("f.wait", "T.test_other_fake")], "a cleanup that releases another fake excuses nothing")
-        self.assertEqual(sorted((w, s) for _s, s, w in rows if w != "T.test_other_fake"),
+        named = ("T.test_other_fake", "T.test_other_fake_lambda", "T.test_other_fakes_server")
+        self.assertEqual(self._tails(tails), [("f.block", "T.test_other_fake"), ("f.serve", "T.test_other_fakes_server"),
+                                              ("lambda: f.block()", "T.test_other_fake_lambda")],
+                         "a cleanup that releases or shuts down another fake excuses nothing")
+        self.assertEqual(sorted((w, s) for _s, s, w in rows if w not in named),
                          [("T.test_cleanup", "cleanup-before-start"), ("T.test_hook", "class-hook:tearDown"),
-                          ("T.test_lambda_release", "stop-before-first-assertion"), ("T.test_release", "stop-before-first-assertion")])
+                          ("T.test_lambda_release", "stop-before-first-assertion"), ("T.test_own_server", "cleanup-before-start"),
+                          ("T.test_release", "stop-before-first-assertion")])
+
+    def test_a_classmethod_or_a_staticmethod_of_a_fake_is_read_through_the_class_or_an_attribute(self):
+        """A @classmethod reached through the class (`_Cls.block`) has the class for its `cls`: its `cls.go` is `_Cls.go`,
+        so a set of that before the first assertion is the stop and a tail-only one is NAMED (waits); reached through an
+        attribute the class is stored on (`self.clsfake.block`, `cls.clsfake = _Cls` in setUpClass), `cls.go` is
+        `self.clsfake.go`, and a tearDownClass that sets it is the class hook. A @staticmethod reached through the class
+        has no instance: the first of args= is not one, and its body's while is a loop, NAMED when tail-only."""
+        rows, (tails, unread, stale, bounded), _p = self._census(
+            "    @classmethod\n"
+            "    def setUpClass(cls):\n"
+            "        cls.clsfake = _Cls\n"
+            "    @classmethod\n"
+            "    def tearDownClass(cls):\n"
+            "        cls.clsfake.go.set()\n"
+            "    def test_cls_hook(self):\n"
+            "        t = threading.Thread(target=self.clsfake.block, daemon=True)\n"
+            "        t.start()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_cls_release(self):\n"
+            "        t = threading.Thread(target=_Cls.block, daemon=True)\n"
+            "        t.start()\n"
+            "        _Cls.go.set()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_cls_named(self):\n"
+            "        t = threading.Thread(target=_Cls.block, daemon=True)\n"
+            "        t.start()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_static(self):\n"
+            "        sink = []\n"
+            "        t = threading.Thread(target=_Cls.pump, args=(sink,), daemon=True)\n"
+            "        t.start()\n"
+            "        self.assertTrue(False)\n", head=self.HEAD_FAKES)
+        self.assertEqual(unread, [], [(s.recv_shown, w) for s, w in unread])
+        self.assertEqual(sorted((s.target, s.kind, w) for s, w in tails),
+                         [("_Cls.block", "waits", "T.test_cls_named"), ("_Cls.pump", "loop", "T.test_static")])
+        self.assertEqual(sorted((w, sh) for _s, sh, w in rows if w in ("T.test_cls_hook", "T.test_cls_release")),
+                         [("T.test_cls_hook", "class-hook:tearDownClass"), ("T.test_cls_release", "stop-before-first-assertion")])
+
+    def test_a_method_whose_body_the_walk_sees_no_loop_or_wait_in_keeps_its_name_rule(self):
+        """A class of the module whose serve_forever runs an asyncio loop (asyncio.run(self._main())), whose wait blocks on
+        a future (self.fut.result()) or whose get blocks on a queue with arguments (self.q.get(block=True)): the body
+        reads bounded, so the NAME rules apply as they did before the body road existed: serve_forever is a loop, wait
+        and get are waits, and a tail-only stop is NAMED; a shutdown of the server before the first assertion is the
+        stop, and for `w.wait` the receiver `w` is what a set or release must name. The body road takes precedence only
+        when it finds a loop or an untimed wait."""
+        head = self.HEAD.replace("import unittest\n", "import unittest\nimport asyncio\nimport queue\nimport concurrent.futures\n") \
+            .replace("class T(", "class _Srv2:\n    def serve_forever(self):\n        asyncio.run(self._main())\n"
+                                 "    async def _main(self):\n        return 1\n    def shutdown(self):\n        pass\n"
+                                 "class _W:\n    def __init__(self):\n        self.fut = concurrent.futures.Future(); self.q = queue.Queue()\n"
+                                 "    def wait(self):\n        return self.fut.result()\n"
+                                 "    def get(self):\n        return self.q.get(block=True)\n"
+                                 "    def release(self):\n        self.fut.set_result(1)\n"
+                                 "class T(")
+        rows, (tails, unread, stale, bounded), _p = self._census(
+            "    def test_serve_named(self):\n"
+            "        s = _Srv2()\n"
+            "        t = threading.Thread(target=s.serve_forever, daemon=True)\n"
+            "        t.start()\n"
+            "        self.assertTrue(False)\n"
+            "        s.shutdown()\n"
+            "    def test_wait_named(self):\n"
+            "        w = _W()\n"
+            "        t = threading.Thread(target=w.wait, daemon=True)\n"
+            "        t.start()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_get_named(self):\n"
+            "        w = _W()\n"
+            "        t = threading.Thread(target=w.get, daemon=True)\n"
+            "        t.start()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_lambda_serve_named(self):\n"
+            "        s = _Srv2()\n"
+            "        threading.Thread(target=lambda: s.serve_forever(), daemon=True).start()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_shutdown_before(self):\n"
+            "        s = _Srv2()\n"
+            "        t = threading.Thread(target=s.serve_forever, daemon=True)\n"
+            "        t.start()\n"
+            "        s.shutdown()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_wait_released(self):\n"
+            "        w = _W()\n"
+            "        t = threading.Thread(target=w.wait, daemon=True)\n"
+            "        t.start()\n"
+            "        w.release()\n"
+            "        self.assertTrue(False)\n", head=head)
+        self.assertEqual(unread, [], [(s.recv_shown, w) for s, w in unread])
+        self.assertEqual(sorted((s.target, s.kind, s.why, w) for s, w in tails), sorted([
+            ("s.serve_forever", "loop", "serve_forever", "T.test_serve_named"),
+            ("w.wait", "waits", "the target is an untimed .wait", "T.test_wait_named"),
+            ("w.get", "waits", "the target is an untimed .get", "T.test_get_named"),
+            ("lambda: s.serve_forever()", "loop", "serve_forever", "T.test_lambda_serve_named")]))
+        self.assertEqual(bounded, [])
+        self.assertEqual(sorted((w, sh) for _s, sh, w in rows if w in ("T.test_shutdown_before", "T.test_wait_released")),
+                         [("T.test_shutdown_before", "stop-before-first-assertion"), ("T.test_wait_released", "stop-before-first-assertion")])
 
     def test_a_stop_word_matches_a_word_of_the_name_and_not_a_substring(self):
         """`pending`, `render`, `send`, `append`, `calendar` say nothing about stopping (they held `end` as a substring):
@@ -2558,7 +3637,9 @@ class PlantedShapes(unittest.TestCase):
         """A nested def's `t = Thread(target=_once)` is its own `t`: the body's later `t.start()` reads the body's
         `t = Thread(target=_loop)`, a loop, and its tail-only stop is NAMED (the nested binding used to rebind the body's).
         The nested start reads its own binding (bounded, joined at once). A nested def that declares `nonlocal t` binds
-        the body's `t`, so the body's start of it is read."""
+        the NEAREST enclosing function's `t` that exists: the body's when the def between binds no t of its own (test_w:
+        two defs deep, the start used to resolve to `t = None` and produce NO row), the middle def's when it does
+        (test_v: the body's t stays the bounded one)."""
         rows, (tails, unread, stale, bounded), _p = self._census(
             "    def test_x(self):\n"
             "        t = threading.Thread(target=_loop, daemon=True)\n"
@@ -2584,18 +3665,43 @@ class PlantedShapes(unittest.TestCase):
             "            t.start()\n"
             "            t.join()\n"
             "        helper()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_w(self):\n"
+            "        t = None\n"
+            "        def outer():\n"
+            "            def inner():\n"
+            "                nonlocal t\n"
+            "                t = threading.Thread(target=_loop, daemon=True)\n"
+            "            inner()\n"
+            "        outer()\n"
+            "        t.start()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_v(self):\n"
+            "        t = threading.Thread(target=_once)\n"
+            "        def outer():\n"
+            "            t = None\n"
+            "            def inner():\n"
+            "                nonlocal t\n"
+            "                t = threading.Thread(target=_loop, daemon=True)\n"
+            "            inner()\n"
+            "            return t\n"
+            "        outer()\n"
+            "        t.start(); t.join()\n"
             "        self.assertTrue(False)\n")
-        self.assertEqual(self._tails(tails), [("_loop", "T.test_x"), ("_loop", "T.test_y")])
+        self.assertEqual(self._tails(tails), [("_loop", "T.test_w"), ("_loop", "T.test_x"), ("_loop", "T.test_y")])
         self.assertEqual(sorted((s.target, s.kind, sh, w) for s, sh, w in rows),
                          sorted([("_loop", "loop", "tail-only", "T.test_x"), ("_once", "bounded", "stop-before-first-assertion", "T.test_x"),
-                                 ("_loop", "loop", "tail-only", "T.test_y"), ("_once", "bounded", "stop-before-first-assertion", "T.test_z")]),
+                                 ("_loop", "loop", "tail-only", "T.test_y"), ("_once", "bounded", "stop-before-first-assertion", "T.test_z"),
+                                 ("_loop", "loop", "tail-only", "T.test_w"), ("_once", "bounded", "stop-before-first-assertion", "T.test_v")]),
                          "the nested start reads its own binding; a closure over the body's binding reads the body's")
 
     def test_a_thread_a_helper_module_under_tests_returns_is_read_on_both_import_roads(self):
         """A function of a helper module under tests/ that returns a Thread is read as a module function's return is,
-        through the imported module (`helper_mod.spawn()`) and through the imported name (`spawn()`): the target's kind
-        is read in the helper's own module, and a tail-only stop is NAMED. A helper function that returns no thread is
-        no start. Before this a call through an imported module name was every module's object and passed in silence."""
+        through the imported module (`helper_mod.spawn()`), through the imported name (`spawn()`) and through the dotted
+        spelling of a package import (`import tests.helper_mod`; `tests.helper_mod.spawn()`): the target's kind is read
+        in the helper's own module, and a tail-only stop is NAMED. A helper function that returns no thread is no start.
+        Before this a call through an imported module name was every module's object and passed in silence (the dotted
+        spelling still was, after the first two roads were read)."""
         helper = ("import threading\nimport time\n"
                   "def _loop():\n    while True:\n        time.sleep(0.01)\n"
                   "def spawn():\n    return threading.Thread(target=_loop, daemon=True)\n"
@@ -2611,13 +3717,16 @@ class PlantedShapes(unittest.TestCase):
             "    def test_no_thread(self):\n"
             "        helper_mod.nothing().start()\n"
             "        nothing().start()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_dotted_road(self):\n"
+            "        tests.helper_mod.spawn().start()\n"
             "        self.assertTrue(False)\n",
-            head=self.HEAD.replace("import unittest\n", "import unittest\nimport helper_mod\nfrom helper_mod import spawn, nothing\n"),
+            head=self.HEAD.replace("import unittest\n", "import unittest\nimport helper_mod\nimport tests.helper_mod\nfrom helper_mod import spawn, nothing\n"),
             helpers={"helper_mod": helper})
-        self.assertEqual(unread, [], [(s.recv_text, w) for s, w in unread])
+        self.assertEqual(unread, [], [(s.recv_shown, w) for s, w in unread])
         self.assertEqual(sorted((s.target, s.kind, w) for s, w in tails),
-                         [("_loop", "loop", "T.test_module_road"), ("_loop", "loop", "T.test_name_road")])
-        self.assertEqual(len(rows), 2, [(s.recv_text, sh, w) for s, sh, w in rows])
+                         [("_loop", "loop", "T.test_dotted_road"), ("_loop", "loop", "T.test_module_road"), ("_loop", "loop", "T.test_name_road")])
+        self.assertEqual(len(rows), 3, [(s.recv_shown, sh, w) for s, sh, w in rows])
         d = os.path.dirname(_p)
         self.assertEqual(helper_thread_factories(helpers={"helper_mod": os.path.join(ROOT, d, "helper_mod.py")}), [("helper_mod", "spawn")])
 
@@ -2670,11 +3779,134 @@ class PlantedShapes(unittest.TestCase):
         self.assertEqual((sorted((s.target, w) for s, w in tails), stale),
                          ([("spin", "T.test_dict_alias"), ("spin", "T.test_flag_and_counter")], []))
 
+    def test_every_unknown_target_falls_to_unreadable_never_bounded(self):
+        """THE RULE, asserted structurally over a table of targets the walk cannot read rather than one plant each: a
+        parameter and a method of one, a function of a module the walk does not read, a stdlib function with no
+        STDLIB_RETURNS entry, a method reached through the class on an instance it cannot name (`*kids`, a literal, a
+        lambda: the syntheses that used to raise SyntaxError out of the census), a callable built by a call it does not
+        read (a parameter's, functools.partial), an element of a list, a stdlib method with no rule, and a shape nobody
+        anticipated (a conditional expression, getattr(...)). Every row is kind UNREADABLE, none bounded, none crashes
+        the census, and with a tail-only stop each is listed in the unreadable bucket."""
+        rows, (tails, unread, stale, bounded), _p = self._census(
+            "    def test_x(self, param=None, obj=None, factory=None):\n"
+            "        kids = [_Child(), _Child()]\n"
+            "        fns = [_once, _loop]\n"
+            "        ev = threading.Event()\n"
+            "        threading.Thread(target=param).start()\n"
+            "        threading.Thread(target=obj.frob).start()\n"
+            "        threading.Thread(target=somelib.run).start()\n"
+            "        threading.Thread(target=os.getcwd).start()\n"
+            "        threading.Thread(target=_Child._drain, args=(*kids,)).start()\n"
+            "        threading.Thread(target=_Child._drain, args=(0,)).start()\n"
+            "        threading.Thread(target=_Child._drain, args=(lambda: 1,)).start()\n"
+            "        threading.Thread(target=factory()).start()\n"
+            "        threading.Thread(target=functools.partial(_once)).start()\n"
+            "        threading.Thread(target=fns[1]).start()\n"
+            "        threading.Thread(target=ev.wait, args=(1,)).start()\n"
+            "        threading.Thread(target=(param or _once)).start()\n"
+            "        threading.Thread(target=getattr(km, 'x')).start()\n"
+            "        self.assertTrue(False)\n",
+            head=self.HEAD_FAKES.replace("import unittest\n", "import unittest\nimport os\nimport functools\nimport somelib\n"
+                                         "km = __import__('types').ModuleType('km')\n"))
+        self.assertEqual(len(rows), 13, [(s.target, s.kind, sh) for s, sh, w in rows])
+        self.assertEqual({s.kind for s, _sh, _w in rows}, {KIND_UNREAD}, [(s.target, s.kind, s.why) for s, _sh, _w in rows])
+        self.assertEqual({sh for _s, sh, _w in rows}, {"tail-only"})
+        self.assertEqual((tails, bounded, stale), ([], [], []))
+        self.assertEqual(sorted(s.target for s, w in unread), sorted(s.target for s, _sh, _w in rows), "every one is listed")
+        reasons = {}
+        for s, _sh, _w in rows:
+            reasons.setdefault(s.target, []).append(s.why)
+        self.assertIn("parameter", reasons["param"][0])
+        self.assertIn("parameter", reasons["obj.frob"][0])
+        self.assertIn("somelib", reasons["somelib.run"][0])
+        self.assertIn("stdlib", reasons["os.getcwd"][0])
+        self.assertEqual(sorted(reasons["_Child._drain"]),
+                         sorted("a method reached through the class on `%s`, an instance the walk cannot name" % h for h in ("*kids", "0", "lambda: 1")))
+        self.assertIn("factory", reasons["factory()"][0])
+        self.assertIn("Event", reasons["ev.wait"][0])
+
+    def test_a_product_function_is_read_in_its_own_module_and_an_attribute_no_function_defines_is_unreadable(self):
+        """The product road: a product module alias (km = load_source(...)), a local bound to one through a helper
+        (k = _kernel()), a product object built through the alias (km.Be()) or unpacked from a helper's tuple. A product
+        function is READ: a body with no loop and no wait is bounded (the excused kind, with the read-body reason), a
+        while is a loop, an untimed get is waits, a delegation to a looping product function is a loop by indirect
+        evidence (`calls`, so the timed-join rule reads it as bounded), a method of a product class follows its own
+        `self._loop()`. A stdlib object the product module holds (km._LOOPS_STOP, a threading.Event) has its methods read
+        from STDLIB_RETURNS (set: bounded) or the name rules (wait: waits). An attribute of the alias that no product
+        function defines is UNREADABLE."""
+        product = ("import threading\nimport queue\n_LOOPS_STOP = threading.Event()\nq = queue.Queue()\n"
+                   "def once():\n    return 1\n"
+                   "def spin():\n    while True:\n        pass\n"
+                   "def block():\n    q.get()\n"
+                   "def relay():\n    return spin()\n"
+                   "class Be:\n    def send(self):\n        return self._save()\n    def _save(self):\n        return 1\n"
+                   "    def pump(self):\n        self._loop()\n    def _loop(self):\n        while True:\n            pass\n")
+        head = self.HEAD.replace("class T(", "km = load_source('fake_kernel', 'fake_kernel.py')\n"
+                                             "def _kernel():\n    return km\n"
+                                             "def _backend():\n    return km.Be(), 1\n"
+                                             "class T(")
+        rows, (tails, unread, stale, bounded), _p = self._census(
+            "    def test_once(self):\n        threading.Thread(target=km.once).start()\n        self.assertTrue(False)\n"
+            "    def test_spin(self):\n        threading.Thread(target=km.spin).start()\n        self.assertTrue(False)\n"
+            "    def test_block(self):\n        threading.Thread(target=km.block).start()\n        self.assertTrue(False)\n"
+            "    def test_relay(self):\n        threading.Thread(target=km.relay).start()\n        self.assertTrue(False)\n"
+            "    def test_be_send(self):\n        be, _ = _backend()\n        threading.Thread(target=be.send).start()\n        self.assertTrue(False)\n"
+            "    def test_be_pump(self):\n        be = km.Be()\n        threading.Thread(target=be.pump).start()\n        self.assertTrue(False)\n"
+            "    def test_local_alias(self):\n        k = _kernel()\n        threading.Thread(target=k.once).start()\n        self.assertTrue(False)\n"
+            "    def test_missing(self):\n        threading.Thread(target=km.nothing_here).start()\n        self.assertTrue(False)\n"
+            "    def test_event_set(self):\n        threading.Timer(0.1, km._LOOPS_STOP.set).start()\n        self.assertTrue(False)\n"
+            "    def test_event_wait(self):\n        threading.Timer(0.1, km._LOOPS_STOP.wait).start()\n        self.assertTrue(False)\n"
+            "    def test_lambda_spin(self):\n        threading.Thread(target=lambda: km.spin()).start()\n        self.assertTrue(False)\n"
+            "    def test_relay_joined(self):\n        t = threading.Thread(target=km.relay)\n        t.start(); t.join(5)\n        self.assertTrue(False)\n",
+            head=head, product={"fake_kernel": product})
+        by = {w: (s.kind, s.why, sh) for s, sh, w in rows}
+        self.assertEqual(by["T.test_once"], ("bounded", "a product function read in 1 definition: no loop, no untimed wait", "tail-only"))
+        self.assertEqual(by["T.test_spin"], ("loop", "a product function with a while loop", "tail-only"))
+        self.assertEqual(by["T.test_block"], ("waits", "a product function: an untimed .get()", "tail-only"))
+        self.assertEqual(by["T.test_relay"], ("loop", "a product function: calls spin, a while loop", "tail-only"))
+        self.assertEqual(by["T.test_be_send"], ("bounded", "a product function read in 1 definition: no loop, no untimed wait", "tail-only"))
+        self.assertEqual(by["T.test_be_pump"], ("loop", "a product function: calls self._loop, a while loop", "tail-only"))
+        self.assertEqual(by["T.test_local_alias"][0], "bounded")
+        self.assertEqual(by["T.test_missing"], (KIND_UNREAD, "km.nothing_here: a product attribute no product function defines", "tail-only"))
+        self.assertEqual(by["T.test_event_set"], ("bounded", STDLIB_RETURNS["set"], "tail-only"))
+        self.assertEqual(by["T.test_event_wait"], ("waits", "the target is an untimed .wait", "tail-only"))
+        self.assertEqual(by["T.test_lambda_spin"], ("loop", "calls spin, a product function with a while loop", "tail-only"))
+        self.assertEqual(by["T.test_relay_joined"][2], "stop-before-first-assertion", "an indirect loop: the timed join is its stop")
+        self.assertEqual(sorted(w for s, w in unread), ["T.test_missing"])
+        self.assertEqual(sorted(w for s, w in bounded), ["T.test_be_send", "T.test_event_set", "T.test_local_alias", "T.test_once"])
+        self.assertTrue(all(bounded_reason_is_read(s.why) for s, w in bounded), [s.why for s, w in bounded])
+
+    def test_no_displayed_or_compared_target_text_is_rendered_by_ast_unparse(self):
+        """The text a row displays, an ALLOW entry is keyed on or a plant compares is the source segment (_text), never
+        ast.unparse's rendering, which differs between interpreters (3.10: `lambda : f()`). This parses the census itself
+        and asserts the functions calling ast.unparse are exactly UNPARSE_ROADS, each a name match between two texts
+        rendered under one interpreter, with its reason; a new use must be registered there."""
+        tree = ast.parse(open(__file__, encoding="utf-8").read(), __file__)
+        found = {}
+
+        def visit(node, qual):
+            for child in ast.iter_child_nodes(node):
+                q = qual
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    q = (qual + "." if qual else "") + child.name
+                elif isinstance(child, ast.ClassDef):
+                    q = child.name
+                if isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute) and child.func.attr == "unparse" \
+                        and isinstance(child.func.value, ast.Name) and child.func.value.id == "ast":
+                    found.setdefault(qual, []).append(child.lineno)
+                visit(child, q)
+        visit(tree, "")
+        self.assertEqual(sorted(found), sorted(UNPARSE_ROADS), "an ast.unparse call outside the registered roads: %r" % found)
+        for road in ("_text", "_Start.describe", "_kind", "_expr_kind", "_product_kind", "_library_kind", "_unread_reason", "_report"):
+            self.assertNotIn(road, found)
+        self.assertEqual(_text(ast.parse("x = (lambda:\n    f.run())").body[0].value, type("M", (), {"src": "x = (lambda:\n    f.run())"})()),
+                         "lambda: f.run()", "the author's text, whitespace collapsed")
+
 
 if __name__ == "__main__":
     if "--table" in sys.argv or "--tail" in sys.argv:
         loops = product_loops()
-        rows = census(module_paths(), loops, product_thread_classes())
+        rows = census(module_paths(), loops, product_thread_classes(), product=_Product())
         print(_report(rows, only_tail="--tail" in sys.argv))
         tails, unread, stale, bounded = tail_only(rows)
         from collections import Counter
