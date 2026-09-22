@@ -393,10 +393,26 @@ second derivation reds (a planted key beside the census's shows it). The cache i
 censuses that land on different workers parse and derive on their own, and no saving is claimed there; the saving is the
 serial cell and this module's own tests. A second census in the same process that reads kernel/kernel.py or another
 product file through the helper gets this census's parse (a tree test holds that from this side). WHAT A DERIVATION LEAVES
-ALIVE, the trees among it, stays for the process, and the helper holds the collector off for the build's own run and
-freezes what is alive once the build has returned, before the collector is handed back (the fourteenth pass, 2026-09-22;
+ALIVE, the trees among it, stays for the process: the helper holds the collector off for the build's own run and, once
+the build has returned, freezes every object then tracked, before derived() returns (the fourteenth pass, 2026-09-22;
 tests/parse_cache.py's docstring carries the whole-suite measurement the shape was ruled from and the freeze's
-process-global cost; ParseCacheRetention below pins the mechanism). THE CACHED TREES ARE
+process-global cost; ParseCacheRetention below pins the mechanism). Two consequences, found by the fifteenth pass's
+verification (2026-09-22). A BUILD BREAKS ITS OWN CYCLES BEFORE IT RETURNS: with the collector off for the whole build, a
+cycle the build drops before returning is not reclaimed but frozen with the result, for the process. Through the
+fourteenth pass _Tree.__init__ kept the modules index as a local, and the _Module/_Unit graph is cyclic (a unit holds its
+module, the module its units), so the derivation froze about 780 thousand dead objects with the trees: the population
+modules that produced no row (three quarters of them), their units and their tables, about 150 MB by sys.getsizeof and
+2.7 million allocator blocks the process never reused, plus one closure cycle per bound helper body from the stdlib's
+recursive ast.fix_missing_locations. Now _Tree releases the units of every population module its results do not hold
+(_units_held, _Module.release_units) and the bound bodies are located by an iterative fixer (_fix_locations), so
+reference counting frees both before the freeze; ParseCacheRetention's plant builds a _Tree with the collector off and
+asserts gc.collect() finds nothing. And EVERY gc.get_freeze_count() READ AFTER THE DERIVATION WALKS the permanent
+generation's list, a tenth of a second per read over the eight million objects this module freezes (up to a second once
+a collection has scattered the heap): the kernel's perf snapshot (_PerfStats.snapshot) reads it, so a test that reads
+the snapshot after this module in the same process pays that per read, 2 to 60 times its call time (about 2 s over a
+serial CI cell, where four snapshot-reading modules sort after this one; 18 to 25 s for an xdist worker that runs this
+module before tests/test_kernel_delta_send.py); the count is read here by the retention pins alone, and the kernel side
+is a follow-up, not this pass's. THE CACHED TREES ARE
 READ-ONLY, tests/parse_cache.py's contract for every consumer (stated in its docstring; the eleventh pass, 2026-09-22): the
 census writes no attribute on a cached node and runs no transformer over a cached tree. The one attribute it wrote
 through the tenth pass, the unit a helper's returned literal is read in, is a side table keyed by id(node)
@@ -1210,6 +1226,15 @@ class _Module:
             u = _Unit(self, cls, fn, parent=parent)
             self._unit_of[id(fn)] = u
         return u
+
+    def release_units(self):
+        """Forget the units built for this module (units, unit_for). A unit holds its module and the module its units, a
+        reference cycle only the collector reclaims, and parse_cache.derived holds the collector off for a build and freezes
+        what is still tracked when the build returns, so a module the tree's results do not hold is released here before
+        _Tree.__init__ returns and freed by reference count (the rule for a build in tests/parse_cache.py's docstring; the
+        fifteenth pass, 2026-09-22). A later units() or unit_for() call builds the units again."""
+        self._units = None
+        self._unit_of.clear()
 
     def is_stdlib_alias(self, name):
         """The local name imports a module of the standard library (`import time`; `from unittest import mock`)."""
@@ -4260,6 +4285,40 @@ class _Bound(ast.NodeTransformer):
         return node
 
 
+def _fix_locations(node):
+    """ast.fix_missing_locations's work with an explicit stack: a node missing a location attribute takes its parent's (out
+    to line 1, column 0), a node that has one hands its own down. The stdlib's version defines a self-referencing inner
+    function on every call, a reference cycle only the collector reclaims, and the tree derivation calls it once per bound
+    helper body inside a build the collector is off for, so each was frozen dead with the trees (26 on the tree,
+    2026-09-22; the rule for a build in tests/parse_cache.py's docstring); this one leaves none."""
+    todo = [(node, 1, 0, 1, 0)]
+    while todo:
+        n, lineno, col_offset, end_lineno, end_col_offset = todo.pop()
+        if "lineno" in n._attributes:
+            if not hasattr(n, "lineno"):
+                n.lineno = lineno
+            else:
+                lineno = n.lineno
+        if "end_lineno" in n._attributes:
+            if getattr(n, "end_lineno", None) is None:
+                n.end_lineno = end_lineno
+            else:
+                end_lineno = n.end_lineno
+        if "col_offset" in n._attributes:
+            if not hasattr(n, "col_offset"):
+                n.col_offset = col_offset
+            else:
+                col_offset = n.col_offset
+        if "end_col_offset" in n._attributes:
+            if getattr(n, "end_col_offset", None) is None:
+                n.end_col_offset = end_col_offset
+            else:
+                end_col_offset = n.end_col_offset
+        for child in ast.iter_child_nodes(n):
+            todo.append((child, lineno, col_offset, end_lineno, end_col_offset))
+    return node
+
+
 def _bound_body(fn, args, keywords):
     """An ast.Module holding a copy of `fn`'s body (_ast_copy: the cached tree is never transformed in place) with each
     parameter replaced by the argument the call handed it: by position (up to a starred argument), by keyword, else by the
@@ -4285,7 +4344,7 @@ def _bound_body(fn, args, keywords):
     for name in stored:
         given.pop(name, None)
     renamed = {name: "_%s__%s" % (fn.name, name) for name in stored}
-    return ast.fix_missing_locations(_Bound(given, renamed).visit(body))
+    return _fix_locations(_Bound(given, renamed).visit(body))
 
 
 def _helper_bodies(unit, call, nodes):
@@ -4925,13 +4984,42 @@ def _report_info(info):
 TREE_KEY = ("tests/test_thread_stop_census.py", "the tree")   # parse_cache.derived's key for _Tree, with the root appended
 
 
+def _units_held(rows, extras):
+    """Every _Unit the derivation's results hold, each with the units enclosing it (parent): a row's start (its own unit,
+    the construction's, the unit of each hand in `given` and of the hands behind that), an informational row's unit
+    (extras["product_starts"]) and the side table's (_LITERAL_UNITS, this census run's). Walked over the starts' own
+    attributes and through dicts, lists and tuples, so an attribute added later that holds a unit is seen without a
+    change here; an AST node, a string or a module ends the walk. _Tree releases the units of every population module
+    none of these belongs to (release_units)."""
+    todo = [vars(st) for st, _shape, _where in rows] + [vars(r) for r in extras.get("product_starts", ())] + [_LITERAL_UNITS]
+    out = {}
+    while todo:
+        v = todo.pop()
+        if isinstance(v, _Unit):
+            while v is not None and id(v) not in out:
+                out[id(v)] = v
+                v = v.parent
+        elif isinstance(v, dict):
+            todo.extend(v.values())
+        elif isinstance(v, (list, tuple)):
+            todo.extend(v)
+    return list(out.values())
+
+
 class _Tree:
     """THE ONE DERIVATION over the tree, built once per process (tree_census, behind parse_cache.derived under TREE_KEY): the
     population (`paths`), the product loops and thread classes, the helper modules, the product index, the rows, the
     informational rows and the oracle modules (`extras`) and the inline list joins in the cleanups (`list_joins`,
     list_join_cleanups over the same modules census built). ThreadStopCensus.setUpClass, the --table road and the
     list-join pin all read it, so the tree is parsed once per module and derived once per process, whichever runs first;
-    a tree test pins that through the helper's counters."""
+    a tree test pins that through the helper's counters. THE BUILD BREAKS ITS OWN CYCLES BEFORE IT RETURNS (the module
+    docstring's retention paragraph; the rule for a build in tests/parse_cache.py's docstring): the modules index is a
+    local, and a module the results do not hold would be dropped in a cycle with its units and frozen dead, so the units
+    of every such module are released (_units_held, _Module.release_units) and reference counting frees them here; a
+    module a row, an informational row or the side table holds stays whole, its units among them. The shared helper index
+    (every module's helper_cache) and the product's modules are held by those modules and by `product`, so they are alive,
+    not dropped. ParseCacheRetention pins this on a plant: a _Tree built there with the collector off leaves gc.collect()
+    nothing to reclaim."""
     def __init__(self, root):
         self.root = root
         self.paths = module_paths(os.path.join(root, "tests"))
@@ -4942,6 +5030,10 @@ class _Tree:
         self.extras, modules = {}, {}
         self.rows = census(self.paths, self.loops, self.thread_classes, self.helpers, self.product, self.extras, modules=modules)
         self.list_joins = list_join_cleanups(self.paths, self.helpers, modules=modules)
+        held = {id(u.module) for u in _units_held(self.rows, self.extras)}     # the modules the results hold stay whole
+        for m in modules.values():                                             # the rest would be dropped in a cycle: released, freed by refcount
+            if id(m) not in held:
+                m.release_units()
 
 
 def tree_census(root=ROOT):
@@ -5736,7 +5828,9 @@ class ParseCacheRetention(unittest.TestCase):
     freeze (a raising build, a refused build, a hit) share one sentinel and one pair of readings; tests/parse_cache.py
     never reads it. The one gc.disable() a case makes in its body is the planted state of a caller who had the collector
     off, restored by the cleanup registered before it, not a speed measure. Every key a case derives is this class's own,
-    never the census's, so these run in any worker and need no tree."""
+    never the census's, so these run in any worker and need no tree. The fifteenth pass (2026-09-22) added, from its
+    verification's findings, the pin on THE RULE FOR A BUILD: the census's own build (_Tree) over a plant, built directly
+    with the collector off, leaves gc.collect() nothing to reclaim, since a cycle a build drops is frozen with its result."""
     KEY = ("tests/test_thread_stop_census.py", "a planted key of ParseCacheRetention")
 
     def _restore_collector(self):
@@ -5904,6 +5998,79 @@ class ParseCacheRetention(unittest.TestCase):
         self.assertEqual(during, [0], "a full collection ran inside the build (%d chunks; the same allocation outside triggered one): "
                                       "the helper did not hold the collector off" % (2 * k))
         self.assertEqual(len(value), 2 * k)
+
+    def _planted_root(self):
+        """A root of the census's shape under a fresh temporary directory (removed by a cleanup registered first): tests/ holds
+        one module that starts threads (PlantedShapes.HEAD_KM's _loop and _once: a start in a test, a helper's start read at
+        its caller, a list of starts joined inline in a cleanup) and one that starts none, with a helper module beside them;
+        kernel/kernel.py has a loop, a Thread subclass and a spawner. Every file's parse is forgotten by a cleanup registered
+        before the file is written."""
+        d = tempfile.mkdtemp(prefix="romp-tests-census-")
+        self.addCleanup(shutil.rmtree, d, True)
+        os.makedirs(os.path.join(d, "tests"))
+        os.makedirs(os.path.join(d, "kernel"))
+        files = [
+            ("tests/__init__.py", ""),
+            ("tests/planted_helper.py", "import threading\n\ndef factory():\n    return threading.Thread(target=int)\n"),
+            ("kernel/kernel.py", "import threading\n\ndef _producer():\n    while True:\n        pass\n\n"
+                                 "class KernelWorker(threading.Thread):\n    def run(self):\n        while True:\n            pass\n\n"
+                                 "def spawn():\n    t = threading.Thread(target=_producer)\n    t.start()\n    return t\n"),
+            ("tests/test_planted_start.py", PlantedShapes.HEAD_KM +
+             "    def test_x(self):\n        t = threading.Thread(target=_loop, daemon=True)\n        t.start()\n        self.addCleanup(t.join, 1)\n"
+             "    def test_y(self):\n        t = _make(_once)\n        t.join(1)\n"
+             "    def test_z(self):\n        ts = [threading.Thread(target=_once) for _ in range(2)]\n"
+             "        self.addCleanup(lambda: [t.join(1) for t in ts])\n        for t in ts:\n            t.start()\n"
+             "    def test_p(self):\n        km.spawn()\n"
+             "\ndef _make(fn):\n    t = threading.Thread(target=fn, daemon=True)\n    t.start()\n    return t\n"),
+            ("tests/test_planted_quiet.py", "import unittest\n\ndef _helper(x):\n    def inner(y):\n        return y + x\n    return inner(1)\n\n"
+                                            "class Q(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(_helper(1), 2)\n\n"
+                                            "    class Nested:\n        def m(self):\n            return 1\n"),
+        ]
+        for rel, text in files:
+            path = os.path.join(d, rel)
+            self.addCleanup(PC.clear, path)
+            ParseCacheKeyAndLock._write(path, text)
+        return d
+
+    def test_the_trees_build_drops_no_cycle_so_the_freeze_pins_nothing_dead(self):
+        """THE RULE FOR A BUILD (tests/parse_cache.py's CONTRACT paragraph): the collector is off for the whole build, so a cycle
+        the build drops before returning is frozen with its result and never reclaimed; a build breaks its own cycles before
+        it returns. The census's build is _Tree.__init__, whose modules index is a local: through the fourteenth pass every
+        population module that produced no row was dropped in a cycle with its units (a unit holds its module, the module
+        its units) and frozen dead, about 780 thousand objects at the tree's derivation (the module docstring's retention
+        paragraph). Pinned by MECHANISM on a plant, a root of the census's shape (_planted_root) with one module that starts
+        threads and one that starts none, a helper module and a product file. A _Tree is built over it DIRECTLY, never
+        through derived(), whose freeze would hide the garbage, with the collector off (planted, the re-enable registered as
+        a cleanup first), TWICE: the first build warms what a first use imports or fills (ast.unparse's module and its enum
+        on 3.12 and 3.14, whose import leaves collector cycles of its own that are not the census's), a gc.collect() then
+        takes the baseline, and after the second build, the tree alive, gc.collect() finds NO unreachable object; the found
+        objects are saved for that one collection (DEBUG_SAVEALL, the flags restored by a cleanup registered before) so a
+        red names their types. THE PLANT: _Tree.__init__ as it stood before the fifteenth pass (no release_units) reds this
+        with the rowless module's graph, 60 to 82 objects on this plant by interpreter (one _Module, three _Unit, their
+        dicts, sets, lists and tuples: 64 on 3.10.20, 60 on 3.12.3, 82 on 3.14.6t)."""
+        self.assertTrue(gc.isenabled(), "the case plants the collector's off state from the on state pytest runs in")
+        self._restore_collector()                                 # gc.enable, registered BEFORE the disable below
+        root = self._planted_root()
+        gc.disable()                                              # the state derived() holds a build in; planted, since _Tree is built directly
+        warm = _Tree(root)                                        # the first build: a first use's imports and fills, not the census's
+        self.assertEqual(warm.extras["modules"], 2, "the plant reads both its test modules")
+        self.assertEqual({os.path.basename(st.unit.module.path) for st, _shape, _where in warm.rows}, {"test_planted_start.py"},
+                         "the plant's rows come from the one module that starts threads; the other produces none and is the module the build drops")
+        del warm
+        gc.collect()                                              # the baseline: nothing unreachable before the build under the pin
+        flags = gc.get_debug()
+        self.addCleanup(gc.set_debug, flags)                      # BEFORE the flag is set
+        start = len(gc.garbage)
+        gc.set_debug(gc.DEBUG_SAVEALL)
+        tree = _Tree(root)
+        unreachable = gc.collect()                                # with `tree` alive: what the build dropped in a cycle
+        gc.set_debug(flags)
+        kinds = collections.Counter(type(o).__name__ for o in gc.garbage[start:])
+        del gc.garbage[start:]
+        self.assertTrue(tree.rows)
+        self.assertEqual(unreachable, 0, "the tree's build dropped %d objects only the collector could reclaim (%s): a cycle the build "
+                                         "made and did not break before returning, which derived()'s freeze would pin for the process"
+                                         % (unreachable, ", ".join("%s %d" % kv for kv in kinds.most_common(8))))
 
 
 class IterativeHandCopier(unittest.TestCase):
