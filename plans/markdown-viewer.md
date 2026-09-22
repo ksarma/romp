@@ -8612,9 +8612,13 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word
 (open point 11). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools,
-upstream or tests alone (48 files, the ledger entry's where line; run 2026-09-21 at the head that carries the author's
-closing pass after the file review's round 10, where the merge-base is the fork's main the branch merged after the fixes for the
-file review's round 10, and the listing is the branch's whole delta over it; the run at the head that carries the
+upstream or tests alone (48 files, the ledger entry's where line; run 2026-09-22 at the head that carries the fixes ruled in
+the file review's round 10, where the merge-base is 65f1895f6, the fork's main the branch merged for the file review's round
+10, and the listing is the branch's whole delta over it; the run at the head that carries the author's closing pass after the
+file review's round 10, from the same merge-base, listed 45, before ui/webview/host-sheets.mjs, ui/webview/host-sheets.d.mts
+and ui/webview/file-view-outline.test.ts joined the delta in those fixes (the file review's round 10, correctness-1 with
+regression-5 and correctness-5: every sheet a page of either host loads, derived from the page assembly, and the Outline
+button's census over them); the run at the head that carries the
 fixes for the file review's round 8, where the merge-base was 5e5ee79ed, the fork's main merged into the branch before
 landing, listed 43, before ui/webview/css-rules.mjs and ui/webview/css-rules.d.mts, the rule reader the closed set over the
 control's sheet rules stands on, joined the delta in the fixes for the file review's round 10 (under tools/ there; the
