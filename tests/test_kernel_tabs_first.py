@@ -35,16 +35,22 @@ class TabsFirst(unittest.TestCase):
     # send (the connect push a `ready` triggers included), the off-cycle session push and the close confirmation. The
     # tuple is the EXPECTED set; the actual set is DERIVED from the kernel's calls to _send_tab_order by AST
     # (_strip_senders: every def in the module, methods included), and the census asserts the two equal before it walks
-    # the senders, so a fourth sender of any spelling, one that builds its own rows included, is named in that red
-    # (tests-2 and extra6-2, 2026-09-22). The whole-text count on the canonical call spelling further down is a second
-    # pin, for that spelling alone.
+    # the senders, so a fourth sender that calls the name directly, one that builds its own rows included, is named in
+    # that red (tests-2 and extra6-2, 2026-09-22). A caller through some OTHER road, an alias bound to the name, a
+    # partial, a callback handed the function, is what the derivation cannot attribute to a def, so the same walk
+    # refuses every load of the name outside a call's callee position, naming where it stands (round 1's closing
+    # verifiers, 2026-09-22). The whole-text count on the canonical call spelling further down is a second pin, for
+    # that spelling alone.
     SENDERS = ("_push", "_push_session_now", "_confirm_close_now")
 
     @staticmethod
     def _strip_senders(text):
         """Every function whose body calls _send_tab_order, by AST over the whole module: the innermost enclosing def (a
-        FunctionDef or an AsyncFunctionDef, a method included) of each call whose callee is the bare name."""
-        out = set()
+        FunctionDef or an AsyncFunctionDef, a method included) of each call whose callee is the bare name. The second
+        set is every OTHER load of the name (an alias assignment, a partial, a callback argument, a bare reference), as
+        (innermost def, line): a road the caller derivation cannot follow, so the census refuses it rather than miss the
+        sender at its end."""
+        out, indirect = set(), set()
 
         def visit(node, enclosing):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -52,9 +58,12 @@ class TabsFirst(unittest.TestCase):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_send_tab_order":
                 out.add(enclosing or "<module>")
             for ch in ast.iter_child_nodes(node):
+                if isinstance(ch, ast.Name) and ch.id == "_send_tab_order" and isinstance(ch.ctx, ast.Load) \
+                        and not (isinstance(node, ast.Call) and node.func is ch):
+                    indirect.add((enclosing or "<module>", ch.lineno))
                 visit(ch, enclosing)
         visit(ast.parse(text), None)
-        return out
+        return out, indirect
 
     @staticmethod
     def _tab_meta_bindings(fn):
@@ -78,14 +87,24 @@ class TabsFirst(unittest.TestCase):
         # and builds no row literal of its own, and the kernel has no other binding of that name (a fourth inline dict
         # would drop a field again).
         text = open(KPATH).read()
-        self.assertEqual(self._strip_senders(text), set(self.SENDERS),
+        senders, indirect = self._strip_senders(text)
+        self.assertEqual(senders, set(self.SENDERS),
                          "the strip's senders are _send_tab_order's callers, derived: a fourth caller is named here")
+        self.assertEqual(indirect, set(),
+                         "every load of _send_tab_order is a call's callee: an alias, a partial or a callback would carry a sender "
+                         "this derivation cannot attribute, so it is refused where it stands (innermost def, line)")
         planted = text + ('\n\ndef _probe_fourth_sender(c, order, live):\n'
                           '    _send_tab_order(c, order, [{"id": s} for s in order], live)\n'
                           '\n\nclass _Probe:\n    def sender_method(self, c, order, live):\n'
                           '        _send_tab_order(c, order, [], live)\n')
-        self.assertEqual(self._strip_senders(planted) - set(self.SENDERS), {"_probe_fourth_sender", "sender_method"},
+        self.assertEqual(self._strip_senders(planted)[0] - set(self.SENDERS), {"_probe_fourth_sender", "sender_method"},
                          "the walk names a planted sender, a method included (the census lists a plant, by execution)")
+        # ...and a planted alias (the round-1 verifiers' shape: `_st = _send_tab_order` at module level, then `_st(...)` in a
+        # def) is refused at the alias, named by the def around it and its line, since its caller is invisible to the walk
+        aliased = text + '\n\n_st = _send_tab_order\n\n\ndef _probe_alias_sender(c, order, live):\n    _st(c, order, [{"id": s} for s in order], live)\n'
+        a_senders, a_indirect = self._strip_senders(aliased)
+        self.assertEqual(a_senders, set(self.SENDERS), "the alias's caller is not a caller the walk sees: what the refusal exists for")
+        self.assertEqual(a_indirect, {("<module>", text.count("\n") + 3)}, "the alias is refused where it stands, by def and line")
         for name in self.SENDERS:
             self.assertEqual(self._tab_meta_bindings(getattr(km, name)), [(1, 0)],
                              "%s binds tab_meta once, from _tab_meta, with no row literal of its own" % name)
