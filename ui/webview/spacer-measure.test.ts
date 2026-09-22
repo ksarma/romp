@@ -1109,9 +1109,10 @@ test("every module the page bundles load, read with the compiler: the only write
   // type member or a variable so named. Outside by construction, as for the field census: a computed key of a non-literal expression, a
   // non-literal spread or source, a call through an alias of Object or Reflect; and a fourth class, a `view` key built from a string VALUE
   // (Object.fromEntries over a literal pair list, JSON.parse of a literal) inside a post's data, which the tree cannot name as a property
-  // write at all: it raises the opaque count below and is in neither the diag population nor the closed multiset, held by the kernel's value
+  // write at all: it is in neither the diag population nor the closed multiset; as the post's data itself it raises the opaque count below,
+  // and returned by a builder the data calls it is filed under the builder and counted nowhere; either way it is held by the kernel's value
   // bound alone (CLIENT_DIAG_VALUES refuses every word but the one: tests/test_client_diag_allowlist.py); the witness cell after this one
-  // runs that shape through the same walker and asserts it is NOT named, so this sentence cannot outlive the behaviour
+  // runs those shapes through the same walker and asserts none is named, so this sentence cannot outlive the behaviour
   // (the maintainer's round 6 ruling, extra8-3). WHAT REACHES A POST, from every module's tree: the clientDiag posts (an object literal
   // with `type: "clientDiag"`, its `data` member a literal, read directly, or a call of a named function, a builder) and scrollDiagRow's calls in
   // render.ts (its data argument's literals and the named functions it calls, through a conditional, a parenthesis or an Object.assign); a
@@ -1172,20 +1173,24 @@ test("every module the page bundles load, read with the compiler: the only write
   ], "every write of a `view` property in the modules the page bundles load, by module (its repo-relative path), owner and form; one reaches a post (spacerRow's), the rest write the viewer's places, a gesture's snapshot, a class's method or field");
 });
 
-test("the fourth class the census cannot name, witnessed through its own walker: a `view` key built from a string VALUE (Object.fromEntries over a literal pair list, JSON.parse of a literal) inside a clientDiag post's data, or spread into it, or handed to scrollDiagRow, is NOT a site (in neither the diag population nor the closed multiset) and raises the opaque count alone; the same word as a literal property in the same post IS a site, so the shapes are what the census reads (the maintainer's round 6 ruling, extra8-3: the bound on that class is the kernel's value bound, CLIENT_DIAG_VALUES, and this cell keeps the census's sentence honest)", () => {
+test("the fourth class the census cannot name, witnessed through its own walker: a `view` key built from a string VALUE (Object.fromEntries over a literal pair list, JSON.parse of a literal) inside a clientDiag post's data, or spread into it, or handed to scrollDiagRow, is NOT a site (in neither the diag population nor the closed multiset): as the post's data itself it raises the opaque count alone, and returned by a builder the data calls it is filed under the builder and counted nowhere; the same word as a literal property in the same post IS a site, so the shapes are what the census reads (the maintainer's round 6 ruling, extra8-3: the bound on that class is the kernel's value bound, CLIENT_DIAG_VALUES, and this cell keeps the census's sentence honest)", () => {
   // synthetic sources (no real data): the word is one the kernel refuses (tests/test_client_diag_allowlist.py drives that refusal), so a
   // page that built the key this way would post a value the kernel drops with its line, whichever module built it
   const run = (module: string, src: string): ViewCensus => { const c = newViewCensus(); censusViewWrites(module, ts.createSourceFile(module, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS), c); return c; };
-  const shapes: Array<[string, string, string]> = [
-    ["Object.fromEntries as a post's data", "ui/webview/synthetic.ts", 'export const p = { type: "clientDiag", data: Object.fromEntries([["view", "away"]]) };'],
-    ["JSON.parse as a post's data", "ui/webview/synthetic.ts", 'export const p = { type: "clientDiag", data: JSON.parse(\'{"view":"away"}\') };'],
-    ["Object.fromEntries spread into a post's data literal", "ui/webview/synthetic.ts", 'export const p = { type: "clientDiag", data: { ...Object.fromEntries([["view", "away"]]) } };'],
-    ["Object.fromEntries as scrollDiagRow's data in render.ts", "ui/webview/render.ts", 'scrollDiagRow("spacer", Object.fromEntries([["view", "away"]]));'],
+  // each shape with the opaque count it owes (1 as the post's data itself; 0 returned by a builder, where the call is filed under the
+  // builder's name and the fromEntries inside its body is no property write) and the builder it is filed under, if any
+  const shapes: Array<[string, string, string, number, string | null]> = [
+    ["Object.fromEntries as a post's data", "ui/webview/synthetic.ts", 'export const p = { type: "clientDiag", data: Object.fromEntries([["view", "away"]]) };', 1, null],
+    ["JSON.parse as a post's data", "ui/webview/synthetic.ts", 'export const p = { type: "clientDiag", data: JSON.parse(\'{"view":"away"}\') };', 1, null],
+    ["Object.fromEntries spread into a post's data literal", "ui/webview/synthetic.ts", 'export const p = { type: "clientDiag", data: { ...Object.fromEntries([["view", "away"]]) } };', 1, null],
+    ["Object.fromEntries as scrollDiagRow's data in render.ts", "ui/webview/render.ts", 'scrollDiagRow("spacer", Object.fromEntries([["view", "away"]]));', 1, null],
+    ["Object.fromEntries returned by a builder the post's data calls", "ui/webview/synthetic.ts", 'function b() { return Object.fromEntries([["view", "away"]]); } export const p = { type: "clientDiag", data: b() };', 0, "b"],
   ];
-  for (const [what, module, src] of shapes) {
+  for (const [what, module, src, opaque, builder] of shapes) {
     const c = run(module, src);
     assert.deepEqual(c.sites.map(describeSite), [], what + ": a key built from a string value is no property write the tree can name, so the census does not name it: outside the census by construction, held by CLIENT_DIAG_VALUES alone (a walker that resolved this shape would red here, and the census's sentence would then be false)");
-    assert.equal(c.opaque, 1, what + ": the opaque count rises by one for the unattributable data");
+    assert.equal(c.opaque, opaque, what + (opaque ? ": the opaque count rises by one for the unattributable data" : ": the data is a builder's call, filed under the builder and counted nowhere, since the builder's body holds no property write the tree can name, so the opaque count stays 0 (the author's fixer pass over the pass after the maintainer's round 6, its verifier (a), which found the census's sentence claiming the count for this shape too)"));
+    if (builder) assert.ok(c.builders.has(builder), what + ": the call is filed as a builder, by name: " + builder);
     assert.equal(c.posts, module === "ui/webview/render.ts" ? 0 : 1, what + ": the post is counted where there is one");
   }
   // the control: the same word as a literal property of the same post's data IS a site, inside the data literal, in the diag population
