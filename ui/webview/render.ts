@@ -58,7 +58,7 @@ import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionR
          followAdoption, reorderTagOrder, homeSectionOf, neighborOfFolded, revealedTabs, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection, type StripItem, type StripHead, type TabGroupsState, type SectionRef } from "./tab-groups";
 import { snapshotModel, snapshotHeading, rowWords, hiddenNeeds, hiddenFoldWords, actWords, standInPip, type SnapModel, type SnapRow } from "./tab-snapshot";
 import { rowStillOpen, installSnapshotEscape, reconcileRows, repeatedClick, menuAnchor } from "./tab-snapshot-view";
-import { tabStateClass, sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick } from "./tab-state";
+import { tabStateClass, sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick, openUserTodo } from "./tab-state";
 import { composeTabWidgets, composeTabRing, ringSwitch, tabHotkey, miniChord } from "./tab-widgets";   // the tab-title widgets (T379): the dot, the context bar and the hot-key keycap compose onto every tab from the registry, and the rings too, one class at a time; miniChord is the chord the strip signature reads
 import { titleWithKey, keyHint, chordOf, effectiveChord, loadOverrides, saveOverride, KEYS_EVENT } from "./keybindings";
 import { hotkeyCommandId, loadTabKeys, rememberTabKey, forgetTabKey, goneTabKeys, renamedTabKeys } from "./tab-keys";   // per-tab hot keys (2026-09-10): the set and its bookkeeping; the keycap on the tab is the T379 widget, read from the same store
@@ -743,7 +743,7 @@ function reconcileRewind(s: Session, bound?: number): void {
 }
 // Tab name+color from the kernel's tabOrder push (the user 2026-06-26): lets renderTabs paint the WHOLE
 // strip as placeholders BEFORE each session's build_session arrives, so tabs don't pop in one-by-one.
-const tabMeta = new Map<string, { name: string; color: Color | null; emoji?: string }>();
+const tabMeta = new Map<string, { name: string; color: Color | null; emoji?: string; userTodos?: number }>();
 // Tabs the user has just ✕'d, suppressed until the kernel's own tab set agrees. Declared up here beside
 // tabMeta because renderTabs reads it, and renderTabs can run before the module finishes evaluating.
 // The close was ALREADY optimistic (dismissSession runs on click) but nothing recorded that locally — so the
@@ -6036,7 +6036,8 @@ function applyTabOrder(o: any, tabs?: any, report?: OrderReport, live?: any) {
       if (t && typeof t.id === "string") {
         tabMeta.set(t.id, { name: typeof t.name === "string" ? t.name : "",
                             color: (t.color && typeof t.color.bg === "string") ? t.color : null,
-                            emoji: typeof t.emoji === "string" ? t.emoji : undefined });   // absent = an older kernel
+                            emoji: typeof t.emoji === "string" ? t.emoji : undefined,   // absent = an older kernel
+                            userTodos: Number.isInteger(t.userTodos) && t.userTodos >= 0 ? t.userTodos : undefined });   // the roster's count of open user todos (2026-09-22): a skeleton or placeholder tab paints its flag from it, the session payload being what the diet withholds; absent = an older kernel, and a count outside the kernel's contract (a non-negative integer, tests/test_user_todos_roster.py) reads as absent too, as text did from the start, so every reader downstream holds a real count or nothing (correctness-1, review round 1). Parsed inline on purpose: chat-split-exec.test.ts lifts this function by source into a stub world where a new import would be undefined
       }
     }
     // …and apply the same blob to EXISTING sessions (the user 2026-08-24): the label/color used to
@@ -6642,7 +6643,11 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
     // (the session's userTodos, refreshed by every chat delta → renderTabs), so the frame that
     // resolves the todo clears both. The header carries it whenever it stands in for a member with no
     // tab on the strip: folded, over the unpinned members; open, over the members hidden inside the
-    // section (a member whose own tab is on screen wears its own glyph, and is never in `hidden`). A
+    // section (a member whose own tab is on screen wears its own glyph, and is never in `hidden`). For a
+    // member whose payload this page has not been served (a skeleton after a redial, a placeholder still
+    // opening) the tabOrder row's count stands in for the rows (2026-09-22; tab-meta.ts), read through
+    // liveSession so a skeleton's stale pre-outage entry never speaks for it: a fold hides no flag the
+    // skeleton tab itself would wear. A
     // real <button>, focusable, with its OWN data-act for the stable #tabs delegate (the nearest data-act
     // wins, so a click never reads as the header's fold; the header's key handler stands down for it,
     // so Enter and Space are the button's own click too): open-group on a folded header (Enter opens
@@ -6651,7 +6656,7 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
     // that was already open, and nothing moved). Its own
     // dragstart guard, so a press that wanders never starts the header's group drag (tab-state.ts owns
     // the count and the title).
-    const flag = sectionTodoFlag(hidden.map((id) => sessions.get(id)));
+    const flag = sectionTodoFlag(hidden.map((id) => liveSession(id) ?? tabMeta.get(id)));
     if (flag) {
       const b = document.createElement("button");
       b.type = "button";
@@ -6888,6 +6893,17 @@ function makeSkeletonTab(id: string): HTMLElement {
   const label = el("span", "tab-label");
   label.replaceChildren(...hostNameNodes(name, id));
   tab.appendChild(label);
+  // USER-TODO flag (2026-09-22): from the roster row's COUNT (tabMeta, the tabOrder push), never the stale entry's rows.
+  // The session payload that carries the rows is exactly what the diet withholds for this tab, and the entry underneath
+  // is pre-outage. The loaded tab's mark and class (its block in renderTabs says the rest); no count on the strip. Open by
+  // the ONE predicate (tab-state.ts openUserTodo), the folded header's and the signature rows' spelling, so the tab and the
+  // header it folds into agree on every value (correctness-1, review round 1).
+  if (openUserTodo(meta?.userTodos)) {
+    const ut = el("span", "tab-usertodo");
+    ut.textContent = "⚑";
+    ut.title = "waiting on you: this session flagged something it needs from you (the note by its message box shows once the tab loads)";
+    tab.appendChild(ut);
+  }
   if (status) appendTabAfterWidgets(tab, { id, status });
   tab.title = "Not loaded yet — click to load";
   const closeBtn = el("span", "tab-close");
@@ -6954,6 +6970,15 @@ function makePlaceholderTab(id: string): HTMLElement {
   if (meta?.name) label.replaceChildren(...hostNameNodes(meta.name, id));
   else label.textContent = "…";
   tab.appendChild(label);
+  // USER-TODO flag (2026-09-22): the roster row's count is here before the session payload is (the strip lands first,
+  // tabs-first), so a tab still opening wears the flag its loaded self will. Same mark, same class, the same open predicate
+  // (tab-state.ts openUserTodo; correctness-1, review round 1); no count on the strip.
+  if (openUserTodo(meta?.userTodos)) {
+    const ut = el("span", "tab-usertodo");
+    ut.textContent = "⚑";
+    ut.title = "waiting on you: this session flagged something it needs from you (the note by its message box shows once the tab loads)";
+    tab.appendChild(ut);
+  }
   return tab;
 }
 
@@ -7290,9 +7315,9 @@ function renderTabs() {
       if (renderKind(skeletonTabs, id, !!s) === "skeleton") {                                              // makeSkeletonTab's reads:
         const m = tabMeta.get(id), kst = skeletonTabs.status.get(id) as Status | undefined;               // the kernel's list + its
         return ["k", m?.name || s?.name, (m?.color || s?.color)?.bg, (m?.color || s?.color)?.fg, id === peekId,   // status frames, never the
-                kst?.state, kst && tabStateClass(kst), kst?.needsYou === true, !!kst?.faded, kst?.ctx, kst?.ctxColor, kst?.ctxTone, down, note, tabHotkey(id)];   // stale session's status; + the hot-key keycap's chord (T379); + the feed's needs-you verdict, the yellow ring's input (2026-09-13)
+                kst?.state, kst && tabStateClass(kst), kst?.needsYou === true, !!kst?.faded, kst?.ctx, kst?.ctxColor, kst?.ctxTone, openUserTodo(m?.userTodos), down, note, tabHotkey(id)];   // stale session's status; + the hot-key keycap's chord (T379); + the feed's needs-you verdict, the yellow ring's input (2026-09-13); + the roster's user-todo count through the one open predicate (tab-state.ts openUserTodo), the flag's input (2026-09-22): open or not, as the builder reads it
       }
-      if (!s) { const m = tabMeta.get(id); return ["p", m?.name, m?.color?.bg, m?.color?.fg, m?.emoji, down, note]; }   // makePlaceholderTab's reads
+      if (!s) { const m = tabMeta.get(id); return ["p", m?.name, m?.color?.bg, m?.color?.fg, m?.emoji, openUserTodo(m?.userTodos), down, note]; }   // makePlaceholderTab's reads (the user-todo flag's input among them, through the one open predicate, 2026-09-22)
       const st = s.status;
       return [s.name, s.color?.bg, s.color?.fg, s.emoji ?? tabMeta.get(id)?.emoji, st.state, tabStateClass(st), st.needsYou === true, !!st.faded,
               st.ctx, st.ctxColor, st.ctxTone, !!s.sub, !!(s.userTodos && s.userTodos.length), down, note,
@@ -7408,7 +7433,9 @@ function renderTabs() {
     // field (delta-stable since slice 1, and build_session already blanks it for ended sessions),
     // so the glyph appears/disappears with the store and needs no client-side gate. Its OWN
     // element, never a .tab-dot: pips encode turn state, and the kernel's mobile scrape keys on
-    // the pip classes (test_tab_strip_pips pins that vocabulary).
+    // the pip classes (test_tab_strip_pips pins that vocabulary). A skeleton or placeholder tab,
+    // whose payload this page has not been served, paints the same mark from the roster row's
+    // count (makeSkeletonTab, makePlaceholderTab; tab-usertodo-skeleton.test.ts, 2026-09-22).
     if (s.userTodos && s.userTodos.length) {
       const ut = el("span", "tab-usertodo");
       ut.textContent = "⚑";
