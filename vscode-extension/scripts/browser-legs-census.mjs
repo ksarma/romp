@@ -14,6 +14,9 @@
 //              destructured or whole) and calls that module's inBrowser THROUGH the binding (an identifier bound to the
 //              export, or a literal inBrowser member of a namespace binding; through parentheses, !, as, .call/.apply/.bind).
 //              A type-only import binds nothing. The import without a call is recorded (launcherImported) and is not a leg.
+//              A name is read at its USE SITE by lexical scope: a use reaches the innermost enclosing declaration of that name,
+//              so a destructured parameter, a catch variable or a local const of an inner scope that reuses the name is not
+//              the import or the loader-bound variable, and a use in the scope that binds them is.
 //   loaded:    every module of the tree the test loads by a relative specifier (an import, an export from, import =, require(),
 //              await import(), a loader bound by createRequire; a specifier that names no file beside the module resolves
 //              against the repo root and vscode-extension/, the bases loaders in this tree are anchored to) is read by this same
@@ -105,11 +108,21 @@ export function classify(ts, file, src, opts = {}) {
     return { kind: abs === launcherAbs ? "launcher" : "local", spec, abs };
   };
 
-  // bindings: name -> { module: "launcher"|"playwright"|..., member: null (whole module) | "inBrowser" | "chromium" | ... }
+  // bindings: the DECLARATION that binds a tracked module -> { name, module: "launcher"|"playwright"|..., member: null (whole
+  // module) | "inBrowser" | "chromium" | ... }. The key is an import's specifier, default clause or namespace node, the variable
+  // declaration or binding element a loader call initializes, or the declaration an assignment's target resolves to by scope;
+  // a name no declaration binds keys as the string "global:<name>". A use of a name is resolved to its declaration by lexical
+  // scope (declOfUse) before it is read here, so a same-named binding of an inner scope (a destructured parameter, a local
+  // const, a catch variable) is not the tracked one, and a use in the scope the import or loader binds is.
   const bindings = new Map();
-  const declared = new Set();          // every locally declared identifier not from an import/loader, for shadow detection
   const loaders = new Set(["require"]); // identifiers that load a module when called with a string: require, createRequire results
-  const pwDerived = new Map();          // identifier -> { engine?: string, launch?: string } for expressions derived from playwright
+  const pwDerived = new Map();          // the same keys -> { name, chain } for expressions derived from playwright
+  const trackedNames = new Set();       // every name an entry of bindings or pwDerived carries: a use of any other name reaches no entry, so it is not resolved
+  const track = (map, key, value) => { map.set(key, value); trackedNames.add(value.name); };
+  const keyOf = (id) => declOfUse(id) || ("global:" + id.text);
+  const bindingAt = (id) => (trackedNames.has(id.text) && bindings.get(keyOf(id))) || null;   // the tracked binding an identifier reaches, or null
+  const derivedAt = (id) => (trackedNames.has(id.text) && pwDerived.get(keyOf(id))) || null;
+  const bindingsNamed = (name) => [...bindings].filter(([, b]) => b.name === name);
   const engines = new Set(), launches = [], skipTodo = [], swallow = [];
   let sharedCalls = 0;
   const playwright = new Set();
@@ -130,26 +143,51 @@ export function classify(ts, file, src, opts = {}) {
    *  literal of literals; a parameter typed as a union of string literal types; a parameter typed `string` whose every call
    *  site in the module passes a literal at that position (the function named by identifier, called directly). Anything else,
    *  or a name no enclosing scope declares: null (refuse). */
+  /** The scopes a name is looked up through, innermost first: a function (its parameters and its block body), a block, a
+   *  for/for-of/for-in head, a catch clause, the source file. */
+  const isScope = (n) => ts.isFunctionLike(n) || ts.isBlock(n) || ts.isForOfStatement(n) || ts.isForInStatement(n) || ts.isForStatement(n) || ts.isCatchClause(n) || ts.isSourceFile(n);
+  /** The declarations a scope holds ITSELF (an inner scope's are not its own): name -> the first node in source order that
+   *  declares it, a variable declaration, a parameter, a binding element (a destructured declaration or parameter, an array
+   *  pattern's element included), a function or class declaration, a catch variable; at the source file an import's binding too
+   *  (a named specifier, the default clause, a namespace import, an import =). Read once per scope and kept for the life of this
+   *  classify call: every lookup of a tracked name resolves through it. */
+  const scopeDecls = new Map();
+  const declsOf = (scope) => {
+    let m = scopeDecls.get(scope);
+    if (m) return m;
+    m = new Map();
+    const note = (n) => { if (!m.has(n.name.text)) m.set(n.name.text, n); };
+    const look = (n) => {
+      if ((ts.isVariableDeclaration(n) || ts.isParameter(n) || ts.isBindingElement(n) || ts.isFunctionDeclaration(n) || ts.isClassDeclaration(n)) && n.name && ts.isIdentifier(n.name)) note(n);
+      else if (ts.isImportSpecifier(n) || ts.isNamespaceImport(n) || ts.isImportEqualsDeclaration(n)) note(n);
+      else if (ts.isImportClause(n) && n.name) note(n);
+      if (n !== scope && isScope(n)) return; // an inner scope's declarations are not ours
+      ts.forEachChild(n, look);
+    };
+    if (ts.isFunctionLike(scope)) { for (const prm of scope.parameters) look(prm); if (scope.body && ts.isBlock(scope.body)) for (const st of scope.body.statements) look(st); }
+    else if (ts.isForOfStatement(scope) || ts.isForInStatement(scope) || ts.isForStatement(scope)) { if (scope.initializer) look(scope.initializer); }
+    else if (ts.isCatchClause(scope)) { if (scope.variableDeclaration) look(scope.variableDeclaration); }
+    else if (ts.isBlock(scope) || ts.isSourceFile(scope)) for (const st of scope.statements) look(st);
+    scopeDecls.set(scope, m);
+    return m;
+  };
+  /** The node that declares `name` in `scope` itself, or null. Shared by foldIdentifier (a folded name) and by every lookup of a
+   *  tracked binding (a playwright or launcher name at its use site). */
+  const declOfName = (scope, name) => declsOf(scope).get(name) || null;
+  /** The declaration an identifier reaches by lexical scope: from the identifier upward, the first enclosing scope that declares
+   *  its name decides (an identifier in a declaration's own name position reaches that declaration). null: no enclosing scope
+   *  declares the name (a global, or a name the module assigns without declaring). Kept per identifier node for this call. */
+  const useDecl = new Map();
+  const declOfUse = (id) => {
+    if (useDecl.has(id)) return useDecl.get(id);
+    let d = null;
+    for (let p = id.parent; p && !d; p = p.parent) if (isScope(p)) d = declOfName(p, id.text);
+    useDecl.set(id, d);
+    return d;
+  };
   const foldIdentifier = (id) => {
     const name = id.text;
-    const declOf = (scope) => {
-      let hit = null;
-      const look = (n) => {
-        if (hit) return;
-        if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === name) { hit = n; return; }
-        if (ts.isParameter(n) && ts.isIdentifier(n.name) && n.name.text === name) { hit = n; return; }
-        if (ts.isBindingElement(n) && ts.isIdentifier(n.name) && n.name.text === name) { hit = n; return; }
-        if (n !== scope && (ts.isFunctionLike(n) || ts.isBlock(n) || ts.isForOfStatement(n) || ts.isForInStatement(n) || ts.isForStatement(n) || ts.isCatchClause(n))) return; // an inner scope's declarations are not ours
-        ts.forEachChild(n, look);
-      };
-      if (ts.isFunctionLike(scope)) { for (const prm of scope.parameters) look(prm); if (!hit && scope.body) { if (ts.isBlock(scope.body)) for (const st of scope.body.statements) look(st); } }
-      else if (ts.isForOfStatement(scope) || ts.isForInStatement(scope) || ts.isForStatement(scope)) { if (scope.initializer) look(scope.initializer); }
-      else if (ts.isCatchClause(scope)) { if (scope.variableDeclaration) look(scope.variableDeclaration); }
-      else if (ts.isBlock(scope) || ts.isSourceFile(scope)) for (const st of scope.statements) look(st);
-      return hit;
-    };
-    let decl = null;
-    for (let p = id.parent; p && !decl; p = p.parent) if (ts.isFunctionLike(p) || ts.isBlock(p) || ts.isForOfStatement(p) || ts.isForInStatement(p) || ts.isForStatement(p) || ts.isCatchClause(p) || ts.isSourceFile(p)) decl = declOf(p);
+    const decl = declOfUse(id);
     if (!decl) return null;
     if (ts.isVariableDeclaration(decl)) {
       // a let or var the module assigns to elsewhere (=, a compound assignment, ++ or --) is not bound to its initializer: null
@@ -272,23 +310,27 @@ export function classify(ts, file, src, opts = {}) {
       }
       if (ts.isCallExpression(e)) { const l = loaderCall(e); if (l && l.kind === "playwright") return chain; if (l && l.kind === "refused") return { refused: true }; return null; }
       if (ts.isIdentifier(e)) {
-        const b = bindings.get(e.text);
+        const b = bindingAt(e);
         if (b && b.module === "playwright") { if (b.member) chain.unshift([b.member]); return chain; }
-        const d = pwDerived.get(e.text);
+        const d = derivedAt(e);
         if (d) { chain.unshift(...d.chain); return chain; }
         return null;
       }
       return null;
     }
   };
-  const isTrackedRoot = (r) => ts.isIdentifier(r) && ((bindings.has(r.text) && ["playwright", "launcher"].includes(bindings.get(r.text).module)) || pwDerived.has(r.text));
+  const isTrackedRoot = (r) => { if (!ts.isIdentifier(r)) return false; const b = bindingAt(r); return (b !== null && ["playwright", "launcher"].includes(b.module)) || derivedAt(r) !== null; };
   const noteChain = (chain) => { for (const names of chain) for (const n of names) if (ENGINES.has(n)) engines.add(n); };
 
   // pass 1: imports, loaders, declarations (source order; a second pass below picks up derived bindings declared before use)
+  /** The kind of a bind target that is neither an identifier nor an object binding pattern, for the refusal that names it: the
+   *  sentence says what the line holds (a property assignment `o.pw = pw`, an element assignment `o[0] = pw`, an array
+   *  destructuring `const [x] = pw`, an object destructuring by assignment `({ x } = pw)`), and names the node's kind for any other. */
+  const targetKind = (t) => ts.isArrayBindingPattern(t) || ts.isArrayLiteralExpression(t) ? "an array destructuring" : ts.isPropertyAccessExpression(t) ? "a property assignment" : ts.isElementAccessExpression(t) ? "an element assignment" : ts.isObjectLiteralExpression(t) ? "an object destructuring by assignment" : "a bind target of a kind the walker does not read (" + ts.SyntaxKind[t.kind] + ")";
   const bindName = (nm, module, member) => {
-    if (ts.isIdentifier(nm)) bindings.set(nm.text, { module, member });
-    else if (ts.isObjectBindingPattern(nm)) for (const el of nm.elements) { if (el.dotDotDotToken) { bindings.set(el.name.text, { module, member }); continue; } const prop = el.propertyName ? (ts.isIdentifier(el.propertyName) ? el.propertyName.text : literalName(el.propertyName)) : (ts.isIdentifier(el.name) ? el.name.text : null); if (prop === null) { refuse(el, "a destructured member with a name the walker cannot read"); continue; } if (ts.isIdentifier(el.name)) bindings.set(el.name.text, { module, member: member ? member + "." + prop : prop }); else refuse(el, "a nested destructuring the walker does not follow"); }
-    else refuse(nm, "an array destructuring of a module the walker does not follow");
+    if (ts.isIdentifier(nm)) track(bindings, keyOf(nm), { name: nm.text, module, member });
+    else if (ts.isObjectBindingPattern(nm)) for (const el of nm.elements) { if (el.dotDotDotToken) { track(bindings, el, { name: el.name.text, module, member }); continue; } const prop = el.propertyName ? (ts.isIdentifier(el.propertyName) ? el.propertyName.text : literalName(el.propertyName)) : (ts.isIdentifier(el.name) ? el.name.text : null); if (prop === null) { refuse(el, "a destructured member with a name the walker cannot read"); continue; } if (ts.isIdentifier(el.name)) track(bindings, el, { name: el.name.text, module, member: member ? member + "." + prop : prop }); else refuse(el, "a nested destructuring the walker does not follow"); }
+    else refuse(nm, targetKind(nm) + " of a loaded module the walker does not follow");
   };
   const walk1 = (n) => {
     if (ts.isImportDeclaration(n)) {
@@ -301,15 +343,15 @@ export function classify(ts, file, src, opts = {}) {
         if (r.kind === "launcher" && !(c && c.isTypeOnly)) launcherImported.push(lineOf(n));
         if (!(c && c.isTypeOnly)) noteLocal(n, r);
         if (c && !c.isTypeOnly) {
-          if (c.name) bindings.set(c.name.text, { module: r.kind, member: "default" });
+          if (c.name) track(bindings, c, { name: c.name.text, module: r.kind, member: "default" });
           if (c.namedBindings) {
-            if (ts.isNamespaceImport(c.namedBindings)) bindings.set(c.namedBindings.name.text, { module: r.kind, member: null });
-            else for (const el of c.namedBindings.elements) if (!el.isTypeOnly) bindings.set(el.name.text, { module: r.kind, member: (el.propertyName || el.name).text });
+            if (ts.isNamespaceImport(c.namedBindings)) track(bindings, c.namedBindings, { name: c.namedBindings.name.text, module: r.kind, member: null });
+            else for (const el of c.namedBindings.elements) if (!el.isTypeOnly) track(bindings, el, { name: el.name.text, module: r.kind, member: (el.propertyName || el.name).text });
           }
         }
       }
     } else if (ts.isImportEqualsDeclaration(n)) {
-      if (ts.isExternalModuleReference(n.moduleReference)) { const spec = literalName(n.moduleReference.expression); if (spec === null) refuse(n, "an import = require whose specifier is not a string literal"); else { const r = resolveSpec(spec); if (r.kind === "playwright") playwright.add(spec); if (r.kind === "launcher") launcherImported.push(lineOf(n)); noteLocal(n, r); bindings.set(n.name.text, { module: r.kind, member: null }); } }
+      if (ts.isExternalModuleReference(n.moduleReference)) { const spec = literalName(n.moduleReference.expression); if (spec === null) refuse(n, "an import = require whose specifier is not a string literal"); else { const r = resolveSpec(spec); if (r.kind === "playwright") playwright.add(spec); if (r.kind === "launcher") launcherImported.push(lineOf(n)); noteLocal(n, r); track(bindings, n, { name: n.name.text, module: r.kind, member: null }); } }
     } else if (ts.isExportDeclaration(n) && n.moduleSpecifier) {
       const spec = literalName(n.moduleSpecifier);
       if (spec === null) refuse(n, "an export from whose specifier is not a string literal");
@@ -326,13 +368,12 @@ export function classify(ts, file, src, opts = {}) {
       const init = unwrap(n.initializer);
       // a createRequire(...) result is a loader
       if (ts.isCallExpression(init) && ((ts.isIdentifier(unwrap(init.expression)) && unwrap(init.expression).text === "createRequire") || (ts.isPropertyAccessExpression(unwrap(init.expression)) && unwrap(init.expression).name.text === "createRequire")) && ts.isIdentifier(n.name)) loaders.add(n.name.text);
-    } else if (ts.isFunctionDeclaration(n) && n.name) declared.add(n.name.text);
-    else if (ts.isClassDeclaration(n) && n.name) declared.add(n.name.text);
+    }
     ts.forEachChild(n, walk1);
   };
   walk1(sf);
   // launcher's own requireCjs export, imported by a leg, is a loader too
-  for (const [name, b] of bindings) if (b.module === "launcher" && b.member === "requireCjs") loaders.add(name);
+  for (const [, b] of bindings) if (b.module === "launcher" && b.member === "requireCjs") loaders.add(b.name);
 
   // pass 2: loader-bound variables and assignments (declaration or assignment), playwright-derived bindings; to a fixpoint
   const bindLoaded = (target, valueExpr, holder) => {
@@ -347,7 +388,7 @@ export function classify(ts, file, src, opts = {}) {
       if (members === null) { refuse(holder, "a computed member with a name the walker cannot fold on a loaded module"); return true; }
       const member = members.length ? members.map((m) => m.join("|")).join(".") : null;
       if (l.kind === "playwright") { for (const m of members) for (const x of m) if (ENGINES.has(x)) engines.add(x); }
-      if (ts.isIdentifier(target)) { if (!bindings.has(target.text)) { bindings.set(target.text, { module: l.kind, member }); return true; } return false; }
+      if (ts.isIdentifier(target)) { const k = keyOf(target); if (!bindings.has(k)) { track(bindings, k, { name: target.text, module: l.kind, member }); return true; } return false; }
       let changed = false;
       const before = bindings.size; bindName(target, l.kind, member); changed = bindings.size !== before;
       if (l.kind === "playwright") for (const [, b] of bindings) if (b.module === "playwright" && b.member) for (const x of b.member.split(".")) if (ENGINES.has(x)) engines.add(x);
@@ -358,9 +399,9 @@ export function classify(ts, file, src, opts = {}) {
     const chain = pwChain(v);
     if (chain && !chain.refused) {
       let changed = false;
-      if (ts.isIdentifier(target)) { if (!pwDerived.has(target.text) && !bindings.has(target.text)) { pwDerived.set(target.text, { chain }); changed = true; } }
-      else if (ts.isObjectBindingPattern(target)) for (const el of target.elements) { const prop = el.propertyName ? (ts.isIdentifier(el.propertyName) ? el.propertyName.text : literalName(el.propertyName)) : (ts.isIdentifier(el.name) ? el.name.text : null); if (prop === null || !ts.isIdentifier(el.name)) { refuse(el, "a destructuring of a playwright expression the walker cannot read"); continue; } if (!pwDerived.has(el.name.text)) { pwDerived.set(el.name.text, { chain: [...chain, [prop]] }); changed = true; } if (LAUNCHES.has(prop)) launches.push({ line: lineOf(el), how: "destructured " + prop }); }
-      else refuse(target, "an array destructuring of a playwright expression");
+      if (ts.isIdentifier(target)) { const k = keyOf(target); if (!pwDerived.has(k) && !bindings.has(k)) { track(pwDerived, k, { name: target.text, chain }); changed = true; } }
+      else if (ts.isObjectBindingPattern(target)) for (const el of target.elements) { const prop = el.propertyName ? (ts.isIdentifier(el.propertyName) ? el.propertyName.text : literalName(el.propertyName)) : (ts.isIdentifier(el.name) ? el.name.text : null); if (prop === null || !ts.isIdentifier(el.name)) { refuse(el, "a destructuring of a playwright expression the walker cannot read"); continue; } if (!pwDerived.has(el)) { track(pwDerived, el, { name: el.name.text, chain: [...chain, [prop]] }); changed = true; } if (LAUNCHES.has(prop)) launches.push({ line: lineOf(el), how: "destructured " + prop }); }
+      else refuse(target, targetKind(target) + " of a playwright expression the walker does not follow");
       noteChain(chain);
       return changed;
     }
@@ -379,11 +420,13 @@ export function classify(ts, file, src, opts = {}) {
   // the engines every playwright binding names by its member path (const { firefox } = require("playwright"))
   for (const [, b] of bindings) if (b.module === "playwright" && b.member) for (const x of b.member.split(".")) for (const y of x.split("|")) if (ENGINES.has(y)) engines.add(y);
 
-  // shadowing: a local declaration (variable, function, class, parameter) with an import binding's name refuses
+  // shadowing: a local declaration (variable, function, class, parameter) with a tracked binding's name refuses. A use of the
+  // name reaches the local (resolution is by scope), so the refusal is not for ambiguity: it is so that an import a shadow leaves
+  // uncalled, or whose launches a shadow hides, does not read as an ordinary non-leg without notice.
   const walkShadow = (n) => {
     if ((ts.isVariableDeclaration(n) || ts.isParameter(n) || ts.isFunctionDeclaration(n) || ts.isClassDeclaration(n)) && n.name && ts.isIdentifier(n.name)) {
-      const b = bindings.get(n.name.text);
-      if (b && ((b.module === "launcher" && (b.member === "inBrowser" || b.member === null)) || b.module === "playwright")) { const init = ts.isVariableDeclaration(n) && n.initializer ? unwrap(n.initializer) : null; const viaLoader = init && (loaderCall(init) || pwChain(init)); const isBinderItself = ts.isVariableDeclaration(n) && (viaLoader || (init === null && n.initializer === undefined)); if (!isBinderItself && !(ts.isVariableDeclaration(n) && n.initializer && (literalName(init) === null && (init.kind === ts.SyntaxKind.NullKeyword || init.kind === ts.SyntaxKind.UndefinedKeyword)))) refuse(n, "a local declaration shadows an import binding of the launcher or of playwright (the walker cannot tell which one a later use reaches)"); }
+      const b = bindingsNamed(n.name.text).some(([k, x]) => k !== n && ((x.module === "launcher" && (x.member === "inBrowser" || x.member === null)) || x.module === "playwright"));
+      if (b) { const init = ts.isVariableDeclaration(n) && n.initializer ? unwrap(n.initializer) : null; const viaLoader = init && (loaderCall(init) || pwChain(init)); const isBinderItself = ts.isVariableDeclaration(n) && (viaLoader || (init === null && n.initializer === undefined)); if (!isBinderItself && !(ts.isVariableDeclaration(n) && n.initializer && (literalName(init) === null && (init.kind === ts.SyntaxKind.NullKeyword || init.kind === ts.SyntaxKind.UndefinedKeyword)))) refuse(n, "a local declaration shadows an import binding of the launcher or of playwright (a use of the name reaches the local, not the import, so what the module does through the import is unread: rename the local)"); }
     }
     ts.forEachChild(n, walkShadow);
   };
@@ -399,9 +442,9 @@ export function classify(ts, file, src, opts = {}) {
       let viaCall = false;
       if ((ts.isPropertyAccessExpression(c)) && ["call", "apply", "bind"].includes(c.name.text)) { c = unwrap(c.expression); viaCall = true; }
       if (ts.isIdentifier(c)) {
-        const b = bindings.get(c.text);
+        const b = bindingAt(c);
         if (b && b.module === "launcher" && b.member === "inBrowser") { sharedCalls++; if (inTryWithCatch(n)) swallow.push(lineOf(n)); }
-        const d = pwDerived.get(c.text);
+        const d = derivedAt(c);
         if (d) { const last = d.chain[d.chain.length - 1] || []; if (last.some((x) => LAUNCHES.has(x))) launches.push({ line: lineOf(n), how: "call of destructured " + last.join("|") + (viaCall ? " via .call/.apply" : "") }); }
         if (b && b.module === "playwright" && b.member && LAUNCHES.has(b.member.split(".").pop())) launches.push({ line: lineOf(n), how: "call of imported " + b.member });
       } else if (ts.isPropertyAccessExpression(c) || ts.isElementAccessExpression(c)) {
@@ -411,7 +454,7 @@ export function classify(ts, file, src, opts = {}) {
         else {
           if (names.some((x) => x === "skip" || x === "todo")) skipTodo.push({ line: lineOf(n), what: "." + names.join("|") + "(" });
           // launcher namespace: leg.inBrowser(...)
-          if (ts.isIdentifier(obj)) { const b = bindings.get(obj.text); if (b && b.module === "launcher" && b.member === null && names.includes("inBrowser")) { sharedCalls++; if (inTryWithCatch(n)) swallow.push(lineOf(n)); } }
+          if (ts.isIdentifier(obj)) { const b = bindingAt(obj); if (b && b.module === "launcher" && b.member === null && names.includes("inBrowser")) { sharedCalls++; if (inTryWithCatch(n)) swallow.push(lineOf(n)); } }
           if (names.some((x) => LAUNCHES.has(x))) { const chain = pwChain(obj); if (chain && !chain.refused) { noteChain(chain); launches.push({ line: lineOf(n), how: "." + names.join("|") + "(" + (viaCall ? " via .call/.apply" : "") }); } }
           const chain = pwChain(c); if (chain && !chain.refused) noteChain(chain);
         }
@@ -423,7 +466,7 @@ export function classify(ts, file, src, opts = {}) {
       if (!(n.parent && (ts.isCallExpression(n.parent) && n.parent.expression === n))) { const chain = pwChain(n); if (chain && !chain.refused) noteChain(chain); }
     } else if (ts.isIdentifier(n)) {
       // a reference to the inBrowser binding that is not a callee, a declaration name, a property name or an import clause: refuse
-      const b = bindings.get(n.text);
+      const b = bindingAt(n);
       if (b && b.module === "launcher" && b.member === "inBrowser") {
         const p = n.parent;
         const isCallee = p && ts.isCallExpression(p) && unwrap(p.expression) === n;
