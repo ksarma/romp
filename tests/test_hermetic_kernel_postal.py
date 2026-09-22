@@ -75,7 +75,6 @@ the spawn site, naming the file.
 """
 import ast
 import collections
-import copy
 import glob
 import json
 import os
@@ -255,9 +254,23 @@ class _EnvNames:
         return isinstance(node, ast.Name) and node.id in self.environ_names
 
 
+def _fresh(node):
+    """A tree of the expression `node` parsed anew from its own text: the one tree the substitution below may rewrite.
+    THE CONTRACT (the reviewer's ruling of 2026-09-22, from a CI red on fork PR #891): a parsed tree is read-only for
+    every consumer, per-node data lives in a side table keyed by id(node), and no consumer deep-copies a parsed node.
+    THE MECHANISM: the parser hands out ast.Load, Store, Del and the operator nodes as process-wide singletons, so an
+    attribute another census writes on one (`child._parent = node` over every node it walks, the singletons among them)
+    is on every tree parsed afterwards, and a deepcopy of a small expression that holds a tagged singleton follows the
+    tag into that census's whole graph (a RecursionError through copy.py on CI's 3.10 and 3.11, a 147 s copy on 3.12).
+    Until the fourth commit of the same day both substitution sites deep-copied the parsed node; the pins in the test
+    class plant the tag and hold the walk to the contract."""
+    return ast.parse(ast.unparse(node), mode="eval").body
+
+
 class _Substitute(ast.NodeTransformer):
-    """A copy of an expression with every name bound once at import replaced by its value expression, recursively; a name
-    already under substitution (`seen`) is left as it is, so a self-referencing binding cannot loop."""
+    """An expression with every name bound once at import replaced by its value expression, recursively, rewritten over a
+    FRESH tree parsed from the expression's text (_fresh), never over the parsed node or a copy of it; a name already
+    under substitution (`seen`) is left as it is, so a self-referencing binding cannot loop."""
 
     def __init__(self, bindings, seen=frozenset()):
         self.bindings, self.seen = bindings, seen
@@ -266,7 +279,9 @@ class _Substitute(ast.NodeTransformer):
         bound = self.bindings.get(node.id)
         if bound is None or node.id in self.seen or not isinstance(node.ctx, ast.Load):
             return node
-        return _Substitute(self.bindings, self.seen | {node.id}).visit(copy.deepcopy(bound))
+        # Contract: a parsed tree is read-only for every consumer, so the bound value is re-parsed from its text, never
+        # deep-copied. Mechanism: its ctx nodes are parser singletons another census may have tagged with its whole graph.
+        return _Substitute(self.bindings, self.seen | {node.id}).visit(_fresh(bound))
 
 
 def _resolved(node, names):
@@ -276,7 +291,9 @@ def _resolved(node, names):
     of `node` itself where nothing substitutes (a name bound twice, or not by an assignment, stays a name); "" for None."""
     if node is None:
         return ""
-    return ast.unparse(_Substitute(names.bindings).visit(copy.deepcopy(node)))
+    # Contract: a parsed tree is read-only for every consumer, so the value is re-parsed from its text, never deep-copied.
+    # Mechanism: its ctx nodes are parser singletons another census may have tagged with its whole graph (_fresh).
+    return ast.unparse(_Substitute(names.bindings).visit(_fresh(node)))
 
 
 def _unreadable(what, node, where):
@@ -1267,6 +1284,34 @@ def _method_chain(cls, name, classes):
     return chain
 
 
+def _parser_singletons():
+    """{"Load": node, "Store": node, "Del": node}: the expression-context nodes the PARSER hands out, one object each for
+    the whole process (`ast.Load()` constructs a new one, so the pins read them from a parse), asserted shared between two
+    parses, since the two pins that rest on the sharing would hold vacuously without it."""
+    one, two = ast.parse("a = b\ndel c").body, ast.parse("x = y\ndel z").body
+    pairs = {"Load": (one[0].value.ctx, two[0].value.ctx), "Store": (one[0].targets[0].ctx, two[0].targets[0].ctx),
+             "Del": (one[1].targets[0].ctx, two[1].targets[0].ctx)}
+    for kind, (p, q) in pairs.items():
+        if p is not q:
+            raise AssertionError("two parses gave two %s nodes; the parser hands out one for the process, and the pins over "
+                                 "the shared singletons rest on that" % kind)
+    return {kind: p for kind, (p, _q) in pairs.items()}
+
+
+def _restore_dict(obj, saved):
+    """`obj.__dict__` put back to `saved`: the cleanup for a plant on a process-wide singleton every test shares."""
+    obj.__dict__.clear()
+    obj.__dict__.update(saved)
+
+
+class _Link:
+    """One link of the deep synthetic chain the plant hangs on the parser's Load singleton: a deepcopy that follows the tag
+    walks the chain and recurses once per link."""
+
+    def __init__(self, tail):
+        self.tail = tail
+
+
 class HermeticKernelPostal(unittest.TestCase):
     def test_kernel_env_gives_every_lab_kernel_its_own_never_started_bus(self):
         env = _lab.kernel_env("/tmp/lab", "/tmp/lab/claude", "/tmp/lab/dist", 1, "tok")
@@ -1803,6 +1848,62 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertTrue(any(l > notify for l in calls.get("wait", [])), "the test waits on the revive after the call (the Event the stub sets)")
         self.assertTrue(any(isinstance(n, ast.Constant) and n.value == "ensure" for n in ast.walk(fn)), "...and asserts the argv names ensure")
         self.assertTrue(any(l > notify for l in calls.get("pop", [])), "...and restores the trio after it")
+
+    def test_the_scan_completes_and_derives_the_same_records_under_a_tag_another_census_left_on_the_parsers_shared_singletons(self):
+        """THE PLANT for the contract _fresh states (the reviewer's ruling of 2026-09-22, from a CI red on fork PR #891):
+        the tag another census writes over every node it walks (`child._parent = node`) put on the parser's Load
+        singleton, the parent the root of a chain of 5000 plain objects, and the walker's derivation run over the
+        smallest input whose value check reaches _resolved, one module-level environment write whose value is a bound
+        name. At the third commit `_Substitute.visit_Name` and `_resolved` deep-copied the parsed node, whose ctx IS the
+        tagged singleton, and the copy followed the tag down the chain: a RecursionError on 3.12 and on 3.10. Both
+        substitute over a fresh parse of the expression's text now, so the tag is never followed, the records equal the
+        untagged run's and the licence's value check reads the resolved value. The singleton's dict is put back by a
+        cleanup registered before the write, since every test in the process shares it."""
+        load = _parser_singletons()["Load"]
+        src = 'import os\nimport tempfile\n_ROOT = tempfile.mkdtemp()\nos.environ["XDG_STATE_HOME"] = _ROOT\n'
+        untagged = _module_level_records(ast.parse(src), "planted.py")
+        self.assertEqual([(name, r.value, r.resolved) for name, r in untagged], [("XDG_STATE_HOME", "_ROOT", "tempfile.mkdtemp()")],
+                         "the smallest input: one write, its value a bound name, so _resolved substitutes through visit_Name")
+        chain = None
+        for _ in range(5000):
+            chain = _Link(chain)
+        self.addCleanup(_restore_dict, load, dict(vars(load)))
+        load._parent = chain
+        tagged = _module_level_records(ast.parse(src), "planted.py")
+        self.assertEqual(tagged, untagged, "the walk under the tag completes and derives the records the untagged walk did")
+        records = _all_licensed_once()
+        records["XDG_STATE_HOME"] = [r for _name, r in tagged]
+        self.assertEqual(_licence_faults(records), [], "the licence's value check reads the resolved value under the tag")
+
+    def test_the_full_walk_writes_nothing_on_the_parsers_shared_singletons(self):
+        """The contract's read-only clause, for this walker: the parser's Load, Store and Del nodes (one object each for
+        the process; a write on one is on every tree parsed after it) carry the same attributes after the census over
+        every module under tests/, the walk the equality pin runs, as before it. A walker that kept per-node data as an
+        attribute (`child._parent = node`, fork PR #891's census before the ruling) fails here; a side table keyed by
+        id(node) is where such data belongs."""
+        singletons = _parser_singletons()
+        before = {kind: dict(vars(node)) for kind, node in singletons.items()}
+        paths = _tests_tree_paths()
+        n, _counts, _records = module_level_env_census(paths)
+        self.assertEqual(n, len(paths), "the walk ran over the whole tree")
+        self.assertGreater(n, 900)
+        after = {kind: dict(vars(node)) for kind, node in singletons.items()}
+        self.assertEqual(after, before, "the walk writes no attribute on a node: per-node data belongs in a side table keyed by id(node)")
+
+    def test_the_module_imports_no_copy_and_deep_copies_no_node(self):
+        """The contract's no-deepcopy clause, held on this module's own tree rather than its text (a comment naming the
+        call would not count): no import of copy, no call of copy.deepcopy, copy.copy or a bare deepcopy anywhere in
+        the module, and no `copy` name among its globals. At the third commit `_Substitute.visit_Name` and `_resolved`
+        each deep-copied a parsed node; both substitute over a fresh parse now (_fresh)."""
+        tree = ast.parse(open(__file__, encoding="utf-8").read(), filename=__file__)
+        imports = sorted(n.lineno for n in ast.walk(tree)
+                         if (isinstance(n, ast.Import) and any(a.name.split(".")[0] == "copy" for a in n.names))
+                         or (isinstance(n, ast.ImportFrom) and n.module == "copy"))
+        copies = sorted(n.lineno for n in ast.walk(tree) if isinstance(n, ast.Call) and (
+            _dotted(n.func) in (["copy", "deepcopy"], ["copy", "copy"]) or (isinstance(n.func, ast.Name) and n.func.id == "deepcopy")))
+        self.assertEqual((imports, copies, "copy" in globals()), ([], [], False),
+                         "the contract (the reviewer, 2026-09-22): no consumer deep-copies a parsed node; a substitution runs over a "
+                         "fresh parse of the expression's text (_fresh)")
 
 
 def _all_licensed_once():
