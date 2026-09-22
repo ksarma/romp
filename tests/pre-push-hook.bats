@@ -64,6 +64,9 @@
 # judged by its combined patch, the read the scan makes for one, which applies
 # no size rule and applies a path's attribute to a symlink; and a blob the tip
 # holds is the tip's to judge, read there or refused there, never the commit's.
+# A one-parent commit that turns a file binary by its bytes into a text one is
+# refused with the previous version named as the cause, the header's disclosed
+# fail-closed shape, and the tip reads the file where the tip keeps it.
 
 ROMP_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 HOOK="$ROMP_DIR/.githooks/pre-push"
@@ -1802,7 +1805,9 @@ path_without_gitleaks() {
 # `unspecified` or `unset`). The advice names the attribute as the cause where
 # one is named and what to do about it (drop it, or keep the file text on
 # purpose with an explicit diff line that outranks it), the configuration key
-# where none is, and a rename or copy of such a file is refused the same way,
+# where none is (or, for a one-parent commit's change of a file binary by its
+# bytes with no key set, that previous version as the cause, with the fetch
+# remedy), and a rename or copy of such a file is refused the same way,
 # since its bytes reach the remote under the new path. The real-push cases
 # push with the hook installed, so the remote's state is asserted too.
 
@@ -2311,6 +2316,55 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
     [ -z "$output" ]
 }
 
+# A one-parent commit that turns a file binary by its bytes into a TEXT file:
+# the pair is binary when either side is, so the diff prints "Binary files
+# differ" and no hunk for the new text, and the commit is refused rather than
+# scanned (the hook header's disclosed fail-closed shape). No attribute and no
+# key accounts for that verdict, so the line names the cause the hook can
+# read, the previous version's bytes, and the advice names the remedy: the
+# hook scans only commits new to every fetched remote, so a commit some remote
+# holds is out of range once that remote is fetched. Three commits in this
+# repository's own history have the shape, refused when a clone with no
+# remote-tracking refs pushes the history as a new ref (2026-09-22).
+
+@test "a one-parent commit turning a NUL-carrying file into a text file carrying the string, gone at the tip, is refused rather than scanned, the line naming the previous version's bytes as the cause and the advice the fetch remedy; the key's facts and the key advice are absent, since the key is not the cause" {
+    printf 'ab\0cd\n' > "$REPO/thing"
+    git -C "$REPO" add thing
+    git -C "$REPO" commit -qm "a binary file"
+    commit_file thing "seen on TESTHOST" "now a text file carrying the string"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file thing "remove it"                            # gone at the tip: only the per-commit half can name it
+    # the road as git applies it: the pair is binary on the old side, so the diff prints no hunk for the new text
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" -- thing' _ "$leak"
+    [[ "$output" == *"Binary files a/thing and b/thing differ"* ]]
+    [[ "$output" != *"TESTHOST"* ]]
+    run _hook_in "$REPO" -c 'git check-attr diff thing'
+    [[ "$output" == *"diff: unspecified"* ]]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: thing in commit ${leak:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict; the previous version of the file is binary by its bytes (a NUL in its first 8000), which made git print no text diff for the change, and the identifier scan could not read the new text, so the push is refused rather than scanned"* ]]
+    [[ "$output" == *"Where a line names the previous version's bytes as the cause, the hook scans only commits new to every fetched remote: if the commit is already on some remote, fetch that remote first and push again, or push from a clone that has fetched it."* ]]
+    [[ "$output" != *"core.bigFileThreshold is not set"* ]]   # the key is not the cause here: the line states the cause, not the key's facts
+    [[ "$output" != *"a configuration key can be what makes git call the file binary"* ]]
+    [[ "$output" != *"at the tip of"* ]]
+    [[ "$output" != *"personal identifier"* ]]
+    [[ "$output" == *"git push --no-verify"* ]]
+}
+
+@test "the same shape with the text file KEPT at the tip is judged by the tip alone: the tip's grep reads the file and reports the hit, and the commit whose diff printed no hunk for it is not named, since the tip holds the blob" {
+    printf 'ab\0cd\n' > "$REPO/thing"
+    git -C "$REPO" add thing
+    git -C "$REPO" commit -qm "a binary file"
+    commit_file thing "seen on TESTHOST" "now a text file carrying the string"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the tip of refs/heads/main (${sha:0:10}) would publish a personal identifier in:"* ]]
+    [[ "$output" == *"  thing"* ]]
+    [[ "$output" != *"is text that"* ]]
+    [[ "$output" != *"previous version"* ]]
+}
+
 # A MERGE is judged by its combined patch, the read the scan makes for one
 # (diff-tree -p -c), parsed section by section, since that patch judges by a
 # rule of its own that no verdict against each parent reproduces: it applies
@@ -2323,8 +2377,14 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
 # resolved was refused as hidden. A path the patch prints nothing for is a
 # pure rename (the same blob under a new path, its blob among the merge's
 # deletions), judged as the addition of its new path as a one-parent
-# commit's is; one that is no rename is a short read, refused with the other
-# fail-closed arms below.
+# commit's is; a path it prints the header alone for (an added empty file:
+# no hunk, no Binary line) that is no rename is a candidate judged by its
+# bytes, where an empty blob passes (the r3d text refused such a merge as
+# unscanned; the round 3 auditor, 2026-09-22); a path with no section at all
+# that is no rename is a short read, refused with the other fail-closed arms
+# below. The patch's header quotes a path holding a byte git escapes (a tab,
+# a quote, a backslash) with C escapes, undone before the join so the line
+# names the path byte for byte; a path left quoted would meet no row.
 merge_fixture() {   # a base the remote holds, a side branch and a main commit, the merge left open (--no-commit) for the case's own change; BASE is the remote's sha
     add_remote
     commit_file base.txt "notes-api" "base"
@@ -2380,6 +2440,7 @@ is_merge() {   # <sha>: two parents
     [[ "$output" == *"commit ${merge:0:10} ADDS a personal identifier in:"* ]]
     [[ "$output" == *"  link"* ]]
     [[ "$output" != *"is text that"* ]]
+    [[ "$output" != *"printed no verdict"* ]]                  # the hunk was honoured: neither the hidden line nor the short read (a hunk not honoured would print one or the other)
 }
 
 @test "a clean big text file a MERGE adds under the key, gone at the tip, passes through a real push: the combined patch applies no size rule and printed its hunk, which the scan read; the remote holds main" {
@@ -2431,6 +2492,7 @@ is_merge() {   # <sha>: two parents
     [[ "$output" == *"  big.txt"* ]]
     [[ "$output" != *"is text that"* ]]                        # before: the same push carried a hidden line for the merge beside the hit
     [[ "$output" != *"git calls binary"* ]]
+    [[ "$output" != *"printed no verdict"* ]]                  # the hunk was honoured: no short read either
 }
 
 @test "a MERGE's own pure RENAME of a big text file under the key, gone at the tip, is refused as hidden naming the new path: the combined patch prints nothing for a pure rename, so the addition verdict of its new path decides, as for a one-parent commit, and no rename clause is added since the patch reads the new path's attribute alone" {
@@ -2487,6 +2549,73 @@ is_merge() {   # <sha>: two parents
     run_hook "$base"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
+}
+
+@test "an evil MERGE adding an EMPTY file neither parent holds, gone at the tip, passes through a real push: the combined patch prints the header alone for it (no hunk, no Binary line), a candidate judged by its bytes, and an empty blob hides nothing; no short read is claimed, and the remote holds main" {
+    merge_fixture
+    : > "$REPO/empty.txt"
+    git -C "$REPO" add empty.txt
+    git -C "$REPO" commit -qm "the merge adds an empty file"
+    merge="$(git -C "$REPO" rev-parse HEAD)"
+    is_merge "$merge"
+    remove_file empty.txt "remove it"
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" -- empty.txt' _ "$merge"   # the header alone
+    [[ "$output" == *"diff --combined empty.txt"* ]]
+    [[ "$output" == *"new file mode 100644"* ]]
+    [[ "$output" != *"@@"* ]]
+    [[ "$output" != *"Binary files"* ]]
+    push_main_through_installed_hook
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]]
+    [[ "$output" != *"printed no verdict"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse HEAD)" ]
+}
+
+@test "a text file a MERGE adds under -diff at a path the patch header QUOTES (a tab in the name), the string in it and the file gone at the tip, is refused as hidden through a real push, the line naming the path byte for byte: the header's C escapes are undone before the join, and a path left quoted would meet no row; the remote stays at the base" {
+    qpath=$'tab\tx.txt'
+    attributes '"tab\tx.txt" -diff'                             # gitattributes reads the same C quoting
+    merge_fixture
+    printf 'seen on TESTHOST\n' > "$REPO/$qpath"
+    git -C "$REPO" add -- "$qpath"
+    git -C "$REPO" commit -qm "the merge adds a -diff file at a quoted path"
+    merge="$(git -C "$REPO" rev-parse HEAD)"
+    is_merge "$merge"
+    remove_file "$qpath" "remove it"
+    run _hook_in "$REPO" -c 'git check-attr diff -- "$1"' _ "$qpath"
+    [[ "$output" == *"diff: unset"* ]]
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1"' _ "$merge"
+    [[ "$output" == *'diff --combined "tab\tx.txt"'* ]]         # the header quotes the path, the tab as a C escape
+    [[ "$output" == *"Binary files differ"* ]]
+    push_main_through_installed_hook
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: $qpath in commit ${merge:0:10} is text that its diff attribute (unset) hides from the identifier scan, so the push is refused rather than scanned"* ]]
+    [[ "$output" != *'"tab\tx.txt"'* ]]                          # the quoted form names nothing
+    [[ "$output" != *"printed no verdict"* ]]                  # a path left quoted meets no row and is refused as unscanned instead
+    [[ "$output" != *"personal identifier"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
+@test "the same at a path with a DOUBLE QUOTE in the name: refused as hidden, the line naming the path byte for byte and no short read claimed" {
+    qpath='a"b.txt'
+    attributes '"a\"b.txt" -diff'
+    merge_fixture
+    printf 'seen on TESTHOST\n' > "$REPO/$qpath"
+    git -C "$REPO" add -- "$qpath"
+    git -C "$REPO" commit -qm "the merge adds a -diff file at a quoted path"
+    merge="$(git -C "$REPO" rev-parse HEAD)"
+    is_merge "$merge"
+    remove_file "$qpath" "remove it"
+    run _hook_in "$REPO" -c 'git check-attr diff -- "$1"' _ "$qpath"
+    [[ "$output" == *"diff: unset"* ]]
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1"' _ "$merge"
+    [[ "$output" == *'diff --combined "a\"b.txt"'* ]]
+    [[ "$output" == *"Binary files differ"* ]]
+    run_hook "$BASE"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: $qpath in commit ${merge:0:10} is text that its diff attribute (unset) hides from the identifier scan, so the push is refused rather than scanned"* ]]
+    [[ "$output" != *'"a\"b.txt"'* ]]
+    [[ "$output" != *"printed no verdict"* ]]
+    [[ "$output" != *"personal identifier"* ]]
 }
 
 # check-attr's three reserved words (set, unspecified, unset) are also names a
