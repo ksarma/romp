@@ -4796,6 +4796,80 @@ class ThreadStopCensus(unittest.TestCase):
                                     "(the guard on a thread never started, written once):\n%s"
                                     % "\n".join("%s:%d %s: %s" % f for f in found))
 
+    def test_the_tree_is_parsed_once_per_module_and_derived_once_per_process(self):
+        """THE MECHANISM, not the seconds (romp-manager's ruling on the ninth pass, 2026-09-22: CI's 3.10 and 3.11 cells had
+        been cancelled at their 25-minute cap with this module's serial cost in them, and a pin on seconds would read a slow
+        runner as a defect). Every file the census reads goes through tests/parse_cache.py, one parse per file per process,
+        and the whole tree derivation (_Tree: the product index, every module's units, the rows, the list joins) sits behind
+        one derived() key, so setUpClass, the --table road and every test of this class read ONE derivation. Held through
+        the helper's counters: the entry point run twice more answers the object setUpClass holds and builds nothing (the
+        key's build count stays 1, the process's derivation count does not move, the hit count moves by two); no file is
+        parsed by those calls; every module of the population and every product file the index holds was parsed exactly
+        once; and the parse count over the population equals the module count. THE RED, planted on a key of this test's own
+        beside the census's (clearing the census's own cache here would only make the next test derive again): a copy of the
+        entry point that forgets its key between two calls builds twice, and the counters show it, because clear() leaves
+        them alone; the same counters would show a second parse or derivation of the tree."""
+        before = PC.stats()
+        again, third = tree_census(), tree_census()
+        self.assertIs(again, self.tree, "the entry point answers the derivation setUpClass holds")
+        self.assertIs(third, self.tree)
+        after = PC.stats()
+        self.assertEqual(PC.builds_of(TREE_KEY + (ROOT,)), 1, "the tree was derived more than once in this process")
+        self.assertEqual(after["derivations"], before["derivations"], "the two calls built nothing")
+        self.assertEqual(after["derived_hits"], before["derived_hits"] + 2, "the two calls were answered from the cache")
+        self.assertEqual(after["parses"], before["parses"], "the two calls parsed nothing")
+        files = list(self.tree.paths) + sorted(self.tree.product.trees)
+        self.assertEqual([os.path.relpath(p, ROOT) for p in files if PC.parses_of(p) != 1], [],
+                         "a module of the population or a product file was parsed other than once in this process")
+        self.assertEqual(sum(PC.parses_of(p) for p in self.tree.paths), self.extras["modules"],
+                         "one parse per module: the parse count over the population is the module count")
+        key = ("tests/test_thread_stop_census.py", "a planted key: the red of this pin")
+        built = []
+
+        def entry_point(forget):                                  # a copy of tree_census over the planted key
+            if forget:
+                PC.clear(key)
+            return PC.derived(key, lambda: built.append(1) or object())
+        a, b = entry_point(False), entry_point(False)
+        self.assertIs(a, b)
+        self.assertEqual((len(built), PC.builds_of(key)), (1, 1), "two calls, one build")
+        c = entry_point(True)
+        self.assertIsNot(c, a)
+        self.assertEqual((len(built), PC.builds_of(key)), (2, 2), "the red: the copy that forgets its key builds again, and the counter says so")
+        PC.clear(key)
+
+    def test_the_product_files_parse_is_shared_with_any_other_census_in_the_process(self):
+        """The cross-module property (the cross-PR ruling of 2026-09-22: one shared parse cache per process, in a tests-local
+        helper both censuses import). A second census in the same process that reads kernel/kernel.py or another product
+        file through tests/parse_cache.py gets THIS census's parse: stated from this side, after the derivation
+        source_and_tree over every product file the index holds answers the very tree object the index holds, counts a hit
+        and no parse, and kernel/kernel.py was parsed once in the process. The state-root censuses adopt the helper in their
+        own pull request; their derivation then reads these entries. The key holds the file's size and mtime_ns, so a file
+        REWRITTEN between two calls is parsed again (shown on a planted file: two texts of different sizes, two parses) and
+        an unchanged one is not (a third call, one more hit and no parse)."""
+        before = PC.stats()
+        for p, tree in sorted(self.tree.product.trees.items()):
+            _text_, again = PC.source_and_tree(p)
+            self.assertIs(again, tree, "%s: another census's read is this census's parse" % os.path.relpath(p, ROOT))
+        after = PC.stats()
+        self.assertEqual(after["parses"], before["parses"], "no product file was parsed again")
+        self.assertEqual(after["parse_hits"], before["parse_hits"] + len(self.tree.product.trees))
+        self.assertEqual(PC.parses_of(os.path.join(ROOT, "kernel", "kernel.py")), 1, "kernel/kernel.py: one parse in the process")
+        d = tempfile.mkdtemp(prefix="romp-tests-census-")
+        self.addCleanup(shutil.rmtree, d, True)
+        p = os.path.join(d, "rewritten.py")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("x = 1\n")
+        first = PC.source_and_tree(p)[1]
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("x = 1\ny = 2\n")
+        second = PC.source_and_tree(p)[1]
+        third = PC.source_and_tree(p)[1]
+        self.assertIsNot(first, second, "a rewritten file is parsed again")
+        self.assertIs(second, third, "an unchanged file is not")
+        self.assertEqual(PC.parses_of(p), 2)
+        PC.clear(p)
+
 
 class PlantedShapes(unittest.TestCase):
     """The rules read on synthetic modules: each shape planted alone, the walk's answer for it."""
