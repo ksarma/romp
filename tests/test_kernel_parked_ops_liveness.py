@@ -28,7 +28,9 @@ test starts km._producer against judge tiers stuck on a gate. Two things went wr
      uses (a lambda returning True), here as one of setUp's patchers so tearDown restores it.
   2. The stop on the tail. The stop seam, the gate release and the join were the body's LAST lines, so the failed
      assertion skipped them, the with-block's eleven patches were undone on the way out while the producer was still in
-     its hold, and a live, fully unpatched judge loop ran for the rest of the worker's life; tearDown only CLEARED the
+     its hold, and a live, fully unpatched judge loop ran for the rest of the worker's life, wherever that failure fired;
+     whether a given sweep carried it is read from that sweep's pytest log (the target's failure line is in it, or it is
+     not: the contamination disclosure is conditional on that line). tearDown only CLEARED the
      stop flag, and only once the producer was already dead. The T282 census named the leaked thread (the ERROR beside
      the FAILED) but could not stop it. The blast radius has TWO FIGURES with different meanings (romp-manager's probe,
      2026-09-21). REACH: the leaked loop's 3 s backstop (_producer_wake.wait(3)) runs _compact_goal_stores() over
