@@ -65,10 +65,16 @@ fail, and the shape this census forbids is a stop that stands BEHIND an assertio
   finally: the start is inside a try body that has a finally, or the walk forward meets such a try before any assertion
     (start, then `try: ... finally: stop`, the contextmanager idiom).
   cleanup-before-start: a cleanup (addCleanup, addClassCleanup, addfinalizer, addModuleCleanup, or a registrar handed in
-    as a parameter whose name says cleanup) that names a stop (an attribute or call of join / set / shutdown / stop /
-    close / cancel / terminate / kill, the loops' seam _LOOPS_STOP, a name that says stop / end / close, or a local
-    function, a lambda or a method of the class that does), registered at or before the start in the same function or
-    in the class's setUp. unittest runs cleanups after tearDown, LIFO, on every exit path.
+    as a parameter whose name says cleanup) that names a stop OF THIS THREAD: its text, or the body of the local
+    function, the lambda or the method of the class it names, has a stop (an attribute or call of join / set / shutdown /
+    stop / close / cancel / terminate / kill, the loops' seam _LOOPS_STOP, a name that says stop / end / close) AND
+    mentions the thread: its receiver (and the attribute or holder behind `self.x` or `h[k]`), the list a for-target
+    iterates, what its target waits on or polls, its target and the object the target runs on (srv for
+    srv.serve_forever), the names handed to it through args= / kwargs= (an Event a product loop is given), the loops'
+    seam for a loop outside the module, or the attribute on self that holds it. A cleanup that stops another thread
+    excuses nothing about this one: setUp's addCleanup(self.srv.shutdown) covers the server's serve_forever thread and no
+    other start in the class. Registered at or before the start in the same function or in the class's setUp. unittest
+    runs cleanups after tearDown, LIFO, on every exit path.
   cleanup-before-first-assertion: such a cleanup registered by a statement the walk forward meets before any assertion
     (`Thread(target=srv.serve_forever).start()` then `self.addCleanup(srv.shutdown)`).
   stop-before-first-assertion: the walk forward meets the stop itself before any assertion: a join, shutdown or cancel
@@ -91,9 +97,10 @@ first; when its own body has no guarantee, each caller in the same class is clas
 before the call, the walk forward from the call, the attribute the call's result is stored on against the caller's
 hooks), and the site is named at the caller.
 
-WHAT THIS CENSUS DOES NOT SEE. The shape rules read constructs and not their meaning: a cleanup that names a
-stop verb but stops the wrong thread, a finally that does not join, a tearDown whose join bound the thread outlives,
-an end method no test calls, are all classed as guaranteed here and caught only by the runtime oracle. A thread started
+WHAT THIS CENSUS DOES NOT SEE. The shape rules read constructs and not their meaning: a cleanup that names the
+thread and a stop verb whose stop does not reach it (a set of an event the loop stopped reading), a finally that does
+not join, a tearDown whose join bound the thread outlives, an end method no test calls, are all classed as guaranteed
+here and caught only by the runtime oracle. A thread started
 by code outside tests/*.py (a kernel helper that spawns its own worker; a product object's own start(), as
 sb.SdkSession(...).start()) is the product's to end. Run the module directly for the table (`--table`; `--tail` prints
 only the tail-only and unreadable rows).
@@ -870,7 +877,15 @@ class _Start:
             self.target_expr = _target_expr(ctor) if ctor is not None else None
             self.target = ast.unparse(self.target_expr) if self.target_expr is not None else "?"
         self.line = call.lineno
+        self._words = {}
         self.kind, self.why = ("?", "") if ctor is None else _kind(self)
+
+    def words(self, extra=()):
+        """_thread_words, memoised per caller binding (`extra`)."""
+        key = tuple(extra)
+        if key not in self._words:
+            self._words[key] = _thread_words(self, extra)
+        return self._words[key]
 
     def file(self):
         return os.path.relpath(self.unit.module.path, ROOT)
@@ -1009,6 +1024,8 @@ def _release_names(start):
         for sub in ast.walk(body):
             if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr in BLOCKING + ("is_set",):
                 out.add(ast.unparse(sub.func.value))
+    elif _outside_target(start):
+        out |= _handed_names(start)                     # an Event handed to a product loop is what releases it
     return out
 
 
@@ -1027,6 +1044,31 @@ def _target_receivers(start):
     return out
 
 
+def _outside_target(start):
+    """The target is a function outside the test module (km._producer, self.km._producer, pm._heartbeat_loop, an imported
+    name): the kernel loops' seam (_LOOPS_STOP) is what such a loop watches, and the walk cannot read its body."""
+    expr = start.target_expr
+    if isinstance(expr, ast.Attribute):
+        return expr.attr not in FOREVER + BLOCKING + READS and _target_fn(start) is None
+    if isinstance(expr, ast.Name):
+        return _target_fn(start) is None
+    return False
+
+
+def _handed_names(start):
+    """The names handed to the target through the construction's args= / kwargs= (`kwargs={"stop": stop}`): what the
+    thread holds, so a cleanup that sets or releases one is about this thread."""
+    out = set()
+    if start.ctor is None:
+        return out
+    for kw in start.ctor.keywords:
+        if kw.arg in ("args", "kwargs"):
+            for sub in ast.walk(kw.value):
+                if isinstance(sub, (ast.Name, ast.Attribute)) and not (isinstance(sub, ast.Name) and sub.id in ("self", "cls")):
+                    out.add(ast.unparse(sub))
+    return out
+
+
 # ── the shape of the stop ───────────────────────────────────────────────────────────────────────────────
 
 def _is_cleanup_call(unit, call):
@@ -1036,9 +1078,49 @@ def _is_cleanup_call(unit, call):
     return isinstance(call.func, ast.Name) and call.func.id in unit.params and "cleanup" in call.func.id.lower()
 
 
-def _names_a_stop(unit, call):
-    """The cleanup names a stop: an attribute or call of a stop verb, the loops' seam, or a name that says stop, in its own
-    arguments or in the body of the local function, lambda or method of the class it names."""
+def _thread_words(start, extra=()):
+    """The names a stop of this thread would mention: its receiver (and the attribute and holder behind `self.x`, `h[k]`),
+    the list a for-target iterates, its release names, its target and the object the target runs on (a server, a loop;
+    a module alias is not one, the loops' seam stands for a product loop), the attributes on self that hold it, and the
+    names a caller binds a helper's result to."""
+    words = set(extra)
+    words.add(start.recv_text)
+    node = start.recv
+    while isinstance(node, ast.Subscript):
+        node = node.value
+        words.add(ast.unparse(node))
+    if isinstance(node, ast.Attribute):
+        words.add(node.attr)
+    if isinstance(start.recv, ast.Name):
+        b = start.unit.binding_at(start.recv.id, start.line)
+        if b is not None and isinstance(b[1], tuple) and b[1][0] == "for":
+            words.add(ast.unparse(b[1][1]))
+            if isinstance(b[1][1], ast.Attribute):
+                words.add(b[1][1].attr)
+    for nm in _release_names(start):
+        words.add(nm)
+        if "." in nm:
+            words.add(nm.rsplit(".", 1)[1])
+    expr = start.target_expr
+    if isinstance(expr, (ast.Name, ast.Attribute)):
+        words.add(ast.unparse(expr))
+        if isinstance(expr, ast.Attribute):
+            words.add(expr.attr)
+    for r in _target_receivers(start) | _handed_names(start):
+        words.add(r)
+        if "." in r:
+            words.add(r.rsplit(".", 1)[1])
+    if start.kind == "loop" and _outside_target(start):
+        words.add(STOP_SEAM)
+    words.update(_stored_attrs(start))
+    return {w for w in words if w and w not in ("self", "cls")}
+
+
+def _cleanup_stops(unit, call, start, extra=()):
+    """The cleanup names a stop (an attribute or call of a stop verb, the loops' seam, or a name that says stop, in its own
+    arguments or in the body of the local function, lambda or method of the class it names) AND that text mentions the
+    started thread (_thread_words): a cleanup that stops another thread excuses nothing about this one. With no start the
+    stop shape alone is read."""
     nodes = []
     for a in list(call.args) + [k.value for k in call.keywords]:
         nodes.append(a)
@@ -1052,7 +1134,12 @@ def _names_a_stop(unit, call):
                 nodes.append(b[1])
         if isinstance(a, ast.Attribute) and isinstance(a.value, ast.Name) and a.value.id in ("self", "cls") and unit.cls is not None:
             nodes += unit.module.methods_of(unit.cls, a.attr)
-    return any(_stop_shaped(n) for n in nodes)
+    if not any(_stop_shaped(n) for n in nodes):
+        return False
+    if start is None:
+        return True
+    text = "\n".join(ast.unparse(n) for n in nodes)
+    return any(_word_in(w, text) for w in start.words(extra))
 
 
 def _is_assertion(stmt):
@@ -1068,19 +1155,19 @@ def _is_assertion(stmt):
     return False
 
 
-def _cleanup_before(unit, line):
-    """A cleanup that names a stop, registered at or before `line` in the unit, or in the class's setUp / setUpClass (which
-    run before every test body)."""
+def _cleanup_before(unit, line, start, extra=()):
+    """A cleanup that names a stop of THIS thread, registered at or before `line` in the unit, or in the class's setUp /
+    setUpClass (which run before every test body)."""
     for s, _b, _i, _st in unit.rows:
         for sub in _expr_children(s):
-            if isinstance(sub, ast.Call) and _is_cleanup_call(unit, sub) and sub.lineno <= line and _names_a_stop(unit, sub):
+            if isinstance(sub, ast.Call) and _is_cleanup_call(unit, sub) and sub.lineno <= line and _cleanup_stops(unit, sub, start, extra):
                 return True
     if unit.cls is not None and unit.fn.name not in ("setUp", "setUpClass"):
         for name, fn in unit.hooks():
             if name in ("setUp", "setUpClass"):
                 hook_unit = unit.module.unit_for(fn, unit.cls)
                 for sub in ast.walk(fn):
-                    if isinstance(sub, ast.Call) and _is_cleanup_call(hook_unit, sub) and _names_a_stop(hook_unit, sub):
+                    if isinstance(sub, ast.Call) and _is_cleanup_call(hook_unit, sub) and _cleanup_stops(hook_unit, sub, start, extra):
                         return True
     return False
 
@@ -1100,7 +1187,7 @@ def _stop_in(unit, stmt, names, releases, start, extra=()):
     for sub in ast.walk(stmt):
         if not isinstance(sub, ast.Call):
             continue
-        if _is_cleanup_call(unit, sub) and _names_a_stop(unit, sub):
+        if _is_cleanup_call(unit, sub) and _cleanup_stops(unit, sub, start, extra):
             return "cleanup-before-first-assertion"
         if isinstance(sub.func, ast.Attribute):
             r = ast.unparse(sub.func.value)
@@ -1195,14 +1282,14 @@ def _applies_stop(fn, attrs, loops_seam=True):
     return False
 
 
-def _hook_stops(unit, attrs):
+def _hook_stops(unit, attrs, start):
     for name, fn in unit.hooks():
         if _applies_stop(fn, attrs):
             return name
         if name in ("setUp", "setUpClass", "setUpModule"):
             hook_unit = unit.module.unit_for(fn, unit.cls)
             for sub in ast.walk(fn):
-                if isinstance(sub, ast.Call) and _is_cleanup_call(hook_unit, sub) and _names_a_stop(hook_unit, sub) \
+                if isinstance(sub, ast.Call) and _is_cleanup_call(hook_unit, sub) and _cleanup_stops(hook_unit, sub, start) \
                         and any(_word_in(a, ast.unparse(sub)) for a in attrs):
                     return name
     return None
@@ -1238,7 +1325,7 @@ def classify(start, at=None):
         extra = tuple(ast.unparse(t) for t in getattr(stmt, "targets", [])) + tuple(unit.assigned_attrs(stmt))
     if _in_try_finally(stack):
         return "finally"
-    if _cleanup_before(unit, line):
+    if _cleanup_before(unit, line, start, extra):
         return "cleanup-before-start"
     names, releases = _start_names(start) | set(extra), _release_names(start)
     ahead = _guard_ahead(unit, stmt, names, releases, start, extra)
@@ -1246,7 +1333,7 @@ def classify(start, at=None):
         return ahead
     attrs = _stored_attrs(start) if at is None else sorted(set(_stored_attrs(start)) | set(unit.assigned_attrs(stmt)))
     if attrs:
-        hook = _hook_stops(unit, attrs)
+        hook = _hook_stops(unit, attrs, start)
         if hook:
             return "class-hook:" + hook
     if at is None:
@@ -1505,6 +1592,41 @@ class PlantedShapes(unittest.TestCase):
             "        t.join(5)\n")
         self.assertEqual(self._tails(tails), [("_loop", "T.test_x"), ("_loop", "T.test_y")])
 
+    def test_a_cleanup_that_stops_another_thread_excuses_nothing_about_this_one(self):
+        """A stop-shaped cleanup counts only for the thread it names: setUp's addCleanup(self.srv.shutdown) covers the
+        server's serve_forever thread and no other start in the class; a cleanup for loop thread a says nothing about
+        loop thread b, whose only stop stands behind the assertion."""
+        rows, (tails, unread, stale, bounded), _p = self._census(
+            "    def setUp(self):\n"
+            "        self.srv = object()\n"
+            "        self.addCleanup(self.srv.shutdown)\n"
+            "    def test_x(self):\n"
+            "        threading.Thread(target=self.srv.serve_forever, daemon=True).start()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_y(self):\n"
+            "        b = threading.Thread(target=_loop, daemon=True)\n"
+            "        b.start()\n"
+            "        self.assertTrue(False)\n"
+            "        b.join()\n"
+            "    def test_z(self):\n"
+            "        a = threading.Thread(target=_loop, daemon=True)\n"
+            "        b = threading.Thread(target=_loop, daemon=True)\n"
+            "        self.addCleanup(a.join)\n"
+            "        a.start(); b.start()\n"
+            "        self.assertTrue(False)\n"
+            "        b.join()\n"
+            "    def test_w(self):\n"
+            "        b = threading.Thread(target=_loop, daemon=True)\n"
+            "        def end():\n"
+            "            b.join()\n"
+            "        self.addCleanup(end)\n"
+            "        b.start()\n"
+            "        self.assertTrue(False)\n")
+        self.assertEqual(self._tails(tails), [("_loop", "T.test_y"), ("_loop", "T.test_z")])
+        self.assertEqual(sorted((s.recv_text, sh, w) for s, sh, w in rows if sh == "cleanup-before-start"),
+                         [("a", "cleanup-before-start", "T.test_z"), ("b", "cleanup-before-start", "T.test_w"),
+                          ("threading.Thread(target=self.srv.serve_forever, daemon=True)", "cleanup-before-start", "T.test_x")])
+
     def test_a_start_inside_a_try_with_a_finally_or_right_before_one_is_not_named(self):
         rows, (tails, unread, stale, bounded), _p = self._census(
             "    def test_x(self):\n"
@@ -1592,8 +1714,8 @@ class PlantedShapes(unittest.TestCase):
             "        t = self._go()\n"
             "        self.addCleanup(t.join)\n"
             "        self.assertTrue(False)\n")
-        self.assertEqual(self._tails(tails), [("_loop", "T.test_bare")])
-        self.assertIn(("_loop", "cleanup-before-start", "T.test_guarded"), [(s.target, sh, w) for s, sh, w in rows])
+        self.assertEqual(self._tails(tails), [("_loop", "T.test_bare"), ("_loop", "T.test_guarded")],
+                         "a cleanup that names no thread of the helper's excuses nothing (self.stop is not what _loop waits on)")
         self.assertIn(("_loop", "cleanup-before-first-assertion", "T.test_named"), [(s.target, sh, w) for s, sh, w in rows])
 
     def test_a_stop_before_the_first_assertion_is_not_named_even_for_a_loop(self):
