@@ -1385,6 +1385,7 @@ class Lifecycle(unittest.TestCase):
 
         be._work = parked_worker
         callers = [threading.Thread(target=be._ensure_worker, args=(s,)) for _ in range(20)]
+        self.addCleanup(lambda: (release.set(), [t.join(2) for t in callers]))   # on every exit path: release the parked worker, wait for the callers
         for t in callers:
             t.start()
         for t in callers:
@@ -1645,7 +1646,6 @@ class Lifecycle(unittest.TestCase):
         self.assertEqual(be.pending_queued(sid), ["first", "second"])
         self.assertEqual(registry_queue_texts(rows, sid), ["first", "second"])
 
-    def test_registry_queue_appends_are_atomic_across_processes(self):
     def test_a_body_that_fails_before_the_second_writer_starts_leaves_one_failure_and_no_cleanup_error(self):
         """The two-writer cleanup above, run rather than read (2026-09-22). It is registered before the first writer starts
         and joins BOTH writers, and the body's first assertion stands between the two starts, so on that failure road the
@@ -1688,6 +1688,7 @@ class Lifecycle(unittest.TestCase):
         self.assertEqual(len(res.errors), 1, "the unguarded join of the never-started writer is the cleanup's error: %r" % (res.errors,))
         self.assertIn("cannot join thread before it is started", res.errors[0][1])
 
+    def test_registry_queue_appends_are_atomic_across_processes(self):
         be, _, tmp = build()
         sid = be.spawn("web", "/TESTDIR")
         self.assertTrue(be.kill(sid))       # child backends load it without starting queue workers
