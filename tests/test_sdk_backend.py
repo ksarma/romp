@@ -5956,6 +5956,13 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
             k_done.set()
 
         lt, kt = threading.Thread(target=run_l, name="L"), threading.Thread(target=run_k, name="K")
+
+        def end():                           # on every exit path (T282): resume the parked loop side (an assertion between
+            resume.set()                     # the two starts fails with L parked on it), join what started
+            for t in (lt, kt):
+                if t.ident is not None:
+                    t.join(5)
+        self.addCleanup(end)
         lt.start()
         self.assertTrue(parked.wait(5), "the loop side never reached the parked read")
         kt.start()
@@ -11318,6 +11325,12 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.addCleanup(setattr, self.be, "_reg_lock", real_lock)
         real_lock.acquire()
         t = threading.Thread(target=s._mirror_auth_pending, daemon=True)
+
+        def end():                           # on every exit path (T282): a failed assertion below would leave the mirror parked
+            if real_lock.locked():           # on the lock this test holds; release it, then a bounded join
+                real_lock.release()
+            t.join(5)
+        self.addCleanup(end)
         t.start()
         self.assertTrue(inside.wait(5), "the writer reached the reg lock")
         with s._hold_write():
