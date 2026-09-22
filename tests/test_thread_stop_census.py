@@ -321,19 +321,24 @@ tests/thread_ends.py's join_started(release, threads, timeout), the guarded list
 only the threads whose ident is not None: a cleanup registered before a start loop runs on the exit path where the body
 failed between two starts, and Thread.join raises on a thread never started), read as a stop through the import (the
 helper road above) and run by a nested case in tests/test_codex_backend.py whose planted failure between two starts reds
-when the guard is stripped. EVERY cleanup in the test modules that joins a LIST of threads goes through it, a property
-held BY CENSUS and not by grep (round 2 of PR 891's review): list_join_cleanups derives, over every cleanup registration
-of every unit (addCleanup, addClassCleanup, addfinalizer, addModuleCleanup, a registrar parameter whose name says cleanup),
-the joins whose receiver is the target of a for or a comprehension (`[t.join(5) for t in ts]`, `for t in (a, b):
-t.join(5)`, guarded or not), in the registration's own arguments or in the body of the lambda, local function, module
-function or method it names, and a tree test pins that list EMPTY (before the pin the tree carried ten such joins in five
-modules, derived by this function over the tree as it stood: six in tests/test_codex_backend.py, three of them the nested
-proofs' own, and one each in tests/test_file_read_memos.py, tests/test_post_push_coalescing.py,
-tests/test_free_threaded_caches.py and tests/test_sdk_backend.py, every one now a call of join_started but the second
-nested case's unguarded contrast, which joins each of its three callers by index); a plant reds it
-on an inline comprehension, a for in a local def, a for over a tuple, a method and a module function, and passes the
-helper through the registration and through a lambda. The helper module is not in the population, so its own for-join
-is the one place the shape lives. The fakes' roads have edges the
+when the guard is stripped. EVERY cleanup REGISTRATION in the test modules that joins a LIST of threads goes through it, a
+property held BY CENSUS and not by grep (round 2 of PR 891's review): list_join_cleanups derives, over every cleanup
+registration of every unit (addCleanup, addClassCleanup, addfinalizer, addModuleCleanup, a registrar parameter whose name
+says cleanup), the joins whose receiver is an element of what a for or a comprehension iterates, the target itself, an
+element of a tuple target or a subscript of the iterated name by the target (`[t.join(5) for t in ts]`, `for t in (a, b):
+t.join(5)`, `for i, t in enumerate(ts): t.join(5)`, `ts[i].join()`, guarded or not: the ninth pass widened the shape from a
+Name target), in the registration's own arguments or in the body of the lambda, local function, module function or method
+it names, and a tree test pins that list EMPTY (before the pin the tree carried ten such joins in five modules, derived by
+this function over the tree as it stood: six in tests/test_codex_backend.py, three of them the nested proofs' own, and one
+each in tests/test_file_read_memos.py, tests/test_post_push_coalescing.py, tests/test_free_threaded_caches.py and
+tests/test_sdk_backend.py, every one now a call of join_started but the second nested case's unguarded contrast, which
+joins each of its three callers by index, written out, no loop); a plant reds it on an inline comprehension, a for in a
+local def, a for over a tuple, a tuple target over enumerate, a join by index, a method and a module function, and passes
+the helper through the registration and through a lambda. The pin covers cleanup REGISTRATIONS, the constructs unittest
+runs on every exit path; a tearDown or tearDownClass that joins a list of threads inline is outside it and named here
+rather than read: tests/test_heartbeat_thread.py's tearDown (:70) and tests/test_ws_liveness.py's tearDown (:116) join
+self.threads inline (the class-hook shape reads those joins for the threads stored on self, not the list-join pin). The
+helper module is not in the population, so its own for-join is the one place the shape lives. The fakes' roads have edges the
 walk states rather than reads: `self.fake` bound to two classes across the class reads the first (class_bindings); a
 class of the module shadows a local of the same name (class_named); a fake's release and receiver names (`self.go`,
 `self._srv`) are read from the target method's own body, not from the methods it delegates to (its KIND follows the
@@ -4235,7 +4240,10 @@ def list_join_cleanups(paths, helpers=None, modules=None):
     of PR 891's review, 2026-09-22): this is EMPTY, because every such cleanup goes through tests/thread_ends.py's
     join_started, the guard on a thread never started written once (a cleanup registered before a start loop runs on
     the exit path where the body failed between two starts, and Thread.join raises on one never started). A helper module
-    is not in `paths` (module_paths lists tests/test_*.py), so the helper's own for-join is not a finding. `modules` maps a
+    is not in `paths` (module_paths lists tests/test_*.py), so the helper's own for-join is not a finding. REGISTRATIONS
+    only (CLEANUP_NAMES and a registrar parameter whose name says cleanup): a tearDown or tearDownClass that joins a list
+    inline is not read here, and two on the tree do, tests/test_heartbeat_thread.py's and tests/test_ws_liveness.py's
+    tearDown, named in the module docstring as outside the pin. `modules` maps a
     path to its _Module already built (the tree derivation hands census's own, so the tree's units are built once per
     process); a path not in it is built here. The finding does not depend on the loops or the product a module was built
     with: a cleanup's nodes are read from the module alone."""
@@ -4911,11 +4919,12 @@ class ThreadStopCensus(unittest.TestCase):
                          "a helper module returns a Thread now: the census reads it; update the does-not-see paragraph")
 
     def test_every_cleanup_that_joins_a_list_of_threads_goes_through_the_helper(self):
-        """Round 2 of PR 891's review (2026-09-22): every cleanup in the test modules that joins a list of threads goes through
-        tests/thread_ends.py's join_started, whose join is guarded on the thread having started; held by census, not by
-        grep: list_join_cleanups derives the inline list joins over every cleanup registration of the tree and this pins the
-        list empty (the plant reds it on an inline comprehension). The helper itself is in the tree (helper_modules) and is
-        the guarded shape."""
+        """Round 2 of PR 891's review (2026-09-22): every cleanup REGISTRATION in the test modules that joins a list of threads
+        goes through tests/thread_ends.py's join_started, whose join is guarded on the thread having started; held by census,
+        not by grep: list_join_cleanups derives the inline list joins over every cleanup registration of the tree and this
+        pins the list empty (the plant reds it on an inline comprehension). Registrations only: the two tearDowns that join a
+        list inline (tests/test_heartbeat_thread.py's, tests/test_ws_liveness.py's) are outside the pin, named in the module
+        docstring. The helper itself is in the tree (helper_modules) and is the guarded shape."""
         self.assertIn("thread_ends", helper_modules())
         _src, helper = PC.source_and_tree(os.path.join(HERE, "thread_ends.py"))
         fn = next(n for n in helper.body if isinstance(n, ast.FunctionDef) and n.name == "join_started")

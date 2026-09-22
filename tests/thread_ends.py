@@ -5,9 +5,13 @@ including the one where the body failed between two starts, and Thread.join rais
 before it is started") on a thread never started: an unguarded list join there turns the one failure into a failure and
 a cleanup error. This helper is that guard, written once: it sets the release the threads wait on (when there is one),
 then joins only the threads whose `ident` is not None, i.e. the ones that started (ident stays set after a thread ends,
-so a finished thread is joined and returns at once). Every cleanup in tests/test_*.py that joins a list of threads goes
-through it: tests/test_thread_stop_census.py pins that (list_join_cleanups), reads a cleanup that calls it as the stop of
-the threads it is handed, and runs a nested case whose planted failure between two starts reds when the guard is stripped.
+so a finished thread is joined and returns at once). Every cleanup REGISTRATION in tests/test_*.py that joins a list of
+threads (addCleanup, addClassCleanup, addfinalizer, addModuleCleanup, or a registrar handed in as a parameter whose name says
+cleanup) goes through it: tests/test_thread_stop_census.py pins that (list_join_cleanups), reads a cleanup that calls it as
+the stop of the threads it is handed, and runs a nested case whose planted failure between two starts reds when the guard is
+stripped. The pin covers registrations, the constructs unittest runs on every exit path; a tearDown or tearDownClass that
+joins a list of threads inline is outside it and named rather than read: tests/test_heartbeat_thread.py's tearDown (:70)
+and tests/test_ws_liveness.py's tearDown (:116) join self.threads inline.
 
 Only the standard library is imported here: the module is imported into test modules above their state preamble.
 """
