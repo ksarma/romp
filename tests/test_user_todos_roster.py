@@ -170,6 +170,9 @@ class UserTodosRoster(_ColdTabFixture):
         km._add_user_todo(S3, "Need the auth-scheme decision")
         c = self._skeleton_client()
         km._push([c])
+        row = _row(c, S3)                                      # the pusher's row, by value (tests-4, round 1): the emoji
+        self.assertEqual((row["userTodos"], row["emoji"], row["color"], row["name"]),   #  pin in tests/test_session_emoji.py
+                         (1, MOON, {"bg": "#1EA1EB", "fg": "#ffffff"}, "tests"), "the pusher's row")   #  points here for it
         del c["_frames"][:]
         c["sent"].pop(("taborder",), None)                     # forget the strip, so each sender's own is observed
         km._push_session_now(S2)
