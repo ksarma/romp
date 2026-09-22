@@ -68,8 +68,12 @@ rules took the tail, such a line showed it). The bound is there so a prefix insi
 never reaches a cut costs a bounded scan (an unbounded head made the scrub quadratic: 80 seconds on
 a 200 KB line of repeated `hf_`, which is what the tests/test_env_value_redaction.py timing case
 guards). A format rule's body class decides where its match begins, never where it ends: every
-format rule ends with the rest of its run, token characters of any kind, so no rule's match stops
-inside a key (`_REST` below says what stopping there cost). A Hugging Face token is `hf_` and 34
+format rule ends with the rest of its run, token characters of any kind, and takes the dotted rest of
+its token as the generic rule does, before a cut and after one (`<prefix><body>.<signature>` whole,
+`'<prefix><head>.<run>...<tail>'` and `'<prefix><head>...<tail>.<run>'` each one marker), so no rule's
+match stops inside a key (`_REST` below says what stopping there cost; until 2026-09-22 a format rule's
+match ended at a dot, and `.<signature>` stood after the marker where the same token without a prefix
+was taken whole). A Hugging Face token is `hf_` and 34
 letters (gitleaks' rule is `hf_(?i:[a-z]{34})`, and every token that rule is tested against is
 letters only); the `hf_` rule here asks for 20 letters and digits after the prefix, wider than that
 on purpose: narrowing it to letters would exclude nothing more (what ends a match in an identifier
@@ -146,6 +150,13 @@ the diff of a comparison in which either operand is a credential: after a skip e
 with the 10 characters the two operands share, so the other operand's line goes too when it is a plain
 expected value (the assert line still shows that value, whole or cut).
 
+Every rule reads one alphabet, base64url (`A-Za-z0-9_-`, `_TOKEN_CHARS`), so a standard-base64 value
+(`+`, `/`, `=`) or a percent-escaped one is redacted only up to its first character outside that
+alphabet, under every rule, the prefixed ones and the generic one alike: `k=sk-ant-<body>+<rest>` is
+the marker and `+<rest>`. Widening the alphabet has a cost in sentences and paths that is not measured
+here; tests/test_env_value_redaction.py witnesses this sentence on one such value, so a widening that
+lands takes the sentence with it.
+
 Nothing here is a credential: the file holds prefixes and character classes only.
 """
 import re
@@ -167,7 +178,8 @@ _VALUE_POSITION = (r"(?:(?<=Bearer )|(?<==)|(?<==\")|(?<==')|(?<=: )|(?<=: \")|(
                    r"|(?<=[\[({]\")|(?<=[\[({]')|(?<=, \")|(?<=, '))")
 _TOKEN_CHARS = r"[A-Za-z0-9_\-]"
 # The dotted rest of a token: `.` and one or more token characters, any number of times. Appended to a
-# rule, it takes `<payload>.<signature>` along with the run that qualified, and never a dot that no token
+# rule (the generic rule, the JWT rules, and through _REST and the cut-key rule's tail every format rule),
+# it takes `<payload>.<signature>` along with the run that qualified, and never a dot that no token
 # character follows (an ellipsis, a sentence's end), so `...` is left for the cut rules.
 _DOTTED = r"(?:\." + _TOKEN_CHARS + r"+)*"
 # A token of unknown format: 24 or more characters with a digit, or 40 or more mixing upper and lower case,
@@ -221,24 +233,25 @@ _QUOTED_LINE = r"^(?P<pfxq>E[ \t]+['\"])" + _GENERIC + r"(?=['\"]$)"
 # once; for `hf_` and `rpa_` the format rule (`[A-Za-z0-9]{20,}`) fails on a run with `_` or `-` in its first
 # 20 characters (repeated `hf_` has one at its third), the run was never consumed, and every occurrence paid
 # again: 80 seconds for a 200 KB line of repeated `hf_`.
-# A head past the bound is the format rule's match, and _CUT_TAIL (below) gives that match the cut and the
-# run after it, so a cut key of any head width is one match.
+# A head past the bound is the format rule's match, and _CUT_TAIL_DOTTED (below, through _REST) gives that
+# match the cut and the run after it, so a cut key of any head width is one match.
 _ELLIPSIS = r"(?:\.\.\.|\[\d+ chars\])"
 CUT_HEAD_MAX = 120
 _CUT_HEAD_BOUNDS = r"{1,%d}" % CUT_HEAD_MAX
-# A cut and the run after it, appended to each format rule and to the JWT rule: optional, so a whole key
-# matches as before, and taken when the run a format rule matched ends at `...` or `[N chars]`
-# (`sk-ant-<130>...<118>`, `hf_<130>[88 chars]<5>`). Without it a cut key whose head is past CUT_HEAD_MAX was
-# two matches, the head by the format rule and the tail by _ELLIPSIZED, which needs a quote or another cut
-# on the tail's far side: in a quoted repr the tail was redacted, but on a line a test or a child process
-# printed itself (end of line, a space, a sentence's dot after the tail) it showed (2026-09-06). The run
-# before it is greedy and its characters are disjoint from a cut's first, so the optional group is tried
-# once where the run ends and never sends the engine back through the run: the scrub stays linear. A
-# sentence's `...` right after a whole key is consumed with it, as _PREFIX_ELLIPSIZED already did for a
-# head within the bound. The JWT's tail is dotted (`...<payload>.<signature>`), so its form takes the
-# dotted rest too; a whole JWT's segment count (one to four after the header) is unchanged, because the
+# A cut and the run after it, with its dotted rest, appended to each format rule (through _REST) and to
+# the JWT rule: optional, so a whole key matches as before, and taken when the run a format rule matched
+# ends at `...` or `[N chars]` (`sk-ant-<130>...<118>`, `hf_<130>[88 chars]<5>`). Without it a cut key
+# whose head is past CUT_HEAD_MAX was two matches, the head by the format rule and the tail by
+# _ELLIPSIZED, which needs a quote or another cut on the tail's far side: in a quoted repr the tail was
+# redacted, but on a line a test or a child process printed itself (end of line, a space, a sentence's
+# dot after the tail) it showed (2026-09-06). The run before it is greedy and its characters are disjoint
+# from a cut's first, so the optional group is tried once where the run ends and never sends the engine
+# back through the run: the scrub stays linear. A sentence's `...` right after a whole key is consumed
+# with it, as _PREFIX_ELLIPSIZED already did for a head within the bound. The tail is dotted
+# (`...<payload>.<signature>`, `...<tail>.<run>`): the JWT's form needed that from the start, and the
+# format rules' tail was undotted until 2026-09-22, so `.<run>` after a cut key's tail stood in the clear
+# past the bound; a whole JWT's segment count (one to four after the header) is unchanged, because the
 # dotted rest is inside the optional cut group.
-_CUT_TAIL = r"(?:" + _ELLIPSIS + _TOKEN_CHARS + r"*)?"
 _CUT_TAIL_DOTTED = r"(?:" + _ELLIPSIS + _TOKEN_CHARS + r"*" + _DOTTED + r")?"
 # The key formats, each the prefix its provider fixed and the body class the whole-key rule asks for after
 # it (the module docstring says why the two letters-and-digits classes are what they are). The whole-key
@@ -252,22 +265,32 @@ KEY_FORMATS = (
     ("AIza", r"[A-Za-z0-9_\-]{30,}"),       # Google API keys
     ("rpa_", r"[A-Za-z0-9]{20,}"),          # RunPod (the prefix is published, the body is not; the same class)
 )
-# The rest of a key past the body its rule asked for: token characters of any kind, then a cut and the run
-# after it. Appended to every whole-key rule, so that a body class decides where a match begins and never
-# where it ends: no rule's match stops inside a key with a token character next to it. Until 2026-09-22 the
-# two letters-and-digits rules did stop there: a key that began `hf_` or `rpa_` with 20 letters and digits
-# before its first `_` or `-` was matched up to that character, the scan resumed after the match, and the
-# rest of the key was no rule's (mid-key nothing marks a value position, and the generic rule, which takes
-# such a key whole where a value sits, alone on a line and on a diff line, loses to a whole-key rule that
-# matches at the same start). A randomized 86-character base64url key that happened to begin that way came
-# out on CI as the marker and 60 characters of the key (2026-09-22), and a cut such key wider than
-# CUT_HEAD_MAX showed the rest of its head. The run before the tail is greedy and the tail's class is the
-# same or wider, so the tail is tried once where the run ends and the scrub stays linear (ScrubCost times
-# the shape).
-_REST = _TOKEN_CHARS + r"*" + _CUT_TAIL
+# The rest of a key past the body its rule asked for: token characters of any kind, the dotted rest of the
+# token (a format rule takes it as the generic rule does), then a cut and the run after it, dotted too.
+# Appended to every whole-key rule, so that a body class decides where a match begins and never where it
+# ends: no rule's match stops inside a key with a token character or a `.<run>` next to it. Until 2026-09-22
+# the two letters-and-digits rules did stop at a token character: a key that began `hf_` or `rpa_` with 20
+# letters and digits before its first `_` or `-` was matched up to that character, the scan resumed after
+# the match, and the rest of the key was no rule's (mid-key nothing marks a value position, and the generic
+# rule, which takes such a key whole where a value sits, alone on a line and on a diff line, loses to a
+# whole-key rule that matches at the same start). A randomized 86-character base64url key that happened to
+# begin that way came out on CI as the marker and 60 characters of the key (2026-09-22), and a cut such
+# key wider than CUT_HEAD_MAX showed the rest of its head. The run before the tail is greedy and the tail's
+# class is the same or wider, so the tail is tried once where the run ends and the scrub stays linear
+# (ScrubCost times the shape). And until later that day every format rule stopped at a dot: _REST carried
+# no dotted rest, so a prefixed key with `.<signature>` after its run was the marker and `.<signature>` in
+# a value position, bare, alone on a line and against a cut (`'hf_<body>.<run>...<tail>'`), while the same
+# token without a prefix was taken whole by the generic rule, which loses to a whole-key rule at a shared
+# start; past the bound the cut tail's dot ended the match the same way (`...<tail>.<run>`). The dotted
+# rest is tried once where the run ends (`.` is no token character) and the cut group once where the
+# dotted rest ends, so the scrub stays linear.
+_REST = _TOKEN_CHARS + r"*" + _DOTTED + _CUT_TAIL_DOTTED
 _WHOLE_KEYS = r"|".join(prefix + body + _REST for prefix, body in KEY_FORMATS)
+# A key of a known format that pytest or unittest cut within the head bound: the prefix, the head (atomic,
+# bounded), the cut, and the run after it with its dotted rest, the shape _JWT_ELLIPSIZED's tail has. The
+# tail was undotted until 2026-09-22, so `'hf_<24>...<10>.<10>'` was the marker and `.<10>`.
 _PREFIX_ELLIPSIZED = (r"(?:" + r"|".join(prefix for prefix, _ in KEY_FORMATS) + r")" + _atomic_run("hk", _CUT_HEAD_BOUNDS)
-                      + _ELLIPSIS + _TOKEN_CHARS + r"*")
+                      + _ELLIPSIS + _TOKEN_CHARS + r"*" + _DOTTED)
 # A JWT's head is `eyJ` and up to three dotted segments: the header, bounded at JWT_HEADER_MAX like the
 # whole-token rule's, so a cut inside any header an installation meets is taken (atomic: it is the one
 # scanned at every `eyJ` in a run; bounded at CUT_HEAD_MAX until 2026-09-06, which left a cut 121 or more
@@ -307,7 +330,7 @@ _DIFF_LINE_CUT = r"^(?P<pfxc>E[ \t]+[-+][ \t]+)" + _FRAGMENT + r"(?=\.\.\.$)"
 TOKEN_RE = re.compile(
     _PREFIX_ELLIPSIZED +                            # a key of a known format that pytest or unittest cut
     r"|" + _JWT_ELLIPSIZED +                        # a JWT so cut
-    r"|" + _WHOLE_KEYS +                            # a key of each known format (KEY_FORMATS), whole or with a cut and its tail
+    r"|" + _WHOLE_KEYS +                            # a key of each known format (KEY_FORMATS), whole, dotted, or with a cut and its dotted tail
     r"|" + _JWT + _CUT_TAIL_DOTTED +                # a JWT (JWS, unsecured or JWE), by its shape, whole or cut with its dotted tail
     r"|" + _VALUE_POSITION + _GENERIC +             # a token of unknown format where a value sits...
     r"|^" + _GENERIC + r"$"                         # ...or alone on its line (an apiKeyHelper's stdout)...

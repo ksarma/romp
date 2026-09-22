@@ -32,7 +32,11 @@ for the assertion nobody wrote that way. Pinned here:
     format rule, quoted or bare; the `hf_` and `rpa_` rules' letters-and-digits class, and the rest of its
     run every whole-key rule takes past its body, pinned over every prefixed rule read from the pattern's
     source (a key that began like an `hf_` or `rpa_` token showed 60 of its 86 characters after the
-    marker: a CI red, 2026-09-22);
+    marker: a CI red, 2026-09-22), with the dotted rest of that run before a cut and after one (a
+    prefixed `<body>.<signature>` was the marker and `.<signature>` where the same token without a
+    prefix was whole: round 1 of fork PR #899), every leaking position listed in one red; the alphabet's
+    stated limit (base64url, so a value is redacted up to its first `+`), witnessed on one value so the
+    module docstring's sentence cannot outlive the behaviour;
     the fragment rule's documented costs (a camelCase name or a digit-bearing run against a cut is
     redacted, a Capitalised word or a single-case identifier is not); the two runs on the sides of one
     cut taken together when either qualifies, whatever the other's alphabet (a letters-only hex tail
@@ -812,7 +816,8 @@ class CredentialPattern(_WithConftest):
         # equal to KEY_FORMATS. Today that is the six provider prefixes and the JWT's `eyJ` (a format fixed
         # by its shape, so its key here is a JWT whose header carries `_` and `-` before its dotted
         # segments). A rule added by hand outside KEY_FORMATS is found here too, without the rest-of-run
-        # tail the list appends, and fails below on the first key whose body outruns its class
+        # tail the list appends, and fails below on the first key whose body outruns its class. The second
+        # loop is the dotted rest of that run, before a cut and after one, over the same population
         red, R, cp = self.cf.redact_credential_tokens, self.cf.CREDENTIAL_REDACTED, self.cf._credpat
         alternatives = _top_level_alternatives(cp.TOKEN_RE.pattern)
         rules = {}                                                   # prefix -> (body class, minimum); None for the JWT
@@ -857,6 +862,34 @@ class CredentialPattern(_WithConftest):
                 rest = secret[secret.index("_", len(prefix)):]
                 for i in range(0, len(rest) - 8 + 1):
                     self.assertFalse(rest[i:i + 8] in out, (prefix, "a piece of the key past its first underscore reached the output: " + out))
+        # the dotted rest (round 1 of fork PR #899): a format rule takes `.<run>` segments past its run as the
+        # generic rule and the JWT rules take theirs, so a dotted key of any known prefix is one marker where
+        # the same token without a prefix already was (until 2026-09-22 `k=hf_<body>.<run>` was the marker and
+        # `.<run>`). Two terms of the pattern carry it, each load-bearing for positions of its own: _REST's
+        # dotted rest and dotted cut tail (a whole dotted key in every position, the dot before the cut, and
+        # past the bound the dot in the tail) and _PREFIX_ELLIPSIZED's dotted tail (within the bound, the dot
+        # after the cut). Every position is checked and every leak listed, so one red names the prefix and
+        # each position that leaked (maxDiff off: unittest would cut the list at 640 characters)
+        self.maxDiff = None
+        for prefix in sorted(rules):
+            dotted = key_of(prefix, "_" + alnum[:10] + "-" + alnum[:10]) + "." + alnum[:20]
+            wide = key_of(prefix, "_" + alnum[:100] + "-" + alnum[:20]) + "." + alnum[:20]   # a head past CUT_HEAD_MAX; the dot in the tail
+            cut = len(prefix) + 124
+            after = "%s%s...%s.%s" % (prefix, alnum[:24], alnum[:10], alnum[:10])             # within the bound; the dot after the cut
+            leaks = []
+            for where, text, want, secret in (
+                    ("a value position", "k=%s" % dotted, "k=" + R, dotted), ("bare", "x %s y" % dotted, "x %s y" % R, dotted),
+                    ("alone on a line", dotted, R, dotted), ("a diff line", "E         - %s" % dotted, "E         - " + R, dotted),
+                    ("quoted, the dot before the cut", "'%s...%s'" % (dotted[:-10], dotted[-10:]), "'%s'" % R, dotted),
+                    ("bare, the dot before the cut", "%s...%s" % (dotted[:-10], dotted[-10:]), R, dotted),
+                    ("quoted past the bound, the dot in the tail", "'%s...%s'" % (wide[:cut], wide[-40:]), "'%s'" % R, wide),
+                    ("bare past the bound, the dot in the tail", "%s...%s" % (wide[:cut], wide[-40:]), R, wide),
+                    ("quoted within the bound, the dot after the cut", "'%s'" % after, "'%s'" % R, after[len(prefix) + 24 + 3:])):
+                out = red(text)
+                rest = secret[secret.index("_", len(prefix)):] if "_" in secret[len(prefix):] else secret
+                if out != want or any(rest[i:i + 8] in out for i in range(0, len(rest) - 8 + 1)):
+                    leaks.append("%s: %s" % (where, out))
+            self.assertEqual(leaks, [], (prefix, "a piece of a dotted key reached the output in the positions listed"))
         # the population is the module's own list: every prefixed alternative is a KEY_FORMATS entry or the
         # JWT's, and the cut-key rule's leading group is that list, so a rule the list does not build is a red
         # here whatever its class
@@ -864,6 +897,17 @@ class CredentialPattern(_WithConftest):
         self.assertEqual(sorted(rules), sorted(listed + ["eyJ"]), "every prefixed alternative is a KEY_FORMATS entry or the JWT's")
         cut_groups = [g for g in (_leading_group_literals(a) for a in alternatives) if g]
         self.assertEqual(cut_groups, [listed], "the cut-key rule's prefixes are KEY_FORMATS, in one group")
+
+    def test_the_alphabet_is_base64url_so_a_value_is_redacted_up_to_its_first_plus(self):
+        # the limit the module docstring states, witnessed: every rule reads the base64url alphabet, so a key
+        # holding a standard-base64 `+` past its body minimum is the marker and then the rest from the `+`.
+        # A red here means the alphabet widened: the docstring's sentence must go with the widening (which is
+        # a change of its own, with its sentence-and-path costs to measure; round 1 of fork PR #899)
+        red, R = self.cf.redact_credential_tokens, self.cf.CREDENTIAL_REDACTED
+        rest = uuid.uuid4().hex[:16]
+        tok = "sk-ant-" + uuid.uuid4().hex[:24] + "+" + rest
+        self.assertEqual(red("k=%s" % tok), "k=%s+%s" % (R, rest),
+                         "the alphabet widened past base64url: remove the module docstring's sentence that says it is base64url only")
 
     def test_a_cut_identifier_or_date_is_redacted_when_it_has_a_digit_or_an_interior_capital(self):
         # the fragment rule cannot tell a camelCase or PascalCase name from a base64 tail without a digit
