@@ -71,8 +71,8 @@ THE KIND of a thread, read from its target: what it does if the test never stops
 CANNOT READ FALLS TO THE RESTRICTED SIDE, NEVER TO EXCUSED. `bounded` comes ONLY from a body the walk READ and found free
 of loops, of untimed waits and of calls of a parameter it has not in hand (the third arm, below), or from a method of the
 stdlib the STDLIB_RETURNS table says returns WHATEVER ITS ARGUMENTS
-AND ON ANY STDLIB RECEIVER (Timer.cancel, Lock.release: each entry's reason says so in those words, UNCONDITIONAL_WORDS,
-states which receiver classes carry the name and what its arguments do, the re-examination of 2026-09-22, and a
+AND ON ANY STDLIB RECEIVER (Lock.release, the one entry left: its reason says so in those words, UNCONDITIONAL_WORDS,
+states which receiver classes carry the name and what its arguments do, the re-examinations of 2026-09-22, and a
 table-shaped test holds every entry to the words; a name that cannot say it is CONDITIONED instead, STDLIB_CONDITIONED,
 checked at the call: time.sleep is bounded only when args= carries a literal number at or under BOUND_S, 5 s;
 server_close only when the receiver was constructed as a TCPServer, UDPServer, HTTPServer or ThreadingHTTPServer, a
@@ -83,7 +83,12 @@ Condition.notify_all's per-sleeper handshake, the argument that dropped notify a
 every entry, moved these three: the `set` entry had said "no stdlib set() blocks"); a queue's put_nowait and get_nowait
 only on a queue or asyncio queue, put_nowait also on a multiprocessing.Queue() (a JoinableQueue's put takes a
 multiprocessing Condition; a multiprocessing get reads the pipe untimed); the receiver's module read through the
-imports (mp.Event(), a bare Event() from either module); and a Timer is bounded only for a literal interval at or under
+imports (mp.Event(), a bare Event() from either module); a cancel only on a threading.Timer() (it sets the Timer's
+finished Event), on an asyncio future, task or handle (cancel schedules the done callbacks through loop.call_soon) or on
+a concurrent.futures.Future() the unit registers no add_done_callback on, because concurrent.futures.Future.cancel runs
+the done callbacks SYNCHRONOUSLY and a blocking one blocks it (the refuter's probe on round 2 of PR 891, 2026-09-22,
+which moved cancel out of STDLIB_RETURNS; release re-examined the same way stays: no stdlib release runs a caller's
+callback); and a Timer is bounded only for a literal interval at or under
 the same bound, whatever its function does; each otherwise UNREADABLE); the name rules (serve_forever, an untimed wait, a read) classify the other way, to loop or
 waits; a target the walk cannot read is UNREADABLE, never bounded, and its tail-only stop is listed with the unreadable
 receivers (the pin asserts that bucket empty; ALLOW may excuse one by name with its reason). A structural test hands
@@ -153,11 +158,13 @@ supplied at the caller is read in the caller's row only: the helper's own row ke
            bound), so for the timed-join rule below such a thread is read as bounded, while its tail-only stop is still
            pinned; a product function whose OWN body has a `while` (km._producer, _pusher, _heartbeat, _jobs_loop,
            _ws_sender, _apply_pending_ops, pm._heartbeat_loop) is a loop outright, by name (product_loops) or by its body.
-  waits:   it blocks until the test releases it: the target is an untimed Event.wait / Lock.acquire / Queue.get / join or
-           a read (recv, accept, readline, read), by name or in a body the walk reads with no timeout (km._login_reader
-           -> _login_reader_loop reads a pty: waits; a test's `self.post()` helper reading its HTTP response: waits).
+  waits:   it blocks until the test releases it: the target is an untimed Event.wait / Lock.acquire / Queue.get / join /
+           Future.result or a read (recv, accept, readline, read), by name or in a body the walk reads with no timeout
+           (km._login_reader -> _login_reader_loop reads a pty: waits; a test's `self.post()` helper reading its HTTP
+           response: waits; a body waiting on `ex.submit(...).result()` for a pool it started: waits, round 2 of PR 891's
+           review, 2026-09-22).
            UNTIMED is no arguments or only the spellings Python reads as untimed (_untimed_call): q.get(True),
-           q.get(block=True), ev.wait(None), ev.wait(timeout=None), lk.acquire(blocking=True), t.join(None), in the body
+           q.get(block=True), ev.wait(None), ev.wait(timeout=None), lk.acquire(blocking=True), t.join(None), fut.result(None), in the body
            or through the construction's args= / kwargs=, and the spellings Python reads the same way (a nonzero number
            as the block flag: q.get(1), lk.acquire(1); an acquire's timeout=-1; arguments the walk cannot read, *a /
            **kw); a name or a number as the TIMEOUT is a timeout to the walk (ev.wait(deadline) reads timed).
@@ -177,7 +184,8 @@ supplied at the caller is read in the caller's row only: the helper's own row ke
            parameter no hand supplies (the third arm), a function of a module it does not
            read (a third-party import), a stdlib function or method with no STDLIB_RETURNS entry (a shutdown blocks until
            the serve loop ends; a put can block on a full queue) or whose CONDITIONED check fails at the call
-           (time.sleep(3600), server_close of a ThreadingTCPServer, set of a multiprocessing.Event(), a Timer(3600, ...)), a
+           (time.sleep(3600), server_close of a ThreadingTCPServer, set of a multiprocessing.Event(), cancel of a
+           concurrent.futures.Future() with an add_done_callback on it or of a pool future, a Timer(3600, ...)), a
            method run on an instance it
            cannot name, a product
            attribute no product function defines, a callable built by a call it does not read (functools.partial(f),
@@ -202,14 +210,30 @@ fail, and the shape this census forbids is a stop that stands BEHIND an assertio
     seam for a loop outside the module, or the attribute on self that holds it. A cleanup that stops another thread
     excuses nothing about this one: setUp's addCleanup(self.srv.shutdown) covers the server's serve_forever thread and no
     other start in the class. Registered at or before the start in the same function or in the class's setUp. unittest
-    runs cleanups after tearDown, LIFO, on every exit path.
+    runs cleanups after tearDown, LIFO, on every exit path. THE TIMED-JOIN DECISION for cleanups (round 2 of PR 891's
+    review, 2026-09-22; a rule each way, stated here): for a LOOP the walk read OUTRIGHT (kind loop, not a loop found
+    only in a product callee) a cleanup whose only stop is a TIMED JOIN (`self.addCleanup(t.join, 10)`, `lambda: [t.join(2)
+    for t in ts]`) is NOT the stop, the body rule below applied to cleanups: the join runs on every exit path but the loop
+    outlives its bound and runs on, so the cleanup must also set, release, shut down, cancel or close something the thread
+    watches, put the sentinel into the queue it reads, set the loops' seam, or join untimed (the strict probe found three
+    such sites, all in tests/test_ws_send_bounded.py: a sender cleanup that already put the sentinel, and two socket
+    drains, whose cleanups now shut the socket down first). For a thread of UNREADABLE kind the cleanup's timed join IS
+    accepted as its stop, THE DOCUMENTED ACCEPTANCE: the walk cannot show the thread loops (its work is a call it cannot
+    read, most often a handed-in function bounded by construction, so there is no loop to release), the cleanup runs on
+    every exit path, including one where a statement the body walk takes not to fail raises, and bounds the test's wait;
+    whether the thread ended within the bound is the runtime oracle's to say. The body rule stays strict for both kinds
+    because a body statement's guarantee rests on the walk's assumption that nothing before it fails and a cleanup's on
+    unittest: the two rules differ by the strength of the guarantee, not by the thread. For a bounded thread the join is
+    a convenience either way (the bounded rule).
   cleanup-before-first-assertion: such a cleanup registered by a statement the walk forward meets before any assertion
     (`Thread(target=srv.serve_forever).start()` then `self.addCleanup(srv.shutdown)`).
   stop-before-first-assertion: the walk meets the stop itself before any assertion, in the start's own statement first
     (`t.start(), t.join()` in one) and then forward: a join of the same receiver or the same list (`for t in ts:
     t.start()` then `for t in ts: t.join()`), a shutdown / stop / cancel of it or of the object the target runs on
     (srv.shutdown() for srv.serve_forever; loop.stop handed to call_soon_threadsafe), a set or release of what the thread
-    waits on or polls (`go.set()`), or the loops' seam set for a loop outside the module (km._LOOPS_STOP.set() for
+    waits on or polls (`go.set()`), a shutdown of the socket it reads (`peer.shutdown(socket.SHUT_RDWR)` for a drain parked
+    in peer.recv()), a sentinel put into the queue it reads or was handed (`q.put_nowait(None)` for km._ws_sender), or the
+    loops' seam set for a loop outside the module (km._LOOPS_STOP.set() for
     km._producer). A TIMED join of a loop thread (or of one of unreadable kind) is a wait the loop may outlive, not its
     stop: alone it is passed over,
     and the walk goes on to a release, a shutdown or the seam; an untimed join counts (a loop that did not end would
@@ -238,10 +262,13 @@ hooks), and the site is named at the caller.
 
 WHAT THIS CENSUS DOES NOT SEE. The shape rules read constructs and not their meaning: a cleanup that names the
 thread and a stop verb whose stop does not reach it (a set of an event the loop stopped reading), a finally that does
-not join, a tearDown or a cleanup whose only stop of a loop thread is a timed join (the thread is waited for on every
+not join, a tearDown or tearDownClass whose only stop of a loop thread is a timed join (the thread is waited for on every
 exit path; whether the loop ended within the bound is the oracle's to say: the timed-join rule reads the body's forward
-walk, not the hooks), an end method no test calls, are all classed as guaranteed here and caught only by the runtime
-oracle. A thread started by code outside tests/*.py is the product's to end, and the census COUNTS the ones it can see
+walk and the cleanups, not the class hooks, a stated asymmetry left for a later pass: a probe over the tree on 2026-09-22,
+when the cleanup rule went strict for outright loops, found no such hook row; its one candidate, a server thread parked in
+accept() whose tearDownClass shuts the listening socket down before its join, is credited once a read's receiver counts as
+what the thread waits on), an end method no test calls, are all classed as guaranteed here and caught only by
+the runtime oracle. A thread started by code outside tests/*.py is the product's to end, and the census COUNTS the ones it can see
 rather than passing them in silence: INFORMATIONAL rows (kind `product-start`, printed by the table with the site and
 what starts, their counts asserted by a tree test, NEVER PINNED: no stop judgment is made) for a product object's own
 start() (sb.SdkSession(...).start(): the session's thread), for a test's call of a product SPAWN-HELPER (a product
@@ -276,7 +303,8 @@ the oracle figure beside it is pinned: romp-manager's ruling of 2026-09-22); tes
 helper modules under tests/ and tests/fixtures/ are read only for a returned Thread (helper_modules). The listing is
 what pytest collects under tests/ only while two things hold, both PINNED by a tree test
 (test_the_population_is_what_pytest_collects_under_tests, romp-manager's ruling of 2026-09-22): this repository has no
-pytest configuration (no pytest.ini, setup.cfg, tox.ini or pyproject.toml; tests/conftest.py names no python_files), so
+pytest configuration (no pytest.ini, setup.cfg, tox.ini or pyproject.toml at the root or under tests/, where pytest's
+inifile search for `pytest tests/` starts; tests/conftest.py names no python_files), so
 pytest's defaults apply, `test_*.py` AND `*_test.py`, recursively; and no `*_test.py` exists anywhere under tests/ and
 no `test_*.py` below its top level, so those defaults collect exactly this listing. The day one appears the pin says
 so, instead of the census omitting it in silence. Run the module
@@ -303,7 +331,7 @@ STOP_WORDS = ("stop", "end", "close", "shutdown", "cancel", "join", "release")
 CLEANUP_NAMES = ("addCleanup", "addClassCleanup", "addfinalizer", "addModuleCleanup")
 HOOK_NAMES = ("setUp", "tearDown", "setUpClass", "tearDownClass", "setUpModule", "tearDownModule")
 OWNER_ENDS = ("close", "stop", "shutdown", "__exit__", "end", "drain", "terminate", "kill")
-BLOCKING = ("wait", "acquire", "join", "get")            # untimed with no arguments or the untimed spellings (_untimed_call)
+BLOCKING = ("wait", "acquire", "join", "get", "result")  # untimed with no arguments or the untimed spellings (_untimed_call)
 UNTIMED_KEYWORDS = {"block": True, "blocking": True, "timeout": None}   # the keyword spellings that mean untimed
 BOUND_S = 5.0                    # the stated bound: a literal time.sleep argument or Timer interval at or under it is bounded
 PRODUCT_START = "product-start"  # the kind of an INFORMATIONAL row: a thread the product starts on a test's call, never pinned
@@ -325,14 +353,20 @@ KIND_UNREAD = "unreadable"       # the kind of a target the walk cannot read: ne
 # (romp-manager's ruling on round 1 of PR 891: which receiver classes carry the name, and what its arguments do). A name
 # that cannot say that is CONDITIONED instead (STDLIB_CONDITIONED, below its checkers, each reading the receiver's
 # construction or the call: time.sleep on a literal argument at or under BOUND_S; server_close on a server with no handler
-# threads to join; an Event's set, clear and is_set and a queue's put_nowait and get_nowait on the receiver's module) or
+# threads to join; an Event's set, clear and is_set and a queue's put_nowait and get_nowait on the receiver's module; a
+# cancel on the receiver's construction and, for a concurrent.futures.Future, on the unit's add_done_callback calls) or
 # dropped. Any other method of a stdlib object used as a target is UNREADABLE (a shutdown blocks until the serve loop
 # ends; a put can block on a full queue; a wait with a timeout is a wait the walk has no rule for).
 UNCONDITIONAL_WORDS = ("whatever its arguments", "on any stdlib receiver")
 STDLIB_RETURNS = {
-    "cancel": "Timer.cancel returns at once whatever its arguments and on any stdlib receiver (re-examined 2026-09-22: threading.Timer.cancel sets a threading.Event; concurrent.futures.Future.cancel takes its threading.Condition, which every method holds briefly, and notifies it; asyncio's Task, Future, Handle and TimerHandle schedule and return, Task.cancel(msg) storing its argument; sched.scheduler.cancel removes the event under its lock)",
-    "release": "Lock.release returns at once whatever its arguments and on any stdlib receiver (re-examined 2026-09-22: threading's Lock, RLock and Condition release the lock, raising when not held; threading's Semaphore and BoundedSemaphore take their Condition briefly and notify it, release(n) n times; multiprocessing's Lock, RLock, Semaphore, BoundedSemaphore and Condition post the semaphore, no handshake; asyncio's Lock, Semaphore, BoundedSemaphore and Condition wake a waiter's future)",
+    "release": "Lock.release returns at once whatever its arguments and on any stdlib receiver (re-examined 2026-09-22: threading's Lock, RLock and Condition release the lock, raising when not held; threading's Semaphore and BoundedSemaphore take their Condition briefly and notify it, release(n) n times; multiprocessing's Lock, RLock, Semaphore, BoundedSemaphore and Condition post the semaphore, no handshake; asyncio's Lock, Semaphore, BoundedSemaphore and Condition wake a waiter's future; re-examined again on round 2 of PR 891's review, 2026-09-22, for a caller's callback run synchronously, the way concurrent.futures.Future.cancel runs its done callbacks and the reason cancel left this table: no stdlib release runs one, threading's notify releases the waiters' locks, asyncio's wake sets the waiter's future, whose callbacks loop.call_soon schedules; a runtime probe had threading.Semaphore.release with a parked waiter and asyncio.Lock.release with a parked waiter return at once)",
 }
+# CONDITIONED on 2026-09-22 (round 2 of PR 891's review, the refuter's probe): cancel, because concurrent.futures.Future.cancel
+# runs the done callbacks SYNCHRONOUSLY (_invoke_callbacks) and a blocking add_done_callback blocks it (`fut.add_done_callback(
+# lambda f: gate.wait())` then `Thread(target=fut.cancel)`: the thread stays alive; re-run here, alive after 0.5 s), so the
+# entry could not say "on any stdlib receiver"; bounded on a threading.Timer(), on an asyncio future, task or handle, and on a
+# concurrent.futures.Future() with no add_done_callback on it in the unit (_cancel_rule), UNREADABLE elsewhere (a pool
+# future, a sched.scheduler, a receiver the walk cannot name). No tree row used it.
 # Dropped on 2026-09-22 (the adversarial review of pass 5): notify / notify_all, because multiprocessing.Condition.notify does an
 # untimed _woken_count.acquire() per woken sleeper, so the entry could not say "on any stdlib receiver"; no tree row used them.
 # CONDITIONED on 2026-09-22 (round 1 of PR 891's review: the same argument re-run over every entry): set, because
@@ -399,6 +433,7 @@ UNPARSE_ROADS = {
     "_body_kind": "a while's test, searched for a clock reading",
     "_body_waits_on": "a wait's receiver, rewritten by _own and matched against a set / release call's receiver",
     "_class_of": "a bound attribute's text: the key of its binding",
+    "_cleanup_ends": "a sentinel put's receiver, matched against the names handed to the thread and what it reads",
     "_cleanup_stops": "a cleanup's nodes, searched for the thread's words",
     "_clock_break": "an if's test, searched for a clock reading",
     "_forever_receivers": "a serve_forever's receiver, rewritten by _own and matched against a shutdown's receiver",
@@ -406,6 +441,7 @@ UNPARSE_ROADS = {
     "_hook_stops": "a setUp cleanup's text, searched for the stored attribute names",
     "_method_call": "the owner a fake's self is rewritten to (f, self.fake, child), matched against release texts",
     "_object_of": "a bound attribute's text: the key of its binding",
+    "_registers_callback": "a future's receiver, matched against an add_done_callback's receiver",
     "_release_names": "a wait's receiver, matched against a set / release call's receiver",
     "_start_names": "the iterated list's text, matched against a join's receiver",
     "_stop_in": "a call's receiver, matched against the start's names and release names",
@@ -491,7 +527,8 @@ def _handed_args(call, unit=None):
 def _untimed_call(name, args, keywords):
     """A blocking call is UNTIMED with no arguments or with only the spellings Python reads as untimed (romp-manager's
     ruling, 2026-09-22): q.get(True), q.get(block=True), lk.acquire(blocking=True) (a true block flag and no timeout or
-    timeout=None), ev.wait(None), ev.wait(timeout=None), t.join(None) (no timeout or timeout=None); and the spellings
+    timeout=None), ev.wait(None), ev.wait(timeout=None), t.join(None), fut.result(None) (no timeout or timeout=None: a
+    Future's result() waits untimed for the pool, round 2 of PR 891's review); and the spellings
     Python reads the same way (the adversarial review of pass 5): a nonzero number as the block flag (q.get(1),
     lk.acquire(1)), an acquire's timeout=-1 (the Lock's own forever), and arguments the walk cannot read (*a, **kw:
     the restricted side). A name or a number as the TIMEOUT is a timeout to the walk: ev.wait(deadline) reads timed, the
@@ -514,7 +551,7 @@ def _untimed_call(name, args, keywords):
         extra = args[2:] or [k for k in kw if k not in (flag, "timeout")]
         forever = timeout is None or is_none(timeout) or (name == "acquire" and _number_literal(timeout) == -1)
         return not extra and (block is None or is_on(block)) and forever
-    if name in ("wait", "join"):
+    if name in ("wait", "join", "result"):
         timeout = args[0] if args else kw.get("timeout")
         extra = args[1:] or [k for k in kw if k != "timeout"]
         return not extra and (timeout is None or is_none(timeout))
@@ -2162,7 +2199,8 @@ def _body_kind(unit, fn_body_nodes, loops, depth, given=None):
                     for m, _owner in methods:
                         r = _reader(unit, m)
                         k, why = _body_kind(r, list(ast.walk(m)), loops, depth + 1,
-                                            _call_given(m, sub, unit, r, given, unbound=_through_class(unit, sub.func, m)))
+                                            {**_instance_given(unit, sub.func.value, given),
+                                             **_call_given(m, sub, unit, r, given, unbound=_through_class(unit, sub.func, m))})
                         if k in ("loop", "waits"):
                             return k, "calls %s, %s" % (_text(sub.func, unit.module), why)
                         if k == KIND_UNREAD:
@@ -2209,19 +2247,37 @@ def _body_kind(unit, fn_body_nodes, loops, depth, given=None):
                     unread = unread or (k, "calls %s, %s" % (nm, why))
                 else:
                     hands += why.split(" | ")[1:]
-    for name, owner, chain, call in _opaque_calls(unit, fn_body_nodes):
-        r = _given_kind(given, name, depth, owner, chain, call)
+    for name, owner, road, call, others, shown, through in _opaque_calls(unit, fn_body_nodes):
+        alt = [_road_kind(unit, o, suffix, given, call, depth + 1, _fn_label(owner)) for o, suffix in others]
+        pinned = next((a for a in alt if a[0] in ("loop", "waits")), None)      # `(fn or _loop)()`: the other operand may run
+        if pinned is not None:
+            return pinned[0], "calls %s, %s" % (shown, pinned[1])
+        r = _given_kind(given, name, depth, owner, road, call)
+        if r is None and "bound in " in through and _is_product_unit(unit) and road and isinstance(road[-1], str):
+            by_name = _by_name_kind(unit, road[-1], depth)                    # self.backend._update_reg(): a product object's
+            if by_name is not None:                                            # collaborator the product's own spawn handed in
+                k, why = by_name
+                why = "calls %s, %s%s %s no hand supplies: %s" % (shown, through, OPAQUE_MARK, _fn_label(owner), why)
+                if k in ("loop", "waits"):
+                    return k, why
+                if k == KIND_UNREAD:
+                    unread = unread or (k, why)
+                continue
         if r is None:
-            unread = unread or (KIND_UNREAD, "calls %s%s, %s%s %s: what the caller hands in is not read here"
-                                % (name, "".join("." + a for a in chain), (name + " ") if chain else "", OPAQUE_MARK, _fn_label(owner)))
+            unread = unread or (KIND_UNREAD, "calls %s, %s%s %s: what the caller hands in is not read here"
+                                % (shown, through, OPAQUE_MARK, _fn_label(owner)))
             continue
         k, why, hand = r
         if k in ("loop", "waits"):
             return k, "%s | %s" % (why, hand)
         if k == KIND_UNREAD:
             unread = unread or (k, "%s | %s" % (why, hand))
-        else:
-            hands += [hand] + why.split(" | ")[1:]
+            continue
+        other = next((a for a in alt if a[0] == KIND_UNREAD), None)
+        if other is not None:
+            unread = unread or (KIND_UNREAD, "calls %s, %s" % (shown, other[1]))
+            continue
+        hands += [hand] + why.split(" | ")[1:]
     if unread is not None:
         return unread
     return "bounded", " | ".join(["no loop, no untimed wait"] + hands)
@@ -2242,45 +2298,265 @@ def _own_params(fn):
     return [x.arg for x in a.posonlyargs + a.args + a.kwonlyargs if x.arg not in ("self", "cls")]
 
 
-def _rebinds(fn, name):
-    """The function's OWN body (not a nested def's) rebinds `name`: an assignment, a for / with / walrus / except target, a
-    def, class or import of that name. A parameter so rebound is shadowed there: a call of the name is not the parameter's."""
+def _star_params(fn):
+    """The *args and **kwargs names of a def or a lambda: parameters too (an element of `*fns`, a value of `**kw`, is what
+    the caller handed, behind a * the hands never place)."""
+    a = fn.args
+    return [x.arg for x in (a.vararg, a.kwarg) if x is not None]
+
+
+def _own_stmts(fn):
+    """The statements of a def's OWN body at any depth (inside its ifs, fors, withs, tries), not those of the defs and
+    classes it defines; nothing for a lambda."""
+    if isinstance(fn, ast.Lambda):
+        return
+    stack = list(reversed(fn.body))
+    while stack:
+        s = stack.pop()
+        yield s
+        if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        blocks = [getattr(s, f, None) for f in ("body", "orelse", "finalbody")]
+        blocks += [h.body for h in getattr(s, "handlers", []) or []] + [c.body for c in getattr(s, "cases", []) or []]
+        for b in reversed(blocks):
+            if isinstance(b, list):
+                stack.extend(reversed([x for x in b if isinstance(x, ast.stmt)]))
+
+
+def _shadows(fn, name):
+    """The function's OWN body (not a nested def's) SHADOWS `name` with a def, a class, an import or an except target: a
+    call of the name is that object's, not the parameter's. An assignment, a for, a with, a comprehension or a walrus
+    target is a BINDING the walk follows instead (_root_param: `fn = fn or _once` binds fn to an expression rooted at the
+    parameter, `g = fn` to an alias of it)."""
     if isinstance(fn, ast.Lambda):
         return False
-    for st in fn.body:
-        for n in _run_nodes(st):
-            if isinstance(n, ast.Name) and n.id == name and isinstance(n.ctx, ast.Store):
-                return True
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n.name == name:
-                return True
-            if isinstance(n, ast.ExceptHandler) and n.name == name:
-                return True
-            if isinstance(n, (ast.Import, ast.ImportFrom)) and any((al.asname or al.name.split(".")[0]) == name for al in n.names):
-                return True
+    for s in _own_stmts(fn):
+        if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and s.name == name:
+            return True
+        if isinstance(s, (ast.Import, ast.ImportFrom)) and any((al.asname or al.name.split(".")[0]) == name for al in s.names):
+            return True
+        if any(h.name == name for h in getattr(s, "handlers", []) or []):
+            return True
     return False
 
 
+def _binding_skipping(unit, name, line, skip, owner=None):
+    """_Unit.binding_at, but never the binding `skip` (the assignment whose value is being resolved: `fn = fn or _once`
+    reads its right side's fn as the binding BEFORE it, the parameter when there is none), and, for a PARAMETER (`owner`
+    its def or lambda), only a binding at or before the use and only in the scopes out to the owner's own: a parameter is
+    a local of its function, so an enclosing scope's same-named binding is invisible to it (`wrap(i, fn)`'s fn is wrap's,
+    not the comprehension target of the function around it), and a rebinding after the use does not reach a call before
+    it."""
+    for scope in unit.scope_chain(unit.scope_at(line)):
+        vals = [lv for lv in unit.scopes.get(id(scope), {}).get(name, []) if lv is not skip]
+        if vals:
+            before = [lv for lv in vals if lv[0] <= line]
+            if before:
+                return before[-1]
+            if owner is None:
+                return vals[0]
+        if owner is not None and scope is owner:
+            return None
+    if unit.parent is not None and (owner is None or scope is not owner):
+        return _binding_skipping(unit.parent, name, line, skip, owner)
+    return None
+
+
+ITEM, RESULT, UNNAMED = ("item",), ("result",), ("unnamed",)      # the ROAD steps that are not an attribute's name
+KEY_METHODS = ("get", "pop", "setdefault")                      # a container's element by key: `d.get("k")`, an ITEM step by key
+CONTAINER_METHODS = ("items", "keys", "values", "get", "pop", "popitem", "setdefault", "update", "copy", "clear", "append",
+                     "extend", "insert", "remove", "index", "count", "sort", "reverse", "discard", "add")
+
+
+def _road_text(road):
+    """A road rendered after a name or a hand: `.frob` for an attribute, `[]` for an element (by index, by key, or any),
+    `()` for a call's result, `.<name>` for an attribute the walk cannot name."""
+    return "".join(("." + s) if isinstance(s, str) else "[]" if s[0] in ("item", "key") else {RESULT: "()", UNNAMED: ".<name>"}[s] for s in road)
+
+
+def _step(r, step):
+    """The root `r` one step further along: the step appended to its road and to the suffix of every OTHER expression
+    (the operands beside the parameter in an `or`, the elements beside a *spread), which the same steps apply to."""
+    if r is None:
+        return None
+    name, owner, road, others, via = r
+    return name, owner, road + (step,), [(o, suffix + (step,)) for o, suffix in others], via
+
+
+def _root_param(unit, node, line, params, depth=0, skip=None):
+    """(the parameter's name, its def or lambda, the ROAD from the parameter to `node`, the OTHER expressions that may run
+    in its place, each with the road suffix that applies to it, the indirection's text for the reason) when `node`, an
+    expression written in `unit` at `line`, is ROOTED at a parameter in `params` (name -> its def or lambda): the
+    parameter itself (`fn`); an attribute of it (a step per attribute: `obj.a.b`); an element of it (`fns[0]`, `kw["fn"]`,
+    `d.get("k")`, `d.pop("k")`, `d.setdefault("k", v)`: an ITEM step, by the constant index or key when there is one); a
+    name bound over it (a local alias `g = fn`, a for or comprehension target `for f in fns`, an unpacked element `a, b =
+    pair`: the binding in force, followed, never the assignment being resolved, so `fn = fn or _once` reads its fn as the
+    parameter, and never a binding beyond the parameter's own function); an operand of a BoolOp or an IfExp (`fn or _once`,
+    `fn if flag else _once`: the other operands are what may run instead, and the steps after the operator apply to them
+    too: `(d.get("nodes") or {}).get(k)` reads `{}`.get as well); a *spread of it into a container the body then iterates
+    or indexes (`(*fns, _once)`: the other elements likewise); functools.partial over it (the callable is partial's first
+    argument); getattr(it, "name") (an attribute step by a literal name, else an UNNAMED step); any other call on it whose
+    RESULT is then used (`fn()()`, `obj.make()()`: a RESULT step). None when nothing on the road is a parameter."""
+    if depth > 8 or node is None:
+        return None
+    if isinstance(node, ast.Name):
+        if node.id in ("self", "cls"):
+            return None
+        owner = params.get(node.id)
+        b = _binding_skipping(unit, node.id, line, skip, owner)
+        if b is None:
+            return (node.id, owner, (), [], "") if owner is not None else None
+        r = _root_param(unit, b[1], b[0], params, depth + 1, skip=b)
+        if r is None or isinstance(b[1], tuple):        # a for / unpack target: the tuple case below says "an element of"
+            return r
+        name, owner, road, others, via = r
+        return name, owner, road, others, "bound to `%s`, %s" % (_text(b[1], unit.module), via)
+    if isinstance(node, tuple):
+        if node[0] in ("for", "unpack"):
+            r = _step(_root_param(unit, node[1], line, params, depth + 1, skip), ITEM)
+            if r is None:
+                return None
+            name, owner, road, others, via = r
+            return name, owner, road, others, "an element of `%s`, %s" % (_text(node[1], unit.module), via)
+        return None
+    if isinstance(node, ast.Attribute):
+        return _step(_root_param(unit, node.value, line, params, depth + 1, skip), node.attr)
+    if isinstance(node, ast.Subscript):
+        key = node.slice.value if isinstance(node.slice, ast.Constant) else None
+        return _step(_root_param(unit, node.value, line, params, depth + 1, skip), ("key", key) if key is not None else ITEM)
+    if isinstance(node, ast.Starred):
+        return _root_param(unit, node.value, line, params, depth + 1, skip)
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        for e in node.elts:
+            if isinstance(e, ast.Starred):
+                r = _root_param(unit, e.value, line, params, depth + 1, skip)
+                if r is not None:
+                    name, owner, road, others, via = r
+                    return name, owner, road, others + [(x, ()) for x in node.elts if x is not e], "spread from %s, %s" % (_text(e.value, unit.module), via)
+        return None
+    if isinstance(node, (ast.BoolOp, ast.IfExp)):
+        operands = node.values if isinstance(node, ast.BoolOp) else [node.body, node.orelse]
+        for op in operands:
+            r = _root_param(unit, op, line, params, depth + 1, skip)
+            if r is not None:
+                name, owner, road, others, via = r
+                return name, owner, road, others + [(x, ()) for x in operands if x is not op], "one of which is %s, %s" % (_text(op, unit.module), via)
+        return None
+    if isinstance(node, ast.Call):
+        f, nm = node.func, _callee_name(node)
+        if nm == "partial" and node.args:                                       # functools.partial(fn, 1): fn is what runs
+            r = _root_param(unit, node.args[0], line, params, depth + 1, skip)
+            return None if r is None else (r[0], r[1], r[2], r[3], "over %s, %s" % (_text(node.args[0], unit.module), r[4]))
+        if isinstance(f, ast.Name) and f.id == "getattr" and len(node.args) >= 2:
+            r = _root_param(unit, node.args[0], line, params, depth + 1, skip)
+            if r is None:
+                return None
+            attr = node.args[1]
+            step = attr.value if isinstance(attr, ast.Constant) and isinstance(attr.value, str) else UNNAMED
+            return _step((r[0], r[1], r[2], r[3], "an attribute of %s, %s" % (_text(node.args[0], unit.module), r[4])), step)
+        if isinstance(f, ast.Attribute) and nm in KEY_METHODS and node.args:    # d.get("k"): the element under the key
+            key = node.args[0].value if isinstance(node.args[0], ast.Constant) else None
+            r = _root_param(unit, f.value, line, params, depth + 1, skip)
+            return None if r is None else _step((r[0], r[1], r[2], r[3], "an element of %s, %s" % (_text(f.value, unit.module), r[4])),
+                                                ("key", key) if key is not None else ITEM)
+        r = _root_param(unit, f, line, params, depth + 1, skip)
+        return None if r is None else _step((r[0], r[1], r[2], r[3], "the result of a call on %s, %s" % (_text(f, unit.module), r[4])), RESULT)
+    return None
+
+
+def _self_bound_params(unit):
+    """{attribute: (the parameter's name, its method, the road, the other expressions, the indirection's text, the value's
+    text)} for every `self.<attr> = <expression rooted at a parameter of the method>` in the unit's class or a base in
+    the module (`__init__(self, fn): self.fn = fn`; a setUp's or a configure's alike; `self.fn = fn or _once` with _once
+    as the other): a call of self.<attr> in a method read in the class's unit runs what that method was handed
+    (_opaque_calls), and its hand is the construction's argument (_instance_given). The first binding of an attribute in
+    source order names it. Memoised per unit."""
+    cached = getattr(unit, "_self_bound", None)
+    if cached is not None:
+        return cached
+    out = {}
+    if unit.cls is not None:
+        for c in unit.module.bases_of(unit.cls):
+            for m in c.body:
+                if not isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                own = {p_: m for p_ in _own_params(m) + _star_params(m) if not _shadows(m, p_)}
+                if not own:
+                    continue
+                mu = _reader(unit, m)
+                for s in sorted(_own_stmts(m), key=lambda s: s.lineno):
+                    if isinstance(s, ast.Assign):
+                        for t in s.targets:
+                            if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id in ("self", "cls") and t.attr not in out:
+                                r = _root_param(mu, s.value, s.lineno, own)
+                                if r is not None:
+                                    out[t.attr] = r + (_text(s.value, mu.module),)
+    unit._self_bound = out
+    return out
+
+
+def _is_product_unit(unit):
+    """The unit reads a function of the product sources (kernel/, postal/, cli/, bin/), not of a test module."""
+    rel = os.path.relpath(unit.module.path, ROOT).split(os.sep)
+    return rel[0] in PRODUCT_DIRS + ("bin",)
+
+
+def _by_name_kind(unit, method, depth):
+    """(kind, reason) for a method called on a PRODUCT object's constructor collaborator no hand supplies (`self.backend
+    ._update_reg()` in SdkSession, `backend` a parameter of its __init__ handed by the product's own spawn, not by the test):
+    the method read BY NAME across the product, every product function of that name in its own module's unit, joined on the
+    restricted side (the docstring's rule for a product method not on the object's class in its file); None when no product
+    function of that name exists."""
+    prod = unit.module.product
+    heads = prod.functions.get(method, []) if prod is not None else []
+    if not heads or depth > 6:
+        return None
+    answers = []
+    for p, c, f in heads:
+        pu = prod.module(p, unit.module).unit_for(f, c)
+        answers.append(_body_kind(pu, list(ast.walk(f)), unit.module.loops, depth + 1))
+    k, why = _join_kind_answers(answers)
+    return k, "%s read by name across the product, %d definition%s: %s" % (method, len(answers), "" if len(answers) == 1 else "s", why)
+
+
 def _opaque_calls(unit, nodes):
-    """The calls that RUN when a read body runs whose callee is a PARAMETER or is reached through one (`fn()`, `fn(*a)`,
-    `obj.frob()`, `obj.a.b()`): [(the parameter's name, the def or lambda whose parameter it is, the attributes between
-    the parameter and the call: () for `fn()`, ("frob",) for `obj.frob()`, the call)], each (name, owner, chain) once,
-    in source order. `nodes` is ast.walk of the body's def or lambda; the parameters in scope are its own and those of
-    the unit's function and its parent's (a def of a helper's body calls the helper's parameter through its closure); a
-    name the body rebinds is not the parameter (_rebinds); self and cls are not parameters here. The defs and lambdas the
-    body only DEFINES are not entered (the census's rule for what runs, _run_nodes): a def or a name-bound lambda the body
-    calls is read at that call with the call's hands (_body_kind's callee loop), a returned one where its caller runs it
+    """The calls that RUN when a read body runs whose callee is a PARAMETER or is reached through one: [(the parameter's
+    name, the def or lambda whose parameter it is, the ROAD from the parameter to the callable, the call, the OTHER
+    expressions that may run in its place, the callee's text, the indirection's words for the reason)], each (name,
+    owner, road) once, in source order. The callee is rooted at a parameter (_root_param) when it is the parameter (`fn()`,
+    `fn(*a)`), an attribute of one (`obj.frob()`, `obj.a.b()`), an element of one (`fns[0]()`, `kw["fn"]()`), a name bound
+    over one (a local alias `g = fn; g()`, a for or comprehension target `for f in fns: f()`, `[f() for f in fns]`), an
+    operand beside one (`(fn or _once)()`, `(fn if flag else _once)()`), an element of a *spread of one (`for f in (*fns,
+    _once)`), functools.partial over one (`partial(fn, 1)()`), getattr over one (`getattr(obj, "run")()`, `getattr(obj,
+    name)()`), or the result of a call on one (`fn()()`); and when it is `self.<attr>` in a method read in its class's
+    unit whose <attr> a method of the class binds from its own parameter (`self.fn = fn` in __init__, then `self.fn()`:
+    _self_bound_params; not when <attr> is a method of the class, the method road's). `nodes` is ast.walk of the body's
+    def or lambda; the parameters in scope are its own (positional, keyword-only, *args, **kwargs: a method of the *args
+    tuple or the **kwargs dict ITSELF, `kw.items()`, `args.count(x)`, is a builtin container's and not opaque; an element
+    of one, `args[0]()`, `kw["fn"]()`, `for f in kw.values(): f()`, is) and those of the unit's
+    function and its parent's (a def of a helper's body calls the helper's parameter through its closure); a name the body
+    SHADOWS with a def, a class, an import or an except target is not the parameter (_shadows), a name it rebinds by
+    assignment is followed to what it was bound to; self and cls are not parameters here. The defs and lambdas the body
+    only DEFINES are not entered (the census's rule for what runs, _run_nodes): a def or a name-bound lambda the body calls
+    is read at that call with the call's hands (_body_kind's callee loop), a returned one where its caller runs it
     (_call_target), one handed to a library call (`sorted(rows, key=lambda r: r.get("t"))`) is inside a call the walk does
     not follow, and a thread target inside a product spawn-helper is that thread's, counted as a product-start row."""
     root = nodes[0] if nodes else None
-    params = {}
-    for scope in (unit.parent, unit):
-        if scope is not None:
-            for p_ in scope.params:
-                if p_ not in ("self", "cls") and not _rebinds(scope.fn, p_):
-                    params[p_] = scope.fn
-    if isinstance(root, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-        params = {p_: o for p_, o in params.items() if not _rebinds(root, p_)}
-        params.update((p_, root) for p_ in _own_params(root) if not _rebinds(root, p_))
+    params, stars = {}, set()
+    fns = [s.fn for s in (unit.parent, unit) if s is not None]          # outermost first: an inner def's parameter shadows
+    if isinstance(root, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)) and not any(root is f for f in fns):
+        fns.append(root)
+    for fn in fns:
+        params = {p_: o for p_, o in params.items() if not _shadows(fn, p_)}
+        for p_ in _own_params(fn):
+            if not _shadows(fn, p_):
+                params[p_] = fn
+                stars.discard((p_, id(fn)))
+        for p_ in _star_params(fn):
+            if not _shadows(fn, p_):
+                params[p_] = fn
+                stars.add((p_, id(fn)))
+    bound = _self_bound_params(unit)
     out, seen = [], set()
     stack = [root] if root is not None else []
     while stack:
@@ -2290,17 +2566,61 @@ def _opaque_calls(unit, nodes):
             while isinstance(head, ast.Attribute):
                 chain.append(head.attr)
                 head = head.value
-            if isinstance(head, ast.Name) and head.id in params:
-                key = (head.id, id(params[head.id]), tuple(reversed(chain)))
+            chain.reverse()
+            if isinstance(head, ast.Name) and head.id in ("self", "cls") and chain and chain[0] in bound \
+                    and unit.cls is not None and unit.method_of(unit.cls, chain[0]) is None:
+                name, method, road, others, via, value = bound[chain[0]]
+                r = (name, method, road, others, "bound in %s to `%s`, %s" % (method.name, value, via))
+                for a in chain[1:]:
+                    r = _step(r, a)
+            else:
+                r = _root_param(unit, n.func, getattr(n, "lineno", 0), params)
+            if r is not None:
+                name, owner, road, others, via = r
+                key = (name, id(owner), road)
+                if (name, id(owner)) in stars and len(road) == 1 and road[0] in CONTAINER_METHODS:
+                    continue                        # kw.items(), args.count(x): a method of the *args tuple or **kwargs dict itself
                 if key not in seen:
                     seen.add(key)
-                    out.append((head.id, params[head.id], key[2], n))
+                    through = via if via else ((name + " ") if road else "")
+                    out.append((name, owner, road, n, others, _text(n.func, unit.module), through))
         for c in ast.iter_child_nodes(n):
             if c is not root and isinstance(c, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
                 continue                            # defined here, run elsewhere (or at a call of it, read there)
             stack.append(c)
     out.sort(key=lambda r: (getattr(r[3], "lineno", 0), getattr(r[3], "col_offset", 0)))
     return out
+
+
+def _instance_given(unit, recv, given=None):
+    """The hands a FAKE'S CONSTRUCTION supplies for its __init__'s parameters, for a method of the fake read through the
+    instance `recv` (f.run, self.fake.run, _F(_loop).run, with f bound to `_F(_loop)` and `class _F: def __init__(self, fn):
+    self.fn = fn`): the construction the instance is bound to (_object_of), its arguments written in `unit` under its hands
+    `given`, keyed on __init__ as `handed in at the construction`, so a `self.fn()` in the method (_self_bound_params) is
+    read from `_loop`; likewise for a PRODUCT class the test constructs itself (`s = sb.SdkSession(be, ...)`: its __init__
+    in the product, one definition), so `self.backend._update_reg()` in a method of s is read from `be`. Nothing when the
+    instance is the unit's own self, is not bound to a construction of a class the walk can name, or the class has no
+    __init__ of its own (a product object the product's own spawn built has no hand: _by_name_kind reads its
+    collaborators' methods by name)."""
+    if recv is None or (isinstance(recv, ast.Name) and recv.id in ("self", "cls")):
+        return {}
+    line = getattr(recv, "lineno", 0)
+    call = _object_of(unit, recv, line)
+    if not isinstance(call, ast.Call):
+        return {}
+    cls = _class_of(unit, recv, line)
+    if cls is not None:                                   # a class of the test module
+        init = unit.method_of(cls, "__init__")
+        if init is None or _class_of(unit, call, line) is not cls:
+            return {}
+        return _given_from(init, call, unit, _reader(unit, init), given, "handed in at the construction")
+    obj = _product_object(unit, recv, line)               # a product class built by the test: sb.SdkSession(be, ...)
+    if isinstance(obj, str) and unit.module.product is not None and _callee_name(call) == obj:
+        heads = unit.module.product.methods(obj, "__init__", unit.module)
+        if len(heads) == 1:
+            p, c, f = heads[0]
+            return _given_from(f, call, unit, unit.module.product.module(p, unit.module).unit_for(f, c), given, "handed in at the construction")
+    return {}
 
 
 def _given_from(fn, call, unit, callee_unit, given, where):
@@ -2376,20 +2696,52 @@ def _data_of(unit, node, line, depth=0):
             r = _data_of(unit, v, v.lineno, depth + 1)
             if r is not None:
                 return r
+    if isinstance(node, ast.Call):                        # jd._pass_acc(), _make_store(): the ONE literal every return returns
+        return _returned_literal(unit, node, line, depth + 1)
     return None
 
 
-def _given_kind(given, name, depth, owner=None, chain=(), call=None):
+def _returned_literal(unit, call, line, depth):
+    """The literal a call returns, when the walk reads its callee (a def of the body, a module function, a lambda, a helper
+    module's function: callee_of; a product module's function through its alias, one definition) and EVERY return of it
+    is a literal of one type: `def _pass_acc(): return {"cpuS": 0.0, "failures": [], ...}` is a dict whose "failures" is a
+    list. None otherwise (a function with a non-literal return, several definitions, a method, a library call)."""
+    if depth > 8:
+        return None
+    heads = []
+    callee = unit.callee_of(call, line)
+    if callee is not None:
+        heads = [callee]
+    elif unit.module.product is not None and _callee_name(call) not in BUILTIN_METHODS and _product_call(unit, call):
+        prod = unit.module.product
+        found = [(p, c, f) for p, c, f in prod.functions.get(_callee_name(call), []) if c is None]
+        if len(found) == 1:
+            p, c, f = found[0]
+            heads = [(f, prod.module(p, unit.module).unit_for(f, c))]
+    if len(heads) != 1:
+        return None
+    fn, u = heads[0]
+    rets = [fn.body] if isinstance(fn, ast.Lambda) else list(_returns(fn))
+    lits = [_data_of(u, v, getattr(v, "lineno", line), depth + 1) for v in rets]
+    if not lits or any(l is None for l in lits) or any(type(l) is not type(lits[0]) for l in lits):
+        return None
+    if not hasattr(lits[0], "_unit"):
+        lits[0]._unit = u                                 # written in the callee's module: its elements are read there (_road_kind)
+    return lits[0]
+
+
+def _given_kind(given, name, depth, owner=None, road=(), call=None):
     """(kind, reason, the hand as text) for the argument a parameter was given (`given`, keyed (name, id(owner)); by name
     alone when `owner` is None: a Name in a body read under those hands); None when no hand supplies it. A constant is no
-    callable to run (a call of it raises at once, and the thread ends): bounded. The parameter CALLED (`fn()`, chain ())
-    is read as a target is, in the unit it is written in and under that unit's own hands (_expr_kind); a METHOD called on
-    it (`s.frob()`, chain ("frob",), `call` the call) is read on the hand: a hand that is itself a parameter of the unit
-    it is written in follows that unit's own hands (`_land(s)` handed the test's s); a LITERAL hand (a dict, a list, a
-    string, a constant: _data_of) is data, whose methods return at once (a dict's get is not a Queue's); any other is the
-    attribute over the argument as written (_attribute_kind: a fake's method by its body, a product object's method in
-    its module, a stdlib object's by the tables, the call's own arguments deciding an untimed wait; UNREADABLE for an
-    object the walk does not read: a scandir entry, a client dict a product function built)."""
+    callable to run (a call of it raises at once, and the thread ends): bounded. The parameter CALLED (`fn()`, road ())
+    is read as a target is, in the unit it is written in and under that unit's own hands (_expr_kind); a road from it
+    (`s.frob()`: ("frob",); `fns[0]()`: (ITEM,); `getattr(obj, name)()`: (UNNAMED,); `fn()()`: (RESULT,); `call` the
+    call) is followed over the hand (_road_kind): a hand that is itself a parameter of the unit it is written in follows
+    that unit's own hands first (`_land(s)` handed the test's s); a LITERAL hand (a dict, a list, a string, a constant:
+    _data_of) is data, whose methods return at once (a dict's get is not a Queue's) and whose elements are each read; any
+    other is the attribute over the argument as written (_attribute_kind: a fake's method by its body, a product object's
+    method in its module, a stdlib object's by the tables, the call's own arguments deciding an untimed wait; UNREADABLE
+    for an object the walk does not read: a scandir entry, a client dict a product function built)."""
     if not given:
         return None
     if owner is not None:
@@ -2399,27 +2751,85 @@ def _given_kind(given, name, depth, owner=None, chain=(), call=None):
     if g is None:
         return None
     node, u, outer, where, label = g
-    dotted = "".join("." + a for a in chain)
+    dotted = _road_text(road)
     hand = "%s%s of %s is `%s`%s %s" % (name, dotted, label, _text(node, u.module), dotted, where)
-    if isinstance(node, ast.Constant) and not chain:
+    if isinstance(node, ast.Constant) and not road:
         return "bounded", "a constant `%s`, not a callable: a call of it raises at once and the thread ends" % _text(node, u.module), hand
-    if chain:
+    if road:
         if isinstance(node, ast.Name) and (node.id in u.params or (u.parent is not None and node.id in u.parent.params)):
-            inner = _given_kind(outer, node.id, depth + 1, None, chain, call)     # the hand is a parameter: its own hand
+            inner = _given_kind(outer, node.id, depth + 1, None, road, call)     # the hand is a parameter: its own hand
             if inner is not None:
                 return inner[0], "%s | %s" % (inner[1], inner[2]), hand
-        lit = _data_of(u, node, getattr(node, "lineno", 0))
-        if lit is not None:
-            return "bounded", "a literal %s handed in: its .%s returns at once (a dict's get is not a Queue's; an attribute it lacks raises)" % (type(lit).__name__.lower(), ".".join(chain)), hand
-        expr, shown = node, _text(node, u.module)
-        for attr in chain:
-            expr = ast.copy_location(ast.Attribute(value=expr, attr=attr, ctx=ast.Load()), node)
-            shown = "%s.%s" % (shown, attr)
-            expr._shown = shown
-        k, why = _attribute_kind(u, expr, getattr(node, "lineno", 0), None, None, outer, call)
+        k, why = _road_kind(u, node, road, outer, call, depth, label)
         return k, why, hand
     k, why = _expr_kind(u, node, getattr(node, "lineno", 0), depth + 1, None, None, outer)
     return k, why, hand
+
+
+def _road_kind(u, node, road, given, call, depth, label="the body"):
+    """(kind, reason) for what a ROAD leads to from a hand `node`, written in `u` under its hands `given` (`label` the
+    parameter's function, for the reason): no step left, the hand read as a target is (_expr_kind); attribute steps, the
+    attribute over the hand as written (_attribute_kind: a fake's method by its body, a product object's method in its
+    module, a stdlib object's by the tables, `call` the call's own arguments; a LITERAL hand's method returns at once); an
+    ITEM step, each element of a literal container in hand (a list, tuple or set's elements, a dict's values, a
+    comprehension's element: _data_of, which follows a helper's or a product function's returned literal), or the one
+    element under a constant index or key (`fns[0]`, `d.get("nodes")`: every element when the key is not in the literal),
+    read on with the rest of the road and joined on the restricted side (an EMPTY literal is bounded: nothing runs from
+    it, a subscript or a later call raises and the thread ends; so is an element of a string or number constant: a
+    character, or an error), UNREADABLE for a hand that is not a literal container
+    (or one with a *spread); an UNNAMED step (getattr by a name the walk
+    cannot read) or a RESULT step (a call on the hand, then a use of what it returned) is UNREADABLE. Each unreadable
+    reason carries OPAQUE_MARK: it is opaque work through a parameter, carried up from a product callee."""
+    line, shown = getattr(node, "lineno", 0), _text(node, u.module)
+    if not road:
+        return _expr_kind(u, node, line, depth + 1, None, None, given)
+    if depth > 8:
+        return KIND_UNREAD, "a road too deep to follow (%s %s)" % (OPAQUE_MARK, label)
+    step = road[0]
+    if step == ITEM or step[0] == "key":
+        lit = _data_of(u, node, line)
+        lu = getattr(lit, "_unit", u)                     # a literal a helper or a product function returned: read where it is written
+        elts = None
+        if isinstance(lit, ast.Dict):
+            elts = lit.values
+            if step != ITEM:
+                hit = [v for k, v in zip(lit.keys, lit.values) if isinstance(k, ast.Constant) and k.value == step[1]]
+                elts = hit or elts
+        elif isinstance(lit, (ast.List, ast.Tuple, ast.Set)):
+            elts = lit.elts
+            if step != ITEM and isinstance(step[1], int) and not isinstance(step[1], bool) and -len(elts) <= step[1] < len(elts):
+                elts = [elts[step[1]]]
+        elif isinstance(lit, (ast.ListComp, ast.SetComp)):
+            elts = [lit.elt]
+        elif isinstance(lit, (ast.Constant, ast.JoinedStr)):   # `msg["type"][0]` on a string: a character or an error, nothing to run
+            return "bounded", "an element of the constant `%s`: a character, or an error that ends the thread; nothing to run" % shown
+        if elts is None:
+            return KIND_UNREAD, "an element of `%s`, which the walk does not read as a container of callables (%s %s)" % (shown, OPAQUE_MARK, label)
+        if any(isinstance(e, ast.Starred) for e in elts):
+            return KIND_UNREAD, "an element of `%s`, a container with a *spread the walk does not read (%s %s)" % (shown, OPAQUE_MARK, label)
+        if not elts:                                      # `{}`.get(k) is None, `[]` iterates nothing: whatever follows raises or skips
+            return "bounded", "an element of `%s`, an empty literal: nothing to run" % shown
+        return _join_kind_answers([_road_kind(lu, e, road[1:], given if lu is u else None, call, depth + 1, label) for e in elts])
+    if step == UNNAMED:
+        return KIND_UNREAD, "an attribute of `%s` named by a value the walk does not read (%s %s)" % (shown, OPAQUE_MARK, label)
+    if step == RESULT:
+        return KIND_UNREAD, "the result of a call on `%s`, which the walk does not read (%s %s)" % (shown, OPAQUE_MARK, label)
+    attrs = []
+    while road and isinstance(road[0], str):
+        attrs.append(road[0])
+        road = road[1:]
+    if not road:
+        lit = _data_of(u, node, line)
+        if lit is not None:
+            return "bounded", "a literal %s handed in: its .%s returns at once (a dict's get is not a Queue's; an attribute it lacks raises)" % (type(lit).__name__.lower(), ".".join(attrs))
+    expr = node
+    for attr in attrs:
+        expr = ast.copy_location(ast.Attribute(value=expr, attr=attr, ctx=ast.Load()), node)
+        shown = "%s.%s" % (shown, attr)
+        expr._shown = shown
+    if road:
+        return _road_kind(u, expr, road, given, call, depth + 1, label)
+    return _attribute_kind(u, expr, line, None, None, given, call)
 
 
 def _unbound_target(start, fn):
@@ -2447,7 +2857,8 @@ def _attribute_kind(unit, node, line, ctor=None, ctor_unit=None, given=None, cal
     if fn is not None:
         unbound = isinstance(node.value, ast.Name) and unit.class_named(node.value.id) is not None \
             and not _decorated(fn, "staticmethod") and not _decorated(fn, "classmethod")
-        body = _body_kind(_reader(unit, fn), list(ast.walk(fn)), loops, 0, _ctor_given(fn, ctor, ctor_unit or unit, given, unbound=unbound))
+        body = _body_kind(_reader(unit, fn), list(ast.walk(fn)), loops, 0,
+                          {**_instance_given(unit, node.value, given), **_ctor_given(fn, ctor, ctor_unit or unit, given, unbound=unbound)})
         if body[0] != "bounded":
             return body
     if node.attr in FOREVER:
@@ -2757,14 +3168,15 @@ def _reader(unit, fn):
 
 
 def _body_waits_on(unit, body, owner, lambda_depth=True):
-    """The receivers of the untimed waits and is_set polls in a function body (`go` for go.wait(); `f.go` for a fake's
-    self.go.wait() when the thread runs on f), and, for a lambda or a body that calls a fake's method, those of the
+    """The receivers of the untimed waits, the reads (recv, accept, readline, read: the socket or file the thread is
+    parked on) and the is_set polls in a function body (`go` for go.wait(); `f.go` for a fake's self.go.wait() when the
+    thread runs on f; `peer` for peer.recv()), and, for a lambda or a body that calls a fake's method, those of the
     methods it calls, one level down."""
     out = set()
     for sub in ast.walk(body):
-        if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr in BLOCKING + ("is_set",):
-            nm = _own(ast.unparse(sub.func.value), owner)
-            if nm:
+        if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr in BLOCKING + READS + ("is_set",):
+            nm = _own(ast.unparse(sub.func.value), owner)      # a read's receiver too: a drain parked in peer.recv() is woken
+            if nm:                                               # by peer.shutdown(), what it waits on (round 2, 2026-09-22)
                 out.add(nm)
     if lambda_depth:
         for fn, o in _method_calls_in(unit, list(ast.walk(body)), body.lineno):
@@ -2826,7 +3238,8 @@ def _target_kind(start):
         fn = _target_fn(start)                     # a method of a class of the module (f.run, self.fake.run, _Fake().run,
         body = None                                # _Child._pump, self.x): its body is what the thread does, whatever the method is called
         if fn is not None:
-            body = _body_kind(_reader(unit, fn), list(ast.walk(fn)), loops, 0, _ctor_given(fn, ctor, unit, given, unbound=_unbound_target(start, fn)))
+            body = _body_kind(_reader(unit, fn), list(ast.walk(fn)), loops, 0,
+                              {**_instance_given(unit, expr.value, given), **_ctor_given(fn, ctor, unit, given, unbound=_unbound_target(start, fn))})
             if body[0] != "bounded":
                 return body
         if expr.attr in FOREVER:
@@ -3108,27 +3521,46 @@ def _library_kind(unit, expr, line, ctor=None):
     if isinstance(recv, ast.Name) and unit.module.is_stdlib_alias(recv.id):
         return _stdlib_rule(unit, expr.attr, _text(expr, unit.module), ctor, None)
     call = _object_of(unit, recv, line)
-    if call is not None and _library_ctor(call, unit):
-        return _stdlib_rule(unit, expr.attr, _text(expr, unit.module), ctor, call)
+    if call is not None and (_library_ctor(call, unit) or _library_made(unit, call) is not None):
+        return _stdlib_rule(unit, expr.attr, _text(expr, unit.module), ctor, call, recv)
     return None
 
 
-def _stdlib_rule(unit, name, shown, ctor, call):
+ASYNCIO_MAKERS = ("call_soon", "call_later", "call_at", "call_soon_threadsafe", "create_task", "create_future", "ensure_future")
+
+
+def _library_made(unit, call):
+    """The stdlib module whose object's METHOD built the receiver, for the makers the walk reads as stdlib constructions:
+    an asyncio loop's handle, task or future (loop.call_later(...), loop.create_task(...): ASYNCIO_MAKERS on a loop built
+    by asyncio) and a pool's future (ex.submit(...) on a concurrent.futures executor); None for any other method's result
+    (a Manager's proxy, say: an object the walk does not read, the restricted side)."""
+    f = call.func
+    if not isinstance(f, ast.Attribute) or f.attr not in ASYNCIO_MAKERS + ("submit",):
+        return None
+    obj = _object_of(unit, f.value, getattr(call, "lineno", 0))
+    if obj is None or not _library_ctor(obj, unit):
+        return None
+    mod = _ctor_module(unit, obj)
+    return mod if mod in ("asyncio", "concurrent") else None
+
+
+def _stdlib_rule(unit, name, shown, ctor, call, recv=None):
     """The verdict for a stdlib function or method used as a target: STDLIB_RETURNS by name (bounded whatever the
     arguments, on any receiver), else STDLIB_CONDITIONED's check at the call (`ctor` the construction, `call` the
-    receiver's construction or None for a module function), else UNREADABLE."""
+    receiver's construction or None for a module function, `recv` the receiver as written, for a checker that reads what
+    the unit did to it), else UNREADABLE."""
     r = STDLIB_RETURNS.get(name)
     if r:
         return "bounded", r
     cond = STDLIB_CONDITIONED.get(name)
     if cond is not None:
-        return cond(unit, ctor, call)
+        return cond(unit, ctor, call, recv)
     if call is not None:
         return KIND_UNREAD, "%s: a method of a %s() the walk has no rule for" % (shown, _callee_name(call))
     return KIND_UNREAD, "%s: a stdlib function the walk has no rule for" % shown
 
 
-def _sleep_rule(unit, ctor, call):
+def _sleep_rule(unit, ctor, call, recv=None):
     """time.sleep as a target is bounded ONLY when args= carries a literal number at or under BOUND_S, read at the call
     (romp-manager's ruling, 2026-09-22): a sleep of 3600 s, or of a name, outlives the test; UNREADABLE otherwise."""
     handed = _handed_args(ctor, unit) if ctor is not None else None
@@ -3141,7 +3573,7 @@ def _sleep_rule(unit, ctor, call):
     return KIND_UNREAD, "time.sleep with %s: not a literal at or under %g s (a thread asleep that long outlives the test)" % (shown, BOUND_S)
 
 
-def _server_close_rule(unit, ctor, call):
+def _server_close_rule(unit, ctor, call, recv=None):
     """server_close as a target is bounded ONLY on a server with no handler threads to join (DAEMON_HANDLER_SERVERS, read
     from the receiver's construction): socketserver.ThreadingMixIn.server_close joins live handlers under its defaults."""
     name = _callee_name(call) if call is not None else None
@@ -3186,7 +3618,7 @@ def _event_method_rule(name):
     Condition.notify_all's per-sleeper _woken_count.acquire() handshake, the argument that dropped notify; clear and is_set
     take the Condition's lock a set() stuck in that handshake holds) and on a receiver whose construction the walk cannot
     name."""
-    def rule(unit, ctor, call):
+    def rule(unit, ctor, call, recv=None):
         mod = _ctor_module(unit, call) if call is not None else None
         ctor_name = _ctor_class(unit, call) if call is not None else None
         if ctor_name == "Event" and mod == "threading":
@@ -3211,7 +3643,7 @@ def _queue_method_rule(name):
     untimed after its poll); on a multiprocessing.JoinableQueue() both are UNREADABLE (put takes its multiprocessing
     Condition, which task_done's notify_all holds through its per-sleeper handshake); UNREADABLE on a receiver whose
     construction the walk cannot name."""
-    def rule(unit, ctor, call):
+    def rule(unit, ctor, call, recv=None):
         mod = _ctor_module(unit, call) if call is not None else None
         ctor_name = _ctor_class(unit, call) if call is not None else None
         if mod == "queue" and ctor_name in ("Queue", "LifoQueue", "PriorityQueue", "SimpleQueue"):
@@ -3231,10 +3663,61 @@ def _queue_method_rule(name):
     return rule
 
 
-# The stdlib names whose boundedness is CONDITIONED on the call: each checker reads the construction (`ctor`) or the
-# receiver's construction (`call`) and answers bounded with its reason or unreadable. A name here is never in
-# STDLIB_RETURNS (stdlib_table_problems holds the two apart).
-STDLIB_CONDITIONED = {"sleep": _sleep_rule, "server_close": _server_close_rule,
+def _registers_callback(unit, recv):
+    """The unit registers an add_done_callback on the receiver `recv`: in its function, in the function enclosing it or,
+    for a self attribute, anywhere in the class or a base in the module. A callback registered elsewhere (in a helper
+    that built the future, in another test) is not seen: the stated limit of _cancel_rule's bounded verdict."""
+    key = ast.unparse(recv)
+    scopes = [unit.fn] + ([unit.parent.fn] if unit.parent is not None else [])
+    if isinstance(recv, ast.Attribute) and isinstance(recv.value, ast.Name) and recv.value.id in ("self", "cls") and unit.cls is not None:
+        scopes += unit.module.bases_of(unit.cls)
+    for scope in scopes:
+        for sub in ast.walk(scope):
+            if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr == "add_done_callback" \
+                    and ast.unparse(sub.func.value) == key:
+                return True
+    return False
+
+
+def _cancel_rule(unit, ctor, call, recv=None):
+    """cancel as a target (round 2 of PR 891's review, 2026-09-22): bounded on a threading.Timer() (cancel sets the Timer's
+    finished Event, whatever its function does; by name, through an alias or a subclass: is_timer_ctor), on asyncio's
+    Future, Task, Handle and TimerHandle (asyncio.Future(), loop.create_future(), asyncio.ensure_future(...),
+    loop.create_task(...), loop.call_soon / call_later / call_at / call_soon_threadsafe(...) on a loop built by asyncio:
+    cancel schedules the done callbacks through loop.call_soon and returns, and a Handle marks itself cancelled; the
+    runtime probe of 2026-09-22 had an asyncio Future's cancel with a blocking done-callback return at once), and on a
+    concurrent.futures.Future() ONLY when the unit registers no add_done_callback on the receiver (_registers_callback),
+    because concurrent.futures.Future.cancel runs the done callbacks SYNCHRONOUSLY (_invoke_callbacks) and a blocking one
+    blocks cancel (the refuter's probe: `fut.add_done_callback(lambda f: gate.wait())` then `Thread(target=fut.cancel)`
+    stays alive; re-run: alive after 0.5 s). UNREADABLE for such a Future with a callback registered, for a pool future
+    (ex.submit(...): the pool and its other callers may register callbacks the walk does not see), for a sched.scheduler
+    (its cancel takes the scheduler's lock, which a run() holds while an action runs) and for any receiver the walk cannot
+    name."""
+    if call is None:
+        return KIND_UNREAD, ("cancel of a receiver whose construction the walk cannot name: bounded only on a threading.Timer(), an asyncio "
+                             "future, task or handle, or a concurrent.futures.Future() with no add_done_callback on it in the unit")
+    if unit.is_timer_ctor(call):
+        return "bounded", "cancel of a threading.Timer() returns: it sets the Timer's finished Event, whatever the Timer's function does"
+    mod, ctor_name, made = _ctor_module(unit, call), _ctor_class(unit, call), _library_made(unit, call)
+    if (mod == "asyncio" and ctor_name in ("Future", "Task", "ensure_future", "create_task")) or made == "asyncio":
+        return "bounded", ("cancel of an asyncio %s() returns: it schedules the done callbacks through loop.call_soon and returns (a Handle or "
+                           "TimerHandle marks itself cancelled)" % (("%s.%s" % (mod, ctor_name)) if mod == "asyncio" else "loop.%s" % _callee_name(call)))
+    if mod == "concurrent" and ctor_name == "Future":
+        if recv is not None and _registers_callback(unit, recv):
+            return KIND_UNREAD, ("cancel of a concurrent.futures.Future() with an add_done_callback registered on `%s`: Future.cancel runs the done "
+                                 "callbacks synchronously, so a blocking callback blocks cancel (the probe of 2026-09-22)" % _text(recv, unit.module))
+        return "bounded", ("cancel of a concurrent.futures.Future() with no add_done_callback on it in the unit returns: it takes the future's "
+                           "Condition, held briefly by every method, notifies it, and has no done callbacks to run")
+    if made == "concurrent":
+        return KIND_UNREAD, "cancel of a pool future (%s()): the pool and its other callers may register done callbacks the walk does not see" % _callee_name(call)
+    return KIND_UNREAD, "cancel of a %s the walk has no rule for: bounded only on a threading.Timer(), an asyncio future, task or handle, or a concurrent.futures.Future() with no add_done_callback on it in the unit" % (
+        ("%s.%s()" % (mod, ctor_name)) if mod and ctor_name else "receiver whose construction the walk cannot name")
+
+
+# The stdlib names whose boundedness is CONDITIONED on the call: each checker reads the construction (`ctor`), the
+# receiver's construction (`call`) or the receiver as written (`recv`) and answers bounded with its reason or unreadable.
+# A name here is never in STDLIB_RETURNS (stdlib_table_problems holds the two apart).
+STDLIB_CONDITIONED = {"sleep": _sleep_rule, "server_close": _server_close_rule, "cancel": _cancel_rule,
                       "set": _event_method_rule("set"), "clear": _event_method_rule("clear"), "is_set": _event_method_rule("is_set"),
                       "put_nowait": _queue_method_rule("put_nowait"), "get_nowait": _queue_method_rule("get_nowait")}
 CONDITIONED_HEADS = ("time.sleep(",) + tuple("%s of a" % n for n in STDLIB_CONDITIONED if n != "sleep")   # the bounded reasons' heads
@@ -3263,9 +3746,10 @@ def _release_names(start):
     method, owner = _target_method(start)
     if method is not None:                              # a fake's method: its self.go is the test's f.go (or nothing, inline)
         out = _body_waits_on(start.ctor_unit, method, owner, lambda_depth=False)
-        if not out and isinstance(expr, ast.Attribute) and expr.attr in BLOCKING:   # w.wait whose body the walk sees no
-            out.add(ast.unparse(expr.value))                                       # wait in: the name's own receiver
-        return out
+        if isinstance(expr, ast.Attribute) and ((not out and expr.attr in BLOCKING)   # w.wait whose body the walk sees no wait
+                                                or (out and owner and all(n == owner or n.startswith(owner + ".") for n in out))):
+            out.add(ast.unparse(expr.value))            # in, or whose waits are all the fake's own (self.fut.result()): the fake's
+        return out                                      # own set / release method on w is what ends them
     if isinstance(expr, ast.Attribute) and expr.attr in BLOCKING:
         out.add(ast.unparse(expr.value))
         return out
@@ -3432,8 +3916,60 @@ def _cleanup_stops(unit, call, start, extra=()):
         return False
     if start is None:
         return True
+    if _cleanup_needs_release(start) and not _cleanup_ends(call, nodes, start):
+        return False
     text = "\n".join(ast.unparse(n) for n in nodes)
     return any(_word_in(w, text) for w in start.words(extra))
+
+
+def _loop_kind(start):
+    """The start's thread runs on unless told, for the BODY's timed-join rule (_stop_in): a loop the walk read outright
+    (not a loop found only in a product callee, _indirect, which the rule reads as bounded) or a thread of unreadable
+    kind. A TIMED join in the body alone is a wait such a thread may outlive, not its stop."""
+    return (start.kind == "loop" and not start.indirect) or start.kind == KIND_UNREAD
+
+
+def _cleanup_needs_release(start):
+    """The start's thread is a LOOP THE WALK READ OUTRIGHT (kind loop, not indirect): a cleanup must release it, a timed
+    join alone is not its stop (_cleanup_ends). Not a thread of UNREADABLE kind: THE DOCUMENTED ACCEPTANCE (round 2 of PR
+    891's review, 2026-09-22): the walk cannot show such a thread loops (its work is a call it cannot read, most often a
+    handed-in function bounded by construction), there is no loop to release, and a cleanup's timed join runs on EVERY
+    exit path, including one where a statement the body walk takes not to fail raises, and bounds the test's wait; whether
+    the thread ended within the bound is the runtime oracle's to say. The body rule (_stop_in) stays strict for both: a
+    body statement is guaranteed only by the walk's assumption that the statements before it do not fail, a cleanup by
+    unittest, so the two rules differ by the strength of the guarantee, not by the thread."""
+    return start.kind == "loop" and not start.indirect
+
+
+def _cleanup_ends(call, nodes, start):
+    """The cleanup's stop is more than a TIMED JOIN ALONE (round 2 of PR 891's review, 2026-09-22: the body rule applied to
+    cleanups for a loop read outright): a stop verb other than join (set, shutdown, stop, cancel, close, terminate, kill,
+    server_close, release) or the loops' seam as an attribute or a call, in its arguments or in the body of the function,
+    lambda or method it names; a SENTINEL PUT (`put` / `put_nowait`) into a queue handed to the thread or one it reads
+    (`q.put_nowait(None)` for km._ws_sender: the handler's own teardown sentinel); an UNTIMED join (`self.addCleanup(t.join)`
+    with nothing after it; `t.join()` in the body); or a bare name that says stop whose body the walk does not have (a
+    parameter, a returned callable: the name is the evidence, as before). A timed join alone (`self.addCleanup(t.join,
+    10)`, `lambda: t.join(5)`, `lambda: [t.join(2) for t in ts]`) waits for the thread on every exit path and lets a loop
+    run on when the bound passes: not the stop. The strict probe of 2026-09-22 found three such sites on the tree, all in
+    tests/test_ws_send_bounded.py: the sender helper's cleanup, which already put the sentinel the walk had no verb for,
+    and two socket drains, whose cleanups now shut the socket down before the join."""
+    fed = _handed_names(start) | _release_names(start)
+    for n in nodes:
+        for sub in ast.walk(n):
+            if isinstance(sub, ast.Attribute) and sub.attr in STOP_VERBS and sub.attr != "join":
+                return True
+            if isinstance(sub, ast.Name) and sub.id == STOP_SEAM:
+                return True
+            if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr == "join" and not sub.args and not sub.keywords:
+                return True
+            if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr in ("put", "put_nowait") \
+                    and ast.unparse(sub.func.value) in fed:
+                return True
+    if call.args and isinstance(call.args[0], ast.Attribute) and call.args[0].attr == "join" and len(call.args) == 1 and not call.keywords:
+        return True                                     # self.addCleanup(t.join): the join itself, untimed
+    named = [n for n in nodes if isinstance(n, ast.Name) and _says_stop(n.id)]
+    bodies = [n for n in nodes if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))]
+    return bool(named) and not bodies
 
 
 def _is_assertion(stmt):
@@ -3473,8 +4009,9 @@ def _in_try_finally(stack):
 def _stop_in(unit, stmt, names, releases, start, extra=()):
     """The stop one statement holds for the thread: a cleanup naming its stop ('cleanup-before-first-assertion'); a join
     of the same receiver or list, a shutdown / stop / cancel of it or of the object its target runs on (called, or handed
-    over as loop.call_soon_threadsafe(loop.stop)), a set / release of what it waits on, or the loops' seam set for a
-    product loop ('stop-before-first-assertion'). A TIMED join of a loop thread is a wait, not its stop: when it returns
+    over as loop.call_soon_threadsafe(loop.stop)), a set / release of what it waits on, a shutdown of the socket it reads,
+    a sentinel put into the queue it reads or was handed, or the loops' seam set for a product loop
+    ('stop-before-first-assertion'). A TIMED join of a loop thread is a wait, not its stop: when it returns
     the loop runs on unless something else ended it, so it counts only beside a release, a shutdown or the seam."""
     loop_vars = {}
     for loop in ast.walk(stmt):
@@ -3482,7 +4019,7 @@ def _stop_in(unit, stmt, names, releases, start, extra=()):
             loop_vars[loop.target.id] = ast.unparse(loop.iter)
     target_recvs = _target_receivers(start) if start is not None else set()
     seam_ok = start is not None and start.kind == "loop" and _outside_target(start)
-    loop_kind = start is not None and ((start.kind == "loop" and not start.indirect) or start.kind == KIND_UNREAD)
+    loop_kind = start is not None and _loop_kind(start)
     timed_join, ended = False, False
     for sub in ast.walk(stmt):
         if isinstance(sub, ast.Call):
@@ -3501,6 +4038,10 @@ def _stop_in(unit, stmt, names, releases, start, extra=()):
             if f.attr in ("shutdown", "stop", "cancel", "close", "server_close") and (same or r in target_recvs):
                 ended = True
             if f.attr in ("set", "release") and (r in releases or (seam_ok and STOP_SEAM in r)):
+                ended = True
+            if f.attr == "shutdown" and r in releases:      # peer.shutdown(SHUT_RDWR) wakes the recv a drain thread is parked in
+                ended = True
+            if f.attr in ("put", "put_nowait") and r in releases:   # q.put_nowait(None): the sentinel a queue-fed loop reads
                 ended = True
         elif isinstance(sub, ast.Attribute) and sub.attr in ("stop", "shutdown", "cancel", "close") and ast.unparse(sub.value) in target_recvs:
             ended = True                                    # handed over: loop.call_soon_threadsafe(loop.stop)
@@ -3710,7 +4251,7 @@ def census(paths, loops=None, thread_classes=None, helpers=None, product=None, e
     return out
 
 
-_HAND = re.compile(r"^\S+ of .+? is `.*`(?:\.[\w.]+)? (handed in by the caller|handed in at the construction|handed in at the call|its default)$")
+_HAND = re.compile(r"^\S+ of .+? is `.*`(?:\.[\w.<>]+|\[\]|\(\))* (handed in by the caller|handed in at the construction|handed in at the call|its default)$")
 
 
 def bounded_reason_is_read(why):
@@ -3948,13 +4489,17 @@ class ThreadStopCensus(unittest.TestCase):
     def test_the_population_is_what_pytest_collects_under_tests(self):
         """The census reads the non-recursive listing of tests/test_*.py (module_paths). pytest, with no configuration file in
         this repository, collects by its defaults: python_files `test_*.py` AND `*_test.py`, recursively under tests/. The two
-        agree only while no configuration appears (a pytest.ini, setup.cfg, tox.ini or pyproject.toml; a python_files line in
+        agree only while no configuration appears (a pytest.ini, setup.cfg, tox.ini or pyproject.toml at the repository root
+        OR under tests/: pytest's inifile search starts at the arguments' common ancestor and walks up, so a file under tests/
+        governs `pytest tests/`, round 2 of PR 891's review; a python_files line in
         tests/conftest.py), no `*_test.py` exists anywhere under tests/ and no `test_*.py` sits below the top level: this pins
         that emptiness, so the day one appears the census says so instead of silently omitting it (romp-manager's ruling,
         2026-09-22); and the listing's length is the count the census read."""
-        for name in ("pytest.ini", "setup.cfg", "tox.ini", "pyproject.toml"):
-            self.assertFalse(os.path.exists(os.path.join(ROOT, name)),
-                             "%s exists: pytest's collection may no longer be its defaults; re-derive the population" % name)
+        for root in (ROOT, HERE):                # the inifile search starts at the arguments' common ancestor: `pytest tests/`
+            for name in ("pytest.ini", "setup.cfg", "tox.ini", "pyproject.toml"):   # would be governed by a file under tests/
+                self.assertFalse(os.path.exists(os.path.join(root, name)),
+                                 "%s exists: pytest's collection may no longer be its defaults; re-derive the population"
+                                 % os.path.relpath(os.path.join(root, name), ROOT))
         with open(os.path.join(HERE, "conftest.py"), encoding="utf-8") as f:
             self.assertNotIn("python_files", f.read(), "tests/conftest.py names python_files: the collection pattern moved; re-derive the population")
         strays = []
@@ -4734,13 +5279,15 @@ class PlantedShapes(unittest.TestCase):
                          [("T.test_cls_hook", "class-hook:tearDownClass"), ("T.test_cls_release", "stop-before-first-assertion")])
 
     def test_a_method_whose_body_the_walk_sees_no_loop_or_wait_in_keeps_its_name_rule(self):
-        """A class of the module whose serve_forever runs an asyncio loop (asyncio.run(self._main())), whose wait blocks on
-        a future (self.fut.result()) or whose get blocks on a queue with a timeout (self.q.get(True, 30); block=True alone
-        is an untimed spelling since romp-manager's ruling of 2026-09-22 and the body road reads it): the body
-        reads bounded, so the NAME rules apply as they did before the body road existed: serve_forever is a loop, wait
-        and get are waits, and a tail-only stop is NAMED; a shutdown of the server before the first assertion is the
-        stop, and for `w.wait` the receiver `w` is what a set or release must name. The body road takes precedence only
-        when it finds a loop or an untimed wait."""
+        """A class of the module whose serve_forever runs an asyncio loop (asyncio.run(self._main())) or whose get blocks
+        on a queue with a timeout (self.q.get(True, 30); block=True alone is an untimed spelling since romp-manager's
+        ruling of 2026-09-22 and the body road reads it): the body reads bounded, so the NAME rules apply as they did
+        before the body road existed: serve_forever is a loop, get is a wait, and a tail-only stop is NAMED; a shutdown
+        of the server before the first assertion is the stop. A wait that blocks on a future (self.fut.result()) is read
+        by the BODY road since round 2 of PR 891's review (result joined BLOCKING, 2026-09-22): the untimed .result() is
+        the wait, and because every wait of the body is on the fake's own attributes, the receiver `w` is still what a
+        set or release must name (w.release() sets the future). The body road takes precedence only when it finds a loop
+        or an untimed wait."""
         head = self.HEAD.replace("import unittest\n", "import unittest\nimport asyncio\nimport queue\nimport concurrent.futures\n") \
             .replace("class T(", "class _Srv2:\n    def serve_forever(self):\n        asyncio.run(self._main())\n"
                                  "    async def _main(self):\n        return 1\n    def shutdown(self):\n        pass\n"
@@ -4785,7 +5332,7 @@ class PlantedShapes(unittest.TestCase):
         self.assertEqual(unread, [], [(s.recv_shown, w) for s, w in unread])
         self.assertEqual(sorted((s.target, s.kind, s.why, w) for s, w in tails), sorted([
             ("s.serve_forever", "loop", "serve_forever", "T.test_serve_named"),
-            ("w.wait", "waits", "the target is an untimed .wait", "T.test_wait_named"),
+            ("w.wait", "waits", "an untimed .result()", "T.test_wait_named"),
             ("w.get", "waits", "the target is an untimed .get", "T.test_get_named"),
             ("lambda: s.serve_forever()", "loop", "serve_forever", "T.test_lambda_serve_named")]))
         self.assertEqual(bounded, [])
@@ -5198,12 +5745,16 @@ class PlantedShapes(unittest.TestCase):
         """Table-shaped (romp-manager's ruling, 2026-09-22): every STDLIB_RETURNS entry's reason states, in UNCONDITIONAL_WORDS,
         the property that lets a name alone excuse a thread: the call returns whatever its arguments and on any stdlib
         receiver. A planted conditional entry without the words reds (the sleep entry the tree carried until this ruling),
-        and a conditioned name planted in the table reds even with the words. sleep, server_close, an Event's set, clear
-        and is_set and a queue's put_nowait and get_nowait are the conditioned names, in STDLIB_CONDITIONED and not in
-        STDLIB_RETURNS; the `set` entry the table carried until 2026-09-22 reds as a conditioned name now."""
+        and a conditioned name planted in the table reds even with the words. sleep, server_close, cancel, an Event's set,
+        clear and is_set and a queue's put_nowait and get_nowait are the conditioned names, in STDLIB_CONDITIONED and not
+        in STDLIB_RETURNS; the `set` entry the table carried until 2026-09-22 reds as a conditioned name now, and so does the
+        `cancel` entry it carried until round 2 of PR 891's review (the same day), leaving release the one entry."""
         self.assertEqual(stdlib_table_problems(STDLIB_RETURNS), [])
-        self.assertEqual(sorted(STDLIB_CONDITIONED), ["clear", "get_nowait", "is_set", "put_nowait", "server_close", "set", "sleep"])
-        self.assertEqual(sorted(STDLIB_RETURNS), ["cancel", "release"])
+        self.assertEqual(sorted(STDLIB_CONDITIONED), ["cancel", "clear", "get_nowait", "is_set", "put_nowait", "server_close", "set", "sleep"])
+        self.assertEqual(sorted(STDLIB_RETURNS), ["release"])
+        self.assertIn("round 2", STDLIB_RETURNS["release"], "release states its re-examination for a synchronous callback")
+        planted = dict(STDLIB_RETURNS, cancel="Timer.cancel returns at once whatever its arguments and on any stdlib receiver")
+        self.assertEqual(stdlib_table_problems(planted), [("cancel", "a conditioned name: its check runs at the call, it cannot be excused by name")])
         self.assertFalse(set(STDLIB_CONDITIONED) & set(STDLIB_RETURNS))
         planted = dict(STDLIB_RETURNS, set="Event.set raises the flag and returns whatever its arguments (it takes none) and on any stdlib receiver (no stdlib set() blocks)")
         self.assertEqual(stdlib_table_problems(planted), [("set", "a conditioned name: its check runs at the call, it cannot be excused by name")])
@@ -5491,6 +6042,237 @@ class PlantedShapes(unittest.TestCase):
         self.assertEqual(sorted(w for s, w in unread), ["T.test_missing"])
         self.assertEqual(sorted(w for s, w in bounded), ["T.test_be_send", "T.test_event_set", "T.test_local_alias", "T.test_once"])
         self.assertTrue(all(bounded_reason_is_read(s.why) for s, w in bounded), [s.why for s, w in bounded])
+
+    def test_a_cancel_is_bounded_only_on_a_timer_an_asyncio_handle_or_a_future_with_no_done_callback(self):
+        """STDLIB_CONDITIONED's cancel (round 2 of PR 891's review, 2026-09-22). concurrent.futures.Future.cancel runs the done
+        callbacks synchronously, so a Future with an add_done_callback in the unit (through the module, a bare import, or a
+        self attribute whose callback setUp registered) is UNREADABLE and listed, one with none bounded; a threading.Timer's
+        cancel (by name or alias) and an asyncio Future's or a loop handle's are bounded; a pool future's (ex.submit) and a
+        sched.scheduler's are unreadable. release stays in STDLIB_RETURNS with its re-examination. Every bounded reason
+        passes bounded_reason_is_read."""
+        head = self.HEAD.replace("import unittest\n", "import unittest\nimport asyncio\nimport concurrent.futures\nimport sched\n"
+                                                    "from concurrent.futures import Future\nfrom threading import Timer as Tm\n")
+        body = ("    def setUp(self):\n        self.fut = concurrent.futures.Future()\n        self.fut.add_done_callback(print)\n"
+                "    def test_fut_cb(self):\n        gate = threading.Event()\n        fut = concurrent.futures.Future()\n"
+                "        fut.add_done_callback(lambda f: gate.wait())\n        t = threading.Thread(target=fut.cancel); t.start()\n        self.assertTrue(False)\n"
+                "    def test_fut_no_cb(self):\n        fut = concurrent.futures.Future()\n        t = threading.Thread(target=fut.cancel); t.start()\n        self.assertTrue(False)\n"
+                "    def test_fut_bare_cb(self):\n        fut = Future()\n        fut.add_done_callback(print)\n        t = threading.Thread(target=fut.cancel); t.start()\n        self.assertTrue(False)\n"
+                "    def test_self_fut_cb(self):\n        t = threading.Thread(target=self.fut.cancel); t.start()\n        self.assertTrue(False)\n"
+                "    def test_timer(self):\n        tm = threading.Timer(3600, print)\n        t = threading.Thread(target=tm.cancel); t.start()\n        self.assertTrue(False)\n"
+                "    def test_timer_alias(self):\n        tm = Tm(3600, print)\n        t = threading.Thread(target=tm.cancel); t.start()\n        self.assertTrue(False)\n"
+                "    def test_aio_future(self):\n        fut = asyncio.Future()\n        t = threading.Thread(target=fut.cancel); t.start()\n        self.assertTrue(False)\n"
+                "    def test_aio_handle(self):\n        loop = asyncio.new_event_loop()\n        h = loop.call_later(1, print)\n"
+                "        t = threading.Thread(target=h.cancel); t.start()\n        self.assertTrue(False)\n"
+                "    def test_sched(self):\n        s = sched.scheduler(time.time, time.sleep)\n        t = threading.Thread(target=s.cancel, args=(None,)); t.start()\n        self.assertTrue(False)\n"
+                "    def test_pool(self):\n        ex = concurrent.futures.ThreadPoolExecutor(1)\n        fut = ex.submit(print)\n"
+                "        t = threading.Thread(target=fut.cancel); t.start()\n        self.assertTrue(False)\n"
+                "    def test_release(self):\n        lk = threading.Lock(); lk.acquire()\n        t = threading.Thread(target=lk.release); t.start()\n        self.assertTrue(False)\n")
+        rows, (tails, unread, stale, bounded), _p = self._census(body, head=head)
+        by = {w.split(".")[1]: (s.kind, s.why, sh) for s, sh, w in rows}
+        for name, start in (("fut_cb", "cancel of a concurrent.futures.Future() with an add_done_callback registered on `fut`"),
+                            ("fut_bare_cb", "cancel of a concurrent.futures.Future() with an add_done_callback registered on `fut`"),
+                            ("self_fut_cb", "cancel of a concurrent.futures.Future() with an add_done_callback registered on `self.fut`"),
+                            ("sched", "cancel of a sched.scheduler() the walk has no rule for"),
+                            ("pool", "cancel of a pool future (submit())")):
+            self.assertEqual(by["test_" + name][0], KIND_UNREAD, (name, by["test_" + name]))
+            self.assertTrue(by["test_" + name][1].startswith(start), (name, by["test_" + name][1]))
+        for name, start in (("fut_no_cb", "cancel of a concurrent.futures.Future() with no add_done_callback on it in the unit returns"),
+                            ("timer", "cancel of a threading.Timer() returns"), ("timer_alias", "cancel of a threading.Timer() returns"),
+                            ("aio_future", "cancel of an asyncio asyncio.Future() returns"), ("aio_handle", "cancel of an asyncio loop.call_later() returns"),
+                            ("release", STDLIB_RETURNS["release"])):
+            self.assertEqual(by["test_" + name][0], "bounded", (name, by["test_" + name]))
+            self.assertTrue(by["test_" + name][1].startswith(start), (name, by["test_" + name][1]))
+            self.assertTrue(bounded_reason_is_read(by["test_" + name][1]), (name, by["test_" + name][1]))
+        self.assertEqual(sorted(w.split(".")[1] for s, w in unread), sorted(["test_fut_cb", "test_fut_bare_cb", "test_self_fut_cb", "test_sched", "test_pool"]))
+        self.assertEqual((tails, stale), ([], []))
+
+    def test_a_futures_untimed_result_is_a_wait_in_a_body_and_as_a_target(self):
+        """result joined BLOCKING (round 2 of PR 891's review, 2026-09-22): a body waiting on `ex.submit(...).result()` or
+        `.result(timeout=None)` is a waits thread (pinned when its stop is tail-only), `.result(5)` bounded; a `fut.result`
+        target with no args= is an untimed wait, one with a timeout falls to the stdlib table, which has no rule for a timed
+        wait (unreadable, listed)."""
+        head = self.HEAD.replace("import unittest\n", "import unittest\nimport concurrent.futures\n")
+        body = ("    def test_untimed(self):\n        ex = concurrent.futures.ThreadPoolExecutor(1)\n        def body():\n            ex.submit(print).result()\n"
+                "        t = threading.Thread(target=body); t.start()\n        self.assertTrue(False)\n"
+                "    def test_kw_none(self):\n        ex = concurrent.futures.ThreadPoolExecutor(1)\n        def body():\n            ex.submit(print).result(timeout=None)\n"
+                "        t = threading.Thread(target=body); t.start()\n        self.assertTrue(False)\n"
+                "    def test_timed(self):\n        ex = concurrent.futures.ThreadPoolExecutor(1)\n        def body():\n            ex.submit(print).result(5)\n"
+                "        t = threading.Thread(target=body); t.start()\n        self.assertTrue(False)\n"
+                "    def test_target(self):\n        fut = concurrent.futures.Future()\n        t = threading.Thread(target=fut.result); t.start()\n        self.assertTrue(False)\n"
+                "    def test_target_timed(self):\n        fut = concurrent.futures.Future()\n        t = threading.Thread(target=fut.result, args=(1,)); t.start()\n        self.assertTrue(False)\n")
+        rows, (tails, unread, stale, bounded), _p = self._census(body, head=head)
+        by = {w.split(".")[1]: (s.kind, s.why, sh) for s, sh, w in rows}
+        self.assertEqual(by["test_untimed"], ("waits", "an untimed .result()", "tail-only"))
+        self.assertEqual(by["test_kw_none"], ("waits", "an untimed .result(timeout=None)", "tail-only"))
+        self.assertEqual(by["test_timed"], ("bounded", "no loop, no untimed wait", "tail-only"))
+        self.assertEqual(by["test_target"], ("waits", "the target is an untimed .result", "tail-only"))
+        self.assertEqual(by["test_target_timed"][0], KIND_UNREAD)
+        self.assertIn("Future", by["test_target_timed"][1])
+        self.assertEqual(self._tails(tails), [("body", "T.test_kw_none"), ("body", "T.test_untimed"), ("fut.result", "T.test_target")])
+        self.assertEqual([w.split(".")[1] for s, w in unread], ["test_target_timed"])
+        self.assertEqual([w.split(".")[1] for s, w in bounded], ["test_timed"])
+
+    def test_a_call_through_an_indirection_of_a_parameter_is_opaque_and_read_through_the_hand(self):
+        """The third arm's INDIRECTIONS (round 2 of PR 891's review, 2026-09-22; each read BOUNDED before it): a local alias
+        (`g = fn; g()`), a subscript (`fns[0]()`, `kw["fn"]()`), a for or comprehension target over the parameter, a BoolOp
+        or an IfExp with the parameter as an operand, a *spread into the iterated tuple, a keyword-only parameter,
+        functools.partial over the parameter (dotted and bare), getattr over it (a literal name reads the attribute; a
+        name is unnameable, unreadable), a *args element (no hand can place it: unreadable), a **kwargs element (likewise)
+        beside a **kwargs dict's own method (a builtin container's, not opaque), a self attribute __init__ bound from a
+        parameter (`self.fn = fn; self.fn()`: read from the fake's construction, unreadable when the construction hands a
+        parameter of the caller), and the same alias and subscript at the construction's args=. Every helper row is
+        unreadable in its own body and classed at its callers, where the hand decides: a loop pinned, a bounded call
+        excused, a road with no hand listed. The reason names the road (`fns[]`) and each hand. Data access on a handed-in
+        literal is read as data: `(store.get("nodes") or {}).get("x")` on a dict literal, `acc["failures"].append(1)` on a
+        helper's returned literal, both bounded."""
+        helpers = ("import functools\nfrom functools import partial\n"
+                   "def _alias(fn):\n    def go():\n        g = fn\n        g()\n    t = threading.Thread(target=go); t.start(); return t\n"
+                   "def _sub(fns):\n    def go():\n        fns[0]()\n    t = threading.Thread(target=go); t.start(); return t\n"
+                   "def _key(kw):\n    def go():\n        kw['fn']()\n    t = threading.Thread(target=go); t.start(); return t\n"
+                   "def _each(fns):\n    def go():\n        for f in fns:\n            f()\n    t = threading.Thread(target=go); t.start(); return t\n"
+                   "def _comp(fns):\n    def go():\n        [f() for f in fns]\n    t = threading.Thread(target=go); t.start(); return t\n"
+                   "def _or(fn):\n    def go():\n        (fn or _once)()\n    t = threading.Thread(target=go); t.start(); return t\n"
+                   "def _ifexp(fn, flag):\n    def go():\n        (fn if flag else _once)()\n    t = threading.Thread(target=go); t.start(); return t\n"
+                   "def _star(fns):\n    def go():\n        for f in (*fns, _once):\n            f()\n    t = threading.Thread(target=go); t.start(); return t\n"
+                   "def _kwonly(*, fn):\n    def go():\n        fn()\n    t = threading.Thread(target=go); t.start(); return t\n"
+                   "def _partial(fn):\n    def go():\n        functools.partial(fn, 1)()\n    t = threading.Thread(target=go); t.start(); return t\n"
+                   "def _partial_bare(fn):\n    def go():\n        partial(fn)()\n    t = threading.Thread(target=go); t.start(); return t\n"
+                   "def _getattr(obj, name):\n    def go():\n        getattr(obj, name)()\n    t = threading.Thread(target=go); t.start(); return t\n"
+                   "def _getattr_lit(obj):\n    def go():\n        getattr(obj, 'run')()\n    t = threading.Thread(target=go); t.start(); return t\n"
+                   "def _varargs(*fns):\n    def go():\n        fns[0]()\n    t = threading.Thread(target=go); t.start(); return t\n"
+                   "def _kwstar(**kw):\n    def go():\n        kw['fn']()\n    t = threading.Thread(target=go); t.start(); return t\n"
+                   "def _kwitems(**kw):\n    def go():\n        return list(kw.items())\n    t = threading.Thread(target=go); t.start(); return t\n"
+                   "def _nodes(store):\n    def go():\n        (store.get('nodes') or {}).get('x')\n    t = threading.Thread(target=go); t.start(); return t\n"
+                   "def _acc():\n    return {'failures': [], 'n': 0}\n"
+                   "def _rec(acc):\n    def go():\n        acc['failures'].append(1)\n    t = threading.Thread(target=go); t.start(); return t\n"
+                   "class _F:\n    def __init__(self, fn):\n        self.fn = fn\n    def run(self):\n        self.fn()\n")
+        body = ("    def test_alias(self):\n        t = _alias(_loop)\n        self.assertTrue(False)\n"
+                "    def test_alias_once(self):\n        t = _alias(_once)\n        self.assertTrue(False)\n"
+                "    def test_alias_param(self, cb=None):\n        t = _alias(cb)\n        self.assertTrue(False)\n"
+                "    def test_sub(self):\n        t = _sub([_loop])\n        self.assertTrue(False)\n"
+                "    def test_sub_once(self):\n        t = _sub([_once, _once])\n        self.assertTrue(False)\n"
+                "    def test_key(self):\n        t = _key({'fn': _loop})\n        self.assertTrue(False)\n"
+                "    def test_each(self):\n        t = _each([_loop, _once])\n        self.assertTrue(False)\n"
+                "    def test_comp(self):\n        t = _comp((_once, _loop))\n        self.assertTrue(False)\n"
+                "    def test_or(self):\n        t = _or(_loop)\n        self.assertTrue(False)\n"
+                "    def test_or_once(self):\n        t = _or(_once)\n        self.assertTrue(False)\n"
+                "    def test_ifexp(self):\n        t = _ifexp(_loop, True)\n        self.assertTrue(False)\n"
+                "    def test_star(self):\n        t = _star([_loop])\n        self.assertTrue(False)\n"
+                "    def test_kwonly(self):\n        t = _kwonly(fn=_loop)\n        self.assertTrue(False)\n"
+                "    def test_partial(self):\n        t = _partial(_loop)\n        self.assertTrue(False)\n"
+                "    def test_partial_bare(self):\n        t = _partial_bare(_loop)\n        self.assertTrue(False)\n"
+                "    def test_getattr(self):\n        t = _getattr(_F(_loop), 'run')\n        self.assertTrue(False)\n"
+                "    def test_getattr_lit(self):\n        t = _getattr_lit(_F(_loop))\n        self.assertTrue(False)\n"
+                "    def test_varargs(self):\n        t = _varargs(_loop)\n        self.assertTrue(False)\n"
+                "    def test_kwstar(self):\n        t = _kwstar(fn=_loop)\n        self.assertTrue(False)\n"
+                "    def test_kwitems(self):\n        t = _kwitems(fn=_loop)\n        self.assertTrue(False)\n"
+                "    def test_nodes(self):\n        t = _nodes({'rev': 1, 'nodes': {}})\n        self.assertTrue(False)\n"
+                "    def test_rec(self):\n        t = _rec(_acc())\n        self.assertTrue(False)\n"
+                "    def test_self_attr(self):\n        f = _F(_loop)\n        t = threading.Thread(target=f.run); t.start()\n        self.assertTrue(False)\n"
+                "    def test_self_attr_param(self, cb=None):\n        f = _F(cb)\n        t = threading.Thread(target=f.run); t.start()\n        self.assertTrue(False)\n"
+                "    def test_ctor_sub(self):\n        def run(fns):\n            fns[0]()\n        threading.Thread(target=run, args=([_loop],)).start()\n        self.assertTrue(False)\n"
+                "    def test_ctor_alias(self):\n        def run(fn):\n            g = fn\n            g()\n        threading.Thread(target=run, args=(_loop,)).start()\n        self.assertTrue(False)\n")
+        rows, (tails, unread, stale, bounded), _p = self._census(body, head=self.HEAD.replace("class T(", helpers + "class T("))
+        by = {}
+        for st, sh, w in rows:
+            by.setdefault(w.split(".")[1] if "." in w else w, []).append((st.target, st.kind, st.why, sh))
+        for helper in ("_alias", "_sub", "_key", "_each", "_comp", "_or", "_ifexp", "_star", "_kwonly", "_partial", "_partial_bare", "_getattr",
+                       "_getattr_lit", "_varargs", "_kwstar", "_nodes", "_rec"):
+            self.assertNotIn(helper, by, "%s's own row is unreadable and tail-only: classed at its callers" % helper)
+        loop = "a while loop | %s"
+        expect = {
+            "alias": ("go", "loop", loop % "fn of _alias is `_loop` handed in by the caller", "tail-only"),
+            "alias_once": ("go", "bounded", "no loop, no untimed wait | fn of _alias is `_once` handed in by the caller", "tail-only"),
+            "alias_param": ("go", KIND_UNREAD, "a parameter (cb): what the caller hands in is not read here | fn of _alias is `cb` handed in by the caller", "tail-only"),
+            "sub": ("go", "loop", loop % "fns[] of _sub is `[_loop]`[] handed in by the caller", "tail-only"),
+            "sub_once": ("go", "bounded", "no loop, no untimed wait | fns[] of _sub is `[_once, _once]`[] handed in by the caller", "tail-only"),
+            "key": ("go", "loop", loop % "kw[] of _key is `{'fn': _loop}`[] handed in by the caller", "tail-only"),
+            "each": ("go", "loop", loop % "fns[] of _each is `[_loop, _once]`[] handed in by the caller", "tail-only"),
+            "comp": ("go", "loop", loop % "fns[] of _comp is `(_once, _loop)`[] handed in by the caller", "tail-only"),
+            "or": ("go", "loop", loop % "fn of _or is `_loop` handed in by the caller", "tail-only"),
+            "or_once": ("go", "bounded", "no loop, no untimed wait | fn of _or is `_once` handed in by the caller", "tail-only"),
+            "ifexp": ("go", "loop", loop % "fn of _ifexp is `_loop` handed in by the caller", "tail-only"),
+            "star": ("go", "loop", loop % "fns[] of _star is `[_loop]`[] handed in by the caller", "tail-only"),
+            "kwonly": ("go", "loop", loop % "fn of _kwonly is `_loop` handed in by the caller", "tail-only"),
+            "partial": ("go", "loop", loop % "fn of _partial is `_loop` handed in by the caller", "tail-only"),
+            "partial_bare": ("go", "loop", loop % "fn of _partial_bare is `_loop` handed in by the caller", "tail-only"),
+            "getattr": ("go", KIND_UNREAD, "an attribute of `_F(_loop)` named by a value the walk does not read (a parameter of _getattr) | "
+                                           "obj.<name> of _getattr is `_F(_loop)`.<name> handed in by the caller", "tail-only"),
+            "getattr_lit": ("go", "loop", loop % "fn of __init__ is `_loop` handed in at the construction | obj.run of _getattr_lit is `_F(_loop)`.run handed in by the caller", "tail-only"),
+            "varargs": ("go", KIND_UNREAD, "calls fns[0], fns a parameter of _varargs: what the caller hands in is not read here", "tail-only"),
+            "kwstar": ("go", KIND_UNREAD, "calls kw['fn'], kw a parameter of _kwstar: what the caller hands in is not read here", "tail-only"),
+            "kwitems": ("go", "bounded", "no loop, no untimed wait", "tail-only"),
+            "self_attr": ("f.run", "loop", loop % "fn of __init__ is `_loop` handed in at the construction", "tail-only"),
+            "self_attr_param": ("f.run", KIND_UNREAD, "a parameter (cb): what the caller hands in is not read here | fn of __init__ is `cb` handed in at the construction", "tail-only"),
+            "ctor_sub": ("run", "loop", loop % "fns[] of run is `[_loop]`[] handed in at the construction", "tail-only"),
+            "ctor_alias": ("run", "loop", loop % "fn of run is `_loop` handed in at the construction", "tail-only"),
+        }
+        for name, row in expect.items():
+            self.assertEqual(by["test_" + name], [row], name)
+        for name in ("nodes", "rec"):
+            self.assertEqual([r[1:2] + r[3:] for r in by["test_" + name]], [("bounded", "tail-only")], (name, by["test_" + name]))
+            self.assertIn("handed in by the caller", by["test_" + name][0][2], name)
+            self.assertTrue(bounded_reason_is_read(by["test_" + name][0][2]), by["test_" + name][0][2])
+        self.assertEqual(sorted(w.split(".")[1] for s, w in unread), sorted(["test_alias_param", "test_getattr", "test_varargs", "test_kwstar", "test_self_attr_param"]))
+        self.assertEqual(sorted(w.split(".")[1] for s, w in bounded), sorted(["test_alias_once", "test_sub_once", "test_or_once", "test_kwitems", "test_nodes", "test_rec"]))
+        self.assertEqual(sorted(w.split(".")[1] for s, w in tails),
+                         sorted("test_" + n for n, r in expect.items() if r[1] == "loop"))
+        self.assertTrue(all(bounded_reason_is_read(s.why) for s, w in bounded), [s.why for s, w in bounded])
+
+    def test_a_cleanups_timed_join_alone_is_not_an_outright_loops_stop(self):
+        """Round 2 of PR 891's review (2026-09-22), the timed-join decision for cleanups. For a LOOP the walk read outright, a
+        cleanup whose only stop is a TIMED join (`self.addCleanup(t.join, 5)`, a lambda joining a list with a timeout, a
+        local def whose body is a timed join, registered before or right after the start) is not the stop: the row is
+        tail-only (named). An untimed join (`self.addCleanup(t.join)`), a release beside the join (`def end(): stop.set();
+        t.join(5)`), the loops' seam set beside it (a product loop), a sentinel put into the queue the loop reads
+        (`q.put_nowait(None)`) or a shutdown of the socket a drain reads (`peer.shutdown(...)`) is. A bounded thread's
+        timed-join cleanup counts as before (its join is a convenience either way); a loop found only in a product callee
+        (indirect) is read as bounded for this rule, as in the body; and for a thread of UNREADABLE kind the timed join is
+        ACCEPTED (the documented acceptance: no loop to release, a bounded wait on every exit path)."""
+        product = "def spin():\n    while True:\n        pass\ndef _producer():\n    while True:\n        pass\n"
+        head = self.HEAD.replace("class T(", "km = load_source('fake_kernel', 'fake_kernel.py')\nclass T(")
+        body = ("    def test_timed(self):\n        t = threading.Thread(target=_loop)\n        self.addCleanup(t.join, 5)\n        t.start()\n        self.assertTrue(False)\n"
+                "    def test_untimed(self):\n        t = threading.Thread(target=_loop)\n        self.addCleanup(t.join)\n        t.start()\n        self.assertTrue(False)\n"
+                "    def test_with_release(self):\n        stop = threading.Event()\n        def run():\n            while not stop.is_set():\n                time.sleep(0.01)\n"
+                "        t = threading.Thread(target=run)\n        def end():\n            stop.set()\n            t.join(5)\n        self.addCleanup(end)\n        t.start()\n        self.assertTrue(False)\n"
+                "    def test_lambda_timed(self):\n        ts = [threading.Thread(target=_loop) for _ in range(2)]\n        self.addCleanup(lambda: [t.join(2) for t in ts])\n"
+                "        for t in ts:\n            t.start()\n        self.assertTrue(False)\n"
+                "    def test_end_def_timed(self):\n        t = threading.Thread(target=_loop)\n        def end():\n            t.join(5)\n        self.addCleanup(end)\n        t.start()\n        self.assertTrue(False)\n"
+                "    def test_after_start_timed(self):\n        t = threading.Thread(target=_loop)\n        t.start()\n        self.addCleanup(t.join, 5)\n        self.assertTrue(False)\n"
+                "    def test_bounded_timed(self):\n        t = threading.Thread(target=_once)\n        self.addCleanup(t.join, 5)\n        t.start()\n        self.assertTrue(False)\n"
+                "    def test_unreadable_timed(self, cb=None):\n        t = threading.Thread(target=cb)\n        self.addCleanup(t.join, 5)\n        t.start()\n        self.assertTrue(False)\n"
+                "    def test_indirect_timed(self):\n        t = threading.Thread(target=lambda: km.spin())\n        self.addCleanup(t.join, 5)\n        t.start()\n        self.assertTrue(False)\n"
+                "    def test_seam(self):\n        t = threading.Thread(target=km._producer)\n        self.addCleanup(lambda: (km._LOOPS_STOP.set(), t.join(5)))\n        t.start()\n        self.assertTrue(False)\n"
+                "    def test_sentinel(self):\n        q = queue.Queue()\n        def run():\n            while True:\n                if q.get() is None:\n                    return\n"
+                "        t = threading.Thread(target=run)\n        self.addCleanup(lambda: (q.put_nowait(None), t.join(5)))\n        t.start()\n        self.assertTrue(False)\n"
+                "    def test_sentinel_body(self):\n        q = queue.Queue()\n        def run():\n            while True:\n                if q.get() is None:\n                    return\n"
+                "        t = threading.Thread(target=run)\n        t.start()\n        q.put_nowait(None); t.join(5)\n        self.assertTrue(False)\n"
+                "    def test_drain_shutdown(self):\n        peer = socket.socket()\n        got = bytearray()\n        def drain():\n            while len(got) < 10:\n"
+                "                b = peer.recv(100)\n                if not b:\n                    return\n                got.extend(b)\n"
+                "        t = threading.Thread(target=drain)\n        def end():\n            try:\n                peer.shutdown(socket.SHUT_RDWR)\n"
+                "            except OSError:\n                pass\n            t.join(10)\n        self.addCleanup(end)\n        t.start()\n        self.assertTrue(False)\n"
+                "    def test_drain_timed(self):\n        peer = socket.socket()\n        got = bytearray()\n        def drain():\n            while len(got) < 10:\n"
+                "                b = peer.recv(100)\n                if not b:\n                    return\n                got.extend(b)\n"
+                "        t = threading.Thread(target=drain)\n        self.addCleanup(t.join, 10)\n        t.start()\n        self.assertTrue(False)\n")
+        head = head.replace("import unittest\n", "import unittest\nimport queue\nimport socket\n")
+        rows, (tails, unread, stale, bounded), _p = self._census(body, head=head, product={"fake_kernel": product})
+        by = {w.split(".")[1]: (s.kind, sh) for s, sh, w in rows}
+        self.assertEqual(by["test_timed"], ("loop", "tail-only"))
+        self.assertEqual(by["test_untimed"], ("loop", "cleanup-before-start"))
+        self.assertEqual(by["test_with_release"], ("loop", "cleanup-before-start"))
+        self.assertEqual(by["test_lambda_timed"], ("loop", "tail-only"))
+        self.assertEqual(by["test_end_def_timed"], ("loop", "tail-only"))
+        self.assertEqual(by["test_after_start_timed"], ("loop", "tail-only"))
+        self.assertEqual(by["test_bounded_timed"], ("bounded", "cleanup-before-start"))
+        self.assertEqual(by["test_unreadable_timed"], (KIND_UNREAD, "cleanup-before-start"), "the documented acceptance for the unreadable kind")
+        self.assertEqual(by["test_indirect_timed"], ("loop", "cleanup-before-start"))
+        self.assertEqual(by["test_seam"], ("loop", "cleanup-before-start"))
+        self.assertEqual(by["test_sentinel"], ("loop", "cleanup-before-start"))
+        self.assertEqual(by["test_sentinel_body"], ("loop", "stop-before-first-assertion"))
+        self.assertEqual(by["test_drain_shutdown"], ("loop", "cleanup-before-start"))
+        self.assertEqual(by["test_drain_timed"], ("loop", "tail-only"))
+        self.assertEqual(sorted(w.split(".")[1] for s, w in tails), ["test_after_start_timed", "test_drain_timed", "test_end_def_timed", "test_lambda_timed", "test_timed"])
+        self.assertEqual((unread, bounded, stale), ([], [], []))
 
     def test_no_displayed_or_compared_target_text_is_rendered_by_ast_unparse(self):
         """The text a row displays, an ALLOW entry is keyed on or a plant compares is the source segment (_text), never
