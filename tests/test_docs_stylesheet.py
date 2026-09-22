@@ -21,12 +21,20 @@ Two properties, keyed on the sheet's structure and never on a line's spelling:
   2. with comments stripped, a rule whose prelude is exactly `:root, :root > *` is present and
      declares both custom properties.
 The scanner is a plain `/*` to `*/` state machine: no nesting (CSS has none) and no string state.
-Strings are not modelled because this sheet has no quoted string carrying either delimiter (a url()
-or a content string could, in general), and a test here asserts that on the comment-stripped text
-rather than assuming it. The mechanics are exercised on the smallest inputs that exhibit each
-property, then the checks run over the real sheet; the historical defect is replanted on every line
-of the real comment in turn and each plant is reported at its own lines, so the pin is known to red
-on the population's own shape.
+Strings are not modelled because this sheet has no quoted string carrying a comment delimiter, and a
+guard asserts that on the RAW sheet rather than assuming it. The guard's job is the `/*` carrier: the
+scanner takes a quoted `/*` as a comment opener and the next real comment's `*/` as its close, so it
+reports no fault and hides the code between the two from the rule reader, and the comment-stripped
+text has lost the string, so the guard's first form, which read that text, could not see it either
+(the reviewer, fork PR #893 round 1). A quoted `*/` needs no guard of its own: comment_faults reports
+it, as a stray close or as the early close of an open comment. Reading raw, the guard also reds on a
+delimiter between two quote characters on one line of a comment's prose (an apostrophe pair included),
+where a parser ignores it: a false red, but one whose message names the string, preferred to a read
+that shares the scanner's blindness. The bound is quoted strings: an unquoted url() body is not
+scanned, so a `/*` there is outside what this module asserts. The mechanics are exercised on the
+smallest inputs that exhibit each property, then the checks run over the real sheet; the historical
+defect is replanted on every line of the real comment in turn and each plant is reported at its own
+lines, so the pin is known to red on the population's own shape.
 
 The natural instrument for this is the CSS rule reader fork PR #862 adds, which was not landed when
 this was written; this module is the narrower comment-balance check over the docs sheet alone (the
@@ -160,6 +168,12 @@ def declarations(body):
 STRING_RE = re.compile(r'"[^"\n]*"|\'[^\'\n]*\'')
 
 
+def string_carriers(text):
+    """The quoted strings of `text` that carry a comment delimiter, `text` being the RAW sheet: on the
+    comment-stripped text a string holding `/*` is already gone, taken by strip_comments as an opener."""
+    return [s for s in STRING_RE.findall(text) if "/*" in s or "*/" in s]
+
+
 def _sheet():
     with open(SHEET, encoding="utf-8") as f:
         return f.read()
@@ -202,6 +216,20 @@ class ScannerMechanics(unittest.TestCase):
         self.assertEqual(strip_comments("a/* one */b/* two\n*/c"), "abc")
         self.assertEqual(strip_comments("a/* open"), "a")
 
+    def test_a_comment_opener_inside_a_quoted_string_is_seen_by_the_raw_read_alone(self):
+        # the scanner takes the string's `/*` as an opener and the real comment's `*/` as its close: no
+        # fault, the rule between hidden from the rule reader, the string gone from the stripped text
+        sheet = 'a { content: "x /* y"; }\nb { z: 1; }\n/* real */\nc { }\n'
+        self.assertEqual(comment_faults(sheet), [])
+        self.assertNotIn("b", [p for p, _ in rules(strip_comments(sheet))])
+        self.assertEqual(string_carriers(strip_comments(sheet)), [])
+        self.assertEqual(string_carriers(sheet), ['"x /* y"'])
+
+    def test_a_comment_close_inside_a_quoted_string_is_a_stray_close_and_a_carrier(self):
+        sheet = 'a { content: "x */ y"; }\n'
+        self.assertEqual(comment_faults(sheet), [(STRAY_CLOSE, 1, None)])
+        self.assertEqual(string_carriers(sheet), ['"x */ y"'])
+
 
 class DocsStylesheet(unittest.TestCase):
     """The real sheet."""
@@ -212,10 +240,12 @@ class DocsStylesheet(unittest.TestCase):
                                      "comment leaves the lines before it as code, and the rule they run into "
                                      "is dropped by the parser with every declaration in it\n%s" % describe(faults))
 
-    def test_no_string_outside_a_comment_carries_a_comment_delimiter(self):
-        # the scanner has no string state; this holds while the sheet gives it no reason to
-        code = strip_comments(_sheet())
-        carriers = [s for s in STRING_RE.findall(code) if "/*" in s or "*/" in s]
+    def test_no_quoted_string_carries_a_comment_delimiter(self):
+        # the scanner has no string state; this holds while the sheet gives it no reason to. The read is of
+        # the raw sheet: a string holding `/*` is gone from the comment-stripped text, taken as an opener,
+        # so a guard reading that text could not red on the case it names (the reviewer, fork PR #893
+        # round 1)
+        carriers = string_carriers(_sheet())
         self.assertEqual(carriers, [], "a quoted string carries a comment delimiter; comment_faults would misread "
                                        "it, so teach the scanner strings before relying on it here")
 
