@@ -44,6 +44,7 @@ from pathlib import Path
 from unittest import mock
 from romp_load import load_source
 from unittest import mock
+from tests.thread_ends import join_started
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -5956,14 +5957,8 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
             k_done.set()
 
         lt, kt = threading.Thread(target=run_l, name="L"), threading.Thread(target=run_k, name="K")
-
-        def end():                           # on every exit path (T282): resume the parked loop side (an assertion between
-            resume.set()                     # the two starts fails with L parked on it), join what started
-            for t in (lt, kt):
-                if t.ident is not None:
-                    t.join(5)
-        self.addCleanup(end)
-        lt.start()
+        self.addCleanup(join_started, resume, (lt, kt), 5)   # on every exit path (T282): resume the parked loop side (an assertion
+        lt.start()                                           # between the two starts fails with L parked on it), join what started
         self.assertTrue(parked.wait(5), "the loop side never reached the parked read")
         kt.start()
         deadline = time.monotonic() + 5

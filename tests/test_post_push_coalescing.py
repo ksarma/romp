@@ -17,6 +17,7 @@ from http.server import ThreadingHTTPServer
 from romp_load import load_source
 from pathlib import Path
 from unittest import mock
+from tests.thread_ends import join_started
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -124,7 +125,7 @@ class ControlRouteLatency(unittest.TestCase):
         # simulate the pile: three threads stuck in the (patched, slow) push build; each ends when its 2 s build
         # returns, and the cleanup waits for all three on every exit path
         piled = [threading.Thread(target=km._push_all, daemon=True) for _ in range(3)]
-        self.addCleanup(lambda: [t.join(5) for t in piled])
+        self.addCleanup(join_started, None, piled, 5)       # the threads that started, on every exit path (tests/thread_ends.py)
         for t in piled:
             t.start()
         km._pusher_wake.clear()

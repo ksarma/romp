@@ -301,7 +301,19 @@ tests/thread_ends.py's join_started(release, threads, timeout), the guarded list
 only the threads whose ident is not None: a cleanup registered before a start loop runs on the exit path where the body
 failed between two starts, and Thread.join raises on a thread never started), read as a stop through the import (the
 helper road above) and run by a nested case in tests/test_codex_backend.py whose planted failure between two starts reds
-when the guard is stripped. The fakes' roads have edges the
+when the guard is stripped. EVERY cleanup in the test modules that joins a LIST of threads goes through it, a property
+held BY CENSUS and not by grep (round 2 of PR 891's review): list_join_cleanups derives, over every cleanup registration
+of every unit (addCleanup, addClassCleanup, addfinalizer, addModuleCleanup, a registrar parameter whose name says cleanup),
+the joins whose receiver is the target of a for or a comprehension (`[t.join(5) for t in ts]`, `for t in (a, b):
+t.join(5)`, guarded or not), in the registration's own arguments or in the body of the lambda, local function, module
+function or method it names, and a tree test pins that list EMPTY (before the pin the tree carried ten such joins in five
+modules, derived by this function over the tree as it stood: six in tests/test_codex_backend.py, three of them the nested
+proofs' own, and one each in tests/test_file_read_memos.py, tests/test_post_push_coalescing.py,
+tests/test_free_threaded_caches.py and tests/test_sdk_backend.py, every one now a call of join_started but the second
+nested case's unguarded contrast, which joins each of its three callers by index); a plant reds it
+on an inline comprehension, a for in a local def, a for over a tuple, a method and a module function, and passes the
+helper through the registration and through a lambda. The helper module is not in the population, so its own for-join
+is the one place the shape lives. The fakes' roads have edges the
 walk states rather than reads: `self.fake` bound to two classes across the class reads the first (class_bindings); a
 class of the module shadows a local of the same name (class_named); a fake's release and receiver names (`self.go`,
 `self._srv`) are read from the target method's own body, not from the methods it delegates to (its KIND follows the
@@ -4039,6 +4051,53 @@ def _cleanup_stops(unit, call, start, extra=()):
     return any(_word_in(w, text) for w in start.words(extra))
 
 
+def _list_joins(node):
+    """The join calls in `node` whose receiver is the target of the for or the comprehension enclosing them (`[t.join(5)
+    for t in ts]`, `for t in (a, b): t.join(5)`, `list(t.join(1) for t in ts)`): a join of every element of a collection,
+    THE LIST-JOIN SHAPE, guarded on ident or not."""
+    out = []
+    for sub in ast.walk(node):
+        if isinstance(sub, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+            targets = {g.target.id for g in sub.generators if isinstance(g.target, ast.Name)}
+            scope = [sub.elt]
+        elif isinstance(sub, ast.For):
+            targets = {sub.target.id} if isinstance(sub.target, ast.Name) else set()
+            scope = sub.body
+        else:
+            continue
+        for s in scope:
+            for c in ast.walk(s):
+                if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "join" \
+                        and isinstance(c.func.value, ast.Name) and c.func.value.id in targets:
+                    out.append(c)
+    return out
+
+
+def list_join_cleanups(paths, helpers=None):
+    """Every cleanup registration in the modules under `paths` that joins a LIST of threads inline (_list_joins over the
+    registration's own arguments and the bodies of the lambda, local function, module function or method it names, the
+    helper-module bodies excluded): [(file, line, unit qualname, the join's text)]. THE PROPERTY THE TREE HOLDS (round 2
+    of PR 891's review, 2026-09-22): this is EMPTY, because every such cleanup goes through tests/thread_ends.py's
+    join_started, the guard on a thread never started written once (a cleanup registered before a start loop runs on
+    the exit path where the body failed between two starts, and Thread.join raises on one never started). A helper module
+    is not in `paths` (module_paths lists tests/test_*.py), so the helper's own for-join is not a finding."""
+    helpers = helper_modules() if helpers is None else helpers
+    out, cache, seen = [], {}, set()
+    for p in paths:
+        m = _Module(p, set(), helpers=helpers, helper_cache=cache)
+        for u in m.units():
+            for s, _b, _i, _st in u.rows:
+                for sub in _expr_children(s):
+                    if isinstance(sub, ast.Call) and _is_cleanup_call(u, sub):
+                        for n in _cleanup_nodes(u, sub, helpers=False):
+                            for j in _list_joins(n):
+                                key = (p, j.lineno, j.col_offset)
+                                if key not in seen:
+                                    seen.add(key)
+                                    out.append((os.path.relpath(p, ROOT), j.lineno, u.qualname, _text(j, m)))
+    return out
+
+
 def _loop_kind(start):
     """The start's thread runs on unless told, for the BODY's timed-join rule (_stop_in): a loop the walk read outright
     (not a loop found only in a product callee, _indirect, which the rule reads as bounded) or a thread of unreadable
@@ -4637,6 +4696,24 @@ class ThreadStopCensus(unittest.TestCase):
             self.assertIn(key, hm)
         self.assertEqual(helper_thread_factories(helpers=hm), [],
                          "a helper module returns a Thread now: the census reads it; update the does-not-see paragraph")
+
+    def test_every_cleanup_that_joins_a_list_of_threads_goes_through_the_helper(self):
+        """Round 2 of PR 891's review (2026-09-22): every cleanup in the test modules that joins a list of threads goes through
+        tests/thread_ends.py's join_started, whose join is guarded on the thread having started; held by census, not by
+        grep: list_join_cleanups derives the inline list joins over every cleanup registration of the tree and this pins the
+        list empty (the plant reds it on an inline comprehension). The helper itself is in the tree (helper_modules) and is
+        the guarded shape."""
+        self.assertIn("thread_ends", helper_modules())
+        with open(os.path.join(HERE, "thread_ends.py"), encoding="utf-8") as f:
+            helper = ast.parse(f.read())
+        fn = next(n for n in helper.body if isinstance(n, ast.FunctionDef) and n.name == "join_started")
+        joins = _list_joins(fn)
+        self.assertEqual(len(joins), 1, "the helper joins the list once")
+        self.assertTrue(any(isinstance(n, ast.If) and "ident" in ast.dump(n.test) for n in ast.walk(fn)), "the helper's join is guarded on ident")
+        found = list_join_cleanups(module_paths())
+        self.assertEqual(found, [], "a cleanup joins a list of threads inline; route it through tests/thread_ends.py's join_started "
+                                    "(the guard on a thread never started, written once):\n%s"
+                                    % "\n".join("%s:%d %s: %s" % f for f in found))
 
 
 class PlantedShapes(unittest.TestCase):
@@ -6433,6 +6510,45 @@ class PlantedShapes(unittest.TestCase):
         self.assertEqual(sorted({w.split(".")[1] for s, w in tails}), ["test_none_release", "test_other_list", "test_real_helper_none"])
         self.assertEqual((unread, bounded, stale), ([], [], []))
         self.assertEqual(len(rows), 10, [(s.recv_shown, sh, w) for s, sh, w in rows])   # one start statement per test
+
+    def test_a_cleanup_that_joins_a_list_of_threads_inline_is_named_by_the_list_join_pin(self):
+        """The list-join pin (round 2 of PR 891's review, 2026-09-22) on a planted module: an inline comprehension join in the
+        registration (`self.addCleanup(lambda: [t.join(5) for t in ts])`), a generator expression, a for in a local def, a
+        for over a tuple with the ident guard written inline, a method of the class and a module function are each named
+        with their unit and text; a cleanup through tests/thread_ends.py's join_started, by the registration or by a lambda,
+        and a cleanup joining single threads are not."""
+        with open(os.path.join(HERE, "thread_ends.py"), encoding="utf-8") as f:
+            real = f.read()
+        head = self.HEAD.replace("import unittest\n", "import unittest\nfrom tests.thread_ends import join_started\n")
+        head = head.replace("class T(", "def _stop_all(ts):\n    [t.join(1) for t in ts]\n\nclass T(")
+        pair = "        ts = [threading.Thread(target=_once) for _ in range(2)]\n"
+        starts = "        for t in ts:\n            t.start()\n        self.assertTrue(False)\n"
+        body = ("    def _end(self):\n        for t in self.ts:\n            t.join()\n"
+                "    def test_comprehension(self):\n" + pair + "        self.addCleanup(lambda: [t.join(5) for t in ts])\n" + starts +
+                "    def test_genexp(self):\n" + pair + "        self.addCleanup(lambda: list(t.join(1) for t in ts))\n" + starts +
+                "    def test_for_def(self):\n" + pair + "        def end():\n            for t in ts:\n                t.join(2)\n        self.addCleanup(end)\n" + starts +
+                "    def test_tuple_for(self):\n        a, b = threading.Thread(target=_once), threading.Thread(target=_once)\n"
+                "        def end():\n            for t in (a, b):\n                if t.ident is not None:\n                    t.join(5)\n        self.addCleanup(end)\n"
+                "        a.start(); b.start()\n        self.assertTrue(False)\n"
+                "    def test_method(self):\n        self.ts = [threading.Thread(target=_once) for _ in range(2)]\n        self.addCleanup(self._end)\n"
+                "        for t in self.ts:\n            t.start()\n        self.assertTrue(False)\n"
+                "    def test_module_fn(self):\n" + pair + "        self.addCleanup(_stop_all, ts)\n" + starts +
+                "    def test_helper(self):\n" + pair + "        self.addCleanup(join_started, None, ts, 5)\n" + starts +
+                "    def test_helper_lambda(self):\n" + pair + "        go = threading.Event()\n        self.addCleanup(lambda: join_started(go, ts, 5))\n" + starts +
+                "    def test_single(self):\n        a, b = threading.Thread(target=_once), threading.Thread(target=_once)\n"
+                "        self.addCleanup(a.join, 5)\n        self.addCleanup(lambda: (a.join(2), b.join(2)))\n        a.start(); b.start()\n        self.assertTrue(False)\n")
+        rows, (tails, unread, stale, bounded), _p = self._census(body, head=head, helpers={"thread_ends": real})
+        d = os.path.join(ROOT, os.path.dirname(_p))
+        found = list_join_cleanups([os.path.join(ROOT, _p)], helpers={"thread_ends": os.path.join(d, "thread_ends.py")})
+        self.assertEqual(sorted((u, t) for _f, _l, u, t in found),
+                         sorted([("T.test_comprehension", "t.join(5)"), ("T.test_genexp", "t.join(1)"), ("T.test_for_def", "t.join(2)"),
+                                 ("T.test_tuple_for", "t.join(5)"), ("T.test_method", "t.join()"), ("T.test_module_fn", "t.join(1)")]), found)
+        self.assertTrue(all(f == _p for f, _l, _u, _t in found), found)
+        self.assertEqual(sorted(w.split(".")[1] for s, sh, w in rows if sh == "cleanup-before-start"),
+                         sorted(["test_comprehension", "test_genexp", "test_for_def", "test_tuple_for", "test_tuple_for", "test_method",
+                                 "test_module_fn", "test_helper", "test_helper_lambda", "test_single", "test_single"]),   # a.start(); b.start(): two rows
+                         [(w, sh) for s, sh, w in rows])
+        self.assertEqual((tails, unread, stale), ([], [], []))
 
     def test_no_displayed_or_compared_target_text_is_rendered_by_ast_unparse(self):
         """The text a row displays, an ALLOW entry is keyed on or a plant compares is the source segment (_text), never

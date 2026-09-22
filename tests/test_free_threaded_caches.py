@@ -32,6 +32,7 @@ from pathlib import Path
 from unittest import mock
 
 from romp_load import load_source
+from tests.thread_ends import join_started
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -785,7 +786,7 @@ def _hammer(case, fn, threads=8, n=5000):
     """`threads` threads each call fn `n` times; `case` (the test) registers the joins as a cleanup right after the
     starts, so an assertion that fails in the caller leaves none of them behind (the joins below are the success path's)."""
     ts = [_run(lambda: [fn() for _ in range(n)]) for _ in range(threads)]
-    case.addCleanup(lambda: [t.join(WAIT * 4) for t in ts if t.ident is not None])   # _run started each; the guard is the
+    case.addCleanup(join_started, None, ts, WAIT * 4)   # _run started each; the helper's guard (tests/thread_ends.py) is the
     # list-join rule (Thread.join raises on a thread never started), so a later shape that builds first stays safe
     for t in ts:
         t.join(WAIT * 4)
