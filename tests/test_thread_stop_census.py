@@ -219,8 +219,10 @@ fail, and the shape this census forbids is a stop that stands BEHIND an assertio
   finally: the start is inside a try body that has a finally, or the walk forward meets such a try before any assertion
     (start, then `try: ... finally: stop`, the contextmanager idiom).
   cleanup-before-start: a cleanup (addCleanup, addClassCleanup, addfinalizer, addModuleCleanup, or a registrar handed in
-    as a parameter whose name says cleanup) that names a stop OF THIS THREAD: its text, or the body of the local
-    function, the lambda or the method of the class it names, has a stop (an attribute or call of join / set / shutdown /
+    as a parameter whose name says cleanup) that names a stop OF THIS THREAD: its text, the body of the local
+    function, the lambda or the method of the class it names, or the body one call down of the local function, module
+    function, lambda or method a call in those bodies names (the stop verb and the thread's words may both come from
+    it), has a stop (an attribute or call of join / set / shutdown /
     stop / close / cancel / terminate / kill, the loops' seam _LOOPS_STOP, a name one of whose WORDS, split on `_` and
     on case, is stop / end / close / shutdown / cancel / join / release: `stop_all`, `endWorker`; not `pending`, `send`,
     `append`, `render`, `calendar`, which only hold one as a substring) AND
@@ -334,9 +336,10 @@ says cleanup), the joins whose receiver is an element of what a for or a compreh
 element of a tuple target or a subscript of the iterated name by the target (`[t.join(5) for t in ts]`, `for t in (a, b):
 t.join(5)`, `for i, t in enumerate(ts): t.join(5)`, `ts[i].join()`, guarded or not: the ninth pass widened the shape from a
 Name target), in the registration's own arguments or in the body of the lambda, local function, module function or method
-it names or, one level down, of the module function or method a call in those bodies names (`self.addCleanup(lambda:
-_stop_all(ts))`, a local def that calls a self-method: round 3 of PR 891's review, 2026-09-22, which found the walk one
-call short of this sentence), and a tree test pins that list EMPTY (before the pin the tree carried ten such joins in five modules, derived by
+it names or, one level down, of the local function, module function, lambda or method a call in those bodies names
+(`self.addCleanup(lambda: _stop_all(ts))`, a local def that calls a self-method: round 3 of PR 891's review, 2026-09-22,
+which found the walk one call short of this sentence; a name the body itself binds is not followed, and a body from
+elsewhere resolves its calls in the module's scope, not the registering unit's: round 4), and a tree test pins that list EMPTY (before the pin the tree carried ten such joins in five modules, derived by
 this function over the tree as it stood: six in tests/test_codex_backend.py, three of them the nested proofs' own, and one
 each in tests/test_file_read_memos.py, tests/test_post_push_coalescing.py, tests/test_free_threaded_caches.py and
 tests/test_sdk_backend.py, every one now a call of join_started but the second nested case's unguarded contrast, which
@@ -414,7 +417,8 @@ RecursionError of the 3.10 and 3.11 cells at 7e084a002, and on 3.12 a completed 
 and a minute in one plant. The iterative copier above makes this census immune, the hosts census guards its marks since,
 and THE SINGLETON PIN makes any such writer visible: tests/parse_cache.py's check_singletons (raising, naming each
 singleton, attribute and value type, the site and the remedy; never repairing) runs on the first parse of the process
-and before and after every build, so every consumer of the cache inherits it; setUpClass calls it before the tree
+and before and after every build, the build returning or raising (a raising build that wrote is named as the writer, its
+own exception chained as the cause), so every consumer of the cache inherits it; setUpClass calls it before the tree
 derivation as the visible site; a tree test holds the singletons clean after the derivation; the read-only pin walks
 them too, each named once per tree with the words that say it is shared. Order-dependent by nature: red exactly when a
 writer ran earlier in the same process, CI's serial shape, green for a module run alone. The mechanism is reproduced by
@@ -4297,40 +4301,94 @@ def _helper_bodies(unit, call, nodes):
     return out
 
 
+def _body_bound_names(body):
+    """The names a collected body (a def or a lambda) binds itself: its parameters (positional, keyword-only, *args and
+    **kwargs), every Name it stores or deletes (as _bound_body's `stored`), and the name of every def it holds. A Name call
+    of one of these one level down is the body's own binding and is not followed (_cleanup_nodes)."""
+    args = body.args
+    out = {a.arg for a in args.posonlyargs + args.args + args.kwonlyargs}
+    for a in (args.vararg, args.kwarg):
+        if a is not None:
+            out.add(a.arg)
+    for n in ast.walk(body):
+        if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)):
+            out.add(n.id)
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n is not body:
+            out.add(n.name)
+    return out
+
+
+def _local_def(unit, name):
+    """The local function `name` of `unit` or, failing that, of its parent unit, with the unit whose scope holds it; (None,
+    None) when neither defines one."""
+    fn = unit.local_defs.get(name)
+    if fn is not None:
+        return fn, unit
+    if unit.parent is not None:
+        fn = unit.parent.local_defs.get(name)
+        if fn is not None:
+            return fn, unit.parent
+    return None, None
+
+
 def _cleanup_nodes(unit, call, helpers=True):
     """The nodes a cleanup registration runs, read for its stop: its arguments; the local function (of the unit or its
     parent), the module function or the lambda a name among them is bound to; the methods of the class a `self.x` /
     `cls.x` among them names; ONE LEVEL DOWN inside those bodies (round 3 of PR 891's review, 2026-09-22), the local
-    function, module function or method of the class a Call in a collected lambda, local function or method names
-    (`self.addCleanup(lambda: _stop_all(ts))`: _stop_all's body; `def end(): self._end_all()` registered: _end_all's body),
-    the way _helper_bodies follows a call to a helper module's function, each body once and not walked further; and, one
-    level down (`helpers`), the bodies of the helper-module functions any of those run, bound to the arguments handed
-    (_helper_bodies). Before the widening the walk stopped at the lambda or the local def, so a list join one call behind
-    it was not the list-join pin's finding while the same join named directly (`self.addCleanup(_stop_all, ts)`) was."""
-    nodes = []
+    function, module function, lambda or method of the class a Call in a collected lambda, local function, module
+    function or method names (`self.addCleanup(lambda: _stop_all(ts))`: _stop_all's body; `def end(): self._end_all()`
+    registered: _end_all's body), the way _helper_bodies follows a call to a helper module's function, each body once and
+    not walked further; and, one level down (`helpers`), the bodies of the helper-module functions any of those run,
+    bound to the arguments handed (_helper_bodies). A NAME CALL ONE LEVEL DOWN IS RESOLVED IN THE SCOPE OF THE BODY IT
+    STANDS IN (round 4 of the review): a name the body itself binds (_body_bound_names: a parameter, a Name it stores or
+    deletes, a def it holds) is not followed, the body's own binding shadowing whatever the name reaches outside it
+    (`def end(): _end_all = lambda xs: None; _end_all(ts)` registered reaches no module function); in a body the
+    registering unit owns (a lambda among the arguments, a local function of the unit or its parent, the lambda a name is
+    bound to) the name is resolved through the local functions of the unit that holds the body and its parent, then the
+    module's functions and, failing those, the lambda the name is bound to at the call's line in that unit (binding_at,
+    the first level's reading: `end = lambda: [t.join(5) for t in ts]; self.addCleanup(lambda: end())` reaches end's
+    body); in a body from elsewhere (a module function, a method of the class) it is resolved through the module's
+    functions alone, never the registering unit's local functions, which that body cannot see (a test's local
+    `def helper(): pass` shadows nothing a method calls). A `self.x` / `cls.x` call in any collected body reaches the
+    methods of the class. Before the widening the walk stopped at the lambda or the local def, so a list join one call
+    behind it was not the list-join pin's finding while the same join named directly (`self.addCleanup(_stop_all, ts)`)
+    was."""
+    nodes, owner = [], {}                                        # owner: id(body) -> the unit whose scope holds it; None for a body from elsewhere
     for a in list(call.args) + [k.value for k in call.keywords]:
         nodes.append(a)
+        owner[id(a)] = unit
         if isinstance(a, ast.Name):
-            fn = unit.local_defs.get(a.id) or (unit.parent.local_defs.get(a.id) if unit.parent is not None else None) \
-                or unit.module.functions.get(a.id)
+            fn, at = _local_def(unit, a.id)
+            if fn is None:
+                fn = unit.module.functions.get(a.id)
             if fn is not None:
                 nodes.append(fn)
+                owner[id(fn)] = at
             b = unit.binding_at(a.id, call.lineno)
             if b is not None and isinstance(b[1], ast.Lambda):
                 nodes.append(b[1])
+                owner[id(b[1])] = unit
         if isinstance(a, ast.Attribute) and isinstance(a.value, ast.Name) and a.value.id in ("self", "cls") and unit.cls is not None:
-            nodes += unit.module.methods_of(unit.cls, a.attr)
+            for m in unit.module.methods_of(unit.cls, a.attr):
+                nodes.append(m)
+                owner[id(m)] = None
     seen = {id(n) for n in nodes}
     for body in [n for n in nodes if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))]:
+        at, bound = owner.get(id(body)), _body_bound_names(body)
         for sub in ast.walk(body):
             if not isinstance(sub, ast.Call):
                 continue
             called = []
-            if isinstance(sub.func, ast.Name):
-                fn = unit.local_defs.get(sub.func.id) or (unit.parent.local_defs.get(sub.func.id) if unit.parent is not None else None) \
-                    or unit.module.functions.get(sub.func.id)
+            if isinstance(sub.func, ast.Name) and sub.func.id not in bound:
+                fn = _local_def(at, sub.func.id)[0] if at is not None else None
+                if fn is None:
+                    fn = unit.module.functions.get(sub.func.id)
                 if fn is not None:
                     called.append(fn)
+                elif at is not None:
+                    b = at.binding_at(sub.func.id, sub.lineno)
+                    if b is not None and isinstance(b[1], ast.Lambda):
+                        called.append(b[1])
             elif isinstance(sub.func, ast.Attribute) and isinstance(sub.func.value, ast.Name) and sub.func.value.id in ("self", "cls") \
                     and unit.cls is not None:
                 called += unit.module.methods_of(unit.cls, sub.func.attr)
@@ -4343,10 +4401,12 @@ def _cleanup_nodes(unit, call, helpers=True):
 
 def _cleanup_stops(unit, call, start, extra=()):
     """The cleanup names a stop (an attribute or call of a stop verb, the loops' seam, or a name that says stop, in its own
-    arguments, in the body of the local function, lambda or method of the class it names, or in the body of the
-    helper-module function it runs, bound to the arguments handed: _cleanup_nodes) AND that text mentions the started
-    thread (_thread_words): a cleanup that stops another thread excuses nothing about this one. With no start the stop
-    shape alone is read."""
+    arguments, in the body of the local function, lambda or method of the class it names, in the body one call down of
+    the local function, module function, lambda or method a call in those bodies names (_cleanup_nodes's widening, round
+    3 of PR 891's review: the stop verb and the thread's words may both come from that body, the same reading as at the
+    first level), or in the body of the helper-module function it runs, bound to the arguments handed: _cleanup_nodes)
+    AND that text mentions the started thread (_thread_words): a cleanup that stops another thread excuses nothing about
+    this one. With no start the stop shape alone is read."""
     nodes = _cleanup_nodes(unit, call)
     if not any(_stop_shaped(n) for n in nodes):
         return False
@@ -4406,7 +4466,8 @@ def _list_joins(node):
 def list_join_cleanups(paths, helpers=None, modules=None):
     """Every cleanup registration in the modules under `paths` that joins a LIST of threads inline (_list_joins over the
     registration's own arguments and the bodies of the lambda, local function, module function or method it names, and,
-    one level down, of the module function or method a call in those bodies names (round 3 of PR 891's review); the
+    one level down, of the local function, module function, lambda or method a call in those bodies names (round 3 of PR
+    891's review; the scope rules of round 4 are _cleanup_nodes's); the
     helper-module bodies excluded): [(file, line, unit qualname, the join's text)]. THE PROPERTY THE TREE HOLDS (round 2
     of PR 891's review, 2026-09-22): this is EMPTY, because every such cleanup goes through tests/thread_ends.py's
     join_started, the guard on a thread never started written once (a cleanup registered before a start loop runs on
@@ -5245,10 +5306,11 @@ class ThreadStopCensus(unittest.TestCase):
 
     def test_the_parsers_singletons_carry_no_attribute_after_the_derivation(self):
         """THE SINGLETON PIN from the census's side (the twelfth pass, 2026-09-22; tests/parse_cache.py holds it for every
-        consumer of the cache: check_singletons on the first parse of the process and before and after every build, and
-        setUpClass's own visible call before the tree derivation). The parser hands out ONE instance of each expression
-        context (Load, Store, Del) and of each operator per process, shared by every tree it builds, so an attribute written
-        on one by a module that ran earlier in the process rides on every tree parsed afterwards: CI's diagnostic run
+        consumer of the cache: check_singletons on the first parse of the process and before and after every build, the
+        build returning or raising, and setUpClass's own visible call before the tree derivation). The parser hands out
+        ONE instance of each expression context (Load, Store, Del) and of each operator per process, shared by every tree
+        it builds, so an attribute written on one by a module that ran earlier in the process rides on every tree parsed
+        afterwards: CI's diagnostic run
         35740276523 read that back, tests/test_hosts_path_census.py's `_fn` and `_parent` marks on the shared nodes, which
         copy.deepcopy of a hand followed into that census's whole graph (the mechanism plant in IterativeHandCopier
         reproduces it). ORDER-DEPENDENT BY NATURE: this reds only when such a writer ran EARLIER in the same process, which
@@ -5307,7 +5369,9 @@ class ParseCacheKeyAndLock(unittest.TestCase):
     it found wanting were the lock, which the helper lacked, and the key, which could not see a rewrite that kept size and
     mtime_ns. Every thread a case starts ends on every exit path in the T282 shape: join_started registered as a cleanup
     before the start loop, a bounded join in the body, and no thread alive after it; the bodies are bounded (a timed
-    barrier, one read or one build)."""
+    barrier, one read or one build). Every key a case derives and every path it parses is forgotten by a cleanup
+    (PC.clear) registered where the name is bound, BEFORE its first use, so a failing case leaves no memo behind (round 4
+    of PR 891's review, 2026-09-22); a clear a case makes in its body is part of what it tests, not its cleanup."""
     KEY = ("tests/test_thread_stop_census.py", "a planted key of ParseCacheKeyAndLock")
 
     def _planted_dir(self):
@@ -5349,6 +5413,7 @@ class ParseCacheKeyAndLock(unittest.TestCase):
             self.assertIn(part, msg)
         self.assertIn("_planted", vars(load), "the helper repaired nothing: the writer stays visible")
         p = os.path.join(self._planted_dir(), "planted.py")
+        self.addCleanup(PC.clear, p)
         self._write(p, "v = 1\n")
         self.addCleanup(setattr, PC, "_PARSE_CHECKED", PC._PARSE_CHECKED)
         PC._PARSE_CHECKED = False
@@ -5358,6 +5423,7 @@ class ParseCacheKeyAndLock(unittest.TestCase):
         self.assertIn("at the first parse of this process", str(cm.exception))
         self.assertEqual((PC.parses_of(p), PC.stats(), PC._PARSE_CHECKED), (0, before, True), "refused before the read; the check ran once")
         key = self.KEY + ("the singleton pin's plant",)
+        self.addCleanup(PC.clear, key)
         calls = []
         with self.assertRaises(AssertionError) as cm:
             PC.derived(key, lambda: calls.append("clean build"))
@@ -5378,7 +5444,72 @@ class ParseCacheKeyAndLock(unittest.TestCase):
         a = PC.derived(key, lambda: calls.append("landed") or object())
         self.assertIs(PC.derived(key, object), a, "clean again: the build lands and the next call hits")
         self.assertEqual((calls[-1], PC.builds_of(key)), ("landed", 2))
-        PC.clear(key)
+
+    def test_a_build_that_writes_on_a_singleton_and_then_raises_is_named_as_the_writer(self):
+        """tests/parse_cache.py's singleton pin on the RAISING path of derived() (round 4 of PR 891's review, 2026-09-22): a
+        build that writes on the parser's Store (from a small parse; the restore registered as a cleanup BEFORE the build
+        runs) and then raises ValueError is refused with an AssertionError that names the build that just raised as the
+        writer (`after the build of <key> raised ValueError`, `Store carries _raised (int)`, the remedy's grep for
+        `._raised =`) and chains the ValueError as its __cause__, so the build's own exception is not masked; the build is
+        counted and not memoised, and the helper removes nothing (the attribute is there until the cleanup). Before this
+        the after-build check ran on the return path alone, the build's ValueError propagated by itself and the write was
+        named at the next miss as an earlier writer's. A build that raises without writing propagates its own exception
+        as before, no AssertionError and nothing chained."""
+        PC.check_singletons("at the plant's entry (ParseCacheKeyAndLock, the raising build)")
+        store = ast.parse("x = 1").body[0].targets[0].ctx
+        self.assertIs(store, ast.parse("y = 2").body[0].targets[0].ctx, "the parser's Store is one object per process")
+        key = self.KEY + ("a build that writes on a singleton and raises",)
+        self.addCleanup(PC.clear, key)
+        self.addCleanup(self._unplant, store, "_raised")            # BEFORE the build runs
+        calls = []
+
+        def dirty_raising_build():
+            calls.append("dirty raising build")
+            store._raised = 1
+            raise ValueError("the build's own failure")
+        with self.assertRaises(AssertionError) as cm:
+            PC.derived(key, dirty_raising_build)
+        msg = str(cm.exception)
+        for part in ("after the build of %r raised ValueError" % (key,), "the build that just raised wrote them",
+                     "Store carries _raised (int)", "grep tests/ for `._raised =`", "order-dependent"):
+            self.assertIn(part, msg)
+        self.assertIsInstance(cm.exception.__cause__, ValueError, "the build's exception is the AssertionError's cause: not masked")
+        self.assertEqual(str(cm.exception.__cause__), "the build's own failure")
+        self.assertEqual((calls, PC.builds_of(key)), (["dirty raising build"], 1), "counted, not memoised")
+        self.assertIn("_raised", vars(store), "the helper repaired nothing: the writer stays visible")
+        self._unplant(store, "_raised")
+
+        def clean_raising_build():
+            raise ValueError("clean and raising")
+        with self.assertRaises(ValueError) as cm:
+            PC.derived(key, clean_raising_build)
+        self.assertIsNone(cm.exception.__cause__, "a build that raises without writing propagates its own exception, nothing chained")
+        self.assertEqual(PC.builds_of(key), 2, "counted, and nothing memoised: the key built again")
+
+    def test_the_singleton_pins_lines_and_remedy_are_rendered_from_its_tuples(self):
+        """singleton_attributes returns (node type, attribute name, value type name) tuples, and singleton_lines and
+        singleton_message render the lines and the remedy's grep list from them (round 4 of PR 891's review, 2026-09-22;
+        before it the remedy re-parsed the rendered lines on `, ` and ` (`, so an attribute name holding either was
+        named as two): an attribute whose name holds both, set on the parser's Load with setattr (the restore registered
+        BEFORE the write), is one tuple, renders as `Load carries odd, name (x) (int)`, and the remedy names that one
+        attribute; a second attribute on the same node joins the same line, the two sorted by name, and the remedy names
+        each once."""
+        load = ast.parse("x").body[0].value.ctx
+        self.addCleanup(self._unplant, load, "odd, name (x)")       # BEFORE the write
+        setattr(load, "odd, name (x)", 1)
+        found = PC.singleton_attributes()
+        self.assertEqual(found, [("Load", "odd, name (x)", "int")])
+        self.assertEqual(PC.singleton_lines(found), ["Load carries odd, name (x) (int)"])
+        msg = PC.singleton_message("in ParseCacheKeyAndLock's plant", found)
+        self.assertIn("grep tests/ for `.odd, name (x) =` over AST walks", msg)
+        self.assertNotIn("`.odd =`", msg)
+        self.assertNotIn("`.name =`", msg)
+        self.addCleanup(self._unplant, load, "_second")             # BEFORE the write
+        load._second = object()
+        found = PC.singleton_attributes()
+        self.assertEqual(found, [("Load", "_second", "object"), ("Load", "odd, name (x)", "int")])
+        self.assertEqual(PC.singleton_lines(found), ["Load carries _second (object), odd, name (x) (int)"])
+        self.assertIn("grep tests/ for `._second =` and `.odd, name (x) =` over AST walks", PC.singleton_message("in ParseCacheKeyAndLock's plant", found))
 
     def test_a_symlink_and_its_target_are_one_cache_entry_with_one_parse(self):
         """The key's first element is the realpath: a symlinked copy of a module (a copy of tests/thread_ends.py, a link
@@ -5387,6 +5518,7 @@ class ParseCacheKeyAndLock(unittest.TestCase):
         the next read parses again and the counter, left alone by clear, counts it."""
         d = self._planted_dir()
         target = os.path.join(d, "copy.py")
+        self.addCleanup(PC.clear, target)                            # one realpath: the link's and the directory's entry too
         shutil.copyfile(os.path.join(HERE, "thread_ends.py"), target)
         link = os.path.join(d, "link.py")
         os.symlink(target, link)
@@ -5404,7 +5536,6 @@ class ParseCacheKeyAndLock(unittest.TestCase):
         PC.clear(link)
         self.assertIsNot(PC.source_and_tree(target)[1], by_target, "clear(link) dropped the one entry, by realpath")
         self.assertEqual(PC.parses_of(target), 2, "the counter is left as it was and counts the second parse")
-        PC.clear(target)
 
     def test_a_build_that_raises_is_not_memoised_is_counted_and_releases_the_lock(self):
         """derived() counts a build before it runs, so a build that raises is counted and memoised as nothing: the next
@@ -5412,6 +5543,7 @@ class ParseCacheKeyAndLock(unittest.TestCase):
         derivation of another key completes after it, joined with a bound, so a lock still held would be a failure here
         and not a hang."""
         key = self.KEY + ("a build that raises",)
+        self.addCleanup(PC.clear, key)
         calls = []
 
         def build():
@@ -5423,6 +5555,7 @@ class ParseCacheKeyAndLock(unittest.TestCase):
             PC.derived(key, build)
         self.assertEqual((len(calls), PC.builds_of(key)), (1, 1), "the raise was a build attempt, counted")
         other = self.KEY + ("another key, asked from a second thread after the raise",)
+        self.addCleanup(PC.clear, other)
         got = []
 
         def derive_other():
@@ -5439,7 +5572,6 @@ class ParseCacheKeyAndLock(unittest.TestCase):
         self.assertIs(a, b, "the second build's value is the memo")
         self.assertEqual((len(calls), PC.builds_of(key)), (2, 2), "the raise memoised nothing: the next call built")
         self.assertEqual(PC.stats()["derived_hits"] - before["derived_hits"], 1)
-        PC.clear(key, other)
 
     def test_two_threads_on_one_path_parse_once_and_on_one_key_build_once(self):
         """THE LOCK (the gap the tenth pass's probe found: without it two threads reading kernel/kernel.py both missed and
@@ -5453,6 +5585,7 @@ class ParseCacheKeyAndLock(unittest.TestCase):
         setUpClass runs under the lock): shown on a planted key."""
         d = self._planted_dir()
         p = os.path.join(d, "kernel_copy.py")
+        self.addCleanup(PC.clear, p)
         shutil.copyfile(os.path.join(ROOT, "kernel", "kernel.py"), p)
         gate = threading.Barrier(2)
         got = {}
@@ -5472,6 +5605,7 @@ class ParseCacheKeyAndLock(unittest.TestCase):
         self.assertEqual(PC.parses_of(p), 1, "two threads on one path: one parse")
         self.assertEqual(PC.stats()["parses"] - before["parses"], 1)
         key = self.KEY + ("two threads",)
+        self.addCleanup(PC.clear, key)
         built = []
         gate2 = threading.Barrier(2)
 
@@ -5494,10 +5628,10 @@ class ParseCacheKeyAndLock(unittest.TestCase):
         self.assertEqual((len(built), PC.builds_of(key)), (1, 1), "two threads on one key: one build")
         nested = self.KEY + ("a re-entrant build",)
         inner = self.KEY + ("a re-entrant build: the inner key",)
+        self.addCleanup(PC.clear, nested, inner)
         value = PC.derived(nested, lambda: (PC.source_and_tree(p)[1], PC.derived(inner, object)))
         self.assertIs(value[0], got["a"], "the build read the cache from inside the lock: the same tree")
         self.assertEqual((PC.builds_of(nested), PC.builds_of(inner)), (1, 1))
-        PC.clear(p, key, nested, inner)
 
     def test_the_key_sees_a_restored_mtime_and_a_rename_over_and_names_its_blind_spot(self):
         """THE KEY (size, mtime_ns, inode, ctime_ns; the ninth pass's held size and mtime_ns alone, and its docstring said
@@ -5510,6 +5644,7 @@ class ParseCacheKeyAndLock(unittest.TestCase):
         the write until ctime has moved (bounded) and asserts the fields it relies on before each read."""
         d = self._planted_dir()
         p = os.path.join(d, "planted.py")
+        self.addCleanup(PC.clear, p)
         self._write(p, "x = 1\n")
         st0 = os.stat(p)
         first_text, first = PC.source_and_tree(p)
@@ -5539,7 +5674,6 @@ class ParseCacheKeyAndLock(unittest.TestCase):
         self.assertEqual(third_text, "x = 3\n")
         self.assertIs(PC.source_and_tree(p)[1], third, "unchanged after both: a hit")
         self.assertEqual(PC.parses_of(p), 3)
-        PC.clear(p)
 
 
 class IterativeHandCopier(unittest.TestCase):
@@ -5590,9 +5724,11 @@ class IterativeHandCopier(unittest.TestCase):
         self.assertEqual(copied.left.right.end_col_offset, node.left.right.end_col_offset)
 
     def test_a_foreign_attribute_on_a_node_is_neither_copied_nor_followed(self):
-        """A five-node hand whose one foreign attribute points at a list nested 100000 deep: _ast_copy copies the hand alone,
-        in bounded time, and the copy carries no such attribute (vars minus _fields and _attributes is empty), while
-        copy.deepcopy of the same node follows the attribute and raises RecursionError at the default limit."""
+        """A five-node hand whose one foreign attribute points at a list nested 100000 deep: _ast_copy copies the hand alone
+        and the copy carries no such attribute (vars minus _fields and _attributes is empty), while copy.deepcopy of the
+        same node follows the attribute and raises RecursionError at the default limit. The copy's duration is a figure in
+        the messages and nothing asserts it (round 4 of PR 891's review, 2026-09-22): what shows the copier ignored the
+        attribute is the copy in hand and the stdlib copier's error on the same node, not a clock."""
         node = ast.parse("f(x, y=[1, 2])").body[0].value
         graph = cur = []
         for _ in range(100000):
@@ -5602,14 +5738,13 @@ class IterativeHandCopier(unittest.TestCase):
         t0 = time.perf_counter()
         copied = _ast_copy(node)
         dt = time.perf_counter() - t0
-        self.assertFalse(hasattr(copied, "_graph"))
-        self.assertEqual(_foreign_attributes(copied), [])
+        self.assertFalse(hasattr(copied, "_graph"), "the copy carries the foreign attribute (the copy took %.6f s)" % dt)
+        self.assertEqual(_foreign_attributes(copied), [], "the copy took %.6f s" % dt)
         self.assertEqual(_foreign_attributes(node, shared=False), ["Call at line 1 carries _graph"],
                          "the check names the source's attribute (the parser's shared nodes left out: a write on them by another module "
                          "is the singleton pin's finding, not this plant's)")
         self.assertEqual(ast.dump(copied, include_attributes=True), ast.dump(node, include_attributes=True))
-        self.assertLess(dt, 2.0, "the copy is bounded by the hand, not by what its foreign attribute points at")
-        with self.assertRaises(RecursionError):
+        with self.assertRaises(RecursionError, msg="the stdlib copier follows the attribute into the list (the census's copy took %.6f s)" % dt):
             copy.deepcopy(node)
 
     @staticmethod
@@ -5637,13 +5772,20 @@ class IterativeHandCopier(unittest.TestCase):
         hand (a Name and its Load) followed `_parent` into that census's whole graph: RecursionError on 3.10 and 3.11, a
         completed copy of the graph on 3.12 (147 s in this module's tree derivation there). Here the Load gets `_parent` =
         kernel/kernel.py's cached tree (the largest the cache holds, 387805 nodes, 94 deep) and `_fn` = an object; under
-        sys.setrecursionlimit(1000), the default, copy.deepcopy of the hand either raises RecursionError or runs for over a
-        second (the whole tree copied; both arms measured, one asserted: on the box it completes in about three seconds
-        under each of 3.10, 3.11 and 3.12), while _ast_copy copies the same hand in under a millisecond (the least of five
-        runs, so a collection pause does not stand for the copier) and its copy carries nothing beyond the Name's fields
-        and a fresh, clean Load. A completed copy is cyclic (its Load's `_parent` leads back to its Names), so the plant
-        clears the copied Load's attributes and the copy frees by reference count, no full collection over the retained
-        trees needed."""
+        sys.setrecursionlimit(1000), the default, copy.deepcopy of the hand either raises RecursionError (the stdlib
+        copier's frames, several per AST level, run out against the foreign tree's depth: the arm CI's 3.10 and 3.11 cells
+        took) or COMPLETES A COPY OF THE FOREIGN TREE, and that arm is pinned by the copy in hand, not by the clock (round
+        4 of PR 891's review, 2026-09-22; before it the arm asserted the copy took over a second, a bound a runner twice
+        as fast per core would have failed): the copied Load is not the parser's, carries `_fn` and `_parent` of its own,
+        and its `_parent` is an ast.Module that is not the cached tree and holds exactly as many nodes as the cached tree
+        (ast.walk over each, iterative). At the depth pytest runs a test at the copy completes on every interpreter (the
+        RecursionError arm needs some 450 frames above the copy); its duration depends on the heap, two to four seconds
+        in a fresh process and about seven after this module's tree derivation when a gen-2 collection over the retained
+        trees lands inside, so it is a figure in the assertions' messages only. _ast_copy copies the same hand with a
+        fresh, clean Load (no `_parent`, no `_fn`) and nothing beyond the Name's fields; the least of its five timings is
+        a figure in a message too, never a bound. A completed copy is cyclic (its Load's `_parent` leads back to its
+        Names), so the plant clears the copied Load's attributes and the copy frees by reference count, no full
+        collection over the retained trees needed."""
         tree = PC.source_and_tree(os.path.join(ROOT, "kernel", "kernel.py"))[1]
         hand = ast.parse("f(v)").body[0].value.args[0]
         load = hand.ctx
@@ -5655,23 +5797,30 @@ class IterativeHandCopier(unittest.TestCase):
         load._parent, load._fn = tree, object()
         best = min(self._timed(_ast_copy, hand) for _ in range(5))
         copied = _ast_copy(hand)
-        self.assertEqual(_foreign_attributes(copied), [], "the census's copy carries no foreign attribute")
+        self.assertEqual(_foreign_attributes(copied), [], "the census's copy carries no foreign attribute (the least of five copies took %.6f s)" % best)
         self.assertIsNot(copied.ctx, load)
-        self.assertEqual(vars(copied.ctx), {}, "a fresh, clean Load on the copy")
+        self.assertEqual(vars(copied.ctx), {}, "a fresh, clean Load on the copy: no `_parent`, no `_fn` (the least of five copies took %.6f s)" % best)
         self.assertEqual(ast.dump(copied, include_attributes=True), ast.dump(hand, include_attributes=True))
-        self.assertLess(best, 0.001, "the census's copier took %.6f s on a two-node hand" % best)
         sys.setrecursionlimit(1000)
         t0 = time.perf_counter()
         try:
             c = copy.deepcopy(hand)
-            outcome = "completed"
-            vars(c.ctx).clear()                                      # the copied Load's `_parent`: the cycle through the copied Names
-            del c
         except RecursionError:
-            outcome = "RecursionError"
+            c = None                                             # the arm CI's 3.10 and 3.11 cells took: the copier followed `_parent` past the limit
         dt = time.perf_counter() - t0
-        self.assertTrue(outcome == "RecursionError" or dt > 1.0,
-                        "copy.deepcopy of the polluted hand %s in %.3f s: neither the recursion error nor a copy of the foreign tree" % (outcome, dt))
+        if c is not None:                                        # the other arm: the foreign tree copied whole, pinned by the copy in hand
+            figure = "copy.deepcopy of the polluted hand completed in %.3f s" % dt
+            try:
+                self.assertIsNot(c.ctx, load, "%s: the copied Load is not the parser's" % figure)
+                self.assertIn("_fn", vars(c.ctx), "%s: the copied Load carries the polluted instance's `_fn`" % figure)
+                foreign = vars(c.ctx).get("_parent")
+                self.assertIsInstance(foreign, ast.Module, "%s: the copied Load's `_parent` is a copy of the foreign tree" % figure)
+                self.assertIsNot(foreign, tree, "%s: a copy of the foreign tree, not the cached tree" % figure)
+                self.assertEqual(sum(1 for _ in ast.walk(foreign)), sum(1 for _ in ast.walk(tree)),
+                                 "%s: the whole foreign tree was copied, node for node" % figure)
+            finally:
+                vars(c.ctx).clear()                              # the copied Load's `_parent`: the cycle through the copied Names
+                del c
 
     def test_over_a_real_module_the_copy_equals_the_source_and_the_stdlib_copy(self):
         """This module's own tree (the parse cache's, a hit when the tree derivation ran first): _ast_copy's copy is ast.dump-equal,
@@ -7577,15 +7726,25 @@ class PlantedShapes(unittest.TestCase):
         list (`self.addCleanup(lambda: _end_all(ts))`) and a local def that calls a method of the class which joins the
         list stored on self (`def end(): self._join_all()`) are named too, with the join's text from the body one call
         behind the registration; before the widening of _cleanup_nodes both were silent while `self.addCleanup(_stop_all,
-        ts)` was named."""
+        ts)` was named. THE SCOPE ONE CALL DOWN (round 4 of the review): a lambda that calls a name bound to a lambda
+        which joins the list (`end = lambda: [t.join(6) for t in ts]; self.addCleanup(lambda: end())`) is named, as the
+        same lambda registered directly was; a local def that binds a name shadowing a module function which joins
+        (`def end(): _join_each = lambda xs: None; _join_each(ts)`) is NOT, its own binding read and the module function
+        never reached; and a method that calls a module function which joins (`def _end_via_module(self):
+        _end_each(self.ts)`) is named though the registering test defines a local `_end_each` of its own that joins
+        nothing, the method's call resolved in the module's scope and not the test's. Before round 4 the first and the
+        third were silent and the second was named. A join site is listed once, for the first registration that reaches
+        it (list_join_cleanups), so each case here reaches a join of its own."""
         with open(os.path.join(HERE, "thread_ends.py"), encoding="utf-8") as f:
             real = f.read()
         head = self.HEAD.replace("import unittest\n", "import unittest\nfrom tests.thread_ends import join_started\n")
-        head = head.replace("class T(", "def _stop_all(ts):\n    [t.join(1) for t in ts]\n\ndef _end_all(ts):\n    for t in ts:\n        t.join(4)\n\nclass T(")
+        head = head.replace("class T(", "def _stop_all(ts):\n    [t.join(1) for t in ts]\n\ndef _end_all(ts):\n    for t in ts:\n        t.join(4)\n\n"
+                                        "def _end_each(ts):\n    for t in ts:\n        t.join(7)\n\ndef _join_each(ts):\n    for t in ts:\n        t.join(8)\n\nclass T(")
         pair = "        ts = [threading.Thread(target=_once) for _ in range(2)]\n"
         starts = "        for t in ts:\n            t.start()\n        self.assertTrue(False)\n"
         body = ("    def _end(self):\n        for t in self.ts:\n            t.join()\n"
                 "    def _join_all(self):\n        for t in self.ts:\n            t.join(3)\n"
+                "    def _end_via_module(self):\n        _end_each(self.ts)\n"
                 "    def test_comprehension(self):\n" + pair + "        self.addCleanup(lambda: [t.join(5) for t in ts])\n" + starts +
                 "    def test_genexp(self):\n" + pair + "        self.addCleanup(lambda: list(t.join(1) for t in ts))\n" + starts +
                 "    def test_for_def(self):\n" + pair + "        def end():\n            for t in ts:\n                t.join(2)\n        self.addCleanup(end)\n" + starts +
@@ -7598,6 +7757,11 @@ class PlantedShapes(unittest.TestCase):
                 "    def test_lambda_module_fn(self):\n" + pair + "        self.addCleanup(lambda: _end_all(ts))\n" + starts +
                 "    def test_def_method(self):\n        self.ts = [threading.Thread(target=_once) for _ in range(2)]\n"
                 "        def end():\n            self._join_all()\n        self.addCleanup(end)\n"
+                "        for t in self.ts:\n            t.start()\n        self.assertTrue(False)\n"
+                "    def test_lambda_bound(self):\n" + pair + "        end = lambda: [t.join(6) for t in ts]\n        self.addCleanup(lambda: end())\n" + starts +
+                "    def test_shadow(self):\n" + pair + "        def end():\n            _join_each = lambda xs: None\n            _join_each(ts)\n        self.addCleanup(end)\n" + starts +
+                "    def test_method_scope(self):\n        self.ts = [threading.Thread(target=_once) for _ in range(2)]\n"
+                "        def _end_each(xs):\n            pass\n        self.addCleanup(self._end_via_module)\n"
                 "        for t in self.ts:\n            t.start()\n        self.assertTrue(False)\n"
                 "    def test_enumerate(self):\n" + pair + "        def end():\n            for i, t in enumerate(ts):\n                t.join(5)\n        self.addCleanup(end)\n" + starts +
                 "    def test_index(self):\n" + pair + "        self.addCleanup(lambda: [ts[i].join(3) for i in range(len(ts))])\n" + starts +
@@ -7614,12 +7778,13 @@ class PlantedShapes(unittest.TestCase):
                          sorted([("T.test_comprehension", "t.join(5)"), ("T.test_genexp", "t.join(1)"), ("T.test_for_def", "t.join(2)"),
                                  ("T.test_tuple_for", "t.join(5)"), ("T.test_method", "t.join()"), ("T.test_module_fn", "t.join(1)"),
                                  ("T.test_lambda_module_fn", "t.join(4)"), ("T.test_def_method", "t.join(3)"),
+                                 ("T.test_lambda_bound", "t.join(6)"), ("T.test_method_scope", "t.join(7)"),
                                  ("T.test_enumerate", "t.join(5)"), ("T.test_index", "ts[i].join(3)"), ("T.test_enumerate_index", "ts[i].join()")]), found)
         self.assertTrue(all(f == _p for f, _l, _u, _t in found), found)
         self.assertEqual(sorted(w.split(".")[1] for s, sh, w in rows if sh == "cleanup-before-start"),
                          sorted(["test_comprehension", "test_genexp", "test_for_def", "test_tuple_for", "test_tuple_for", "test_method",
-                                 "test_module_fn", "test_lambda_module_fn", "test_def_method", "test_enumerate", "test_index",
-                                 "test_enumerate_index", "test_indexed_out",
+                                 "test_module_fn", "test_lambda_module_fn", "test_def_method", "test_lambda_bound", "test_shadow",
+                                 "test_method_scope", "test_enumerate", "test_index", "test_enumerate_index", "test_indexed_out",
                                  "test_helper", "test_helper_lambda", "test_single", "test_single"]),   # a.start(); b.start(): two rows
                          [(w, sh) for s, sh, w in rows])
         self.assertEqual((tails, unread, stale), ([], [], []))
