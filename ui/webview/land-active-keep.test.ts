@@ -52,7 +52,8 @@ function liftBetween(startAnchor: string, endAnchor: string): string {
  *  untracked bag and a production-shaped `style.height` write was a silent no-op, while a spacer query planted in the window reddened on
  *  selector text rather than on the geometry it wrote). A row's `style.height` is routed into its `h` and recorded on the world's trace; the
  *  view element's `style.height`, which the model has no figure for (its height is its children's sum), throws; any other style key throws
- *  on a read or a write. A child inserted or removed through the DOM's methods (appendChild, insertBefore, removeChild, replaceChildren, a
+ *  on a read or a write; and the style OBJECT itself is non-writable on a row and on the view element, so replacing it throws too (the
+ *  maintainer's round 5 ruling, extra8-3: a replaced style would have routed every later height write into a plain object in silence). A child inserted or removed through the DOM's methods (appendChild, insertBefore, removeChild, replaceChildren, a
  *  node's remove) is recorded; the children collection is read-only like the DOM's. A selector is resolved for what the lifted code and
  *  production's spacer code are entitled to query among the children (every uuid-carrying row, one uuid, one class with or without
  *  `:scope > `), and any other selector throws, so an unmodelled query fails closed instead of matching nothing. Every property the model
@@ -86,7 +87,7 @@ function failClosed<T extends object>(o: T, name: string): T {
     set: (t, k, v, r) => {
       if (!known(k)) throw new Error(name + "." + String(k) + " written as " + JSON.stringify(v) + ": the model has no such property, so this fails closed rather than passing as a silent no-op");
       if (Reflect.set(t, k, v, r)) return true;
-      throw new Error(name + "." + String(k) + " written as " + JSON.stringify(v) + ": read-only in the model as in the DOM (a getter with no setter), so this fails closed rather than passing as a silent no-op");
+      throw new Error(name + "." + String(k) + " written as " + JSON.stringify(v) + ": read-only in the model as in the DOM (a getter with no setter, or the instrumented style object, which the DOM's element.style also refuses to replace), so this fails closed rather than passing as a silent no-op");
     },
     deleteProperty: (_t, k) => { throw new Error(name + "." + String(k) + " deleted: the model has nothing to delete, so this fails closed rather than passing as a silent no-op"); },
   });
@@ -101,22 +102,25 @@ class Content {
   getBoundingClientRect() { return { top: 0, bottom: this.clientHeight }; }
 }
 class Node {
-  dataset: Record<string, string> = {}; host: Host | null = null; readonly style: Record<string, string>;
+  dataset: Record<string, string> = {}; host: Host | null = null; declare readonly style: Record<string, string>;
   constructor(public h: number, public className: string, uuid?: string) {
     if (uuid) this.dataset.uuid = uuid;
     // a height written on a row moves the model's geometry and is recorded on the trace of the view the row is in (a detached row's write
-    // reaches the trace when the row is inserted, with its height)
-    this.style = styleOf("<" + className + ">", () => this.h, (h) => { this.host?.content.trace.push("style " + this.className + " height=" + h + " (was " + this.h + ")"); this.h = h; });
+    // reaches the trace when the row is inserted, with its height). The style object is installed NON-WRITABLE (configurable, so hideEdges
+    // can still hide it), so a write of the object itself, `row.style = {...}`, fails Reflect.set and the proxy's set trap throws: until the
+    // pass after the maintainer's round 5 ruling (extra8-3) it was a writable field and a replaced style routed every later height write
+    // into a plain object, a silent no-op the model refused for its keys but not for the object
+    Object.defineProperty(this, "style", { value: styleOf("<" + className + ">", () => this.h, (h) => { this.host?.content.trace.push("style " + this.className + " height=" + h + " (was " + this.h + ")"); this.h = h; }), writable: false, enumerable: false, configurable: true });
     hideEdges(this); return failClosed(this, "<" + className + ">");
   }
   getBoundingClientRect() { const top = this.host!.offsetOf(this) - this.host!.content.scrollTop; return { top, bottom: top + this.h }; }
   remove(): void { this.host?.removeChild(this); }
 }
 class Host {
-  private kids: Node[] = []; readonly style: Record<string, string>;
+  private kids: Node[] = []; declare readonly style: Record<string, string>;
   constructor(public content: Content) {
     const noHeight = (): never => { throw new Error("v.el.style.height: the view element's height is its children's sum and the model has no figure of its own for it, so a read or a write here fails closed rather than passing as a silent no-op"); };
-    this.style = styleOf("v.el", noHeight, noHeight);
+    Object.defineProperty(this, "style", { value: styleOf("v.el", noHeight, noHeight), writable: false, enumerable: false, configurable: true });   // non-writable, as on Node: the object itself cannot be replaced
     hideEdges(this); const p = failClosed(this, "v.el"); content.host = p; return p;
   }
   /** The children, read-only like the DOM's collection: insertion and removal go through the methods below, which record them. */
@@ -341,6 +345,23 @@ test("the reload restore's raw write, the ordering its exception rests on: the t
     assert.deepEqual(r.writes.map((x) => x.writer), ["reload-restore"], shape + ": the raw write is the land's one write");
     assert.ok(!r.trace.some((e) => /^(measured|avgTurnH|pxPerTurn)=/.test(e)), shape + ": the view's own take state (any of its three fields) is written by nothing on this road: " + JSON.stringify(r.trace));
   }
+});
+
+test("the model refuses a write of the `style` OBJECT itself on a row, on the head spacer and on the view element, not only of its keys: the instrumented style is installed non-writable, so the set trap's throw fires, and a replaced style cannot disable the height routing in silence for every later write; the members still route (the maintainer's round 5 ruling, extra8-3: closure-6's second named witness was still green)", () => {
+  // until this pass `style` was an own writable data property on Node and Host, so `row.style = {...}` and `v.el.style = {...}` passed the set
+  // trap through Reflect.set and the model's height routing went to a plain object: a silent no-op inside the ordering window, the shape the
+  // model exists to refuse (the members were refused, the object was not)
+  const w = world({ saved: 2350, scrollTop: 0, gap: true, bottomSpacerH: 500 });
+  const before = w.trace.length;
+  assert.throws(() => { (w.rows[0] as any).style = { height: "1px" }; }, /<turn>\.style written as .*read-only in the model as in the DOM/, "a row's style object cannot be replaced");
+  assert.throws(() => { (w.spacer as any).style = { height: "3px" }; }, /<tx-spacer tx-spacer-top>\.style written as .*read-only in the model/, "the head spacer's neither");
+  assert.throws(() => { (w.host as any).style = {}; }, /v\.el\.style written as .*read-only in the model/, "nor the view element's");
+  assert.throws(() => { Reflect.set(w.rows[1] as any, "style", {}); }, /read-only in the model/, "…through Reflect.set too (the trap throws where the DOM would ignore the write)");
+  assert.equal(w.rows[0].h, 100, "the row's height is untouched"); assert.equal(w.trace.length, before, "nothing traced: no write landed");
+  w.rows[0].style.height = "120px";
+  assert.equal(w.rows[0].h, 120, "a height written through the instrumented style still routes into the model");
+  assert.deepEqual(w.trace.slice(before), ["style turn height=120 (was 100)"], "…and is traced");
+  assert.throws(() => { (w.rows[0].style as any).color = "red"; }, /the model carries a height and nothing else/, "…and every other key is refused as before");
 });
 
 test("an armed miss whose attempt REBUILT the window around the anchor's unit (scrollToAnchor's pointer-not-rendered and pointer-wrong-kind roads): the captured row left with the old rows, so the restore misses, the take is undone and the raw land-saved write of the saved scrollTop lands in the layout it was saved in, the third of the raw write's roads; a rebuild that renders the saved place's row again under its uuid is restored over the take", () => {
