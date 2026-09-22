@@ -22,14 +22,17 @@
 # it drives from a string; the switch never reaches it", checked both ways, and can never be rostered; every other leg
 # carries the grandfather reason, the sentence quoted on the next line, so its owner moves it to the roster with the
 # step's measured numbers.
-# Every grandfather reason, "existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers", is bound to commit ff436587f4e826e2450517517efdf0b3208c9359: a source that did not exist at that commit may not carry it.
+# Every grandfather reason, "existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers", is bound to commit ff436587f4e826e2450517517efdf0b3208c9359: a source that did not exist at that commit may not carry it; the bound reads the file's age, not what it did there, so a source that existed at that commit without a browser launch may carry it, and the remedy for one that gained its launch later is a reason of its own.
 # That commit is main at the roster's creation, and this line is the bound's one home: ui/webview/ci-browser-legs-census.test.ts
 # (the vscode-extension job) reads the commit and the sentence from here, fetches the commit at depth 1 when the checkout
 # lacks it (a fetch or object read that fails is a red naming the reason, never a pass), and refuses a row carrying the
 # sentence whose source is not in the tree at that commit; tools/ci-browser-legs.test.mjs (the Shell job, a depth-1
-# checkout that fetches nothing) holds this header to one such line and does not run that history read. Both read the
-# claim by property, not spelling: a reason that makes the before-the-roster claim in any other spelling (a letter, a
-# punctuation mark or a space changed, or the word grandfather) is refused by name, never read as a reason of its own.
+# checkout that fetches nothing) holds this header to one such line and does not run that history read. Both read a reason
+# as one of four forms: the grandfather sentence as quoted on the line above, whole and exact; an engine reason, "launches
+# <Firefox|WebKit|Firefox and WebKit>; the gating job installs Chromium only", a tail after the phrase allowed; the
+# embedded-driver sentence, whole and exact; or a pending line. A reason that is none of them is refused by name (there is
+# no reason of its own, so the exemption cannot be made in another spelling), and one that reads as one form while its text
+# carries another form's phrase is refused as ambiguous, so a tail cannot carry a second claim.
 # To move a leg, delete its line here and add
 # the bundle path to ci-browser-legs.txt (a leg in both files turns the checkers red); a leg that launches through
 # its own playwright copy first switches its launch to inBrowser in ui/webview/real-viewer-leg.ts, the one shared
