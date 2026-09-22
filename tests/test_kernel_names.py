@@ -1091,6 +1091,7 @@ class ClaimBeforeSnapshot(_Base):
             self.parked_ident[0] = threading.get_ident()
             out["v"] = fn()
         t = threading.Thread(target=run)
+        self.addCleanup(self.resume, t)          # on every exit path: open the gate and wait for the parked caller
         t.start()
         self.assertTrue(self.entered.wait(timeout=10), "the parked caller reached %s" % at)
         return t, out
