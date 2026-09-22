@@ -1170,6 +1170,43 @@ test("the fourth class the census cannot name, witnessed through its own walker:
   assert.equal(ctl.opaque, 0, "…and nothing opaque");
 });
 
+/** The CLIENT_DIAG_VALUES table's body read by a BALANCED parse (the maintainer's round 6 ruling, extra8-1): the text tokenized over
+ *  parentheses, brackets and braces and over double- and single-quoted strings (a `#` comment runs to its line's end and is dropped), split
+ *  into entries at depth-0 commas; per entry the string literals before its top-level colon are the surface and the key (any text, a hyphen
+ *  included), the string literals inside the frozenset(...) argument are its words, and `container` says what that argument opens with (a
+ *  tuple, a set, a list, a single word in parentheses with no trailing comma, which Python reads as a string). `frozensets` counts
+ *  `frozenset(` over the body with comments and string contents removed, the number of entries the parse must read. */
+function parseValuesTable(body: string): { entries: Array<{ surface: string; key: string; words: string[]; container: string }>; frozensets: number } {
+  const strings = (s: string): string[] => [...s.matchAll(/"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'/g)].map((m) => m[1] ?? m[2]);
+  const chunks: string[] = [], colons: number[] = []; let depth = 0, cur = "", stripped = "", q: string | null = null, colon = -1;
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (q) { cur += ch; if (ch === "\\" && i + 1 < body.length) cur += body[++i]; else if (ch === q) { q = null; stripped += '""'; } continue; }   // a string's contents are dropped from `stripped`
+    if (ch === '"' || ch === "'") { q = ch; cur += ch; continue; }
+    if (ch === "#") { while (i < body.length && body[i] !== "\n") i++; cur += "\n"; stripped += "\n"; continue; }
+    stripped += ch;
+    if ("([{".includes(ch)) depth++; else if (")]}".includes(ch)) depth--;
+    if (depth === 0 && ch === ":" && colon < 0) colon = cur.length;
+    if (depth === 0 && ch === ",") { chunks.push(cur); colons.push(colon); cur = ""; colon = -1; continue; }
+    cur += ch;
+  }
+  if (cur.trim()) { chunks.push(cur); colons.push(colon); }
+  const entries = chunks.map((e, i) => {
+    const at = colons[i];
+    assert.ok(at >= 0, "an entry of the table has a top-level colon: " + e.trim());
+    const [surface, key] = strings(e.slice(0, at));
+    const value = e.slice(at + 1), m = /frozenset\s*\(/.exec(value);
+    assert.ok(m, "an entry's value is a frozenset(...): " + e.trim());
+    const argStart = m!.index + m![0].length;
+    let d = 1, j = argStart, qq: string | null = null;   // the argument runs to the frozenset call's own closing parenthesis
+    for (; j < value.length && d > 0; j++) { const c = value[j]; if (qq) { if (c === "\\") j++; else if (c === qq) qq = null; } else if (c === '"' || c === "'") qq = c; else if ("([{".includes(c)) d++; else if (")]}".includes(c)) d--; }
+    const arg = value.slice(argStart, j - 1).trim(), words = strings(arg);
+    const container = arg.startsWith("(") ? (words.length > 1 || /,\s*\)$/.test(arg) ? "a tuple" : "a single word in parentheses with no trailing comma (a string to Python; frozenset of a string is its letters)") : arg.startsWith("{") ? "a set" : arg.startsWith("[") ? "a list" : "another expression";
+    return { surface, key, words, container };
+  });
+  return { entries, frozensets: (stripped.match(/frozenset\s*\(/g) || []).length };
+}
+
 test("the page's guard literal is a member of the set the kernel admits for the marker, both read from their sources: kernel.py states the set once (CLIENT_DIAG_VALUES, one entry, chat's `view`, one word) and scroll-write.ts's spacerRow compares its `view` parameter with that word and types the parameter by it, so a change to either side alone reds here (the author's fixer pass over the pass after the maintainer's round 5, its verifier (b): until then the tie between the page's spelling and the kernel's set was two hand-written literals, the allowlist module's fixture row and the census's guard pin above)", () => {
   // WHAT IS READ: kernel.py's CLIENT_DIAG_VALUES table literal, by text (every `(surface, key): frozenset((words,))` entry between its
   // braces, the way the webview tests that read kernel.py read it), and scroll-write.ts's tree (the string literal spacerRow's guard
@@ -1178,6 +1215,21 @@ test("the page's guard literal is a member of the set the kernel admits for the 
   const table = /^CLIENT_DIAG_VALUES = \{\n([\s\S]*?)^\}/m.exec(kernel);
   assert.ok(table, "kernel.py states CLIENT_DIAG_VALUES as a table literal");
   const entries = [...table![1].matchAll(/^\s*\("(\w+)", "(\w+)"\): frozenset\(\(((?:\s*"[^"]*",)+)\s*\)\),/gm)].map((m) => ({ surface: m[1], key: m[2], words: [...m[3].matchAll(/"([^"]*)"/g)].map((x) => x[1]) }));
+  // the same body read by the BALANCED parse beside the regex (the maintainer's round 6 ruling, extra8-1: a one-spelling regex over a table
+  // that bounds a privacy value is a silent shape). The regex is kept as the strict form the table is written in (a `\w+` surface and key, a
+  // tuple of double-quoted words each followed by a comma); the parse reads any spelling (parseValuesTable above), its entry count is the
+  // count of `frozenset(` in the body, and the two reads must agree entry for entry, so an entry the regex cannot read (a hyphenated surface
+  // or key, a set or list literal, a single word in parentheses with no trailing comma) is a red here NAMING the entry, never a silent miss
+  // that leaves the one-entry assertion below green. tests/test_client_diag_allowlist.py reads the runtime object and reds on a second entry
+  // or a list too; this cell is the tree-side read of the table's text.
+  const balanced = parseValuesTable(table![1]);
+  assert.equal(balanced.entries.length, balanced.frozensets, "the balanced parse reads one entry per frozenset( in the table's body: " + JSON.stringify(balanced.entries));
+  const entryName = (e: { surface: string; key: string }): string => e.surface + "/" + e.key;
+  for (const nm of [...new Set([...entries.map(entryName), ...balanced.entries.map(entryName)])]) {
+    const r = entries.find((e) => entryName(e) === nm), p = balanced.entries.find((e) => entryName(e) === nm);
+    assert.ok(r && p, "the regex and the balanced parse disagree on the entry " + nm + ": the regex read " + (r ? JSON.stringify(r.words) : "nothing") + ", the parse read " + (p ? JSON.stringify(p.words) + " in " + p.container : "nothing") + " (a spelling one read cannot see: a hyphenated surface or key, a set or list literal, a tuple with no trailing comma)");
+    assert.deepEqual(r!.words, p!.words, "the entry " + nm + ": the two reads agree on its words (" + p!.container + ")");
+  }
   assert.deepEqual(entries.map((e) => e.surface + "/" + e.key), ["chat/view"], "one bounded key, chat's `view` (every entry of the table is read: a second is named here)");
   const words = entries[0].words;
   assert.equal(words.length, 1, "one fixed word, no host name (the owner 2026-09-21, who approved the field): " + JSON.stringify(words));
