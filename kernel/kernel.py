@@ -10500,10 +10500,9 @@ def _user_todo_session_ended(sid):
 
 def _user_todos_shown(sid):
     """The ONE ended gate for every surface that shows a session's open user todos: an ENDED session (corroborated,
-    _user_todo_session_ended) hides its todos from every surface, hidden and not cleared, so they return with a revive
-    (a dead session's asks should neither nag from beyond the grave nor be silently lost). build_session's rows, the
-    feed's rows (_feed_session_key) and the tab roster's count (_tab_meta) all ask this, and only when open rows exist,
-    so the common case pays no registry read (the fix brief of 2026-09-22, requirement 1)."""
+    _user_todo_session_ended) hides its todos from every surface, hidden and not cleared, so they return with a revive.
+    build_session's rows, the feed's rows (_feed_session_key) and the tab roster's count (_tab_meta) all ask this, and
+    only when open rows exist, so the common case pays no registry read (the fix brief of 2026-09-22, requirement 1)."""
     return not _user_todo_session_ended(sid)
 
 
