@@ -5426,7 +5426,7 @@ class PlantedShapes(unittest.TestCase):
             ("waits", "calls _pop, an untimed .get()", "tail-only"),
             (KIND_UNREAD, "calls _hand, calls _poke, a method of `self.fake`, an object the walk does not read | f.get of _hand is `self.fake`.get handed in at the call | x.get of _poke is `f`.get handed in at the call", "tail-only"),
             ("bounded", "no loop, no untimed wait", "tail-only"),
-            ("loop", "calls _bound, calls worker, calls _loop, a while loop | fn of _bound is `_loop` handed in at the call", "tail-only")])
+            ("loop", "calls _bound, calls worker, a while loop | fn of _bound is `_loop` handed in at the call", "tail-only")])
         self.assertEqual(self._tails(tails), sorted([("go", "T.test_loop"), ("go", "T.test_lambda"), ("go", "T.test_fake"),
                                                      ("run", "T.test_ctor"), ("run", "T.test_ctor"), ("lambda: _until(lambda: _loop())", "T.test_call"),
                                                      ("lambda: _pop(q)", "T.test_method"), ("lambda: _poke(be)", "T.test_method"),
