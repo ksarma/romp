@@ -95,8 +95,8 @@
 //              the walker does not follow which branch the value takes, so the engines and launches read through it, or where
 //              inBrowser is called from, are unread); a local declaration
 //              shadowing a launcher or playwright binding; a parse diagnostic; a loaded module of the tree as the `loaded`
-//              clause states, or a relative specifier that names no file, or two; and THE INVARIANT's refusal, below. The CLI
-//              exits 2 on any refusal.
+//              clause states, or a relative specifier that names no file, or two; THE INVARIANT's refusal, below; and THE SAFETY
+//              NET's, below it. The CLI exits 2 on any refusal.
 // THE INVARIANT (the parse's own state against its record; run at the end of every classify, so census() holds it over every
 // module it reads, test modules and the modules they load alike, whatever the class): the census may not resolve a tracked
 // specifier or a launcher binding and return a record that carries nothing of it. Three clauses. (1) A playwright package the
@@ -115,8 +115,8 @@
 // walker, and one the walker classified as neither is refused by the invariant itself. Each refusal names the line and what
 // was resolved. The invariant compares two states of the parse (what it resolved, what it recorded), so no string trips it
 // and no module need cooperate: a module that names playwright or the launcher in a string, a test title, a regex or a file
-// read resolves nothing and is class none without a refusal; a resolution the parse never makes (the residuals below) is
-// outside it. The bound of that comparison, stated: the invariant compares the loads the parse RESOLVED against what the record
+// read resolves nothing and trips nothing of it (THE SAFETY NET below reads such mentions on its own terms, and refuses one in a
+// specifier-capable position that no fold accounted for); a resolution the parse never makes (the residuals below) is outside it. The bound of that comparison, stated: the invariant compares the loads the parse RESOLVED against what the record
 // carries, so it cannot see a load that never resolves (a callee the walker does not know as a loader), and a playwright load it
 // resolves is recorded in the same call, so clause 1 holds by construction whatever the walker then fails to read through the
 // value (a conditional or logical root, a computed member on the unbound load) or in the call's other arguments (a spread before
@@ -126,6 +126,51 @@
 // rows of the census test. Its plants under tests/fixtures/browser-legs-plants record the outcome of every road it closes, and the census
 // test (ui/webview/ci-browser-legs-census.test.ts) runs one mutation of the walker per clause over them and holds the
 // invariant to refusing what the mutation silenced.
+// THE SAFETY NET (run at the end of every classify, after THE INVARIANT; the round-4 review's ruling: the walker's arms are an
+// enumerated set, every round found forms outside it that were class none with no refusal, a Firefox or WebKit leg outside the
+// roster with every checker green, and a set closed one arm at a time stays open). The census reads every module a second time
+// for any MENTION of a browser load, keyed on the walker's own name-sets and readers and on nothing else: a string literal, a
+// no-substitution template, or a template or `+` chain folded by foldText, standing in a specifier-capable position (an import or
+// export specifier, import = require, any call's or new's argument, an array literal that is a call's argument, a tagged
+// template's text), whose text isPwPackage, resolves through resolveSpec to the launcher, or is a relative path whose segments
+// after its last node_modules satisfy isPwPackage; a string whose text names a playwright package and parses as code without a
+// diagnostic (the fold's placeholders rewritten to an identifier first), read by the compiler for a specifier so positioned inside
+// it, the driver-string road the regex reader misses (a loader applied through createRequire, a bound loader, a subpath); and the
+// identifiers requireCjs and createRequire (the latter through its import binding, so an alias counts) and the member
+// module.require, in every position. A mention is ACCOUNTED when the walker's own records show it read, and only then: a
+// specifier when the import, export or loader call holding it is in `resolved`; a driver string when the string reader noted its
+// line (embedded); requireCjs when bindingAt resolves it to a launcher binding, when it names a member of a launcher binding or of
+// a launcher load in `resolved`, or when the declaration it reaches is a loader the walker bound (loaders); createRequire when it
+// is a declaration's or an import's own name or a type query, the callee of a call bound as a loader (loaders), applied directly
+// as a loader callee loaderCall reads, or the object of a member other than call, apply or bind (resolve or cache is a read off
+// the loader function and makes no load; those three make or bind one). The accounting set is derived from those records at the
+// moment of the scan and the net declares no set of its own (a reader checks it by grepping the net block for the records it
+// reads, resolved, embedded, loaders and bindingAt, and the readers loaderCall, resolveSpec, isPwPackage, foldText, memberNames
+// and declOfUse, and finding no other), so a fold that reads a form accounts for its token by construction and the two cannot
+// disagree. Two clauses, one refusal per module, by name with the first unaccounted mention and its line, the count of the rest,
+// and the remedy: (1) a module with an unaccounted mention whose fold produced NO reach and NO refusal is refused, "mentions a
+// browser load the walker did not fold"; (2) a module with an unaccounted mention whose fold produced a reach is refused too, the
+// reach not accounting for that mention (a shared call beside a loader the walker does not know), and, asked of a test module's
+// own record, a playwright package the fold recorded with no engine and no launch read through it (the load or its binding handed
+// on where the walker does not read: passed as an argument, held in a class field or an object property, bound by a compound
+// assignment, handed to .then) is refused naming the package; a loaded module that names the package is refused at its importer
+// whatever it read through the load, so that clause is not asked of it. The net stands down for a module the fold already refused
+// (the refusal is the visible verdict and the module is not silent) and, for a test module, is asked after the modules it loads
+// have had their say (census(), after localRefusals), so a module carries one refusal; a loaded module's net refusal reaches its
+// importer through the cannot-classify arm above. THE RULE: the net can refuse falsely and never pass silently; a module it
+// refuses is respelled through a form the walker reads, or the walker is taught the form, which accounts for the mention by
+// construction. Its bounds, stated: the read-through clause is per module, since engines and launches are the record's sets, so
+// a module with one load read through and a second handed on passes it on the second (the hand-on refusals above name that
+// form); a driver text that parses with a diagnostic is read by the regex alone; the net reads the text of a literal, a template
+// or a `+` chain where it stands and folds no identifier (a name bound to the package's text is a mention at its declaration, a
+// position the net does not read, and a load through that name is the walker's fold when the callee is a loader and the hand-on
+// refusals' when it is not); the strict road (the ruling's literal wording, a
+// mention of the launcher's name counted whether or not the parse resolved the import) was measured at 36 live refusals over the
+// tree before round 5, every one a module that imports the launcher and never calls it, and not taken, the accounting through the
+// walker's resolutions being what lets the tree pass. Live modules at this head: the net refuses none, falsely or truly, the
+// census test's one assembled literal having been respelled for it (a package name as a call's argument, the p74 form); its
+// --tsv over the tree is byte-identical to the census's before it. The plant p74, a package name in a call argument of its own,
+// records the net's stated false refusal.
 // THE CENSUS RULE: a module is a browser leg when it calls the shared launcher through its binding, names a playwright
 // package, or holds a driver string that does. THE ROSTER GATE (rosterGap, null when the leg passes): a shared call, no
 // playwright package of its own, no launch of its own, no driver string, no skip or todo; the engines it names are a separate
@@ -160,6 +205,10 @@ const LAUNCHES = new Set(["launch", "launchPersistentContext", "launchServer", "
 // members that hand a launcher module (or its load) on rather than reading an export of it: a promise callback receives the
 // module where the walker does not follow, and a default member is not one of the launcher's exports (it has none)
 const HANDOFF = new Set(["then", "catch", "finally", "default"]);
+// THE SAFETY NET's two tails (the header states the clauses): after the first unaccounted mention, for a module whose fold
+// produced no reach and no refusal, and for one whose reach does not account for the mention
+const NET_NO_REACH_TAIL = ", and the fold produced no reach and no refusal, so the census refuses the module rather than pass it silently: spell the load through a form the walker reads, or teach scripts/browser-legs-census.mjs the form";
+const NET_REACH_TAIL = ", and the fold's reach does not account for it, so the census refuses the module rather than pass the mention silently: spell the load through a form the walker reads, or teach scripts/browser-legs-census.mjs the form";
 
 /** typescript, from vscode-extension/node_modules and nowhere else; a named error when npm ci has not run. */
 export function loadTypescript() {
@@ -172,7 +221,10 @@ export function loadTypescript() {
 
 const isPwPackage = (spec) => PW_PACKAGES.some((p) => spec === p || spec.startsWith(p + "/"));
 
-/** Classify one module. `file` is absolute; `src` its text; `opts.strictComputed` refuses every computed member on a tracked binding. */
+/** Classify one module. `file` is absolute; `src` its text; `opts.strictComputed` refuses every computed member on a tracked binding;
+ *  `opts.testModule` marks a module census() reads directly (a .test.ts under LEG_DIRS): THE SAFETY NET then asks its read-through
+ *  clause of the record and returns its verdict in the record's `net` field for census() to apply after localRefusals, instead of
+ *  pushing it here as it does for a loaded module. */
 export function classify(ts, file, src, opts = {}) {
   const rel = path.relative(opts.root || REPO, file);
   const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, /\.[cm]?js$/.test(file) ? ts.ScriptKind.JS : ts.ScriptKind.TS);
@@ -862,8 +914,109 @@ export function classify(ts, file, src, opts = {}) {
   // a load where it stands): what a module that imports THIS one reaches through it
   let launcherBinds = launcherReexport || sharedCalls > 0;
   for (const [, b] of bindings) if (b.module === "launcher" && (b.member === null || b.member === "default" || b.member === "inBrowser")) launcherBinds = true;
+  // THE SAFETY NET (the header states it): a pre-scan of the parse for any mention of a browser load, keyed on the walker's own
+  // name-sets and readers, with the accounting DERIVED from the walker's records. This block reads the records `resolved`,
+  // `embedded`, `loaders` and `bindings` (through bindingAt) and the readers loaderCall, resolveSpec, isPwPackage, foldText,
+  // memberNames and declOfUse, and declares no set of its own: a fold that reads a form accounts for its token by construction.
+  // `netHits` is every UNACCOUNTED mention in source order, { line, what, token }.
+  const netHits = [];
+  {
+    const hit = (n, what, token) => netHits.push({ line: lineOf(n), what, token: String(token).split("\n")[0].slice(0, 80) });
+    const pwText = (t) => PW_PACKAGES.some((p) => t.includes(p));
+    // a relative path whose segments after its last node_modules name a playwright package (.js, .ts and /index stripped)
+    const nmPw = (t) => { const segs = t.split("/"); const i = segs.lastIndexOf("node_modules"); return i >= 0 && isPwPackage(segs.slice(i + 1).join("/").replace(/\.[cm]?[jt]s$/, "").replace(/\/index$/, "")); };
+    const up = (n) => { let q = n; while (q.parent && (ts.isParenthesizedExpression(q.parent) || ts.isAsExpression(q.parent) || ts.isNonNullExpression(q.parent) || ts.isSatisfiesExpression(q.parent) || ts.isTypeAssertionExpression(q.parent))) q = q.parent; return q; };
+    /** The node a specifier-capable position hands `n`'s text to, the one noteResolved keys when the walker reads it: the import,
+     *  export or import = declaration whose specifier it is, the call or new whose argument it is (an array literal that is a call's
+     *  argument too, .apply's list), the tagged template whose text it is; null in any other position (a declaration's initializer,
+     *  a property, an array in a declaration, a type, a title). */
+    const specHolder = (n) => {
+      const q = up(n), p = q.parent;
+      if (!p) return null;
+      if ((ts.isCallExpression(p) || ts.isNewExpression(p)) && (p.arguments || []).includes(q)) return p;
+      if ((ts.isImportDeclaration(p) || ts.isExportDeclaration(p)) && p.moduleSpecifier === q) return p;
+      if (ts.isExternalModuleReference(p)) return p.parent;
+      if (ts.isTaggedTemplateExpression(p) && p.template === q) return p;
+      if (ts.isArrayLiteralExpression(p)) { const a = up(p), pp = a.parent; return pp && ts.isCallExpression(pp) && pp.arguments.includes(a) ? pp : null; }
+      return null;
+    };
+    // a specifier is accounted when the walker resolved the holder (`resolved`: an import, an export from, import =, a loader call)
+    const scanText = (n, text) => {
+      const holder = specHolder(n);
+      if (holder === null || resolved.has(holder)) return;
+      if (isPwPackage(text)) hit(n, "a playwright package specifier", text);
+      else if (nmPw(text)) hit(n, "a relative path into node_modules naming a playwright package", text);
+      else if (text.startsWith(".") && resolveSpec(text).kind === "launcher") hit(n, "the launcher module's name", text);
+    };
+    // a string whose text names a playwright package is read AS CODE one level down (the driver-string road the regex reader
+    // misses): the fold's <placeholder> pieces rewritten to an identifier, the text parsed with the compiler, and a specifier so
+    // positioned inside it matched by isPwPackage or nmPw; a text that parses with a diagnostic is not code and is not read (the
+    // walker's regex still reads it: the stated bound). Accounted when the string reader noted the string's line (embedded).
+    const scanAsCode = (n, text) => {
+      if (!pwText(text) || embedded.some((e) => e.line === lineOf(n))) return;
+      const isf = ts.createSourceFile("driver.ts", text.replace(/<[^<>]*>/g, "_"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+      if (isf.parseDiagnostics.length) return;
+      let found = null;
+      const look = (x) => { if (found !== null) return; if ((ts.isStringLiteral(x) || ts.isNoSubstitutionTemplateLiteral(x)) && (isPwPackage(x.text) || nmPw(x.text)) && specHolder(x) !== null) found = x.text; ts.forEachChild(x, look); };
+      look(isf);
+      if (found !== null) hit(n, "a playwright package specifier inside a string's text read as code", found);
+    };
+    const isPlus = (x) => ts.isBinaryExpression(x) && x.operatorToken.kind === ts.SyntaxKind.PlusToken;
+    const isCreateRequireId = (id) => { if (id.text === "createRequire") return true; const d = declOfUse(id); return !!(d && (ts.isImportSpecifier(d) || ts.isBindingElement(d)) && d.propertyName && ts.isIdentifier(d.propertyName) && d.propertyName.text === "createRequire"); };
+    /** createRequire as a callee (`c`: the identifier, or the member access spelling it), by the position of the call it makes: accounted
+     *  when the walker read that call (bound as a loader by a declaration, `loaders`; applied directly as a loader callee, loaderCall) or
+     *  when the call is the object of a member other than call, apply or bind (a read off the loader function makes no load). */
+    const createRequireFolded = (c) => {
+      const q = up(c), call = q.parent;
+      if (!(call && ts.isCallExpression(call) && call.expression === q)) return false;   // not called: the loader itself handed on
+      const cq = up(call), cp = cq.parent;
+      if (!cp) return false;
+      if (ts.isVariableDeclaration(cp) && cp.initializer === cq && ts.isIdentifier(cp.name)) return loaders.has(cp.name.text);
+      if (ts.isCallExpression(cp) && cp.expression === cq) return loaderCall(cp) !== null;
+      if ((ts.isPropertyAccessExpression(cp) || ts.isElementAccessExpression(cp)) && cp.expression === cq) { const names = memberNames(cp); return names !== null && !names.some((x) => ["call", "apply", "bind"].includes(x)); }
+      return false;
+    };
+    const CR_WHAT = "createRequire in a position the walker does not fold (not a declaration's own name or an import's, the callee of a call bound as a loader or applied as one, or the object of a member other than call, apply or bind)";
+    const netWalk = (n) => {
+      if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) { if (!(n.parent && isPlus(n.parent))) { scanText(n, n.text); scanAsCode(n, n.text); } }   // a `+` operand is read at its chain's root, folded
+      else if (ts.isTemplateExpression(n) || (isPlus(n) && !(n.parent && isPlus(n.parent)))) { const t = foldText(n); scanText(n, t); scanAsCode(n, t); }
+      else if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "module" && n.name.text === "require") hit(n, "module.require, a loader callee the walker does not know", n.getText(sf));
+      else if (ts.isPropertyAccessExpression(n) && n.name.text === "createRequire") { if (!createRequireFolded(n)) hit(n, CR_WHAT, n.getText(sf)); }
+      else if (ts.isIdentifier(n)) {
+        const p = n.parent;
+        if (n.text === "requireCjs") {
+          const b = bindingAt(n);
+          const d = declOfUse(n);
+          const localLoader = !!(d && ts.isVariableDeclaration(d) && ts.isIdentifier(d.name) && loaders.has(d.name.text));
+          const asMember = !!(p && ts.isPropertyAccessExpression(p) && p.name === n) && (() => { const o = unwrap(p.expression); if (ts.isIdentifier(o)) { const ob = bindingAt(o); return ob !== null && ob.module === "launcher"; } const rr = resolved.get(o); return !!(rr && rr.kind === "launcher"); })();
+          if (!((b !== null && b.module === "launcher") || localLoader || asMember)) hit(n, "the identifier requireCjs, the launcher's loader, resolved to no launcher binding", n.getText(sf));
+        } else if (isCreateRequireId(n) && !(p && ts.isPropertyAccessExpression(p) && p.name === n)) {
+          const declPos = !!p && (ts.isImportSpecifier(p) || ts.isImportClause(p) || ts.isBindingElement(p) || (ts.isVariableDeclaration(p) && p.name === n) || ts.isTypeQueryNode(p));
+          if (!declPos && !createRequireFolded(n)) hit(n, CR_WHAT, n.getText(sf));
+        }
+      }
+      ts.forEachChild(n, netWalk);
+    };
+    netWalk(sf);
+  }
+  /** The net's verdict on this module, or null: the fold's own refusal stands (the module is not silent); else the first unaccounted
+   *  mention refuses by name, clause 1 or 2 by the reach; else, asked of a test module alone, the read-through clause. */
+  const netVerdict = () => {
+    if (refusals.length) return null;
+    if (netHits.length) {
+      const h = netHits[0], more = netHits.length - 1;
+      return rel + ":" + h.line + ": mentions a browser load the walker did not fold (" + h.what + ": " + JSON.stringify(h.token) + (more ? "; and " + more + " more mention" + (more > 1 ? "s" : "") : "") + ")" + (reaches ? NET_REACH_TAIL : NET_NO_REACH_TAIL);
+    }
+    if (opts.testModule && playwright.size > 0 && engines.size === 0 && launches.length === 0) {
+      const first = [...resolved.values()].find((x) => x.kind === "playwright");
+      return rel + ":" + (first ? first.line : 1) + ": the census read no engine and no launch through the playwright package it loads (" + [...playwright].sort().join(", ") + "), so the load or its binding is handed on where the walker does not read and the engines and launches reached through it are unread: bind the load to a name in a statement of its own and launch on that name";
+    }
+    return null;
+  };
+  const net = netVerdict();
+  if (net !== null && !opts.testModule) refusals.push(net);   // a loaded module: refused here, so localRefusals carries it to the importer
   const seenI = new Set(); const localU = localImports.filter((l) => { const k = l.line + "|" + l.spec; if (seenI.has(k)) return false; seenI.add(k); return true; });
-  return { rel, refusals, launcherImported: launcherImported.length > 0, typeOnly, launcherBinds, sharedCalls, embedded, playwright: [...playwright].sort(), engines: [...engines].sort(), launches, skipTodo, swallow, reaches, localImports: localU };
+  return { rel, refusals, launcherImported: launcherImported.length > 0, typeOnly, launcherBinds, sharedCalls, embedded, playwright: [...playwright].sort(), engines: [...engines].sort(), launches, skipTodo, swallow, reaches, localImports: localU, ...(opts.testModule ? { net } : {}) };
 }
 
 const MODULE_EXT = /\.(d\.ts|[cm]?ts|[cm]?js)$/;
@@ -948,8 +1101,12 @@ export function census(root = REPO, opts = {}) {
     if (!fs.existsSync(abs)) continue;
     for (const f of fs.readdirSync(abs).filter((f) => f.endsWith(".test.ts")).sort()) {
       const file = path.join(abs, f);
-      const r = classify(ts, file, fs.readFileSync(file, "utf8"), { ...opts, root });
+      const { net, ...r } = classify(ts, file, fs.readFileSync(file, "utf8"), { ...opts, root, testModule: true });
       if (r.localImports) r.refusals.push(...localRefusals(ts, r, file, root, opts, ownCache));
+      // THE SAFETY NET's verdict on a test module, applied after the modules it loads have had their say: the net stands down when
+      // any refusal already names the module (its own fold's, or a loaded module's carried by localRefusals), so a module carries
+      // one refusal; `net` is classify's hand-off to this line and no reader's (a parse-diagnostic record carries none)
+      if (net && r.refusals.length === 0) r.refusals.push(net);
       const bundle = bundleOf(dir, f);
       byBundle.set(bundle, r);
       if (r.refusals.length) refusals.push(...r.refusals);
