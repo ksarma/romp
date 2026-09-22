@@ -75,7 +75,7 @@ test("a plain human-prompt append does not set stale: the signature reads the pr
 // Compact mode's tail path by unit (chat-compact-tail.test.ts) was inserted ABOVE normal mode's block and the two fixes to the
 // spacers' measurement live in functions of their own; the normal-mode block (from "Normal mode, pure append." to syncViewInner's
 // closing brace) is recorded here line by line and pinned byte for byte, so a change to the desktop's path is a deliberate edit
-// of this record, never a side effect. On a failure the diff says what moved. Five deliberate edits so far. Two applied the
+// of this record, never a side effect. On a failure the diff says what moved. Six deliberate edits so far. Two applied the
 // maintainer's round 2 ruling: the block's own copy of the tail walk, which stopped at a foreign child (a hover's rail band) and
 // re-appended the tail on top of a stale copy of itself, gave way to trimUnitsFrom, the walk compact mode's seam uses, and the hover's
 // marks came off with the band, as in the seam (compact-seam-exec.test.ts executes both calls; chat-compact-tail.test.ts drives the
@@ -89,16 +89,20 @@ test("a plain human-prompt append does not set stale: the signature reads the pr
 // patch no list (the patch then mapped the event index onto data-unit: the footer on the row above the reply, or on none); now the first
 // changed event's unit is looked up in the list, the trim and the tags are by unit, a gap at or past it is re-drawn, and both this block's
 // patch calls hand the list (compact-tail-differential.test.ts drives a head gap through the fast path, the browse branch and the tail).
+// The sixth is prose alone: the browse branch's comment re-flowed so the label of the maintainer's round 1 addendum stands on one line
+// instead of wrapping after its possessive (the author's fixer pass over the pass after the maintainer's round 5, its verifier (b): that
+// pass's added lines were to carry every numbered mention qualified on its line, and two, this comment's and this record's copy of it,
+// carried the label's tail alone).
 const NORMAL_MODE_BLOCK = [
   "  // Normal mode, pure append. While BROWSING history (window not at the tail), the new events land below the",
   "  // rendered window → just grow the bottom spacer (no DOM churn); the user sees them on scroll-down.",
   "  // …after the one render inside the window that reads LATER events, the \"worked …\" footer on a turn's last reply, is patched from",
   "  // the first changed event (v.rendered, still the pre-append value), as compact mode's spacer branch and this mode's tail do: a",
   "  // prompt completing the turn below the window put no footer on the window's last reply, and a later reply joining the turn took none",
-  "  // off, until the maintainer's round 3 ruling B (the compact branch was fixed for this in the author's pass 1b, applying the maintainer's",
-  "  // round 1 addendum, and this branch was not: the same defect on the other side of the compact switch). The patch is handed the unit",
-  "  // list here as at every site (the maintainer's round 5 ruling, regression-1): this mode's list carries the regions' gaps too",
-  "  // (displayItems runs withGapItems in both modes), so an event's unit is its index in the list, not its event index.",
+  "  // off, until the maintainer's round 3 ruling B (the compact branch was fixed for this in the author's pass 1b, applying",
+  "  // the maintainer's round 1 addendum, and this branch was not: the same defect on the other side of the compact switch). The patch is",
+  "  // handed the unit list here as at every site (the maintainer's round 5 ruling, regression-1): this mode's list carries the regions'",
+  "  // gaps too (displayItems runs withGapItems in both modes), so an event's unit is its index in the list, not its event index.",
   "  if (!wasAtTail) {",
   "    patchWorkedFooters(v, s, v.rendered, working, items);",
   "    v.spacerCountBot = total - (v.winEnd ?? total); v.unitTotal = total; v.rendered = len; sizeSpacers(v); return v;",

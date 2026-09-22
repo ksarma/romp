@@ -13671,10 +13671,10 @@ function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBot
   // …after the one render inside the window that reads LATER events, the "worked …" footer on a turn's last reply, is patched from
   // the first changed event (v.rendered, still the pre-append value), as compact mode's spacer branch and this mode's tail do: a
   // prompt completing the turn below the window put no footer on the window's last reply, and a later reply joining the turn took none
-  // off, until the maintainer's round 3 ruling B (the compact branch was fixed for this in the author's pass 1b, applying the maintainer's
-  // round 1 addendum, and this branch was not: the same defect on the other side of the compact switch). The patch is handed the unit
-  // list here as at every site (the maintainer's round 5 ruling, regression-1): this mode's list carries the regions' gaps too
-  // (displayItems runs withGapItems in both modes), so an event's unit is its index in the list, not its event index.
+  // off, until the maintainer's round 3 ruling B (the compact branch was fixed for this in the author's pass 1b, applying
+  // the maintainer's round 1 addendum, and this branch was not: the same defect on the other side of the compact switch). The patch is
+  // handed the unit list here as at every site (the maintainer's round 5 ruling, regression-1): this mode's list carries the regions'
+  // gaps too (displayItems runs withGapItems in both modes), so an event's unit is its index in the list, not its event index.
   if (!wasAtTail) {
     patchWorkedFooters(v, s, v.rendered, working, items);
     v.spacerCountBot = total - (v.winEnd ?? total); v.unitTotal = total; v.rendered = len; sizeSpacers(v); return v;
