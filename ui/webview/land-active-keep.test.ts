@@ -52,7 +52,8 @@ function liftBetween(startAnchor: string, endAnchor: string): string {
  *  untracked bag and a production-shaped `style.height` write was a silent no-op, while a spacer query planted in the window reddened on
  *  selector text rather than on the geometry it wrote). A row's `style.height` is routed into its `h` and recorded on the world's trace; the
  *  view element's `style.height`, which the model has no figure for (its height is its children's sum), throws; any other style key throws
- *  on a read or a write; and the style OBJECT itself is non-writable on a row and on the view element, so replacing it throws too (the
+ *  on a read, a write, a delete or a define, and a define of `height` on the style object throws too; and the style OBJECT itself is
+ *  non-writable on a row and on the view element, so replacing it throws too (the
  *  maintainer's round 5 ruling, extra8-3: a replaced style would have routed every later height write into a plain object in silence). A child inserted or removed through the DOM's methods (appendChild, insertBefore, removeChild, replaceChildren, a
  *  node's remove) is recorded; the children collection is read-only like the DOM's. A selector is resolved for what the lifted code and
  *  production's spacer code are entitled to query among the children (every uuid-carrying row, one uuid, one class with or without
@@ -65,14 +66,18 @@ function liftBetween(startAnchor: string, endAnchor: string): string {
  *  <px>)`, `child +<class>:<px>`, `child -<class>:<px>`, beside the take-class events the stubs and the accessors push (the world below). */
 type Write = { writer: string; top: number; stick: boolean; from: number | undefined };
 const px = (v: unknown, what: string): number => { const m = /^(-?\d+(?:\.\d+)?)px$/.exec(String(v)); assert.ok(m, what + ": the model reads a height in px, not " + JSON.stringify(v)); return Number(m![1]); };
-/** A `style` whose `height` reads `read()` and writes through `write`; every other key throws on a read, a write or a delete (a write there
- *  would change nothing the model measures, so it fails closed rather than passing silently). `name` names the element in the errors. */
+/** A `style` whose `height` reads `read()` and writes through `write`; every other key throws on a read, a write, a delete or a define (a write
+ *  there would change nothing the model measures, so it fails closed rather than passing silently), and a DEFINE of `height` throws too: with
+ *  no defineProperty trap a define landed an own property on the proxy's target, which the traps never read, so the model kept routing where a
+ *  DOM element's style takes the own property over its accessor and every later height write is a silent no-op (the closing lens over the
+ *  author's fixer pass over the pass after the maintainer's round 5, CL-4). `name` names the element in the errors. */
 function styleOf(name: string, read: () => number, write: (h: number) => void): Record<string, string> {
   const refuse = (k: string | symbol, what: string): never => { throw new Error(name + ".style." + String(k) + " " + what + ": the model carries a height and nothing else, so this fails closed rather than passing as a silent no-op"); };
   return new Proxy({} as Record<string, string>, {
     get: (_t, k) => k === "height" ? read() + "px" : typeof k === "symbol" || k === "toJSON" || k === "then" ? undefined : refuse(k, "read"),
     set: (_t, k, v) => { if (k === "height") { write(px(v, name + ".style.height")); return true; } return refuse(k, "written as " + JSON.stringify(v)); },
     deleteProperty: (_t, k) => refuse(k, "deleted"),
+    defineProperty: (_t, k) => refuse(k, "defined"),
   });
 }
 /** A model object that FAILS CLOSED on any property it lacks: a read or a write of a key that is neither an own property nor on the
@@ -354,7 +359,7 @@ test("the reload restore's raw write, the ordering its exception rests on: the t
   }
 });
 
-test("the model refuses a write of the `style` OBJECT itself on a row, on the head spacer and on the view element, not only of its keys: the instrumented style is installed non-writable, so the set trap's throw fires, and a replaced style cannot disable the height routing in silence for every later write; a DEFINE of the object (Object.defineProperty, Object.defineProperties, Reflect.defineProperty), which reaches the defineProperty trap and not the set trap, is refused the same way; the members still route (the maintainer's round 5 ruling, extra8-3: closure-6's second named witness was still green; the define door is the author's fixer pass over the pass after that round, its verifier (a))", () => {
+test("the model refuses a write of the `style` OBJECT itself on a row, on the head spacer and on the view element, not only of its keys: the instrumented style is installed non-writable, so the set trap's throw fires, and a replaced style cannot disable the height routing in silence for every later write; a DEFINE of the object (Object.defineProperty, Object.defineProperties, Reflect.defineProperty), which reaches the defineProperty trap and not the set trap, is refused the same way; a define of a KEY on the style object itself (`height` or another) is refused by the style proxy's own defineProperty trap; the members still route (the maintainer's round 5 ruling, extra8-3: closure-6's second named witness was still green; the define door is the author's fixer pass over the pass after that round, its verifier (a); the style's own define door is the closing lens over that fixer pass, CL-4)", () => {
   // until this pass `style` was an own writable data property on Node and Host, so `row.style = {...}` and `v.el.style = {...}` passed the set
   // trap through Reflect.set and the model's height routing went to a plain object: a silent no-op inside the ordering window, the shape the
   // model exists to refuse (the members were refused, the object was not)
@@ -373,6 +378,15 @@ test("the model refuses a write of the `style` OBJECT itself on a row, on the he
   assert.throws(() => { Reflect.defineProperty(w.host, "style", { value: {}, configurable: true }); }, /v\.el\.style defined: the model has nothing to define/, "nor the view element's, through Reflect.defineProperty, which returns true where the DOM's element takes an own property");
   assert.throws(() => { Object.defineProperties(w.spacer, { style: { value: {} } }); }, /<tx-spacer tx-spacer-top>\.style defined/, "nor the head spacer's, through Object.defineProperties");
   assert.throws(() => { Object.defineProperty(w.rows[1], "h", { value: 1 }); }, /<turn>\.h defined: the model has nothing to define/, "…and no other key either: a define is not a write the model represents, whatever the key");
+  // the style object's OWN keys (the closing lens over the author's fixer pass over the pass after the maintainer's round 5, CL-4): the
+  // style proxy refused a read, a write and a delete of every key but `height` and had no defineProperty trap, so a define of `height` on
+  // the style itself threw nothing, returned the proxy and landed an own property on the proxy's target, which the traps never read (the
+  // model's read and a later write still routed), where a DOM element's style takes the own property over its accessor and every later
+  // height write is a silent no-op; the trap refuses every key, `height` included, as failClosed's does
+  assert.throws(() => { Object.defineProperty(w.rows[0].style, "height", { value: "1px", writable: true, configurable: true }); }, /<turn>\.style\.height defined: the model carries a height and nothing else/, "a define of `height` on a row's style object is refused");
+  assert.throws(() => { Reflect.defineProperty(w.host.style, "height", { value: "1px", configurable: true }); }, /v\.el\.style\.height defined/, "…and on the view element's, through Reflect.defineProperty, which returned true where the DOM's style takes an own property");
+  assert.throws(() => { Object.defineProperties(w.spacer.style, { color: { value: "red" } }); }, /<tx-spacer tx-spacer-top>\.style\.color defined/, "…and of any other key, through Object.defineProperties");
+  assert.equal(Object.getOwnPropertyDescriptor(w.rows[0].style, "height"), undefined, "no own property landed on the style: its target is untouched");
   assert.equal(w.rows[0].h, 100, "the row's height is untouched"); assert.equal(w.rows[1].h, 100, "the other row's too"); assert.equal(w.trace.length, before, "nothing traced: no write landed");
   w.rows[0].style.height = "120px";
   assert.equal(w.rows[0].h, 120, "a height written through the instrumented style still routes into the model");
