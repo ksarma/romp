@@ -58,16 +58,18 @@
 # that read is not in the rows: its leg is red as in neither file when it arrives and takes the pending-row remedy then, never
 # a guessed roster or exclusions line. A pending row alone does not clear a PR whose module the census refuses: the census
 # refuses before the equality runs, so that PR stays red until the form is rewritten or the census is taught it.
-# The why after the colon of a pending row is read by no checker (the form before it is), and the row is deleted when its PR
-# lands, so that text is unpinned and transient; the property that matters, that the row turns red at its source's arrival with
-# the remedy derived from the source, is pinned by execution in ui/webview/ci-browser-legs-census.test.ts ("the fifth remedy
-# class, executed in the script and in promotionOf" for a row whose source calls inBrowser beside a playwright load of its own,
-# "the script's reading of the real census over a pending line" for the other classes) and in tools/ci-browser-legs.test.mjs
-# ("the script allows a pending line while its source is absent"). A pending row dropped while its source is absent leaves
-# every checker green (the row is a promise about an absent source, a member of neither set); its consequence surfaces when
-# the source arrives, in the red for a leg in neither file, which prints the same remedy derived from the source that a pending
-# row takes at promotion, so no per-row presence pin is held (tools/ci-browser-legs.test.mjs holds only that at least one
-# pending row exists).
+# No checker reads the why after the colon of a pending row for its content: both refuse a why whose text carries another
+# form's phrase (the grandfather sentence, the engine form's launch words or its phrase, the embedded-driver sentence) as
+# ambiguous and read nothing else of it, and when its PR lands the row is deleted or its reason is replaced by the form the
+# census derives, so that text is an unpinned claim and transient. The property that matters, that the row turns red at its
+# source's arrival with the remedy derived from the source, is pinned by execution in ui/webview/ci-browser-legs-census.test.ts
+# ("the fifth remedy class, executed in the script and in promotionOf" for a row whose source calls inBrowser beside a
+# playwright load of its own, "the script's reading of the real census over a pending line" for the other classes) and in
+# tools/ci-browser-legs.test.mjs ("the script allows a pending line while its source is absent"). A pending row dropped while
+# its source is absent leaves every checker green (the row is a promise about an absent source, a member of neither set); its
+# consequence surfaces when the source arrives, in the red for a leg in neither file, which prints the remedy derived from the
+# source by the same rule a pending row's promotion uses, so no per-row presence pin is held (of a row's presence,
+# tools/ci-browser-legs.test.mjs holds only that at least one pending row exists).
 out-tests/ui/timeline-tags-scale-browser.test.js	launches Firefox; the gating job installs Chromium only
 out-tests/ui/webview/anchor-map-cells-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
 out-tests/ui/webview/anchor-map-code-lines-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers

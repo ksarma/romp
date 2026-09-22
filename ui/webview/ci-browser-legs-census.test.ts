@@ -506,7 +506,7 @@ test("every planted form under tests/fixtures/browser-legs-plants is classified 
     const at = p.dir + "/" + p.file + ": ";
     assert.ok(r, at + "the census read the module");
     if (p.refused) {
-      assert.ok(r.refusals.some((x) => x.includes(p.refused as string)), at + "refused with file and line; expected a refusal containing " + JSON.stringify(p.refused) + ", got " + JSON.stringify(r.refusals));
+      assert.ok(r.refusals.some((x) => x.includes(p.refused as string)), at + "refused with file and line; expected a refusal containing " + JSON.stringify(p.refused) + ", got " + JSON.stringify(r.refusals) + ((p.refused as string).includes(SHADOW_REFUSAL) ? " (this row holds the SENTENCE through SHADOW_REFUSAL: a reword of the module's shadow refusal moves that constant and this row too)" : ""));
       assert.ok(c.refusals.some((x) => x.includes(p.refused as string)), at + "the refusal reaches the census's own list (the CLI exits 2 on it)");
     } else {
       assert.deepEqual(r.refusals, [], at + "no refusal");
@@ -548,7 +548,7 @@ test("every planted form under tests/fixtures/browser-legs-plants is classified 
   const moduleLines = read(MODULE).split("\n");
   const codeAt = moduleLines.findIndex((l) => !l.startsWith("//") && l.trim() !== "");
   const header = moduleLines.slice(0, codeAt < 0 ? moduleLines.length : codeAt).filter((l) => l.startsWith("//")).map((l) => l.replace(/^\/\/ ?/, "")).join(" ");
-  assert.ok(header.includes("Three residuals, stated"), "the census header's leading comment block states three residuals (the string-typed parameter's fold, the non-loader call, and a browser reached without spelling a playwright package or the launcher); a header counting two has dropped the third, whose plants are the p68 to p71 rows above; a sentence moved into a body comment is not the header's (holds the sentence: a reword moves this pin too)");
+  assert.ok(header.includes("Three residuals, stated"), "the census header's leading comment block states three residuals (the string-typed parameter's fold, the non-loader call, and a browser reached without spelling a playwright package or the launcher); a header counting two has dropped the third, whose plants are the p68 to p71 rows above. A sentence moved into a body comment is not the header's. Holds the sentence: a reword moves this pin too");
   for (const form of ["another driver package such as puppeteer", "a browser binary it spawns", "a driver source whose package name arrives at run time"]) assert.ok(header.includes(form), "the census header's leading comment block names the third residual's form " + JSON.stringify(form) + " (a text pin on the header's prose: the class that form takes is executed by the p68 to p71 rows above; holds the sentence: a reword of the form moves this pin too)");
   assert.ok(header.includes("is unread by the walker: class none, no refusal"), "the census header's leading comment block states the third residual's outcome, unread by the walker: class none, no refusal (the outcome the p68 to p71 rows record; holds the sentence: a reword moves this pin too)");
 });
@@ -574,7 +574,11 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
     assert.ok((p.carried as string).startsWith("a shape another plant carries: ") && detail.length > 0, idOf(p) + ": carried begins with that form, a colon and the row's detail: " + JSON.stringify(p.carried));
     const carriers = [...new Set([...detail.matchAll(/\bp\d+\b/g)].map((m) => m[0]))].filter((x) => x !== idOf(p));
     assert.ok(carriers.length > 0, idOf(p) + ": carried names the plant that carries the property");
-    for (const c of carriers) { const q = rows.get(c); assert.ok(q !== undefined && q.holds === undefined, idOf(p) + ": the carrier " + c + " is a table row that reds under the census before round 3 (no holds field)" + NOT_RERUN); }
+    for (const c of carriers) {
+      const q = rows.get(c);
+      assert.ok(q !== undefined, idOf(p) + ": the carrier " + c + " is a table row" + NOT_RERUN);
+      assert.equal((q as Plant).holds, undefined, idOf(p) + ": the carrier " + c + (inRound3(q as Plant) ? " is a round-3 row without holds, so the table says it reds under the census before round 3" : " is a row before p38, outside the round-3 population, where holds is never set (the last assertion below), so this check holds only that the row exists; that it reds under the census before round 3 is the table's statement alone") + NOT_RERUN);
+    }
   }
   assert.equal(r3.length - held.length, 44, "44 round-3 rows red under the census before round 3 (51 rows, 7 with holds)" + NOT_RERUN);
   assert.deepEqual(PLANT_TABLE.filter((p) => (p.holds !== undefined || p.carried !== undefined) && !inRound3(p)).map(idOf), [], "holds and carried are fields of the round-3 rows, p38 to p88, the population the statement is about; an earlier row carries neither");
