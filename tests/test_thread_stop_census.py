@@ -392,7 +392,11 @@ of the population and every product file was parsed once, the parse count over t
 second derivation reds (a planted key beside the census's shows it). The cache is per PROCESS: under pytest-xdist the
 censuses that land on different workers parse and derive on their own, and no saving is claimed there; the saving is the
 serial cell and this module's own tests. A second census in the same process that reads kernel/kernel.py or another
-product file through the helper gets this census's parse (a tree test holds that from this side). THE CACHED TREES ARE
+product file through the helper gets this census's parse (a tree test holds that from this side). WHAT A DERIVATION LEAVES
+ALIVE, the trees among it, stays for the process, and the helper holds the collector off for the build's own run and
+freezes what is alive once the build has returned, before the collector is handed back (the fourteenth pass, 2026-09-22;
+tests/parse_cache.py's docstring carries the whole-suite measurement the shape was ruled from and the freeze's
+process-global cost; ParseCacheRetention below pins the mechanism). THE CACHED TREES ARE
 READ-ONLY, tests/parse_cache.py's contract for every consumer (stated in its docstring; the eleventh pass, 2026-09-22): the
 census writes no attribute on a cached node and runs no transformer over a cached tree. The one attribute it wrote
 through the tenth pass, the unit a helper's returned literal is read in, is a side table keyed by id(node)
@@ -429,10 +433,12 @@ import ast
 import builtins
 import collections
 import copy
+import gc
 import os
 import re
 import shutil
 import sys
+import sysconfig
 import tempfile
 import threading
 import time
@@ -5676,6 +5682,222 @@ class ParseCacheKeyAndLock(unittest.TestCase):
         self.assertEqual(PC.parses_of(p), 3)
 
 
+def _is_free_threaded_build():
+    """True on a free-threaded CPython build (Py_GIL_DISABLED), whose collector has one generation and reports every
+    automatic collection as generation 0 and an explicit collect as 2 (probed on 3.14t, 2026-09-22); read from the build's
+    configuration, not from the runtime GIL, which a free-threaded build may run with while its collector stays the same."""
+    return bool(sysconfig.get_config_var("Py_GIL_DISABLED"))
+
+
+class _FullCollections:
+    """A gc.callbacks hook that counts the collector's FULL collections while it is armed: generation 2 on the classic
+    collector (a build with the GIL through 3.13); every collection on the free-threaded build (_is_free_threaded_build:
+    one generation, automatic collections reported as 0); and generation 1 or more on a build with the GIL from 3.14 on,
+    whose incremental collector runs the old generation in increments and reports no automatic generation 2 (that branch
+    follows the collector's design and was not run on this pass: no such interpreter was at hand; the calibration's cap
+    names it if it is wrong). `count` is what the pins read. The caller appends the hook to gc.callbacks itself, with
+    disarm registered as a cleanup BEFORE the append, so a failing pin leaves gc.callbacks as it found it."""
+    def __init__(self):
+        self.count = 0
+        if _is_free_threaded_build():
+            self._least = 0
+        elif sys.version_info >= (3, 14):
+            self._least = 1
+        else:
+            self._least = 2
+
+    def __call__(self, phase, info):
+        if phase == "start" and info.get("generation", 0) >= self._least:
+            self.count += 1
+
+    def disarm(self):
+        while self in gc.callbacks:
+            gc.callbacks.remove(self)
+
+
+class ParseCacheRetention(unittest.TestCase):
+    """tests/parse_cache.py's retention shape (the fourteenth pass, 2026-09-22; the helper's docstring has the whole-suite
+    measurement it was ruled from): derived() holds the collector off around a build it found on and hands it back in a
+    finally on both roads, never touches a collector the caller had off, and after a build that returned freezes what is
+    alive, once, before the hand-back. Pinned by MECHANISM, never by seconds: gc.isenabled() read inside the build and after
+    the call, gc.get_freeze_count() before and after, and the collector's own callbacks counting full collections inside a
+    build whose allocation triggers one outside. Every mutation a case makes is undone by a cleanup registered BEFORE it:
+    the collector's enabled flag (_restore_collector), the callbacks hook (_counter), the planted singleton attribute, the
+    memo keys (PC.clear). gc.freeze() cannot be undone for one build's objects alone (gc.unfreeze returns every frozen
+    object of the process to the collector, the census's trees included), so the freeze pins assert only that the count
+    GREW and never unfreeze; each case's build keeps its own value alive, so the count grows by at least that value's
+    tracked objects. The count is LIVE (it drops when a frozen object dies by reference count), so a road that must not
+    freeze is pinned on growth too: a sentinel of tracked objects, allocated before the call and kept alive across it, is
+    unfrozen, and a freeze on that road would move it, growing the count by at least the sentinel's size; the pin asserts
+    it did not. The one gc.disable() a case makes in its body is the planted state of a caller who had the collector
+    off, restored by the cleanup registered before it, not a speed measure. Every key a case derives is this class's own,
+    never the census's, so these run in any worker and need no tree."""
+    KEY = ("tests/test_thread_stop_census.py", "a planted key of ParseCacheRetention")
+
+    def _restore_collector(self):
+        """Register the restore of the collector's enabled flag as it stands now, BEFORE a case or the helper touches it."""
+        self.addCleanup(gc.enable if gc.isenabled() else gc.disable)
+
+    def _counter(self):
+        """A _FullCollections hook armed in gc.callbacks, its disarm registered as a cleanup BEFORE the append."""
+        c = _FullCollections()
+        self.addCleanup(c.disarm)
+        gc.callbacks.append(c)
+        return c
+
+    def test_a_build_runs_with_the_collector_off_freezes_what_it_leaves_alive_and_hands_the_collector_back_on(self):
+        """The road a caller with the collector on takes (pytest's state): inside the build gc.isenabled() is False; after the
+        call it is True again; gc.get_freeze_count() grew by at least the tracked objects the value keeps alive (the freeze
+        moved what the build left alive, its value among it); a hit on the memo builds nothing and freezes nothing (a
+        sentinel alive and unfrozen across the hit is not moved: the class docstring)."""
+        self.assertTrue(gc.isenabled(), "the case reads the road a caller with the collector on takes, the state pytest runs in")
+        self._restore_collector()
+        key = self.KEY + ("a build with the collector on",)
+        self.addCleanup(PC.clear, key)
+        n, seen = 10000, []
+
+        def build():
+            seen.append(gc.isenabled())
+            return [[] for _ in range(n)]                         # n tracked objects the value keeps alive, and the list holding them
+        before = gc.get_freeze_count()
+        value = PC.derived(key, build)
+        self.assertEqual(seen, [False], "the collector was off inside the build")
+        self.assertTrue(gc.isenabled(), "and on again after the call: the state found")
+        self.assertGreaterEqual(gc.get_freeze_count() - before, n + 1, "the freeze moved what the build left alive, the value's objects among it")
+        frozen = gc.get_freeze_count()
+        keep = [[] for _ in range(n)]                             # alive and unfrozen across the hit: a freeze there would move it
+        self.assertIs(PC.derived(key, build), value)
+        self.assertEqual(seen, [False], "a hit builds nothing")
+        self.assertLess(gc.get_freeze_count() - frozen, n + 1, "a hit freezes nothing: the sentinel kept alive across it was not moved")
+        del keep
+
+    def test_a_build_that_raises_or_is_refused_leaves_the_collector_on_and_freezes_nothing(self):
+        """Both raising roads with the collector found on: a build that raises its own exception (re-raised as it was) and a
+        build that returned but wrote on a parser singleton (refused by the after-check, the restore of the attribute
+        registered BEFORE the build runs). After each gc.isenabled() is True again and gc.get_freeze_count() has not grown
+        by the sentinel kept alive and unfrozen across the call (the count is live and may drop, so the pin is on growth:
+        the class docstring): the finally handed the collector back and nothing was frozen."""
+        self.assertTrue(gc.isenabled(), "the case reads the raising roads from the state pytest runs in")
+        self._restore_collector()
+        key = self.KEY + ("a build that raises or is refused",)
+        self.addCleanup(PC.clear, key)
+        n, seen = 10000, []
+        keep = [[] for _ in range(n)]                             # alive and unfrozen across both builds: a freeze on either road would move it
+
+        def raising_build():
+            seen.append(gc.isenabled())
+            raise RuntimeError("the build's own failure")
+        before = gc.get_freeze_count()
+        with self.assertRaises(RuntimeError):
+            PC.derived(key, raising_build)
+        self.assertEqual(seen, [False], "the collector was off inside the raising build")
+        self.assertTrue(gc.isenabled(), "handed back on the raising road")
+        self.assertLess(gc.get_freeze_count() - before, n + 1, "a build that raised froze nothing: the sentinel was not moved")
+        load = ast.parse("x").body[0].value.ctx
+        self.assertIs(load, ast.parse("y").body[0].value.ctx, "the parser's Load is one object per process")
+        self.addCleanup(ParseCacheKeyAndLock._unplant, load, "_retention")   # BEFORE the build that writes it
+
+        def refused_build():
+            seen.append(gc.isenabled())
+            load._retention = object()
+            return object()
+        with self.assertRaises(AssertionError) as cm:
+            PC.derived(key, refused_build)
+        self.assertIn("after the build", str(cm.exception))
+        self.assertEqual(seen, [False, False])
+        self.assertTrue(gc.isenabled(), "handed back on the after-check's road")
+        self.assertLess(gc.get_freeze_count() - before, n + 1, "a build the after-check refused froze nothing: the sentinel was not moved")
+        del keep
+        ParseCacheKeyAndLock._unplant(load, "_retention")
+        self.assertEqual(PC.builds_of(key), 2, "both were builds, counted, and neither memoised")
+
+    def test_a_caller_with_the_collector_off_gets_it_back_off_and_its_value_and_the_freeze_still_runs(self):
+        """A caller who disabled the collector before the call (planted here, the re-enable registered as a cleanup BEFORE the
+        disable): the helper never enables it, inside the build or after, on the returning road or on the raising road; the
+        value comes back as on any call; and the freeze, which does not depend on the collector's state, still runs after
+        the build that returned."""
+        self.assertTrue(gc.isenabled(), "the case plants the caller's off state from the on state pytest runs in")
+        self._restore_collector()                                 # gc.enable, registered BEFORE the disable below
+        gc.disable()                                              # the planted caller state, not a speed measure
+        key = self.KEY + ("a build with the collector off",)
+        other = self.KEY + ("a raising build with the collector off",)
+        self.addCleanup(PC.clear, key, other)
+        n, seen = 1000, []
+
+        def build():
+            seen.append(gc.isenabled())
+            return [[] for _ in range(n)]
+        before = gc.get_freeze_count()
+        value = PC.derived(key, build)
+        self.assertEqual(seen, [False], "off inside the build, as the caller left it")
+        self.assertFalse(gc.isenabled(), "handed back off: the helper enables no collector it found off")
+        self.assertEqual(len(value), n, "and the value comes back as on any call")
+        self.assertGreaterEqual(gc.get_freeze_count() - before, n + 1, "the freeze ran: it does not depend on the collector's state")
+
+        def raising_build():
+            raise ValueError("the build's own failure")
+        with self.assertRaises(ValueError):
+            PC.derived(other, raising_build)
+        self.assertFalse(gc.isenabled(), "still off after a raising build: the finally touches only a collector it turned off")
+
+    def test_no_full_collection_runs_inside_a_build_whose_allocation_triggers_one_outside(self):
+        """Counted by the collector's own callbacks (_FullCollections: generation 2, or every collection on the free-threaded
+        build). The allocation is CALIBRATED on this heap rather than sized by a literal, since a full collection needs the
+        pending long-lived count to pass a share of the long-lived total, which depends on what the process holds: from a
+        gc.collect() baseline, chunks of ten thousand tracked objects are allocated with the collector on until a full
+        collection fires (k chunks; a cap names a heap the pin cannot discriminate on). The premise is then shown outside a
+        build: from the same baseline, twice k chunks trigger at least one full collection with the collector on. The pin:
+        from the same baseline, the same allocation inside a derived() build sees no full collection at all, because the
+        helper held the collector off. THE PLANT: the helper as it stood before this pass, which held nothing off, sees at
+        least one there, the premise's collection, and this pin reds on it. ON THE FREE-THREADED BUILD the collector
+        schedules an automatic collection when the process's memory has grown by a share since its last one or the
+        deferred young count has passed a large multiple of the first threshold, and its count rule still scales with the
+        frozen objects (probed on 3.14t, 2026-09-22: in this module's process, after the
+        derivation's freeze, four million new tracked objects triggered none, and in a fresh process with eight million
+        frozen the count rule alone needed two million), unless its second threshold is zero, which asks for immediate
+        scheduling once the young count passes the first; the pin sets that for its own run there, the thresholds restored
+        by the cleanup registered before the change, and the calibration then finds one chunk."""
+        self.assertTrue(gc.isenabled(), "the pin needs the automatic collector on, the state pytest runs in")
+        self._restore_collector()
+        if _is_free_threaded_build():
+            thresholds = gc.get_threshold()
+            self.addCleanup(gc.set_threshold, *thresholds)         # BEFORE the change
+            gc.set_threshold(thresholds[0], 0, thresholds[2])      # immediate scheduling past the young threshold: the docstring
+        full = self._counter()
+        chunk, cap = 10000, 400
+
+        def allocate(chunks):
+            return [[[] for _ in range(chunk)] for _ in range(chunks)]
+        gc.collect()                                              # the baseline: the long-lived total is what survives now
+        held, k, n0 = [], 0, full.count
+        while full.count == n0 and k < cap:
+            held.append(allocate(1))
+            k += 1
+        self.assertGreater(full.count, n0, "the premise's calibration: %d chunks of %d tracked objects triggered no full collection "
+                           "with the collector on; the pin cannot discriminate on this heap" % (k, chunk))
+        del held
+        gc.collect()                                              # the same baseline again
+        n1 = full.count
+        held = allocate(2 * k)
+        self.assertGreater(full.count, n1, "the premise: the allocation the build makes below, %d chunks, triggers a full collection "
+                           "outside a build with the collector on" % (2 * k))
+        del held
+        gc.collect()                                              # and again, before the build
+        key = self.KEY + ("a build whose allocation triggers a full collection outside",)
+        self.addCleanup(PC.clear, key)
+        during = []
+
+        def build():
+            n = full.count
+            value = allocate(2 * k)
+            during.append(full.count - n)
+            return value
+        value = PC.derived(key, build)
+        self.assertEqual(during, [0], "a full collection ran inside the build (%d chunks; the same allocation outside triggered one): "
+                                      "the helper did not hold the collector off" % (2 * k))
+        self.assertEqual(len(value), 2 * k)
+
+
 class IterativeHandCopier(unittest.TestCase):
     """_ast_copy, the census's copier for the hands and the helper bodies (the eleventh pass, 2026-09-22), each property on
     a node of this class's own, no tree needed: a deep hand copies under a recursion limit the stdlib's recursive copier
@@ -5780,8 +6002,9 @@ class IterativeHandCopier(unittest.TestCase):
         and its `_parent` is an ast.Module that is not the cached tree and holds exactly as many nodes as the cached tree
         (ast.walk over each, iterative). At the depth pytest runs a test at the copy completes on every interpreter (the
         RecursionError arm needs some 450 frames above the copy); its duration depends on the heap, two to four seconds
-        in a fresh process and about seven after this module's tree derivation when a gen-2 collection over the retained
-        trees lands inside, so it is a figure in the assertions' messages only. _ast_copy copies the same hand with a
+        in a fresh process, and about seven after this module's tree derivation while a gen-2 collection over the retained
+        trees could land inside (before the fourteenth pass froze what a derivation leaves alive: tests/parse_cache.py), so
+        it is a figure in the assertions' messages only. _ast_copy copies the same hand with a
         fresh, clean Load (no `_parent`, no `_fn`) and nothing beyond the Name's fields; the least of its five timings is
         a figure in a message too, never a bound. A completed copy is cyclic (its Load's `_parent` leads back to its
         Names), so the plant clears the copied Load's attributes and the copy frees by reference count, no full

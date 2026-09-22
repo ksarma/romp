@@ -46,6 +46,35 @@ table keyed by id(node) that the consumer owns and clears with its derivation, s
 inherited by the next reader of the same tree. The thread-stop census's no-foreign-attribute pin walks every node of
 every cached tree after its derivation (cached_trees() hands it every (realpath, tree) held) and asserts each carries
 only its _fields and _attributes, so a consumer that breaks the contract in the same process is shown there.
+THE RETENTION SHAPE is part of the contract (the fourteenth pass, 2026-09-22, from the whole-suite serial measurement under
+Python 3.10, which romp-manager ruled the shape must come from; its ruling named two admissible shapes, gc.freeze() once
+after the derivation or releasing the trees once every consumer has derived, and a bounded gc.disable() inside the cache's
+build only if collections during the build measured a material share, never in a test body). The trees a derivation reads
+stay alive for the rest of the process, held here, and the measurement put two costs on that. Inside the census's build the
+collector ran five full collections that took near half of the derivation, each walking every tracked object, the trees
+under construction among them; after the census not one full collection ran for the rest of that run, so the retained
+trees cost the test phase nothing in that order. And after pytest's clock had stopped, the interpreter's finalization,
+whose full collections walk every tracked object, took about twice main's, with about twice main's tracked objects alive,
+a cost that lands in every run whatever the order. So derived() does two things around a build when it finds the
+collector enabled: it disables the collector before the build and re-enables it in a finally, on the returning road and
+on the raising road alike, never touching a collector the caller had disabled, and handing back the state it found (a
+build that switches the collector itself is handed back as the build left it); and after a build that RETURNED and
+passed the after-check it calls gc.freeze() once, BEFORE the re-enable, which moves every object then tracked into the
+permanent generation, which no later collection walks, automatic, explicit or the finalization's. The freeze comes
+before the re-enable because the first allocation after a re-enable triggers a young collection over everything the
+build allocated (a fifth of a second over six million objects in the probe, and nothing once they were frozen first; on
+the interpreters with a GIL the freeze itself is a list splice, microseconds whatever the count, and the free-threaded
+build's walks its heaps to mark them, milliseconds per million objects). The freeze is PROCESS-GLOBAL: every object
+alive at that moment leaves the collector's generations for the rest of the process, the cache's trees and everything
+else alive, each build freezing what is alive then, a hit on the memo freezing nothing, and gc.unfreeze is never called;
+the count gc.get_freeze_count() reads is live, growing with each build here and dropping when a frozen object dies by
+reference count. Acceptable in a test process because the process is a test run and
+ends with it: an object alive at a freeze that later falls into an unreachable cycle is never reclaimed by the collector
+(a cycle made after the freeze is, as before), gc.get_objects() no longer lists what is frozen, and a full collection
+over a frozen heap costs microseconds on the interpreters with a GIL; the free-threaded build's collector, which has one
+generation and reports every automatic collection as generation 0, freezes the same objects (the count grows, a later
+collection leaves them) but still visits its heaps to skip them, about half the cost rather than none. A consumer that
+needs the trees walked again, or reclaimed, has no road here: the shape is the freeze, not the release.
 
 THE SINGLETON PIN (the thread-stop census's twelfth pass, 2026-09-22; the mechanism read back by CI's diagnostic run
 35740276523). The parser hands out ONE instance of each expression context (ast.Load, ast.Store, ast.Del) and of each
@@ -96,6 +125,7 @@ it read has parses_of 1, and a second parse of a cached module or a second deriv
 Only the standard library is imported here: the module is imported into test modules above their state preamble.
 """
 import ast
+import gc
 import os
 import threading
 
@@ -224,7 +254,14 @@ def derived(key, build):
     counted, memoised as nothing, so the next call builds again). On the raising path the build's exception is not masked:
     the singletons are read; when any carries an attribute an AssertionError naming the build that just raised as the
     writer is raised `from` the build's exception (its __cause__), else the build's exception is re-raised as it was; the
-    module docstring."""
+    module docstring. THE RETENTION SHAPE (the module docstring's paragraph of that name): when the collector is enabled
+    on entry it is disabled for the build and re-enabled in a finally, on both roads, so no automatic collection walks the
+    trees while the build allocates them; a collector the caller had disabled is never touched, and the state found is
+    handed back (a build that switches the collector itself is handed back as it left it). After a build that returned
+    and passed the after-check, and after the memo, gc.freeze() runs once,
+    while the collector is still off: every object alive then, the trees this build read among them, leaves the
+    collector's generations for the rest of the process. A build that raised, or that the after-check refused, freezes
+    nothing; a hit freezes nothing; nothing here unfreezes."""
     with _LOCK:
         if key in _DERIVED:
             _STATS["derived_hits"] += 1
@@ -232,16 +269,25 @@ def derived(key, build):
         check_singletons("before the build of %r (parse_cache.derived): an earlier writer" % (key,))
         _BUILDS[key] = _BUILDS.get(key, 0) + 1
         _STATS["derivations"] += 1
+        collecting = False                   # the caller's collector state, read INSIDE the try: an interrupt between the disable and the finally cannot leave it off
         try:
-            value = build()
-        except BaseException as exc:
-            found = singleton_attributes()
-            if found:
-                where = "after the build of %r raised %s (parse_cache.derived): the build that just raised wrote them, or a thread beside it"
-                raise AssertionError(singleton_message(where % (key, type(exc).__name__), found)) from exc
-            raise
-        check_singletons("after the build of %r (parse_cache.derived): the build itself wrote them, or a thread beside it" % (key,))
-        _DERIVED[key] = value
+            collecting = gc.isenabled()      # held off for the build when on, never touched when off
+            if collecting:
+                gc.disable()
+            try:
+                value = build()
+            except BaseException as exc:
+                found = singleton_attributes()
+                if found:
+                    where = "after the build of %r raised %s (parse_cache.derived): the build that just raised wrote them, or a thread beside it"
+                    raise AssertionError(singleton_message(where % (key, type(exc).__name__), found)) from exc
+                raise
+            check_singletons("after the build of %r (parse_cache.derived): the build itself wrote them, or a thread beside it" % (key,))
+            _DERIVED[key] = value
+            gc.freeze()                      # THE RETENTION SHAPE: what is alive now leaves the collector's generations for good, before the re-enable
+        finally:
+            if collecting:
+                gc.enable()                  # the state found, on the returning road and on the raising road
         return value
 
 
