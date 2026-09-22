@@ -316,8 +316,15 @@ test('the file review: L3 and L6 record the remote picture\'s tab as the one new
   gesturesConditioned(between(op11, '(a) as built', '(b) the narrow road'), 'open point 11, road (a)');
   assert.match(between(op11, '(b) the narrow road', 'a bare plain click'), /the tab for the explicit control and for a Cmd\/Ctrl-click where the press reaches the picture alone/, 'road (b) keeps the tab for the control and for the modified click under the same condition, where the press reaches the picture');
   assert.ok(op11.includes('The narrow road keeps the request: the control and the modified click still open the same credentialed tab'), 'road (b) says what it keeps (extra5-3)');
-  assert.ok(op11.includes('The reviewer\'s reading (romp-manager, 2026-09-20), for the owner to take or leave: the explicit control is an unambiguous gesture and a plain click on a picture is not'), 'the reviewer\'s reading, attributed');
+  assert.ok(op11.includes('The reviewer\'s reading (romp-manager, 2026-09-20), recorded before the decision: the explicit control is an unambiguous gesture and a plain click on a picture is not'), 'the reviewer\'s reading, attributed and placed before the decision (a sentence pin)');
   assert.ok(op11.includes('The landing is the owner\'s whatever the tier'));
+  // the decision as answered stands in the point and in L6, dated, paraphrased, with the road not taken named (the file review's round 11,
+  // ui-2 with extra8-2: the pins above had held the open question's wording, so the record outlived the decision it asked for)
+  assert.match(op11, /^11\. The remote picture's tab \(L3, L6; the file review's HIGH 1\)\. Decided by the owner on 2026-09-22, who kept all three gestures and asked that the outbound case be made visible before it happens/, 'open point 11 opens with the decision, dated (a sentence pin)');
+  assert.ok(!op11.includes('neither chosen') && !op11.includes('take or leave'), 'open point 11 no longer offers the roads (a sentence pin on the absence)');
+  assert.ok(op11.includes('(b) the narrow road, not taken'), 'road (b) is the road not taken (a sentence pin)');
+  assert.ok(op11.includes('the word was given on 2026-09-22'), 'the landing sentence carries the date (a sentence pin)');
+  assert.ok(L6.includes('landing on the owner\'s word, given on 2026-09-22') && L6.includes('all three gestures kept, the outbound case made visible before it happens'), 'L6 states the decision, dated (a sentence pin)');
   for (const leg of ['file-view-figure-chosen-browser.test.ts', 'file-view-figure-shapes-browser.test.ts', 'file-figure-open-browser.test.ts']) {
     assert.ok(op11.includes(leg), 'the narrow road prices ' + leg);
     assert.match(read('ui', 'webview', leg), /plain click/, leg + ' drives a plain click');

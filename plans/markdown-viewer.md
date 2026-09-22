@@ -8609,8 +8609,8 @@ before this follow-on only an author's link opened such a tab. A failed figure o
 file review's round 2), so the image request has always been made before the tab is asked for; the round-1 wording,
 a host the page had already fetched the image from, was false for a failed remote figure (extra5-4). The gate is not
 bypassed: no request reaches a host the gate still holds. The build's record here claimed that nothing leaves the machine that did not before, and the PR body and
-the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word
-(open point 11). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
+the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word, given on 2026-09-22
+(open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools,
 upstream or tests alone (48 files, the ledger entry's where line; run 2026-09-22 at the head that carries the fixes ruled in
 the file review's round 10, where the merge-base is 53f9f4aa3, the fork's main the branch merged for the file review's round
@@ -8958,13 +8958,19 @@ Playwright browser).
     should yield the arrows to a pane whose document has a viewer up (`#romp-fileview`), or the trail's arrow chords
     should be other keys, is a ruling; the guide's trail sentence states the exception (the review's round 2, held by
     tests/test_guide_trail_chords_and_figure_button.py to the shell script's lines).
-11. The remote picture's tab (L3, L6; the file review's HIGH 1). Two roads, both priced here and neither chosen: (a) as
-    built: a plain click on a loaded remote picture, its control, and a Cmd/Ctrl-click on it (the control at any time,
+11. The remote picture's tab (L3, L6; the file review's HIGH 1). Decided by the owner on 2026-09-22, who kept all three
+    gestures and asked that the outbound case be made visible before it happens; both roads stay priced here, and (b) is
+    the road not taken (the file review's round 11, ui-2 with extra8-2: the point had stood as a two-road offer after the
+    decision). (a) as built, the road taken: a plain click on a loaded remote picture, its control, and a Cmd/Ctrl-click on
+    it (the control at any time,
     and the two clicks on the picture where the press reaches it, the Comments panel closed or the pointer coarse; L3)
     open a top-level tab at the picture's address, a document request to a host the page had requested the image from that carries cookie
     classes the image request did not (L3's table), where before the follow-on only an author's link did; one gesture
     opens every picture, remote or local, and the tab is observed as a request by
-    file-view-figure-chosen-browser.test.ts from each of the three gestures; (b) the narrow road: the tab for the
+    file-view-figure-chosen-browser.test.ts from each of the three gestures, and since the fixes for the file review's
+    round 11 (ui-1 with extra8-1) the surface says where the open goes before the click: for a web target the control's
+    title, aria-label, class and glyph name the outbound open and its host, and the picture's own title carries the
+    address, an author's title kept before it (L3); (b) the narrow road, not taken: the tab for the
     explicit control and for a Cmd/Ctrl-click where the press reaches the picture alone, a bare plain click on a remote
     picture doing nothing, as before the follow-on. The narrow road keeps the request: the control and the modified click still open the same
     credentialed tab (the file review's round 2, extra5-3), so it changes which gesture makes it and not what leaves;
@@ -8974,9 +8980,10 @@ Playwright browser).
     file-view-figure-shapes-browser.test.ts's protocol-relative figure, file-figure-open-browser.test.ts's remote
     picture) and the guide's "a picture from the web opens its address in a new tab" narrowed to the button and the
     modified click. A failed remote figure opens no tab on either road (L3). The reviewer's reading
-    (romp-manager, 2026-09-20), for the owner to take or leave: the explicit control is an unambiguous gesture and a
-    plain click on a picture is not, so a plain click opening a credentialed third-party tab is the surprising one. The
-    landing is the owner's whatever the tier.
+    (romp-manager, 2026-09-20), recorded before the decision: the explicit control is an unambiguous gesture and a
+    plain click on a picture is not, so a plain click opening a credentialed third-party tab is the surprising one; the
+    visibility built here answers it without dropping the gesture. The landing is the owner's whatever the tier, and the
+    word was given on 2026-09-22.
 12. A picture opened from a figure takes no Recent row (L3): the default taken, so the report's row stands and Back
     reaches the report through the trail. With one exception, L2's rule, stated here because the default is ruled on
     here (the file review's round 2, extra8-1): a Back or Forward open is the pane's own (openFromViewer through the
