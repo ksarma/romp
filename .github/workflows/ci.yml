@@ -253,10 +253,11 @@ jobs:
         # regardless of the attribute. Latent here today: the one committed .gitattributes
         # (ui/webview/anchor-map-fixtures/.gitattributes) marks a fixture -text, for its line
         # endings, not -diff. Other plain-stream options (--no-color, --no-textconv, --no-ext-diff)
-        # guard against a developer's git config; this workflow sets no git config, and nothing in
-        # it configures color, textconv or an external diff, so here they would be defence in depth,
-        # not load-bearing. The committed attribute is the input this repository carries itself, and
-        # --text is its option. A finding exits nonzero and fails the step.
+        # guard against a developer's git config; no step of this workflow configures color, textconv
+        # or a diff driver (actions/checkout writes safe.directory, gc.auto and the auth header, none
+        # of which touches diff output), so here they would be defence in depth, not load-bearing.
+        # The committed attribute is the input this repository carries itself, and --text is its
+        # option. A finding exits nonzero and fails the step.
         run: gitleaks git . --no-banner --redact -v --config .gitleaks.toml --log-opts="--all --diff-merges=first-parent --text"
       - name: Scan the tree as it stands
         # The history scan reads commit diffs, so a secret in a file that is present but untouched
