@@ -263,8 +263,6 @@ jobs:
     # growing: PR 1790's run 35138058863 was cancelled at 25 min 04 s mid served-lab on a slow runner,
     # every step green up to the cut (2026-09-16). 40 min: the served step's 20-odd minutes on a slow
     # runner plus the 600 s per-test timeout plus setup.
-    # (fork, 2026-09-21: the runs above are the dates' own; the served step's figures read on 2026-09-21 are stated beside that
-    # step's comment below, against this cap, which is main's item and unchanged here.)
     timeout-minutes: 40
     defaults:
       run:
