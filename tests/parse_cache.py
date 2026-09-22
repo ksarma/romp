@@ -16,9 +16,12 @@ tenth pass's probe showed the utime-restored and the rename-over cases stale, an
 asked for in the process, the memo after: a census puts its WHOLE derivation (an index over the product sources, the units
 of every module, the table of rows) behind one key, so its tests and its --table road read one derivation, and two
 censuses that read the same product file (kernel/kernel.py, 79k lines) parse it once between them. A build that raises is
-memoised as nothing and counted as a build: the next call builds again. clear() forgets every cached parse and derivation;
-clear(key, ...) forgets those derived keys, and any parsed path among them. A planted copy a test writes under a fresh
-temporary directory is a path of its own, cached like any other file and dropped with the process.
+memoised as nothing and counted as a build: the next call builds again. clear() forgets every cached parse and derivation,
+and clear(key, ...) those derived keys and any parsed path among them; forgetting drops the cache's references only, so a
+tree a frozen cycle still holds (a derivation's value that references its trees through a cycle, as the census's _Tree does
+through its modules and their units) stays alive for the process, since nothing here unfreezes (the retention shape, below).
+A planted copy a test writes under a fresh temporary directory is a path of its own, cached like any other file and dropped
+with the process.
 
 THE SCOPE IS THE PROCESS. Module-level dicts, nothing on disk. Under pytest-xdist each worker is its own process with its
 own cache: two censuses that land on different workers each parse and derive on their own, so no saving is claimed there.
@@ -315,7 +318,10 @@ def derived(key, build):
 
 def clear(*keys):
     """Forget every cached parse and derivation (no arguments), or the derived keys given and any parsed path among them
-    (by realpath). The counters are left as they are: they count what happened in the process. Under the module's lock."""
+    (by realpath). Forgetting drops the cache's references only: a tree a frozen cycle still holds (a derivation's value that
+    references its trees through a cycle, as the census's _Tree does through its modules and their units) stays alive for the
+    process, since nothing here unfreezes (the retention shape in the module docstring). The counters are left as they are:
+    they count what happened in the process. Under the module's lock."""
     with _LOCK:
         if not keys:
             _PARSED.clear()
