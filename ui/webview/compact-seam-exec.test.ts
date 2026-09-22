@@ -439,7 +439,10 @@ test("every name the seam's prelude stubs is one render.ts declares at module le
   const prelude = ts.createSourceFile("prelude.js", SEAM_PRELUDE, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   const stubbed: string[] = [];
   for (const st of prelude.statements) { if (ts.isVariableStatement(st)) for (const d of st.declarationList.declarations) bind(d.name, stubbed); else if (ts.isFunctionDeclaration(st) && st.name) stubbed.push(st.name.text); }
-  assert.ok(stubbed.length >= 30 && stubbed.includes("gapElement") && stubbed.includes("appendItem"), "the prelude's stubbed names, read off its own tree (" + stubbed.length + "): " + stubbed.join(", "));
+  const kindOf = (st: ts.Statement): string => ts.isVariableStatement(st) ? "a variable statement" : ts.isFunctionDeclaration(st) ? "a function declaration" : ts.isClassDeclaration(st) ? "a class declaration" : ts.SyntaxKind[st.kind];
+  const unread = prelude.statements.filter((st) => !ts.isVariableStatement(st) && !(ts.isFunctionDeclaration(st) && st.name)).map(kindOf);
+  assert.deepEqual(unread, [], "every statement of the prelude is a variable statement or a named function declaration, the two forms this pin reads its names from: a stub in another form (a class, an expression statement) would be a name the pin never checks against render.ts, so it reds here by kind (the author's fixer pass over the pass after the maintainer's round 6, its verifier (b), which found a floor on the count standing where this belongs)");
+  assert.ok(stubbed.includes("gapElement") && stubbed.includes("appendItem"), "the prelude's stubbed names, read off its own tree, every statement read (" + stubbed.length + "): " + stubbed.join(", "));
   const sf = ts.createSourceFile("render.ts", RENDER, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const declared: string[] = [];
   for (const st of sf.statements) {
