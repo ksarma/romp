@@ -295,8 +295,10 @@ class ParkedCreates(unittest.TestCase):
                                   "text": "Why?", "name": "", "model": "", "effort": "", "fast": "", "color": "",
                                   "tries": 0}]
         t1 = _run(km._retry_parked_creates)
+        self.addCleanup(lambda: (gate.set(), t1.join(WAIT)))     # on every exit path: open the gate, wait for the pass
         self.assertTrue(entered.wait(WAIT))
         t2 = _run(km._retry_parked_creates)               # the connect push's pass, mid-cycle
+        self.addCleanup(lambda: (gate.set(), t2.join(WAIT)))
         time.sleep(SETTLE)
         gate.set()
         t1.join(WAIT); t2.join(WAIT)
@@ -356,8 +358,10 @@ class JudgeUsageReader(unittest.TestCase):
         got = {}
         with mock.patch.object(km, "open", gated_open, create=True):
             t1 = _run(lambda: got.__setitem__(1, km._judge_usage_rows()))
+            self.addCleanup(lambda: (gate.set(), t1.join(WAIT)))     # on every exit path: open the gate, wait for the reader
             self.assertTrue(entered.wait(WAIT))
             t2 = _run(lambda: got.__setitem__(2, km._judge_usage_rows()))
+            self.addCleanup(lambda: (gate.set(), t2.join(WAIT)))
             time.sleep(SETTLE)
             gate.set()
             t1.join(WAIT); t2.join(WAIT)
@@ -410,7 +414,9 @@ class JudgeUsageWalkers(unittest.TestCase):
         def go():
             self._write([row], mode="a")
             km._judge_usage_rows()
-        return _run(go)
+        t = _run(go)
+        self.addCleanup(t.join, WAIT)         # on every exit path (the caller's join is the success path's)
+        return t
 
     def test_the_roll_up_counts_the_rows_present_at_the_walks_start_under_a_prune(self):
         base = 1781100000
@@ -594,8 +600,10 @@ class RetryEpisodeGate(unittest.TestCase):
             return v
         km._retry_gate_state = parked_gate_state
         t1 = _run(km._fire_api_retry, SID, self.be)
+        self.addCleanup(lambda: (gate.set(), t1.join(WAIT)))     # on every exit path: open the gate, wait for the asker
         self.assertTrue(entered.wait(WAIT))
         t2 = _run(km._fire_api_retry, SID, self.be)   # the pusher's tick against the client's ask
+        self.addCleanup(lambda: (gate.set(), t2.join(WAIT)))
         time.sleep(SETTLE)
         gate.set()
         t1.join(WAIT); t2.join(WAIT)
@@ -773,8 +781,11 @@ class PathLinkCacheCopyOnWrite(unittest.TestCase):
 
 
 # ── counters: read-modify-write increments from eight threads land exactly ──
-def _hammer(fn, threads=8, n=5000):
+def _hammer(case, fn, threads=8, n=5000):
+    """`threads` threads each call fn `n` times; `case` (the test) registers the joins as a cleanup right after the
+    starts, so an assertion that fails in the caller leaves none of them behind (the joins below are the success path's)."""
     ts = [_run(lambda: [fn() for _ in range(n)]) for _ in range(threads)]
+    case.addCleanup(lambda: [t.join(WAIT * 4) for t in ts])
     for t in ts:
         t.join(WAIT * 4)
     for t in ts:
@@ -795,7 +806,7 @@ class Counters(unittest.TestCase):
                 v = km._next_nonce()
                 with lock:
                     seen.append(v)
-            total = _hammer(take)
+            total = _hammer(self, take)
             self.assertEqual(len(set(seen)), total)
             self.assertEqual(km._nonce[0], total)
         finally:
@@ -803,7 +814,7 @@ class Counters(unittest.TestCase):
 
     def test_models_rev_advances_once_per_change(self):
         before = km._models_rev[0]
-        total = _hammer(km._models_changed, n=1000)
+        total = _hammer(self, km._models_changed, n=1000)
         self.assertEqual(km._models_rev[0] - before, total)
 
     def test_drain_refusals_are_counted_exactly(self):
@@ -811,7 +822,7 @@ class Counters(unittest.TestCase):
         km._DRAIN_REFUSED.update(count=0, episodeCount=0, episode=False, lastT=0)
         try:
             with contextlib.redirect_stderr(io.StringIO()):
-                total = _hammer(km._note_drain_refused, n=2000)
+                total = _hammer(self, km._note_drain_refused, n=2000)
             self.assertEqual(km._DRAIN_REFUSED["count"], total)
             self.assertEqual(km._DRAIN_REFUSED["episodeCount"], total)
         finally:
@@ -824,9 +835,9 @@ class Counters(unittest.TestCase):
         em._ASM_STATS.pop("ft-test", None)
         em._ASM_STATS.pop("g:ft-test", None)
         try:
-            demoted = _hammer(lambda: em._asm_demote("ft-test"))
+            demoted = _hammer(self, lambda: em._asm_demote("ft-test"))
             self.assertEqual(em._ASM_STATS["g:ft-test"], demoted)
-            total = _hammer(lambda: em._asm_stat("ft-test"), n=2000)
+            total = _hammer(self, lambda: em._asm_stat("ft-test"), n=2000)
             self.assertEqual(em._ASM_STATS["ft-test"], total)
         finally:
             em._ASM_STATS.pop("ft-test", None)
@@ -839,7 +850,7 @@ class Counters(unittest.TestCase):
         saved = dict(km._wire_stats)
         km._wire_stats["feed_body"] = 0
         try:
-            total = _hammer(lambda: km._LazyWire(lambda: "{}", 2, "feed_body").text(), n=2000)
+            total = _hammer(self, lambda: km._LazyWire(lambda: "{}", 2, "feed_body").text(), n=2000)
             self.assertEqual(km._wire_stats["feed_body"], total)
         finally:
             km._wire_stats.clear()
@@ -854,7 +865,7 @@ class Counters(unittest.TestCase):
         km._last_machine_cut = lambda sid: (0.0, "")
         turns = []
         try:
-            total = _hammer(lambda: km._interrupt_marks(turns, sid=SID, family="display"), n=2000)
+            total = _hammer(self, lambda: km._interrupt_marks(turns, sid=SID, family="display"), n=2000)
             st = km._intr_marks_memo_stats
             self.assertEqual(st["hit"] + st["miss"], total)
         finally:
