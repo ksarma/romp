@@ -1208,7 +1208,8 @@ test("the fourth class the census cannot name, witnessed through its own walker:
  *  parentheses, brackets and braces and over double- and single-quoted strings (a `#` comment runs to its line's end and is dropped), split
  *  into entries at depth-0 commas; per entry the string literals before its top-level colon are the surface and the key (any text, a hyphen
  *  included), the string literals inside the frozenset(...) argument are its words, and `container` says what that argument opens with (a
- *  tuple, a set, a list, a single word in parentheses with no trailing comma, which Python reads as a string). `frozensets` counts
+ *  tuple, a set, a list, a single word in parentheses with no trailing comma, which Python reads as a string, or a bare string, whose
+ *  frozenset is its letters too). `frozensets` counts
  *  `frozenset(` over the body with comments and string contents removed, the number of entries the parse must read. */
 function parseValuesTable(body: string): { entries: Array<{ surface: string; key: string; words: string[]; container: string }>; frozensets: number } {
   const strings = (s: string): string[] => [...s.matchAll(/"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'/g)].map((m) => m[1] ?? m[2]);
@@ -1235,7 +1236,7 @@ function parseValuesTable(body: string): { entries: Array<{ surface: string; key
     let d = 1, j = argStart, qq: string | null = null;   // the argument runs to the frozenset call's own closing parenthesis
     for (; j < value.length && d > 0; j++) { const c = value[j]; if (qq) { if (c === "\\") j++; else if (c === qq) qq = null; } else if (c === '"' || c === "'") qq = c; else if ("([{".includes(c)) d++; else if (")]}".includes(c)) d--; }
     const arg = value.slice(argStart, j - 1).trim(), words = strings(arg);
-    const container = arg.startsWith("(") ? (words.length > 1 || /,\s*\)$/.test(arg) ? "a tuple" : "a single word in parentheses with no trailing comma (a string to Python; frozenset of a string is its letters)") : arg.startsWith("{") ? "a set" : arg.startsWith("[") ? "a list" : "another expression";
+    const container = arg.startsWith("(") ? (words.length > 1 || /,\s*\)$/.test(arg) ? "a tuple" : "a single word in parentheses with no trailing comma (a string to Python; frozenset of a string is its letters)") : arg.startsWith("{") ? "a set" : arg.startsWith("[") ? "a list" : /^["']/.test(arg) ? "a bare string (a string to Python; frozenset of a string is its letters)" : "another expression";
     return { surface, key, words, container };
   });
   return { entries, frozensets: (stripped.match(/frozenset\s*\(/g) || []).length };
@@ -1261,7 +1262,7 @@ test("the page's guard literal is a member of the set the kernel admits for the 
   const entryName = (e: { surface: string; key: string }): string => e.surface + "/" + e.key;
   for (const nm of [...new Set([...entries.map(entryName), ...balanced.entries.map(entryName)])]) {
     const r = entries.find((e) => entryName(e) === nm), p = balanced.entries.find((e) => entryName(e) === nm);
-    assert.ok(r && p, "the regex and the balanced parse disagree on the entry " + nm + ": the regex read " + (r ? JSON.stringify(r.words) : "nothing") + ", the parse read " + (p ? JSON.stringify(p.words) + " in " + p.container : "nothing") + " (a spelling one read cannot see: a hyphenated surface or key, a set or list literal, a tuple with no trailing comma)");
+    assert.ok(r && p, "the regex and the balanced parse disagree on the entry " + nm + ": the regex read " + (r ? JSON.stringify(r.words) : "nothing") + ", the parse read " + (p ? JSON.stringify(p.words) + " in " + p.container : "nothing") + " (a spelling one read cannot see: a hyphenated surface or key, a set or list literal, a tuple with no trailing comma, a bare string)");
     assert.deepEqual(r!.words, p!.words, "the entry " + nm + ": the two reads agree on its words (" + p!.container + ")");
   }
   assert.deepEqual(entries.map((e) => e.surface + "/" + e.key), ["chat/view"], "one bounded key, chat's `view` (every entry of the table is read: a second is named here)");
