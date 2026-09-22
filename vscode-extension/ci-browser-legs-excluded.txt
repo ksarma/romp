@@ -45,6 +45,14 @@
 # `grep '^out-tests.*pending #' vscode-extension/ci-browser-legs-excluded.txt` lists the pending lines (the rows alone: a
 # grep for the bare prefix would list this header's two lines that spell the form as well); tools/ci-browser-legs.test.mjs
 # runs that command as written here and holds its output to the pending rows.
+# The pending rows at the roster's creation were DERIVED, not recalled: on 2026-09-22 the fork's open PRs were listed with
+# `gh api "repos/<owner>/<repo>/pulls?state=open&per_page=100" --paginate`, each PR's added or modified .test.ts files under
+# the census's directories (LEG_DIRS in scripts/browser-legs-census.mjs) were read with
+# `gh api "repos/<owner>/<repo>/pulls/<N>/files?per_page=100" --paginate`, and each candidate's content at the PR's head was
+# classified by that module's classify(); the rows name every leg that read found absent from this tree. A PR opened after
+# that read is not in the rows: its leg is red as in neither file when it arrives and takes the pending-row remedy then, never
+# a guessed roster or exclusions line. A pending row alone does not clear a PR whose module the census refuses: the census
+# refuses before the equality runs, so that PR stays red until the form is rewritten or the census is taught it.
 out-tests/ui/timeline-tags-scale-browser.test.js	launches Firefox; the gating job installs Chromium only
 out-tests/ui/webview/anchor-map-cells-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
 out-tests/ui/webview/anchor-map-code-lines-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
@@ -244,3 +252,11 @@ out-tests/ui/webview/file-view-figure-floor-browser.test.js	pending #862: launch
 out-tests/ui/webview/file-view-figure-recent-browser.test.js	pending #862: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
 out-tests/ui/webview/file-view-figure-shapes-browser.test.js	pending #862: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
 out-tests/ui/webview/file-view-figure-state-browser.test.js	pending #862: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
+out-tests/ui/webview/file-print-armed-browser.test.js	pending #853: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
+out-tests/ui/webview/file-print-browser.test.js	pending #853: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
+out-tests/ui/webview/file-print-driver-browser.test.js	pending #853: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
+out-tests/ui/webview/file-print-egress-browser.test.js	pending #853: calls inBrowser beside a playwright load of its own; at its merge of main the owner replaces this reason with the roster gap the census reads
+out-tests/ui/webview/file-print-figure-browser.test.js	pending #853: runs in every engine the launcher offers, through its engine parameter; at its merge of main the owner writes the reason the census derives
+out-tests/ui/webview/file-print-media-browser.test.js	pending #853: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
+out-tests/ui/webview/file-view-print-takings-browser.test.js	pending #853: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
+out-tests/ui/webview/feed-css-footer.test.js	pending #864: drives playwright from a child process whose source it holds in a string; at its merge of main the owner replaces this reason with the embedded-driver sentence

@@ -18,7 +18,11 @@
 //              `require("./real-viewer-leg").inBrowser(...)`; through parentheses, !, as, .call/.apply; .bind makes no call,
 //              so a bound reference is a value use, refused). The call arm and the value-use refusal read ONE record of the
 //              identifier the call resolved through, so the two agree by construction. A type-only import binds nothing and is
-//              recorded (typeOnly). The import without a call is recorded (launcherImported) and is not a leg.
+//              recorded (typeOnly). The import without a call is recorded (launcherImported) and is not a leg. An ENGINE
+//              passed to inBrowser as its third argument (the launcher's engine parameter; .call passes it fourth, .apply in
+//              its array literal) is read into the engines the leg reaches: a literal, or a name FOLDED through the closed
+//              forms under `playwright` below; an argument outside them, or one naming no engine, is REFUSED with the line,
+//              never read as no engine. A call with no third argument passes nothing and the record says nothing of it.
 //              A name is read at its USE SITE by lexical scope: a use reaches the innermost enclosing declaration of that name,
 //              so a destructured parameter, a catch variable or a local const of an inner scope that reuses the name is not
 //              the import or the loader-bound variable, and a use in the scope that binds them is.
@@ -40,7 +44,9 @@
 //              lexical scope through four closed forms: a const bound to a literal (a let or var too, when no statement of the
 //              module assigns to it), a for-of over an array literal, a parameter
 //              typed as a union of string literals, a string-typed parameter whose every direct call site in the module passes a
-//              literal); a launch of its own (launch, launchPersistentContext, launchServer, connect, connectOverCDP on a
+//              literal; and two the launcher's own exports supply, read from its source by resolved path: a for-of over a name
+//              imported from the launcher whose export is a const array literal of literals, and a parameter typed by a type
+//              alias the launcher exports as a union of string literals); a launch of its own (launch, launchPersistentContext, launchServer, connect, connectOverCDP on a
 //              playwright-derived expression, by property, bracket, destructuring or .call/.apply). Derivation stops at a call
 //              that is not a loader: a browser returned by launch() or a wrapper's return value is not the package.
 //   skipTodo:  every .skip( and .todo( call and every { skip: } or { todo: } option property, with its line, read from the tree,
@@ -234,12 +240,14 @@ export function classify(ts, file, src, opts = {}) {
       if (fo && ts.isForOfStatement(fo) && fo.initializer === p) {
         const arr = unwrap(fo.expression);
         if (ts.isArrayLiteralExpression(arr)) { const vals = arr.elements.map((el) => literalName(unwrap(el))); if (vals.every((v) => v !== null)) return vals; }
+        if (ts.isIdentifier(arr)) return launcherExportLiterals(arr, "const");   // for (const engine of ENGINES), ENGINES imported from the launcher
       }
       return null;
     }
     if (ts.isParameter(decl)) {
       if (decl.type && ts.isUnionTypeNode(decl.type)) { const vals = decl.type.types.map((t) => ts.isLiteralTypeNode(t) && ts.isStringLiteral(t.literal) ? t.literal.text : null); if (vals.every((v) => v !== null)) return vals; return null; }
       if (decl.type && ts.isLiteralTypeNode(decl.type) && ts.isStringLiteral(decl.type.literal)) return [decl.type.literal.text];
+      if (decl.type && ts.isTypeReferenceNode(decl.type) && ts.isIdentifier(decl.type.typeName)) return launcherExportLiterals(decl.type.typeName, "type");   // (engine: Engine), Engine imported from the launcher
       // a string-typed parameter: every direct call of the named function in this module passes a literal at this position
       const fn = decl.parent;
       if (!(decl.type && decl.type.kind === ts.SyntaxKind.StringKeyword)) return null;
@@ -255,6 +263,37 @@ export function classify(ts, file, src, opts = {}) {
       return [...new Set(vals)];
     }
     return null;
+  };
+  /** The string literals the launcher's export named by `id` holds, when `id` is a name imported from the launcher (by scope) and
+   *  the launcher's source, read once per classify by its resolved path, exports it as a const array literal of literals
+   *  (`kind` "const": `export const ENGINES = ["chromium", ...]`, `as const` or typed) or as a type alias that is a union of
+   *  string literal types (`kind` "type": `export type Engine = "chromium" | ...`). null otherwise (refuse). */
+  let launcherExports = null;
+  const launcherExportLiterals = (id, kind) => {
+    const d = declOfUse(id);
+    if (!d || !ts.isImportSpecifier(d)) return null;
+    const imp = d.parent && d.parent.parent && d.parent.parent.parent;
+    if (!imp || !ts.isImportDeclaration(imp)) return null;
+    const spec = literalName(imp.moduleSpecifier);
+    if (spec === null || resolveSpec(spec).kind !== "launcher") return null;
+    if (launcherExports === null) {
+      launcherExports = new Map();
+      let text = null; try { text = fs.readFileSync(launcherAbs, "utf8"); } catch { text = null; }
+      if (text !== null) {
+        const lsf = ts.createSourceFile(launcherAbs, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+        const exported = (st) => (ts.canHaveModifiers(st) ? ts.getModifiers(st) || [] : []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+        for (const st of lsf.statements) {
+          if (ts.isVariableStatement(st) && exported(st)) for (const vd of st.declarationList.declarations) if (ts.isIdentifier(vd.name) && vd.initializer) launcherExports.set("const:" + vd.name.text, vd.initializer);
+          if (ts.isTypeAliasDeclaration(st) && exported(st)) launcherExports.set("type:" + st.name.text, st.type);
+        }
+      }
+    }
+    const node = launcherExports.get(kind + ":" + (d.propertyName || d.name).text);
+    if (!node) return null;
+    if (kind === "const") { const arr = unwrap(node); if (!ts.isArrayLiteralExpression(arr)) return null; const vals = arr.elements.map((el) => literalName(unwrap(el))); return vals.every((v) => v !== null) ? vals : null; }
+    if (!ts.isUnionTypeNode(node)) return ts.isLiteralTypeNode(node) && ts.isStringLiteral(node.literal) ? [node.literal.text] : null;
+    const vals = node.types.map((t) => ts.isLiteralTypeNode(t) && ts.isStringLiteral(t.literal) ? t.literal.text : null);
+    return vals.every((v) => v !== null) ? vals : null;
   };
   /** Does any statement in the module assign to the identifier `name` (=, a compound assignment, ++ or --)? */
   const assignedSomewhere = (name) => {
@@ -494,6 +533,21 @@ export function classify(ts, file, src, opts = {}) {
   // read, `refRefused` every one it refused: THE INVARIANT holds every such reference to one of the two
   const calledThrough = new Set();
   const refRead = new Set(), refRefused = new Set();
+  /** The engine a shared call passes (inBrowser's third argument; fourth through .call; the array literal's third through .apply),
+   *  folded into `engines`; nothing when the call passes none; a refusal when the argument folds through no closed form, names no
+   *  engine, or sits in an .apply list the walker cannot read. */
+  const readEngineArg = (call, via) => {
+    let arg;
+    if (!via) arg = call.arguments[2];
+    else if (via === "call") arg = call.arguments[3];
+    else { const list = call.arguments[1] && unwrap(call.arguments[1]); if (list && ts.isArrayLiteralExpression(list)) arg = list.elements[2]; else if (list) { refuse(call, "the shared launcher applied to an argument list the walker cannot read (an engine may be passed in it)"); return; } }
+    if (!arg) return;
+    const a = unwrap(arg);
+    const lit = literalName(a);
+    const vals = lit !== null ? [lit] : ts.isIdentifier(a) ? foldIdentifier(a) : null;
+    if (!vals) { refuse(arg, "an engine argument to the shared launcher the walker cannot fold (the closed forms: a literal; a const bound to one; a for-of over an array literal or over the launcher's exported const array; a parameter typed as a literal union or as the launcher's exported alias; a string parameter whose call sites pass literals), so the engine the leg reaches is unread: spell it through one of them"); return; }
+    for (const v of vals) { if (ENGINES.has(v)) engines.add(v); else refuse(arg, "an engine argument to the shared launcher that names no engine (" + v + "; the engines are chromium, firefox and webkit)"); }
+  };
   const carriesInBrowser = (b) => b !== null && b.module === "launcher" && (b.member === "inBrowser" || b.member === null || b.member === "default");
   const walk3 = (n) => {
     if (ts.isCallExpression(n)) {
@@ -511,10 +565,10 @@ export function classify(ts, file, src, opts = {}) {
       let c = unwrap(n.expression);
       // .call / .apply on the callee (.bind makes no call: a bound reference is read as a value use below)
       let viaCall = false;
-      if ((ts.isPropertyAccessExpression(c)) && ["call", "apply"].includes(c.name.text)) { c = unwrap(c.expression); viaCall = true; }
+      if ((ts.isPropertyAccessExpression(c)) && ["call", "apply"].includes(c.name.text)) { viaCall = c.name.text; c = unwrap(c.expression); }
       if (ts.isIdentifier(c)) {
         const b = bindingAt(c);
-        if (b && b.module === "launcher" && b.member === "inBrowser") { sharedCalls++; calledThrough.add(c); if (inTryWithCatch(n)) swallow.push(lineOf(n)); }
+        if (b && b.module === "launcher" && b.member === "inBrowser") { sharedCalls++; calledThrough.add(c); readEngineArg(n, viaCall); if (inTryWithCatch(n)) swallow.push(lineOf(n)); }
         const d = derivedAt(c);
         if (d) { const last = d.chain[d.chain.length - 1] || []; if (last.some((x) => LAUNCHES.has(x))) launches.push({ line: lineOf(n), how: "call of destructured " + last.join("|") + (viaCall ? " via .call/.apply" : "") }); }
         if (b && b.module === "playwright" && b.member && LAUNCHES.has(b.member.split(".").pop())) launches.push({ line: lineOf(n), how: "call of imported " + b.member });
@@ -525,8 +579,8 @@ export function classify(ts, file, src, opts = {}) {
         else {
           if (names.some((x) => x === "skip" || x === "todo")) skipTodo.push({ line: lineOf(n), what: "." + names.join("|") + "(" });
           // launcher namespace or default binding: leg.inBrowser(...); or the loader call's own result: require(launcher).inBrowser(...)
-          if (ts.isIdentifier(obj)) { const b = bindingAt(obj); if (b && b.module === "launcher" && (b.member === null || b.member === "default") && names.includes("inBrowser")) { sharedCalls++; calledThrough.add(obj); if (inTryWithCatch(n)) swallow.push(lineOf(n)); } }
-          else { const l = loaderCall(obj); if (l && l.kind === "launcher") { followed.add(unwrap(obj)); launcherImported.push(lineOf(n)); if (names.includes("inBrowser")) { sharedCalls++; if (inTryWithCatch(n)) swallow.push(lineOf(n)); } } }
+          if (ts.isIdentifier(obj)) { const b = bindingAt(obj); if (b && b.module === "launcher" && (b.member === null || b.member === "default") && names.includes("inBrowser")) { sharedCalls++; calledThrough.add(obj); readEngineArg(n, viaCall); if (inTryWithCatch(n)) swallow.push(lineOf(n)); } }
+          else { const l = loaderCall(obj); if (l && l.kind === "launcher") { followed.add(unwrap(obj)); launcherImported.push(lineOf(n)); if (names.includes("inBrowser")) { sharedCalls++; readEngineArg(n, viaCall); if (inTryWithCatch(n)) swallow.push(lineOf(n)); } } }
           if (names.some((x) => LAUNCHES.has(x))) { const chain = pwChain(obj); if (chain && !chain.refused) { noteChain(chain); launches.push({ line: lineOf(n), how: "." + names.join("|") + "(" + (viaCall ? " via .call/.apply" : "") }); } }
           const chain = pwChain(c); if (chain && !chain.refused) noteChain(chain);
         }

@@ -254,6 +254,13 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p73-namespace-member-bind.test.ts", leg: false, cls: "none", gap: "never calls its inBrowser through that import", launcherImported: true, refused: "p73-namespace-member-bind.test.ts:3: the launcher's module binding handed on as a value" }, // leg.inBrowser.bind(null): .bind makes no call, so the bound reference is a value use
   // THE INVARIANT's boundary: text that names playwright or the launcher without a resolution (a title, an array literal, a regex, a message string) trips nothing
   { dir: W, file: "p74-text-names-playwright.test.ts", leg: false, cls: "none", gap: null, launcherImported: false },
+  // regression-1's engine parameter (PR 853's launcher takes an engine as inBrowser's third argument): read into the engines the leg reaches, through the closed forms and the two the stub launcher's exports supply; anything else refused
+  { dir: W, file: "p75-engine-for-of-import.test.ts", leg: true, cls: "shared", gap: null, engines: ["chromium", "firefox", "webkit"] }, // for (const engine of ENGINES), ENGINES the launcher's exported const array (853's shape)
+  { dir: W, file: "p76-engine-typed-param.test.ts", leg: true, cls: "shared", gap: null, engines: ["chromium", "firefox", "webkit"] }, // a parameter typed by the launcher's exported alias Engine: the whole union, on the safe side
+  { dir: W, file: "p77-engine-literal.test.ts", leg: true, cls: "shared", gap: null, engines: ["firefox"] },
+  { dir: W, file: "p78-engine-unfoldable.test.ts", leg: true, cls: "shared", gap: null, engines: [], refused: "p78-engine-unfoldable.test.ts:3: an engine argument to the shared launcher the walker cannot fold" }, // process.env.ENGINE: refused, never read as no engine
+  { dir: W, file: "p79-engine-via-call.test.ts", leg: true, cls: "shared", gap: null, engines: ["webkit"] },                          // inBrowser.call(null, t, body, "webkit"): the engine is the fourth argument
+  { dir: W, file: "p80-engine-unknown-name.test.ts", leg: true, cls: "shared", gap: null, engines: [], refused: "p80-engine-unknown-name.test.ts:3: an engine argument to the shared launcher that names no engine (chrome" }, // a literal that is no engine
 ];
 const bundleOf = (p: Plant): string => "out-tests/" + p.dir + "/" + p.file.replace(/\.test\.ts$/, ".test.js");
 

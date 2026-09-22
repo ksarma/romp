@@ -73,7 +73,14 @@ branch) every checker turns the line red with the promotion remedy (a roster lin
 own, or no line), so the owner promotes it in that merge. A pending line whose PR closes without the
 leg never turns red on its own and is removed by hand;
 `grep '^out-tests.*pending #' vscode-extension/ci-browser-legs-excluded.txt` lists the pending lines (the rows; the
-file's header spells the form too, which a grep for the bare prefix would list).
+file's header spells the form too, which a grep for the bare prefix would list). The rows at the roster's creation
+were derived, not recalled: the fork's open PRs listed with `gh api "repos/<owner>/<repo>/pulls?state=open&per_page=100" --paginate`,
+each PR's added or modified `.test.ts` files under the census's directories read with
+`gh api "repos/<owner>/<repo>/pulls/<N>/files?per_page=100" --paginate`, and each candidate's content at the PR's head
+classified by the census module's `classify()` (the exclusions header records the date); a PR opened after that read
+takes the pending-row remedy when its leg arrives. A pending row alone does not clear a PR whose module the census
+refuses: the census refuses before the equality runs, so that PR stays red until the form is rewritten or the census is
+taught it.
 Before you push, `node --test tools/ci-browser-legs.test.mjs` from the repo root runs the tree checks
 CI's shell job runs (no `npm ci` needed); from `vscode-extension/`, after `npm ci`,
 `node esbuild.js --tests && node --test out-tests/ui/webview/ci-browser-legs-census.test.js` runs the
