@@ -71,9 +71,12 @@ THE KIND of a thread, read from its target: what it does if the test never stops
 CANNOT READ FALLS TO THE RESTRICTED SIDE, NEVER TO EXCUSED. `bounded` comes ONLY from a body the walk READ and found free
 of loops, of untimed waits and of calls of a parameter it has not in hand (the third arm, below), or from a method of the
 stdlib the STDLIB_RETURNS table says returns WHATEVER ITS ARGUMENTS
-AND ON ANY STDLIB RECEIVER (Lock.release, the one entry left: its reason says so in those words, UNCONDITIONAL_WORDS,
-states which receiver classes carry the name and what its arguments do, the re-examinations of 2026-09-22, and a
-table-shaped test holds every entry to the words; a name that cannot say it is CONDITIONED instead, STDLIB_CONDITIONED,
+AND ON ANY STDLIB RECEIVER (EMPTY since the ninth pass, 2026-09-22: release, its last entry, moved to the conditioned
+names when the refuter showed its reason claimed a receiver read as threading's, multiprocessing's or asyncio's
+construction while _library_ctor answers True for a constructor of ANY stdlib module, so a release on a mmap or a sqlite3
+connection would have read bounded by name; an entry, should one return, must say so in those words, UNCONDITIONAL_WORDS,
+state which receiver classes carry the name and what its arguments do, and a table-shaped test holds every entry to the
+words; a name that cannot say it is CONDITIONED instead, STDLIB_CONDITIONED,
 checked at the call: time.sleep is bounded only when args= carries a literal number at or under BOUND_S, 5 s;
 server_close only when the receiver was constructed as a TCPServer, UDPServer, HTTPServer or ThreadingHTTPServer, a
 server with no handler threads to join, since socketserver.ThreadingMixIn.server_close joins live handlers under its
@@ -87,16 +90,21 @@ imports (mp.Event(), a bare Event() from either module); a cancel only on a thre
 finished Event), on an asyncio future, task or handle (cancel schedules the done callbacks through loop.call_soon) or on
 a concurrent.futures.Future() the unit registers no add_done_callback on, because concurrent.futures.Future.cancel runs
 the done callbacks SYNCHRONOUSLY and a blocking one blocks it (the refuter's probe on round 2 of PR 891, 2026-09-22,
-which moved cancel out of STDLIB_RETURNS; release re-examined the same way stays: no stdlib release runs a caller's
-callback; a multiprocessing.managers PROXY, Manager().Lock() / .RLock() / .Semaphore() / .BoundedSemaphore() /
-.Condition(), an AcquirerProxy, is NOT a receiver the release entry covers, its reason says so: its release is a
-synchronous round trip to the manager process, blocked while that process is stopped or busy, the probe of 2026-09-22 on
-round 2 of PR 891's review, alive after 1 s with the manager SIGSTOPped and a BrokenPipeError after shutdown; the walk
-reads such a receiver as UNREADABLE and never through the table, because its construction is a method's result and not
-a stdlib constructor (_library_ctor, _library_made), and a plant holds a proxy Lock's and Semaphore's release, a proxy
-Event's set, clear and is_set and a proxy Queue's put_nowait and get_nowait each unreadable and LISTED, through the
-module, an import alias, a bare Manager, a manager bound to a name, a with-as manager, a chained call and a SyncManager,
-whose own start() the walk lists as an unreadable receiver too); and a Timer is bounded only for a literal interval at or under
+which moved cancel out of STDLIB_RETURNS); a release only on a receiver constructed as a lock, semaphore or condition of
+threading or _thread, of multiprocessing's own constructors or of asyncio (RELEASE_RECEIVERS, _release_rule: re-examined
+on round 2 the same way as cancel, no release among them runs a caller's callback, and a probe had a Semaphore's and an
+asyncio Lock's release with a parked waiter return at once), UNREADABLE on any other stdlib object (a mmap.mmap(), a
+sqlite3.connect(): the objects the table's entry excused by name until the ninth pass, since _library_ctor answers True
+for a constructor of ANY stdlib module) and on a multiprocessing.managers PROXY, Manager().Lock() / .RLock() /
+.Semaphore() / .BoundedSemaphore() / .Condition(), an AcquirerProxy, whose release is a synchronous round trip to the
+manager process, blocked while that process is stopped or busy, the probe of 2026-09-22 on round 2 of PR 891's review,
+alive after 1 s with the manager SIGSTOPped and a BrokenPipeError after shutdown; the walk reads such a proxy as an
+object it does not read and never through the tables, because its construction is a method's result and not a stdlib
+constructor (_library_ctor, _library_made), and a plant holds a proxy Lock's and Semaphore's release, a proxy Event's
+set, clear and is_set and a proxy Queue's put_nowait and get_nowait each unreadable and LISTED, through the module, an
+import alias, a bare Manager, a manager bound to a name, a with-as manager, a chained call and a SyncManager, whose own
+start() the walk lists as an unreadable receiver too, and a mmap's and a sqlite3 connection's release unreadable and
+listed; and a Timer is bounded only for a literal interval at or under
 the same bound, whatever its function does; each otherwise UNREADABLE); the name rules (serve_forever, an untimed wait, a read) classify the other way, to loop or
 waits; a target the walk cannot read is UNREADABLE, never bounded, and its tail-only stop is listed with the unreadable
 receivers (the pin asserts that bucket empty; ALLOW may excuse one by name with its reason). A structural test hands
@@ -193,8 +201,9 @@ supplied at the caller is read in the caller's row only: the helper's own row ke
            parameter no hand supplies (the third arm), a function of a module it does not
            read (a third-party import), a stdlib function or method with no STDLIB_RETURNS entry (a shutdown blocks until
            the serve loop ends; a put can block on a full queue) or whose CONDITIONED check fails at the call
-           (time.sleep(3600), server_close of a ThreadingTCPServer, set of a multiprocessing.Event(), cancel of a
-           concurrent.futures.Future() with an add_done_callback on it or of a pool future, a Timer(3600, ...)), a
+           (time.sleep(3600), server_close of a ThreadingTCPServer, set of a multiprocessing.Event(), release of a
+           mmap.mmap() or a sqlite3.connect(), cancel of a concurrent.futures.Future() with an add_done_callback on it or
+           of a pool future, a Timer(3600, ...)), a
            method of an object the walk does not read (release, set or put_nowait of a Manager proxy: the tables are
            never consulted for it), a
            method run on an instance it
@@ -417,13 +426,17 @@ KIND_UNREAD = "unreadable"       # the kind of a target the walk cannot read: ne
 # that cannot say that is CONDITIONED instead (STDLIB_CONDITIONED, below its checkers, each reading the receiver's
 # construction or the call: time.sleep on a literal argument at or under BOUND_S; server_close on a server with no handler
 # threads to join; an Event's set, clear and is_set and a queue's put_nowait and get_nowait on the receiver's module; a
-# cancel on the receiver's construction and, for a concurrent.futures.Future, on the unit's add_done_callback calls) or
+# cancel on the receiver's construction and, for a concurrent.futures.Future, on the unit's add_done_callback calls; a
+# release on the receiver's construction, a lock, semaphore or condition of threading, multiprocessing or asyncio) or
 # dropped. Any other method of a stdlib object used as a target is UNREADABLE (a shutdown blocks until the serve loop
 # ends; a put can block on a full queue; a wait with a timeout is a wait the walk has no rule for).
+# EMPTY since the ninth pass (2026-09-22): release, its last entry, moved to the conditioned names when the refuter showed
+# that the entry's reason ("on any stdlib receiver the walk reads as a stdlib construction, threading's, multiprocessing's
+# or asyncio's own constructor") claimed more than the walk checked: _library_ctor answers True for a constructor of ANY
+# stdlib module, so a release on a mmap.mmap() or a sqlite3.connect() would have read bounded by name. The table stays, with
+# its words and its test, for an entry that can say them; none does today.
 UNCONDITIONAL_WORDS = ("whatever its arguments", "on any stdlib receiver")
-STDLIB_RETURNS = {
-    "release": "Lock.release returns at once whatever its arguments and on any stdlib receiver the walk reads as a stdlib construction, threading's, multiprocessing's or asyncio's own constructor (re-examined 2026-09-22: threading's Lock, RLock and Condition release the lock, raising when not held; threading's Semaphore and BoundedSemaphore take their Condition briefly and notify it, release(n) n times; multiprocessing's Lock, RLock, Semaphore, BoundedSemaphore and Condition post the semaphore, no handshake; asyncio's Lock, Semaphore, BoundedSemaphore and Condition wake a waiter's future; re-examined again on round 2 of PR 891's review, 2026-09-22, for a caller's callback run synchronously, the way concurrent.futures.Future.cancel runs its done callbacks and the reason cancel left this table: no stdlib release runs one, threading's notify releases the waiters' locks, asyncio's wake sets the waiter's future, whose callbacks loop.call_soon schedules; a runtime probe had threading.Semaphore.release with a parked waiter and asyncio.Lock.release with a parked waiter return at once). EXCLUDED, never read through this entry: a multiprocessing.managers proxy (Manager().Lock(), .RLock(), .Semaphore(), .BoundedSemaphore(), .Condition(): an AcquirerProxy), whose release is a synchronous round trip to the manager process, blocked while that process is stopped or busy (the probe of 2026-09-22: a Manager().Lock() proxy's release on a thread was alive after 1 s with the manager process SIGSTOPped and returned after SIGCONT; after the manager's shutdown it raised BrokenPipeError); the walk reads such a receiver as unreadable because its construction is a method's result and not a stdlib constructor (_library_ctor, _library_made), and a plant holds it listed",
-}
+STDLIB_RETURNS = {}
 # CONDITIONED on 2026-09-22 (round 2 of PR 891's review, the refuter's probe): cancel, because concurrent.futures.Future.cancel
 # runs the done callbacks SYNCHRONOUSLY (_invoke_callbacks) and a blocking add_done_callback blocks it (`fut.add_done_callback(
 # lambda f: gate.wait())` then `Thread(target=fut.cancel)`: the thread stays alive; re-run here, alive after 0.5 s), so the
@@ -3818,10 +3831,52 @@ def _cancel_rule(unit, ctor, call, recv=None):
         ("%s.%s()" % (mod, ctor_name)) if mod and ctor_name else "receiver whose construction the walk cannot name")
 
 
+# The receivers whose release returns on its own, by the module their construction names and the class: threading's and
+# _thread's locks, semaphores and conditions, multiprocessing's own (multiprocessing.synchronize's classes, reached as
+# multiprocessing.Lock() and the like), asyncio's.
+RELEASE_RECEIVERS = {"threading": ("Lock", "RLock", "Condition", "Semaphore", "BoundedSemaphore"),
+                     "_thread": ("allocate_lock", "allocate", "LockType", "RLock"),
+                     "multiprocessing": ("Lock", "RLock", "Condition", "Semaphore", "BoundedSemaphore"),
+                     "asyncio": ("Lock", "Condition", "Semaphore", "BoundedSemaphore")}
+
+
+def _release_rule(unit, ctor, call, recv=None):
+    """release as a target (the refuter's finding on the ninth pass, 2026-09-22): bounded ONLY on a receiver whose construction
+    the walk reads as a lock, semaphore or condition of threading or _thread (release frees the lock, raising when not held;
+    a Semaphore takes its Condition briefly and notifies it, release(n) n times), of multiprocessing's own constructors
+    (post the semaphore, no handshake) or of asyncio (wake a waiter's future, whose callbacks loop.call_soon schedules):
+    RELEASE_RECEIVERS, the receiver's module read through the imports (_ctor_module) and its class (_ctor_class). The
+    re-examinations of 2026-09-22 (round 1 of PR 891's review: which receiver classes carry the name and what the arguments
+    do; round 2: a caller's callback run synchronously) stand for those receivers: no stdlib release among them runs a
+    caller's callback synchronously (the way concurrent.futures.Future.cancel runs its done callbacks, the reason cancel left
+    the table), and a runtime probe had threading.Semaphore.release and asyncio.Lock.release with a parked waiter return at
+    once. UNREADABLE
+    for any other stdlib object's release (a mmap.mmap(), whose release is the buffer's; a sqlite3.connect(), whatever it
+    may do: the objects the table's entry would have excused by name, since _library_ctor answers True for a constructor
+    of ANY stdlib module) and for a receiver whose construction the walk cannot name. A multiprocessing.managers proxy
+    (Manager().Lock(), .RLock(), .Semaphore(), .BoundedSemaphore(), .Condition(): an AcquirerProxy) never reaches this
+    checker: its construction is a method's result and not a stdlib constructor (_library_ctor, _library_made), so the walk
+    reads it as an object it does not read, and rightly, since its release is a synchronous round trip to the manager
+    process, blocked while that process is stopped or busy (the probe of 2026-09-22: a Manager().Lock() proxy's release on a
+    thread was alive after 1 s with the manager process SIGSTOPped and returned after SIGCONT; after the manager's shutdown
+    it raised BrokenPipeError); a plant holds it listed."""
+    if call is None:
+        return KIND_UNREAD, "release of a receiver whose construction the walk cannot name: bounded only on a lock, semaphore or condition of threading, multiprocessing or asyncio"
+    mod, ctor_name = _ctor_module(unit, call), _ctor_class(unit, call)
+    if mod in RELEASE_RECEIVERS and ctor_name in RELEASE_RECEIVERS[mod]:
+        what = {"threading": "frees the lock (raising when not held), a Semaphore's takes its Condition briefly and notifies it",
+                "_thread": "frees the lock, raising when not held",
+                "multiprocessing": "posts the semaphore, no handshake",
+                "asyncio": "wakes a waiter's future, whose callbacks loop.call_soon schedules"}[mod]
+        return "bounded", "release of a %s.%s() returns: it %s" % (mod, ctor_name, what)
+    return KIND_UNREAD, "release of a %s the walk has no rule for: bounded only on a lock, semaphore or condition of threading, multiprocessing or asyncio" % (
+        ("%s.%s()" % (mod, ctor_name)) if mod and ctor_name else "receiver whose construction the walk cannot name")
+
+
 # The stdlib names whose boundedness is CONDITIONED on the call: each checker reads the construction (`ctor`), the
 # receiver's construction (`call`) or the receiver as written (`recv`) and answers bounded with its reason or unreadable.
 # A name here is never in STDLIB_RETURNS (stdlib_table_problems holds the two apart).
-STDLIB_CONDITIONED = {"sleep": _sleep_rule, "server_close": _server_close_rule, "cancel": _cancel_rule,
+STDLIB_CONDITIONED = {"sleep": _sleep_rule, "server_close": _server_close_rule, "cancel": _cancel_rule, "release": _release_rule,
                       "set": _event_method_rule("set"), "clear": _event_method_rule("clear"), "is_set": _event_method_rule("is_set"),
                       "put_nowait": _queue_method_rule("put_nowait"), "get_nowait": _queue_method_rule("get_nowait")}
 CONDITIONED_HEADS = ("time.sleep(",) + tuple("%s of a" % n for n in STDLIB_CONDITIONED if n != "sleep")   # the bounded reasons' heads
@@ -6152,13 +6207,22 @@ class PlantedShapes(unittest.TestCase):
         is read as UNREADABLE and LISTED, never through the table, for release (a proxy Lock, Semaphore, RLock: through the
         module, an alias, a bare Manager, a manager bound to a name, a with-as manager, a chained call, a SyncManager) and
         for the conditioned names (a proxy Event's set, clear and is_set; a proxy Queue's put_nowait and get_nowait), while
-        the same names on multiprocessing's and threading's own constructors read bounded through the table. Had the plant
-        read a proxy as bounded, release would have moved to STDLIB_CONDITIONED with a construction checker."""
+        the same names on multiprocessing's and threading's own constructors read bounded through the checkers. On the ninth
+        pass (2026-09-22) release itself became a conditioned name (_release_rule): the refuter showed the table entry's
+        reason claimed a receiver read as threading's, multiprocessing's or asyncio's construction while _library_ctor
+        answers True for a constructor of ANY stdlib module, so here a release on a mmap.mmap() and on a sqlite3.connect()
+        reads UNREADABLE and listed (the entry would have excused both by name), an asyncio.Lock()'s and a bare-imported
+        RLock()'s read bounded through the checker, and the proxies read as they did."""
         head = self.HEAD.replace("import unittest\n", "import unittest\nimport multiprocessing\nimport multiprocessing as mp\n"
-                                                    "from multiprocessing import Manager\nfrom multiprocessing.managers import SyncManager\n")
+                                                    "from multiprocessing import Manager\nfrom multiprocessing.managers import SyncManager\n"
+                                                    "import asyncio\nimport mmap\nimport sqlite3\nfrom threading import RLock\n")
         one = "        t = threading.Thread(target=%s); t.start()\n        self.assertTrue(False)\n"
         body = ("    def test_mp_lock(self):\n        lk = multiprocessing.Lock()\n" + one % "lk.release" +
                 "    def test_thr_sem(self):\n        s = threading.Semaphore()\n" + one % "s.release" +
+                "    def test_aio_lock(self):\n        lk = asyncio.Lock()\n" + one % "lk.release" +
+                "    def test_bare_rlock(self):\n        lk = RLock()\n" + one % "lk.release" +
+                "    def test_mmap(self):\n        m = mmap.mmap(-1, 16)\n" + one % "m.release" +
+                "    def test_sqlite(self):\n        c = sqlite3.connect(':memory:')\n" + one % "c.release" +
                 "    def test_mp_event_set(self):\n        ev = multiprocessing.Event()\n" + one % "ev.set" +
                 "    def test_proxy_lock(self):\n        lk = multiprocessing.Manager().Lock()\n" + one % "lk.release" +
                 "    def test_proxy_alias_sem(self):\n        s = mp.Manager().Semaphore()\n" + one % "s.release" +
@@ -6178,10 +6242,16 @@ class PlantedShapes(unittest.TestCase):
         by = {}
         for s, sh, w in rows:
             by.setdefault(w.split(".")[1], []).append((s.kind, s.why, sh, s.recv_shown))
-        for name in ("mp_lock", "thr_sem"):
+        for name, start in (("mp_lock", "release of a multiprocessing.Lock() returns"), ("thr_sem", "release of a threading.Semaphore() returns"),
+                            ("aio_lock", "release of a asyncio.Lock() returns"), ("bare_rlock", "release of a threading.RLock() returns")):
             (kind, why, sh, _r), = by["test_" + name]
-            self.assertEqual((kind, why, sh), ("bounded", STDLIB_RETURNS["release"], "tail-only"), (name, by["test_" + name]))
+            self.assertEqual((kind, sh), ("bounded", "tail-only"), (name, by["test_" + name]))
+            self.assertTrue(why.startswith(start), (name, why))
             self.assertTrue(bounded_reason_is_read(why), (name, why))
+        for name, words in (("mmap", "release of a mmap.mmap() the walk has no rule for"), ("sqlite", "release of a sqlite3.connect() the walk has no rule for")):
+            (kind, why, sh, _r), = by["test_" + name]
+            self.assertEqual((kind, sh), (KIND_UNREAD, "tail-only"), (name, by["test_" + name]))
+            self.assertIn(words, why, (name, why))
         (kind, why, sh, _r), = by["test_mp_event_set"]
         self.assertEqual((kind, sh), (KIND_UNREAD, "tail-only"))
         self.assertIn("set of a multiprocessing.Event()", why, "the conditioned checker, on the module's own constructor")
@@ -6198,11 +6268,13 @@ class PlantedShapes(unittest.TestCase):
                          "a SyncManager's start() is an unreadable receiver, listed; the thread on its proxy's release unreadable, listed: %r" % (sm,))
         self.assertIn("a method of `lk`, an object the walk does not read", sm[1][1])
         self.assertEqual(sorted(w.split(".")[1] for s, w in unread),
-                         sorted(["test_" + n for n in proxies] + ["test_mp_event_set", "test_sync_manager", "test_sync_manager"]))
-        self.assertEqual(sorted(w.split(".")[1] for s, w in bounded), ["test_mp_lock", "test_thr_sem"])
+                         sorted(["test_" + n for n in proxies] + ["test_mp_event_set", "test_sync_manager", "test_sync_manager", "test_mmap", "test_sqlite"]))
+        self.assertEqual(sorted(w.split(".")[1] for s, w in bounded), ["test_aio_lock", "test_bare_rlock", "test_mp_lock", "test_thr_sem"])
         self.assertEqual((tails, stale), ([], []))
-        for words in ("multiprocessing.managers proxy", "AcquirerProxy", "synchronous round trip", "SIGSTOPped", "BrokenPipeError", "_library_ctor"):
-            self.assertIn(words, STDLIB_RETURNS["release"], "the reason states the exclusion and its evidence")
+        for words in ("multiprocessing.managers proxy", "AcquirerProxy", "synchronous round trip", "SIGSTOPped", "BrokenPipeError", "_library_ctor",
+                      "mmap.mmap()", "sqlite3.connect()"):
+            self.assertIn(words, _release_rule.__doc__, "the checker states the exclusions and their evidence")
+        self.assertNotIn("release", STDLIB_RETURNS)
 
     def test_every_stdlib_returns_entry_says_it_returns_whatever_its_arguments_on_any_receiver(self):
         """Table-shaped (romp-manager's ruling, 2026-09-22): every STDLIB_RETURNS entry's reason states, in UNCONDITIONAL_WORDS,
@@ -6211,11 +6283,15 @@ class PlantedShapes(unittest.TestCase):
         and a conditioned name planted in the table reds even with the words. sleep, server_close, cancel, an Event's set,
         clear and is_set and a queue's put_nowait and get_nowait are the conditioned names, in STDLIB_CONDITIONED and not
         in STDLIB_RETURNS; the `set` entry the table carried until 2026-09-22 reds as a conditioned name now, and so does the
-        `cancel` entry it carried until round 2 of PR 891's review (the same day), leaving release the one entry."""
+        `cancel` entry it carried until round 2 of PR 891's review (the same day), and the `release` entry it carried until
+        the ninth pass (the same day again), which leaves the table EMPTY: the words and this test stand for an entry that
+        can say them."""
         self.assertEqual(stdlib_table_problems(STDLIB_RETURNS), [])
-        self.assertEqual(sorted(STDLIB_CONDITIONED), ["cancel", "clear", "get_nowait", "is_set", "put_nowait", "server_close", "set", "sleep"])
-        self.assertEqual(sorted(STDLIB_RETURNS), ["release"])
-        self.assertIn("round 2", STDLIB_RETURNS["release"], "release states its re-examination for a synchronous callback")
+        self.assertEqual(sorted(STDLIB_CONDITIONED), ["cancel", "clear", "get_nowait", "is_set", "put_nowait", "release", "server_close", "set", "sleep"])
+        self.assertEqual(STDLIB_RETURNS, {}, "the table is empty by construction since the ninth pass")
+        self.assertIn("round 2", _release_rule.__doc__, "release states its re-examination for a synchronous callback")
+        planted = dict(STDLIB_RETURNS, release="Lock.release returns at once whatever its arguments and on any stdlib receiver the walk reads as a stdlib construction")
+        self.assertEqual(stdlib_table_problems(planted), [("release", "a conditioned name: its check runs at the call, it cannot be excused by name")])
         planted = dict(STDLIB_RETURNS, cancel="Timer.cancel returns at once whatever its arguments and on any stdlib receiver")
         self.assertEqual(stdlib_table_problems(planted), [("cancel", "a conditioned name: its check runs at the call, it cannot be excused by name")])
         self.assertFalse(set(STDLIB_CONDITIONED) & set(STDLIB_RETURNS))
@@ -6542,7 +6618,7 @@ class PlantedShapes(unittest.TestCase):
         for name, start in (("fut_no_cb", "cancel of a concurrent.futures.Future() with no add_done_callback on it in the unit returns"),
                             ("timer", "cancel of a threading.Timer() returns"), ("timer_alias", "cancel of a threading.Timer() returns"),
                             ("aio_future", "cancel of an asyncio asyncio.Future() returns"), ("aio_handle", "cancel of an asyncio loop.call_later() returns"),
-                            ("release", STDLIB_RETURNS["release"])):
+                            ("release", "release of a threading.Lock() returns")):      # the conditioned checker since the ninth pass
             self.assertEqual(by["test_" + name][0], "bounded", (name, by["test_" + name]))
             self.assertTrue(by["test_" + name][1].startswith(start), (name, by["test_" + name][1]))
             self.assertTrue(bounded_reason_is_read(by["test_" + name][1]), (name, by["test_" + name][1]))
