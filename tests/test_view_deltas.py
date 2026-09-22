@@ -121,11 +121,10 @@ def _py_maps(msg, keys=None):
         def put(kk, val, pre=""):
             if kk is None or kk in items:
                 n = len(order)
-                while True:
+                for n in range(n, n + len(items) + 1):   # bounded: of len(items) + 1 candidates one is free (unbounded until 2026-09-22)
                     kk = pre + "#%d" % n
                     if kk not in items:
                         break
-                    n += 1
             items[kk] = val; order.append(kk)
 
         def key_of(it, pre=""):
