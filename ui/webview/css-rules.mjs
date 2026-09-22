@@ -12,15 +12,16 @@
 // author's closing pass after the file review's round 10, which moved the reader from tools/, where that pin had been red).
 //
 // What the reader refuses, loudly, rather than classifies, in eight refusals, each armed by an assert.throws in the tools home
-// (tools/markdown-viewer-plan-linknav.test.mjs, the reader's test, which also holds this count to the source's fail sites; the
-// ui home holds no refusal pin, by design): a comment left open, a string left open, a block left open at the end of the
-// sheet, a close brace with no block open, a close brace inside a prelude (a lost `{`), a prelude the sheet ends inside, a
+// (tools/markdown-viewer-plan-linknav.test.mjs, the reader's test, which holds this count to the source's refusal sites and
+// holds each site to one pin by the phrase its message opens with; the ui home holds no refusal pin, by design): a comment
+// left open, a string left open, a block left open at the end of the sheet, a close brace with no block open, a close brace
+// inside a prelude (a lost `{`), a prelude the sheet ends inside, a
 // block opened inside a style rule's declarations (CSS nesting, which the sheets do not use; a reader with no rule for a
-// form names it) and a style rule left open (the file review's round 10, extra7-1: three of the eight had no pin, the open
+// form names it) and a style rule left open (the file review's round 11, extra7-1: three of the eight had no pin, the open
 // string among them, so neutralising any one left both homes green). A statement at-rule (`@import ...;`, `@charset ...;`)
 // declares no rule and is passed over. A block at-rule whose body holds declarations and no rules (`@font-face` and the
 // others DECLARATION_AT_RULE names) yields no rule, its last declaration with or without a semicolon (the file review's
-// round 10, correctness-2 with extra7-2: the reader had refused the no-semicolon spelling, valid CSS one edit away in the
+// round 11, correctness-2 with extra7-2: the reader had refused the no-semicolon spelling, valid CSS one edit away in the
 // tree's own `@font-face` blocks, as a close brace inside a prelude, an unbalanced-brace message on a balanced sheet). The
 // one read that acceptance leaves silent: inside a declaration-only at-rule a selector-shaped prelude ended by `}`
 // (`@font-face { .a top: 0 }`) is read as a declaration and yields no rule, with no refusal. `@keyframes` steps (`from`,
@@ -29,7 +30,7 @@
 //
 // The reader returns every rule; each home chooses its population by the SELECTOR, the rules naming the control's class,
 // over every sheet a page of either host loads (ui/webview/host-sheets.mjs derives that set from the page assembly; the file
-// review's round 10, correctness-1 with regression-5). A rule whose selector would match the control's element without naming
+// review's round 11, correctness-1 with regression-5). A rule whose selector would match the control's element without naming
 // the class (`.fileview-md img + button`, an attribute selector, a universal) is outside what the homes close, a bound they
 // state rather than read, since reading it means matching selectors against the element (the author's closing pass after the
 // file review's round 10, mechanism-2), as are katex's vendored sheet and the style a template or a script writes into a page,

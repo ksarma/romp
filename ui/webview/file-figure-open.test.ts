@@ -145,16 +145,16 @@ test("SOURCE-TEXT pins of the two text-read control lists (anchor-map.ts's CONTR
 });
 
 /** The bounds of the closed set over the control's sheet rules, stated in its assertion messages: the selector bound (the author's
- *  closing pass after the file review's round 10, mechanism-2) and the sheet bounds beside it (the file review's round 10,
+ *  closing pass after the file review's round 10, mechanism-2) and the sheet bounds beside it (the file review's round 11,
  *  regression-5). */
 const BOUND = " (the population is the rules whose selector names the control's class in every sheet a page of either host loads, derived from the page assembly by ui/webview/host-sheets.mjs; outside what this set closes, bounds stated here and in the plan's L3, not read: a rule whose selector would match the control's element without naming the class, katex's vendored sheet that styles.css and feed.css import, and the style a template writes into its own page or a script adds after it is served";
 
 test("the sheets: the control rests transparent over the figure's corner with a zero-width margin box, positioned above the layer's overlay; every rule naming the control's class that reveals it (the pointer over the figure or the control, a keyboard focus, a device with no hover) is under screen, so print shows none of it and the print block carries no line for it; the population the set closes is the rules whose selector names the class in every sheet a page of either host loads, the chat's and the feed's carrying the dress and every other sheet none, the sheets derived and the bounds stated, not read", () => {
   for (const d of DRESSING) assert.ok(SHEETS.some((s) => s.name === d), d + " is a sheet a page loads: the viewer's dress is written there (a renamed or unlinked sheet fails here, never silently)");
-  assert.ok(SHEETS.some((s) => s.name.startsWith("kernel/kernel.py ")), "the population is wider than a listing of ui/webview: the sheets the kernel inlines from its own source (THEME_CSS, into every page) are in it, so a rule written there is read; a derivation reading the directory alone passes this set with a reveal there (the file review's round 10, regression-5)");
+  assert.ok(SHEETS.some((s) => s.name.startsWith("kernel/kernel.py ")), "the population is wider than a listing of ui/webview: the sheets the kernel inlines from its own source (THEME_CSS, into every page) are in it, so a rule written there is read; a derivation reading the directory alone passes this set with a reveal there (the file review's round 11, regression-5)");
   for (const { name, css, loadedBy } of SHEETS) {
     if (!DRESSING.includes(name)) {
-      // the sheet dimension of the closed set (the file review's round 10, correctness-1 with regression-5): every sheet a page loads
+      // the sheet dimension of the closed set (the file review's round 11, correctness-1 with regression-5): every sheet a page loads
       // that is not one of the two the dress is written in holds no rule naming the control, the Files page's own sheet among them,
       // read live into that page after styles.css so a rule there wins on order and applies in print
       assert.deepEqual(cssRules(css).filter((r) => /fv-figopen/.test(r.selector)).map(renderRule), [], name + " (loaded by " + loadedBy.join(", ") + "): no rule naming the control, however the sheet writes it; the dress is written in the chat's and the feed's sheets alone, and a rule here would apply on the pages that load this sheet" + BOUND + ")");

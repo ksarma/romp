@@ -8161,7 +8161,7 @@ review before the PR ran two rounds, named below as the review's round 1 and rou
 of the PR (2026-09-20) is named the file review. Its contract is kept outside the repo; this section records what was built,
 with the build's deliberate departures from that contract recorded as the decisions, and what is left for the owner to
 rule on. The file review's rounds are numbered by the maintainer, and a record names one by its number: the file review's rounds 1,
-2, 3, 4, 5, 6, 7, 8, 9 and 10 are the rounds the convention enumerates, this list the one home of the enumeration
+2, 3, 4, 5, 6, 7, 8, 9, 10 and 11 are the rounds the convention enumerates, this list the one home of the enumeration
 (ui/webview/linknav-records-attribution.test.ts reads its allowed set from this list and faults a numbered round the list
 lacks, so a round the maintainer rules next is added here first; the fixlists and rulings are kept outside the repo in the
 maintainer's notes). In that numbering rounds 1 to 6 are the delta rounds, each reading what changed since the round before
@@ -8171,7 +8171,7 @@ digit before the hyphen), none of the author's family; round 8 read the whole PR
 for round 7 and the author's verification of them, the landing round's second read, and its fixlist shares several ids with
 round 7's (fresh-1, fresh-2, tests-1, tests-2, regression-1, extra6-1, extra7-1, extra8-1, extra8-2 and extra8-3
 stand in both), so a record cites such a finding by its round's number and never as the landing round's alone; round 9 is
-the round after it, which reads the fixes for round 8, and round 10 the round after that, which reads the fixes for round 9. The author's own verification after a round's fixes, by a verifier of the
+the round after it, which reads the fixes for round 8, round 10 the round after that, which reads the fixes for round 9, and round 11 the round after that, which reads the fixes for round 10 and the whole PR at one head. The author's own verification after a round's fixes, by a verifier of the
 author's, is named the author's closing pass after that round, never a round of either review, and its findings carry the
 ids behaviour-N, records-N, coverage-N, guards-N, attribution-and-gates-N, reader-N and tree-N, which no fixlist of the file
 review holds; the passes after the file review's rounds 7 and 8 kept their ids (census-N, and records-N of the family
@@ -8234,7 +8234,7 @@ under its document-level opener, over the chat's own bundle and skeleton: the sa
 file reached over the trail, the URL view replacing the viewer in place and the trail ending, with no tab, no window.open
 and no navigation of the page). The replace itself, under the chat's document-level opener (render.ts, the one caller of
 openUrlView), is held by file-trail.test.ts's wiring pin, the trail's end after openUrlView's guard, and driven in Chromium
-by file-trail-browser.test.ts's case 9, launched through the shared helper (the file review's round 10, tests-3: the road
+by file-trail-browser.test.ts's case 9, launched through the shared helper (the file review's round 11, tests-3: the road
 the guide's trail sentence leads with had been driven by no leg in the tree, its named witness that wiring pin, which holds
 the trail's end inside openUrlView and not that a link inside the shown file reaches it; for round 10 it had been driven
 once in a scratch copy, a file reached over the trail linking a .md page at the page's own origin, the click replacing the
@@ -8613,10 +8613,11 @@ the contract said the same; the claim was false, and the follow-on is a privacy 
 (open point 11). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools,
 upstream or tests alone (48 files, the ledger entry's where line; run 2026-09-22 at the head that carries the fixes ruled in
-the file review's round 10, where the merge-base is 65f1895f6, the fork's main the branch merged for the file review's round
-10, and the listing is the branch's whole delta over it; the run at the head that carries the author's closing pass after the
-file review's round 10, from the same merge-base, listed 45, before ui/webview/host-sheets.mjs, ui/webview/host-sheets.d.mts
-and ui/webview/file-view-outline.test.ts joined the delta in those fixes (the file review's round 10, correctness-1 with
+the file review's round 10, where the merge-base is 53f9f4aa3, the fork's main the branch merged for the file review's round
+11, and the listing is the branch's whole delta over it; the run at the head that carries the author's closing pass after the
+file review's round 10, from the merge-base 65f1895f6, the fork's main the branch merged for the file review's round 10,
+listed 45, before ui/webview/host-sheets.mjs, ui/webview/host-sheets.d.mts
+and ui/webview/file-view-outline.test.ts joined the delta in those fixes (the file review's round 11, correctness-1 with
 regression-5 and correctness-5: every sheet a page of either host loads, derived from the page assembly, and the Outline
 button's census over them); the run at the head that carries the
 fixes for the file review's round 8, where the merge-base was 5e5ee79ed, the fork's main merged into the branch before
@@ -8733,7 +8734,7 @@ property, through an optional chain or through a bracketed literal, the option w
 or a quoted key, the option under a computed string-literal key, the option assigned onto an options object through a
 bracketed literal or through a dot before the object is handed to the test, a skip or todo standing between braces,
 whether the shorthand option or the destructuring that takes the method off the context, and the bare call of it; the
-file review's round 10, extra6-2 with extra6-1, correctness-3 and tests-4: the quoted key and the assigned and computed
+file review's round 11, extra6-2 with extra6-1, correctness-3 and tests-4: the quoted key and the assigned and computed
 forms had passed the read while each stands a leg down with its body never run, and the count had been typed in every
 home, derived in none, and had counted the two brace forms as two where one arm reads both), so its
 green says that no leg carries one of the nine and not that no leg stands itself down: a conditional call is within that
@@ -8741,7 +8742,7 @@ read, since the spelling stands whatever the condition, and outside it is a stan
 the leg's own source (a computed member name, a value built from parts, an options object built elsewhere), a class no
 read of spellings closes, the method bound to a name of its own and called by that name among it (the unbound alias
 throws under node:test and fails the leg loudly, and the family is live through .bind(t) or an aliased test.skip, each
-skipping with the body never run and passing the pin; the file review's round 10, extra6-3), every form named here
+skipping with the body never run and passing the pin; the file review's round 11, extra6-3), every form named here
 planted in the pin's own cases; what refuses that class is execution and not a read of the source: the step PR 887
 brings to that job, directly after its Chromium install, runs the rostered legs with a browser and reads the run's
 record, and a test skipped there is red naming the test, its reason and the switch's state, whatever spelled the skip,
@@ -8759,9 +8760,9 @@ ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480
 reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
 (the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
 ui/webview/file-view-figure-error-browser.test.ts (the label readers step past the control),
-ui/webview/fileview-parity.test.ts (the control's rules byte-equal in both sheets, and in the file review's round 10,
+ui/webview/fileview-parity.test.ts (the control's rules byte-equal in both sheets, and in the file review's round 11,
 correctness-5, the Outline button's census on parsed rules over every sheet a page of either host loads) and
-ui/webview/file-view-outline.test.ts (the same census, in the file review's round 10, correctness-5),
+ui/webview/file-view-outline.test.ts (the same census, in the file review's round 11, correctness-5),
 ui/webview/anchor-map-fallback-markup.test.ts (the stand-in's control list), and in the review
 ui/webview/file-view-notice.test.ts (its Escape cases run every keydown handler an open registers in the document's
 order, the capture phase first, since the trail's listener is an open's newest registration, and the close hooks'

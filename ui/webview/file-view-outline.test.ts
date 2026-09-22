@@ -741,7 +741,7 @@ test("file-view.ts and the two sheets: the button's label is the exported OUTLIN
 // twin gone from both sheets). Red over a git archive of 3e433ceee: the twin's head in both sheets, and no `on` class at the
 // open; the panel's own source is pinned so the hazard stays named. The census here and in fileview-parity.test.ts is on parsed
 // rules through ui/webview/css-rules.mjs over every sheet a page of either host loads (ui/webview/host-sheets.mjs; the file
-// review's round 10, correctness-5: heads read at a line start over the pair alone passed the twin indented inside an at-rule
+// review's round 11, correctness-5: heads read at a line start over the pair alone passed the twin indented inside an at-rule
 // block, and a rule of the button's own in the Files page's sheet dresses the button there as one in styles.css does).
 test("the open state's dress is the bar's selected dress and reaches the Outline button alone: no rule in any sheet a page of either host loads names aria-expanded or the button's class, however the sheet writes it, `.fileview-btn.on` matches the open Outline button and neither the panel's Show less nor its armed Reject all, which are .fileview-btn with aria-expanded too and never `on`", () => {
   const FC = web("file-comments.ts");

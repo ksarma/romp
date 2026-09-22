@@ -1,15 +1,17 @@
 // Every stylesheet a page of either host loads, DERIVED from the page assembly rather than typed as a pair or listed off a
 // directory: the population of the closed set over the figure control's sheet rules (ui/webview/file-figure-open.test.ts and
 // tools/markdown-viewer-plan-linknav.test.mjs) and of the Outline button's census (ui/webview/fileview-parity.test.ts,
-// ui/webview/file-view-outline.test.ts). The file review's round 10, correctness-1 with regression-5 and correctness-5: the set
+// ui/webview/file-view-outline.test.ts). The file review's round 11, correctness-1 with regression-5 and correctness-5: the set
 // was closed over styles.css and feed.css while the Files page loads ui/webview/files-pane.css third, after styles.css, so a
 // reveal planted there left every home green and the control painting in print; and a flat listing of ui/webview is a wider
 // typed bound, not the population, since the kernel inlines two sheets of its own into every page (THEME_CSS and the chat's
 // _CHAT_MOBILE_CSS, string constants of kernel/kernel.py) that no listing of the directory reads.
 //
 // The derivation, each part read off the tree's own source so a change to the assembly moves the population:
-//   * the kernel's served pages are the `def _<name>_page():` functions of kernel/kernel.py (the chat, the feed, the sessions
-//     pane, the waiting pane, the Files pane, the settings page, the timeline), each with the function's own text, its comment
+//   * the kernel's served pages are the `def _<name>_page(...)` functions of kernel/kernel.py, whatever their parameters (the
+//     chat, the feed, the sessions pane, the waiting pane, the Files pane, the settings page and the timeline, and the chat's
+//     history page and the too-large notice, which take arguments and load no sheet today; a read keyed on an empty signature
+//     had left those two outside the derivation with no failure to name it), each with the function's own text, its comment
 //     lines dropped so a sheet a comment mentions is not read as one the page loads; from each: every `/dist/<name>.css` it
 //     links, a bundle vscode-extension/esbuild.js builds from ui/webview/<name>.css (the entry list is read and a link with no
 //     entry fails); every `(UI / "webview" / "<name>.css").read_text()` it writes into a `<style>`; and every module-level
@@ -63,14 +65,16 @@ export function pyStringConstant(src, name) {
   fail(name + ' is assigned in a form this reader has no rule for (a triple-quoted literal or a parenthesised run)');
 }
 
-/** The kernel's served pages: each `def _<name>_page():` with the function's own text (the indented, blank and comment lines
- *  after the def, up to the next statement at column zero), its comment lines dropped. */
+/** The kernel's served pages: each `def _<name>_page(...)`, whatever its parameters (the pages that take none and the chat's
+ *  history page and the too-large notice, which take arguments; a page read only when its signature is empty would leave a
+ *  sheet inlined by a page with parameters outside the population, silently), with the function's own text (the indented, blank
+ *  and comment lines after the def, up to the next statement at column zero), its comment lines dropped. */
 export function kernelPages(kernel) {
   const out = [];
-  const re = /^def (_\w+_page)\(\):\n((?:(?:[ \t]+[^\n]*|#[^\n]*)?\n)*)/gm;
+  const re = /^def (_\w+_page)\([^)]*\):\n((?:(?:[ \t]+[^\n]*|#[^\n]*)?\n)*)/gm;
   let m;
   while ((m = re.exec(kernel))) out.push({ name: m[1], body: m[2].split('\n').filter((l) => !/^\s*#/.test(l)).join('\n') });
-  if (!out.length) fail('kernel.py declares no `def _<name>_page():` function');
+  if (!out.length) fail('kernel.py declares no `def _<name>_page(...)` function');
   return out;
 }
 
