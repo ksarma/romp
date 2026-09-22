@@ -35,6 +35,18 @@ because a build reads files and derives through the cache from the building thre
 exactly that); the cost is that a build holds the lock for its whole run, so a build must not wait on another thread's
 read of the cache, which would wait on the build's lock.
 
+THE CONTRACT FOR EVERY CONSUMER (stated on the thread-stop census's eleventh pass, 2026-09-22, after CI's Python 3.11
+cell errored its tree tests with a RecursionError inside copy.py; the census's docstring carries the history). A cached
+tree is READ-ONLY for every consumer: no attribute is written on a cached node, no in-place transformer
+(ast.NodeTransformer.visit, fix_missing_locations, a copy_location onto a cached node) runs over a cached tree, and a
+consumer that needs a changed or bound copy of a node copies it first, with an ITERATIVE copier (an explicit stack over
+the node's _fields and _attributes, non-AST leaves shared, any other attribute ignored), never copy.deepcopy. Per-node
+data a consumer derives (the unit a helper's returned literal is read in, in the thread-stop census) lives in a side
+table keyed by id(node) that the consumer owns and clears with its derivation, so nothing one consumer writes is
+inherited by the next reader of the same tree. The thread-stop census's no-foreign-attribute pin walks every node of
+every cached tree after its derivation (cached_trees() hands it every (realpath, tree) held) and asserts each carries
+only its _fields and _attributes, so a consumer that breaks the contract in the same process is shown there.
+
 THE TWO IMPORT ROADS. Under pytest tests/ is a package (tests/__init__.py), so `from tests.parse_cache import
 source_and_tree` (or `from . import parse_cache` in a test module) is one module object every test module shares. A census
 run as a script (`python3 tests/test_thread_stop_census.py --table`) has no package: it puts its own directory on sys.path
@@ -119,6 +131,13 @@ def clear(*keys):
             _DERIVED.pop(k, None)
             if isinstance(k, str):
                 _PARSED.pop(os.path.realpath(k), None)
+
+
+def cached_trees():
+    """[(realpath, tree)] for every file parsed and held here, a snapshot under the module's lock: what a consumer's pin over
+    the cached nodes walks (the contract's third sentence in the module docstring)."""
+    with _LOCK:
+        return [(real, hit[2]) for real, hit in _PARSED.items()]
 
 
 def stats():

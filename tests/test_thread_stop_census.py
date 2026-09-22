@@ -235,7 +235,13 @@ fail, and the shape this census forbids is a stop that stands BEHIND an assertio
     lambda, a local function or a method that calls one; the imported name, the imported module or the dotted package
     spelling) is read by that function's BODY through the import, with its parameters standing for the arguments the
     call handed (_helper_bodies, _bound_body: positional, keyword or default; a parameter handed the constant None
-    applies no verb, so `release.set()` for release=None is no release), one level down: tests/thread_ends.py's
+    applies no verb, so `release.set()` for release=None is no release; the body and each hand are copied by the
+    census's OWN ITERATIVE COPIER, _ast_copy, an explicit stack over a node's _fields and _attributes that shares the
+    leaves and ignores any other attribute a node carries, never by copy.deepcopy, whose Python frames grow with the
+    copied node's depth, on 3.10 and 3.11 with the C frames of its reduce road counted against the same limit, and
+    which follows whatever a node carries: the eleventh pass, 2026-09-22, after CI's 3.11 cell at 7e084a002 errored
+    every tree test of this module with a RecursionError raised inside copy.py under _bound_body, which no interpreter
+    on the box reproduced, so the class is closed and not the instance), one level down: tests/thread_ends.py's
     join_started sets the release and joins each started thread of the list it is handed, so a cleanup that hands it
     the list is a stop that names the list (its body's for-join) and, when the release is an Event, a release of it;
     a helper whose body joins a list the cleanup did not hand it, or only timed-joins an outright loop, is no stop.
@@ -381,7 +387,20 @@ of the population and every product file was parsed once, the parse count over t
 second derivation reds (a planted key beside the census's shows it). The cache is per PROCESS: under pytest-xdist the
 censuses that land on different workers parse and derive on their own, and no saving is claimed there; the saving is the
 serial cell and this module's own tests. A second census in the same process that reads kernel/kernel.py or another
-product file through the helper gets this census's parse (a tree test holds that from this side).
+product file through the helper gets this census's parse (a tree test holds that from this side). THE CACHED TREES ARE
+READ-ONLY, tests/parse_cache.py's contract for every consumer (stated in its docstring; the eleventh pass, 2026-09-22): the
+census writes no attribute on a cached node and runs no transformer over a cached tree. The one attribute it wrote
+through the tenth pass, the unit a helper's returned literal is read in, is a side table keyed by id(node)
+(_LITERAL_UNITS, filled by _returned_literal, read by _literal_unit) that the census run owns and clears as it begins,
+and the hands and helper bodies it binds are copied first, by its own iterative copier (_ast_copy). Why: the cache is
+shared by every census in the process, so a foreign attribute on a cached node is inherited by every later reader of
+that tree, and a copy of a hand that reaches one climbs into whatever it points at (a unit holds its module, the module
+its tree and every unit); a recursive copier's Python frames grow with the copied node's depth, and on 3.10 and 3.11 the
+C frames of its reduce road count against the same limit, so a deep hand or a foreign attribute can exceed the recursion
+limit, which is how CI's 3.11 cell errored every tree test at 7e084a002 (a RecursionError inside copy.py under
+_bound_body) while 3.12, 3.13 and 3.14t passed the same tree. A tree test walks every node of every cached tree after the
+derivation (parse_cache.cached_trees) and holds each to its _fields and _attributes, the pin the contract names; a
+foreign attribute planted on a copy is shown red by the same check.
 
 """
 import ast
@@ -2801,6 +2820,17 @@ def _through_class(unit, func, fn):
 
 
 _LITERALS = (ast.Dict, ast.List, ast.Set, ast.Tuple, ast.Constant, ast.JoinedStr, ast.ListComp, ast.SetComp, ast.DictComp)
+_LITERAL_UNITS = {}   # id(literal) -> (the literal, the unit it is written in): the SIDE TABLE _returned_literal fills and
+                      # _road_kind reads through _literal_unit; owned by the census run (census() clears it as it begins), never
+                      # an attribute on a cached node (tests/parse_cache.py's contract: the cached trees are read-only)
+
+
+def _literal_unit(lit, default):
+    """The unit a returned literal is written in (_returned_literal's side table, _LITERAL_UNITS), `default` for a literal no
+    helper or product function returned. The entry holds the node and is checked by identity, so an id is never read for a
+    node it was not written for."""
+    hit = _LITERAL_UNITS.get(id(lit))
+    return hit[1] if hit is not None and hit[0] is lit else default
 
 
 def _data_of(unit, node, line, depth=0):
@@ -2854,9 +2884,9 @@ def _returned_literal(unit, call, line, depth):
     lits = [_data_of(u, v, getattr(v, "lineno", line), depth + 1) for v in rets]
     if not lits or any(l is None for l in lits) or any(type(l) is not type(lits[0]) for l in lits):
         return None
-    if not hasattr(lits[0], "_unit"):
-        lits[0]._unit = u                                 # written in the callee's module: its elements are read there (_road_kind)
-    return lits[0]
+    lit = lits[0]
+    _LITERAL_UNITS.setdefault(id(lit), (lit, u))          # written in the callee's module: its elements are read there (_road_kind);
+    return lit                                            # the innermost writer stands, in the side table, never on the cached node
 
 
 def _given_kind(given, name, depth, owner=None, road=(), call=None):
@@ -2917,7 +2947,7 @@ def _road_kind(u, node, road, given, call, depth, label="the body"):
     step = road[0]
     if step == ITEM or step[0] == "key":
         lit = _data_of(u, node, line)
-        lu = getattr(lit, "_unit", u)                     # a literal a helper or a product function returned: read where it is written
+        lu = _literal_unit(lit, u)                        # a literal a helper or a product function returned: read where it is written
         elts = None
         if isinstance(lit, ast.Dict):
             elts = lit.values
@@ -4087,9 +4117,82 @@ def _imported_function(unit, func):
     return None
 
 
+_AST_KEYS = {}        # node type -> frozenset of its _fields and _attributes: what _ast_copy copies and _foreign_attributes allows
+
+
+def _ast_keys(node):
+    """The names an AST node may carry: its `_fields` and `_attributes`, cached per type."""
+    keys = _AST_KEYS.get(type(node))
+    if keys is None:
+        keys = _AST_KEYS[type(node)] = frozenset(node._fields) | frozenset(node._attributes)
+    return keys
+
+
+def _ast_copy(node):
+    """A copy of an AST node, or of a list of them, made ITERATIVELY: an explicit stack and no Python recursion, so a deep
+    node (a left-nested chain of 600 terms) copies under any recursion limit a test runs at. Each AST node is copied by
+    its `_fields` and `_attributes` alone (`lineno`, `col_offset`, `end_lineno` and `end_col_offset` come across), each
+    list element by element, a non-AST leaf (a constant's value, a name, a string, None) is shared, and ANY OTHER
+    ATTRIBUTE on a node is ignored: the copy carries none, and whatever it pointed at is never followed. An object reached
+    twice in the source is one object in the copy (a memo by id, as copy.deepcopy keeps). This is the census's copier for
+    the hands and the helper bodies (_Bound, _bound_body) in place of copy.deepcopy, whose Python frames grow with the
+    copied node's depth (several per AST level; on Python 3.10 and 3.11 the C frames of its reduce road count against the
+    same limit) and which follows every attribute a node carries: CI's Python 3.11 cell at 7e084a002 errored every tree
+    test of this module with a RecursionError raised inside copy.py under _bound_body, which 3.12, 3.13 and 3.14t on the
+    same tree did not, nor 3.10, 3.11 or 3.12 on the box; the copier closes the class rather than the instance."""
+    def fresh(src):
+        if isinstance(src, list):
+            return []
+        if isinstance(src, ast.AST):
+            return type(src).__new__(type(src))
+        return src
+    out = fresh(node)
+    if out is node:
+        return out
+    memo = {id(node): out}
+    stack = [(node, out)]
+    while stack:
+        src, dst = stack.pop()
+        if isinstance(src, list):
+            for item in src:
+                c = memo.get(id(item))
+                if c is None:
+                    c = fresh(item)
+                    if c is not item:
+                        memo[id(item)] = c
+                        stack.append((item, c))
+                dst.append(c)
+            continue
+        keys = _ast_keys(src)
+        for name, v in vars(src).items():
+            if name not in keys:
+                continue
+            c = memo.get(id(v))
+            if c is None:
+                c = fresh(v)
+                if c is not v:
+                    memo[id(v)] = c
+                    stack.append((v, c))
+            setattr(dst, name, c)
+    return out
+
+
+def _foreign_attributes(tree):
+    """Every node of `tree` carrying an attribute outside its `_fields` and `_attributes`, one line each (the node's type,
+    its line and the attribute names): the check of the no-foreign-attribute pin over the cached trees, and of its planted
+    red. ast.walk is iterative, so the check runs under any recursion limit over any depth of tree."""
+    out = []
+    for n in ast.walk(tree):
+        keys = _ast_keys(n)
+        extra = [k for k in vars(n) if k not in keys]
+        if extra:
+            out.append("%s at line %s carries %s" % (type(n).__name__, getattr(n, "lineno", "?"), ", ".join(sorted(extra))))
+    return out
+
+
 class _Bound(ast.NodeTransformer):
     """A helper's body with its parameters standing for the arguments a call handed it: a Name that is a parameter becomes a
-    copy of the argument; an attribute over a parameter handed the constant None (`release.set()` for release=None)
+    copy of the argument (_ast_copy); an attribute over a parameter handed the constant None (`release.set()` for release=None)
     becomes None itself, so no verb is read as applied to it; a name the body binds itself (its for-target `t`) is
     renamed `_<helper>__<name>`, so the helper's own words are never taken for the test's (a test's thread `t` is not
     mentioned by the helper's `t.join`)."""
@@ -4107,14 +4210,15 @@ class _Bound(ast.NodeTransformer):
         if node.id in self.renamed:
             return ast.copy_location(ast.Name(id=self.renamed[node.id], ctx=node.ctx), node)
         if isinstance(node.ctx, ast.Load) and node.id in self.given:
-            return copy.deepcopy(self.given[node.id])
+            return _ast_copy(self.given[node.id])
         return node
 
 
 def _bound_body(fn, args, keywords):
-    """An ast.Module holding a copy of `fn`'s body with each parameter replaced by the argument the call handed it: by
-    position (up to a starred argument), by keyword, else by the parameter's default; a parameter no argument reaches, or
-    one the body rebinds, keeps its name; the body's own bindings are renamed (_Bound)."""
+    """An ast.Module holding a copy of `fn`'s body (_ast_copy: the cached tree is never transformed in place) with each
+    parameter replaced by the argument the call handed it: by position (up to a starred argument), by keyword, else by the
+    parameter's default; a parameter no argument reaches, or one the body rebinds, keeps its name; the body's own bindings
+    are renamed (_Bound)."""
     params = [a.arg for a in fn.args.posonlyargs + fn.args.args]
     given = {}
     for name, arg in zip(params, args):
@@ -4130,7 +4234,7 @@ def _bound_body(fn, args, keywords):
     for a, d in zip(fn.args.kwonlyargs, fn.args.kw_defaults):
         if d is not None:
             given.setdefault(a.arg, d)
-    body = ast.Module(body=copy.deepcopy(fn.body), type_ignores=[])
+    body = ast.Module(body=_ast_copy(fn.body), type_ignores=[])
     stored = {n.id for n in ast.walk(body) if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del))}
     for name in stored:
         given.pop(name, None)
@@ -4566,6 +4670,7 @@ def census(paths, loops=None, thread_classes=None, helpers=None, product=None, e
     thread_classes = product_thread_classes() if thread_classes is None else thread_classes
     helpers = helper_modules() if helpers is None else helpers
     product = _Product() if product is None else product
+    _LITERAL_UNITS.clear()                # the side table is this census run's: per-node data beside the cached trees, never on them
     out, cache = [], {}
     if extras is not None:
         extras["modules"], extras["product_starts"], extras["oracle"] = 0, [], []
@@ -5023,6 +5128,37 @@ class ThreadStopCensus(unittest.TestCase):
         self.assertEqual((len(built), PC.builds_of(key)), (2, 2), "the red: the copy that forgets its key builds again, and the counter says so")
         PC.clear(key)
 
+    def test_no_attribute_is_written_on_any_cached_node(self):
+        """tests/parse_cache.py's CONTRACT for every consumer (the eleventh pass, 2026-09-22): a cached tree is read-only, per-node
+        data lives in a side table the consumer owns and clears with its derivation, and this pin walks every cached node
+        after a derivation. After the tree derivation (setUpClass), every node of every tree the parse cache holds, the
+        population's modules, the helper modules and every product file the index read, carries only its _fields and
+        _attributes: vars(node) minus those is empty. Through the tenth pass the census wrote one attribute on a cached node,
+        the unit a helper's returned literal is read in (`_unit`), which every later consumer of the cache inherited and
+        which copy.deepcopy followed from a hand into the whole unit graph (CI's 3.11 cell at 7e084a002: a RecursionError
+        inside copy.py under _bound_body); it is a side table now (_LITERAL_UNITS, _literal_unit). THE RED, planted on a
+        COPY of one cached tree and never on the cached tree (the copy is _ast_copy's): a foreign attribute set on one node
+        of the copy is named by the same check, type, line and name, and the cached tree it was copied from stays clean."""
+        cached = PC.cached_trees()
+        held = {real for real, _tree in cached}
+        files = [os.path.realpath(p) for p in list(self.tree.paths) + sorted(self.tree.product.trees)]
+        self.assertEqual([os.path.relpath(p, ROOT) for p in files if p not in held], [],
+                         "every module of the population and every product file the index read is in the cache")
+        found = ["%s: %s" % (os.path.relpath(real, ROOT), line) for real, tree in cached for line in _foreign_attributes(tree)]
+        self.assertEqual(found, [], "tests/parse_cache.py's contract for every consumer: a cached tree is READ-ONLY (no attribute "
+                         "written on a cached node, no in-place transformer over a cached tree; copy first, with an iterative copier), "
+                         "per-node data lives in a side table keyed by id(node) that the consumer owns and clears with its derivation, "
+                         "and this pin walks every cached node after a derivation. These cached nodes carry more than their _fields "
+                         "and _attributes:\n%s" % "\n".join(found))
+        real = os.path.realpath(os.path.join(HERE, "thread_ends.py"))
+        original = dict(cached)[real]
+        planted = _ast_copy(original)
+        node = planted.body[-1]
+        node._planted = object()
+        self.assertEqual(_foreign_attributes(planted), ["%s at line %d carries _planted" % (type(node).__name__, node.lineno)],
+                         "the red: the check names the planted attribute by node type, line and name")
+        self.assertEqual(_foreign_attributes(original), [], "the plant is on the copy alone; the cached tree stays clean")
+
     def test_the_product_files_parse_is_shared_with_any_other_census_in_the_process(self):
         """The cross-module property (the cross-PR ruling of 2026-09-22: one shared parse cache per process, in a tests-local
         helper both censuses import). A second census in the same process that reads kernel/kernel.py or another product
@@ -5237,6 +5373,87 @@ class ParseCacheKeyAndLock(unittest.TestCase):
         self.assertIs(PC.source_and_tree(p)[1], third, "unchanged after both: a hit")
         self.assertEqual(PC.parses_of(p), 3)
         PC.clear(p)
+
+
+class IterativeHandCopier(unittest.TestCase):
+    """_ast_copy, the census's copier for the hands and the helper bodies (the eleventh pass, 2026-09-22), each property on
+    a node of this class's own, no tree needed: a deep hand copies under a recursion limit the stdlib's recursive copier
+    exceeds on the same node (the plant asserts both, so it proves the copier and not the limit); a foreign attribute on
+    a node is neither copied nor followed; and over a real module's tree the copy is ast.dump-equal, with attributes, to
+    the source and to copy.deepcopy's, and shares no node with the source."""
+
+    @staticmethod
+    def _chain(terms):
+        """A left-nested BinOp chain of `terms` Names (`a + a + ... + a`), terms - 1 levels deep, every node located."""
+        def name(i):
+            return ast.Name(id="a", ctx=ast.Load(), lineno=1, col_offset=4 * i, end_lineno=1, end_col_offset=4 * i + 1)
+        node = name(0)
+        for i in range(1, terms):
+            node = ast.BinOp(left=node, op=ast.Add(), right=name(i), lineno=1, col_offset=0, end_lineno=1, end_col_offset=4 * i + 1)
+        return node
+
+    @staticmethod
+    def _depth():
+        d, f = 0, sys._getframe()
+        while f is not None:
+            d, f = d + 1, f.f_back
+        return d
+
+    def test_a_deep_hand_copies_under_a_recursion_limit_the_stdlib_copier_exceeds(self):
+        """A hand 600 terms deep, copied under sys.setrecursionlimit(120) (restored in a finally; pytest runs a test at a depth
+        of about 32 frames, and only a runner deeper than 80 lifts the limit to 40 above its own depth, which the message
+        states; 600 levels of the stdlib copier need thousands): copy.deepcopy of the node raises RecursionError at that
+        limit, _ast_copy returns, and the copy is ast.dump-equal to the source with its attributes (the dump is itself
+        recursive, so it runs with the limit raised) and shares no node with it."""
+        node = self._chain(600)
+        old = sys.getrecursionlimit()
+        limit = max(120, self._depth() + 40)
+        try:
+            sys.setrecursionlimit(limit)
+            with self.assertRaises(RecursionError, msg="the stdlib copier's frames grow with the hand: 600 levels at a limit of %d" % limit):
+                copy.deepcopy(node)
+            copied = _ast_copy(node)
+            sys.setrecursionlimit(max(old, 10000))
+            self.assertEqual(ast.dump(copied, include_attributes=True), ast.dump(node, include_attributes=True))
+        finally:
+            sys.setrecursionlimit(old)
+        self.assertFalse({id(n) for n in ast.walk(copied)} & {id(n) for n in ast.walk(node)}, "no node is shared with the source")
+        self.assertEqual(copied.left.right.end_col_offset, node.left.right.end_col_offset)
+
+    def test_a_foreign_attribute_on_a_node_is_neither_copied_nor_followed(self):
+        """A five-node hand whose one foreign attribute points at a list nested 100000 deep: _ast_copy copies the hand alone,
+        in bounded time, and the copy carries no such attribute (vars minus _fields and _attributes is empty), while
+        copy.deepcopy of the same node follows the attribute and raises RecursionError at the default limit."""
+        node = ast.parse("f(x, y=[1, 2])").body[0].value
+        graph = cur = []
+        for _ in range(100000):
+            cur.append([])
+            cur = cur[0]
+        node._graph = graph
+        t0 = time.perf_counter()
+        copied = _ast_copy(node)
+        dt = time.perf_counter() - t0
+        self.assertFalse(hasattr(copied, "_graph"))
+        self.assertEqual(_foreign_attributes(copied), [])
+        self.assertEqual(_foreign_attributes(node), ["Call at line 1 carries _graph"], "the check names the source's attribute")
+        self.assertEqual(ast.dump(copied, include_attributes=True), ast.dump(node, include_attributes=True))
+        self.assertLess(dt, 2.0, "the copy is bounded by the hand, not by what its foreign attribute points at")
+        with self.assertRaises(RecursionError):
+            copy.deepcopy(node)
+
+    def test_over_a_real_module_the_copy_equals_the_source_and_the_stdlib_copy(self):
+        """This module's own tree (the parse cache's, a hit when the tree derivation ran first): _ast_copy's copy is ast.dump-equal,
+        with attributes, to the source and to copy.deepcopy's copy, and shares no node with the source; every call
+        argument (the shape of a hand) copies the same."""
+        tree = PC.source_and_tree(__file__)[1]
+        copied, stdlib = _ast_copy(tree), copy.deepcopy(tree)
+        self.assertEqual(ast.dump(copied, include_attributes=True), ast.dump(tree, include_attributes=True))
+        self.assertEqual(ast.dump(copied, include_attributes=True), ast.dump(stdlib, include_attributes=True))
+        self.assertFalse({id(n) for n in ast.walk(copied)} & {id(n) for n in ast.walk(tree)}, "no node is shared with the source")
+        hands = [a for n in ast.walk(tree) if isinstance(n, ast.Call) for a in n.args]
+        self.assertTrue(len(hands) > 1000, len(hands))
+        self.assertEqual([ast.dump(a, include_attributes=True) for a in hands],
+                         [ast.dump(_ast_copy(a), include_attributes=True) for a in hands])
 
 
 class PlantedShapes(unittest.TestCase):
