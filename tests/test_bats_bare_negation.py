@@ -1573,6 +1573,12 @@ CORPUS_WORKERS = 4
 # per run and not in aggregate, and it fires on a red corpus only, the case the corpus exists to report (extra8-3 and tests-1 of
 # round 2: nearly doubling the wall time there)
 CONTROL_BUDGET = 60
+# the arm's deadline as decide_corpus hands it down (control_under_bats, _sides): the instant the budget is spent at (`at`, a
+# time.monotonic() value) together with the budget it was cut from (`budget`, in seconds), so each sentence about the budget
+# quotes the figure applied and never the module constant by itself. Round 3 of fork PR #871's review found the three budget
+# sentences formatting CONTROL_BUDGET where decide_corpus takes `budget` as a parameter and its own arm line prints it, so a
+# caller passing another budget read two figures for one budget: the shape extra5-5 of round 2 ruled on the per-run bound
+Deadline = collections.namedtuple("Deadline", "at budget")
 # what the per-run copy of the checkout leaves out (_copy_tree): the repository's .git, python's caches, and the extension's
 # dependencies and build outputs, node_modules, dist (vscode-extension/tsconfig.json's outDir and the outfile and outdir of the
 # extension's bundler script) and out-tests (that script's test bundle), which no suite reads and a developer's tree carries built
@@ -1623,9 +1629,10 @@ def _sides(root, relpath, lines, cand, test, scratch, bats, timeout, repeats, co
     the control's (_control_env) when `control` is set; each copy is removed after its run. `runs` holds the run standing for
     each side (_agreed), `shown` the candidate's line under each rewrite, `secs` every run's time summed. A rewritten file bash
     does not parse, or a pipeline running off the text, is a `no run` side, decided without a run. `deadline`, the control arm's
-    (a time.monotonic() value, CONTROL_BUDGET after the arm began: decide_corpus), cuts every run's bound to what is left of it:
-    a run that would start after it, or one the cut bound ends, is a `budget` run whose detail says so, and it ends the side and
-    the rewrites after it, so the control is withheld and never decided from a cut run (control_under_bats)."""
+    (a Deadline: the instant the budget is spent at, `budget` seconds after the arm began, and that budget: decide_corpus), cuts
+    every run's bound to what is left of it: a run that would start after it, or one the cut bound ends, is a `budget` run whose
+    detail says so, quoting the budget applied, and it ends the side and the rewrites after it, so the control is withheld and
+    never decided from a cut run (control_under_bats)."""
     runs, shown, secs = [], [], 0.0
     for k, (repl, _) in enumerate(REWRITES):
         new = rewrite(lines, cand, repl)
@@ -1639,10 +1646,10 @@ def _sides(root, relpath, lines, cand, test, scratch, bats, timeout, repeats, co
             continue
         side = []
         for r in range(repeats):
-            bound = timeout if deadline is None else min(timeout, deadline - time.monotonic())
+            bound = timeout if deadline is None else min(timeout, deadline.at - time.monotonic())
             if bound <= 0:
-                side.append(BatsRun("budget", None, None, "the control arm's budget (CONTROL_BUDGET, %d s for every control of the corpus together) "
-                                    "was spent before run %d of the side under `%s` started: nothing is said of the environment" % (CONTROL_BUDGET, r + 1, repl), 0.0))
+                side.append(BatsRun("budget", None, None, "the control arm's budget (%d s for every control of the corpus together) was spent "
+                                    "before run %d of the side under `%s` started: nothing is said of the environment" % (deadline.budget, r + 1, repl), 0.0))
                 break
             d = _run_dir(scratch, relpath, cand, k, r, control)
             tree = os.path.join(d, "tree")
@@ -1654,9 +1661,9 @@ def _sides(root, relpath, lines, cand, test, scratch, bats, timeout, repeats, co
             finally:
                 shutil.rmtree(d, ignore_errors=True)
             if bound < timeout and run.outcome == "timed out":
-                run = BatsRun("budget", None, None, "the control arm's budget (CONTROL_BUDGET, %d s for every control of the corpus together) ended "
-                              "run %d of the side under `%s` after %.0f s, bounded at %.0f s by what was left of the budget and not at the run's bound "
-                              "(%.0f s): nothing is said of the environment" % (CONTROL_BUDGET, r + 1, repl, run.secs, bound, timeout), run.secs)
+                run = BatsRun("budget", None, None, "the control arm's budget (%d s for every control of the corpus together) ended run %d of "
+                              "the side under `%s` after %.0f s, bounded at %.0f s by what was left of the budget and not at the run's bound "
+                              "(%.0f s): nothing is said of the environment" % (deadline.budget, r + 1, repl, run.secs, bound, timeout), run.secs)
             side.append(run)
             if run.outcome == "budget":
                 break
@@ -1691,18 +1698,18 @@ def control_under_bats(d, root, lines, extents, scratch, bats="bats", timeout=RU
     (_control_verdict) follows decide's in the message, so a suite that needs a variable the rule excludes fails naming the
     mapping and where the key is added, and one whose verdict is its own gets the observation and what it cannot tell apart.
     The control is withheld, and the sentence says why, where a side was ended at the bound, a rewrite did not run, or a side's
-    runs disagree (_control_withheld), where the arm's `deadline` (decide_corpus's, CONTROL_BUDGET after the arm began) has
-    passed before the control starts, and where a run of the control was cut by it (_sides: the cut run's detail is the reason,
-    and no verdict is read from a cut pair). Fork PR #871's round 2, thirteenth commit ran the arm on every candidate not read
-    inside its decision; the twelfth ran it on one shape, both sides `not ok` on one line, as the test as written, and a gate on
-    the variable before the negation was reported inert, a skip on it no verdict, a read of it after the negation two lines, none
-    naming the cause."""
+    runs disagree (_control_withheld), where the arm's `deadline` (a Deadline, decide_corpus's: the instant its budget is spent
+    at, and that budget, which the sentence quotes) has passed before the control starts, and where a run of the control was cut
+    by it (_sides: the cut run's detail is the reason, and no verdict is read from a cut pair). Fork PR #871's round 2, thirteenth
+    commit ran the arm on every candidate not read inside its decision; the twelfth ran it on one shape, both sides `not ok` on
+    one line, as the test as written, and a gate on the variable before the negation was reported inert, a skip on it no
+    verdict, a read of it after the negation two lines, none naming the cause."""
     if d.verdict == "read":
         return d, None
     withheld = _control_withheld(d.runs, timeout)
-    if withheld is None and deadline is not None and time.monotonic() >= deadline:
-        withheld = ("the control arm's budget (CONTROL_BUDGET, %d s for every control of the corpus together) was spent before this candidate's "
-                    "control started" % CONTROL_BUDGET)
+    if withheld is None and deadline is not None and time.monotonic() >= deadline.at:
+        withheld = ("the control arm's budget (%d s for every control of the corpus together) was spent before this candidate's control started"
+                    % deadline.budget)
     if withheld is None:
         c_runs, _, c_secs = _sides(root, d.relpath, lines, d.cand, d.test, scratch, bats, timeout, repeats, control=True, deadline=deadline)
         d = d._replace(secs=d.secs + c_secs)
@@ -1728,7 +1735,8 @@ def decide_corpus(root, files, scratch, emit=_say, bats="bats", timeout=RUN_TIME
     candidates at a time through a pool, each run in its own copy of the tree (decide_under_bats), a candidate's head emitted
     before its runs (a run an outer bound ends is attributable), its row as it is decided, then the summary line, then the report
     in full of every candidate not read. Then, and only then, the CONTROL arm: control_under_bats on every candidate not read,
-    through the pool again, under one deadline `budget` seconds after the arm begins (CONTROL_BUDGET), each control's sentence
+    through the pool again, under one deadline `budget` seconds after the arm begins (CONTROL_BUDGET by default; handed down as
+    a Deadline carrying the instant and the budget, so each budget sentence quotes the budget applied), each control's sentence
     emitted as it comes with what bats said under it, then the arm's own line (how many ran, how many were withheld, the time).
     So a bound the arm hits, its own deadline or the wrapper test's BATS_TEST_TIMEOUT, costs diagnostics and never a verdict, a
     row or a report (tests-1 and extra8-3 of fork PR #871's round 2: the thirteenth commit ran each control inside its
@@ -1759,7 +1767,7 @@ def decide_corpus(root, files, scratch, emit=_say, bats="bats", timeout=RUN_TIME
     if not todo:
         return decisions
     t1 = time.monotonic()
-    deadline = t1 + budget
+    deadline = Deadline(t1 + budget, budget)
 
     def control(i):
         d = decisions[i]
@@ -4471,13 +4479,28 @@ class BatsCorpus(unittest.TestCase):
             self.assertIsNone(_control_withheld(runs, RUN_TIMEOUT), runs)
         cand, extent = Candidate(0, 2, 4, False), (0, 3)   # 1-based line 3 of a test spanning lines 1 to 4
         inert = Decision("tests/x.bats", cand, "x", "inert", "the test passes with the negated command succeeding and with it failing", ["! true", "! false"], [ok, ok], 0.3)
-        spent, said = control_under_bats(inert, "/nowhere", [], [extent], "/nowhere", deadline=time.monotonic() - 1)
+        # the spent-budget withhold on a REAL small tree, the candidate derived from its text (round 3 of fork PR #871's review:
+        # with a root of nowhere and no lines, this pin handed a mutant that never checks the deadline an IndexError out of the
+        # rewrite, an incidental red; on this tree that mutant runs _sides, which withholds by its own sentence, so the equality
+        # below reds by its own message), under a budget of the test's own, 5 s, smaller than the module constant: the sentence
+        # quotes the budget applied and never the constant (extra5-5 of round 2, the shape found again on this bound in round 3)
+        text = '@test "x" {\n    true\n    ! true\n}\n'
+        lines = text.split("\n")
+        extents = bash_test_extents(lines)
+        self.assertEqual((extents, candidates(lines, extents)), ([extent], [cand]))
+        with tempfile.TemporaryDirectory() as d:
+            tree = os.path.join(d, "tree")
+            os.makedirs(os.path.join(tree, "tests"))
+            with open(os.path.join(tree, "tests", "x.bats"), "w", encoding="utf-8") as f:
+                f.write(text)
+            spent, said = control_under_bats(inert, tree, lines, extents, d, deadline=Deadline(time.monotonic() - 1, 5))
+            read = inert._replace(verdict="read", runs=[bad(3), ok])
+            self.assertEqual(control_under_bats(read, tree, lines, extents, d), (read, None))
         self.assertIsNone(spent.control)
-        self.assertEqual(said, CONTROL_WITHHELD % ("the control arm's budget (CONTROL_BUDGET, %d s for every control of the corpus together) was spent before "
-                                                   "this candidate's control started" % CONTROL_BUDGET))
+        self.assertEqual(said, CONTROL_WITHHELD % "the control arm's budget (5 s for every control of the corpus together) was spent before this candidate's control started")
+        self.assertNotIn("CONTROL_BUDGET", said)
+        self.assertNotIn("%d s" % CONTROL_BUDGET, said)
         self.assertEqual(spent.message, "%s; %s" % (inert.message, said))
-        read = inert._replace(verdict="read", runs=[bad(3), ok])
-        self.assertEqual(control_under_bats(read, "/nowhere", [], [extent], "/nowhere"), (read, None))
         rule = lambda runs: decide("tests/x.bats", cand, extent, runs)
         control = lambda runs: Control(runs, *decide("tests/x.bats", cand, extent, runs), 0.4)
         for rule_runs in ([ok, ok], [skipped, skipped], [bad(2), bad(4)], [bad(2), bad(2)]):
@@ -4508,6 +4531,42 @@ class BatsCorpus(unittest.TestCase):
         self.assertEqual(_control_verdict("inert", [ok, ok], control([_agreed("! true", [ok, bad(3)]), _agreed("! false", [ok, bad(3)])])),
                          CONTROL_NOISE % "`! true`, `! false`")
 
+    def test_the_arms_budget_sentences_quote_the_budget_applied_and_never_the_module_constant(self):
+        # round 3 of fork PR #871's review, on the fifteenth commit: the arm's three budget sentences formatted CONTROL_BUDGET,
+        # the module constant, where decide_corpus takes `budget` as a parameter and its own arm line prints it, so a caller
+        # passing another budget read two figures for one budget (extra5-5 of round 2 ruled that shape on the per-run bound).
+        # The deadline decide_corpus hands down carries the budget it was cut from (Deadline), and each sentence quotes that
+        # figure. Here, without bats: _sides under a 7 s budget already spent withholds the side before its first run, naming
+        # 7 s; under a 9 s budget with half a second left it bounds the run at what is left, and a run ended there
+        # (run_test_alone stubbed to answer `timed out`, so no bats runs and the tree, a one-test suite, is copied once) is the
+        # budget's, naming 9 s, what was left and the run's own bound; the spent-before-start sentence is the pin above's, 5 s.
+        # None of the three carries the constant's name or its figure
+        text = '@test "x" {\n    true\n    ! true\n}\n'
+        lines = text.split("\n")
+        extents = bash_test_extents(lines)
+        found = candidates(lines, extents)
+        self.assertEqual(found, [Candidate(0, 2, 4, False)])
+        with tempfile.TemporaryDirectory() as d:
+            tree = os.path.join(d, "tree")
+            os.makedirs(os.path.join(tree, "tests"))
+            with open(os.path.join(tree, "tests", "x.bats"), "w", encoding="utf-8") as f:
+                f.write(text)
+            spent = _sides(tree, "tests/x.bats", lines, found[0], "x", d, "bats", 20, 2, control=True, deadline=Deadline(time.monotonic() - 1, 7))
+            timed = BatsRun("timed out", None, None, "1..1", 0.6)
+            with unittest.mock.patch.object(sys.modules[__name__], "run_test_alone", return_value=timed) as stub:
+                cut = _sides(tree, "tests/x.bats", lines, found[0], "x", d, "bats", 20, 2, control=True, deadline=Deadline(time.monotonic() + 0.5, 9))
+        self.assertEqual(stub.call_count, 1)
+        self.assertEqual(([r.outcome for r in spent[0]], spent[2]), (["budget"], 0.0))
+        self.assertEqual(spent[0][0].detail, "the control arm's budget (7 s for every control of the corpus together) was spent before run 1 of the side "
+                                             "under `! true` started: nothing is said of the environment")
+        self.assertEqual(([r.outcome for r in cut[0]], cut[2]), (["budget"], 0.6))
+        self.assertRegex(cut[0][0].detail, r"^the control arm's budget \(9 s for every control of the corpus together\) ended run 1 of the side under "
+                                           r"`! true` after 1 s, bounded at [01] s by what was left of the budget and not at the run's bound \(20 s\): "
+                                           r"nothing is said of the environment$")
+        for detail in (spent[0][0].detail, cut[0][0].detail):
+            self.assertNotIn("CONTROL_BUDGET", detail)
+            self.assertNotIn("%d s" % CONTROL_BUDGET, detail)
+
 
 class Invocations(unittest.TestCase):
     def test_every_bats_invocation_goes_through_run_bats(self):
@@ -4525,24 +4584,42 @@ class Invocations(unittest.TestCase):
         # refused wherever it stands, with the def, class or lambda it stands in named (or module level). The census is held by
         # EQUALITY to a derivation that does not share its walk: the token stream (tokenize, which skips strings and comments)
         # counted for NAME subprocess, OP `.`, NAME, OP `(`; round 1's pin held a floor of 3 against 6 calls, a pin that could
-        # not notice three invocations disappearing (tests-2, regression-2). Every invocation is printed with its line
+        # not notice three invocations disappearing (tests-2, regression-2). Every invocation is printed with its line.
+        # The other roads of python's standard library that start a program by name are read the same way, since the name of this
+        # test says every bats invocation and a census blind to a road it claims is the shape round 2 ruled against (round 3 of
+        # fork PR #871's review: a planted `if False: os.system("bats --version")` left the subprocess-only census green): `import
+        # os` is the one binding of os allowed and `import asyncio` the one of asyncio (this module has none), any other binding or
+        # use of either name refused as for subprocess; and a call of os.system, os.popen, os.spawn*, os.exec*, os.posix_spawn* or
+        # os.startfile, or of asyncio.create_subprocess_exec or create_subprocess_shell, is refused wherever it stands, the place
+        # named, since no bats run belongs on those roads; that count too is held by equality to the token stream's. NOT read,
+        # named so no one takes this census for wider than it is: a module reached through importlib.import_module or __import__,
+        # a program started through ctypes or pty.spawn, and a program named inside the arguments of bash or pgrep, the two
+        # programs allowed outside _run_bats (a `bash -c` that runs bats passes the program check as bash)
         with open(__file__, encoding="utf-8") as f:
             src = f.read()
         tree = ast.parse(src)
         parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+        # the modules read, each with the predicate on an attribute of it that starts a program: every attribute of subprocess,
+        # os's spawning ones, asyncio's two subprocess constructors
+        spawners = {"subprocess": lambda attr: True,
+                    "os": lambda attr: attr in ("system", "popen", "startfile") or attr.startswith(("spawn", "exec", "posix_spawn")),
+                    "asyncio": lambda attr: attr.startswith("create_subprocess_")}
         refused = []
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    if alias.name.split(".")[0] == "subprocess" and (alias.asname is not None or alias.name != "subprocess"):
-                        refused.append("line %d: `import %s%s` binds subprocess under another name" % (node.lineno, alias.name, " as " + alias.asname if alias.asname else ""))
-            elif isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "subprocess":
-                refused.append("line %d: `from subprocess import %s` binds a callable of subprocess to a bare name" % (node.lineno, ", ".join(a.name for a in node.names)))
-            elif isinstance(node, ast.Name) and node.id == "subprocess":
+                    top = alias.name.split(".")[0]
+                    if top in spawners and (alias.asname is not None or alias.name != top):
+                        refused.append("line %d: `import %s%s` binds %s under another name" % (node.lineno, alias.name, " as " + alias.asname if alias.asname else "", top))
+            elif isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] in spawners:
+                refused.append("line %d: `from %s import %s` binds a callable of %s to a bare name" % (node.lineno, node.module, ", ".join(a.name for a in node.names),
+                                                                                                        node.module.split(".")[0]))
+            elif isinstance(node, ast.Name) and node.id in spawners:
                 parent = parents.get(node)
                 if not (isinstance(parent, ast.Attribute) and parent.value is node):
-                    refused.append("line %d: the name subprocess is used as more than an attribute's receiver (%s)" % (node.lineno, type(parent).__name__))
-        self.assertEqual(refused, [], "subprocess is reachable under another name, so a bats run through it would stand outside this census:\n" + "\n".join(refused))
+                    refused.append("line %d: the name %s is used as more than an attribute's receiver (%s)" % (node.lineno, node.id, type(parent).__name__))
+        self.assertEqual(refused, [], "a module that starts programs is reachable under another name, so a bats run through it would stand outside this census:\n"
+                         + "\n".join(refused))
         run_bats = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_run_bats"]
         self.assertEqual(len(run_bats), 1, "the module defines %d functions named _run_bats at module level; this census places calls by containment in it" % len(run_bats))
         inside = {id(n) for n in ast.walk(run_bats[0])}
@@ -4558,8 +4635,12 @@ class Invocations(unittest.TestCase):
                     return "the body of class %s" % node.name
             return "module level"
 
-        calls = [(where(node), node) for node in ast.walk(tree)
-                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess"]
+        def on(module):
+            return [(where(node), node) for node in ast.walk(tree)
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == module and spawners[module](node.func.attr)]
+
+        calls = on("subprocess")
         outside = []
         for place, call in calls:
             if id(call) in inside:
@@ -4574,11 +4655,25 @@ class Invocations(unittest.TestCase):
                 self.fail("%s calls subprocess.%s with a program that is not a bash, pgrep or sys.executable literal (line %d): a bats run "
                           "belongs in _run_bats, bounded, stdin /dev/null, in its own group" % (place, call.func.attr, call.lineno))
         self.assertEqual(sum(1 for _, call in calls if id(call) in inside), 1, "one Popen in _run_bats")
+        roads = on("os") + on("asyncio")
+        self.assertEqual(["%s calls %s.%s (line %d)" % (place, call.func.value.id, call.func.attr, call.lineno) for place, call in roads], [],
+                         "a program is started on a road outside subprocess, where no program check stands: a bats run belongs in _run_bats, bounded, "
+                         "stdin /dev/null, in its own group")
         tokens = [(t.type, t.string) for t in tokenize.generate_tokens(iter(src.splitlines(keepends=True)).__next__) if t.type in (tokenize.NAME, tokenize.OP)]
-        spelled = sum(1 for i in range(len(tokens) - 3)
-                      if tokens[i] == (tokenize.NAME, "subprocess") and tokens[i + 1] == (tokenize.OP, ".") and tokens[i + 2][0] == tokenize.NAME and tokens[i + 3] == (tokenize.OP, "("))
-        self.assertEqual(len(calls), spelled, "the syntax-tree census found %d subprocess calls where the token stream spells %d: the walk misses some" % (len(calls), spelled))
-        print("%d subprocess calls, %d outside _run_bats: %s" % (len(calls), len(outside), "; ".join("%s line %d %s(%s)" % (place, line, attr, program) for place, attr, line, program in outside)))
+
+        def spelled(module):
+            return sum(1 for i in range(len(tokens) - 3)
+                       if tokens[i] == (tokenize.NAME, module) and tokens[i + 1] == (tokenize.OP, ".") and tokens[i + 2][0] == tokenize.NAME
+                       and spawners[module](tokens[i + 2][1]) and tokens[i + 3] == (tokenize.OP, "("))
+
+        self.assertEqual(len(calls), spelled("subprocess"),
+                         "the syntax-tree census found %d subprocess calls where the token stream spells %d: the walk misses some" % (len(calls), spelled("subprocess")))
+        self.assertEqual(len(roads), spelled("os") + spelled("asyncio"),
+                         "the syntax-tree census found %d calls on the os and asyncio roads where the token stream spells %d: the walk misses some"
+                         % (len(roads), spelled("os") + spelled("asyncio")))
+        print("%d subprocess calls, %d outside _run_bats: %s; %d calls on the os and asyncio roads (system, popen, spawn*, exec*, posix_spawn*, startfile, "
+              "create_subprocess_*)" % (len(calls), len(outside), "; ".join("%s line %d %s(%s)" % (place, line, attr, program) for place, attr, line, program in outside),
+                                        len(roads)))
 
 
 def _processes_of(path, ignore=()):
@@ -5064,9 +5159,11 @@ class BatsRoad(unittest.TestCase):
         # extra8-3 of fork PR #871's round 2: the arm is bounded in aggregate, one deadline for every control of a corpus
         # (CONTROL_BUDGET after the arm begins), and a run that deadline cuts is the budget's, never an outcome a verdict is
         # read from. A test sleeping 2 s around an inert negation, decided under the rule (inert, its runs about 2 s each), then
-        # its control under a deadline 1 s away: the control's first run is bounded at what is left of the budget, ended there,
-        # the control withheld with a sentence naming the budget, the run it ended, the bound it applied and the run's own
-        # bound, and no control on the decision; the same control with no deadline runs to the observation
+        # its control under a 1 s budget with its deadline 1 s away: the control's first run is bounded at what is left of the
+        # budget, ended there, the control withheld with a sentence naming the budget applied (1 s, the test's own, and never the
+        # module constant: round 3 of fork PR #871's review read CONTROL_BUDGET's 60 s here, extra5-5's shape on this bound),
+        # the run it ended, the bound it applied and the run's own bound, and no control on the decision; the same control with
+        # no deadline runs to the observation
         skip_unless_bats_serves(self)
         text = '@test "slow inert" {\n    sleep 2\n    ! true\n    true\n}\n'
         with tempfile.TemporaryDirectory() as d:
@@ -5081,12 +5178,14 @@ class BatsRoad(unittest.TestCase):
             with unittest.mock.patch.dict(os.environ, {"PATH": os.environ.get("PATH", os.defpath)}, clear=True):
                 decision = decide_under_bats(tree, relpath, lines, extents, found[0], d, timeout=20, repeats=1)
                 self.assertEqual(decision.verdict, "inert", decision.message)
-                cut, said = control_under_bats(decision, tree, lines, extents, d, timeout=20, repeats=1, deadline=time.monotonic() + 1)
+                cut, said = control_under_bats(decision, tree, lines, extents, d, timeout=20, repeats=1, deadline=Deadline(time.monotonic() + 1, 1))
                 whole, _ = control_under_bats(decision, tree, lines, extents, d, timeout=20, repeats=1)
         self.assertIsNone(cut.control)
-        self.assertRegex(said, r"^no control ran under the process environment: the control arm's budget \(CONTROL_BUDGET, %d s for every control of the "
-                               r"corpus together\) ended run 1 of the side under `! true` after [0-9]+ s, bounded at [01] s by what was left of the budget and not "
-                               r"at the run's bound \(20 s\): nothing is said of the environment$" % CONTROL_BUDGET)
+        self.assertRegex(said, r"^no control ran under the process environment: the control arm's budget \(1 s for every control of the corpus together\) "
+                               r"ended run 1 of the side under `! true` after [0-9]+ s, bounded at [01] s by what was left of the budget and not at the run's "
+                               r"bound \(20 s\): nothing is said of the environment$")
+        self.assertNotIn("CONTROL_BUDGET", said)
+        self.assertNotIn("%d s" % CONTROL_BUDGET, said)
         self.assertTrue(cut.message.endswith("; " + said), cut.message)
         self.assertNotIn("control", _row(cut))
         self.assertIsNotNone(whole.control)
