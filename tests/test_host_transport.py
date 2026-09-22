@@ -317,8 +317,10 @@ class Settings(unittest.TestCase):
             self.skipTest("the runner's floor (tests/conftest.py) is not in play")
         self.assertEqual(Path(marker).read_text().strip(), "off")
         self.assertEqual(ht.session_hosts_read(root), (False, "off"), "a fresh floored root reads hosts off")
-        Path(marker).unlink()                                     # a test that removes it gets it back before the next test
-        self.assertTrue(ht.session_hosts_on(root), "…and a bare root is on, which is exactly what the belt prevents")
+        # The other half on a root of this test's own, not by removing the floored file (until 2026-09-21 this unlinked it and
+        # relied on the per-test re-floor): a removal reads as on, so tests/test_tempdir_hygiene.py's ledger counts it as a
+        # hosts-on turn in the floored root, whose shape (romp-tests-state-XXXXXXXX/romp) is no mkdtemp the reader can follow.
+        self.assertTrue(ht.session_hosts_on(tempfile.mkdtemp()), "…and a bare root is on, which is exactly what the belt prevents")
 
     def test_the_grace_default_and_its_file(self):
         d = tempfile.mkdtemp()
@@ -1100,7 +1102,8 @@ def run(coro):
 class TransportOverSocket(unittest.TestCase):
     def _path(self):
         # under the system temp dir the tests package recorded (ROMP_TESTS_SYSTEM_TMPDIR), outside the run's private
-        # root, so the AF_UNIX path fits sun_path under xdist nesting; outside the root is outside the exit sweep's
+        # root, so the AF_UNIX path fits sun_path under a long TMPDIR (a root costs 20 bytes; two levels under xdist
+        # before 2026-09-21); outside the root is outside the exit sweep's
         # scope too, so the dir is removed here, when its test is (six per run leaked before this cleanup)
         d = tempfile.mkdtemp(dir=os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR") or None)
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
@@ -1498,7 +1501,7 @@ class BackendHostRules(unittest.TestCase):
 
     def _be(self, short=False):
         # short: the state dir under the system temp dir (tests/README.md's ROMP_TESTS_SYSTEM_TMPDIR), so a fake host's
-        # AF_UNIX socket path under it stays inside sun_path's 104 bytes on every platform and xdist nesting. A short
+        # AF_UNIX socket path under it stays inside sun_path's 104 bytes on every platform and under a long TMPDIR. A short
         # dir is outside the run's private root and so outside the exit sweep's scope: removed here, when its test is
         d = tempfile.mkdtemp(dir=(os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR") or None) if short else None); logs = []
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
