@@ -803,3 +803,37 @@ test("round 6, ninth commit: decision 47 and the hook header record the position
   assert.ok(pin.allowedWithoutWriterEvidence.why.includes("round 6's eighth commit, 2026-09-22"), 'the piped-script fixture dates the eighth commit the day of its commit');
   assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
 });
+
+// Round 6's tenth and eleventh commits (2026-09-22): the tenth commit's record was missing on decision 47 and the hook header while the hook's
+// inline comments named it (the round's record verifier on the tenth's head), so beside the phrase pins the record list is DERIVED: every
+// ordinal the hook's own text names as "round 6's Nth commit" has a ROUND 6, NTH COMMIT record on the header and on decision 47, dated alike,
+// the records run from the second to the latest with no gap, and the latest record is the latest commit the hook names. A missing record for
+// the newest commit reds here before anyone reads the header.
+test("round 6, tenth and eleventh commits: decision 47 and the hook header record the ifs rule, the multi-digit positional, the alternate value, the vanishing head, the routed standard output, the counted slice, the bound name and the keyword dash runs; every commit the hook names has a record on both, dated alike, with no gap to the latest; the hook has the functions that carry the eleventh commit's fixes and asks the roads at the three keyword sites", () => {
+  const ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh', 'twelfth', 'thirteenth', 'fourteenth', 'fifteenth', 'sixteenth', 'seventeenth', 'eighteenth', 'nineteenth', 'twentieth'];
+  const named = new Set([...hook.matchAll(/round 6's (\w+) commit/g)].map((m) => m[1].toLowerCase()).filter((o) => ORDINALS.includes(o)));
+  assert.ok(named.size >= 2, `the hook's own text names round 6's commits (${named.size})`);
+  // the hook is read raw (a record heads a `//` line); decision 47 comes through `between`, whitespace collapsed to one line, so its records are matched unanchored
+  const records = (text, re) => new Map([...text.matchAll(re)].map((m) => [m[1].toLowerCase(), m[2]]));
+  const headerRecords = records(hook, /^\/\/ ROUND 6, (\w+) COMMIT \((\d{4}-\d{2}-\d{2})/gm);
+  const planRecords = records(d47, /ROUND 6, (\w+) COMMIT \((\d{4}-\d{2}-\d{2})/g);
+  const firstHeader = hook.match(/^\/\/ ROUND 6 \((\d{4}-\d{2}-\d{2})/m);
+  const firstPlan = d47.match(/ROUND 6 \((\d{4}-\d{2}-\d{2})/);
+  assert.ok(firstHeader && firstPlan && firstHeader[1] === firstPlan[1], "the first commit's record stands on both, dated alike");
+  for (const o of named) if (o !== 'first') {
+    assert.ok(headerRecords.has(o), `the hook header records round 6's ${o} commit (the hook's own text names it)`);
+    assert.ok(planRecords.has(o), `decision 47 records round 6's ${o} commit`);
+    assert.equal(planRecords.get(o), headerRecords.get(o), `the ${o} commit's two records date it alike`);
+  }
+  const latest = Math.max(...[...headerRecords.keys()].map((o) => ORDINALS.indexOf(o)));
+  for (let i = 1; i <= latest; i++) assert.ok(headerRecords.has(ORDINALS[i]) && planRecords.has(ORDINALS[i]), `no gap: round 6's ${ORDINALS[i]} commit is recorded on both`);
+  assert.equal(ORDINALS[latest], [...named].sort((a, b) => ORDINALS.indexOf(b) - ORDINALS.indexOf(a))[0], 'the latest record is the latest commit the hook names');
+  for (const [name, text] of [['decision 47', d47], ['the hook header', hook]]) {
+    const flat = text.replace(/\/\//g, ' ').replace(/\s+/g, ' ').toLowerCase();
+    for (const phrase of ['round 6, tenth commit (2026-09-22', 'round 6, eleventh commit (2026-09-22', 'the ifs rule', 'the multi-digit positional', 'the alternate value', 'the vanishing head', 'the routed standard output', 'the counted slice', 'the bound name', 'the keyword dash runs', 'one home']) assert.ok(flat.includes(phrase), `${name} records: ${phrase}`);
+  }
+  for (const fn of ['headMayVanish', 'vanishedHeadTexts', 'dashCommandRoads', 'runHeadSplices', 'absSpelled', 'rereadForVanish']) assert.ok(hook.includes(fn), `the hook has ${fn}`);
+  // where the code lives; what it does is pinned by execution in the eleventh commit's rows test (tools/romp-track-bash-guard.test.mjs, the S11 rows)
+  assert.equal((hook.match(/dashCommandRoads\(seg\.words\[(p|at)\], (p|at)\);/g) || []).length, 3, "the three keyword sites (function, coproc, repeat) ask the roads under dash's grammar");
+  assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
+});

@@ -4759,6 +4759,65 @@ document stands on its own, each with the reasoning it was given.
     substitution. The eighth commit's records on the hook header, this decision, the piped-script fixture and
     the tests date it 2026-09-22, the day of its commit. Every fix is pinned by execution in the ninth commit's
     rows test, the writers measured in bash, zsh and dash, red on the eighth commit's head.
+    ROUND 6, TENTH COMMIT (2026-09-22; the round's three verifiers on the ninth commit's head): eight defects of the
+    round's own class (a reading that resolves a word wrongly and thereby allows), each fixed at the mechanism. THE IFS
+    RULE over a positional list (positionalWords): `"$*"` joins the parameters by the first character of IFS, and dash
+    joins `"$@"` at a redirection target, so a named IFS the resolver does not read leaves the joined name unknown (`set
+    -- .. docs report.md; IFS=/; echo x > "$*"` wrote ../docs/report.md in every shell while allowed). THE MULTI-DIGIT
+    POSITIONAL (resolveWord, positionalSpelling): an unbraced `$10` is `${1}0` in bash and dash and the tenth positional
+    in zsh, so the word is left unread where zsh may run the line; `${10}` is the tenth in every shell. THE ALTERNATE
+    VALUE (defaultWordReading, scriptTexts): `${name:+word}` stands for the word when the name is set and for nothing
+    otherwise, so the dropped form joins the readings where the name may be unset (`eval cp ${c:+x} a b` ran the
+    two-operand copy while the three-operand reading allowed). THE VANISHED TEXT on a prompt road (readValuedWords): a
+    prompt name's value is read through scriptTexts, the expansions the command never values removed. THE VANISHING HEAD
+    (the head splice): a command name that is an expansion the command never values may be empty, so the next word is the
+    command and the segment is read again with the head dropped (`$c cp a b` copied in every shell while `$c` was the
+    command name). THE ROUTED STANDARD OUTPUT (lex's onStdout): the standard output reaches a process substitution along a
+    chain of `>&` dups and out of a subshell's, group's or compound's body. THE PEELED NAME's two roads: `[[` is searched
+    through PATH, since dash runs a bound one, and an unquoted glob-shaped name after `function` is the function's name.
+    The residual table: RT-glued-plus-head is refused now and RT-run-written-prefix added (199 rows). Every fix pinned by
+    execution in the tenth commit's rows test (49 rows, the writers measured in bash, zsh and dash), red on the ninth
+    commit's head.
+    ROUND 6, ELEVENTH COMMIT (2026-09-22; the round's two verifiers on the tenth commit's head): a regression of the
+    round's own class, a fix not fitted to its class, a crash in the tenth's code, and the tenth commit's deferred list
+    closed, fixed or filed. THE COUNTED SLICE (positionalSpelling, positionalWords): an offset `$#` in a positional slice
+    was read as a slice from past the end, so nothing was picked and `set -- other.md report.md; echo x > ${@:$#}` allowed
+    while bash and zsh wrote, where the round-5 head refused; `$#`, `${#}`, `${#@}` and `${#*}` as an offset or a length
+    are the count of the parameters, resolved against the list where the walk holds it (the offset that is the count is
+    the last element; with no parameter, the slice from 0 the resolver does not compute; the length that is the count
+    reaches the end), and a slice of a list the walk does not hold stays unknown. THE VANISHING HEAD's one home
+    (headMayVanish, vanishedHeadTexts, activeHeadTexts, passthroughCat): the tenth commit's dropped-head reading reached
+    the writer and consumer heads in the walk and not the printer, which lex reads through activeHeadTexts, nor the
+    passthrough cat, so `$c echo 'cp a b' | bash` and twenty-five printer forms ran the text in every shell while allowed;
+    the predicate has one home, every consumer of a head word reads it, the printer reads the head as THE VANISHED TEXT
+    reads a script word (the empty text where the command never gives the name a value, so `e=echo; $e .. | bash` keeps
+    its one text and its refusal by name), and a command holding an expansion is read again once its values are noted. THE
+    ALTERNATE VALUE at the top level (posKnown): the positional parameters are not modelled there (null), so the count
+    read threw and `eval cp ${1:+x} a b` refused through the catch-all as an error of the guard's own; the list is read
+    only where it is modelled, the dropped form joins the readings and the refusal is the rule's, by name. THE BOUND NAME
+    (boundRoad, recordMutations' absSpelled): under a PATH the resolver cannot read, or a directory it does not know,
+    every bound path whose last component is the name is spliced, so the bound writer's operands are judged by their own
+    project from any cwd (`cp /usr/bin/cp <out>/scratch/env; PATH=<out>/scratch:$PATH; env <proj>/base/report.md
+    <proj>/docs/report.md` from a cwd in no project allowed while every shell copied, where the same line from the
+    project's directory and the alias and hash roads from that cwd refused); and a made path is bound under its spelled
+    name beside the path a link the command makes resolves to (an `ln -s` binding was keyed on its target and found by no
+    name). THE KEYWORD DASH RUNS (dashCommandRoads at the function, coproc and repeat sites; the head's roads defined
+    before any keyword is read): a word bash and zsh reserve and dash runs as a command name is asked the alias and
+    bound-path roads before the walk consumes it, the binding spliced beside the construct's own reading (`alias
+    function=cp`, then `function a b`, copied in dash while allowed, and so did coproc and repeat, where select, foreach,
+    time, `[[`, `]]`, end, always and declare aliased so took the roads at the head and refused). The residual table gains
+    51 rows (250 rows over the same 8 classes): the FIFO a command makes with a shell reading it in the background, the
+    coprocess zsh starts and feeds, a call of a function the command defines before `>(bash)`, and the members of stated
+    classes the verifiers measured writing with no row (creation under the tracked notes/ folder by touch, mktemp, split
+    and csplit; ruby -i; mawk's and nawk's system; unzip -o, cpio -p, xxd, iconv -o, cpp, gpg -o, find -fprint, fallocate;
+    eatmydata; busybox's sed -i and dd; a written startup file read by bash --rcfile, --init-file and -l, dash -i with ENV
+    and zsh -i with ZDOTDIR; a pipe through rev, tr, envsubst, sed, awk or head into bash; `$(type -P cp)`, `$(realpath
+    ..)`, `$(readlink -f ..)` and `$(basename ..)` as the command name; `> >(tee /dev/null | bash)`; python's popen,
+    shell=True and an open on an operand or an environment name), each keyed on the shells measured writing; the prompt
+    roads with a vanished operand, the deferred list's last item, measured refused since the tenth commit and pinned as
+    rows. Every fix pinned by execution in the eleventh commit's rows test (93 rows, the writers measured in bash, zsh and
+    dash), red on the tenth commit's head, and the record list on this header and decision 47 is derived by the plan test
+    from the commits the hook's own text names, so a missing record for the newest commit reds.
     THE RESIDUAL PROPERTY. The guard refuses a write only when it resolves the command to a writer it models (the
     writer cases of extract's switch, a write redirection, an interpreter's write call it scans) reached through a
     road it reads (the wrapper set, the shells' script roads, the readings of the resolver, the alias and hash roads),

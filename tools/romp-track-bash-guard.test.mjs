@@ -3442,6 +3442,7 @@ test('the corpus (tools/romp-track-bash-guard-corpus.json): more than 80 ordinar
       got[`${e.cwd}: ${e.command}`] = reason == null ? 'allow' : 'refuse';
       want[`${e.cwd}: ${e.command}`] = e.verdict;
       if (reason) assert.ok(!/\u2014/.test(reason) && !ROMP_NOUNS.test(reason.split(proj).join('<p>').split(B).join('<b>')), `no em dash, no romp noun: ${e.command}`);
+      if (reason) assert.ok(!reason.includes('an error of my own'), `no corpus entry reaches the catch-all (round 6's eleventh commit: the refusal is the rule's, never an error of the guard's own): ${e.command}: ${reason.split('\n')[0]}`);
     }
     assert.deepEqual(got, want);
     const since = CORPUS.filter((e) => e.since);
@@ -7609,6 +7610,66 @@ const RESIDUAL_TABLE = [
   ['RT-procsub-cat-file', 'a producer outside the output model', null, "printf '%s\\n' 'cp ../base/report.md report.md' > ../scratch/s; cat ../scratch/s > >(bash)", ['bash', 'zsh']],   // dash has no `>(`
   ['RT-procsub-while-read', 'a script held in a variable', null, "echo 'cp ../base/report.md report.md' > >(while read -r l; do $l; done)", ['bash']],   // zsh splits no expansion, so the whole line is one command name there
   ['RT-procsub-python-stdin', 'a reader outside the roads', 'python3', "echo 'import os; os.system(\"cp ../base/report.md report.md\")' > >(python3)", ['bash', 'zsh']],
+  // round 6's eleventh commit: the shapes the round's verifiers measured writing while allowed with no row of their shape, each under its class
+  // (the deferred list of the tenth commit's message closed here: a FIFO a command makes with a shell reading it in the background, and a
+  // coprocess a command starts and feeds, are readers the roads do not reach; a call of a function the command defines before `>(bash)` is the
+  // producer outside the model the fifth class names, as its pipe form RT-function-producer is). The zsh coprocess rows run zsh from every shell
+  // (the bare `coproc bash; print -p ..` blocks bash on the coprocess's pipe until the run's timeout).
+  ['RT-fifo-bg-shell', 'a reader outside the roads', null, "mkfifo ../scratch/p; bash < ../scratch/p & echo 'cp ../base/report.md report.md' > ../scratch/p; wait", ['bash', 'zsh', 'dash']],
+  ['RT-fifo-source', 'a reader outside the roads', null, "mkfifo ../scratch/p; (sleep 0.2; echo 'cp ../base/report.md report.md' > ../scratch/p) & . ../scratch/p; wait", ['bash', 'zsh', 'dash']],
+  ['RT-fifo-cat-pipe', 'a reader outside the roads', null, "mkfifo ../scratch/p; cat ../scratch/p | bash & echo 'cp ../base/report.md report.md' > ../scratch/p; wait", ['bash', 'zsh', 'dash']],
+  ['RT-fifo-exec-fd', 'a reader outside the roads', null, "mkfifo ../scratch/p; exec 3<>../scratch/p; bash <&3 & echo 'cp ../base/report.md report.md; exit' >&3; exec 3>&-; wait", ['bash', 'zsh', 'dash']],   // the fed text ends in exit: a FIFO opened `<>` has a writer while the reader's own descriptor is open, so the reader would wait for input past the run's timeout
+  ['RT-fifo-tee', 'a reader outside the roads', null, "mkfifo ../scratch/p; bash < ../scratch/p & echo 'cp ../base/report.md report.md' | tee ../scratch/p >/dev/null; wait", ['bash', 'zsh', 'dash']],
+  ['RT-zsh-coproc-print', 'a reader outside the roads', null, "zsh -c \"coproc bash; print -p 'cp ../base/report.md report.md'; coproc :; wait\"", ['bash', 'zsh', 'dash']],
+  ['RT-zsh-coproc-dup', 'a reader outside the roads', null, "zsh -c \"coproc bash; echo 'cp ../base/report.md report.md' >&p; coproc :; wait\"", ['bash', 'zsh', 'dash']],
+  ['RT-fncall-procsub', 'a producer outside the output model', null, "f() { echo 'cp ../base/report.md report.md'; }; f > >(bash)", ['bash', 'zsh']],   // dash has no `>(`
+  ['RT-fncall-procsub-dup', 'a producer outside the output model', null, "f() { echo 'cp ../base/report.md report.md' >&3; }; f 3> >(bash)", ['bash', 'zsh']],
+  // creation under the tracked notes/ folder by a program outside the model (a `> ../notes/new.md` is refused by name, so a new entry there is a write)
+  ['RT-touch-notes', 'a writer outside the model', null, 'touch ../notes/new.md', ['bash', 'zsh', 'dash']],
+  ['RT-mktemp-notes', 'a writer outside the model', null, 'mktemp -p ../notes', ['bash', 'zsh', 'dash']],
+  ['RT-mktemp-notes-template', 'a writer outside the model', null, 'mktemp ../notes/tmp.XXXXXX', ['bash', 'zsh', 'dash']],
+  ['RT-split-notes', 'a writer outside the model', null, 'split -l 1 ../base/report.md ../notes/part.', ['bash', 'zsh', 'dash']],
+  ['RT-csplit-notes', 'a writer outside the model', null, 'csplit -f ../notes/cs. ../base/report.md 1', ['bash', 'zsh', 'dash']],
+  ['RT-ruby-inplace', 'a writer outside the model', 'ruby', "ruby -i -pe 'sub(/NA/, \"x\")' report.md", ['bash', 'zsh', 'dash']],
+  ['RT-unzip-o', 'a writer outside the model', 'unzip', "python3 -c 'import zipfile; z = zipfile.ZipFile(\"../scratch/a.zip\", \"w\"); z.writestr(\"report.md\", \"x\"); z.close()'; unzip -o ../scratch/a.zip -d .", ['bash', 'zsh', 'dash']],   // python3 makes the archive
+  ['RT-cpio-pass', 'a writer outside the model', 'cpio', '(cd ../base && echo report.md | cpio -pu ../docs)', ['bash', 'zsh', 'dash']],
+  ['RT-xxd-out', 'a writer outside the model', 'xxd', 'xxd ../base/report.md report.md', ['bash', 'zsh', 'dash']],
+  ['RT-iconv-o', 'a writer outside the model', 'iconv', 'iconv -o report.md ../base/report.md', ['bash', 'zsh', 'dash']],
+  ['RT-iconv-output-eq', 'a writer outside the model', 'iconv', 'iconv --output=report.md ../base/report.md', ['bash', 'zsh', 'dash']],
+  ['RT-cpp-P', 'a writer outside the model', 'cpp', 'cpp -P ../base/report.md report.md', ['bash', 'zsh', 'dash']],
+  ['RT-cpp-o', 'a writer outside the model', 'cpp', 'cpp -o report.md ../base/report.md', ['bash', 'zsh', 'dash']],
+  ['RT-gpg-output-enarmor', 'a writer outside the model', 'gpg', 'gpg --batch --yes --output report.md --enarmor ../base/report.md', ['bash', 'zsh', 'dash']],
+  ['RT-gpg-o-enarmor', 'a writer outside the model', 'gpg', 'gpg --batch --yes -o report.md --enarmor ../base/report.md', ['bash', 'zsh', 'dash']],
+  ['RT-find-fprint', 'a writer outside the model', null, 'find ../base -name report.md -fprint report.md', ['bash', 'zsh', 'dash']],
+  ['RT-fallocate', 'a writer outside the model', 'fallocate', 'fallocate -l 64 report.md', ['bash', 'zsh', 'dash']],
+  ['RT-busybox-sed-i', 'a writer outside the model', 'busybox', 'busybox sed -i s/NA/x/ report.md', ['bash', 'zsh', 'dash']],
+  ['RT-busybox-dd', 'a writer outside the model', 'busybox', 'busybox dd if=../base/report.md of=report.md', ['bash', 'zsh', 'dash']],
+  ['RT-python-open-argv', 'a writer outside the model', 'python3', "python3 -c 'import sys; open(sys.argv[1], \"w\").write(\"x\")' report.md", ['bash', 'zsh', 'dash']],   // the path an operand, not a literal in the code
+  ['RT-python-open-env', 'a writer outside the model', 'python3', "F=report.md python3 -c 'import os; open(os.environ[\"F\"], \"w\").write(\"x\")'", ['bash', 'zsh', 'dash']],
+  ['RT-mawk-system', 'a reader outside the roads', 'mawk', "mawk 'BEGIN{system(\"cp ../base/report.md report.md\")}'", ['bash', 'zsh', 'dash']],
+  ['RT-nawk-system', 'a reader outside the roads', 'nawk', "nawk 'BEGIN{system(\"cp ../base/report.md report.md\")}'", ['bash', 'zsh', 'dash']],
+  ['RT-eatmydata', 'a reader outside the roads', 'eatmydata', 'eatmydata cp ../base/report.md report.md', ['bash', 'zsh', 'dash']],
+  // a startup file the command writes and a shell it starts reads (the file the command writes and then sources, by the shell's own road)
+  ['RT-bash-rcfile', 'a reader outside the roads', null, "printf 'cp ../base/report.md report.md\\n' > ../scratch/rc; bash --rcfile ../scratch/rc -i -c true", ['bash', 'zsh', 'dash']],
+  ['RT-bash-init-file', 'a reader outside the roads', null, "printf 'cp ../base/report.md report.md\\n' > ../scratch/rc; bash --init-file ../scratch/rc -i -c true", ['bash', 'zsh', 'dash']],
+  ['RT-bash-login-home', 'a reader outside the roads', null, "mkdir -p ../scratch/h; printf 'cp ../base/report.md report.md\\n' > ../scratch/h/.bash_profile; HOME=$PWD/../scratch/h bash -l -c true", ['bash', 'zsh', 'dash']],
+  ['RT-dash-env-i', 'a reader outside the roads', null, "printf 'cp ../base/report.md report.md\\n' > ../scratch/rc; ENV=../scratch/rc dash -i -c true", ['bash', 'zsh', 'dash']],
+  ['RT-zsh-zdotdir-i', 'a reader outside the roads', null, "mkdir -p ../scratch/z; printf 'cp ../base/report.md report.md\\n' > ../scratch/z/.zshrc; ZDOTDIR=../scratch/z zsh -i -c true", ['bash', 'zsh', 'dash']],
+  ['RT-python-popen', 'a reader outside the roads', 'python3', "python3 -c 'import os; os.popen(\"cp ../base/report.md report.md\").read()'", ['bash', 'zsh', 'dash']],
+  ['RT-python-subprocess-shell', 'a reader outside the roads', 'python3', "python3 -c 'import subprocess; subprocess.call(\"cp ../base/report.md report.md\", shell=True)'", ['bash', 'zsh', 'dash']],   // shell=True hands the string to /bin/sh (spelled with call, since the real-shell-leg scan keys on the other method's name before a parenthesis)
+  // a substitution outside the output model as the command name (beside RT-which-head)
+  ['RT-type-P-head', 'a command name the resolver never reads', null, '$(type -P cp) ../base/report.md report.md', ['bash']],   // `type -P` is bash's
+  ['RT-realpath-head', 'a command name the resolver never reads', 'realpath', '$(realpath /usr/bin/cp) ../base/report.md report.md', ['bash', 'zsh', 'dash']],
+  ['RT-readlink-head', 'a command name the resolver never reads', null, '$(readlink -f /usr/bin/cp) ../base/report.md report.md', ['bash', 'zsh', 'dash']],
+  ['RT-basename-head', 'a command name the resolver never reads', null, '$(basename /usr/bin/cp) ../base/report.md report.md', ['bash', 'zsh', 'dash']],
+  // a pipe through another command before the shell (the fifth class's "a pipe through another command")
+  ['RT-pipe-rev', 'a producer outside the output model', 'rev', "echo 'dm.troper dm.troper/esab/.. pc' | rev | bash", ['bash', 'zsh', 'dash']],
+  ['RT-pipe-tr', 'a producer outside the output model', null, "echo 'cp ../base/report.md report.md' | tr a a | bash", ['bash', 'zsh', 'dash']],
+  ['RT-pipe-envsubst', 'a producer outside the output model', 'envsubst', "echo 'cp ../base/report.md report.md' | envsubst | bash", ['bash', 'zsh', 'dash']],
+  ['RT-pipe-sed', 'a producer outside the output model', null, "echo 'cp ../base/report.md report.md' | sed '' | bash", ['bash', 'zsh', 'dash']],
+  ['RT-pipe-awk', 'a producer outside the output model', null, "echo 'cp ../base/report.md report.md' | awk 1 | bash", ['bash', 'zsh', 'dash']],
+  ['RT-pipe-head', 'a producer outside the output model', null, "echo 'cp ../base/report.md report.md' | head -1 | bash", ['bash', 'zsh', 'dash']],
+  ['RT-procsub-tee-devnull', 'a producer outside the output model', null, "echo 'cp ../base/report.md report.md' > >(tee /dev/null | bash)", ['bash', 'zsh']],   // dash has no `>(`
 ];
 test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could name that still reaches a tracked file, run through the hook (allowed) and the shells (the writers as measured), each under a class of THE RESIDUAL PROPERTY, and the property's paragraph on the hook header names every class", () => {
   const w = sixthPassWorld();
@@ -9014,12 +9075,15 @@ test("round 6, ninth commit, the rows: a positional list of several elements at 
       ["S9-pn-hash-zsh-env", "nad", "hash env=/usr/bin/cp; env ../base/report.md report.md", ["zsh"], 'name'],
       ["S9-pn-hash-zsh-nice", "nad", "hash nice=/usr/bin/cp; nice ../base/report.md report.md", ["zsh"], 'name'],
       ["S9-pn-hash-zsh-nohup", "nad", "hash nohup=/usr/bin/cp; nohup ../base/report.md report.md", ["zsh"], 'name'],
-      ["S9-pn-bound-path-env", "nad", "cp /usr/bin/cp ../scratch/env; PATH=../scratch:$PATH; env ../base/report.md report.md", ["bash", "zsh", "dash"], ["text", "is looked up through a PATH"]],
-      ["S9-pn-bound-link-nice", "nad", "ln -s /usr/bin/cp ../scratch/nice; PATH=../scratch:$PATH; nice ../base/report.md report.md", ["bash", "zsh", "dash"], ["text", "is looked up through a PATH"]],
+      // round 6's eleventh commit (THE BOUND NAME): under a PATH the resolver cannot read, every bound path whose last component is the name is
+      // spliced too, so these refuse by name (the file named) where the ninth commit refused with the unreadable PATH alone; the PATH refusal
+      // still stands where the splice names no tracked file (S9-pn-bound-path-timeout: `cp 5 a b` is a copy into a directory named report.md)
+      ["S9-pn-bound-path-env", "nad", "cp /usr/bin/cp ../scratch/env; PATH=../scratch:$PATH; env ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
+      ["S9-pn-bound-link-nice", "nad", "ln -s /usr/bin/cp ../scratch/nice; PATH=../scratch:$PATH; nice ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
       ["S9-pn-bound-path-timeout", "nad", "cp /usr/bin/cp ../scratch/timeout; PATH=../scratch:$PATH; timeout 5 ../base/report.md report.md", [], ["text", "is looked up through a PATH"]],
       ["S9-pn-bound-as-path-env", "nad", "cp /usr/bin/cp ../scratch/env; ../scratch/env ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
       ["S9-pn-bound-as-path-nice", "nad", "ln -s /usr/bin/cp ../scratch/nice; ../scratch/nice -n 5 ../base/report.md report.md", [], 'allow'],
-      ["S9-pn-bound-inner-env", "nad", "cp /usr/bin/cp ../scratch/env; PATH=../scratch:$PATH; nice env ../base/report.md report.md", ["bash", "zsh", "dash"], ["text", "is looked up through a PATH"]],
+      ["S9-pn-bound-inner-env", "nad", "cp /usr/bin/cp ../scratch/env; PATH=../scratch:$PATH; nice env ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],   // by name since the eleventh commit (THE BOUND NAME)
       ["S9-pn-hash-inner-command", "nad", "hash -p /usr/bin/cp env; command env ../base/report.md report.md", ["bash"], 'name'],
       ["S9-pn-hash-inner-exec", "nad", "hash -p /usr/bin/cp env; exec env ../base/report.md report.md", ["bash"], 'name'],
       ["S9-pn-hash-inner-nice", "nad", "hash -p /usr/bin/cp env; nice env ../base/report.md report.md", [], 'name'],
@@ -9036,7 +9100,7 @@ test("round 6, ninth commit, the rows: a positional list of several elements at 
       ["S9-pn-ctl-alias-noops", "nad", "alias command='cp ../base/report.md report.md'\ncommand", ["dash"], 'name'],
       ["S9-pn-ctl-fn-env", "nad", "env() { cp \"$@\"; }; env ../base/report.md report.md", ["bash", "zsh", "dash"], ["text", "may split into several words"]],
       ["S9-pn-ctl-hash-cat", "nad", "hash -p /usr/bin/cp cat; cat ../base/report.md report.md", ["bash"], 'name'],
-      ["S9-pn-ctl-bound-cat", "nad", "cp /usr/bin/cp ../scratch/cat; PATH=../scratch:$PATH; cat ../base/report.md report.md", ["bash", "zsh", "dash"], ["text", "is looked up through a PATH"]],
+      ["S9-pn-ctl-bound-cat", "nad", "cp /usr/bin/cp ../scratch/cat; PATH=../scratch:$PATH; cat ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],   // by name since the eleventh commit (THE BOUND NAME: the bound name outside the wrapper set is spliced under the unreadable PATH too)
       ["S9-pn-ctl-alias-env-untracked", "nad", "alias env=cp\nenv ../base/report.md ../scratch/keep.md", [], 'allow'],
       ["S9-pn-ctl-alias-unread-body", "nad", "alias env=\"$x\"\nenv ../base/report.md report.md", [], ["text", "an alias this command defines with a text I do not read"]],
       ["S9-pn-ctl-alias-unread-name", "nad", "alias $n=cp\nenv ../base/report.md report.md", [], ["text", "binds a name I do not read"]],
@@ -9268,8 +9332,8 @@ test("round 6, tenth commit, the rows: a double-quoted `\"$*\"` joins the positi
       ["S10-dup-twin-stderr", "nad", "echo 'cp ../base/report.md report.md' 2> >(bash)", [], 'allow'],
       ["S10-dup-twin-nodup", "nad", "echo 'cp ../base/report.md report.md' 3> >(bash)", [], 'allow'],
       // THE PEELED NAME: `[[` bound through PATH under dash, and a `function [` definition
-      ["S10-bracket-bound-dash", "nad", "cp /usr/bin/cp '../scratch/[['; PATH=../scratch:$PATH; [[ ../base/report.md report.md", ["dash"], ['text', 'looked up through a PATH']],
-      ["S10-bracket-bound-notes", "nan", "cp /usr/bin/cp '../scratch/[['; PATH=../scratch:$PATH; [[ ../base/report.md n1.md", ["dash"], ['text', 'looked up through a PATH']],
+      ["S10-bracket-bound-dash", "nad", "cp /usr/bin/cp '../scratch/[['; PATH=../scratch:$PATH; [[ ../base/report.md report.md", ["dash"], 'name'],   // by name since the eleventh commit (THE BOUND NAME: the bound `[[` is spliced under the unreadable PATH too)
+      ["S10-bracket-bound-notes", "nan", "cp /usr/bin/cp '../scratch/[['; PATH=../scratch:$PATH; [[ ../base/report.md n1.md", ["dash"], 'name'],
       ["S10-bracket-bound-twin", "nad", "cp /usr/bin/cp '../scratch/['; PATH=../scratch:$PATH; [ ../base/report.md report.md", [], 'allow'],
       ["S10-fn-bracket", "nad", "function [ { cp \"$@\"; }; [ ../base/report.md report.md", ["bash", "zsh"], 'name'],
       ["S10-fn-bracket-args", "nad", "function [ { cp $1 $2; }; [ ../base/report.md report.md", ["bash", "zsh"], 'name'],
@@ -9307,5 +9371,157 @@ test("round 6, tenth commit, the rows: a double-quoted `\"$*\"` joins the positi
     assert.deepEqual(lex('${c:+x} a').segments[0].words[0].readingParams, [{ name: 'c', op: ':+', before: '', after: '', plus: true }], 'THE ALTERNATE VALUE: the reading carries the name and operator so scriptTexts adds the empty possibility');
     assert.deepEqual(lex('echo x 3> >(bash) 2>&3 1>&2').segments[0].outDups, [{ from: '2', to: '3' }, { from: '1', to: '2' }], 'the dup chain is recorded in full, for THE ROUTED STANDARD OUTPUT to follow');
     assert.ok(lex('function [ { cp "$@"; }').segments.length >= 1, 'a `function [` line lexes');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+
+test("round 6, eleventh commit, the rows: a positional slice whose offset or length is the parameter count (`$#`, `${#}`, `${#@}`, `${#*}`) resolves to the count (the regression: `${@:$#}` read as an empty slice), a command name that is an expansion the command never values vanishes before the printer and the passthrough cat too, a positional's alternate value at the top level refuses by the rule (not the catch-all), a bound name under a PATH the resolver cannot read is spliced from any cwd (a link under its own name), and `function`, `coproc` and `repeat` aliased or bound take the roads under dash's grammar; each with the shells that write and the twins allowed", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const rows = [
+      // THE COUNTED SLICE (finding: an offset or a length that is the parameter count, `$#`, `${#}`, `${#@}`, `${#*}`, is the count; the regression: `${@:$#}` read as an empty slice)
+      ["S11-cs-target", "nad", "set -- other.md report.md; echo x > ${@:$#}", ["bash", "zsh"], 'name'],
+      ["S11-cs-target-dq", "nad", "set -- other.md report.md; echo x > \"${@:$#}\"", ["bash", "zsh"], 'name'],
+      ["S11-cs-star", "nad", "set -- other.md report.md; echo x > ${*:$#}", ["bash", "zsh"], 'name'],
+      ["S11-cs-len-one", "nad", "set -- other.md report.md; echo x > ${@:$#:1}", ["bash", "zsh"], 'name'],
+      ["S11-cs-cp-operand", "nad", "set -- other.md report.md; cp ../base/report.md ${@:$#}", ["bash", "zsh"], 'name'],
+      ["S11-cs-cp-operand-dq", "nad", "set -- other.md report.md; cp ../base/report.md \"${@:$#}\"", ["bash", "zsh"], 'name'],
+      ["S11-cs-function", "nad", "f() { echo x > ${@:$#}; }; f other.md report.md", ["bash", "zsh"], 'name'],
+      ["S11-cs-three", "nad", "set -- a.md other.md report.md; echo x > ${@:$#}", ["bash", "zsh"], 'name'],
+      ["S11-cs-eval", "nad", "set -- other.md report.md; eval 'echo x > ${@:$#}'", ["bash", "zsh"], 'name'],
+      ["S11-cs-append", "nad", "set -- other.md report.md; echo x >> ${@:$#}", ["bash", "zsh"], 'name'],
+      ["S11-cs-tee", "nad", "set -- other.md report.md; tee ${@:$#} < ../base/report.md", ["bash", "zsh"], 'name'],
+      ["S11-cs-notes", "nad", "set -- other.md ../notes/n1.md; echo x > ${@:$#}", ["bash", "zsh"], 'name'],
+      ["S11-cs-out-abs", "out", "set -- other.md {NA}/docs/report.md; echo x > ${@:$#}", ["bash", "zsh"], 'name', null],
+      ["S11-cs-braced-count", "nad", "set -- other.md report.md; echo x > ${@:${#}}", ["bash", "zsh"], 'name'],
+      ["S11-cs-count-at", "nad", "set -- other.md report.md; echo x > ${@:${#@}}", ["bash", "zsh"], 'name'],
+      ["S11-cs-count-star", "nad", "set -- other.md report.md; echo x > ${@:${#*}}", ["bash", "zsh"], 'name'],
+      ["S11-cs-len-count", "nad", "set -- other.md report.md; echo x > ${@:2:${#}}", ["bash", "zsh"], 'name'],
+      ["S11-cs-ctl-two", "nad", "set -- other.md report.md; echo x > ${@:2}", ["bash", "zsh"], 'name'],
+      ["S11-cs-ctl-neg", "nad", "set -- other.md report.md; echo x > ${@: -1}", ["bash", "zsh"], 'name'],
+      ["S11-cs-ctl-name", "nad", "set -- other.md report.md; n=2; echo x > ${@:$n}", ["bash", "zsh"], ['text', "not a literal path"]],
+      ["S11-cs-ctl-arith", "nad", "set -- other.md report.md; echo x > ${@:$#-0}", ["bash"], ['text', "not a literal path"]],
+      ["S11-cs-ctl-two-count", "nad", "set -- other.md report.md; echo x > ${@:2:$#}", ["bash", "zsh"], 'name'],
+      ["S11-cs-twin-first", "nad", "set -- report.md other.md; echo x > ${@:$#}", [], 'allow'],
+      ["S11-cs-toplevel", "nad", "echo x > ${@:$#}", [], ['text', "not a literal path"]],
+      ["S11-cs-empty-list", "nad", "set --; echo x > ${@:$#}", [], ['text', "not a literal path"]],
+      // THE VANISHING HEAD at the printer and the passthrough cat (finding: `$c echo 'cp ..' | bash` allowed while every shell ran the text)
+      ["S11-vh-echo-bash", "nad", "$c echo 'cp ../base/report.md report.md' | bash", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-printf", "nad", "$c printf '%s\\n' 'cp ../base/report.md report.md' | bash", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-braced", "nad", "${c} echo 'cp ../base/report.md report.md' | bash", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-sub", "nad", "$(true) echo 'cp ../base/report.md report.md' | bash", ["bash", "zsh", "dash"], ['text', "is filled in from"]],
+      ["S11-vh-pos", "nad", "$1 echo 'cp ../base/report.md report.md' | bash", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-at", "nad", "\"$@\" echo 'cp ../base/report.md report.md' | bash", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-sh", "nad", "$c echo 'cp ../base/report.md report.md' | sh", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-zsh", "nad", "$c echo 'cp ../base/report.md report.md' | zsh", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-dash", "nad", "$c echo 'cp ../base/report.md report.md' | dash", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-bash-s", "nad", "$c echo 'cp ../base/report.md report.md' | bash -s", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-env-bash", "nad", "$c echo 'cp ../base/report.md report.md' | env bash", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-cat-bash", "nad", "$c echo 'cp ../base/report.md report.md' | cat | bash", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-subshell", "nad", "($c echo 'cp ../base/report.md report.md') | bash", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-group", "nad", "{ $c echo 'cp ../base/report.md report.md'; } | bash", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-valued-second", "nad", "e=echo; $c $e 'cp ../base/report.md report.md' | bash", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-command-echo", "nad", "$c command echo 'cp ../base/report.md report.md' | bash", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-env-echo", "nad", "$c env echo 'cp ../base/report.md report.md' | bash", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-bash-c-sub", "nad", "bash -c \"$($c echo 'cp ../base/report.md report.md')\"", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-herestring", "nad", "bash <<< \"$($c echo 'cp ../base/report.md report.md')\"", ["bash", "zsh"], 'name'],
+      ["S11-vh-eval-sub", "nad", "eval \"$($c echo 'cp ../base/report.md report.md')\"", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-source-procsub", "nad", ". <($c echo 'cp ../base/report.md report.md')", ["bash", "zsh"], 'name'],
+      ["S11-vh-bash-procsub", "nad", "bash < <($c echo 'cp ../base/report.md report.md')", ["bash", "zsh"], 'name'],
+      ["S11-vh-notes", "nan", "$c echo 'cp ../base/report.md n1.md' | bash", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-out-abs", "out", "$c echo 'cp {NA}/base/report.md {NA}/docs/report.md' | bash", ["bash", "zsh", "dash"], 'name', null],
+      ["S11-vh-redirect-text", "nad", "$c echo 'echo poison > report.md' | bash", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-passthrough", "nad", "echo 'cp ../base/report.md report.md' | $c cat | bash", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-twin-default", "nad", "${c:-} echo 'cp ../base/report.md report.md' | bash", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-twin-valued-printer", "nad", "e=echo; $e 'cp ../base/report.md report.md' | bash", ["bash", "zsh", "dash"], 'name'],
+      ["S11-vh-twin-noop", "nad", "$c echo 'ls' | bash", [], 'allow'],
+      // THE ALTERNATE VALUE at the top level (finding: `${1:+x}` with the positionals not modelled crashed into the catch-all)
+      ["S11-av-eval-one", "nad", "eval cp ${1:+x} ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
+      ["S11-av-eval-two", "nad", "eval cp ${2:+x} ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
+      ["S11-av-eval-at", "nad", "eval cp ${@:+x} ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
+      ["S11-av-eval-star", "nad", "eval cp ${*:+x} ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
+      ["S11-av-bash-c", "nad", "bash -c \"cp ${1:+x} ../base/report.md report.md\"", ["bash", "zsh", "dash"], 'name'],
+      ["S11-av-plus", "nad", "eval cp ${1+x} ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
+      ["S11-av-ctl-set-empty", "nad", "set --; eval cp ${1:+x} ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
+      ["S11-av-twin-set-one", "nad", "set -- a; eval cp ${1:+x} ../base/report.md report.md", [], 'allow'],
+      ["S11-av-twin-count", "nad", "eval cp ${#:+x} ../base/report.md report.md", [], 'allow'],
+      // THE BOUND NAME (finding: the bound-PATH road from a cwd in no project with absolute operands, the PATH unreadable, and a link bound under its target)
+      ["S11-bn-env-out", "out", "cp /usr/bin/cp {OUT}/scratch/env; PATH={OUT}/scratch:$PATH; env {NA}/base/report.md {NA}/docs/report.md", ["bash", "zsh", "dash"], 'name', null],
+      ["S11-bn-c2-out", "out", "cp /usr/bin/cp {OUT}/scratch/c2; PATH={OUT}/scratch:$PATH; c2 {NA}/base/report.md {NA}/docs/report.md", ["bash", "zsh", "dash"], 'name', null],
+      ["S11-bn-relative-path-out", "out", "cp /usr/bin/cp scratch/c2; PATH=scratch:$PATH; c2 {NA}/base/report.md {NA}/docs/report.md", ["bash", "zsh", "dash"], 'name', null],
+      ["S11-bn-link-nice-out", "out", "ln -s /usr/bin/cp {OUT}/scratch/nice; PATH={OUT}/scratch:$PATH; nice {NA}/base/report.md {NA}/docs/report.md", ["bash", "zsh", "dash"], 'name', null],
+      ["S11-bn-link-c2-out", "out", "ln -s /usr/bin/cp {OUT}/scratch/c2; PATH={OUT}/scratch:$PATH; c2 {NA}/base/report.md {NA}/docs/report.md", ["bash", "zsh", "dash"], 'name', null],
+      ["S11-bn-link-env-out", "out", "ln -s /usr/bin/cp {OUT}/scratch/env; PATH={OUT}/scratch:$PATH; env {NA}/base/report.md {NA}/docs/report.md", ["bash", "zsh", "dash"], 'name', null],
+      ["S11-bn-nice-out", "out", "cp /usr/bin/cp {OUT}/scratch/nice; PATH={OUT}/scratch:$PATH; nice {NA}/base/report.md {NA}/docs/report.md", ["bash", "zsh", "dash"], 'name', null],
+      ["S11-bn-readable-path-out", "out", "ln -s /usr/bin/cp {OUT}/scratch/nice; PATH={OUT}/scratch; nice {NA}/base/report.md {NA}/docs/report.md", ["bash", "zsh", "dash"], 'name', null],
+      ["S11-bn-ctl-path-form-out", "out", "cp /usr/bin/cp scratch/c2; scratch/c2 {NA}/base/report.md {NA}/docs/report.md", ["bash", "zsh", "dash"], 'name', null],
+      ["S11-bn-ctl-alias-out", "out", "alias c=cp\nc {NA}/base/report.md {NA}/docs/report.md", ["dash"], 'name', null],
+      ["S11-bn-ctl-docs", "nad", "cp /usr/bin/cp ../scratch/env; PATH=../scratch:$PATH; env ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
+      ["S11-bn-twin-option-out", "out", "cp /usr/bin/cp {OUT}/scratch/nice; PATH={OUT}/scratch:$PATH; nice -n 5 {NA}/base/report.md {NA}/docs/report.md", [], 'allow', null],
+      // THE KEYWORD DASH RUNS (finding: `function`, `coproc` and `repeat` aliased or bound, run as a command by dash)
+      ["S11-kd-alias-function", "nad", "alias function=cp\nfunction ../base/report.md report.md", ["dash"], 'name'],
+      ["S11-kd-alias-coproc", "nad", "alias coproc=cp\ncoproc ../base/report.md report.md", ["dash"], 'name'],
+      ["S11-kd-alias-repeat", "nad", "alias repeat=cp\nrepeat ../base/report.md report.md", ["dash"], 'name'],
+      ["S11-kd-bound-function", "nad", "cp /usr/bin/cp ../scratch/function; PATH=../scratch:$PATH; function ../base/report.md report.md", ["dash"], 'name'],
+      ["S11-kd-bound-coproc", "nad", "cp /usr/bin/cp ../scratch/coproc; PATH=../scratch:$PATH; coproc ../base/report.md report.md", ["dash"], 'name'],
+      ["S11-kd-bound-repeat", "nad", "cp /usr/bin/cp ../scratch/repeat; PATH=../scratch:$PATH; repeat ../base/report.md report.md", ["bash", "dash"], 'name'],
+      ["S11-kd-alias-function-fed", "nad", "dash <<'EOF'\nalias function=cp\nfunction ../base/report.md report.md\nEOF", ["bash", "zsh", "dash"], 'name'],
+      ["S11-kd-alias-function-notes", "nan", "alias function=cp\nfunction ../base/report.md n1.md", ["dash"], 'name'],
+      ["S11-kd-ctl-alias-select", "nad", "alias select=cp\nselect ../base/report.md report.md", ["dash"], 'name'],
+      ["S11-kd-ctl-alias-time", "nad", "alias time=cp\ntime ../base/report.md report.md", ["dash"], 'name'],
+      ["S11-kd-ctl-alias-foreach", "nad", "alias foreach=cp\nforeach ../base/report.md report.md", ["dash"], 'name'],
+      ["S11-kd-ctl-alias-dbracket", "nad", "alias [[=cp\n[[ ../base/report.md report.md", ["dash"], 'name'],
+      ["S11-kd-ctl-coproc-body", "nad", "alias coproc=cp\ncoproc cp ../base/report.md report.md", ["bash", "zsh"], 'name'],
+      ["S11-kd-twin-function-def", "nad", "alias function=cp\nfunction f { echo hi; }; f", [], 'allow'],
+      ["S11-kd-twin-hash-function", "nad", "hash -p /usr/bin/cp function; function ../base/report.md report.md", [], 'allow'],
+      // the prompt roads with a vanished operand, refused since the tenth commit (the deferred list's last item, closed by measurement)
+      ["S11-pr-ps4-vanish", "nad", "PS4=\"\\$(cp $c ../base/report.md report.md)\"; set -x; true", ["bash"], 'name'],
+      ["S11-pr-ps4-zsh-promptsubst", "nad", "setopt promptsubst; PS4=\"\\$(cp $c ../base/report.md report.md)\"; set -x; true", ["bash", "zsh"], 'name'],
+      ["S11-pr-ps4-live", "nad", "PS4=\"$(cp $c ../base/report.md report.md)\"; set -x; true", ["bash", "zsh", "dash"], 'name'],
+    ];
+    const judge = (id, cwd, raw, writers, expect, outside = 'allow') => {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      w.build();
+      const h = w.hook(cmd, at);
+      assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error: ${h.reason.split('\n')[0]}`);
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      if (outside != null) {
+        w.build();
+        const o = w.hook(cmd, w.cwds.out);
+        if (outside === 'allow') assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
+        else assert.equal(o.status, 2, `${id}: from a cwd in no project the stated cost refuses: ${cmd}`);
+      }
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    };
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect, outside] of rows) { judge(id, cwd, raw, writers, expect, outside); n++; }
+    assert.equal(n, 93);
+    // THE CATCH-ALL IS NO VERDICT (the finding's pin, derived): every rows test in this file asserts per row that the refusal is not the
+    // guard's own error, and the corpus test asserts it per entry, so no probe row of the population the tests hold reaches the catch-all
+    const src = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
+    const rowsTests = [...src.matchAll(/^test\("round 6, \w+ commit, the rows[^]*?\n\}\);$/gm)].map((m) => m[0]);
+    assert.ok(rowsTests.length >= 5, `the rows tests are derived from the file (${rowsTests.length})`);
+    for (const t of rowsTests) assert.ok(t.includes("assert.ok(!h.reason.includes('an error of my own')"), `a rows test pins the catch-all away per row: ${t.slice(0, 80)}`);
+    const corpusTest = src.match(/^test\('the corpus \(tools\/romp-track-bash-guard-corpus\.json\)[^]*?\n\}\);$/m);
+    assert.ok(corpusTest && corpusTest[0].includes("assert.ok(!reason.includes('an error of my own')"), 'the corpus test pins the catch-all away per entry');
+    // the mechanisms' homes, each pinned by execution in the rows above (the source pin says where the code lives; the rows prove what it does)
+    const hook = fs.readFileSync(HOOK, 'utf8');
+    for (const fn of ['const headMayVanish = ', 'const vanishedHeadTexts = ', 'const dashCommandRoads = ', 'const runHeadSplices = ', 'const absSpelled = ', 'let rereadForVanish = ']) assert.ok(hook.includes(fn), `the hook has ${fn.trim()} (THE VANISHING HEAD's one home, THE KEYWORD DASH RUNS, THE BOUND NAME)`);
+    assert.equal((hook.match(/dashCommandRoads\(seg\.words\[(p|at)\], (p|at)\);/g) || []).length, 3, 'the three keyword sites (function, coproc, repeat) ask the roads under dash\'s grammar (behaviour: S11-kd-* above)');
+    assert.ok(hook.includes("Array.isArray(positionals) && (name === '@' || name === '*' ? positionals.length > 0 : positionals.length >= Number(name))"), 'posKnown reads the list only where it is modelled (behaviour: S11-av-* above)');
+    assert.ok(hook.includes("const COUNT = /^\\$(?:#|\\{#\\}|\\{#[@*]\\})$/;"), 'the counted slice knows the four spellings of the count (behaviour: S11-cs-* above)');
   } finally { process.env.HOME = savedHome; w.rm(); }
 });

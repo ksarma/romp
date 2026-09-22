@@ -953,6 +953,53 @@
 // redirection into a process substitution on the seven surfaces and patch 0009; the eighth commit's records date it 2026-09-22, the day of its
 // commit. Every fix pinned by execution (the ninth commit's rows test, the writers measured in bash, zsh and dash; red on the eighth commit's
 // head at S9-pt-at, S9-pn-alias-command, S9-vt-eval-unset and S9-ps-echo, each `0 !== 2`).
+// ROUND 6, TENTH COMMIT (2026-09-22; the round's three verifiers on the ninth commit's head): eight defects of the round's own class (a reading that
+// resolves a word wrongly and thereby allows), each fixed at the mechanism. THE IFS RULE over a positional list (positionalWords): `"$*"` joins the
+// parameters by the first character of IFS, and dash joins `"$@"` at a redirection target, so a named IFS the resolver does not read leaves the joined
+// name unknown (`set -- .. docs report.md; IFS=/; echo x > "$*"` wrote ../docs/report.md in every shell while allowed). THE MULTI-DIGIT POSITIONAL
+// (resolveWord, positionalSpelling): an unbraced `$10` is `${1}0` in bash and dash and the tenth positional in zsh, so the word is left unread where
+// zsh may run the line; `${10}` is the tenth in every shell. THE ALTERNATE VALUE (defaultWordReading, scriptTexts): `${name:+word}` stands for the
+// word when the name is set and for nothing otherwise, so the dropped form joins the readings where the name may be unset (`eval cp ${c:+x} a b` ran
+// the two-operand copy while the three-operand reading allowed). THE VANISHED TEXT on a prompt road (readValuedWords): a prompt name's value is read
+// through scriptTexts, the expansions the command never values removed. THE VANISHING HEAD (the head splice): a command name that is an expansion the
+// command never values may be empty, so the next word is the command and the segment is read again with the head dropped (`$c cp a b` copied in every
+// shell while `$c` was the command name). THE ROUTED STANDARD OUTPUT (lex's onStdout): the standard output reaches a process substitution along a
+// chain of `>&` dups and out of a subshell's, group's or compound's body. THE PEELED NAME's two roads: `[[` is searched through PATH, since dash runs
+// a bound one, and an unquoted glob-shaped name after `function` is the function's name. The residual table: RT-glued-plus-head is refused now and
+// RT-run-written-prefix added (199 rows). Every fix pinned by execution in the tenth commit's rows test (49 rows, the writers measured in bash, zsh
+// and dash), red on the ninth commit's head.
+// ROUND 6, ELEVENTH COMMIT (2026-09-22; the round's two verifiers on the tenth commit's head): a regression of the round's own class, a fix not fitted
+// to its class, a crash in the tenth's code, and the tenth commit's deferred list closed, fixed or filed. THE COUNTED SLICE (positionalSpelling,
+// positionalWords): an offset `$#` in a positional slice was read as a slice from past the end, so nothing was picked and `set -- other.md report.md;
+// echo x > ${@:$#}` allowed while bash and zsh wrote, where the round-5 head refused; `$#`, `${#}`, `${#@}` and `${#*}` as an offset or a length are
+// the count of the parameters, resolved against the list where the walk holds it (the offset that is the count is the last element; with no parameter,
+// the slice from 0 the resolver does not compute; the length that is the count reaches the end), and a slice of a list the walk does not hold stays
+// unknown. THE VANISHING HEAD's one home (headMayVanish, vanishedHeadTexts, activeHeadTexts, passthroughCat): the tenth commit's dropped-head reading
+// reached the writer and consumer heads in the walk and not the printer, which lex reads through activeHeadTexts, nor the passthrough cat, so `$c echo
+// 'cp a b' | bash` and twenty-five printer forms ran the text in every shell while allowed; the predicate has one home, every consumer of a head word
+// reads it, the printer reads the head as THE VANISHED TEXT reads a script word (the empty text where the command never gives the name a value, so
+// `e=echo; $e .. | bash` keeps its one text and its refusal by name), and a command holding an expansion is read again once its values are noted. THE
+// ALTERNATE VALUE at the top level (posKnown): the positional parameters are not modelled there (null), so the count read threw and `eval cp ${1:+x} a
+// b` refused through the catch-all as an error of the guard's own; the list is read only where it is modelled, the dropped form joins the readings and
+// the refusal is the rule's, by name. THE BOUND NAME (boundRoad, recordMutations' absSpelled): under a PATH the resolver cannot read, or a directory
+// it does not know, every bound path whose last component is the name is spliced, so the bound writer's operands are judged by their own project from
+// any cwd (`cp /usr/bin/cp <out>/scratch/env; PATH=<out>/scratch:$PATH; env <proj>/base/report.md <proj>/docs/report.md` from a cwd in no project
+// allowed while every shell copied, where the same line from the project's directory and the alias and hash roads from that cwd refused); and a made
+// path is bound under its spelled name beside the path a link the command makes resolves to (an `ln -s` binding was keyed on its target and found by
+// no name). THE KEYWORD DASH RUNS (dashCommandRoads at the function, coproc and repeat sites; the head's roads defined before any keyword is read): a
+// word bash and zsh reserve and dash runs as a command name is asked the alias and bound-path roads before the walk consumes it, the binding spliced
+// beside the construct's own reading (`alias function=cp`, then `function a b`, copied in dash while allowed, and so did coproc and repeat, where
+// select, foreach, time, `[[`, `]]`, end, always and declare aliased so took the roads at the head and refused). The residual table gains 51 rows (250
+// rows over the same 8 classes): the FIFO a command makes with a shell reading it in the background, the coprocess zsh starts and feeds, a call of a
+// function the command defines before `>(bash)`, and the members of stated classes the verifiers measured writing with no row (creation under the
+// tracked notes/ folder by touch, mktemp, split and csplit; ruby -i; mawk's and nawk's system; unzip -o, cpio -p, xxd, iconv -o, cpp, gpg -o, find
+// -fprint, fallocate; eatmydata; busybox's sed -i and dd; a written startup file read by bash --rcfile, --init-file and -l, dash -i with ENV and zsh
+// -i with ZDOTDIR; a pipe through rev, tr, envsubst, sed, awk or head into bash; `$(type -P cp)`, `$(realpath ..)`, `$(readlink -f ..)` and
+// `$(basename ..)` as the command name; `> >(tee /dev/null | bash)`; python's popen, shell=True and an open on an operand or an environment name),
+// each keyed on the shells measured writing; the prompt roads with a vanished operand, the deferred list's last item, measured refused since the tenth
+// commit and pinned as rows. Every fix pinned by execution in the eleventh commit's rows test (93 rows, the writers measured in bash, zsh and dash),
+// red on the tenth commit's head, and the record list on this header and decision 47 is derived by the plan test from the commits the hook's own text
+// names, so a missing record for the newest commit reds.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -4479,15 +4526,34 @@ function extractIn(command, ctx) {
   // read again below once its own values are noted, so a head the first read could not splice is spliced on the second
   const callerHeads = activeHeadTexts;
   let headTextsOf = null;
-  activeHeadTexts = (w) => (headTextsOf ? headTextsOf(w) : callerHeads ? callerHeads(w) : null);
+  let dir = ctx.dir;
+  let unknownDir = ctx.unknownDir;
+  let unknownWhy = ctx.unknownWhy;   // for the refusal: which construct made the directory unknown (round 3)
+  // THE VANISHING HEAD's one home (round 6's eleventh commit, 2026-09-22; the round's verifiers: `$c echo 'cp a b' | bash` ran the printed text
+  // in bash, zsh and dash while allowed, and so did printf, `${c}`, `$(true)`, `$1` and `"$@"` heads, the text into sh, zsh, dash, `bash -s`,
+  // `env bash` and `cat | bash`, from a subshell or a group, behind `command` and `env`, inside `bash -c "$(..)"`, a here-string, `eval "$(..)"`,
+  // `. <(..)` and `bash < <(..)`, from the tracked notes/ folder and from a cwd in no project, and `echo .. | $c cat | bash`: the tenth commit's
+  // dropped-head reading reached the writer and consumer heads in the walk and not the printer, which lex reads through activeHeadTexts, nor
+  // the passthrough cat): a command name that is an expansion the command never gives a value may stand for no field, so the next word is
+  // the command. The predicate has one home, headMayVanish, and every consumer of a head word reads it: the walk's splice (THE VANISHING HEAD
+  // in the walk), the printer (splicedPrinter, through activeHeadTexts, so the reading is known to the FIRST lex, before any candidate is
+  // noted, and to the caller's), the passthrough cat (passthroughCat) and, through the splice's recursion, the alias, hash and bound-path
+  // roads of the word that becomes the head. A name whose value the resolver could not establish answers nothing here (scriptTexts refuses
+  // it at the head).
+  const headMayVanish = (w) => !!w && mayVanish(w, !unknownDir);
+  activeHeadTexts = (w) => {
+    if (!headTextsOf) return callerHeads ? callerHeads(w) : null;   // before this command's values are noted: the caller's reading (the command is read again below once they are)
+    const c = headTextsOf(w);   // THE HEAD CANDIDATES: { texts } | { unread } | null
+    if (c && c.unread) return null;
+    const texts = c ? c.texts.slice() : [];
+    for (const t of vanishedHeadTexts(w)) if (!texts.includes(t)) texts.push(t);   // THE VANISHING HEAD: the empty text where the command never gives the name a value (`e=echo; $e .. | bash` keeps its one text, echo, and its refusal by name)
+    return texts.length ? texts : null;
+  };
   let lexed = lex(command, shell, lexOpts);
   let segments = withDashPieces(lexed.segments);
   let opaque = lexed.opaque;
   const targets = [];
   const unresolved = [];
-  let dir = ctx.dir;
-  let unknownDir = ctx.unknownDir;
-  let unknownWhy = ctx.unknownWhy;   // for the refusal: which construct made the directory unknown (round 3)
   let keywordMode = !!ctx.keywordMode;   // bash's `set -k` is on from an earlier segment (setsKeywordMode)
   // B2: the names this command set to a plain string (name -> value; null for a name a write the readability rule does not
   // follow touched, which stays null: a later plain write does not restore it), why each such name is unreadable (for the
@@ -4648,8 +4714,9 @@ function extractIn(command, ctx) {
   // `"${@: -3}"`, `"${@:1:$#}"`, `"${@:2}"` after `f x cp a b`, and zsh's `$argv`, `"${argv[@]}"`, `$argv[1] $argv[2] $argv[3]`, `"${(@)argv}"` and
   // `"${@[1,-1]}"` each ran the copy in the shells named while the word was an expansion the resolver never read): beside `$N`, `${N}`, `$@`, `$*`
   // and their braced forms, a whole word may be bash's and zsh's slice of the list, `${@:offset}` and `${@:offset:length}` (bash: Shell Parameter
-  // Expansion, `*` alike), the offset counting from 1, a negative one (after the blank bash requires) from the end, the length a run of digits or
-  // `$#`, which reaches the end; and under zsh's grammar the array `argv`, the list itself (zshparam(1)), whole (`$argv`, `${argv}`, `${argv[@]}`,
+  // Expansion, `*` alike), the offset counting from 1, a negative one (after the blank bash requires) from the end, or the count of the
+  // parameters (`$#`, `${#}`, `${#@}`, `${#*}`: THE COUNTED SLICE, round 6's eleventh commit), the length a run of digits or the count, which
+  // reaches the end; and under zsh's grammar the array `argv`, the list itself (zshparam(1)), whole (`$argv`, `${argv}`, `${argv[@]}`,
   // `${argv[*]}`, `${(@)argv}`), one element (`$argv[N]`, `${argv[N]}`) or a range (`${argv[N,M]}`, `${@[N,M]}`, `$@[N,M]`, a negative bound
   // counting from the end); an offset of 0 (bash puts `$0`, the shell's own name, at the head of that list) or a length or bound that is not a
   // run of digits is a slice the resolver does not compute: UNRESOLVABLE. Every other `${...}` form over a positional (`${1#x}`, `${1:0:2}`,
@@ -4665,11 +4732,20 @@ function extractIn(command, ctx) {
     let mm;
     if ((mm = t.match(/^([1-9][0-9]*)$/))) return braced || mm[1].length === 1 ? { quoted, from: Number(mm[1]) - 1, to: Number(mm[1]), star: false } : null;   // an unbraced multi-digit `$10` is `${1}0` in bash and dash and the tenth positional in zsh: no positional here, resolveWord's THE MULTI-DIGIT POSITIONAL leaves it unread where zsh may run the line
     if (/^[@*]$/.test(t)) return { quoted, from: 0, to: Infinity, star: t === '*' };
-    if (braced && (mm = t.match(/^([@*]):( ?-?[0-9]+|\$#)(?::([0-9]+|\$#|[^]*))?$/))) {
-      const off = mm[2] === '$#' ? null : Number(mm[2]);
+    if (braced && (mm = t.match(/^([@*]):( ?-?[0-9]+|\$#|\$\{#\}|\$\{#[@*]\})(?::([^]*))?$/))) {
+      // THE COUNTED SLICE (round 6's eleventh commit, 2026-09-22; the round's verifiers: `set -- other.md report.md; echo x > ${@:$#}` wrote
+      // report.md in bash and zsh while allowed, and so did `"${@:$#}"`, `${*:$#}`, `${@:$#:1}`, a copy's operand, a function's, three
+      // positionals, eval, `>>`, tee, the tracked notes/ folder and an absolute last element from a cwd in no project, each refused at the
+      // round-5 head): the offset `$#` was read as a slice from past the end, so nothing was picked and the target vanished from the
+      // judgment. `$#`, `${#}`, `${#@}` and `${#*}` are the count of the positional parameters (bash: Special Parameters; zshparam(1)), so an
+      // offset or a length spelled so is the count, resolved against the list the walk holds (positionalWords, where the list is known: the
+      // offset that is the count is the last element, or, with no parameter, the slice from 0 the resolver does not compute; the length that
+      // is the count reaches the end); where the list is not known the slice is unknown, as every slice of it is.
+      const COUNT = /^\$(?:#|\{#\}|\{#[@*]\})$/;
+      const off = COUNT.test(mm[2]) ? { count: true } : Number(mm[2]);
       if (off === 0) return { quoted, zero: true, star: mm[1] === '*' };
-      const from = off == null ? Infinity : off > 0 ? off - 1 : { fromEnd: -off };
-      const len = mm[3] == null ? Infinity : mm[3] === '$#' ? Infinity : /^[0-9]+$/.test(mm[3]) ? Number(mm[3]) : null;
+      const from = typeof off === 'object' ? off : off > 0 ? off - 1 : { fromEnd: -off };
+      const len = mm[3] == null ? Infinity : COUNT.test(mm[3]) ? { count: true } : /^[0-9]+$/.test(mm[3]) ? Number(mm[3]) : null;
       return { quoted, from, len, star: mm[1] === '*', slice: true };
     }
     if (shell == null || shell === 'zsh') {
@@ -4699,8 +4775,11 @@ function extractIn(command, ctx) {
     let picked;
     if (sp.slice) {
       if (sp.len === null) return { unresolvable: `the word \`${w.raw}\` slices the positional parameters by a length that is not a run of digits, which I do not compute` };
-      const start = sp.from === Infinity ? positionals.length : typeof sp.from === 'object' ? Math.max(0, positionals.length - sp.from.fromEnd) : sp.from;
-      picked = positionals.slice(start, sp.len === Infinity ? undefined : start + sp.len);
+      const count = positionals.length;
+      if (typeof sp.from === 'object' && sp.from.count && count === 0) return { unresolvable: `the word \`${w.raw}\` slices the positional parameters from their count, which is 0 here, so from 0, which bash heads with the shell's own name, a word I do not read` };   // THE COUNTED SLICE: `${@:$#}` with no parameter is `${@:0}`
+      const start = typeof sp.from === 'object' ? (sp.from.count ? count - 1 : Math.max(0, count - sp.from.fromEnd)) : sp.from;
+      const len = typeof sp.len === 'object' ? count : sp.len;   // THE COUNTED SLICE: a length that is the count reaches the end
+      picked = positionals.slice(start, len === Infinity ? undefined : start + len);
     } else if (sp.range) {
       const at = (n) => (n < 0 ? positionals.length + n : n - 1);   // zsh: 1 the first, -1 the last
       const [a, b] = [at(sp.range[0]), at(sp.range[1])];
@@ -5226,6 +5305,10 @@ function extractIn(command, ctx) {
   const recordMutations = (name, args, cwd) => {
     if (!cwd) return;
     const abs = (w) => (w && w.literal ? literalPath(w.text, cwd) : null);
+    // the path as spelled, no link this command makes followed (round 6's eleventh commit, THE BOUND NAME: `ln -s /usr/bin/cp <out>/scratch/c2`
+    // bound the link's TARGET, `/usr/bin/cp`, since literalPath follows a link the command made, so a lookup by the name's last component found
+    // no `c2`; the shell looks a link up by its own name, so a made path is bound under that name beside the path it resolves to)
+    const absSpelled = (text) => { const saved = activeLinks; activeLinks = null; try { return literalPath(text, cwd); } finally { activeLinks = saved; } };
     const markAllCandidates = (verb) => { for (const c of optionCandidates(args)) markMutated(abs(c), verb); };
     // THE ALIAS ROAD's bound paths: a copy or a link this command makes (cp, install, ln, link, mv) binds the destination path to the
     // source's text, so a later command named by that path is read as the source (`cp /usr/bin/cp ../scratch/c2; ../scratch/c2 a b` and
@@ -5236,9 +5319,10 @@ function extractIn(command, ctx) {
         if (parsed.unknown || parsed.installDir) return;
         const ops = parsed.operands || [];
         const srcText = (w) => (w && w.literal ? w.text : null);
-        if (parsed.targetDir) { if (parsed.targetDir.literal) for (const src of ops) { const d = literalPath(path.join(parsed.targetDir.text, path.basename(src.text)), cwd); if (d) bound.set(d, srcText(src)); } }
-        else if (ops.length === 2) { const d = abs(ops[1]); if (d) bound.set(d, srcText(ops[0])); }
-        else if (ops.length > 2) { const dst = ops[ops.length - 1]; if (dst.literal) for (const src of ops.slice(0, -1)) { const d = literalPath(path.join(dst.text, path.basename(src.text)), cwd); if (d) bound.set(d, srcText(src)); } }
+        const bind = (text, src) => { for (const d of [literalPath(text, cwd), absSpelled(text)]) if (d) bound.set(d, src); };   // under the resolved path and the spelled one (THE BOUND NAME)
+        if (parsed.targetDir) { if (parsed.targetDir.literal) for (const src of ops) bind(path.join(parsed.targetDir.text, path.basename(src.text)), srcText(src)); }
+        else if (ops.length === 2) { if (ops[1].literal) bind(ops[1].text, srcText(ops[0])); }
+        else if (ops.length > 2) { const dst = ops[ops.length - 1]; if (dst.literal) for (const src of ops.slice(0, -1)) bind(path.join(dst.text, path.basename(src.text)), srcText(src)); }
       };
       bindUnder(parseOps(args));
       // THE VANISHING OPERAND: the path is bound under every operand list the shell may hand the writer (`cp $c /usr/bin/cp ../scratch/c2` binds c2 to
@@ -5421,7 +5505,12 @@ function extractIn(command, ctx) {
     }
     return { texts };
   };
-  headTextsOf = (w) => { const c = candidateTexts(w); return c && c.texts ? c.texts : null; };   // THE SPLICED PRINTER reads THE HEAD CANDIDATES; a name whose value the resolver could not establish answers nothing here (scriptTexts refuses it at the head)
+  headTextsOf = (w) => candidateTexts(w);   // THE SPLICED PRINTER reads THE HEAD CANDIDATES through activeHeadTexts above, which adds THE VANISHING HEAD's texts and answers nothing for a name whose value the resolver could not establish (scriptTexts refuses it at the head)
+  // THE VANISHING HEAD's texts for a head word (round 6's eleventh commit): where the spelling may stand for no field (headMayVanish), the word is
+  // read as THE VANISHED TEXT reads a script word (candidateTexts' vanish: the expansions the command never gives a value removed), so a head the
+  // command never values reads as the empty text and the next word is the command, while a head with a value the command gives keeps that value
+  // alone; [] where the spelling always makes a field, or the name's value could not be established (refused at the head by scriptTexts)
+  const vanishedHeadTexts = (w) => { if (!headMayVanish(w)) return []; const v = candidateTexts(w, true); return v && !v.unread && v.texts ? v.texts : []; };
   const scriptTexts = (w, how, role = 'text') => {
     if (!w) return [];
     const optionWord = role === 'option';   // THE SHELL'S OPTION WORD: a text role whose empty answer is a refusal (the caller records the word), so THE VANISHED TEXT, one reading beside the residual, does not stand in for it (`a=(-c); bash "${a[@]}" 'cp a b'` would read as a script file and pass)
@@ -5452,7 +5541,7 @@ function extractIn(command, ctx) {
           // so the empty text the shell may hand over reaches the judgment (a two-operand copy the three-operand reading hid)
           const setKnown = vars.has(name) && vars.get(name) != null && (!/:/.test(op || '') || vars.get(name) !== '');
           const candKnown = candidates.has(name) && [...candidates.get(name)].length > 0 && (!/:/.test(op || '') || [...candidates.get(name)].every((v) => v !== ''));
-          const posKnown = /^[0-9@*]+$/.test(name) && positionalsApply() && positionals !== UNKNOWN_POSITIONALS && (name === '@' || name === '*' ? positionals.length > 0 : positionals.length >= Number(name));
+          const posKnown = /^[0-9@*]+$/.test(name) && positionalsApply() && Array.isArray(positionals) && (name === '@' || name === '*' ? positionals.length > 0 : positionals.length >= Number(name));   // Array.isArray: at the top level the list is not modelled (null), so a positional's alternate value is not known and the dropped form joins the readings (round 6's eleventh commit: `eval cp ${1:+x} a b` had refused through the catch-all, a TypeError on null, where the rule refuses by name)
           if (!(setKnown || candKnown || posKnown)) texts.add(before + after);
           continue;
         }
@@ -5761,7 +5850,12 @@ function extractIn(command, ctx) {
   const passthroughCat = (s) => {
     if (s.paren || s.redirects.some((r) => WRITE_REDIRECTS.has(r.op)) || (s.closerTail && s.closerTail.length)) return null;   // a write redirection takes the output off the pipe; a `<(..)` on its `<` is the text fed (stdinBodies), so a substitution among the segment's commands is no bar, and an expansion among the operands is (below)
     const cmd = commandOf(s.words);
-    if (!cmd || cmd.unknown || cmd.opaque || 'script' in cmd || cmd.chdirs.length || cmd.writes.length || cmd.name !== 'cat') return null;
+    if (!cmd || cmd.opaque) return null;
+    // THE VANISHING HEAD (round 6's eleventh commit): the head, or the word a wrapper's walk stopped at, that may stand for no field is dropped and
+    // the rest read again (`echo 'cp a b' | $c cat | bash` passed the text through in every shell while `$c cat` was no cat to this reading)
+    const vanishAt = cmd.unknown ? cmd.unknown.at : cmd.name ? s.words.length - cmd.args.length - 1 : -1;
+    if (vanishAt != null && vanishAt >= 0 && s.words[vanishAt] && !s.words[vanishAt].literal && vanishedHeadTexts(s.words[vanishAt]).includes('')) { const dropped = passthroughCat({ ...s, words: s.words.filter((_, i) => i !== vanishAt) }); if (dropped) return dropped; }
+    if (cmd.unknown || 'script' in cmd || cmd.chdirs.length || cmd.writes.length || cmd.name !== 'cat') return null;
     if (cmd.args.some((w) => !w.literal)) return null;
     const plainArg = (w) => w.text === '-' || w.text === '--' || w.text === '-u' || isStdinName(w.text);
     if (cmd.args.some((w) => !plainArg(w) && !w.text.startsWith('-'))) return null;   // a file operand: outside the model
@@ -6027,7 +6121,12 @@ function extractIn(command, ctx) {
   // THE SPLICED PRINTER: the values this text gives its names were not known to the read above, so a command name that is an expansion was
   // no printer to it; while the candidates grew, the text is read again with them known (a resolved printer may give a name a further value,
   // `x=$($e cp)`: three reads at most), and the walk below reads the last lex
-  for (let pass = 0; pass < 3 && countCandidates() !== knownCandidates; pass++) {
+  // THE VANISHING HEAD (round 6's eleventh commit): a command name that is an expansion may read as the empty text once this command's values are
+  // known (none given: `$c echo 'cp a b' | bash` has no candidate to grow the count), so a command holding an expansion anywhere (a word, a
+  // here-string, a redirection's target, a substitution's text) is read again at least once with them known
+  let rereadForVanish = /[$`]/.test(command);
+  for (let pass = 0; pass < 3 && (rereadForVanish || countCandidates() !== knownCandidates); pass++) {
+    rereadForVanish = false;
     knownCandidates = countCandidates();
     lexed = lex(command, shell, lexOpts);
     segments = withDashPieces(lexed.segments);
@@ -6100,6 +6199,117 @@ function extractIn(command, ctx) {
       let start = from;
       while (k < seg.words.length && brace(seg.words[k]) === '{') { openGroup(conditional, seg.words.slice(start, k).some((w) => plainWord(w) && w.text === 'time')); start = k + 1; k = peelIndex(seg.words, k + 1, false); }
     }
+    // THE HEAD'S ROADS, defined before any keyword is read (round 6's eleventh commit, 2026-09-22): the alias and hash roads (nameRoads), the
+    // bound-path road (boundRoad), the texts they and THE HEAD SPLICE collect (headTexts) and the splice itself (runHeadSplices) stand here so
+    // that a word bash and zsh read as a reserved word and dash runs as a command name (THE KEYWORD DASH RUNS, below) is asked the same roads
+    // before the walk consumes it; the splice at the head, after the walk's other readings, is the same call.
+    const headTexts = [];
+    let splicedUpTo = 0;
+    // THE PEELED NAME (round 6's ninth commit, 2026-09-22; the round's verifiers: `alias command=cp`, then `command ../base/report.md report.md`
+    // copied in dash while allowed, and the same for builtin, exec, env, nice, nohup, time, timeout, sudo, stdbuf, setsid, ionice, flock, taskset,
+    // chrt, numactl, zsh's noglob and nocorrect, `[` and `[[`, through a here-document or a pipe in every shell; `hash -p /usr/bin/cp env`,
+    // then `env a b` copied in bash and `hash env=/usr/bin/cp` in zsh; a copy or link of cp at `../scratch/env` on PATH, as `env a b`, as
+    // `../scratch/env a b` and as `nice env a b`, in every shell; while the same binding of a name outside the wrapper set was refused): the
+    // alias, hash and bound-path roads were consulted at the head the wrapper walk left, so a binding of a wrapper's own name was never seen
+    // once operands followed it (a bare `command` with no operand was the head and was read). Every word the walk peeled as a wrapper is a
+    // name the shell looks up (an alias on the first word, a hashed path or a bound path through the shell's or the wrapper's own PATH
+    // search), so the three roads are asked of each, the binding spliced at that word (the words before it as spelled, the text, the words
+    // after it, the wrapper peeled again on the spliced text) and an unreadable binding refused as the head's is. `[` is a command name the
+    // shells alias (the lexer marks it a pattern, which matches nothing and stands as spelled), and `[[` is one to dash, so both take the
+    // alias and hash roads by their text.
+    const nameWordOf = (w) => (w && (plainWord(w) || (w.glob && w.marks && /^u+$/.test(w.marks) && (w.text === '[' || w.text === '[['))) ? w.text : null);
+    const nameRoads = (hw, hIdx, hashRoad = true) => {   // hashRoad false: dash's reading of a keyword (THE KEYWORD DASH RUNS), whose `hash` binds no name to a path
+      const name = nameWordOf(hw);
+      if (name == null) return;
+      const here = lineOf(seg);
+      const a = aliases.get(name);
+      if (a && !a.suffix && a.line < here && !aliasChain.has(name)) {
+        if (a.body == null) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `\`${name}\` is an alias this command defines with a text I do not read, so what runs in its place is not known` });
+        else headTexts.push({ text: a.body, chain: new Set([...aliasChain, name]), at: hIdx });
+      }
+      for (const [suf, sa] of aliases) if (sa.suffix && sa.line < here && name.endsWith('.' + suf) && !aliasChain.has(suf)) {
+        if (sa.body == null) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `\`${name}\` ends in a suffix this command aliases to a text I do not read` });
+        else headTexts.push({ text: sa.body + ' ' + hw.raw, chain: new Set([...aliasChain, suf]), at: hIdx });
+      }
+      if (hashRoad && hashes.has(name)) {
+        const p = hashes.get(name);
+        if (p == null) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `\`${name}\` is hashed by this command to a path I do not read` });
+        else headTexts.push({ text: p, chain: aliasChain, at: hIdx });
+      }
+      if (aliasState.unread && !a) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `an earlier \`alias\` of this command binds a name I do not read (${aliasState.unread}), so \`${name}\` may run another command` });
+    };
+    // THE BOUND PATH (round 6's fourth commit, 2026-09-21; the residuals lens ran `cp /usr/bin/cp ../scratch/c2` and then the copy through
+    // `'../scratch/c2'`, `"../scratch/c2"`, `$x` with x the path, `"$PWD/../scratch/c2"`, `../scratch/c?` and `~/c2` after `HOME=$PWD/../scratch`,
+    // each allowed while every shell ran it, since the lookup read the unquoted literal spelling alone): a path the command made by copying
+    // or linking a command (`bound`) is looked up by the head's TEXT however spelled (a quoted spelling runs the file too, unlike an alias; a
+    // spelling the readability rule resolved is that text), by a pattern's matches among the paths bound (the file is made when the command
+    // runs, so the filesystem cannot expand the pattern at check time), and through PATH for a bare name (the directories a `PATH=` prefix
+    // or plain assignment of this command gives, else the guard's own environment; a PATH the command sets to a value the resolver does not
+    // read makes a bare name one it cannot read while a path is bound); a head through a HOME the command reassigns is one it cannot read
+    // while a path is bound. Nothing here applies while no path is bound.
+    const boundRoad = (hw, hIdx) => {
+      if (!hw || !bound.size) return;
+      const bindHead = (abs) => {
+        const src = bound.get(abs);
+        if (src == null) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `\`${hw.raw}\` is a path this command made by copying or linking a source I do not read` });
+        else headTexts.push({ text: src, chain: aliasChain, at: hIdx });
+      };
+      if (hw.marks && hw.marks.includes('h') && homeUnreadableNow()) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `\`${hw.raw}\` is a path through HOME, which this command reassigns, and this command made a path by copying or linking a command, so which file it names is not known` });
+      else if (hw.literal && hw.text.includes('/') && !unknownDir) { const abs = literalPath(hw.text, dir); if (abs && bound.has(abs)) bindHead(abs); }
+      else if (hw.glob && !unknownDir) {
+        const re = globRegex(hw.text, hw.marks);
+        if (re) for (const abs of bound.keys()) if (re.test(abs) || re.test(path.relative(dir, abs)) || re.test('./' + path.relative(dir, abs))) bindHead(abs);
+      }
+      // a bare name, or `[[`, which dash (having no `[[` keyword and no `[[` builtin) looks up as an external command and finds through PATH
+      // (round 6's tenth commit: `cp /usr/bin/cp '../scratch/[['; PATH=../scratch:$PATH; [[ a b` ran cp in dash while `[[` was glob-marked and
+      // skipped the lookup); `[` is a builtin in every shell, so a bound `[` never runs, and it is not searched here
+      const bareName = hw.literal && !hw.text.includes('/') ? hw.text : (hw.text === '[[' && hw.marks && /^u+$/.test(hw.marks) ? '[[' : null);
+      if (bareName != null) {
+        const prefix = seg.words.slice(0, hIdx).find((w) => /^PATH=/.test(w.raw));
+        const pathValue = prefix ? (prefix.literal && !prefix.text.includes('\0') ? prefix.text.slice(5) : null) : (vars.has('PATH') ? vars.get('PATH') : (process.env.PATH || ''));
+        // THE BOUND NAME (round 6's eleventh commit, 2026-09-22; the round's verifiers: `cp /usr/bin/cp <out>/scratch/env; PATH=<out>/scratch:$PATH;
+        // env <proj>/base/report.md <proj>/docs/report.md` from a cwd in no project ran the copy in every shell while allowed, and so did a name
+        // outside the wrapper set, a relative PATH and an `ln -s` binding, where the same line from the project's own directory refused, as did
+        // the alias and hash roads from that cwd): a PATH the resolver cannot read was a refusal alone, one that holds while a project is in
+        // play, and from a cwd in no project nothing put the operands' project in play, so the bound writer was never spliced and its operands
+        // never judged. The shell's search is by the name's last component: under a PATH the resolver reads, in a directory it knows, the
+        // bound paths in PATH's directories are the candidates (as before); under a PATH it cannot read, or a directory it does not know, every
+        // bound path whose last component is the name is one, and each is spliced, the writer's operands judged by their own project from any
+        // cwd. The unreadable PATH keeps its refusal while a project is in play (a stated cost, unchanged).
+        if (pathValue == null && !unknownDir) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `\`${hw.raw}\` is looked up through a PATH this command sets to a value I do not read, and this command made a path by copying or linking a command, so which file it names is not known` });
+        if (pathValue == null || unknownDir) { for (const abs of bound.keys()) if (path.basename(abs) === bareName) bindHead(abs); }
+        else for (const d of pathValue.split(':')) { const abs = d ? literalPath(path.join(d, bareName), dir) : null; if (abs && bound.has(abs)) bindHead(abs); }
+      }
+    };
+    // the splice: every text headTexts holds and no earlier call spliced, each read again in the head's place with the words around it as
+    // spelled (THE HEAD SPLICE below says what the texts are); called where the roads were asked of a keyword dash runs, and at the head
+    const runHeadSplices = (headIdx) => {
+      if (splicedUpTo >= headTexts.length) return;
+      // a word the walk already expanded to a literal (a positional the replay bound, a `$name` the readability rule read) is spliced as
+      // that literal, single-quoted, not by its raw spelling: raw would re-expand in the splice's re-lex, so `$c "$@"` after a `shift` had
+      // spliced `cp "$@" "$@"` and doubled the operands to a copy no shell performs (round 6's seventh commit, THE POSITIONAL VALUE meeting
+      // THE HEAD SPLICE); a word raw and text agree on, or one still an expansion, keeps its raw
+      const spliceRaw = (w) => (w.literal && w.raw !== w.text ? `'${w.text.replace(/'/g, `'\\''`)}'` : w.raw);
+      const redirs = seg.redirects.map((r) => `${r.op} ${spliceRaw(r.target)}`).join(' ');
+      for (; splicedUpTo < headTexts.length; splicedUpTo++) {   // `at`: the word the text stands for (the head, or a wrapper name THE PEELED NAME bound, or a keyword dash runs), the words around it as spelled
+        const { text, chain, at = headIdx } = headTexts[splicedUpTo];
+        const before = seg.words.slice(0, at).map(spliceRaw).join(' ');
+        const after = seg.words.slice(at + 1).map(spliceRaw).join(' ');
+        recurse([before, text, after, redirs].filter(Boolean).join(' '), shell, false, ` through the command name \`${seg.words[at].raw}\``, stdinBodies(idx), chain, true, { adopt: true });   // the spliced text runs in this shell: a cd in it moves the shell (THE MOVED SHELL: `alias c=cd`, then `c ../notes`; `c=cd; $c ../notes`)
+      }
+    };
+    // THE KEYWORD DASH RUNS (round 6's eleventh commit, 2026-09-22; the round's verifiers: `alias function=cp`, then `function ../base/report.md
+    // report.md`, copied in dash while allowed, and so did `coproc` and `repeat` aliased and `function` and `coproc` bound through PATH, where
+    // `select`, `foreach`, `end`, `always`, `[[`, `]]`, `time` and `declare` aliased so took the roads at the head and were refused): `function`,
+    // `coproc` and `repeat` are words bash and zsh read before any alias (a reserved word is no simple command's first word; bash: Aliases,
+    // Reserved Words; zshmisc(1)) and dash has no word for, so dash looks each up as a command name, through its aliases, its hash and PATH;
+    // the walk consumed each as the construct it opens (a definition, a coprocess, a counted body) before the roads were asked of it, the
+    // three sites where a keyword is read before the head. Where dash may run the line (the shell not known, or dash), the word is asked
+    // the three roads first and a binding spliced at it, the words after it as spelled (dash's reading), beside the construct's own reading,
+    // which keeps its place (bash's coproc runs the command after it: `alias coproc=cp`, then `coproc cp a b`, copies in bash and zsh and is
+    // refused by that reading). An unreadable binding refuses as the head's does. The hash road is not asked: `hash -p NAME` is bash's and
+    // `hash NAME=PATH` zsh's, and dash's `hash` binds no name to a path (`hash -p /usr/bin/cp function`, then `function a b`, writes in no shell).
+    const dashCommandRoads = (hw, hIdx) => { if (hw && (shell == null || shell === 'dash')) { nameRoads(hw, hIdx, false); boundRoad(hw, hIdx); runHeadSplices(hIdx); } };
     // `function NAME {` and `function NAME` then `{` (bash, zsh; the parentheses optional): a definition, not a run (C6a: it was
     // read as a command named `function`, so the body's assignment was read as the shell's own and the call poisoned nothing).
     // The frame is the one `name() {` gets; a `{` on this segment is the body's and counts here, a `{` on the next segment is
@@ -6109,6 +6319,7 @@ function extractIn(command, ctx) {
       const p = peelIndex(seg.words, k, false);
       const fnNameWord = (w) => !!(w && w.marks && /^u+$/.test(w.marks) && w.text !== '{' && w.text !== '}');   // an unquoted name after `function`: a plain identifier or a glob-shaped one (`[`, `[[`, `?`, `a*`), which bash and zsh take as the function's name (round 6's tenth commit: `function [ { cp "$@"; }; [ a b` ran cp while `[` was glob-marked and the `.literal` test skipped it)
       if (seg.words.length >= p + 2 && plainWord(seg.words[p]) && seg.words[p].text === 'function' && fnNameWord(seg.words[p + 1]) && seg.op !== '(' && !frames.some((f) => f.kind === 'function')) {
+        dashCommandRoads(seg.words[p], p);   // THE KEYWORD DASH RUNS: dash has no `function` word and runs the line as a command
         // every word up to the body's `{` is a name (round 5's addendum, F2: zsh's `function f g {` defines both and runs nothing;
         // bash rejects the spelling); with no `{` on this segment the body is the next segment, a `{ }` group counted by `braces`
         // or zsh's one-command body, which dash, having no `function` word, runs in THIS shell (`function f⏎{⏎cd ../docs⏎}` moved
@@ -6136,6 +6347,7 @@ function extractIn(command, ctx) {
     {
       const p = peelIndex(seg.words, k, false);
       if (seg.words.length > p && plainWord(seg.words[p]) && seg.words[p].text === 'coproc') {
+        dashCommandRoads(seg.words[p], p);   // THE KEYWORD DASH RUNS: dash has no `coproc` word and runs the line as a command
         let q = p + 1;
         const bodyWord = (w) => !!(w && plainWord(w) && (w.text === '{' || Object.hasOwn(BODY_CLOSER, w.text)));
         if (seg.words[q] && seg.words[q].literal && IDENTIFIER.test(seg.words[q].text) && bodyWord(seg.words[q + 1])) q++;   // bash's NAME before a compound body
@@ -6233,6 +6445,7 @@ function extractIn(command, ctx) {
       // the count are the body, run N times (0 included), so `repeat N` is dropped and the rest read as the body, one command
       // (`repeat 2 cp base/report.md docs/report.md` writes the tracked file in zsh; bash and dash have no repeat and run nothing)
       // or a brace body, whose writer commandOf had read as repeat's operand (`repeat 1 { cp .. }` allowed while zsh copied)
+      if (head === 'repeat') dashCommandRoads(seg.words[at], at);   // THE KEYWORD DASH RUNS: dash has no `repeat` word and runs the line as a command
       if (head === 'repeat' && seg.words.length > at + 2) { seg.words = seg.words.slice(at + 2); preWords = preWords.slice(at + 2); compoundBody(seg, 0, f, true, preWords); }
       else compoundBody(seg, at + 1, f, true, preWords);
     }
@@ -6300,7 +6513,7 @@ function extractIn(command, ctx) {
     // another command (`bound`: the source's text). A binding whose text the resolver cannot read makes the name a target the hook
     // cannot read (refused while a project is in play); after an alias whose NAME is unreadable, every later command name is one.
     // The splice runs in this shell with this command's names (not a fresh shell), the chain of alias names bounding the recursion.
-    const headTexts = headWord ? scriptTexts(headWord, 'command name', 'head').map((t) => ({ text: t, chain: aliasChain })) : [];
+    for (const t of headWord ? scriptTexts(headWord, 'command name', 'head') : []) headTexts.push({ text: t, chain: aliasChain, at: headIdx });
     // a glob in the command name (round 6's third commit, 2026-09-21: `/usr/bin/[c]p a b` ran cp in bash, zsh and dash while the walk read an
     // unknown command named so): the matches, sorted as the shells sort them, stand in the name's place as the words the shell makes (the
     // first is the command, the rest lead its operands: `/usr/bin/c? a b` runs cp with the other matches before a and b, and writes
@@ -6315,75 +6528,9 @@ function extractIn(command, ctx) {
     // zsh's `=cmd` (zshexpn, Filename Expansion: an unquoted word beginning with `=` is the path of the command named) in command position
     // runs that command (round 6's third commit: `=cp a b` copied in zsh while the walk read a command named `=cp`); read under zsh's grammar
     if (headWord && headWord.literal && (shell == null || shell === 'zsh') && headWord.marks && headWord.marks[0] === 'u' && /^=[A-Za-z_][A-Za-z0-9_.+-]*$/.test(headWord.text)) headTexts.push({ text: headWord.text.slice(1), chain: aliasChain });
-    // THE PEELED NAME (round 6's ninth commit, 2026-09-22; the round's verifiers: `alias command=cp`, then `command ../base/report.md report.md`
-    // copied in dash while allowed, and the same for builtin, exec, env, nice, nohup, time, timeout, sudo, stdbuf, setsid, ionice, flock, taskset,
-    // chrt, numactl, zsh's noglob and nocorrect, `[` and `[[`, through a here-document or a pipe in every shell; `hash -p /usr/bin/cp env`,
-    // then `env a b` copied in bash and `hash env=/usr/bin/cp` in zsh; a copy or link of cp at `../scratch/env` on PATH, as `env a b`, as
-    // `../scratch/env a b` and as `nice env a b`, in every shell; while the same binding of a name outside the wrapper set was refused): the
-    // alias, hash and bound-path roads were consulted at the head the wrapper walk left, so a binding of a wrapper's own name was never seen
-    // once operands followed it (a bare `command` with no operand was the head and was read). Every word the walk peeled as a wrapper is a
-    // name the shell looks up (an alias on the first word, a hashed path or a bound path through the shell's or the wrapper's own PATH
-    // search), so the three roads are asked of each, the binding spliced at that word (the words before it as spelled, the text, the words
-    // after it, the wrapper peeled again on the spliced text) and an unreadable binding refused as the head's is. `[` is a command name the
-    // shells alias (the lexer marks it a pattern, which matches nothing and stands as spelled), and `[[` is one to dash, so both take the
-    // alias and hash roads by their text.
-    const nameWordOf = (w) => (w && (plainWord(w) || (w.glob && w.marks && /^u+$/.test(w.marks) && (w.text === '[' || w.text === '[['))) ? w.text : null);
-    const nameRoads = (hw, hIdx) => {
-      const name = nameWordOf(hw);
-      if (name == null) return;
-      const here = lineOf(seg);
-      const a = aliases.get(name);
-      if (a && !a.suffix && a.line < here && !aliasChain.has(name)) {
-        if (a.body == null) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `\`${name}\` is an alias this command defines with a text I do not read, so what runs in its place is not known` });
-        else headTexts.push({ text: a.body, chain: new Set([...aliasChain, name]), at: hIdx });
-      }
-      for (const [suf, sa] of aliases) if (sa.suffix && sa.line < here && name.endsWith('.' + suf) && !aliasChain.has(suf)) {
-        if (sa.body == null) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `\`${name}\` ends in a suffix this command aliases to a text I do not read` });
-        else headTexts.push({ text: sa.body + ' ' + hw.raw, chain: new Set([...aliasChain, suf]), at: hIdx });
-      }
-      if (hashes.has(name)) {
-        const p = hashes.get(name);
-        if (p == null) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `\`${name}\` is hashed by this command to a path I do not read` });
-        else headTexts.push({ text: p, chain: aliasChain, at: hIdx });
-      }
-      if (aliasState.unread && !a) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `an earlier \`alias\` of this command binds a name I do not read (${aliasState.unread}), so \`${name}\` may run another command` });
-    };
     nameRoads(headWord, headIdx);
     const peeledIdx = cmd.wrapperIdx || [];
     for (const j of peeledIdx) if (j !== headIdx) nameRoads(seg.words[j], j);
-    // THE BOUND PATH (round 6's fourth commit, 2026-09-21; the residuals lens ran `cp /usr/bin/cp ../scratch/c2` and then the copy through
-    // `'../scratch/c2'`, `"../scratch/c2"`, `$x` with x the path, `"$PWD/../scratch/c2"`, `../scratch/c?` and `~/c2` after `HOME=$PWD/../scratch`,
-    // each allowed while every shell ran it, since the lookup read the unquoted literal spelling alone): a path the command made by copying
-    // or linking a command (`bound`) is looked up by the head's TEXT however spelled (a quoted spelling runs the file too, unlike an alias; a
-    // spelling the readability rule resolved is that text), by a pattern's matches among the paths bound (the file is made when the command
-    // runs, so the filesystem cannot expand the pattern at check time), and through PATH for a bare name (the directories a `PATH=` prefix
-    // or plain assignment of this command gives, else the guard's own environment; a PATH the command sets to a value the resolver does not
-    // read makes a bare name one it cannot read while a path is bound); a head through a HOME the command reassigns is one it cannot read
-    // while a path is bound. Nothing here applies while no path is bound.
-    const boundRoad = (hw, hIdx) => {
-      if (!hw || !bound.size) return;
-      const bindHead = (abs) => {
-        const src = bound.get(abs);
-        if (src == null) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `\`${hw.raw}\` is a path this command made by copying or linking a source I do not read` });
-        else headTexts.push({ text: src, chain: aliasChain, at: hIdx });
-      };
-      if (hw.marks && hw.marks.includes('h') && homeUnreadableNow()) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `\`${hw.raw}\` is a path through HOME, which this command reassigns, and this command made a path by copying or linking a command, so which file it names is not known` });
-      else if (hw.literal && hw.text.includes('/') && !unknownDir) { const abs = literalPath(hw.text, dir); if (abs && bound.has(abs)) bindHead(abs); }
-      else if (hw.glob && !unknownDir) {
-        const re = globRegex(hw.text, hw.marks);
-        if (re) for (const abs of bound.keys()) if (re.test(abs) || re.test(path.relative(dir, abs)) || re.test('./' + path.relative(dir, abs))) bindHead(abs);
-      }
-      // a bare name, or `[[`, which dash (having no `[[` keyword and no `[[` builtin) looks up as an external command and finds through PATH
-      // (round 6's tenth commit: `cp /usr/bin/cp '../scratch/[['; PATH=../scratch:$PATH; [[ a b` ran cp in dash while `[[` was glob-marked and
-      // skipped the lookup); `[` is a builtin in every shell, so a bound `[` never runs, and it is not searched here
-      const bareName = hw.literal && !hw.text.includes('/') ? hw.text : (hw.text === '[[' && hw.marks && /^u+$/.test(hw.marks) ? '[[' : null);
-      if (bareName != null && !unknownDir) {
-        const prefix = seg.words.slice(0, hIdx).find((w) => /^PATH=/.test(w.raw));
-        const pathValue = prefix ? (prefix.literal && !prefix.text.includes('\0') ? prefix.text.slice(5) : null) : (vars.has('PATH') ? vars.get('PATH') : (process.env.PATH || ''));
-        if (pathValue == null) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `\`${hw.raw}\` is looked up through a PATH this command sets to a value I do not read, and this command made a path by copying or linking a command, so which file it names is not known` });
-        else for (const d of pathValue.split(':')) { const abs = d ? literalPath(path.join(d, bareName), dir) : null; if (abs && bound.has(abs)) bindHead(abs); }
-      }
-    };
     boundRoad(headWord, headIdx);
     for (const j of peeledIdx) if (j !== headIdx) boundRoad(seg.words[j], j);   // THE PEELED NAME: an external wrapper searches PATH for the name after it, and the shell for the first
     // THE VANISHING HEAD (round 6's tenth commit, 2026-09-22; the round's verifiers: `$c cp ../base/report.md report.md` ran the copy in every
@@ -6392,22 +6539,10 @@ function extractIn(command, ctx) {
     // THE VANISHING OPERAND gives a writer's operand, given here to the head, so the segment is read again with the head dropped (spliced as the
     // empty text, which the splice's join drops), beside the reading that keeps it (the residual a command whose name is an unread expansion is).
     // A head the readability rule resolved to a literal, or one an always-set form makes (mayVanish is false there), keeps its place.
-    if (headWord && mayVanish(headWord, !unknownDir) && !headTexts.some((t) => t.text === '' && (t.at == null ? headIdx : t.at) === headIdx)) headTexts.push({ text: '', chain: aliasChain, at: headIdx });
+    if (headWord && headMayVanish(headWord) && !headTexts.some((t) => t.text === '' && (t.at == null ? headIdx : t.at) === headIdx)) headTexts.push({ text: '', chain: aliasChain, at: headIdx });   // headMayVanish: the one home of the reading (round 6's eleventh commit), read by the printer and the passthrough cat too
     for (const w of seg.words) if (w !== headWord && plainWord(w)) { const g = aliases.get(w.text); if (g && g.global && g.line < lineOf(seg)) cannotRead(w, 'a global alias', { kind: 'aliasUnread', text: `\`${w.text}\` is a global alias this command defines (zsh expands it in every position), so the word is not the text spelled` }); }
     for (const r of seg.redirects) if (plainWord(r.target)) { const g = aliases.get(r.target.text); if (g && g.global && g.line < lineOf(seg)) cannotRead(r.target, 'a global alias', { kind: 'aliasUnread', text: `\`${r.target.text}\` is a global alias this command defines (zsh expands it at a redirection target too), so the target is not the text spelled` }); }   // round 6's fourth commit: `alias -g R=report.md` then `echo x > R` wrote report.md in zsh while the target escaped the rule
-    if (headTexts.length) {
-      // a word the walk already expanded to a literal (a positional the replay bound, a `$name` the readability rule read) is spliced as
-      // that literal, single-quoted, not by its raw spelling: raw would re-expand in the splice's re-lex, so `$c "$@"` after a `shift` had
-      // spliced `cp "$@" "$@"` and doubled the operands to a copy no shell performs (round 6's seventh commit, THE POSITIONAL VALUE meeting
-      // THE HEAD SPLICE); a word raw and text agree on, or one still an expansion, keeps its raw
-      const spliceRaw = (w) => (w.literal && w.raw !== w.text ? `'${w.text.replace(/'/g, `'\\''`)}'` : w.raw);
-      const redirs = seg.redirects.map((r) => `${r.op} ${spliceRaw(r.target)}`).join(' ');
-      for (const { text, chain, at = headIdx } of headTexts) {   // `at`: the word the text stands for (the head, or a wrapper name THE PEELED NAME bound), the words around it as spelled
-        const before = seg.words.slice(0, at).map(spliceRaw).join(' ');
-        const after = seg.words.slice(at + 1).map(spliceRaw).join(' ');
-        recurse([before, text, after, redirs].filter(Boolean).join(' '), shell, false, ` through the command name \`${seg.words[at].raw}\``, stdinBodies(idx), chain, true, { adopt: true });   // the spliced text runs in this shell: a cd in it moves the shell (THE MOVED SHELL: `alias c=cd`, then `c ../notes`; `c=cd; $c ../notes`)
-      }
-    }
+    runHeadSplices(headIdx);
     const asSpelled = cmd.args;
     let { name } = cmd;
     if (/^(python[0-9.]*|pypy[0-9]*)$/.test(name)) name = 'python';
