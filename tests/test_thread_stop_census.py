@@ -27,9 +27,9 @@ beside the "1 failed") but could not stop it.
 THE BLAST RADIUS, proven by romp-manager's probe, has TWO FIGURES with different meanings. REACH: the leaked loop runs
 _compact_goal_stores() on its 3 s backstop (_producer_wake.wait(3)), globbing jd.GOALDIR and rewriting any store whose
 mtime moved; km.jd is the ONE process-wide judge module (kernel/kernel.py:52, jd = load_source("romp_judge", ...): one
-object per interpreter; tests/conftest.py's shared-judge note), and 141 test modules call jd._rebind_state(), so the
-leaked loop follows jd.GOALDIR to wherever the LATEST rebind put it: any of those 141 scheduled after the failure in the
-same worker (a store saved under a private sid with a cleared root was archived 7.5 s later by the leaked thread).
+object per interpreter; tests/conftest.py's shared-judge note), and the probe counted 141 callers of jd._rebind_state()
+among the test modules, so the leaked loop follows jd.GOALDIR to wherever the LATEST rebind put it: any of those 141
+scheduled after the failure in the same worker (a store saved under a private sid with a cleared root was archived 7.5 s later by the leaked thread).
 VISIBLE SET: 13 modules save stores with cleared roots and 18 assert on the archive; that is where a wrong result would
 surface, a SPURIOUS PASS as well as a spurious failure in a module that did nothing wrong, and the spurious pass is the
 dangerous direction. 13 is not the exposure; 141 is the reach. NOT DETERMINED, carried and not dropped: whether the
@@ -184,10 +184,11 @@ supplied at the caller is read in the caller's row only: the helper's own row ke
            walk does not follow (a parameter's, a library's, a product callee two levels down), or in a product function
            the test REBOUND (tests/test_post_push_coalescing.py's `km._push_all = slow_build` is read as the product's);
            the runtime oracle, tests/conftest.py's thread_census and wait_for_census in a module's own teardown, catches
-           those only in the modules that call it: 5 test modules at this head (of 936, 2026-09-22: test_codex_backend,
-           test_heartbeat_thread, test_kernel_parked_ops_liveness, test_kernel_remote_ws_proxy, test_model_live_midturn;
-           this module's only mention is this sentence), a figure the census derives from the imports and calls
-           (census's extras["oracle"]), the table prints and a tree test holds this sentence to.
+           those only in the modules that call it: 5 test modules at this head (of the modules the census reads, a count
+           the table prints; 2026-09-22: test_codex_backend, test_heartbeat_thread, test_kernel_parked_ops_liveness,
+           test_kernel_remote_ws_proxy, test_model_live_midturn; this module's only mention is this sentence), a figure the
+           census derives from the imports and calls (census's extras["oracle"]), the table prints and a tree test holds
+           this sentence to.
   unreadable: a target the walk cannot read: a parameter in the helper's own row, a body whose work is a call of a
            parameter no hand supplies (the third arm), a function of a module it does not
            read (a third-party import), a stdlib function or method with no STDLIB_RETURNS entry (a shutdown blocks until
@@ -334,10 +335,13 @@ ALLOW entry is keyed on and a plant compares is the SOURCE SEGMENT of the expres
 collapsed (_text), never ast.unparse, a renderer whose spelling differs between interpreters (Python 3.10 writes
 `lambda : f()`, 3.12 `lambda: f()`); ast.unparse is used only where two texts it rendered under ONE interpreter are
 matched against each other (UNPARSE_ROADS names every such function with its reason, and a test parses this module to
-assert there is no other). THE POPULATION is the non-recursive listing of tests/test_*.py (module_paths; 936 modules at
-this head, a figure the table prints and a tree test PINS to this sentence and to the oracle bullet's `of 936` above, as
-the oracle figure beside it is pinned: romp-manager's ruling of 2026-09-22); tests/conftest.py, tests/__init__.py, the
-helper modules under tests/ and tests/fixtures/ are read only for a returned Thread (helper_modules). The listing is
+assert there is no other). THE POPULATION is the non-recursive listing of tests/test_*.py (module_paths), a count with ONE
+HOME, the table the census prints: NO LITERAL MODULE COUNT stands in this docstring, in the oracle bullet's denominator
+above or in the ledger entry, and a tree test pins the absence (romp-manager's ruling on the ninth pass, 2026-09-22: CI
+tests a pull request's MERGE with main, so a docstring pinned to the count read went red the day main gained a test module,
+and would every time; the oracle's own figure beside it stays pinned to the derivation); tests/conftest.py,
+tests/__init__.py, the helper modules under tests/ and tests/fixtures/ are read only for a returned Thread
+(helper_modules). The listing is
 what pytest collects under tests/ only while two things hold, both PINNED by a tree test
 (test_the_population_is_what_pytest_collects_under_tests, romp-manager's ruling of 2026-09-22): this repository has no
 pytest configuration (no pytest.ini, setup.cfg, tox.ini or pyproject.toml at the root or under tests/, where pytest's
@@ -4514,6 +4518,17 @@ def module_paths(root=HERE):
     return sorted(os.path.join(root, f) for f in os.listdir(root) if f.startswith("test_") and f.endswith(".py"))
 
 
+_MODULE_COUNT = re.compile(r"\b\d{3,}\s+(?:test\s+)?modules\b|\bof\s+(?:the\s+)?\d{3,}(?=\s*[,;.)]|\s+(?:test\s+)?modules\b|\s*$)|\bmodules\s*\(\d{3,}\b")
+
+
+def _literal_module_counts(text):
+    """The literal module counts in a prose text, the shapes the population figure has taken: a number of three or more
+    digits before `modules` or `test modules`, after `of` or `of the` when a comma, a semicolon, a period, a parenthesis, the
+    word modules or the end follows (not a date, a time, a decimal or a quantity with a unit: `a sleep of 3600 s`), or in a
+    parenthesis after `modules`. The population has one home, the table; a tree test pins this empty over the docstring."""
+    return [m.group(0) for m in _MODULE_COUNT.finditer(text)]
+
+
 def _report(rows, only_tail=False):
     lines = []
     for st, shape, where in sorted(rows, key=lambda r: (r[0].file(), r[0].line)):
@@ -4694,16 +4709,27 @@ class ThreadStopCensus(unittest.TestCase):
             self.assertIn(name, oracle)
         self.assertNotIn("tests/test_thread_stop_census.py", oracle, "this module names the oracle in its docstring only")
 
-    def test_the_docstrings_population_figure_is_the_count_the_census_read(self):
-        """The population figure in the docstring, stated twice (the POPULATION sentence and the oracle bullet's `of N`), is
-        pinned to the count the census read, as the oracle figure beside it is (romp-manager's ruling, 2026-09-22): a figure
-        in prose that nothing reads is a second home for a number the table already prints."""
-        pop = re.search(r"\(module_paths; (\d+) modules at\s+this head", __doc__)
-        self.assertIsNotNone(pop, "the POPULATION sentence states the figure")
-        self.assertEqual(int(pop.group(1)), self.extras["modules"], "%d modules read: restate the POPULATION sentence's figure" % self.extras["modules"])
-        of = re.search(r"test modules at this head \(of (\d+), ", __doc__)
-        self.assertIsNotNone(of, "the oracle bullet states the population beside its figure")
-        self.assertEqual(int(of.group(1)), self.extras["modules"], "%d modules read: restate the oracle bullet's `of N`" % self.extras["modules"])
+    def test_no_literal_module_count_stands_in_the_docstring(self):
+        """romp-manager's ruling on the ninth pass (2026-09-22): the population count has ONE home, the table the census
+        prints, and no literal module count stands in prose. The pin this replaces held the docstring's figure to the count
+        read; CI tests a pull request's MERGE with main, so it went red the day main gained a test module
+        (tests/test_docs_stylesheet.py), and would every time. This pins the ABSENCE: no number of three or more digits
+        stands beside the word modules in the docstring, in the shapes the population figure took (`NNN modules`, `NNN test
+        modules`, `(of NNN,`, `of the NNN`, `modules (NNN`); the oracle bullet's `5 test modules` is the oracle's own figure,
+        derived and held by the test above, and the reach figure of the 2026-09-21 probe is phrased as callers. The sentences
+        the docstring carried red the regex (planted, with the count the census read written into their shapes, so this test
+        carries no literal either), and a date, a commit, a quantity with a unit or a two-digit figure is not a count."""
+        self.assertEqual(_literal_module_counts(__doc__), [], "a literal module count in the docstring: the table is its one home")
+        n = self.extras["modules"]
+        for planted in ("the listing of tests/test_*.py (module_paths; %d modules at this head, a figure the table prints" % n,
+                        "call it: 5 test modules at this head (of %d, 2026-09-22: test_codex_backend" % n,
+                        "the runtime oracle called by 5 of the %d" % n, "the runtime oracle called by 5 of the %d; the liveness module" % n,
+                        "a population of %d test modules" % (n + 63), "the modules (%d at this head)" % n):
+            self.assertTrue(_literal_module_counts(planted), planted)
+        for fine in ("5 test modules at this head (of the modules the census reads, a count the table prints; 2026-09-22:",
+                     "the probe of 2026-09-22", "kernel commit 3421c94d0", "13 modules save stores", "141 callers of jd._rebind_state()",
+                     "on 20000 random payloads", "round 2 of PR 891's review", "a sleep of 3600 s, or of a name", "a bound of 107 bytes"):
+            self.assertEqual(_literal_module_counts(fine), [], fine)
 
     def test_every_bounded_kind_comes_from_a_read_body_or_the_stdlib_table(self):
         """THE RULE over the tree: no bounded row carries a reason other than a body the walk read (its own, each of a

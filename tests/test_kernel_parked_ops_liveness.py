@@ -36,7 +36,7 @@ test starts km._producer against judge tiers stuck on a gate. Two things went wr
      the FAILED) but could not stop it. The blast radius has TWO FIGURES with different meanings (romp-manager's probe,
      2026-09-21). REACH: the leaked loop's 3 s backstop (_producer_wake.wait(3)) runs _compact_goal_stores() over
      jd.GOALDIR, and km.jd is the ONE process-wide judge module (kernel/kernel.py:52, jd = load_source("romp_judge",
-     ...): one object per interpreter) that 141 test modules jd._rebind_state() onto their own roots, so the loop follows
+     ...): one object per interpreter) that 141 callers among the test modules jd._rebind_state() onto their own roots, so the loop follows
      jd.GOALDIR to wherever the LATEST rebind put it: any of those 141 scheduled after the failure in the same worker.
      VISIBLE SET: 13 modules save stores with cleared roots and 18 assert on the archive; that is where a wrong result
      would surface, a spurious pass or a spurious failure in a module that did nothing wrong, and the spurious pass is
