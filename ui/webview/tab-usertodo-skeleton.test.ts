@@ -26,10 +26,13 @@ const fn = (src: string, name: string): string => {
 const skeleton = fn(RENDER, "makeSkeletonTab"), placeholder = fn(RENDER, "makePlaceholderTab");
 const renderTabs = RENDER.slice(RENDER.indexOf("function renderTabs() {"), RENDER.indexOf("function stripAftermath("));
 const sig = renderTabs.slice(renderTabs.indexOf("const stripSig = JSON.stringify(["), renderTabs.indexOf("const mslotEl = "));
+// a row's CODE: block comments first, then line comments, as tab-strip-skip.test.ts's census reads the rows (a term spelled only
+// in a comment is not a read, and the includes checks below must miss it)
+const stripComments = (t: string): string => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
 const sigRow = (marker: string): string => {
   const a = sig.indexOf(marker);
   assert.ok(a >= 0, "the signature row " + marker + " is in renderTabs");
-  return sig.slice(a, sig.indexOf("];", a));
+  return stripComments(sig.slice(a, sig.indexOf("];", a)));
 };
 /** The builder paints the flag: the tab's own mark and class (tab-usertodo.test.ts pins the style and the phone scrape),
  *  from the strip meta's count, and never a number on the strip (plans/user-todos.md governs the glyph, not the wire). */
@@ -73,8 +76,8 @@ test("makePlaceholderTab paints it too: a tab whose session is still being built
 test("the strip signature's skeleton AND placeholder rows carry the count, so a change repaints; the loaded row still reads the session's rows", () => {
   // without the term a filed or resolved todo on a skeleton computes an EQUAL signature and the repaint is skipped
   // (tab-strip-skip.test.ts: the signature is the input list; its census is the rule, these two are the instances)
-  assert.ok(sigRow('return ["k",').includes("m?.userTodos"), "the skeleton row reads the meta's count");
-  assert.ok(sigRow('return ["p",').includes("m?.userTodos"), "the placeholder row reads the meta's count");
+  assert.ok(sigRow('return ["k",').includes("m?.userTodos"), "the skeleton row's code reads the meta's count (comments stripped)");
+  assert.ok(sigRow('return ["p",').includes("m?.userTodos"), "the placeholder row's code reads the meta's count (comments stripped)");
   assert.ok(sig.includes("!!(s.userTodos && s.userTodos.length)"), "the loaded row's input is unchanged (tab-usertodo.test.ts)");
   // the kernel's painter-key census (tests/test_cold_tab_gate.py) reads the skeleton row's kst?. keys: the count is meta, not status
   assert.ok(!sigRow('return ["k",').includes("kst?.userTodos"), "the count rides the roster row, never the status frame");

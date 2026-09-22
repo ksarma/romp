@@ -150,7 +150,9 @@ test("census: every s.-sourced glyph input of the loaded row has an m?. or kst?.
   // head listed it as missing from both rows. Rather than pin the one input, the census derives the loaded row's s.- and st.-sourced inputs
   // and demands each one's counterpart, or an exemption NAMED below and checked against the builder's source, so a
   // builder that starts painting an exempt input turns its exemption stale and the census demands the term.
-  const comments = (t: string) => t.replace(/\/\/[^\n]*/g, "");   // the rows' trailing comments name other rows' reads: read the code alone
+  // the rows' comments, block and trailing, name other rows' reads: read the code alone (a term spelled only in a comment is
+  // not a read, and the census must miss it; the block form is stripped first, so a `//` inside one cannot eat a line of code)
+  const comments = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
   const rowAt = (start: number, label: string): string => {
     assert.ok(start >= 0, `the ${label} row is in the signature`);
     const a = sig.indexOf("return [", start), b = sig.indexOf("];", start);
