@@ -484,6 +484,41 @@ NON_THREAD_ATTRS = ("finditer", "match", "search", "fullmatch", "compile")
 # end, but a plain Lock can be released by any thread, so a cleanup could have unwedged it.
 ALLOW = {}
 
+def _diag_frames():
+    f, n = sys._getframe(), 0
+    while f is not None:
+        n += 1
+        f = f.f_back
+    return n
+
+
+def _diag_deepcopy(x, where):
+    """DIAGNOSTIC (diag branch only): deep-copy a hand; on RecursionError print what was being copied to stderr."""
+    try:
+        return copy.deepcopy(x)
+    except RecursionError:
+        nodes = x if isinstance(x, list) else [x]
+        best, count, foreign, stack = 0, 0, set(), [(nd, 1) for nd in nodes]
+        while stack:
+            nd, d = stack.pop()
+            count += 1
+            best = max(best, d)
+            if isinstance(nd, ast.AST):
+                for k, v in vars(nd).items():
+                    if k not in nd._fields and k not in nd._attributes:
+                        foreign.add("%s.%s=%s" % (type(nd).__name__, k, type(v).__name__))
+                for ch in ast.iter_child_nodes(nd):
+                    stack.append((ch, d + 1))
+        try:
+            text = ast.unparse(nodes[0])[:200] if nodes and isinstance(nodes[0], ast.AST) else ""
+        except Exception as e:
+            text = "<unparse failed: %r>" % (e,)
+        sys.stderr.write("DIAG891 %s: RecursionError limit=%d frames_here=%d hand=%s ast_depth=%d nodes=%d foreign=%s text=%r\n"
+                         % (where, sys.getrecursionlimit(), _diag_frames(), type(nodes[0]).__name__ if nodes else None, best, count, sorted(foreign), text))
+        sys.stderr.flush()
+        raise
+
+
 
 def _text(node, module):
     """The text of an expression AS THE AUTHOR WROTE IT: its source segment in `module`, whitespace collapsed to single
@@ -4107,7 +4142,7 @@ class _Bound(ast.NodeTransformer):
         if node.id in self.renamed:
             return ast.copy_location(ast.Name(id=self.renamed[node.id], ctx=node.ctx), node)
         if isinstance(node.ctx, ast.Load) and node.id in self.given:
-            return copy.deepcopy(self.given[node.id])
+            return _diag_deepcopy(self.given[node.id], "visit_Name")
         return node
 
 
@@ -4130,7 +4165,7 @@ def _bound_body(fn, args, keywords):
     for a, d in zip(fn.args.kwonlyargs, fn.args.kw_defaults):
         if d is not None:
             given.setdefault(a.arg, d)
-    body = ast.Module(body=copy.deepcopy(fn.body), type_ignores=[])
+    body = ast.Module(body=_diag_deepcopy(fn.body, "_bound_body:" + getattr(fn, "name", "lambda")), type_ignores=[])
     stored = {n.id for n in ast.walk(body) if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del))}
     for name in stored:
         given.pop(name, None)
@@ -4721,6 +4756,8 @@ def tree_census(root=ROOT):
 class ThreadStopCensus(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        sys.stderr.write("DIAG891 setUpClass: limit=%d frames_here=%d python=%s\n" % (sys.getrecursionlimit(), _diag_frames(), sys.version.split()[0]))
+        sys.stderr.flush()
         cls.tree = tree_census()
         cls.loops, cls.thread_classes = cls.tree.loops, cls.tree.thread_classes
         cls.extras, cls.rows = cls.tree.extras, cls.tree.rows
