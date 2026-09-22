@@ -316,6 +316,15 @@ test('the completeness sentence is scoped to the extension\'s test build on ever
   }
   assert.ok(read(CENSUS).includes(LIST), path.relative(REPO, CENSUS) + ' spells the directory list in its header (the one home): ' + LIST);
   assert.ok(read(CENSUS_TEST).includes('metafile'), path.relative(REPO, CENSUS_TEST) + ' holds the list to esbuild\'s test build by a metafile build (a presence pin: the executed equality lives there, in the vscode-extension job, which has esbuild)');
+  // the roster header states the gate's own clause for a driver string in the words the census's gap sentence uses. The clause is
+  // READ from the census module (the sentence rosterGap returns for a driver string, "drives <clause> (line N), which the switch
+  // never reaches", the same clause in each of its arms) and the roster header is held to it, so the two homes are one phrase by
+  // execution, as the lost-browser phrase is held between the helper and the script below: a reword in either home is red here.
+  // The gloss after the clause in the roster, "(the gate reads the string, not a spawn)", is the roster's own and is read as text.
+  const gapArms = [...read(CENSUS).matchAll(/return "drives ([^"]+) \(line " \+ r\.embedded\[0\]\.line \+ "\), which the switch never reaches";/g)].map((m) => m[1]);
+  assert.ok(gapArms.length > 0 && gapArms.every((c) => c === gapArms[0]), path.relative(REPO, CENSUS) + '\'s rosterGap returns the driver-string gap as "drives <clause> (line N), which the switch never reaches", the same clause in every arm (the clause the roster header is held to is read from here, so an empty read means the sentence moved, not that the clause is free): ' + JSON.stringify(gapArms));
+  const rosterHeader = read(path.join(EXT, ROSTER)).split('\n').filter((l) => l.startsWith('#')).map((l) => l.replace(/^# ?/, '')).join(' ');
+  assert.ok(rosterHeader.includes('does not drive ' + gapArms[0] + ', which the switch never reaches (the gate reads the string, not a spawn)'), ROSTER + '\'s header states the gate\'s own clause for a driver string in the census\'s words: a leg does not drive ' + gapArms[0] + ', which the switch never reaches (the gate reads the string, not a spawn). One phrase, two homes (' + path.relative(REPO, CENSUS) + '\'s gap sentence and this header), held equal here, so a reword in either is red rather than the two drifting apart; the gloss in parentheses is the roster\'s own words, read as text');
 });
 
 test('the grep the exclusions header spells for the pending lines lists exactly the pending rows when run as written from the repo root, and CONTRIBUTING.md spells the same command (residual 1 of the landing condition: a pending line whose PR closes without the leg is found by this command and removed by hand)', () => {
@@ -329,6 +338,21 @@ test('the grep the exclusions header spells for the pending lines lists exactly 
   assert.ok(rows.length > 0, 'the exclusions hold pending rows (' + rows.length + '); with none this pin proves nothing');
   assert.deepEqual(r.stdout.split('\n').filter(Boolean), rows, 'the command lists the pending rows and no other line (the header spells the form "pending #<PR>: <why>" twice, which a grep for the bare prefix would list too)');
   assert.ok(read(path.join(REPO, 'CONTRIBUTING.md')).includes('`' + m[1] + '`'), 'CONTRIBUTING.md spells the same command as the header: ' + m[1]);
+  // the header records HOW the pending rows were derived (the claim that they were derived, not recalled; the date and time of the
+  // read; the command that listed the open PRs, in backticks), and CONTRIBUTING.md makes the same claim and spells the same
+  // command, held equal by execution: the command is read from the header and looked for in CONTRIBUTING.md, never spelled here.
+  // The header wraps the command onto its own # line and CONTRIBUTING.md wraps its prose, so both are read with their line breaks
+  // folded to one space.
+  const joined = header.split('\n').map((l) => l.replace(/^# ?/, '')).join(' ');
+  const derived = /were DERIVED, not recalled: on (\d{4}-\d{2}-\d{2}) at (\d{2}:\d{2}Z) the fork's open PRs were listed with `([^`]+)`/.exec(joined);
+  assert.ok(derived && /pulls\?state=open/.test(derived[3]), 'the exclusions header records how the pending rows were derived: the claim "were DERIVED, not recalled", the date and time of the read ("on <date> at <hh:mm>Z") and, in backticks, the command that listed the open PRs (pulls?state=open); a header that says the rows were recalled, or lost the time or the command, is red; the header reads: ' + joined.slice(Math.max(0, joined.indexOf('The pending rows at the roster')), Math.max(0, joined.indexOf('The pending rows at the roster')) + 240));
+  const contributing = read(path.join(REPO, 'CONTRIBUTING.md')).replace(/\s+/g, ' ');
+  assert.ok(contributing.includes('were derived, not recalled') && contributing.includes('`' + derived[3] + '`'), 'CONTRIBUTING.md makes the same claim (were derived, not recalled) and spells, in backticks, the same listing command as the header: ' + derived[3] + ' (one command, two homes, held equal here)');
+  // and both surfaces state the coupling: a pending row alone does not clear a PR whose module the census refuses, since the census
+  // refuses before the equality runs. The sentence is read from the header and looked for in CONTRIBUTING.md: one sentence, two homes.
+  const coupling = /A pending row alone does not clear a PR whose module the census refuses[^.]*\./.exec(joined);
+  assert.ok(coupling, EXCLUDED + '\'s header states the coupling sentence, "A pending row alone does not clear a PR whose module the census refuses: ...": a pending row is a promise about an absent source, and the census refuses before the equality runs, so a refused module stays red whatever row names it; the sentence is gone or reversed');
+  assert.ok(contributing.includes(coupling[0]), 'CONTRIBUTING.md states the same coupling sentence as the header (one sentence, two homes, held equal here; gone or reversed there): ' + coupling[0]);
 });
 
 /** An exclusions reason is exactly one of four closed forms, or refused by name (the census test holds the same rule, in the
@@ -471,6 +495,15 @@ test('the script exists, is executable, calls the census module once and node --
   assert.ok(src.includes('echo "no legs in the roster"; exit 0'), 'the empty-roster guard is spelled in the script (executed below)');
   assert.match(src, /^node --test .*"\$\{legs\[@\]\}" \|\| status=\$\?$/m, 'node --test runs the roster array directly and its status is kept, so the status is node\'s own on every platform (xargs would map a failed command\'s status to 123 on GNU and to 1 on BSD and macOS; executed below: 1 and 7 pass through)');
   assert.ok(!src.split('\n').some((l) => !/^\s*#/.test(l) && /xargs/.test(l)), 'no xargs on a code line of the script (a comment may name it)');
+  // the header states the post-run property as what the record proves, A TEST OF ITS BUNDLE PASSED, and names the boundary of
+  // that proof (node's events carry no launch). A text pin on the header's prose, the # lines before the code: it holds that the
+  // header says what the record proves and no more, so a reader does not take the property for a launch record; the derivation
+  // itself is executed in the post-run test below over records with no pass, and the boundary's other home, the parenthetical
+  // in the unrun red, is read from the script's stderr there.
+  const headLines = src.split('\n').slice(1);
+  const headEnd = headLines.findIndex((l) => !l.startsWith('#'));
+  const scriptHeader = headLines.slice(0, headEnd < 0 ? headLines.length : headEnd).map((l) => l.replace(/^# ?/, '')).join(' ');
+  assert.ok(scriptHeader.includes('derives, per rostered leg, that A TEST OF ITS BUNDLE PASSED') && scriptHeader.includes('That is the whole of what the record can prove: node\'s events carry no launch'), 'the script header states the post-run property as A TEST OF ITS BUNDLE PASSED and its boundary, "That is the whole of what the record can prove: node\'s events carry no launch" (a text pin on the header\'s prose: it guards that the header states what the record proves and its boundary, so the property is not read as a launch record; the derivation is executed below)');
 });
 
 /** A synthetic tree: the script under vscode-extension/scripts; under ui/webview five browser legs and one plain test module
@@ -717,6 +750,9 @@ test('after node --test the script derives per rostered leg that at least one at
   assert.equal(none.status, 1, 'a file that registered nothing is red; stderr: ' + none.err);
   assert.deepEqual(none.node, ['--test', A], 'the leg ran (the empty run is read from the record, not refused before it)');
   assert.ok(none.err.includes(UNRUN + '0 skipped, 0 todo, 0 suite and 1 file-level results for it), so the step claims coverage it did not run') && none.err.includes('move it to ' + EXCLUDED + ' with that reason until one runs'), none.err);
+  // the unrun red carries the boundary of what the record proves beside its remedy (read from the run's stderr): a pass is the
+  // most the record proves, and the browser part's own run is read only by the skip and lost-browser lines when its launch is reached
+  assert.ok(none.err.includes('a rostered leg holds a test that runs and passes here (a pass is the most the record proves: a pass from a test needing no browser satisfies this check, and the browser part\'s own run is read only by the skip and lost-browser lines when its launch is reached)'), 'the unrun red says, beside its remedy, that a pass is the most the record proves, so a reader of the red does not take the property for a launch record:\n' + none.err);
   const suite = run(A + '\n', excluded, { report: rec(A, 'pass', 'suite', '-', 'test', 'a suite that registers none', '', '-') });
   assert.equal(suite.status, 1, 'a describe() that registers no test is red; stderr: ' + suite.err);
   assert.ok(suite.err.includes(UNRUN + '0 skipped, 0 todo, 1 suite and 0 file-level results for it)'), suite.err);

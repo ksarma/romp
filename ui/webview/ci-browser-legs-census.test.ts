@@ -244,6 +244,11 @@ type Plant = {
   launches?: string[]; skipTodo?: string[]; swallow?: number[]; refused?: string; strictRefused?: boolean; launcherImported?: boolean;
 };
 const W = "ui/webview";
+/** The shadow refusal's WHOLE sentence after "<file>:<line>: ", as the census emits it (read from a run of the CLI over the plants,
+ *  not guessed): the p17 and p47 rows hold the whole sentence, not the prefix "a local declaration shadows an import binding",
+ *  because the sentence (why the shadow is refused, and the remedy) is what the round-3 item landed and the prefix predates it;
+ *  a reword of the why or the remedy in the module is red at those rows. */
+const SHADOW_REFUSAL = "a local declaration shadows an import binding of the launcher or of playwright (a use inside the local's scope reaches the local, not the import; the shadow is refused so an import it leaves uncalled, or whose launches it hides, is not read as an ordinary non-leg without notice: rename the local)";
 const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p01-alias.test.ts", leg: true, cls: "shared", gap: null },                                                     // tests-1, extra7-2, extra7-3: an aliased import, called
   { dir: W, file: "p02-single-quote-require.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["chromium"], playwright: ["playwright"], launches: [".launch("] }, // extra5-1
@@ -263,7 +268,7 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p15a-computed-env.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], refused: "p15a-computed-env.test.ts:3: a computed member with a name the walker cannot fold" },
   { dir: W, file: "p15b-computed-loop.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["chromium", "firefox"], strictRefused: true }, // the tree's live for-of shape
   { dir: W, file: "p16-type-only.test.ts", leg: false, cls: "none", gap: null, launcherImported: false },
-  { dir: W, file: "p17-shadow.test.ts", leg: false, cls: "none", gap: "never calls its inBrowser through that import", launcherImported: true, refused: "p17-shadow.test.ts:3: a local declaration shadows an import binding" }, // fresh-1: the call reaches the local arrow, so the import stands uncalled and the identifier-named shadow is refused. This row read leg true, class shared, before names were resolved by scope: a WRONG EXPECTATION the module-flat lookup let pass (the call is the local's, never the import's)
+  { dir: W, file: "p17-shadow.test.ts", leg: false, cls: "none", gap: "never calls its inBrowser through that import", launcherImported: true, refused: "p17-shadow.test.ts:3: " + SHADOW_REFUSAL }, // fresh-1: the call reaches the local arrow, so the import stands uncalled and the identifier-named shadow is refused; the row holds the whole refusal sentence (SHADOW_REFUSAL) because the sentence is what round 3 landed and the prefix predates it. This row read leg true, class shared, before names were resolved by scope: a WRONG EXPECTATION the module-flat lookup let pass (the call is the local's, never the import's)
   { dir: W, file: "p18-launch-call.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", launches: [".launch( via .call/.apply"] },
   { dir: W, file: "p19-default-core.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["webkit"], playwright: ["playwright-core"] },
   { dir: W, file: "p20-todo.test.ts", leg: true, cls: "shared", gap: "holds a skip or todo of its own (line 3: .todo()", skipTodo: [".todo(", "{ todo: } option"] }, // correctness-1's todo, read from the tree
@@ -296,7 +301,7 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p44-pattern-param-reuses-name.test.ts", leg: true, cls: "both", gap: "loads playwright itself", engines: ["firefox"], launches: [".launch("] }, // a parameter's array pattern reuses pw inside an arrow (the shape PR 853's module holds): the inner pw is the parameter, the module's pw is playwright, and nothing is refused
   { dir: W, file: "p45-catch-and-for-shadow.test.ts", leg: true, cls: "shared", gap: null },                                       // a catch variable and a for-of const named inBrowser, the import called after them: the call reaches the import
   { dir: W, file: "p46-inner-destructured-shadow.test.ts", leg: false, cls: "none", gap: "never calls its inBrowser through that import", launcherImported: true }, // an inner block's destructured inBrowser is what the call reaches, so the import stands uncalled; a destructured shadow has no identifier-named declaration, so no shadow refusal
-  { dir: W, file: "p47-shadow-delegates.test.ts", leg: true, cls: "shared", gap: null, refused: "p47-shadow-delegates.test.ts:3: a local declaration shadows an import binding" }, // fresh-1's twin: the local shadow delegates to a module-level helper that calls the import, so the module IS a shared leg (the call resolves to the import by scope) and the identifier-named shadow is still refused
+  { dir: W, file: "p47-shadow-delegates.test.ts", leg: true, cls: "shared", gap: null, refused: "p47-shadow-delegates.test.ts:3: " + SHADOW_REFUSAL }, // fresh-1's twin: the local shadow delegates to a module-level helper that calls the import, so the module IS a shared leg (the call resolves to the import by scope) and the identifier-named shadow is still refused; the row holds the whole refusal sentence (SHADOW_REFUSAL) because the sentence is what round 3 landed and the prefix predates it
   // the round-2 review's roads, section A of its rulings: a loader result used where it stands, in any position
   { dir: W, file: "p48-require-pw-chain.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["chromium"], playwright: ["playwright"], launches: [".launch("] }, // correctness-1, extra7-1: require("playwright").chromium.launch(), never bound
   { dir: W, file: "p49-require-launcher-chain.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true },              // correctness-1: require(the launcher).inBrowser(t, ...), the load followed as the object of the member the call arm read
@@ -522,6 +527,15 @@ test("every planted form under tests/fixtures/browser-legs-plants is classified 
   const expectedLegs = PLANT_TABLE.filter((p) => p.leg).map(bundleOf).sort();
   assert.deepEqual(c.legs, expectedLegs, "the plants the census calls legs");
   assert.equal(c.refusals.length, PLANT_TABLE.filter((p) => p.refused).length, "one refusal per refused plant: " + JSON.stringify(c.refusals));
+  // the census header states the third residual beside the other two: a browser reached without spelling a playwright package or
+  // the launcher is unread by the walker, class none, no refusal. A text pin on the header's prose (its // lines joined, since the
+  // sentence wraps): it holds that the header names the three forms and the outcome, not that the walker behaves so; the CLASS is
+  // executed above by the p68 to p71 rows (a package name from the environment, another driver package, a package whose name
+  // contains a tracked spelling, a spawned binary), each class none with no refusal.
+  const header = read(MODULE).split("\n").filter((l) => l.startsWith("//")).map((l) => l.replace(/^\/\/ ?/, "")).join(" ");
+  assert.ok(header.includes("Three residuals, stated"), "the census header states three residuals (the string-typed parameter's fold, the non-loader call, and a browser reached without spelling a playwright package or the launcher); a header counting two has dropped the third, whose plants are the p68 to p71 rows above");
+  for (const form of ["another driver package such as puppeteer", "a browser binary it spawns", "a driver source whose package name arrives at run time"]) assert.ok(header.includes(form), "the census header names the third residual's form " + JSON.stringify(form) + " (a text pin on the header's prose: the class that form takes is executed by the p68 to p71 rows above)");
+  assert.ok(header.includes("is unread by the walker: class none, no refusal"), "the census header states the third residual's outcome, unread by the walker: class none, no refusal (the outcome the p68 to p71 rows record)");
 });
 
 test("THE INVARIANT is armed: one mutation of the walker per clause, over the plants, is refused by the invariant naming what the mutation silenced (a playwright package resolved and not recorded; a launcher load the walker stopped reading; a launcher binding handed on that the value-use arm stopped refusing; a computed member on the binding that rootOf stopped seeing), and each mutation's anchor is found once, so a rewrite of the walker re-anchors this test rather than passing it empty", async (t) => {
