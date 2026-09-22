@@ -56,7 +56,8 @@
 //              webkit: a property, a bracketed literal, a destructured binding, a named import, or a computed name FOLDED by
 //              lexical scope through four closed forms: a const bound to a literal (a let or var too, when no statement of the
 //              module writes to it: an assignment with the name as its target or inside a destructuring target, a for-of or
-//              for-in head over it, ++ or --, or a second var declaration of it with an initializer), a for-of over an array
+//              for-in head over it, assigning it or redeclaring it with var, ++ or --, or a second var declaration of it with
+//              an initializer), a for-of over an array
 //              literal, a parameter
 //              typed as a union of string literals, a string-typed parameter whose every direct call site in the module passes a
 //              literal; and two the launcher's own exports supply, read from its source by resolved path: a for-of over a name
@@ -82,7 +83,9 @@
 //              default binding handed on as a value (aliased, destructured, passed as an argument, called as a function or
 //              constructed with new, which the launcher's module is not, read for inBrowser
 //              without a call, `.bind` included, handed to a promise callback through .then, .catch or .finally, read for a
-//              default member, or awaited into a name; reading another member off it is not a hand-on, and the refusal names
+//              default member, awaited into a name, or read as an operand of a conditional, logical or other binary expression
+//              on either side, `leg ?? null`, `null ?? leg`, `leg !== null`, where an assignment's target is the one exempt
+//              operand position; reading another member off it is not a hand-on, and the refusal names
 //              the position the line holds); the launcher loaded where it stands and handed on through .then, .catch,
 //              .finally or .default; the launcher's requireCjs loader handed on as a value, not called (the named import
 //              aliased to a name, or the member read off a whole-module or default binding or off the load where it stands
@@ -280,8 +283,8 @@ export function classify(ts, file, src, opts = {}) {
     if (!decl) return null;
     if (ts.isVariableDeclaration(decl)) {
       // a let or var the module writes to elsewhere (assignedSomewhere: an assignment with the name as its target or inside a
-      // destructuring target, a for-of or for-in head over it, ++ or --, a second var declaration with an initializer) is not
-      // bound to its initializer: null
+      // destructuring target, a for-of or for-in head over it or redeclaring it with var, ++ or --, a second var declaration with
+      // an initializer) is not bound to its initializer: null
       if (!(decl.parent && ts.isVariableDeclarationList(decl.parent) && (decl.parent.flags & ts.NodeFlags.Const)) && assignedSomewhere(name, decl)) return null;
       if (decl.initializer) { const v = literalName(unwrap(decl.initializer)); if (v !== null) return [v]; return null; }
       const p = decl.parent, fo = p && p.parent;
@@ -348,10 +351,13 @@ export function classify(ts, file, src, opts = {}) {
    *  under =, inside an array or object literal target at any depth (an element, a spread, a default's left side, a shorthand
    *  property, a property assignment's value, a spread assignment, through parentheses); (b) a for-of or for-in head whose
    *  initializer is not a declaration list and holds the name in such a position; (c) ++ or --; (d) a second var declaration of
-   *  the name that carries an initializer and resolves, by scope, to the declaration the use reaches (`decl`, the first in source
-   *  order, the one declsOf keeps; a same-named let of an inner block is its own declaration and no write to this one). A member
-   *  access on the name (`o[name] = 1`, `name.x = y`) is a read of it, not a write. The predicate is the rule, not a list of
-   *  spellings: the plants p31 and p133 to p141 record its outcomes. */
+   *  the name (the identifier, or one inside its binding pattern) that resolves, by scope, to the declaration the use reaches
+   *  (`decl`, the first in source order, the one declsOf keeps) and either carries an initializer or is the declaration of a
+   *  for-of or for-in head (`for (var name of xs)`, `for (var [name] of xs)`: the head writes it on every pass); a same-named let
+   *  or const of an inner block or of a for head is its own declaration and no write to this one. A member access on the name
+   *  (`o[name] = 1`, `name.x = y`) is a read of it, not a write. The predicate is the rule, not a list of spellings: the plants
+   *  p31, p133 to p141 and p151 to p155 record its outcomes. */
+  const isAssignmentOp = (e) => e.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && e.operatorToken.kind <= ts.SyntaxKind.LastAssignment;   // =, a compound assignment, ??=, ||=, &&=
   const assignedSomewhere = (name, decl) => {
     const bindsName = (t) => {
       t = unwrap(t);
@@ -362,13 +368,18 @@ export function classify(ts, file, src, opts = {}) {
       if (ts.isBinaryExpression(t) && t.operatorToken.kind === ts.SyntaxKind.EqualsToken) return bindsName(t.left);   // a default inside a pattern: [name = "x"] = arr
       return false;   // a member access or any other target: no write to the name
     };
+    // (d): a declaration whose name (an identifier, or one inside a binding pattern) is `name` and resolves by scope to `decl`
+    // (a `var`: hoisted to decl's scope); a let or const in a for head or a block is a declaration of its own scope, resolves to
+    // itself and is no write to `decl`
+    const redeclares = (bn) => ts.isIdentifier(bn) ? bn.text === name && declOfUse(bn) === decl : (ts.isArrayBindingPattern(bn) || ts.isObjectBindingPattern(bn)) && bn.elements.some((el) => ts.isBindingElement(el) && redeclares(el.name));
+    const forHead = (n) => !!(n.parent && ts.isVariableDeclarationList(n.parent) && n.parent.parent && (ts.isForOfStatement(n.parent.parent) || ts.isForInStatement(n.parent.parent)) && n.parent.parent.initializer === n.parent);
     let hit = false;
     const look = (n) => {
       if (hit) return;
-      if (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment && bindsName(n.left)) { hit = true; return; }
+      if (ts.isBinaryExpression(n) && isAssignmentOp(n) && bindsName(n.left)) { hit = true; return; }
       if ((ts.isForOfStatement(n) || ts.isForInStatement(n)) && !ts.isVariableDeclarationList(n.initializer) && bindsName(n.initializer)) { hit = true; return; }
       if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken) && ts.isIdentifier(n.operand) && n.operand.text === name) { hit = true; return; }
-      if (decl && ts.isVariableDeclaration(n) && n !== decl && n.initializer && ts.isIdentifier(n.name) && n.name.text === name && declOfUse(n.name) === decl) { hit = true; return; }
+      if (decl && ts.isVariableDeclaration(n) && n !== decl && (n.initializer || forHead(n)) && redeclares(n.name)) { hit = true; return; }
       ts.forEachChild(n, look);
     };
     look(sf);
@@ -701,8 +712,12 @@ export function classify(ts, file, src, opts = {}) {
     if (ts.isAwaitExpression(pp)) return "awaited into a name the walker does not bind: await the import where it is loaded and call inBrowser on the result";
     if (ts.isConditionalExpression(pp) || isLogical(pp)) return "read through a conditional or logical expression the walker does not follow: bind the module in a statement of its own";
     if (ts.isVariableDeclaration(pp) && pp.initializer === q) return ts.isIdentifier(pp.name) ? "aliased by a declaration" : "destructured";
-    if (ts.isBinaryExpression(pp) && pp.right === q) return "aliased by an assignment";
-    if (ts.isCallExpression(pp) || ts.isNewExpression(pp)) return pp.expression === q ? "called as a function, which the launcher's module is not: call its inBrowser" : "passed as an argument";
+    if (ts.isBinaryExpression(pp) && isAssignmentOp(pp) && pp.right === q) return "aliased by an assignment";
+    // any other binary operator, either side (`leg !== null`, `null !== leg`; a logical one is named above, and the left side of an
+    // assignment is the one exempt operand position, read by the value-use arm as a declaration): the binding is read as a value
+    if (ts.isBinaryExpression(pp)) return "read as an operand of " + ts.tokenToString(pp.operatorToken.kind) + ", a value use the walker does not follow: use the binding only to call inBrowser";
+    if (ts.isNewExpression(pp)) return pp.expression === q ? "constructed with new, which the launcher's module is not: call its inBrowser" : "passed as an argument";
+    if (ts.isCallExpression(pp)) return pp.expression === q ? "called as a function, which the launcher's module is not: call its inBrowser" : "passed as an argument";
     if (ts.isArrayLiteralExpression(pp) || ts.isPropertyAssignment(pp) || ts.isShorthandPropertyAssignment(pp)) return "held in an array or an object literal";
     if (ts.isReturnStatement(pp) || ts.isArrowFunction(pp)) return "returned from a function";
     return "in a position the walker does not read (" + ts.SyntaxKind[pp.kind] + ")";
@@ -770,7 +785,7 @@ export function classify(ts, file, src, opts = {}) {
         const p = n.parent;
         let q = n; while (q.parent && (ts.isParenthesizedExpression(q.parent) || ts.isNonNullExpression(q.parent) || ts.isAsExpression(q.parent))) q = q.parent;
         const called = q.parent && ts.isCallExpression(q.parent) && q.parent.expression === q;
-        const isDecl = p && (ts.isImportSpecifier(p) || (ts.isBindingElement(p) && (p.name === n || p.propertyName === n)) || (ts.isVariableDeclaration(p) && p.name === n) || (ts.isBinaryExpression(p) && p.left === n));
+        const isDecl = p && (ts.isImportSpecifier(p) || (ts.isBindingElement(p) && (p.name === n || p.propertyName === n)) || (ts.isVariableDeclaration(p) && p.name === n) || (ts.isBinaryExpression(p) && p.left === n && isAssignmentOp(p)));
         const isPropName = p && ((ts.isPropertyAccessExpression(p) && p.name === n) || (ts.isPropertyAssignment(p) && p.name === n));
         const isType = p && (ts.isTypeQueryNode(p) || ts.isTypeReferenceNode(p));
         if (!(called || isDecl || isPropName || isType)) refuse(n, "the launcher's requireCjs loader handed on as a value, not called (a load made through the alias is unread by the walker: call requireCjs where the load is made)");
@@ -778,8 +793,10 @@ export function classify(ts, file, src, opts = {}) {
       if (carriesInBrowser(b)) {
         const p = n.parent;
         // the NAME position of a declaration is exempt, never its initializer: `const f = inBrowser` and `const { x = inBrowser } = o`
-        // hand the binding on as a value and are refused; a type position (`typeof inBrowser`, a type reference) binds nothing
-        const isDecl = p && (ts.isImportSpecifier(p) || ts.isNamespaceImport(p) || ts.isImportClause(p) || ts.isImportEqualsDeclaration(p) || (ts.isBindingElement(p) && (p.name === n || p.propertyName === n)) || (ts.isVariableDeclaration(p) && p.name === n) || (ts.isBinaryExpression(p) && p.left === n));
+        // hand the binding on as a value and are refused; a type position (`typeof inBrowser`, a type reference) binds nothing;
+        // of a binary expression only an ASSIGNMENT's left side is a name position (`leg ?? null` and `leg !== null` read the
+        // binding as a value and fall through to the refusals below: an exemption on any left operand left them silent)
+        const isDecl = p && (ts.isImportSpecifier(p) || ts.isNamespaceImport(p) || ts.isImportClause(p) || ts.isImportEqualsDeclaration(p) || (ts.isBindingElement(p) && (p.name === n || p.propertyName === n)) || (ts.isVariableDeclaration(p) && p.name === n) || (ts.isBinaryExpression(p) && p.left === n && isAssignmentOp(p)));
         const isPropName = p && ((ts.isPropertyAccessExpression(p) && p.name === n) || (ts.isPropertyAssignment(p) && p.name === n));
         const isType = p && (ts.isTypeQueryNode(p) || ts.isTypeReferenceNode(p));
         if (calledThrough.has(n) || isDecl || isPropName || isType) refRead.add(n);
