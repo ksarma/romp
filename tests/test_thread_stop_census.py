@@ -271,7 +271,8 @@ collapsed (_text), never ast.unparse, a renderer whose spelling differs between 
 `lambda : f()`, 3.12 `lambda: f()`); ast.unparse is used only where two texts it rendered under ONE interpreter are
 matched against each other (UNPARSE_ROADS names every such function with its reason, and a test parses this module to
 assert there is no other). THE POPULATION is the non-recursive listing of tests/test_*.py (module_paths; 936 modules at
-this head, a figure the table prints and the tree test's message carries); tests/conftest.py, tests/__init__.py, the
+this head, a figure the table prints and a tree test PINS to this sentence and to the oracle bullet's `of 936` above, as
+the oracle figure beside it is pinned: romp-manager's ruling of 2026-09-22); tests/conftest.py, tests/__init__.py, the
 helper modules under tests/ and tests/fixtures/ are read only for a returned Thread (helper_modules). The listing is
 what pytest collects under tests/ only while two things hold, both PINNED by a tree test
 (test_the_population_is_what_pytest_collects_under_tests, romp-manager's ruling of 2026-09-22): this repository has no
@@ -3907,6 +3908,17 @@ class ThreadStopCensus(unittest.TestCase):
         for name in ("tests/test_kernel_parked_ops_liveness.py", "tests/test_heartbeat_thread.py", "tests/test_codex_backend.py"):
             self.assertIn(name, oracle)
         self.assertNotIn("tests/test_thread_stop_census.py", oracle, "this module names the oracle in its docstring only")
+
+    def test_the_docstrings_population_figure_is_the_count_the_census_read(self):
+        """The population figure in the docstring, stated twice (the POPULATION sentence and the oracle bullet's `of N`), is
+        pinned to the count the census read, as the oracle figure beside it is (romp-manager's ruling, 2026-09-22): a figure
+        in prose that nothing reads is a second home for a number the table already prints."""
+        pop = re.search(r"\(module_paths; (\d+) modules at\s+this head", __doc__)
+        self.assertIsNotNone(pop, "the POPULATION sentence states the figure")
+        self.assertEqual(int(pop.group(1)), self.extras["modules"], "%d modules read: restate the POPULATION sentence's figure" % self.extras["modules"])
+        of = re.search(r"test modules at this head \(of (\d+), ", __doc__)
+        self.assertIsNotNone(of, "the oracle bullet states the population beside its figure")
+        self.assertEqual(int(of.group(1)), self.extras["modules"], "%d modules read: restate the oracle bullet's `of N`" % self.extras["modules"])
 
     def test_every_bounded_kind_comes_from_a_read_body_or_the_stdlib_table(self):
         """THE RULE over the tree: no bounded row carries a reason other than a body the walk read (its own, each of a
