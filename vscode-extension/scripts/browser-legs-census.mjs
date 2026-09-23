@@ -106,7 +106,10 @@
 //              sees as an identifier), so a driver assembled
 //              from pieces is read; a piece the fold cannot take (a value from the environment) is the third residual below.
 //   REFUSALS:  a form the walker cannot classify refuses with file and line, never reports it absent: an import or loader
-//              specifier that is not a string literal and folds through no closed form; a computed member with a name it
+//              specifier that is not a string literal and folds through no closed form (a let or var some statement of the module
+//              writes to is no closed form for a specifier, as it is none for an engine: before the closing pass after round 5 a
+//              specifier rebound from a decoy to the package's name folded to the decoy and loaded the package silently); a
+//              computed member with a name it
 //              cannot fold on a playwright or launcher binding or load (`require("playwright")[k]` where k folds through no
 //              closed form, bound or where it stands); the inBrowser binding used as a value, not called (an
 //              initializer `const f = inBrowser` and a default value `{ x = inBrowser }` included; the exempt uses are the name,
@@ -233,14 +236,16 @@
 // construction. Its bounds, stated: the read-through clause is per module, since engines and launches are the record's sets, so
 // a module with one load read through and a second handed on passes it on the second (the hand-on refusals above name that
 // form); a driver text that parses with a diagnostic is read by the regex alone; the net reads the text of a literal, a template
-// or a `+` chain where it stands and folds no identifier (a name bound to the package's text is a mention at its declaration, a
-// position the net does not read, and a load through that name is the walker's fold when the callee is a loader and the hand-on
-// refusals' when it is not); the strict road (the ruling's literal wording, a
+// or a `+` chain where it stands and folds no identifier (a name bound to the package's text by a const, or by a let or var no
+// statement writes to, is a mention at its declaration, a position the net does not read, and a load through that name is the
+// walker's fold when the callee is a loader and the hand-on refusals' when it is not; a let or var written after its declaration
+// is no closed form, so a loader called through it is refused by the walker, the net reading no assignment's right side either:
+// the closing pass after round 5, p237 to p244); the strict road (the ruling's literal wording, a
 // mention of the launcher's name counted whether or not the parse resolved the import) was measured at 36 live refusals over the
 // tree before round 5, every one a module that imports the launcher and never calls it, and not taken, the accounting through the
 // walker's resolutions being what lets the tree pass. Live modules at this head: the net refuses none, falsely or truly, the
 // census test's one assembled literal having been respelled for it (a package name as a call's argument, the p74 form); its
-// --tsv over the tree is byte-identical to the census's before it. The plant p74, a package name in a call argument of its own,
+// --tsv over the tree is byte-identical to the census's before it over the same tree. The plant p74, a package name in a call argument of its own,
 // records the net's stated false refusal.
 // THE CENSUS RULE: a module is a browser leg when it calls the shared launcher through its binding, names a playwright
 // package, or holds a driver string that does. THE ROSTER GATE (rosterGap, null when the leg passes): a shared call, no
@@ -412,6 +417,7 @@ export function classify(ts, file, src, opts = {}) {
     useDecl.set(id, d);
     return d;
   };
+  const isConstDecl = (d) => !!(d.parent && ts.isVariableDeclarationList(d.parent) && (d.parent.flags & ts.NodeFlags.Const));   // a declaration under const; a let or var is not, and is bound to its initializer only while no statement writes to it (assignedSomewhere)
   // the parameter declarations whose call-site fold is in progress (correctness-1, round 5): a fold re-entered for the SAME
   // declaration (the function passing the parameter to its own call, directly or through another function, `go(engine, false)`
   // inside go) folds through no closed form and returns null, so the caller's refusal (the computed member, the engine argument)
@@ -427,7 +433,7 @@ export function classify(ts, file, src, opts = {}) {
       // a let or var the module writes to elsewhere (assignedSomewhere: an assignment with the name as its target or inside a
       // destructuring target, a for-of or for-in head over it or redeclaring it with var, ++ or --, a second var declaration with
       // an initializer) is not bound to its initializer: null
-      if (!(decl.parent && ts.isVariableDeclarationList(decl.parent) && (decl.parent.flags & ts.NodeFlags.Const)) && assignedSomewhere(name, decl)) return null;
+      if (!isConstDecl(decl) && assignedSomewhere(name, decl)) return null;
       if (decl.initializer) { const v = literalName(unwrap(decl.initializer)); if (v !== null) return [v]; return null; }
       const p = decl.parent, fo = p && p.parent;
       if (fo && ts.isForOfStatement(fo) && fo.initializer === p) {
@@ -604,7 +610,8 @@ export function classify(ts, file, src, opts = {}) {
     noteResolved(e, r.kind, r.spec, "load");
     return r;
   };
-  /** A non-literal specifier folded through closed forms: an identifier bound to a const (one level down, recursively), a
+  /** A non-literal specifier folded through closed forms: an identifier bound to a const, or to a let or var no statement of the
+   *  module writes to (one level down, recursively; a written let or var is no closed form: constInitializer), a
    *  path.resolve/path.join/pathToFileURL(...).href/new URL(...) call or a `+`/template concatenation whose literal pieces are
    *  read: such an expression is a filesystem path, which names a playwright package or the launcher only when one of its
    *  literal pieces does (over-inclusive, on the safe side); otherwise a local file. Anything else: null (refuse). */
@@ -638,12 +645,19 @@ export function classify(ts, file, src, opts = {}) {
     if (text.includes("real-viewer-leg")) return { kind: "launcher", spec: text };
     return { kind: "local", spec: text };
   };
-  /** The initializer of the one top-level or block const/let `name` in the module (undefined: not found or several; null: declared without one). */
+  /** The initializer of the one top-level or block const/let `name` in the module (undefined: not found or several, or a let or var
+   *  some statement of the module writes to, which is bound to no one text; null: declared without one). The write check is the
+   *  engine fold's (assignedSomewhere, foldIdentifier's rule for a let or var), added here by the closing pass after the review's
+   *  round 5: before it, `let spec = "./decoy"; spec = "playwright"; require(spec)` folded to the decoy and loaded the package
+   *  silently (class none, no refusal, under the census and under THE SAFETY NET alike, since neither reads an assignment's right
+   *  side); undefined here makes the loader call refuse as folding through no closed form, and a driver template's substitution a
+   *  placeholder. The plants p237 to p244 record the outcome, p245 the never-written control. */
   const constInitializer = (name) => {
     let hits = [];
     const visit = (n) => { if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === name) hits.push(n); ts.forEachChild(n, visit); };
     visit(sf);
     if (hits.length !== 1) return undefined;
+    if (!isConstDecl(hits[0]) && assignedSomewhere(name, hits[0])) return undefined;   // written after its declaration: no closed form (the closing pass after round 5)
     return hits[0].initializer === undefined ? null : hits[0].initializer;
   };
   /** The branches of a ConditionalExpression or of a ??, || or && BinaryExpression, unwrapped and flattened through nested ones;

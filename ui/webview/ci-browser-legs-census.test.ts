@@ -46,7 +46,9 @@
 // parameter, a label) and the satisfies or angle-bracket assertion peels under which the value-use arm refused a launcher binding
 // falsely before round 5, beside the computed-name and initializer controls that stay refused and the two whose sentence improved;
 // then the spawned-driver file, the third residual's stated boundary, beside its fork twin and the control that imports the driver
-// and is refused), every one
+// and is refused; then, from the closing pass after the round's verification, the loader specifier bound by a let or var the module
+// writes to after its declaration, folded to the declaration's text before and loading the package or the launcher silently, refused
+// now as folding through no closed form, beside its never-written control), every one
 // is red under the census before round 5 (the module at
 // the round-4 head) unless the table names it held with its reason, and the same test holds the table to that statement. A module
 // whose classification throws for any other reason is refused by name and the census goes on, executed over a synthetic root by a
@@ -347,6 +349,10 @@ const PW_HANDOFF = (name: string, how: string) => "a playwright binding (" + nam
 const COMPOUND_PLAYWRIGHT = "a playwright load or binding bound by a compound assignment the walker does not follow (which value the name takes is unread): bind it with = in a statement of its own";
 const COMPOUND_LAUNCHER = "the shared launcher loaded by a compound assignment the walker does not follow, so where inBrowser is called from is unread: bind the load with = in a statement of its own";
 const WRITE_REFUSAL = (module: string, name: string, what: string) => "a " + module + " binding (" + name + ") written with " + what + ", which the walker does not follow: a call through the rebound name would count as a call through the binding while what the name holds is unread: bind the load once, or give the other value a name of its own";
+/** The loader-specifier refusal's WHOLE sentence after "<file>:<line>: " and before ": <code>", as the census emits it (read from a
+ *  run of the CLI over the plants, not guessed): the closing pass after round 5's rows p237 to p244 hold the SENTENCE through this
+ *  constant (p14 holds its prefix and stays where it is); a reword of the module's refusal moves the constant and the rows through it. */
+const SPEC_NO_CLOSED_FORM = "a loader whose specifier is not a string literal and folds through no closed form (refused, on the safe side)";
 const WHAT_NO_LOAD = "a value that is no load the walker reads";
 const WHAT_PW_LOAD = "a load of a playwright package";
 const PLANT_TABLE: Plant[] = [
@@ -679,6 +685,22 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p234-c4a-spawn-driver-file.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, holds: "a stated residual boundary: the third residual's driver held in a separate file of the tree that the test spawns by path (spawnSync(process.execPath, [path.join(__dirname, the driver)]); a spawn is no load, so the file is unread), class none, no refusal, which the census before round 5 also gives; the spawn-reading capability was not taken in a landing round" }, // the spawned-driver file, a stated boundary
   { dir: W, file: "p235-c4b-fork-url-driver.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, holds: "a stated residual boundary: the third residual's driver in a separate file, reached by fork(new URL(the driver, import.meta.url)), the second witness of the same rule (a fork is no load), class none, no refusal, which the census before round 5 also gives" }, // the fork-by-URL twin
   { dir: W, file: "p236-c4z-imports-driver-control.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p236-c4z-imports-driver-control.test.ts:2: loads ui/webview/spawn-driver.mjs, which names a playwright package (playwright)", holds: "a shape another plant carries: p34 (a loaded module that names a playwright package, refused at the importer), the load half of p234's boundary: importing the driver the spawn test only spawns is refused before and after round 5, so the boundary is exactly load against spawn" }, // import "./spawn-driver.mjs": the control, refused before and after
+  // the closing pass after round 5 (the round's verifiers' finding): a loader's specifier bound by a let or var the module WRITES to
+  // after its declaration was folded to the declaration's text, so `let spec = "./decoy-helper"; spec = "playwright"; require(spec)`
+  // loaded the decoy to the walker and the package at run time: class none, no refusal, under the census before round 5 and under the
+  // net alone alike (the net reads no assignment's right side, and a load through a name is the walker's fold), the one silent form
+  // of the round's press that the head passed. constInitializer now treats a written let or var as the engine fold does
+  // (assignedSomewhere): no closed form, so the loader call is refused where it stands. The rows below are red under the census
+  // before round 5 as class none with no refusal; p245 is the never-written control, folded to its initializer before and after.
+  { dir: W, file: "p237-w01-let-specifier-rewritten-require.test.ts", leg: false, cls: "none", gap: null, refused: "p237-w01-let-specifier-rewritten-require.test.ts:4: " + SPEC_NO_CLOSED_FORM }, // let spec = "./decoy-helper"; spec = "playwright"; require(spec).firefox.launch(): the write after the declaration (before: class none, the decoy loaded, no refusal)
+  { dir: W, file: "p238-w02-var-specifier-rewritten-require.test.ts", leg: false, cls: "none", gap: null, refused: "p238-w02-var-specifier-rewritten-require.test.ts:4: " + SPEC_NO_CLOSED_FORM }, // the var twin, webkit (before: class none, no refusal)
+  { dir: W, file: "p239-w03-let-specifier-rewritten-in-function.test.ts", leg: false, cls: "none", gap: null, refused: "p239-w03-let-specifier-rewritten-in-function.test.ts:5: " + SPEC_NO_CLOSED_FORM }, // the write inside a function called before the load (before: class none, no refusal)
+  { dir: W, file: "p240-w04-let-specifier-rewritten-await-import.test.ts", leg: false, cls: "none", gap: null, refused: "p240-w04-let-specifier-rewritten-await-import.test.ts:4: " + SPEC_NO_CLOSED_FORM }, // await import(spec) inside the test body (before: class none, no refusal)
+  { dir: W, file: "p241-w05-let-specifier-rewritten-createrequire.test.ts", leg: false, cls: "none", gap: null, refused: "p241-w05-let-specifier-rewritten-createrequire.test.ts:6: " + SPEC_NO_CLOSED_FORM }, // a createRequire loader called through the rebound name (before: class none, no refusal)
+  { dir: W, file: "p242-w06-let-specifier-rewritten-requirecjs.test.ts", leg: false, cls: "none", gap: "never calls its inBrowser through that import", launcherImported: true, refused: "p242-w06-let-specifier-rewritten-requirecjs.test.ts:5: " + SPEC_NO_CLOSED_FORM }, // the launcher's requireCjs called through the rebound name, the launcher imported and never called (before: class none, launcherImported true, no refusal)
+  { dir: W, file: "p243-w07-let-specifier-rewritten-to-launcher.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p243-w07-let-specifier-rewritten-to-launcher.test.ts:4: " + SPEC_NO_CLOSED_FORM }, // spec = "./real-viewer-leg"; require(spec).inBrowser(t, ...): the launcher loaded and called through the rebound name, unread (before: class none, launcherImported false, no refusal)
+  { dir: W, file: "p244-w08-let-specifier-rewritten-to-relative-node-modules.test.ts", leg: false, cls: "none", gap: null, refused: "p244-w08-let-specifier-rewritten-to-relative-node-modules.test.ts:4: " + SPEC_NO_CLOSED_FORM }, // spec = a relative path into node_modules naming the package (before: class none, no refusal)
+  { dir: W, file: "p245-w09-let-specifier-never-written-control.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["firefox"], launches: [".launch("], playwright: ["playwright"], holds: "the no-refusal half of a pair whose partner reds: p237 to p244 (a loader's specifier bound by a let or var written after its declaration, folded to the declaration's text before the closing pass after round 5 and loading the package or the launcher silently) beside this let no statement writes to, which folds to its initializer before and after: class own, engines [firefox], the launch read, no refusal" }, // let spec = "playwright"; require(spec).firefox.launch(): the control
 ];
 const bundleOf = (p: Plant): string => "out-tests/" + p.dir + "/" + p.file.replace(/\.test\.ts$/, ".test.js");
 
@@ -1074,12 +1096,13 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // over the plants throwing whole before it judges a row, the shape correctness-1 named; for p208 to p211, a loaded helper's engine,
   // skip or swallow missing from the test's record, the field fresh-1's fold reads; for p215 to p229, a refusal the row does not
   // expect, the value-use arm's false refusal of a name position or a peeled satisfies or type assertion, the shape extra5-5 named;
-  // for p232 and p233, the sentence of a refusal the row holds, which that census spelled by the node kind) unless R5_HELD names it with
+  // for p232 and p233, the sentence of a refusal the row holds, which that census spelled by the node kind; for p237 to p244, class none with no refusal where the row expects
+  // the specifier refusal, the closing pass's written let or var) unless R5_HELD names it with
   // holds set (a control, a pin of an arm no plant carried, a stated boundary); a round-5 builder who adds a row moves R5_LAST to it
   // and, when the row stays green under that census, adds it to R5_HELD with holds set (the round-4 population above is closed)
   const NOT_RERUN5 = " (the discrimination was established by running the census before round 5, the module at the round-4 head, over the plants, recorded in the PR's notes, and is not re-run here, since that census is not in the tree at test time: this assertion holds the table's statement, not the fact)";
-  const R5_FIRST = R4_LAST + 1, R5_LAST = 236;
-  const R5_HELD = ["p197", "p198", "p200", "p201", "p202", "p207", "p212", "p213", "p214", "p230", "p231", "p234", "p235", "p236"];
+  const R5_FIRST = R4_LAST + 1, R5_LAST = 245;
+  const R5_HELD = ["p197", "p198", "p200", "p201", "p202", "p207", "p212", "p213", "p214", "p230", "p231", "p234", "p235", "p236", "p245"];
   const R5_CARRIED: string[] = [];
   const inRound5 = (p: Plant) => num(p) >= R5_FIRST && num(p) <= R5_LAST;
   const r5 = PLANT_TABLE.filter(inRound5);
