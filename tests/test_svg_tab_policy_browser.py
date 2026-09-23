@@ -4,8 +4,8 @@
 On the web dashboard a Cmd, Ctrl or middle click on a path link to an .svg in a viewed file opens the kernel's /file URL in
 its own tab (ui/webview/preview.ts openFileTab, fileUrl), and for a remote session's file the /remote/<host>/file relay's
 URL. The kernel serves the file as image/svg+xml, so the tab is an svg DOCUMENT. Under the bare `sandbox` policy the kernel
-sent before this change, that document ran no script but still fetched every host its markup named (PR 878's round 5,
-extra6-2, executed in Chromium). The policy now carries four fetch directives beside `sandbox` in one value: default-src
+sent before this change, that document ran no script but still fetched every host its markup named (executed in
+Chromium, 2026-09-23). The policy now carries four fetch directives beside `sandbox` in one value: default-src
 'none', and img-src data: blob:, style-src 'unsafe-inline' and font-src data:, which keep an exported figure's inline
 raster, styles and fonts.
 
@@ -15,7 +15,7 @@ second kernel the hub relays to as host gpu1 (registered through the hub's own c
 serves its session's docs/diagram.svg behind /remote/gpu1/file. A request logger on http://localhost:Q is a second origin
 and a second site to the pages (they are served from 127.0.0.1), and the browser holds two cookies for its host, one
 SameSite=None and one Lax. Each diagram carries sixteen load shapes aimed at the logger under a per-tab path prefix: the
-seven the round's refuters measured (an <image> href, an <image> xlink:href, a CSS @import, a foreignObject <img>, a fill,
+seven measured first (an <image> href, an <image> xlink:href, a CSS @import, a foreignObject <img>, a fill,
 a mask and a CSS fill paint reference) and nine more that a probe of this change found loading under the bare `sandbox`
 (an <feImage> href, a CSS cursor, a background image, an @font-face source, and in a foreignObject a stylesheet <link>, an
 image preload, a prefetch, an <iframe> and a <video>); then a 40 by 40 data: PNG raster at the top left, and below it a
@@ -80,8 +80,8 @@ SVG_DOCUMENT_POLICY = "sandbox; default-src 'none'; img-src data: blob:; style-s
 FRAMING_POLICY = "frame-ancestors 'self'"   # _send's, on every 200
 RASTER_RGB = (0, 160, 80)                   # the data: raster's one colour, read back from the tab's pixels
 STYLED_RGB = (40, 40, 200)                  # the fill an inline <style> rule gives one rect (unstyled, it would be black)
-# the load shapes, by the file name each asks the logger for (the tab's prefix goes in front): the seven the round's
-# refuters measured, and nine more that a probe of this change found loading under the bare `sandbox` too (2026-09-23;
+# the load shapes, by the file name each asks the logger for (the tab's prefix goes in front): the seven measured
+# first, and nine more that a probe of this change found loading under the bare `sandbox` too (2026-09-23;
 # an <object> loaded in the probe and not in every run of this tab, so it is not among them)
 RULED_SHAPES = ("import.css", "image.png", "ximage.png", "fo-img.png", "fill.svg", "mask.svg", "cssfill.svg")
 MORE_SHAPES = ("feimage.png", "cursor.png", "bgimg.png", "font.woff", "link.css", "preload.png", "prefetch.txt",

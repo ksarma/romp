@@ -58266,7 +58266,7 @@ def _media_policy_headers(mime):
     gets an opaque origin, so it can reach nothing of the dashboard's.
 
     `sandbox` stops scripts, not loads. Under it alone the opened tab fetched every host its markup named
-    (PR 878's round 5, executed in Chromium, 2026-09-23): an <image> href and xlink:href, a CSS @import and a
+    (executed in Chromium, 2026-09-23): an <image> href and xlink:href, a CSS @import and a
     foreignObject <img>, each with that browser's SameSite=None cookies for the host, and a fill, a mask
     and a CSS fill paint reference, none of it behind the gear's list of hosts a viewed file's pictures may
     load from; this change's own probe added an <feImage>, a CSS cursor, a background image, an @font-face

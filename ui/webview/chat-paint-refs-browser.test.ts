@@ -5,8 +5,8 @@
 // them. The instrument is two real servers' request logs, never the page's request events and never a route (the rule in
 // file-view-figures-gate-adopt-browser.test.ts's header). The page server at http://localhost:P serves the chat page as
 // the dashboard serves it (the shared skeleton, the chat's sheet, a fake acquireVsCodeApi, the chat bundle built from this
-// tree) with the headers every kernel page carries, read from kernel/kernel.py's Handler._send (the reader PR 878's chat
-// media witness uses), so a request carries the Referer the dashboard's `Referrer-Policy: same-origin` gives it. The remote
+// tree) with the headers every kernel page carries, read from kernel/kernel.py's Handler._send, so a
+// request carries the Referer the dashboard's `Referrer-Policy: same-origin` gives it. The remote
 // logger at http://127.0.0.1:Q records the method, the path, the Referer and the Sec-Fetch-Dest of every request. A posted
 // session frame puts one user message and one assistant reply through render.ts's own userMd() and md(). The reply holds
 // every spelling the viewer gate's leg holds (md-config-svg-paint-gate-browser.test.ts), aimed at the remote logger, plus
@@ -57,8 +57,8 @@ const SID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 // ── the servers ──────────────────────────────────────────────────────────────────────────────────────
 
 /** The headers every page the kernel serves carries: Handler._send's unconditional `send_header` lines with two literal
- *  arguments, up to its caller-supplied headers loop (the reader of PR 878's chat-media witness). Loud when the function's
- *  shape moves, so the page is never served without them in silence. */
+ *  arguments, up to its caller-supplied headers loop. Loud when the function's shape moves, so the page is never served
+ *  without them in silence. */
 function kernelPageHeaders(): Record<string, string> {
   const m = /\n    def _send\(self, code, body, ctype, cache=None, headers=None\):\n([\s\S]*?)\n        for k, v in \(headers or \{\}\)\.items\(\):/.exec(KERNEL);
   assert.ok(m, "kernel/kernel.py Handler._send up to its caller-supplied headers loop (the page is served with the headers read there)");
