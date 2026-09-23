@@ -8489,12 +8489,12 @@ test("round 6, fifth commit, the rows: the parameter's value joins a default wor
       ['R6V-M-source-stdin-heredoc', 'nad', `. /dev/stdin <<'EOF'\ncd ../notes\nEOF\n${NOTE}`, A, 'name'],
       ['R6V-M-source-stdin-herestring', 'nad', `source /dev/stdin <<< 'cd ../notes'; ${NOTE}`, BZ, 'name'],
       ['R6V-M-source-procsub', 'nad', `. <(echo 'cd ../notes'); ${NOTE}`, BZ, 'name'],
-      ['R6V-M-alias-body-cd', 'nad', `alias c='cd ../notes'\nc\n${NOTE}`, D, 'name'],
-      ['R6V-M-alias-body-cd-zsh', 'nad', `zsh <<'EOF'\nalias c='cd ../notes'\nc\n${NOTE}\nEOF`, A, 'name'],
-      ['R6V-M-alias-body-cd-sh', 'nad', `sh <<'EOF'\nalias c='cd ../notes'\nc\n${NOTE}\nEOF`, A, 'name'],
-      ['R6V-M-alias-body-cd-piped', 'nad', `printf 'alias c="cd ../notes"\\nc\\n${NOTE}\\n' | sh`, A, 'name'],
-      ['R6V-M-alias-of-cd', 'nad', `alias c=cd\nc ../notes\n${NOTE}`, D, 'name'],
-      ['R6V-M-alias-body-up', 'nad', "alias c='cd ..'\nc\ncp base/report.md docs/report.md", D, 'name'],
+      ['R6V-M-alias-body-cd', 'nad', `alias c='cd ../notes'\nc\n${NOTE}`, D, ['text', 'is an alias this command defines, which dash expands through `-c` and bash and zsh do not']],   // round 7's twenty-first commit: the alias runs in some shells and not in others, so where the shell is when the copy runs is not known (THE CONDITIONAL TEXT's move); the verdict unchanged, the reason names the road
+      ['R6V-M-alias-body-cd-zsh', 'nad', `zsh <<'EOF'\nalias c='cd ../notes'\nc\n${NOTE}\nEOF`, A, ['text', 'is an alias this command defines, which dash expands through `-c` and bash and zsh do not']],
+      ['R6V-M-alias-body-cd-sh', 'nad', `sh <<'EOF'\nalias c='cd ../notes'\nc\n${NOTE}\nEOF`, A, ['text', 'is an alias this command defines, which dash expands through `-c` and bash and zsh do not']],
+      ['R6V-M-alias-body-cd-piped', 'nad', `printf 'alias c="cd ../notes"\\nc\\n${NOTE}\\n' | sh`, A, ['text', 'is an alias this command defines, which dash expands through `-c` and bash and zsh do not']],
+      ['R6V-M-alias-of-cd', 'nad', `alias c=cd\nc ../notes\n${NOTE}`, D, ['text', 'is an alias this command defines, which dash expands through `-c` and bash and zsh do not']],
+      ['R6V-M-alias-body-up', 'nad', "alias c='cd ..'\nc\ncp base/report.md docs/report.md", D, ['text', 'is an alias this command defines, which dash expands through `-c` and bash and zsh do not']],
       ['R6V-M-candidate-cd', 'nad', `c=cd; $c ../notes; ${NOTE}`, A, 'name'],
       ['R6V-M-then-bash-c', 'nad', `eval 'cd ../notes'; bash -c '${NOTE}'`, A, 'name'],
       ['R6V-M-then-tee', 'nad', "eval 'cd ../notes'; tee n1.md < ../base/report.md", A, 'name'],
@@ -10710,9 +10710,10 @@ test("round 7, nineteenth commit, the rows: a `set` or `shift` in a subshell, a 
     assert.ok(hook.includes("if (name === 'set' && positionalsApply()) { const ops = setOperands(asSpelled); if (ops) rebindHere(seg, idx, cmd, '`set`',") && hook.includes("rebindHere(seg, idx, cmd, '`shift`',"), 'both binds go through the door (behaviour: S19-set-*, S19-shift-*)');
     assert.ok(hook.includes("(opts.rebind || bindPositionals)(sub.positionals, sub.positionalsWhy)"), "an in-place text's list is adopted through the caller's door (behaviour: S19-eval-subshell, S19-splice-subshell, S19-emulate-subshell, S19-source-*)");
     const SITE_MSG = 'the adoption site carries a door (the frame door, or THE CONDITIONAL TEXT\'s since round 7\'s twentieth commit; the head splice\'s door is chosen by the text\'s kind, pinned in "round 7, twentieth commit, the rows")';
-    for (const site of ["{ adopt: name === 'eval', trapMove: name === 'trap', rebind: (ws, why) => rebindHere(seg, idx, cmd, '`eval`', ws, why) }", "{ adopt: true, rebind: door }", "{ adopt: true, rebind: () => rebindConditional(`\\`${name} -C\\``, `callback runs in bash alone, once per \\`-c\\` count of lines read (an input of fewer lines never runs it; zsh and dash find no \\`${name}\\`)`) }", "{ adopt: true, rebind: (ws, why) => rebindHere(seg, idx, cmd, `\\`${name}\\``, ws, why) }"]) assert.ok(hook.includes(site), `${SITE_MSG}: ${site}`);
-    assert.ok(hook.includes("{ adopt: true, rebind: shell === 'zsh' ? (ws, why) => rebindHere(seg, idx, cmd, '`emulate -c`', ws, why) : () => rebindConditional('`emulate -c`', 'text runs in zsh alone (bash and dash find no `emulate`)') }"), `${SITE_MSG}: the emulate site (on its own line: the legs scan reads a literal list spelling a shell as a shell leg)`);
-    assert.equal((hook.match(/\{ adopt: /g) || []).length, (hook.match(/\{ adopt: [^{}]*rebind: (?:\(ws, why\) => rebindHere\(|door \}|shell === 'zsh' \? \(ws, why\) => rebindHere\([^:]*: \(\) => rebindConditional\(|\(\) => rebindConditional\()/g) || []).length, 'every adoption site in the hook carries one of the two doors (a new `adopt: true` without one reds here; the twentieth commit added the conditional door)');
+    // round 7's twenty-first commit gathered the doors into three builders (frameText, conditionalText, externalText); each site names its builder
+    for (const site of ["{ adopt: name === 'eval', trapMove: name === 'trap', rebind: (ws, why) => rebindHere(seg, idx, cmd, '`eval`', ws, why) }", "const door = external ? externalText : conditional ? conditionalText(label, conditional) : frameText(seg, idx, null, label);", "conditionalText(`\\`${name} -C\\``, `callback runs in bash alone, once per \\`-c\\` count of lines read (an input of fewer lines never runs it; zsh and dash find no \\`${name}\\`)`)", "const sourceDoor = () => (inPlace ? frameText(seg, idx, cmd, `\\`${name}\\``) : conditionalText('`source`', 'text runs in bash and zsh alone (dash finds no `source`, and goes on to the next command)'));", "recurse(t, shell, false, ` through \\`${name} <(..)\\``, null, aliasChain, false, frameText(seg, idx, cmd, `\\`${name}\\``));"]) assert.ok(hook.includes(site), `${SITE_MSG}: ${site}`);
+    assert.ok(hook.includes("shell === 'zsh' ? frameText(seg, idx, cmd, '`emulate -c`') : conditionalText('`emulate -c`', 'text runs in zsh alone (bash and dash find no `emulate`)')"), `${SITE_MSG}: the emulate site (on its own line: the legs scan reads a literal list spelling a shell as a shell leg)`);
+    assert.deepEqual(hook.match(/\{ adopt: [^}]*\}/g) || [], ["{ adopt: true, rebind: (ws, why) => rebindHere(seg, idx, cmd, label, ws, why) }", "{ adopt: true, rebind: () => rebindConditional(label, how), conditional: label + ' ' + how }", "{ adopt: false }", "{ adopt: name === 'eval', trapMove: name === 'trap', rebind: (ws, why) => rebindHere(seg, idx, cmd, '`eval`', ws, why) }"], "every adoption option object in the hook is one of the four, in source order (frameText's, conditionalText's, externalText's, eval's own), so a new `adopt:` spelled at a site reds here (the twentieth commit added the conditional door, the twenty-first gathered the doors; behaviour: S19-*, S20-*, S21-*)");
     assert.ok(hook.includes("if (g.positionals) bindPositionals(UNKNOWN_POSITIONALS, `an earlier ${g.positionals} stands in ${how}") && hook.includes("if (g.positionals) frames[frames.length - 1].positionals = g.positionals;"), 'a `{ }` group notes the bind and its closer settles or hands it on (behaviour: S19-set-group-pipe, S19-set-group-bg, S19-set-group-nested-pipe, S19-shift-group-pipe, S19-eval-group-pipe)');
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
@@ -10985,11 +10986,263 @@ test("round 7, twentieth commit, the rows: a `set` or `shift` inside an `emulate
     // where the code lives (the rows above prove what it does)
     const hook = fs.readFileSync(HOOK, 'utf8');
     assert.ok(hook.includes("const rebindConditional = (label, how) => {") && hook.includes("bindPositionals(UNKNOWN_POSITIONALS, `an earlier ${label} ${how}, and whether it rebinds this shell's positional parameters is not known`);"), "THE CONDITIONAL TEXT's door binds values not read, the road named, whatever the frame (behaviour: every refused S20 row)");
-    assert.ok(hook.includes("{ adopt: true, rebind: shell === 'zsh' ? (ws, why) => rebindHere(seg, idx, cmd, '`emulate -c`', ws, why) : () => rebindConditional('`emulate -c`', 'text runs in zsh alone (bash and dash find no `emulate`)') }"), 'the emulate site takes the conditional door, the frame door under a known zsh (behaviour: S20-emulate-*, S20-ctl-emulate-under-zsh)');
-    assert.ok(hook.includes("{ adopt: true, rebind: () => rebindConditional(`\\`${name} -C\\``, `callback runs in bash alone, once per \\`-c\\` count of lines read (an input of fewer lines never runs it; zsh and dash find no \\`${name}\\`)`) }"), 'the mapfile and readarray site takes the conditional door (behaviour: S20-mapfile-*, S20-readarray-*)');
-    assert.ok(hook.includes("const door = conditional ? () => rebindConditional(label, conditional) : (ws, why) => rebindHere(seg, idx, null, label, ws, why);") && hook.includes("const conditional = kind === 'alias' ? ") && hook.includes(": kind === 'vanish' ? ") && hook.includes(": kind === 'text' && /\\s/.test(text) ? "), 'the head splice picks its door by the kind of text: an alias, a head that may be empty, a text with a blank (behaviour: S20-alias-*, S20-vanish-*, S20-splice-*; the one-word splice keeps the frame door: S20-ctl-splice-single*)');
+    assert.ok(hook.includes("shell === 'zsh' ? frameText(seg, idx, cmd, '`emulate -c`') : conditionalText('`emulate -c`', 'text runs in zsh alone (bash and dash find no `emulate`)')"), 'the emulate site takes the conditional door, the frame door under a known zsh (behaviour: S20-emulate-*, S20-ctl-emulate-under-zsh; the doors are built by frameText and conditionalText since round 7\'s twenty-first commit)');
+    assert.ok(hook.includes("conditionalText(`\\`${name} -C\\``, `callback runs in bash alone, once per \\`-c\\` count of lines read (an input of fewer lines never runs it; zsh and dash find no \\`${name}\\`)`)"), 'the mapfile and readarray site takes the conditional door (behaviour: S20-mapfile-*, S20-readarray-*)');
+    assert.ok(hook.includes("const door = external ? externalText : conditional ? conditionalText(label, conditional) : frameText(seg, idx, null, label);") && hook.includes("const conditional = kind === 'alias' ? ") && hook.includes(": kind === 'vanish' ? ") && hook.includes(": kind === 'text' && /\\s/.test(text) ? "), 'the head splice picks its door by the kind of text: an alias, a head that may be empty, a text with a blank (behaviour: S20-alias-*, S20-vanish-*, S20-splice-*; the one-word splice keeps the frame door: S20-ctl-splice-single*; an external kind adopts nothing since the twenty-first commit: S21-equals-*, S21-hash-*, S21-bound-*)');
     assert.equal((hook.match(/headTexts\.push\(\{/g) || []).length, (hook.match(/headTexts\.push\(\{[^}]*\bkind: /g) || []).length, 'every head text carries its kind (a new push without one reds here)');
     assert.ok((hook.match(/headTexts\.push\(\{/g) || []).length >= 8, 'the head texts are pushed at their eight roads');
     assert.ok(hook.includes("if (role === 'head') { const v = vanishedHeadTexts(w); if (v.length) { if (meta) meta.vanished = true; return v.map((t) => t.replace(/\\n+/g, ' ')); } }") && hook.includes("kind: meta.vanished ? 'vanish' : 'text'"), "THE VANISHED HEAD TEXT's reading is marked by scriptTexts and tagged where it is pushed (behaviour: S20-vanish-head-glued-set, whose head word does not vanish whole)");
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+// Round 7's twenty-first commit (2026-09-23; the reviewer's verifier on the twentieth commit, by execution): THE FILE AT THE HEAD, THE CONDITIONAL
+// TEXT's `source` and its move, THE GLUED CALLBACK. The twentieth commit's population left three roads on the frame door that bind or move this shell in
+// some shells and not in others, or in none. (1) `source` is bash's and zsh's spelling: dash prints `source: not found` and goes on to the next command,
+// so `set -- report.md; source /dev/stdin <<'EOF'`, `set -- other.md`, `EOF`, `cp ../base/report.md $1` from docs/ was allowed while dash copied onto the
+// tracked file, and under `sh -c` or `dash -c` every shell did; `.` is every shell's and keeps the frame door, and so does `source` where the walk knows the
+// shell is bash or zsh, where the operand is a process substitution and where the command carries a here-string (dash parses neither `<(..)` nor `<<<`:
+// the syntax error ends its script, so no later command runs there). (2) zsh's `=name` runs the external command the name resolves to, and a builtin has
+// none: zsh stops at `set not found`, bash and dash find no `=set` and go on, so `set -- report.md; =set -- other.md; cp ../base/report.md $1` was allowed
+// while bash and dash copied, the splice `set -- other.md` read as the builtin in this shell's frame; a hashed path (`hash -p /usr/bin/set foo`, then `foo
+// -- other.md`) and a copied command whose file was `/usr/bin/set` spliced the same text (a hashed or bound BARE name, `hash foo=set`, `cp set ../scratch/x`,
+// splices `set` itself, which no slash rule catches: the external kinds adopt nothing on their own), and a head spelled with a slash (`/usr/bin/set`, `./set`, `~/set`,
+// `$d/set`, `/usr/bin/shift`, `/usr/bin/eval 'set -- other.md'`) was read as the builtin by its basename, every shell copying: a slash-spelled head is a file
+// the shell runs, never its own builtin, and an external command binds nothing and moves nothing in this shell (`=cd ../scratch`, a hashed or bound path
+// to `cd` and `/usr/bin/cd` before a copy copied in the shells named). (3) The twentieth commit's conditional roads moved the walk with a cd every shell was
+// taken to run: `emulate sh -c 'cd ../scratch'; cp ../base/report.md report.md` was allowed while bash and dash copied, and so through `mapfile -C`, an
+// alias this command defines, a splice of several words and `source` with a here-document; now a move inside a conditional text leaves the directory
+// unknown, the road named. (4) bash reads a `-C` value glued to its letter, so `mapfile -C'cp ../base/report.md report.md #' -c 1 <<< x` was allowed while
+// bash ran the callback and copied; the glued value is the callback now, and an expansion glued there a callback the guard cannot read. The rows below are
+// the population derived over the three roads (`source` through every feed dash parses, inside eval and a group, `set` and `shift`, the target, head and
+// script roads, nine write forms, the root, scratch/, notes/ with the existing note and a new one, a cwd in no project, another project's file, a cd
+// before the bind; `=name`, a hashed path or bare name in bash's and zsh's spellings, a bound path or bare name and six slash spellings of a builtin, with `cd`, `pushd`, `export`,
+// `unset` and `read` beside `set`, `shift`, `eval`, `source` and `emulate`; the glued callback in twelve forms; the move through every conditional road)
+// and the controls (every form that keeps the frame door or the bind, the roads still read for what they write, the frame around a conditional text, the
+// costs the rule charges); each measured at the round-5 head, at the twentieth commit and at the fixed tree through the hook as a process, then unguarded
+// in the three shells (r7-a2-21-measure-pop.log in the notes).
+test("round 7, twenty-first commit, the rows: a `set`, `shift` or `cd` inside a `source` text runs in bash and zsh alone, so it rebinds this shell's positional parameters to values not read and leaves its directory unknown unless the shell is known bash or zsh, the operand a process substitution or the command a here-string; zsh's `=name`, a hashed path, a bound path and a head spelled with a slash run an external command, which binds and moves nothing; a move inside any conditional text leaves the directory unknown; a `-C` value glued to its letter is the mapfile callback; the roads still read what they write", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const BD = ['bash', 'dash'];
+    const BZ = ['bash', 'zsh'];
+    const Z = ['zsh'];
+    const B = ['bash'];
+    const D = ['dash'];
+    const N = [];
+    const NOT_OWN = "whether it rebinds this shell's positional parameters is not known";
+    const SRC_HOW = '`source` text runs in bash and zsh alone (dash finds no `source`, and goes on to the next command)';
+    const EMU_HOW = '`emulate -c` text runs in zsh alone (bash and dash find no `emulate`)';
+    const MAP_HOW = (n) => '`' + n + ' -C` callback runs in bash alone, once per `-c` count of lines read (an input of fewer lines never runs it; zsh and dash find no `' + n + '`)';
+    const ALIAS_HOW = (raw) => '`' + raw + '` is an alias this command defines, which dash expands through `-c` and bash and zsh do not (zsh and dash expand it from a file or a pipe, bash under `expand_aliases`)';
+    const SPLICE_HOW = (raw) => '`' + raw + '` stands for a text of several words, which some shells split into a command and others run as one word they do not find (a quoted spelling is one word to every shell)';
+    const VANISH_HOW = (raw) => '`' + raw + '` is a command name holding an expansion this command never gives a value, which may be empty, so whether the words after it run as a command of their own is not known';
+    // the bind's reason names the road: `an earlier <label> <how>, and whether it rebinds this shell's positional parameters is not known`
+    const SRC = ['text', 'an earlier ' + SRC_HOW + ', and ' + NOT_OWN];
+    const MAP = ['text', 'an earlier ' + MAP_HOW('mapfile') + ', and ' + NOT_OWN];
+    // the move's reason names the road: `an earlier <label> <how>, so where the shell is when a later command runs is not known`
+    const MOVE = (how) => ['text', 'an earlier ' + how + ', so where the shell is when a later command runs is not known'];
+    const MOVE_SRC = MOVE(SRC_HOW), MOVE_EMU = MOVE(EMU_HOW), MOVE_MAP = MOVE(MAP_HOW('mapfile')), MOVE_MAPR = MOVE(MAP_HOW('readarray'));
+    const MOVE_ALIAS = (raw) => MOVE(ALIAS_HOW(raw)), MOVE_SPLICE = (raw) => MOVE(SPLICE_HOW(raw)), MOVE_VANISH = (raw) => MOVE(VANISH_HOW(raw));
+    const GLUED = ['text', 'the callback glued to `-C` holds an expansion I do not read here'];
+    const NOT_LIT = ['text', 'not a literal path'];   // dd's `of=`, and a name an unknown external command's operand touches (`/usr/bin/export t=other.md`, `/usr/bin/read t`): the positional's or the name's plain refusal
+    const WRAP = ['text', 'behind the wrapper `env`'];   // THE BIND'S FRAME's own reason for a wrapped `set`
+    // [id, cwd, command, the shells that write (measured), the verdict ('allow', 'name', or ['text', a substring of the reason]), the verdict from a
+    // cwd in no project ('allow' unless given; null: the row's paths are absolute or its own cwd is that cwd)]
+    // 1. `source`: the bind through every feed dash parses (a quoted, unquoted and `<<-` here-document on /dev/stdin, /dev/fd/0 and /proc/self/fd/0),
+    // inside eval and a `{ }` group, `shift`, the head and script roads (allowed at every head before), under `sh -c` and `dash -c` (every shell writes),
+    // the cwds, nine write forms; then the move (docs/ to scratch/, where dash alone copies; docs/ to notes/, where bash and zsh copy onto the tracked
+    // note) and the controls: `.`, a here-string, a process substitution and a known bash or zsh keep the frame door (allowed, no shell writes), the
+    // text is still read for what it writes, and the move through a here-string or a process substitution is adopted (refused by name: bash and zsh
+    // moved and copied onto the note)
+    // 2. externals: `=name` with `set`, `shift`, `eval`, `source`, `emulate`, `cd`, in every write form and cwd, on the head and script roads, from a cwd
+    // in no project with absolute paths (the list kept, the copy refused by name); a hashed path in bash's `hash -p` and zsh's `hash NAME=PATH`
+    // spellings; a bound path; a slash-spelled head in six spellings, with `shift`, `eval`, `source`, `.`, `emulate`, `cd`, `pushd`, `export`, `unset`
+    // and `read`, under `sh -c`; the controls: `=cp` and `/usr/bin/cp` are the copies they are (refused by name, the shells that run them writing),
+    // a quoted `'=set'` and `=set` under `bash -c` refuse by name as before, `=set` under `zsh -c` refuses by name now (the cost: zsh stops at the
+    // name and writes nothing; the round-5 head refused it too), a wrapped `set` keeps the frame's reason, `/usr/bin/alias` defines nothing (allowed,
+    // no shell writes; the twentieth commit had refused it by name through a definition no shell makes)
+    // 3. the glued callback: single- and double-quoted, `-tC`, after `-c1`, readarray, a file, a here-document, mv, a redirection, the cwds, a value of
+    // letters that names a function, a glued expansion (refused as a callback the guard cannot read, with and without a value: the cost), a glued `set`
+    // (the bind's reason), under `bash -c` (every shell writes); the move through the callback; the controls: the separated `-C 'cb'`, `-dC` (a value
+    // over-read as the callback, refused with no writer, unchanged) and a glued callback that writes nothing before a plain copy
+    // 4. the move through the other conditional roads: `emulate -c`, an alias, a splice of several words, a head that may be empty (the cost: no shell
+    // writes), each to scratch/ and to notes/; a piped group around an emulate (the closer restores the directory: refused by name); the controls: eval's
+    // text and a one-word splice move the walk (allowed, no shell writes), `emulate -c` under a known zsh the same
+    const rows = [
+      ["S21-source-heredoc-set", "nad", "set -- report.md; source /dev/stdin <<'EOF'\nset -- other.md\nEOF\ncp ../base/report.md $1", D, SRC],
+      ["S21-source-heredoc-shift", "nad", "set -- report.md other.md; source /dev/stdin <<'EOF'\nshift\nEOF\ncp ../base/report.md $1", D, SRC],
+      ["S21-source-heredoc-unquoted-set", "nad", "set -- report.md; source /dev/stdin <<EOF\nset -- other.md\nEOF\ncp ../base/report.md $1", D, SRC],
+      ["S21-source-heredoc-strip-set", "nad", "set -- report.md; source /dev/stdin <<-EOF\n\tset -- other.md\n\tEOF\ncp ../base/report.md $1", D, SRC],
+      ["S21-source-fd0-heredoc-set", "nad", "set -- report.md; source /dev/fd/0 <<'EOF'\nset -- other.md\nEOF\ncp ../base/report.md $1", D, SRC],
+      ["S21-source-procfd0-heredoc-set", "nad", "set -- report.md; source /proc/self/fd/0 <<'EOF'\nset -- other.md\nEOF\ncp ../base/report.md $1", D, SRC],
+      ["S21-source-in-eval-set", "nad", "set -- report.md; eval 'source /dev/stdin' <<'EOF'\nset -- other.md\nEOF\ncp ../base/report.md $1", D, SRC],
+      ["S21-source-in-group-set", "nad", "set -- report.md; { source /dev/stdin; } <<'EOF'\nset -- other.md\nEOF\ncp ../base/report.md $1", D, SRC],
+      ["S21-source-in-group-inner-set", "nad", "set -- report.md; { source /dev/stdin <<'EOF'\nset -- other.md\nEOF\n}\ncp ../base/report.md $1", D, SRC],
+      ["S21-source-heredoc-head", "nad", "set -- cp; source /dev/stdin <<'EOF'\nset -- ls\nEOF\n$1 ../base/report.md report.md", D, SRC],
+      ["S21-source-heredoc-script", "nad", "set -- report.md; source /dev/stdin <<'EOF'\nset -- other.md\nEOF\nbash -c \"cp ../base/report.md $1\"", D, SRC],
+      ["S21-source-under-sh", "nad", "sh -c 'set -- report.md; source /dev/stdin <<\"EOF\"\nset -- other.md\nEOF\ncp ../base/report.md $1'", A, SRC],
+      ["S21-source-under-dash", "nad", "dash -c 'set -- report.md; source /dev/stdin <<\"EOF\"\nset -- other.md\nEOF\ncp ../base/report.md $1'", A, SRC],
+      ["S21-cwd-root-source", "na", "set -- docs/report.md; source /dev/stdin <<'EOF'\nset -- scratch/other.md\nEOF\ncp base/report.md $1", D, SRC],
+      ["S21-cwd-scratch-source", "nas", "set -- ../docs/report.md; source /dev/stdin <<'EOF'\nset -- other.md\nEOF\ncp ../base/report.md $1", D, SRC],
+      ["S21-cwd-notes-source", "nan", "set -- n1.md; source /dev/stdin <<'EOF'\nset -- ../scratch/other.md\nEOF\ncp ../base/report.md $1", D, SRC],
+      ["S21-cwd-notes-new-source", "nan", "set -- n2.md; source /dev/stdin <<'EOF'\nset -- ../scratch/other.md\nEOF\ncp ../base/report.md $1", D, SRC],
+      ["S21-cwd-out-b2-source", "out", "set -- {NA}/docs/report.md; source /dev/stdin <<'EOF'\nset -- {NA}/scratch/other.md\nEOF\ncp {NA}/base/report.md $1", D, 'allow', null],
+      ["S21-cwd-web-from-docs-source", "nad", "set -- {WEB}/docs/report.md; source /dev/stdin <<'EOF'\nset -- other.md\nEOF\ncp {WEB}/base/report.md $1", D, SRC],
+      ["S21-cwd-cd-notes-source", "nad", "cd ../notes; set -- n1.md; source /dev/stdin <<'EOF'\nset -- ../scratch/other.md\nEOF\ncp ../base/report.md $1", D, SRC],
+      ["S21-w-source-mv", "nad", "set -- report.md; source /dev/stdin <<'EOF'\nset -- other.md\nEOF\nmv ../base/report.md $1", D, SRC],
+      ["S21-w-source-install", "nad", "set -- report.md; source /dev/stdin <<'EOF'\nset -- other.md\nEOF\ninstall ../base/report.md $1", D, SRC],
+      ["S21-w-source-ln", "nad", "set -- report.md; source /dev/stdin <<'EOF'\nset -- other.md\nEOF\nln -sf ../base/report.md $1", D, SRC],
+      ["S21-w-source-tee", "nad", "set -- report.md; source /dev/stdin <<'EOF'\nset -- other.md\nEOF\necho x | tee $1", D, SRC],
+      ["S21-w-source-redirect", "nad", "set -- report.md; source /dev/stdin <<'EOF'\nset -- other.md\nEOF\necho x > $1", D, SRC],
+      ["S21-w-source-append", "nad", "set -- report.md; source /dev/stdin <<'EOF'\nset -- other.md\nEOF\necho x >> $1", D, SRC],
+      ["S21-w-source-cp-R", "nad", "set -- report.md; source /dev/stdin <<'EOF'\nset -- other.md\nEOF\ncp -R ../base/report.md $1", D, SRC],
+      ["S21-w-source-sed", "nad", "set -- report.md; source /dev/stdin <<'EOF'\nset -- other.md\nEOF\nsed -i 's/ORIG/X/' $1", D, SRC],
+      ["S21-w-source-dd", "nad", "set -- report.md; source /dev/stdin <<'EOF'\nset -- other.md\nEOF\ndd if=../base/report.md of=$1 status=none", D, NOT_LIT],
+      ["S21-move-source-heredoc", "nad", "source /dev/stdin <<'EOF'\ncd ../scratch\nEOF\ncp ../base/report.md report.md", D, MOVE_SRC],
+      ["S21-move-source-notes", "nad", "source /dev/stdin <<'EOF'\ncd ../notes\nEOF\ncp ../base/report.md n1.md", BZ, MOVE_SRC],
+      ["S21-ctl-dot-heredoc-set", "nad", "set -- report.md; . /dev/stdin <<'EOF'\nset -- other.md\nEOF\ncp ../base/report.md $1", N, 'allow'],
+      ["S21-ctl-source-herestring-set", "nad", "set -- report.md; source /dev/stdin <<< 'set -- other.md'; cp ../base/report.md $1", N, 'allow'],
+      ["S21-ctl-source-procsub-set", "nad", "set -- report.md; source <(echo 'set -- other.md'); cp ../base/report.md $1", N, 'allow'],
+      ["S21-ctl-source-under-bash", "nad", "bash -c 'set -- report.md; source /dev/stdin <<\"EOF\"\nset -- other.md\nEOF\ncp ../base/report.md $1'", N, 'allow'],
+      ["S21-ctl-source-under-zsh", "nad", "zsh -c 'set -- report.md; source /dev/stdin <<\"EOF\"\nset -- other.md\nEOF\ncp ../base/report.md $1'", N, 'allow'],
+      ["S21-ctl-source-write", "nad", "source /dev/stdin <<'EOF'\ncp ../base/report.md report.md\nEOF\n", BZ, 'name'],
+      ["S21-ctl-move-dot-heredoc", "nad", ". /dev/stdin <<'EOF'\ncd ../scratch\nEOF\ncp ../base/report.md report.md", N, 'allow'],
+      ["S21-ctl-move-source-herestring", "nad", "source /dev/stdin <<< 'cd ../scratch'; cp ../base/report.md report.md", N, 'allow'],
+      ["S21-ctl-move-source-herestring-notes", "nad", "source /dev/stdin <<< 'cd ../notes'; cp ../base/report.md n1.md", BZ, 'name'],
+      ["S21-ctl-move-source-procsub-notes", "nad", "source <(echo 'cd ../notes'); cp ../base/report.md n1.md", BZ, 'name'],
+      ["S21-equals-set", "nad", "set -- report.md; =set -- other.md; cp ../base/report.md $1", BD, 'name'],
+      ["S21-equals-shift", "nad", "set -- report.md other.md; =shift; cp ../base/report.md $1", BD, 'name'],
+      ["S21-equals-eval-set", "nad", "set -- report.md; =eval 'set -- other.md'; cp ../base/report.md $1", BD, 'name'],
+      ["S21-equals-source-heredoc-set", "nad", "set -- report.md; =source /dev/stdin <<'EOF'\nset -- other.md\nEOF\ncp ../base/report.md $1", BD, 'name'],
+      ["S21-equals-emulate-set", "nad", "set -- report.md; =emulate sh -c 'set -- other.md'; cp ../base/report.md $1", BD, 'name'],
+      ["S21-equals-set-mv", "nad", "set -- report.md; =set -- other.md; mv ../base/report.md $1", BD, 'name'],
+      ["S21-equals-set-redirect", "nad", "set -- report.md; =set -- other.md; echo x > $1", BD, 'name'],
+      ["S21-equals-set-tee", "nad", "set -- report.md; =set -- other.md; echo x | tee $1", BD, 'name'],
+      ["S21-equals-set-root", "na", "set -- docs/report.md; =set -- scratch/other.md; cp base/report.md $1", BD, 'name'],
+      ["S21-equals-set-scratch", "nas", "set -- ../docs/report.md; =set -- other.md; cp ../base/report.md $1", BD, 'name'],
+      ["S21-equals-set-notes", "nan", "set -- n1.md; =set -- ../scratch/other.md; cp ../base/report.md $1", BD, 'name'],
+      ["S21-equals-set-web-from-docs", "nad", "set -- {WEB}/docs/report.md; =set -- other.md; cp {WEB}/base/report.md $1", BD, 'name', null],
+      ["S21-equals-set-out-abs", "out", "set -- {NA}/docs/report.md; =set -- {NA}/scratch/other.md; cp {NA}/base/report.md $1", BD, 'name', null],
+      ["S21-equals-set-head", "nad", "set -- cp; =set -- ls; $1 ../base/report.md report.md", BD, 'name'],
+      ["S21-equals-set-script", "nad", "set -- report.md; =set -- other.md; bash -c \"cp ../base/report.md $1\"", BD, 'name'],
+      ["S21-equals-cd", "nad", "=cd ../scratch; cp ../base/report.md report.md", BD, 'name'],
+      ["S21-equals-cd-notes", "nad", "=cd ../notes; cp ../base/report.md n1.md", N, 'allow'],
+      ["S21-hash-p-set", "nad", "hash -p /usr/bin/set foo; set -- report.md; foo -- other.md; cp ../base/report.md $1", A, 'name'],
+      ["S21-hash-zsh-set", "nad", "hash foo=/usr/bin/set; set -- report.md; foo -- other.md; cp ../base/report.md $1", A, 'name'],
+      ["S21-hash-p-shift", "nad", "hash -p /usr/bin/shift foo; set -- report.md other.md; foo; cp ../base/report.md $1", A, 'name'],
+      ["S21-hash-p-cd", "nad", "hash -p /usr/bin/cd foo; foo ../scratch; cp ../base/report.md report.md", A, 'name'],
+      ["S21-bound-set", "nad", "cp /usr/bin/set ../scratch/x; set -- report.md; ../scratch/x -- other.md; cp ../base/report.md $1", A, 'name'],
+      ["S21-bound-cd", "nad", "cp /usr/bin/cd ../scratch/x; ../scratch/x ../scratch; cp ../base/report.md report.md", A, 'name'],
+      ["S21-hash-p-bare-set", "nad", "hash -p set foo; set -- report.md; foo -- other.md; cp ../base/report.md $1", A, 'name'],
+      ["S21-hash-zsh-bare-set", "nad", "hash foo=set; set -- report.md; foo -- other.md; cp ../base/report.md $1", A, 'name'],
+      ["S21-bound-bare-set", "nad", "cp set ../scratch/x; set -- report.md; ../scratch/x -- other.md; cp ../base/report.md $1", A, 'name'],
+      ["S21-bound-rel-set", "nad", "cp ./set ../scratch/x; set -- report.md; ../scratch/x -- other.md; cp ../base/report.md $1", A, 'name'],
+      ["S21-slash-set", "nad", "set -- report.md; /usr/bin/set -- other.md; cp ../base/report.md $1", A, 'name'],
+      ["S21-slash-rel-set", "nad", "set -- report.md; ./set -- other.md; cp ../base/report.md $1", A, 'name'],
+      ["S21-slash-tilde-set", "nad", "set -- report.md; ~/set -- other.md; cp ../base/report.md $1", A, 'name'],
+      ["S21-slash-var-set", "nad", "set -- report.md; d=/usr/bin; $d/set -- other.md; cp ../base/report.md $1", A, 'name'],
+      ["S21-slash-shift", "nad", "set -- report.md other.md; /usr/bin/shift; cp ../base/report.md $1", A, 'name'],
+      ["S21-slash-eval-set", "nad", "set -- report.md; /usr/bin/eval 'set -- other.md'; cp ../base/report.md $1", A, 'name'],
+      ["S21-slash-source-heredoc-set", "nad", "set -- report.md; /usr/bin/source /dev/stdin <<'EOF'\nset -- other.md\nEOF\ncp ../base/report.md $1", A, 'name'],
+      ["S21-slash-dot-heredoc-set", "nad", "set -- report.md; ./. /dev/stdin <<'EOF'\nset -- other.md\nEOF\ncp ../base/report.md $1", A, 'name'],
+      ["S21-slash-emulate-set", "nad", "set -- report.md; /usr/bin/emulate sh -c 'set -- other.md'; cp ../base/report.md $1", A, 'name'],
+      ["S21-slash-set-head", "nad", "set -- cp; /usr/bin/set -- ls; $1 ../base/report.md report.md", A, 'name'],
+      ["S21-slash-set-script", "nad", "set -- report.md; /usr/bin/set -- other.md; bash -c \"cp ../base/report.md $1\"", A, 'name'],
+      ["S21-slash-set-root", "na", "set -- docs/report.md; /usr/bin/set -- scratch/other.md; cp base/report.md $1", A, 'name'],
+      ["S21-slash-set-notes", "nan", "set -- n1.md; /usr/bin/set -- ../scratch/other.md; cp ../base/report.md $1", A, 'name'],
+      ["S21-slash-set-under-sh", "nad", "sh -c 'set -- report.md; /usr/bin/set -- other.md; cp ../base/report.md $1'", A, 'name'],
+      ["S21-slash-cd", "nad", "/usr/bin/cd ../scratch; cp ../base/report.md report.md", A, 'name'],
+      ["S21-slash-pushd", "nad", "/usr/bin/pushd ../scratch; cp ../base/report.md report.md", A, 'name'],
+      ["S21-slash-export", "nad", "t=report.md; /usr/bin/export t=other.md; cp ../base/report.md $t", A, NOT_LIT],
+      ["S21-slash-unset-default", "nad", "t=report.md; /usr/bin/unset t; cp ../base/report.md ${t:-other.md}", A, NOT_LIT],
+      ["S21-slash-read", "nad", "t=report.md; /usr/bin/read t <<< other.md; cp ../base/report.md $t", BZ, NOT_LIT],
+      ["S21-ctl-slash-alias", "nad", "/usr/bin/alias c=cp\nc ../base/report.md report.md", N, 'allow'],
+      ["S21-ctl-slash-cp", "nad", "/usr/bin/cp ../base/report.md report.md", A, 'name'],
+      ["S21-ctl-slash-env-set", "nad", "set -- report.md; /usr/bin/env set -- other.md; cp ../base/report.md $1", A, WRAP],
+      ["S21-ctl-equals-cp", "nad", "=cp ../base/report.md report.md", Z, 'name'],
+      ["S21-ctl-equals-quoted-set", "nad", "set -- report.md; '=set' -- other.md; cp ../base/report.md $1", A, 'name'],
+      ["S21-ctl-equals-under-bash", "nad", "bash -c 'set -- report.md; =set -- other.md; cp ../base/report.md $1'", A, 'name'],
+      ["S21-ctl-equals-under-zsh", "nad", "zsh -c 'set -- report.md; =set -- other.md; cp ../base/report.md $1'", N, 'name'],
+      ["S21-ctl-bound-true-set", "nad", "cp /usr/bin/true ../scratch/x; set -- report.md; ../scratch/x -- other.md; cp ../base/report.md $1", A, 'name'],
+      ["S21-ctl-hash-p-cp", "nad", "hash -p /usr/bin/cp foo; foo ../base/report.md report.md", B, 'name'],
+      ["S21-mapfile-glued-C-cp", "nad", "mapfile -C'cp ../base/report.md report.md #' -c 1 <<< x", B, 'name'],
+      ["S21-mapfile-glued-C-dq-cp", "nad", "mapfile -C\"cp ../base/report.md report.md #\" -c 1 <<< x", B, 'name'],
+      ["S21-mapfile-glued-tC-cp", "nad", "mapfile -tC'cp ../base/report.md report.md #' -c 1 <<< x", B, 'name'],
+      ["S21-mapfile-glued-c1-C-cp", "nad", "mapfile -c1 -C'cp ../base/report.md report.md #' <<< x", B, 'name'],
+      ["S21-readarray-glued-C-cp", "nad", "readarray -C'cp ../base/report.md report.md #' -c 1 <<< x", B, 'name'],
+      ["S21-mapfile-glued-C-file", "nad", "mapfile -C'cp ../base/report.md report.md #' -c 1 < ../base/report.md", B, 'name'],
+      ["S21-mapfile-glued-C-heredoc", "nad", "mapfile -C'cp ../base/report.md report.md #' -c 1 <<EOF\nx\nEOF", B, 'name'],
+      ["S21-mapfile-glued-C-mv", "nad", "mapfile -C'mv ../base/report.md report.md #' -c 1 <<< x", B, 'name'],
+      ["S21-mapfile-glued-C-redirect", "nad", "mapfile -C'echo x > report.md #' -c 1 <<< x", B, 'name'],
+      ["S21-mapfile-glued-C-root", "na", "mapfile -C'cp base/report.md docs/report.md #' -c 1 <<< x", B, 'name'],
+      ["S21-mapfile-glued-C-notes", "nan", "mapfile -C'cp ../base/report.md n1.md #' -c 1 <<< x", B, 'name'],
+      ["S21-mapfile-glued-C-out-abs", "out", "mapfile -C'cp {NA}/base/report.md {NA}/docs/report.md #' -c 1 <<< x", B, 'name', null],
+      ["S21-mapfile-glued-C-web-from-docs", "nad", "mapfile -C'cp {WEB}/base/report.md {WEB}/docs/report.md #' -c 1 <<< x", B, 'name', null],
+      ["S21-mapfile-glued-Ct-fn", "nad", "t() { cp ../base/report.md report.md; }; mapfile -Ct -c 1 <<< x", B, 'name'],
+      ["S21-mapfile-glued-C-var", "nad", "t='cp ../base/report.md report.md #'; mapfile -C\"$t\" -c 1 <<< x", B, GLUED],
+      ["S21-mapfile-glued-C-unset-var", "nad", "mapfile -C\"$t\" -c 1 <<< x", N, GLUED],
+      ["S21-mapfile-glued-C-set", "nad", "set -- report.md; mapfile -C'set -- other.md #' -c 1 <<< x; cp ../base/report.md $1", Z, MAP],
+      ["S21-mapfile-glued-C-under-bash", "nad", "bash -c \"mapfile -C'cp ../base/report.md report.md #' -c 1 <<< x\"", A, 'name'],
+      ["S21-move-mapfile-devnull", "nad", "mapfile -C 'cd ../scratch #' -c 1 </dev/null; cp ../base/report.md report.md", A, MOVE_MAP],
+      ["S21-move-mapfile-glued", "nad", "mapfile -C'cd ../scratch #' -c 1 <<< x; cp ../base/report.md report.md", Z, MOVE_MAP],
+      ["S21-move-readarray-notes", "nad", "readarray -C 'cd ../notes #' -c 1 <<< x; cp ../base/report.md n1.md", B, MOVE_MAPR],
+      ["S21-ctl-mapfile-sep-C-cp", "nad", "mapfile -C 'cp ../base/report.md report.md #' -c 1 <<< x", B, 'name'],
+      ["S21-ctl-mapfile-dC", "nad", "mapfile -dC 'cp ../base/report.md report.md #' -c 1 <<< x", N, 'name'],
+      ["S21-ctl-mapfile-glued-C-x", "nad", "mapfile -C'true #' -c 1 <<< x; cp ../base/report.md report.md", BZ, 'name'],
+      ["S21-move-emulate", "nad", "emulate sh -c 'cd ../scratch'; cp ../base/report.md report.md", BD, MOVE_EMU],
+      ["S21-move-emulate-notes", "nad", "emulate sh -c 'cd ../notes'; cp ../base/report.md n1.md", Z, MOVE_EMU],
+      ["S21-move-alias-nextline", "nad", "alias s='cd ../scratch'\ns; cp ../base/report.md report.md", BZ, MOVE_ALIAS("s")],
+      ["S21-move-alias-notes", "nad", "alias c='cd ../notes'\nc\ncp ../base/report.md n1.md", D, MOVE_ALIAS("c")],
+      ["S21-move-splice-var", "nad", "s='cd ../scratch'; $s; cp ../base/report.md report.md", Z, MOVE_SPLICE("$s")],
+      ["S21-move-splice-notes", "nad", "s='cd ../notes'; $s; cp ../base/report.md n1.md", BD, MOVE_SPLICE("$s")],
+      ["S21-move-vanish-head", "nad", "$c cd ../scratch; cp ../base/report.md report.md", N, MOVE_VANISH("$c")],
+      ["S21-move-emulate-group-pipe", "nad", "{ emulate sh -c 'cd ../scratch'; } | cat; cp ../base/report.md report.md", A, 'name'],
+      ["S21-ctl-move-emulate-under-zsh", "nad", "zsh -c \"emulate sh -c 'cd ../scratch'; cp ../base/report.md report.md\"", N, 'allow'],
+      ["S21-ctl-move-eval", "nad", "eval 'cd ../scratch'; cp ../base/report.md report.md", N, 'allow'],
+      ["S21-ctl-move-splice-single", "nad", "c=cd; $c ../scratch; cp ../base/report.md report.md", N, 'allow'],
+      ["S21-ctl-move-alias-of-cd-notes", "nad", "alias c=cd\nc ../notes\ncp ../base/report.md n1.md", D, MOVE_ALIAS("c")],
+    ];
+    const judge = (id, cwd, raw, writers, expect, outside = 'allow') => {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      w.build();
+      const h = w.hook(cmd, at);
+      assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error: ${h.reason.split('\n')[0]}`);
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      if (outside != null) {
+        w.build();
+        const o = w.hook(cmd, w.cwds.out);
+        assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
+      }
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    };
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect, outside] of rows) { judge(id, cwd, raw, writers, expect, outside); n++; }
+    assert.equal(n, 132);
+    // where the code lives (the rows above prove what it does)
+    const hook = fs.readFileSync(HOOK, 'utf8');
+    assert.ok(hook.includes("const SHELL_OWN = new Set([") && hook.includes("const name = spelled.includes('/') && SHELL_OWN.has(path.basename(spelled)) ? spelled : path.basename(spelled);"), 'THE FILE AT THE HEAD: commandOf keeps a slash-spelled head of a shell-own name as its name, so it meets no builtin site (behaviour: S21-slash-*)');
+    const own = hook.match(/const SHELL_OWN = new Set\(\[([^\]]*)\]\);/)[1].split(',').map((t) => t.trim().replace(/^'|'$/g, ''));
+    for (const nm of ['set', 'shift', 'eval', 'trap', 'source', '.', 'emulate', 'mapfile', 'readarray', 'alias', 'unalias', 'hash', 'cd', 'chdir', 'pushd', 'popd', 'export', 'declare', 'typeset', 'local', 'readonly', 'unset', 'read', 'getopts', 'let', 'shopt', 'setopt', 'unsetopt']) assert.ok(own.includes(nm), `SHELL_OWN names ${nm}, a builtin the walk models as this shell's own state (behaviour: S21-slash-set, -shift, -eval-set, -source-heredoc-set, -dot-heredoc-set, -emulate-set, -cd, -pushd, -export, -unset-default, -read)`);
+    for (const nm of ['cp', 'mv', 'sed', 'tee', 'dd', 'install', 'ln', 'echo', 'printf', 'cat', 'env', 'time', 'command', 'builtin', 'exec', 'nice', 'timeout', 'python', 'node', 'xargs']) assert.ok(!own.includes(nm), `SHELL_OWN leaves ${nm} its basename: a program on disk, or a wrapper that is one (behaviour: S21-ctl-slash-cp, S21-ctl-slash-env-set)`);
+    assert.ok(!own.some((nm) => guard.SHELLS.has(nm) || nm === 'sh'), 'SHELL_OWN names no shell: `/bin/bash -c` and `/bin/sh -c` keep their basename and their script is read (no shell is spawned here; the shells are named through the hook\'s own SHELLS set)');
+    assert.ok(CENSUS.SHELL_OWN && CENSUS.SHELL_OWN.side === 'WRITE' && hook.includes(CENSUS.SHELL_OWN.consumer), 'the census names SHELL_OWN with its gap on the write side and the commandOf line that consumes it');
+    assert.ok(hook.includes("const externalText = { adopt: false };") && hook.includes("const external = kind === 'equals' || kind === 'hash' || kind === 'bound';") && hook.includes("const door = external ? externalText : conditional ? conditionalText(label, conditional) : frameText(seg, idx, null, label);"), "the head splice of zsh's `=name`, a hashed path or a bound path adopts nothing of the sub-walk's shell state (behaviour: S21-equals-*, S21-hash-*, S21-bound-*; the writes still read: S21-ctl-equals-cp, S21-ctl-hash-p-cp)");
+    assert.ok(hook.includes("const inPlace = name === '.' || shell === 'bash' || shell === 'zsh' || seg.herestring;") && hook.includes("const sourceDoor = () => (inPlace ? frameText(seg, idx, cmd, `\\`${name}\\``) : conditionalText('`source`', 'text runs in bash and zsh alone (dash finds no `source`, and goes on to the next command)'));"), "`source` takes THE CONDITIONAL TEXT's door unless the walk knows the shell is bash or zsh or the command carries a here-string (behaviour: S21-source-*, S21-ctl-dot-heredoc-set, S21-ctl-source-herestring-set, S21-ctl-source-under-bash, S21-ctl-source-under-zsh)");
+    assert.ok(hook.includes("seg.herestring = true;") && hook.includes("paramAssigns: [], herestring: false })"), 'the lexer marks a segment that carries a here-string (behaviour: S21-ctl-source-herestring-set, S21-ctl-move-source-herestring, S21-ctl-move-source-herestring-notes)');
+    assert.ok(hook.includes("if (opts.conditional) moveUnknown(`an earlier ${opts.conditional}, so where the shell is when a later command runs is not known`);") && hook.includes("const conditionalText = (label, how) => ({ adopt: true, rebind: () => rebindConditional(label, how), conditional: label + ' ' + how });"), 'a move inside a conditional text leaves the directory unknown, the road named (behaviour: S21-move-*)');
+    assert.ok(hook.includes("const m = a.text.match(/^-[A-Za-z]*?C/);") && hook.includes("const glued = a.text.length > m[0].length ? sliceWord(a, m[0].length) : null;") && hook.includes("if (glued && !glued.literal) { cannotRead(a, `\\`${name} -C\\` callback`") && hook.includes("const cb = glued || args[k + 1];"), 'the mapfile site reads a value glued to `-C` as the callback and refuses a glued expansion (behaviour: S21-mapfile-glued-*, S21-readarray-glued-C-cp, S21-ctl-mapfile-sep-C-cp)');
   } finally { process.env.HOME = savedHome; w.rm(); }
 });

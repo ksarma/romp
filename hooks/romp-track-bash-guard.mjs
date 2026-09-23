@@ -1110,6 +1110,23 @@
 // `builtin` and `time`); eval's text and a sourced text (every shell runs them in place), a splice of one word and an `emulate -c` inside a script
 // the walk knows is zsh's keep the frame door, and each road's text is still read for what it writes. Every row is pinned with its writers in
 // tools/romp-track-bash-guard.test.mjs (round 7, twentieth commit).
+// ROUND 7 OF FORK PR #780 REVIEW, TWENTY-FIRST COMMIT (2026-09-23; the reviewer's verifier on the twentieth commit, by execution): THE FILE AT THE
+// HEAD (SHELL_OWN, commandOf; the head splice's externalText), THE CONDITIONAL TEXT's `source` and its move (frameText, conditionalText; recurse) and
+// THE GLUED CALLBACK (the mapfile site). Roads the twentieth commit's population left on the frame door bind or move this shell in some shells and
+// not in others, or in none: `set -- report.md; source /dev/stdin <<'EOF'`, `set -- other.md`, `EOF`, `cp ../base/report.md $1` from docs/ was
+// allowed while dash copied onto the tracked file (`source` is bash's and zsh's spelling; dash prints `source: not found` and goes on), `=set --
+// other.md` in the same place while bash and dash copied (zsh's `=name` runs the external command the name resolves to, and a builtin has none: zsh
+// stops, bash and dash find no `=set` and go on), and so did `/usr/bin/set -- other.md`, `./set`, `/usr/bin/shift`, `/usr/bin/eval 'set --
+// other.md'`, a hashed path and a copied command whose file is named for a builtin, every shell copying (a name spelled with a slash is a file the
+// shell runs, never its own builtin); `emulate sh -c 'cd ../scratch'; cp ../base/report.md report.md` was allowed while bash and dash copied (the
+// twentieth commit's roads moved the walk with a cd every shell was taken to run, and so through `mapfile -C`, an alias, a splice, `=cd` and a
+// hashed path), and `mapfile -C'cp ../base/report.md report.md #' -c 1 <<< x` while bash ran the callback glued to its option letter. Now a
+// slash-spelled head of a shell-own name keeps its spelling as its name and meets no builtin site; the spliced text of `=name`, a hashed path or a
+// bound path is read for what it writes and nothing of its shell state comes back; `source` takes THE CONDITIONAL TEXT's door unless the walk knows
+// the shell is bash or zsh, the operand is a process substitution or the command carries a here-string (dash parses neither, and runs nothing
+// after); a move inside any conditional text leaves the directory unknown, the road named; and a `-C` value glued to its letter is the callback,
+// an expansion glued there a callback the guard cannot read. Every row is pinned with its writers in tools/romp-track-bash-guard.test.mjs (round 7,
+// twenty-first commit).
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -1190,6 +1207,18 @@ export const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);   // export
 // cp` write nothing), and it is peeled all the same, the cost a refusal of a spelling no shell runs.
 const ZSH_MODIFIERS = new Set(['noglob', 'nocorrect', '-']);
 const PREFIXES = new Set(['sudo', 'command', 'builtin', 'exec', 'nice', 'nohup', 'time', 'env', 'timeout', 'ionice', 'stdbuf', 'setsid', 'flock', 'taskset', 'chrt', 'numactl', ...ZSH_MODIFIERS]);
+// THE FILE AT THE HEAD (round 7's twenty-first commit, 2026-09-23; the reviewer's verifier on the twentieth commit, by execution: `set -- report.md;
+// =set -- other.md; cp ../base/report.md $1` from docs/ was allowed while bash and dash copied onto the tracked file, and so were `/usr/bin/set --
+// other.md`, `./set -- other.md`, `/usr/bin/shift`, `/usr/bin/eval 'set -- other.md'`, `hash -p /usr/bin/set foo` then `foo -- other.md` and `cp
+// /usr/bin/set ../scratch/x` then `../scratch/x -- other.md`, every shell copying): a command name spelled with a slash is a FILE the shell runs as
+// an external command (bash: Command Search and Execution; dash(1), Command Search; zshmisc(1), Command Execution), never one of its own builtins,
+// so `/usr/bin/set` binds no positional parameter, `/usr/bin/cd` moves nothing and `/usr/bin/export` assigns nothing in this shell (a system that
+// ships /usr/bin/cd and its kin ships scripts that run the builtin in a child shell: the same nothing here). These are the names the walk reads as
+// the shell's own, each modelling a change of this shell's state or a text run in its frame; commandOf keeps the slash spelling as the name for
+// them, so such a head meets no site keyed on the builtin and is read as the unknown external command it is. The programs the walk models (cp,
+// sed, tee, python, the shells) keep their basename: `/usr/bin/cp a b` is the copy it is, and the wrappers (PREFIXES) their peeling: `/usr/bin/env`
+// and `/usr/bin/time` are the programs on disk.
+const SHELL_OWN = new Set(['set', 'shift', 'eval', 'trap', 'source', '.', 'emulate', 'mapfile', 'readarray', 'alias', 'unalias', 'hash', 'cd', 'chdir', 'pushd', 'popd', 'export', 'declare', 'typeset', 'local', 'readonly', 'unset', 'read', 'getopts', 'let', 'shopt', 'setopt', 'unsetopt']);
 const RESERVED = new Set(['do', 'then', 'else', 'elif', 'if', 'while', 'until', '!', '{', '}']);
 // The shells verified (round 3, 2026-09-19, by execution) to read `$'...'` as ANSI-C quoting: bash 5.2 and zsh 5.9,
 // the shells the Bash tool runs, so the top-level command (shell null) reads it so too. dash, `/bin/sh` here, reads a
@@ -1447,7 +1476,7 @@ function parenCloseAt(text) {
 // addendum, 2026-09-20): a `(( ))` body under dash's reading, a `$((` bash and zsh read as `$( (`, and every `$(...)` or backtick
 // inside an arithmetic body; `dashPieces` the further commands dash reads after a `&&` or `||` inside a `[[ ... ]]`, spliced into
 // extract's walk after the test's segment (withDashPieces), and `dashFirstOp` the operator that joins the first of them.
-const newSegment = () => ({ words: [], redirects: [], heredocs: [], stdin: [], dups: [], outDups: [], subs: [], arith: [], arithAt: [], viaSubs: [], dashPieces: null, dashFirstOp: '', op: '', start: 0, paramAssigns: [] });   // paramAssigns: the `${name:=word}` assignments the segment's words perform, name and the word's texts (null: a text the resolver could not establish), for THE HEAD CANDIDATES (THE ASSIGNED DEFAULT, round 6's sixth commit)   // dups: the input descriptors this command duplicates, `[n]<&m` as { to: n or '0', from: m, or null for a word the lexer cannot read } (THE DUPLICATED DESCRIPTOR, round 6's fifth commit: `exec 3< <(echo '..'); bash <&3` read the text through 3 while the `<&` was skipped)   // start: the source index the segment begins at (extract counts the lines before it: THE ALIAS ROAD applies to a later line)   // stdin: the words a `<` redirects into the standard input (the third fix-up: `bash < <(echo '..')` reads the script the substitution prints)   // arithAt: the number of words before each `(( ))` (round 5's third addendum: compoundBody tells `if (( 0 )) {` from `if { cond } {` by it)
+const newSegment = () => ({ words: [], redirects: [], heredocs: [], stdin: [], dups: [], outDups: [], subs: [], arith: [], arithAt: [], viaSubs: [], dashPieces: null, dashFirstOp: '', op: '', start: 0, paramAssigns: [], herestring: false });   // paramAssigns: the `${name:=word}` assignments the segment's words perform, name and the word's texts (null: a text the resolver could not establish), for THE HEAD CANDIDATES (THE ASSIGNED DEFAULT, round 6's sixth commit)   // dups: the input descriptors this command duplicates, `[n]<&m` as { to: n or '0', from: m, or null for a word the lexer cannot read } (THE DUPLICATED DESCRIPTOR, round 6's fifth commit: `exec 3< <(echo '..'); bash <&3` read the text through 3 while the `<&` was skipped)   // start: the source index the segment begins at (extract counts the lines before it: THE ALIAS ROAD applies to a later line)   // stdin: the words a `<` redirects into the standard input (the third fix-up: `bash < <(echo '..')` reads the script the substitution prints)   // arithAt: the number of words before each `(( ))` (round 5's third addendum: compoundBody tells `if (( 0 )) {` from `if { cond } {` by it)
 
 // `shell` is the name of the shell the command is a script of, when the call is a recursion into `sh -c '...'`,
 // `bash <<EOF` or a `$(...)` inside one (null for the Bash tool's own command): it decides whether `$'...'` is
@@ -2333,7 +2362,7 @@ export function lex(command, shell = null, opts = {}) {
         continue;
       }
       if (c === '<') {
-        if (src[i + 1] === '<' && src[i + 2] === '<') { i += 3; expect = { kind: 'herestring' }; continue; }
+        if (src[i + 1] === '<' && src[i + 2] === '<') { i += 3; expect = { kind: 'herestring' }; seg.herestring = true; continue; }   // `herestring`: the segment carries a here-string, a form dash does not parse (a syntax error ends its script), read by THE CONDITIONAL TEXT's `source` (round 7's twenty-first commit)
         if (src[i + 1] === '<') { const strip = src[i + 2] === '-'; i += strip ? 3 : 2; expect = { kind: 'heredoc', stripTabs: strip }; continue; }
         if (src[i + 1] === '>') { i += 2; expect = { kind: 'target', op: '<>', fd: fdDigits == null ? '0' : fdDigits }; continue; }   // `[n]<>word`: descriptor n, the standard input when no n (bash: Opening File Descriptors for Reading and Writing)
         if (src[i + 1] === '&') { i += 2; expect = { kind: 'dup', fd: fdDigits }; continue; }   // `[n]<&word`: the descriptor word names is duplicated onto n (the standard input when no n), recorded at endWord (THE DUPLICATED DESCRIPTOR, round 6's fifth commit; before, the digits were skipped and the consumer read nothing through them)
@@ -2810,7 +2839,8 @@ function commandOf(words) {
     // the caller read the segment as plain assignments, so `x=../docs/report.md; command x=other.md; cp base/report.md
     // scratch/$x` resolved $x to other.md while every shell kept the tracked path.
     if (k >= words.length) return wrapped ? { name: '', args: words.slice(first), chdirs, writes, wrapped, wrappers, wrapperIdx } : null;
-    const name = path.basename(words[k].text);
+    const spelled = words[k].text;
+    const name = spelled.includes('/') && SHELL_OWN.has(path.basename(spelled)) ? spelled : path.basename(spelled);   // THE FILE AT THE HEAD: a slash-spelled head of a shell-own name is a file the shell runs, never the builtin (SHELL_OWN says why); its spelling stays its name
     if (!PREFIXES.has(name)) return { name, args: words.slice(k + 1), chdirs, writes, wrapped, wrappers, wrapperIdx };
     wrapped = true;
     wrappers.push(name);
@@ -5313,6 +5343,21 @@ function extractIn(command, ctx) {
     const g = frames.length && frames[frames.length - 1].kind === 'group' ? frames[frames.length - 1] : null;
     if (g) g.positionals = label;   // the closer's own reason replaces this one when the group turns out piped or backgrounded (the list stays values not read)
   };
+  // The options a recursion into a text this command hands its own shell takes, by which shells run the text (round 7's twenty-first commit, 2026-09-23;
+  // the reviewer's verifier on the twentieth commit, by execution). frameText: a text every shell runs in this shell's frame (eval's text, `.`, `source`
+  // where the walk knows the shell is bash or zsh or where dash would parse nothing after, a splice of one word, a glob's matches): the sub-walk's list
+  // comes back through the frame door and its move is adopted. conditionalText: a text some shells run and others do not (THE CONDITIONAL TEXT: `emulate
+  // -c`, a `mapfile -C` callback, an alias this command defines, a splice of several words or of a head that may be empty, `source` elsewhere): the list
+  // is rebound to values not read and a move leaves the directory unknown, the road named (`conditional`, which recurse reads). externalText: the
+  // spliced text of zsh's `=name`, a hashed path or a bound path: `set -- report.md; =set -- other.md; cp ../base/report.md $1` from docs/ was allowed
+  // while bash and dash copied onto the tracked file, the splice `set -- other.md` read as the builtin in this shell's frame, where zsh's `=name` runs the
+  // external command the name resolves to (a builtin has none: zsh stops, bash and dash find no `=set` and go on), `hash -p /usr/bin/set foo` then `foo --
+  // other.md` and a copied `../scratch/x` whose source was `/usr/bin/set` the same (every shell copied), and `=cd ../scratch` before a copy the same way
+  // (bash and dash copied): an external command binds nothing and moves nothing in this shell, so the text is read for what it writes and nothing of
+  // the sub-walk's shell state comes back.
+  const frameText = (seg, idx, cmd, label) => ({ adopt: true, rebind: (ws, why) => rebindHere(seg, idx, cmd, label, ws, why) });
+  const conditionalText = (label, how) => ({ adopt: true, rebind: () => rebindConditional(label, how), conditional: label + ' ' + how });
+  const externalText = { adopt: false };
   // the readable form: a word of a segment holding assignment words alone (commandOf gave null), resolved by the caller
   const recordPlainWord = (w, seg, idx, seq) => {
     const m = w.raw.match(/^([A-Za-z_][A-Za-z0-9_]*)(\+?=)/);
@@ -6010,7 +6055,17 @@ function extractIn(command, ctx) {
     // `trap 'cd ../notes' DEBUG; cp ..` moved bash and zsh before the cp): a text this shell ran in place moves it exactly as a top-level cd
     // does, the sub-walk's directory state adopted (known or unknown, with the construct that made it so), the move recorded on the frames
     // around it and on a function body it stands in; a trap action that moves leaves the directory unknown, since when it fires is not known
-    if (sub.moved && opts.adopt) { dir = sub.dir; unknownDir = sub.unknownDir; unknownWhy = sub.unknownWhy; oldDir = sub.oldDir; movedHere(); markFunctionBody(); }
+    if (sub.moved && opts.adopt) {
+      // THE CONDITIONAL TEXT's move (round 7's twenty-first commit, 2026-09-23; the reviewer's verifier on the twentieth commit, by execution: `emulate sh
+      // -c 'cd ../scratch'; cp ../base/report.md report.md` from docs/ was allowed while bash and dash copied onto the tracked file, zsh alone having
+      // moved; the same through `mapfile -C 'cd ../scratch #' -c 1 </dev/null` (every shell copied: bash read no line), an alias this command defines
+      // on an earlier line (bash and zsh copied), a head splice of several words (zsh copied) and `source /dev/stdin` with a here-document (dash
+      // copied)): a text some shells run and others do not (conditionalText names which) leaves the directory unknown, the road named, where a text
+      // every shell runs in place moves the walk with it
+      if (opts.conditional) moveUnknown(`an earlier ${opts.conditional}, so where the shell is when a later command runs is not known`);
+      else { dir = sub.dir; unknownDir = sub.unknownDir; unknownWhy = sub.unknownWhy; oldDir = sub.oldDir; }
+      movedHere(); markFunctionBody();
+    }
     if (opts.adopt && opts.callArgs === undefined && sub.positionals !== undefined && sub.positionals !== positionals) (opts.rebind || bindPositionals)(sub.positionals, sub.positionalsWhy);   // THE POSITIONAL VALUE: a `set` or `shift` inside a text this shell ran in place rebinds this shell's positional parameters (`eval 'set -- cp'; "$@" a b`); through the caller's door where it has one (THE BIND'S FRAME: `(eval 'set -- other.md')` binds the subshell's)
     else if (sub.moved && opts.trapMove) { setUnknown('an earlier `trap` action moves the shell (its cd runs when the trap fires, before a later command under DEBUG or at exit), so where the shell is when the command runs is not known'); movedHere(); markFunctionBody(); }
   };
@@ -6611,17 +6666,19 @@ function extractIn(command, ctx) {
         const { text, chain, at = headIdx, kind } = headTexts[splicedUpTo];
         const before = renderWords(seg.words.slice(0, at));
         const after = renderWords(seg.words.slice(at + 1));
-        // THE CONDITIONAL TEXT: which shells run the spliced text as a command decides whose list a `set` or `shift` in it binds; an alias the
-        // command defines, a text of several words and a head that may be empty (THE VANISHED HEAD TEXT's reading, tagged where it is pushed) differ by
-        // shell or by a value the walk does not read (rebindConditional), a hashed or bound path, a
-        // glob's matches and zsh's `=cmd` name an external command that binds nothing, and a text of one word runs in every shell (the frame door)
+        // THE CONDITIONAL TEXT: which shells run the spliced text as a command decides whose list a `set` or `shift` in it binds and whether a cd in it
+        // moves this shell; an alias the command defines, a text of several words and a head that may be empty (THE VANISHED HEAD TEXT's reading, tagged
+        // where it is pushed) differ by shell or by a value the walk does not read (conditionalText); a hashed or bound path and zsh's `=cmd` name an
+        // external command, which binds nothing and moves nothing in this shell (externalText, round 7's twenty-first commit: the text is read for what it
+        // writes alone); a glob's matches and a text of one word run in every shell (frameText)
         const label = `\`${seg.words[at].raw}\``;
         const conditional = kind === 'alias' ? 'is an alias this command defines, which dash expands through `-c` and bash and zsh do not (zsh and dash expand it from a file or a pipe, bash under `expand_aliases`)'
           : kind === 'vanish' ? 'is a command name holding an expansion this command never gives a value, which may be empty, so whether the words after it run as a command of their own is not known'
           : kind === 'text' && /\s/.test(text) ? 'stands for a text of several words, which some shells split into a command and others run as one word they do not find (a quoted spelling is one word to every shell)'
           : null;
-        const door = conditional ? () => rebindConditional(label, conditional) : (ws, why) => rebindHere(seg, idx, null, label, ws, why);
-        recurse([before, text, after, redirs].filter(Boolean).join(' '), shell, false, ` through the command name \`${seg.words[at].raw}\``, stdinBodies(idx), chain, true, { adopt: true, rebind: door });   // the spliced text runs in this shell: a cd in it moves the shell (THE MOVED SHELL: `alias c=cd`, then `c ../notes`; `c=cd; $c ../notes`)
+        const external = kind === 'equals' || kind === 'hash' || kind === 'bound';
+        const door = external ? externalText : conditional ? conditionalText(label, conditional) : frameText(seg, idx, null, label);
+        recurse([before, text, after, redirs].filter(Boolean).join(' '), shell, false, ` through the command name \`${seg.words[at].raw}\``, stdinBodies(idx), chain, true, door);   // a spliced text runs in this shell by the door's reading: a cd in a text every shell runs moves the shell (THE MOVED SHELL: `alias c=cd`, then `c ../notes`; `c=cd; $c ../notes`)
       }
     };
     // THE KEYWORD DASH RUNS (round 6's eleventh commit, 2026-09-22; the round's verifiers: `alias function=cp`, then `function ../base/report.md
@@ -7222,7 +7279,7 @@ function extractIn(command, ctx) {
       case 'emulate': {
         // zsh's `emulate [-LR] [shell [flags]] -c TEXT` runs TEXT under the emulation, in this shell (round 6's third commit: `emulate sh -c 'cp a
         // b'` copied in zsh while the walk read an unknown command); the text after `-c` is a script of zsh, read as `eval`'s text is
-        for (let k = 0; k < args.length; k++) if (args[k].literal && args[k].text === '-c' && args[k + 1]) for (const tx of scriptTexts(args[k + 1], '`emulate -c` script')) recurse(tx, 'zsh', false, ' through `emulate -c`', null, aliasChain, false, { adopt: true, rebind: shell === 'zsh' ? (ws, why) => rebindHere(seg, idx, cmd, '`emulate -c`', ws, why) : () => rebindConditional('`emulate -c`', 'text runs in zsh alone (bash and dash find no `emulate`)') });   // THE CONDITIONAL TEXT: the walk knows the shell is zsh inside a script handed to it alone
+        for (let k = 0; k < args.length; k++) if (args[k].literal && args[k].text === '-c' && args[k + 1]) for (const tx of scriptTexts(args[k + 1], '`emulate -c` script')) recurse(tx, 'zsh', false, ' through `emulate -c`', null, aliasChain, false, shell === 'zsh' ? frameText(seg, idx, cmd, '`emulate -c`') : conditionalText('`emulate -c`', 'text runs in zsh alone (bash and dash find no `emulate`)'));   // THE CONDITIONAL TEXT: the walk knows the shell is zsh inside a script handed to it alone
         break;
       }
       case 'mapfile': case 'readarray': {
@@ -7230,7 +7287,22 @@ function extractIn(command, ctx) {
         // auditor: `mapfile -C 'cp a b #' -c 1 < f` copied in bash while the callback's text stood in the command unread): the text is a script
         // of this shell, read as eval's text is (the appended index and line are operands the text's last command takes; a text the resolver
         // cannot read refuses through scriptTexts, an expansion it never reads is the residual)
-        for (let k = 0; k < args.length; k++) if (args[k].literal && /^-[A-Za-z]*C$/.test(args[k].text) && args[k + 1]) for (const tx of scriptTexts(args[k + 1], `\`${name} -C\` callback`)) recurse(tx, shell, false, ` through \`${name} -C\``, null, aliasChain, false, { adopt: true, rebind: () => rebindConditional(`\`${name} -C\``, `callback runs in bash alone, once per \`-c\` count of lines read (an input of fewer lines never runs it; zsh and dash find no \`${name}\`)`) });   // THE CONDITIONAL TEXT
+        // THE GLUED CALLBACK (round 7's twenty-first commit, 2026-09-23; the reviewer's verifier on the twentieth commit, by execution: `mapfile -C'cp
+        // ../base/report.md report.md #' -c 1 <<< x` from docs/ was allowed while bash ran the callback and copied onto the tracked file, the site
+        // reading a `-C` that ends its word alone): bash takes a value-taking letter's value from the rest of its word when the rest is not empty, else
+        // from the next word (`-Ccb`, `-tCcb`, `-C cb`); the letters before the first `C` are read as flags, so a value-taking letter there (`-dC x`,
+        // where `d` takes `C`) reads a value as the callback, the safe side; a glued rest holding an expansion the resolver did not read is a callback
+        // it cannot read (THE RESOLVER'S CONTRACT), refused; a `-c` count is not read (a callback that runs once per several lines still runs)
+        for (let k = 0; k < args.length; k++) {
+          const a = args[k];
+          const m = a.text.match(/^-[A-Za-z]*?C/);
+          if (!m || !(a.literal || (a.marks && !a.marks.slice(0, m[0].length).includes('x')))) continue;   // the option letters themselves are literal
+          const glued = a.text.length > m[0].length ? sliceWord(a, m[0].length) : null;
+          if (glued && !glued.literal) { cannotRead(a, `\`${name} -C\` callback`, { kind: 'unresolvableReading', spelling: a.raw, text: `the callback glued to \`-C\` holds an expansion I do not read here, so the command bash runs for the lines read is not known` }); continue; }
+          const cb = glued || args[k + 1];
+          if (!cb) continue;
+          for (const tx of scriptTexts(cb, `\`${name} -C\` callback`)) recurse(tx, shell, false, ` through \`${name} -C\``, null, aliasChain, false, conditionalText(`\`${name} -C\``, `callback runs in bash alone, once per \`-c\` count of lines read (an input of fewer lines never runs it; zsh and dash find no \`${name}\`)`));   // THE CONDITIONAL TEXT
+        }
         break;
       }
       case 'alias': {
@@ -7269,10 +7341,20 @@ function extractIn(command, ctx) {
         // body, measured) reads what this command reads, in this shell (round 6's second commit); a sourced file's contents are not in the
         // command (the residual the surfaces name; the name poison VAR_POISONERS applies as before)
         const ops = args.length && args[0].literal && args[0].text === '--' ? args.slice(1) : args;   // `. -- FILE`: the option terminator (round 6's fourth commit: `. -- <(echo 'cp a b')` copied in bash and zsh while the `--` was read as the operand)
-        if (ops.length && ops[0].literal && isStdinName(ops[0].text)) for (const body of stdinBodies(idx, fdOfName(ops[0].text))) recurse(body, shell, false, ` through \`${name} ${ops[0].text}\``, [], aliasChain, false, { adopt: true, rebind: (ws, why) => rebindHere(seg, idx, cmd, `\`${name}\``, ws, why) });   // the descriptor named is read (THE DESCRIPTOR FEED: `. /dev/fd/3 3< <(..)`); a sourced text runs in this shell and moves it (THE MOVED SHELL)
+        // THE CONDITIONAL TEXT's `source` (round 7's twenty-first commit, 2026-09-23; the reviewer's verifier on the twentieth commit, by execution: `set --
+        // report.md; source /dev/stdin <<'EOF'`, `set -- other.md`, `EOF`, `cp ../base/report.md $1` from docs/ was allowed while dash copied onto the
+        // tracked file, and under `sh -c` every shell did; `source /dev/stdin` with `cd ../scratch` in the body before the copy the same): `source` is
+        // bash's and zsh's spelling; dash finds no such command, prints `source: not found` and goes on to the next command, so a text sourced through
+        // it runs in bash and zsh alone, and its `set`, `shift` or `cd` binds or moves this shell in those alone (`.` is every shell's). The text runs in
+        // this shell's frame in every shell that reaches the next command where the walk knows the shell is bash or zsh, where the operand is a
+        // process substitution and where this command carries a here-string (dash parses neither `<(..)` nor `<<<`: the syntax error ends its script,
+        // measured, so no later command runs there); anywhere else `source` takes THE CONDITIONAL TEXT's door
+        const inPlace = name === '.' || shell === 'bash' || shell === 'zsh' || seg.herestring;
+        const sourceDoor = () => (inPlace ? frameText(seg, idx, cmd, `\`${name}\``) : conditionalText('`source`', 'text runs in bash and zsh alone (dash finds no `source`, and goes on to the next command)'));
+        if (ops.length && ops[0].literal && isStdinName(ops[0].text)) for (const body of stdinBodies(idx, fdOfName(ops[0].text))) recurse(body, shell, false, ` through \`${name} ${ops[0].text}\``, [], aliasChain, false, sourceDoor());   // the descriptor named is read (THE DESCRIPTOR FEED: `. /dev/fd/3 3< <(..)`); a sourced text runs in this shell and moves it (THE MOVED SHELL) by the door's reading
         // a sourced process substitution is the text a literal echo or printf prints, as a script operand that is one is (round 6's third
         // commit: `. <(echo 'cp a b')` copied in bash and zsh, zsh's `. =(echo '..')` too, while the operand was read as a file outside the command)
-        else if (ops.length && procsubOf(ops[0]) != null) for (const t of scriptTexts(ops[0], `\`${name}\` operand`, 'file')) recurse(t, shell, false, ` through \`${name} <(..)\``, null, aliasChain, false, { adopt: true, rebind: (ws, why) => rebindHere(seg, idx, cmd, `\`${name}\``, ws, why) });
+        else if (ops.length && procsubOf(ops[0]) != null) for (const t of scriptTexts(ops[0], `\`${name}\` operand`, 'file')) recurse(t, shell, false, ` through \`${name} <(..)\``, null, aliasChain, false, frameText(seg, idx, cmd, `\`${name}\``));   // the operand is a form dash does not parse: every shell that reaches the next command ran the text (the frame door for both spellings)
         else if (positionals !== null) rebindHere(seg, idx, cmd, `\`${name}\``, UNKNOWN_POSITIONALS, `an earlier \`${name}\` of a file whose contents are not in the command may rebind the positional parameters`);   // THE POSITIONAL VALUE: a sourced file runs in this shell and may set or shift them
         break;
       }
