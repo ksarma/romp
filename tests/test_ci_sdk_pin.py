@@ -26,7 +26,8 @@ This module holds five things, and it never skips: a pin that skips reports gree
    two steps, and GitHub Actions does not require unique names). The population is derived from
    the file's text by pytest_invocations (its docstring is the rule: `python -m pytest`, `python -mpytest`, a bare
    `pytest` or `py.test` at command position, in a named or unnamed step in the file's own layout, in a single-line,
-   quoted, continued, `run: |` or `run: >` scalar, a tag before it read through, backslash continuations joined as
+   quoted (closed on its line), continued, `run: |` or `run: >` scalar, a tag before it read through, backslash
+   continuations joined as
    the shell joins them, comment lines and pip installs excluded), and the two invocations the file is known to
    hold, the Python matrix step's Run pytest (the switch and the flag) and the vscode-extension job's served-page
    step (the flag; listed for the switch, since its job installs no SDK), are asserted present, so an empty read is
@@ -51,11 +52,16 @@ This module holds five things, and it never skips: a pin that skips reports gree
    line where a job key goes that the parser does not read as one (a quoted key) is red, so no step is read under the
    job above it. A name: key's own line is excused, and nothing else of the name: a name folded or continued onto a
    second line that spells pytest there is red on valid YAML, and the message says to reword it. The check does not
-   read YAML anchors, aliases or merge keys, nor a step written as a flow mapping or flow sequence, and fails
-   closed on them rather than model them (the owner's fail-closed design, 2026-09-23; ci.yml uses none): every anchor
-   (`&cmd`), alias (`*cmd`) and merge key (`<<:`) anywhere in ci.yml, and every flow mapping or flow sequence holding
-   a run, env or shell key or a name key beside another key, is red at its line (unread_yaml_forms), so a run, a step,
-   a steps list or an env reached through an alias is red where it is written. Outside the check: a run line that
+   read YAML anchors, aliases or merge keys, a step written as a flow mapping or flow sequence, a quoted scalar or a
+   flow collection continued past the line it opens on, or a double-quoted scalar holding a backslash escape, and
+   fails closed on them rather than model them (the owner's fail-closed design, 2026-09-23, and its first verify
+   pass; ci.yml uses none): every anchor (`&cmd`), alias (`*cmd`) and merge key (`<<:`) anywhere in ci.yml, every flow
+   mapping or flow sequence holding a run, env or shell key or a name key beside another key, every quoted scalar and
+   flow collection that does not close on the line it opens, and every double-quoted scalar holding a backslash (an
+   escape the parser does not decode: `\n` in a run starts a second command) is red at its line (unread_yaml_forms),
+   so a run, a step, a steps list or an env reached through an alias is red where it is written, and a key-shaped line
+   inside another key's quoted scalar over several lines is red at that scalar's opening line. Outside the check: a
+   run line that
    never spells pytest (a `$RUNNER` set elsewhere, `make test`), a pytest run by a script or action a step calls, and
    every other workflow file under .github/workflows/. The flag half
    keys on the spelling `-p no:anyio` with one space, the switch half on the merged value reading exactly 1 (a quoted
@@ -70,7 +76,8 @@ This module holds five things, and it never skips: a pin that skips reports gree
    PytestPopulation names it (review round 4's verify, 2026-09-23): an env: written as an alias or a flow mapping, a
    quoted or spaced key, a value continued on the next line or written as a block scalar, a key-shaped line inside
    another key's block scalar (that key's text to YAML), and a step's shell: or a job's defaults that spells the
-   switch are each red at their line. Outside
+   switch are each red at their line; a key-shaped line inside another key's quoted scalar over several lines is red
+   at that scalar's opening line (unread_yaml_forms, above). Outside
    that read: any write of the switch that does not spell its name, wherever it is written. Among them: one in a
    step's own run text (`env -i`, sudo's reset of the environment, an indirect unset such as `unset "${!ROMP_@}"`, a
    loop over the environment), one in a step's shell: or a job's defaults (`shell: env -i bash -e {0}`), one by a
@@ -725,8 +732,10 @@ class RequireSwitch(unittest.TestCase):
 # comment or a name: key, lies in the span of lines the parser read for a row, or the census names it. A line at the
 # jobs' indent that is not a job the parser reads is red too (unread_job_keys), so no step is read under the job above
 # it. Until 2026-09-23 the parser's limits were claimed red and a step in YAML's compact list style gave no row at all.
-# YAML anchors, aliases and merge keys, and a step in flow style, are not read at all: every one is red at its
-# line (unread_yaml_forms, the owner's fail-closed design, 2026-09-23), since the real file uses none.
+# YAML anchors, aliases and merge keys, a step in flow style, a quoted scalar or flow collection continued past its
+# line, and a double-quoted scalar holding a backslash escape are not read at all: every one is red at its line
+# (unread_yaml_forms, the owner's fail-closed design, 2026-09-23, and its first verify pass), since the real file uses
+# none.
 # ---------------------------------------------------------------------------------------------------------------------
 TOP_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):", re.M)                # a column-0 key of the workflow's mapping
 JOB_RE = re.compile(r"^  ([A-Za-z0-9_-]+):[ \t]*(?:#.*)?\n", re.M)           # a job: a bare key at indent 2 under jobs:
@@ -883,7 +892,9 @@ def _env_block(text, env_indent, keys_out=None):
     False for a key whose value runs on past its line or is a block scalar (the switch census, switch_line_census,
     counts only a clean key line as read). Not read at all: an `env:` line that carries anything after the colon but a
     comment (an alias `env: *x`, an anchor, a flow mapping), a line at the key indent this regex does not read as a key
-    (a quoted or spaced key), and a line less indented than the first key."""
+    (a quoted or spaced key), and a line less indented than the first key. A quoted value that runs on past its line
+    is not followed, so a key-shaped line inside it reads here as a key; unread_yaml_forms refuses such a value at its
+    opening line (the fail-closed design's first verify pass, 2026-09-23)."""
     pad = " " * env_indent
     m = re.search(r"^%senv:[ \t]*(?:#.*)?\n((?:%s .*\n|[ \t]*\n)+)" % (pad, pad), text, re.M)
     out = {}
@@ -1019,7 +1030,8 @@ def _step_run(stext):
     """The step's `run:` scalar as shell lines [(offset in stext, text, offset of its last line)] and an `unreadable`
     reason (None when the form is one this parser reads); the last line differs from the first for a folded paragraph
     or a plain scalar continued on later lines. Read: a single-line plain or quoted scalar, with continuation lines
-    indented past the key folded onto it; a `run: |` literal (with a `-` or `+` chomping indicator: the indicator
+    indented past the key folded onto it (a quoted scalar that runs on past its line, and a double-quoted one holding
+    a backslash escape, which this split does not decode, are refused by unread_yaml_forms); a `run: |` literal (with a `-` or `+` chomping indicator: the indicator
     changes trailing newlines only); a `run: >` folded block, each paragraph one command. Node properties before any of
     these (NODE_PROPERTIES_RE) are set aside, since they change no text of the scalar, so the scalar is split into its
     lines as the same scalar without them is: a tag (`!!str`) is read through. Not read, and reported so an invocation
@@ -1108,7 +1120,9 @@ def pytest_invocations(src, read=None, switch_read=None):
     unread_job_keys a job key this parser does not read. The run forms read are _step_run's; comment lines are skipped;
     a line ending in an unescaped backslash is joined with the next the way the shell joins it (_continues,
     _join_continuation: nothing inserted). Not read, and red at their lines by unread_yaml_forms instead: an anchor,
-    an alias, a merge key, and a step in flow style. Outside this parser by construction: a pytest run by a
+    an alias, a merge key, a step in flow style, a quoted scalar or flow collection continued past its line, and a
+    double-quoted scalar holding a backslash escape (this parser reads a quoted run's text as written, and decodes no
+    escape). Outside this parser by construction: a pytest run by a
     script or action the workflow calls, and a run line that never spells pytest (a `$RUNNER` variable set elsewhere,
     or `make test`)."""
     sections = _top_sections(src)
@@ -1324,7 +1338,9 @@ def switch_line_census(src):
     else sets or clears the switch where the merge does not look and reds here: an `env:` written as an alias (`env:
     *x`) or a flow mapping, a quoted or spaced key, a value continued on the next line or written as a block scalar, a
     key-shaped line inside another key's block scalar (that key's text to YAML), a step's `shell:` or a job's `defaults:
-    run: shell:` that spells the name, a line in a layout the parser does not read. Until 2026-09-23 each of these read
+    run: shell:` that spells the name, a line in a layout the parser does not read. A key-shaped line inside another
+    key's quoted scalar over several lines is read here as a key line, and unread_yaml_forms refuses that scalar at its
+    opening line (the fail-closed design's first verify pass). Until 2026-09-23 each of these read
     ok beside a pytest step that ran with the switch at 0, `1 0` or unset. Keyed on the spelling over the whole file, so
     a name: or an if: that spells the switch reds too: rename it. What this census cannot see is a write that does not
     spell the name (module docstring, item 1)."""
@@ -1371,7 +1387,8 @@ def unread_job_keys(src):
 
 
 STEP_FLOW_KEYS = ("run", "env", "shell")     # keys that make a flow collection a step's to this check
-YAML_FORMS_UNREAD = "this check does not read YAML anchors, aliases or merge keys, nor a step written in flow style"
+YAML_FORMS_UNREAD = ("this check does not read YAML anchors, aliases or merge keys, a step written in flow style, a quoted "
+                     "scalar or flow collection continued past its line, nor a double-quoted scalar holding a backslash escape")
 
 
 def _yaml_quote_end(line, i, quote):
@@ -1402,13 +1419,20 @@ def unread_yaml_forms(src):
     some: an anchor on a name: value aliased by `run: *cmd`, an anchored step or steps list aliased into a job without
     the switch, `env: *x` with its anchor on a line of its own, and a flow mapping over several lines whose name line
     carried a JSON-style `"run":` each read green beside a pytest run without the switch or the flag (the pre-push
-    lenses' plants). The real ci.yml uses none of these, so each is red at its line and never modelled. Keyed on a line
-    scan, not a YAML parser: a node starts at a line's first character, after a sequence's `- `, after a key's colon,
-    and after `[`, `{` or `,` inside a flow collection; a block scalar's lines (every line indented past the key or dash
-    that opened it with `|` or `>`) are text and are not read. A quoted scalar or a flow collection left open at the end
-    of the file is refused at the line that opened it; a quoted scalar's later lines are its text. The scan errs on the
-    side of red: a line that continues a plain scalar is read as if it began a node, so a continuation line that begins
-    with `&`, `*` or `<<:` is red on valid YAML; reword it."""
+    lenses' plants). Refused as well, since the scan reads one line at a time (the fail-closed design's first verify
+    pass, 2026-09-23): every quoted scalar and every flow collection that does not close on the line it opens, and
+    every double-quoted scalar holding a backslash escape. Until then a plain scalar continued onto a line that opens
+    with a quote made the scan read a quoted scalar YAML never opened, so the lines up to the next such quote went
+    unread and an anchor or alias there read green (the lenses' env alias, name anchor and anchored step plants each
+    behind such a line); a key-shaped line inside another env key's quoted scalar over several lines read as the
+    switch on; and a double-quoted run's `\\n` escape started a second pytest command, without the flag, that the
+    parser read as part of the first. The real ci.yml uses none of these, so each is red at its line and never
+    modelled. Keyed on a line scan, not a YAML parser: a node starts at a line's first character, after a sequence's
+    `- `, after a key's colon, and after `[`, `{` or `,` inside a flow collection; a block scalar's lines (every line
+    indented past the key or dash that opened it with `|` or `>`) are text and are not read, and a refused quoted
+    scalar or flow collection is followed to its close, so its later lines are not read as nodes. The scan's error
+    runs one way: a line that continues a plain scalar is read as if it began a node, so one that opens with `&`, `*`
+    or `<<:`, or with a quote or a bracket that does not close on the line, is red on valid YAML; reword it."""
     out = []
     block_at = None       # inside a block scalar: its lines are those indented past this column
     quote = None          # a quoted scalar open at the end of the previous line: (quote character, its opening line)
@@ -1496,8 +1520,11 @@ def unread_yaml_forms(src):
             if ch in "\"'":
                 end = _yaml_quote_end(raw, i + 1, ch)
                 if end is None:
+                    refuse(n, "a quoted scalar continued past its line")
                     quote = (ch, n)
                     break
+                if ch == '"' and "\\" in raw[i:end]:
+                    refuse(n, "a double-quoted scalar holding a backslash escape")
                 opened, text, i, start = i, raw[i + 1:end - 1], end, False
                 j = i
                 while j < size and raw[j] in " \t":
@@ -1533,10 +1560,8 @@ def unread_yaml_forms(src):
                     key(text, n, False)
                     expect_key = False
                 i, start = j, False
-    if quote:
-        refuse(quote[1], "a quoted scalar left open at the end of the file")
-    for bracket, opened, _keys in flow:
-        refuse(opened, "a flow collection (%s) left open at the end of the file" % bracket)
+        for bracket, opened, _keys in flow:
+            refuse(opened, "a flow collection (%s) continued past its line" % bracket)
     return sorted(out)
 
 
@@ -1715,10 +1740,11 @@ class PytestPopulation(unittest.TestCase):
     line that spells pytest (PYTEST_WORD_RE), outside a comment or a name: key and other than a pip install, lies in
     the span of lines the parser read for a row, parsed or unparsed, whatever its layout, or the line census names it;
     a mention the parser reads but not as a command is red as unparsed until it is read; every line where a job key
-    goes is a job the parser reads, so no step is read under the job above it; and no YAML anchor, alias, merge key, or
-    step in flow style appears in the file, each red at its line, since the check does not read them (the
-    owner's fail-closed design, 2026-09-23). Outside the check: a run line that never spells pytest, a pytest run by a
-    script or action a step calls, and any other workflow file."""
+    goes is a job the parser reads, so no step is read under the job above it; and no YAML anchor, alias, merge key,
+    step in flow style, quoted scalar or flow collection continued past its line, or double-quoted scalar holding a
+    backslash escape appears in the file, each red at its line, since the check does not read them (the owner's
+    fail-closed design, 2026-09-23, and its first verify pass). Outside the check: a run line that never spells pytest,
+    a pytest run by a script or action a step calls, and any other workflow file."""
     def setUp(self):
         self.src = open(WF).read()
         self.found = pytest_invocations(self.src)
@@ -1785,14 +1811,17 @@ class PytestPopulation(unittest.TestCase):
     def test_ci_yml_holds_no_yaml_form_the_check_refuses(self):
         # the owner's fail-closed design (2026-09-23): the parser and the two censuses read no YAML anchor, alias or
         # merge key and no step written in flow style, and the pre-push lenses planted each beside a pytest run
-        # without the switch or the flag and read green. The real file uses none of them, so each is refused at its line
-        # (unread_yaml_forms; its cases in PopulationCheckReds) and none is modelled
+        # without the switch or the flag and read green; its first verify pass found the same behind a quoted scalar
+        # or flow collection carried to the next line, and in a double-quoted run's escape. The real file uses none of
+        # them, so each is refused at its line (unread_yaml_forms; its cases in PopulationCheckReds) and none is modelled
         found = unread_yaml_forms(self.src)
         self.assertEqual(found, [], "lines of ci.yml in a YAML form " + YAML_FORMS_UNREAD + " (a flow mapping or sequence "
                          "holding a run, env or shell key, or a name key beside another key). Keyed on a line scan outside "
                          "block scalars: rewrite the line in the file's block layout without the anchor, alias, merge key "
-                         "or flow collection (a plain scalar continued onto a line that begins with &, * or <<: reads as "
-                         "one: reword it):\n  " + "\n  ".join("line %d: %s (%s)" % f for f in found))
+                         "or flow collection, each quoted scalar closed on its line and a double-quoted one without a "
+                         "backslash (a plain scalar continued onto a line that begins with &, * or <<:, or with a quote or "
+                         "bracket that does not close there, reads as one: reword it):\n  "
+                         + "\n  ".join("line %d: %s (%s)" % f for f in found))
         # the scan reads to the end of the real file: an alias appended as its last line is named there (a scan left
         # inside a block scalar, or stopped early, would read nothing after the point it stopped)
         last = len(self.src.rstrip("\n").splitlines()) + 1
@@ -2730,26 +2759,29 @@ class PopulationCheckReds(unittest.TestCase):
         # the owner's fail-closed design (2026-09-23; the pre-push lenses' N04 and N05): the parser reads no step in
         # flow style, and a flow mapping over several lines whose name line carried a JSON-style `"run":` key read
         # green, the census excusing the line as a lone name key. A flow mapping or sequence holding a run, env or shell
-        # key, or a name key beside another key, is refused at the key's line
-        for label, text, named, what in (
+        # key, or a name key beside another key, is refused at the key's line; one written over several lines is
+        # refused at its opening line as well (the fail-closed design's first verify pass: no scan state crosses a line)
+        over_lines = (1, "a flow collection ({) continued past its line")
+        for label, text, named in (
                 ('a JSON-style "run": after the name, over several lines (N04)',
-                 '      - {\n          name: FlowAdj, "run":python -m pytest tests/test_a.py -q\n        }\n', 2, "a flow mapping holding the key 'run'"),
+                 '      - {\n          name: FlowAdj, "run":python -m pytest tests/test_a.py -q\n        }\n',
+                 [over_lines, (2, "a flow mapping holding the key 'run'")]),
                 ("the same with 'run': (N05)",
-                 "      - {\n          name: FlowAdj, 'run':python -m pytest tests/test_a.py -q\n        }\n", 2, "a flow mapping holding the key 'run'"),
-                ("a one-line flow step", "      - {name: Flow step, run: python -m pytest tests/test_a.py -q}\n", 1, "a flow mapping holding the key 'run'"),
-                ("a flow env on a flow step", '      - {name: Flow env, env: {%s: "0"}, uses: ./a}\n' % SWITCH, 1, "a flow mapping holding the key 'env'"),
-                ("a shell key in a flow sequence's mapping", "      - uses: ./a\n        with: [{shell: bash}]\n", 2, "a flow mapping holding the key 'shell'"),
-                ("a name beside another key", "      - {name: Flow action, uses: ./.github/actions/a}\n", 1, "a flow mapping holding a name key beside another key"),
+                 "      - {\n          name: FlowAdj, 'run':python -m pytest tests/test_a.py -q\n        }\n",
+                 [over_lines, (2, "a flow mapping holding the key 'run'")]),
+                ("a one-line flow step", "      - {name: Flow step, run: python -m pytest tests/test_a.py -q}\n", [(1, "a flow mapping holding the key 'run'")]),
+                ("a flow env on a flow step", '      - {name: Flow env, env: {%s: "0"}, uses: ./a}\n' % SWITCH, [(1, "a flow mapping holding the key 'env'")]),
+                ("a shell key in a flow sequence's mapping", "      - uses: ./a\n        with: [{shell: bash}]\n", [(2, "a flow mapping holding the key 'shell'")]),
+                ("a name beside another key", "      - {name: Flow action, uses: ./.github/actions/a}\n", [(1, "a flow mapping holding a name key beside another key")]),
                 # an entry of a flow mapping is a key whatever follows it, read up to its first colon
-                ("a plain run key with no space after its colon", "      - {name: Tight, run:python -m pytest tests/test_a.py -q}\n", 1,
-                 "a flow mapping holding the key 'run'")):
+                ("a plain run key with no space after its colon", "      - {name: Tight, run:python -m pytest tests/test_a.py -q}\n",
+                 [(1, "a flow mapping holding the key 'run'")])):
             with self.subTest(form=label):
                 src, first = self._with_first_step_in_shell_job(text)
-                line = first + named - 1
-                self.assertEqual([(n, w) for n, _t, w in unread_yaml_forms(src)], [(line, what)], label)
+                self.assertEqual([(n, w) for n, _t, w in unread_yaml_forms(src)], [(first + k - 1, what) for k, what in named], label)
         # a flow collection or a quoted scalar left open at the end of the file is refused at the line that opened it
-        for label, tail, what in (("a flow sequence", "zz-open: [a, b\n", "a flow collection ([) left open at the end of the file"),
-                                  ("a quoted scalar", 'zz-open: "text\n', "a quoted scalar left open at the end of the file")):
+        for label, tail, what in (("a flow sequence", "zz-open: [a, b\n", "a flow collection ([) continued past its line"),
+                                  ("a quoted scalar", 'zz-open: "text\n', "a quoted scalar continued past its line")):
             with self.subTest(open=label):
                 src = self.src.rstrip("\n") + "\n" + tail
                 self.assertEqual(unread_yaml_forms(src), [(len(src.splitlines()), tail.strip(), what)], label)
@@ -2762,6 +2794,89 @@ class PopulationCheckReds(unittest.TestCase):
         for label, text in (("a flow sequence of values", "      - uses: ./a\n        with:\n          list: ['3.10', \"3.13\", main]\n"),
                             ("a flow mapping of inputs", "      - uses: actions/setup-python@v5\n        with: {python-version: '3.12', cache: pip}\n"),
                             ("a name alone", "      - uses: ./a\n        with: {name: only}\n")):
+            with self.subTest(control=label):
+                self.assertEqual(unread_yaml_forms(self._with_first_step_in_shell_job(text)[0]), [], label)
+
+    def test_a_quoted_scalar_or_flow_collection_continued_past_its_line_and_a_double_quoted_escape_are_refused(self):
+        # the fail-closed design's first verify pass (2026-09-23): the scan carried a quoted scalar or flow collection
+        # to the next line as YAML does, and a plain scalar continued onto a line that opens with a quote or a bracket
+        # carried one YAML never opened, so the lines up to the next such quote or bracket were not read as nodes: the
+        # env alias, name anchor and anchored step plants behind such a line (W01 to W03) each read green beside a
+        # pytest run without the switch or the flag. A key-shaped switch line inside another env key's quoted scalar
+        # over several lines (Z01 to Z04b, Z14) read as the switch on, and a double-quoted run's \n escape started a
+        # second pytest command without the flag that the parser read as part of the first (Q01; a \x escape spells
+        # pytest or the switch in text the checks read without it, Q02 and Q03). Each was silent at the round-4 takes
+        # head and at the owner's fail-closed head. Each is refused at the line that opens it, and nothing else here is
+        # red (asserted per plant), so the refusal is what reds it
+        sw_job = '    runs-on: ubuntu-latest\n    env:\n      %s: "1"\n' % SWITCH
+        run_ok = "        run: python -m pytest tests/test_a.py -q -p no:anyio\n"
+        quote = "a quoted scalar continued past its line"
+        escape = "a double-quoted scalar holding a backslash escape"
+        for label, where, text, named in (
+                ("an env alias, each name continued onto a line opening with a double quote (W01)", "job",
+                 "  setter:\n" + sw_job + '    steps:\n      - name: Env anchor\n          "x\n        env:\n          &zeroenv\n'
+                 '          %s: "0"\n        run: echo anchor\n      - name: Env alias (pytest)\n          "y\n        env: *zeroenv\n' % SWITCH + run_ok,
+                 ((7, quote), (13, quote))),
+                ("a name anchor aliased by a run, behind a name continued onto a line opening with a double quote (W02)", "first",
+                 '      - name: Prior step\n          "x\n        run: echo prior\n      - name: &cmd python -m pytest tests/test_a.py -q\n'
+                 "        run: *cmd\n", ((2, quote),)),
+                ("an anchored step aliased into a switchless job, behind a single quote (W03)", "job",
+                 "  anch:\n" + sw_job + "    steps:\n      - name: Prior\n          'x\n        run: echo prior\n      - &pystep\n"
+                 "        name: Anchored step (pytest)\n" + run_ok + "  alias:\n    runs-on: ubuntu-latest\n    steps:\n      - *pystep\n",
+                 ((7, quote),)),
+                ("the switch line inside a step env's double-quoted scalar (Z01)", "last",
+                 '      - name: Quoted text (pytest)\n        env:\n          NOTES: "first line\n          %s: \'1\'\n          end"\n' % SWITCH + run_ok,
+                 ((3, quote),)),
+                ("the same in a single-quoted scalar (Z02)", "last",
+                 "      - name: Single quoted text (pytest)\n        env:\n          NOTES: 'first line\n          %s: \"1\"\n          end'\n" % SWITCH + run_ok,
+                 ((3, quote),)),
+                ("the switch line inside a step name's quoted scalar over the env: lines (Z04b)", "last",
+                 '      - name: "Quoted name\n        env:\n          %s: \'1\'\n        tail"\n' % SWITCH + run_ok, ((1, quote),)),
+                ("a quoted scalar opened on a later key's line (Z14)", "last",
+                 '      - name: Quoted text two (pytest)\n        env:\n          A: plain\n          B: "open\n          %s: \'1\'\n'
+                 '          "\n' % SWITCH + run_ok, ((4, quote),)),
+                ("a double-quoted run whose \\n escape starts a second, unflagged pytest (Q01)", "last, switch",
+                 '      - name: Escaped newline (pytest)\n        run: "python -m pytest tests/test_a.py -q -p no:anyio \\npytest tests/test_b.py -q"\n',
+                 ((2, escape),)),
+                ("a double-quoted run whose \\x escape spells pytest (Q02)", "last",
+                 '      - name: Escaped word\n        run: "python -m py\\x74est tests/test_a.py -q"\n', ((2, escape),)),
+                ("a double-quoted env key whose \\x escape spells the switch, set to 0 (Q03)", "last, switch",
+                 '      - name: Escaped key (pytest)\n        env:\n          "ROMP_SDK_\\x52EQUIRE": "0"\n' + run_ok, ((3, escape),))):
+            with self.subTest(form=label):
+                if where == "job":
+                    src, first = self._with_job_before_shell(text)
+                elif where == "first":
+                    src, first = self._with_first_step_in_shell_job(text)
+                else:
+                    src, first = self._with_step_in_shell_job(text, self._with_shell_job_env(self.src) if "switch" in where else None)
+                want = [(first + k - 1, src.splitlines()[first + k - 2].strip(), what) for k, what in named]
+                self.assertEqual(unread_yaml_forms(src), want, label)
+                self.assertEqual((self._new_bad(src), pytest_line_census(src)[1], switch_line_census(src)[1], unread_job_keys(src)[1]),
+                                 ([], [], [], []), "%s: the refusal is the one red" % label)
+        # a job env's quoted scalar over several lines holding the switch line (Z03): refused at its opening line
+        src = self.src.replace("\n  shell:\n    name: Shell", '\n  shell:\n    env:\n      NOTES: "first\n      %s: \'1\'\n      end"\n    name: Shell' % SWITCH, 1)
+        self.assertNotEqual(src, self.src, "the shell job's header moved: re-anchor this case")
+        src, _first = self._with_step_in_shell_job("      - name: Job quoted text (pytest)\n" + run_ok, src)
+        at = [n + 1 for n, l in enumerate(src.splitlines()) if l == '      NOTES: "first']
+        self.assertEqual(unread_yaml_forms(src), [(at[0], 'NOTES: "first', quote)])
+        # a flow collection continued past its line is refused at its opening line, and the lines inside it are read as
+        # flow content: an alias after a dash there was not named (an anchored step aliased behind a name continued onto
+        # a line opening with `[`); and a flow sequence of values over two lines is refused alone
+        src, first = self._with_job_before_shell("  anch:\n" + sw_job + "    steps:\n      - &pystep\n        name: Anchored step (pytest)\n" + run_ok +
+                                                 "  alias:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Prior\n          [y\n      - *pystep\n"
+                                                 "      - name: Closer y]\n")
+        self.assertEqual([(n - first + 1, w) for n, _t, w in unread_yaml_forms(src)],
+                         [(6, "an anchor (&pystep)"), (13, "a flow collection ([) continued past its line")])
+        src, first = self._with_first_step_in_shell_job("      - uses: ./a\n        with:\n          list: ['3.10',\n            main]\n")
+        self.assertEqual(unread_yaml_forms(src), [(first + 2, "list: ['3.10',", "a flow collection ([) continued past its line")])
+        # a refused quoted scalar is followed to its close: its later lines are its text, never nodes, so a second line
+        # opening with `&` is not also an anchor
+        src, first = self._with_first_step_in_shell_job('      - name: "Build\n          &x and *y test"\n        run: echo hi\n')
+        self.assertEqual(unread_yaml_forms(src), [(first, '- name: "Build', quote)])
+        # the controls: quoted scalars closed on their line, a single-quoted one holding `''`, and a double-quoted one
+        # without a backslash, in a run, a name and an action's inputs
+        for label, text in (("closed quoted scalars", '      - name: "Quoted (x)"\n        run: \'echo \'\'a\'\' "b"\'\n'),
+                            ("a double-quoted value in a flow mapping", '      - uses: ./a\n        with: {a: "x, *y", b: \'z\'}\n')):
             with self.subTest(control=label):
                 self.assertEqual(unread_yaml_forms(self._with_first_step_in_shell_job(text)[0]), [], label)
 
