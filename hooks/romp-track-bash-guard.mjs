@@ -4269,6 +4269,11 @@ const NEVER_EMPTY_EXPANSION = /^(?:\$\(\(|\$\{#|\$[?$#0]$|\$\{[?$#0]\}$)/;   // 
 // (`[@]`, `[*]`, an arithmetic, flagged or quoted subscript), and a word of several such expansions is not one subscript, so the head keeps its place
 // and `$argv[*] cp a b` copies in zsh while allowed: filed, not changed here, as 60 rows of THE RESIDUAL TABLE under the class 'a positional the
 // resolver reads at the word by a model the shell does not keep', for the round's ruling.
+// a word whose every expansion is a positional form (`$N`, `${N..}`, `$@`, `$*`, `$#`, their braced forms, zsh's `$argv..` and `${argv..}`, `$@[..]`, `$*[..]`):
+// with those removed no `$` or backtick remains (THE UNREAD HEAD: such a head in a body being defined is the call's, and at the top level before any
+// `set` the residual the property names, not a text of the command the resolver did not read)
+const POSITIONAL_FORM = /\$(?:[0-9@*#]|\{#?[0-9@*][^}]*\}|argv|\{argv[^}]*\})/g;
+const allPositional = (raw) => /\$/.test(raw) && !/[$`]/.test(raw.replace(POSITIONAL_FORM, ''));
 const ZSH_POSITIONAL_SUBSCRIPT = /^\$(?:argv|[@*])\[-?[0-9]+(?:,-?[0-9]+)?\]$/;   // the whole word: the list's unbraced name and one subscript, unquoted
 const ZSH_SUBSCRIPT_AFTER_LIST = /^\[-?[0-9]+(?:,-?[0-9]+)?\]/;   // the subscript opening a literal run that follows the list's name (candidateTexts)
 const ENDS_WITH_LIST_NAME = /\$(?:argv|[@*])$/;   // the expansion run before such a literal run ends with the list's unbraced name
@@ -4846,6 +4851,7 @@ function extractIn(command, ctx) {
   // side is the refusal it already gives an unreadable name). A name no assignment word gives a value (a loop variable, a name read, a
   // positional parameter) stays the residual the property names.
   const candidates = ctx.candidates || new Map();
+  const vanishedValues = ctx.vanishedValues || new Set();   // THE VANISHED VALUE (round 7's twenty-third commit, 2026-09-23): the names one of whose values is THE VANISHED TEXT's reading (the expansions the command never gives a value removed: `v=$(cat f)` holds the empty text beside whatever the cat printed), so a word over such a name stands for the value read AND for a text not read; candidateTexts marks the texts it answers over one `vanished`, scriptTexts raises vanishedRead (or the head road's meta) on them, and THE UNHELD ROAD is taken beside the reading wherever this shell runs the text in place
   const unreadValues = ctx.unreadValues || new Set();   // the names a value the resolver looked at and could not establish is given (round 6's fifth commit): a command name or script formed from such a name is UNRESOLVABLE
   const noteCandidate = (w) => {
     const m = w.text.match(/^([A-Za-z_][A-Za-z0-9_]*)(\+?=)([^]*)$/);
@@ -4871,9 +4877,10 @@ function extractIn(command, ctx) {
       if (ts.length) return ts.map(strip);
       const c = candidateTexts(w);
       if (c && c.unread) { unreadValues.add(m[1]); return []; }
-      if (c) return c.texts.map(strip);
+      if (c) { if (c.vanished) vanishedValues.add(m[1]); return c.texts.map(strip); }   // THE VANISHED VALUE: a value composed over a name that holds one holds one too (`d=$(cat f); c=$d`)
       const v = candidateTexts(w, true);   // THE VANISHED TEXT: a value whose expansions the command never gives values holds the text with them removed (`x="cp $c a b"; $x` ran the two-operand copy)
       if (v && v.unread) { unreadValues.add(m[1]); return []; }
+      if (v) vanishedValues.add(m[1]);   // THE VANISHED VALUE (round 7's twenty-third commit; the reviewer's verifier on the twenty-second: `v=$(cat ../scratch/x); set -- other.md; $v; cp ../base/report.md $1` and `. /dev/stdin <<< "$v"` from docs/ ran the file's `set -- report.md` in the shells named while the name's one candidate, the empty text, was read as the whole value): the name holds the text read and whatever the removed expansion stood for
       return v ? v.texts.map(strip) : [];
     })();
     // `+=` appends the text to the value the name holds (bash: Shell Parameters; zsh: Simple Commands and Pipelines), so each value noted so far
@@ -4939,11 +4946,23 @@ function extractIn(command, ctx) {
   const UNKNOWN_POSITIONALS = 'unknown';
   let positionals = ctx.callArgs != null ? ctx.callArgs : null;   // an array of words (known), UNKNOWN_POSITIONALS (rebound to values not read), or null (not modelled)
   let positionalsWhy = ctx.positionalsWhy || null;
+  // THE STANDING TRAP (round 7's twenty-third commit, 2026-09-23; deriving THE UNHELD ROAD's population: `trap 'set -- report.md' DEBUG; set -- other.md; cp
+  // ../base/report.md $1` from docs/ was refused at the round-5 head and allowed since round 6 while bash and zsh copied onto the tracked file, the trap
+  // firing before the cp and rebinding the list the later `set` had bound; the same through `shift`, an action not read, and a trap set inside a function
+  // body then called): a trap whose action rebinds the list (or is a text not read) stands for the rest of this shell and fires before later commands
+  // (DEBUG), on an error (ERR), on a signal, so every LATER bind of this shell's list yields values not read too, the reason the trap's (trapText sets it
+  // where the trap reaches this shell: not in a subshell, a pipeline or a background job; a fresh shell inherits no trap). An EXIT trap's action runs after
+  // the last command and binds nothing a later command sees (trapText). The trap's MOVE keeps round 6's fifth commit's model (unknown from the trap on, a
+  // later `cd` making the directory known again): recorded for the reviewer, not changed here.
+  let trapBinds = ctx.trapBinds || null;
   // THE STALE POSITIONAL CANDIDATE (round 6's thirteenth commit, 2026-09-22; the round's verifiers on the twelfth commit's head): the notes below clear no
   // earlier bind's candidates, so after `set -- a; shift` candidateTexts still yields `a` for `1` at a head word or in a script text (`set -- a; shift;
   // ${1}cp a b` is read as `acp` while every shell runs cp): filed, not changed here, as 31 rows of THE RESIDUAL TABLE under the class 'a positional the
   // resolver reads at the word by a model the shell does not keep', for the round's ruling.
+  let rebound = false;   // a `set`, `shift` or in-place text rebound the list during this walk (the init binds below do not count): a trap action's sub-walk reports it, since its list starts as values not read and a `shift` leaves it so (trapText)
   const bindPositionals = (ws, why = null) => {
+    rebound = true;
+    if (trapBinds && ws !== UNKNOWN_POSITIONALS) { ws = UNKNOWN_POSITIONALS; why = trapBinds; }   // THE STANDING TRAP: a later bind is overtaken when the trap fires
     for (const k of [...vars.keys()]) if (/^[0-9]+$/.test(k)) vars.delete(k);
     if (ws === UNKNOWN_POSITIONALS) {
       positionals = ws;
@@ -4966,6 +4985,7 @@ function extractIn(command, ctx) {
   const positionalsApply = () => !frames.some((f) => f.kind === 'function' && !f.running && !f.coproc);
   if (Array.isArray(positionals)) bindPositionals(positionals);
   else if (positionals === UNKNOWN_POSITIONALS) bindPositionals(positionals, positionalsWhy);
+  rebound = false;
   // THE POSITIONAL LIST'S SPELLINGS (round 6's seventh commit, 2026-09-21; the residuals verifier: `f() { "${@:1}"; }; f cp a b`, `"${@:1:1}" "${@:2}"`,
   // `"${@: -3}"`, `"${@:1:$#}"`, `"${@:2}"` after `f x cp a b`, and zsh's `$argv`, `"${argv[@]}"`, `$argv[1] $argv[2] $argv[3]`, `"${(@)argv}"` and
   // `"${@[1,-1]}"` each ran the copy in the shells named while the word was an expansion the resolver never read): beside `$N`, `${N}`, `$@`, `$*`
@@ -5338,8 +5358,8 @@ function extractIn(command, ctx) {
   // the frame (an unread head, `$c set -- other.md` with `$c` never given a value, is the same question: whether the words after it run as a command
   // of their own); eval's text and a sourced text, which every shell runs in place, and an `emulate -c` inside a script the walk knows is zsh's, keep
   // the frame door. The road's text is still read for what it writes (`emulate sh -c 'cp a b'`, `alias c=cp` then `c a b` stay refused by name).
-  const rebindConditional = (label, how) => {
-    bindPositionals(UNKNOWN_POSITIONALS, `an earlier ${label} ${how}, and whether it rebinds this shell's positional parameters is not known`);
+  const rebindConditional = (label, how, why = null) => {   // `why`: THE UNHELD ROAD's own reason for a text not read (below); else the door's
+    bindPositionals(UNKNOWN_POSITIONALS, why || `an earlier ${label} ${how}, and whether it rebinds this shell's positional parameters is not known`);
     const g = frames.length && frames[frames.length - 1].kind === 'group' ? frames[frames.length - 1] : null;
     if (g) g.positionals = label;   // the closer's own reason replaces this one when the group turns out piped or backgrounded (the list stays values not read)
   };
@@ -5355,9 +5375,49 @@ function extractIn(command, ctx) {
   // other.md` and a copied `../scratch/x` whose source was `/usr/bin/set` the same (every shell copied), and `=cd ../scratch` before a copy the same way
   // (bash and dash copied): an external command binds nothing and moves nothing in this shell, so the text is read for what it writes and nothing of
   // the sub-walk's shell state comes back.
-  const frameText = (seg, idx, cmd, label) => ({ adopt: true, rebind: (ws, why) => rebindHere(seg, idx, cmd, label, ws, why) });
-  const conditionalText = (label, how) => ({ adopt: true, rebind: () => rebindConditional(label, how), conditional: label + ' ' + how });
+  // THE UNHELD ROAD (round 7's twenty-third commit, 2026-09-23; the reviewer's verifier on the twenty-second commit, by execution, and the class derived
+  // from it: `printf 'set -- report.md\n' > ../scratch/x; set -- other.md; . <(cat ../scratch/x); cp ../base/report.md $1` from docs/ was refused at the
+  // round-5 head and allowed since round 6 while bash and zsh copied onto the tracked file, the operand a process substitution whose command is no printer
+  // the guard reads; `v=$(cat ../scratch/x); set -- other.md; $v; cp ../base/report.md $1` the same (bash and dash), a command name that stands for a text
+  // the guard never read, and so the same head with operands (`$v -- report.md`, every shell), in a loop body, an if body, a `{ }` group, an `&&` list and a
+  // function body; `. /dev/stdin <<< "$(cat ../scratch/x)"`, `<<< "$v"`, a here-document holding `$(cat ..)`, a backtick or `$v`, each a sourced text whose
+  // one reading was the empty text; `emulate sh -c "$(cat ../scratch/x)"` (zsh), `mapfile -C "$(cat ../scratch/x)" -c 1 <<< x` (bash), `trap 'set -- report.md'
+  // DEBUG` and `trap "$v" DEBUG` (bash and zsh); and the move face of each, allowed at every head while the shells moved and copied onto the tracked note):
+  // every site that hands THIS shell a text to run in its own frame (eval's operands, a trap action, a `.` or `source` operand or feed, a command name that
+  // is an expansion, `emulate -c`'s text, a `mapfile -C` or `readarray -C` callback) asks for the texts first (readInPlace) and reads each through its door;
+  // where the set is EMPTY (the text is not in the command: a file's contents, an unfed standard input, a process substitution whose command is no printer,
+  // an expansion the resolver never read) or a text is a VANISHED reading (THE VANISHED TEXT and THE VANISHED VALUE: the expansions the command never gives
+  // a value removed, so the shell may run more than the text read), the text may `set`, `shift` or `cd` in this shell, so the list is rebound to values not
+  // read and the directory is left unknown, the construct and the text named, through the door's own bind (the frame door asks where the command stands, THE
+  // CONDITIONAL TEXT's names the shells that run it, a trap's names when it fires) and the move recorded on the frames and on a function body it stands in.
+  // Before, each site ran its loop over the texts, which ran zero times for a text not held, so an unread text took no door at all; the twentieth,
+  // twenty-first and twenty-second commits each closed one road of this shape (the emulate, mapfile, alias and splice doors; `source`; the fed standard
+  // input and the file operand) and the verifier found the next. An external command's text (externalText) binds nothing and moves nothing in this shell
+  // and is never unheld (a hashed, bound or `=name` path is a literal).
+  const unheldRoad = (rebind, subject) => {
+    if (positionals !== null && positionals !== UNKNOWN_POSITIONALS) rebind(UNKNOWN_POSITIONALS, `${subject} may rebind the positional parameters`);   // THE POSITIONAL VALUE: the text runs in this shell and may set or shift them; a list already values not read keeps its earlier reason (a spliced reading's own, THE CONDITIONAL TEXT's)
+    const s = walkIdx >= 0 ? segments[walkIdx] : null;
+    if (s && (s.op === '|' || s.op === '&')) return;   // a member that pipes into another command, or a backgrounded one, runs in a subshell in every shell (zsh keeps a pipeline's LAST member in this shell, whose op is not `|`; the bind above took the frame's reason), so its text moves nothing here: `$c echo 'cp a b' | bash` keeps the consumer's by-name refusal
+    moveUnknown(`${subject} may move the shell, so where the shell is when a later command runs is not known`);   // THE MOVED SHELL: and may cd
+    movedHere(); markFunctionBody();   // in a function body, the body moves the shell when the function is called (cdFunctions), as a literal cd there does
+  };
+  const frameText = (seg, idx, cmd, label) => ({ adopt: true, rebind: (ws, why) => rebindHere(seg, idx, cmd, label, ws, why), unheld: (what, subject = `an earlier ${label} of ${what}`) => unheldRoad((ws, why) => rebindHere(seg, idx, cmd, label, ws, why), subject) });
+  const conditionalText = (label, how) => ({ adopt: true, rebind: () => rebindConditional(label, how), conditional: label + ' ' + how, unheld: (what) => unheldRoad((ws, why) => rebindConditional(label, how, why), `an earlier ${label} ${how}, and it is ${what}, which`) });
   const externalText = { adopt: false };
+  // a trap action runs when the trap fires (before every command under DEBUG, at exit under EXIT, at a signal), so a `set` or `shift` inside a READ action
+  // rebinds this shell's list to values not read (which values it holds when a later command runs is not known: `trap 'set -- report.md' DEBUG; set -- other.md;
+  // cp ../base/report.md $1` from docs/ copied onto the tracked file in bash and zsh, refused at the round-5 head and allowed since round 6), a move inside one
+  // leaves the directory unknown (recurse's trapMove, round 6's fifth commit), and an action not read may do either; the frame question (a trap in a subshell
+  // is the subshell's) is rebindHere's, as for every bind of this shell's list
+  const TRAP_FIRES = 'when the trap fires (before every command under DEBUG, on an error under ERR, at a signal)';
+  const EXIT_SPEC = /^(?:0|(?:SIG)?EXIT)$/i;   // bash and zsh: `EXIT` or `0`, the SIG prefix optional, the case free (bash: Bourne Shell Builtins, trap)
+  const trapReaches = (seg, idx) => !frames.some((f) => f.kind === 'subshell' || f.coproc || f.conditional === '|') && seg.op !== '|' && seg.op !== '&' && !(idx > 0 && segments[idx - 1].op === '|');   // the trap is this shell's own (a subshell's, a pipeline member's or a background job's dies with its process; a body's, a group's or a conditional list's may be set, the safe side)
+  const trapText = (seg, idx, cmd, sigs) => {
+    if (sigs.length && sigs.every((s) => s.literal && EXIT_SPEC.test(s.text))) return { adopt: false };   // an EXIT trap's action runs after the last command: it binds and moves nothing a later command sees, and is read for what it writes alone
+    const stands = trapReaches(seg, idx);
+    const bind = (why) => { if (stands) trapBinds = why; rebindHere(seg, idx, cmd, '`trap`', UNKNOWN_POSITIONALS, why); };   // THE STANDING TRAP, then this shell's frame
+    return { adopt: false, trapMove: true, rebind: () => bind(`an earlier \`trap\` action rebinds the positional parameters ${TRAP_FIRES}, so what they hold when a later command runs is not known`), unheld: (what) => { const subject = `an earlier \`trap\` action that is ${what}, which runs ${TRAP_FIRES},`; if (stands) trapBinds = `${subject} may rebind the positional parameters`; unheldRoad((ws, why) => bind(why), subject); } };   // one line, so the adoption census (the nineteenth commit's rows) reads it
+  };
   // the readable form: a word of a segment holding assignment words alone (commandOf gave null), resolved by the caller
   const recordPlainWord = (w, seg, idx, seq) => {
     const m = w.raw.match(/^([A-Za-z_][A-Za-z0-9_]*)(\+?=)/);
@@ -5803,6 +5863,7 @@ function extractIn(command, ctx) {
     if (w.literal || !w.marks || !w.marks.includes('x')) return null;   // no expansion in the word (a glob-shaped head such as `[[`): nothing to stand for
     if (w.text.includes('\0') && (!vanish || NEVER_EMPTY_RUN.test(w.raw))) return null;   // a substitution the resolver did not read stands as a NUL: no candidate; THE VANISHED TEXT reads it as empty unless the spelling holds a never-empty form
     let texts = [''];
+    let vanished = false;   // THE VANISHED VALUE: a name used here holds a vanished reading, so the texts answered are one reading beside a text not read
     for (let i = 0; i < w.text.length;) {
       let j = i;
       while (j < w.text.length && w.marks[j] === w.marks[i]) j++;
@@ -5825,12 +5886,13 @@ function extractIn(command, ctx) {
         if (/^[0-9@*]+$/.test(n) && positionals === UNKNOWN_POSITIONALS) return { unread: n, why: positionalsWhy };
         if (unreadValues.has(n)) return { unread: n };
         if (!candidates.has(n)) { if (!vanish) return null; continue; }   // THE VANISHED TEXT: a name the command gives no value may be empty
+        if (vanishedValues.has(n)) vanished = true;
         texts = texts.flatMap((t) => [...candidates.get(n)].map((v) => t + v));
         if (texts.length > 64) return null;
       }
       i = j;
     }
-    return { texts };
+    return { texts, vanished };
   };
   headTextsOf = (w) => candidateTexts(w);   // THE SPLICED PRINTER reads THE HEAD CANDIDATES through activeHeadTexts above, which adds THE VANISHING HEAD's texts and answers nothing for a name whose value the resolver could not establish (scriptTexts refuses it at the head)
   // THE VANISHING HEAD's texts for a head word (round 6's eleventh commit): where the spelling may stand for no field (headMayVanish), the word is
@@ -5905,6 +5967,7 @@ function extractIn(command, ctx) {
         if (!vars.has(name) && !candidates.has(name)) { cannotRead(w, how, { kind: 'unresolvableReading', spelling: w.raw, text: `${stands} this command does not set \`${name}\`, so its value is the shell's own, which I do not read` }); return []; }
         if (vars.has(name)) texts.add(before + vars.get(name) + after);   // the value stands where the expansion stands, the literal text around it kept (`eval "${c:-cat} a b"` with c=cp runs `cp a b`)
         for (const v of candidates.get(name) || []) texts.add(before + v + after);
+        if (vanishedValues.has(name)) { vanishedRead = true; if (meta) meta.vanished = true; }   // THE VANISHED VALUE: one of the name's values is a text not read
       }
       return [...texts];
     }
@@ -5917,7 +5980,7 @@ function extractIn(command, ctx) {
       // was read as two commands)
       const c = candidateTexts(w);
       if (c && c.unread) { cannotRead(w, how, { kind: 'unresolvableReading', spelling: w.raw, text: c.why || `a value this command gives \`${c.unread}\` comes from a text I looked at and could not establish, so what the word stands for is not known` }); return []; }
-      if (c) return role === 'head' ? c.texts.map((t) => t.replace(/\n+/g, ' ')) : c.texts;
+      if (c) { if (c.vanished) { vanishedRead = true; if (meta) meta.vanished = true; } return role === 'head' ? c.texts.map((t) => t.replace(/\n+/g, ' ')) : c.texts; }   // THE VANISHED VALUE: the texts over a name holding a vanished reading are one reading beside a text not read, so THE UNHELD ROAD is taken beside them (the head road's meta, as THE VANISHED HEAD TEXT is tagged)
       // THE VANISHED HEAD TEXT (vanishedHeadTexts says why): a head word with no candidate text whose expansions the command never gives a
       // value stands for the text with them removed, one command the shell may run, beside the residual (its other values are not read;
       // the result's opaque flag is left as the whole-word reading leaves it, a `$(..)` head nested to RECURSION_CAP is read through);
@@ -5984,7 +6047,25 @@ function extractIn(command, ctx) {
     targets.push({ path: p.path, how: how + viaOf() });
   };
   let sawOpaqueCommand = false;
-  let vanishedRead = false;   // THE VANISHED TEXT: scriptTexts answered a text with an expansion the command never gives a value removed (the eval case reads it: such a text may rebind the positional parameters)
+  let vanishedRead = false;   // THE VANISHED TEXT: scriptTexts answered a text with an expansion the command never gives a value removed (readInPlace reads it: such a text is one reading beside a text not read, THE UNHELD ROAD's case)
+  // THE UNHELD ROAD's one reader for every site that runs a text in this shell's frame (frameText says why): `getTexts` answers the texts the site's word
+  // or feed stands for (through scriptTexts, whose vanished readings raise vanishedRead), `run` reads one text through the site's door, and the road is
+  // taken when the set is empty (`emptyIsUnheld` false where an empty set is nothing to judge: a function body being defined reads the standard input of
+  // its call, THE CALLED BODY's replay judging it) or a text was a vanished reading. Answers the texts and whether they were HELD (all read, none vanished).
+  // `positionalResidual`: the words a site hands over are each literal or glued from positionals alone (allPositional) while the list is not modelled
+  // (the top level before any `set`, a fresh shell's own: the residual the property names, the tool's shell handing none) or is the call's (a body being
+  // defined, whose call THE CALLED BODY replays with its operands): their texts are not this road's, as THE UNREAD HEAD's are not
+  const positionalResidual = (words) => words.length > 0 && (positionals === null || !positionalsApply()) && words.every((w) => w.literal || allPositional(w.raw));
+  const readInPlace = (getTexts, door, what, run, { emptyIsUnheld = true, road = true } = {}) => {
+    vanishedRead = false;
+    const texts = getTexts();
+    const vanished = vanishedRead;
+    vanishedRead = false;
+    for (const t of texts) run(t);
+    const held = texts.length > 0 && !vanished && texts.every((t) => !String(t).includes('\0'));   // a NUL in a fed text stands where a substitution the resolver did not read stood (lex: `. /dev/stdin <<< "$(cat ../scratch/x)"` hands the sourced text the NUL, and the sub-walk read a command named by it): not held whole
+    if (road && !held && door.unheld && (texts.length || emptyIsUnheld)) door.unheld(what);   // after the texts read, so the road's state stands (a read text's known move never hides the unread text's); `road` false where the texts are the call's or the residual (positionalResidual)
+    return { texts, held };
+  };
   // THE VALUED NAMES (round 6's fourth commit): the value of a SCRIPT_VALUED_NAMES assignment is a script of this shell, read through scriptTexts,
   // which since the tenth commit (THE VANISHED TEXT on this road; the round's verifiers: `PS4="\$(cp $c ../base/report.md report.md)"; set -x; true`
   // and the `$(true)` twin ran the copy in bash while the value held a live expansion the literal guard skipped) reads the value with the
@@ -6030,11 +6111,13 @@ function extractIn(command, ctx) {
     const homeValue = vars.has('HOME') && vars.get('HOME') != null ? [['HOME', vars.get('HOME')]] : [];
     const sub = extract(text, {
       dir, unknownDir, unknownWhy, shell: sh, depth: depth + 1, homeAssigned: homeUnreadableNow(), homeWhy: homeWhyNow(), unreadableNames, links, cdFunctions, mutated, keywordMode,
-      ifsNamed, candidates, unreadValues, execFeeds,   // THE IFS RULE, THE HEAD CANDIDATES and THE EXEC FEED hold in every text this command hands over, a fresh shell's included (round 6's fourth commit)
+      ifsNamed, candidates, unreadValues, vanishedValues, execFeeds,   // THE IFS RULE, THE HEAD CANDIDATES (THE VANISHED VALUE with them) and THE EXEC FEED hold in every text this command hands over, a fresh shell's included (round 6's fourth commit)
       aliases: fresh ? new Map() : aliases, hashes: fresh ? new Map() : hashes, aliasState: fresh ? { unread: null } : aliasState, bound, aliasChain: chain, headSplice: spliced,   // THE ALIAS ROAD: a fresh shell starts with no alias or hash; the paths made are on the filesystem for every shell
       spliceLine: spliced ? defLineOf(walkIdx >= 0 ? segments[walkIdx] : null) : undefined,   // a definition inside the splice binds at the spliced segment's line (defLineOf)
       functionBodies, functionLines, fnChain: opts.fnChain || fnChain, runFunction: opts.runFunction || null,   // THE CALLED BODY
-      callArgs: opts.callArgs !== undefined ? opts.callArgs : (spliced || opts.adopt ? positionals : null), positionalsWhy: opts.callArgs !== undefined ? null : positionalsWhy,   // THE POSITIONAL VALUE: a text this shell runs in place holds this shell's positional parameters; a fresh or fed shell has its own, which the guard does not read
+      callArgs: opts.callArgs !== undefined ? opts.callArgs : opts.trapMove ? UNKNOWN_POSITIONALS : (spliced || opts.adopt ? positionals : null),   // THE POSITIONAL VALUE: a text this shell runs in place holds this shell's positional parameters; a fresh or fed shell has its own, which the guard does not read; a trap action reads the list as it stands WHEN THE TRAP FIRES, which is not known (round 7's twenty-third commit: `set -- other.md; trap 'cp ../base/report.md $1' DEBUG; set -- report.md; true` copied onto the tracked file in bash while the action read the list at the trap)
+      positionalsWhy: opts.callArgs !== undefined ? null : opts.trapMove ? 'an earlier `trap` action runs when the trap fires (before every command under DEBUG, on an error under ERR, at a signal), so which values the positional parameters hold then is not known' : positionalsWhy,
+      trapBinds: fresh ? null : trapBinds,   // THE STANDING TRAP holds in every text this shell runs; a fresh shell inherits no trap
       lineBase: opts.lineBase !== undefined ? opts.lineBase : lineOf(walkIdx >= 0 ? segments[walkIdx] : null), lineStep: (ctx.lineStep || 1) / (String(text).split('\n').length + 1),   // the inner text's lines lie between this segment's line and the next (lineOf)
       vars: fresh ? new Map(homeValue) : new Map(vars), unreadableWhy: fresh ? new Map() : new Map(unreadableWhy), refTargets: fresh ? new Set() : new Set(refTargets), readonlyNames: fresh ? new Set() : new Set(readonlyNames), oldDir, varsPoisoned: fresh ? false : varsPoisoned, poisonWhy: fresh ? null : poisonWhy, definedFunctions,
       via: viaOf() + via,
@@ -6067,7 +6150,8 @@ function extractIn(command, ctx) {
       movedHere(); markFunctionBody();
     }
     if (opts.adopt && opts.callArgs === undefined && sub.positionals !== undefined && sub.positionals !== positionals) (opts.rebind || bindPositionals)(sub.positionals, sub.positionalsWhy);   // THE POSITIONAL VALUE: a `set` or `shift` inside a text this shell ran in place rebinds this shell's positional parameters (`eval 'set -- cp'; "$@" a b`); through the caller's door where it has one (THE BIND'S FRAME: `(eval 'set -- other.md')` binds the subshell's)
-    else if (sub.moved && opts.trapMove) { setUnknown('an earlier `trap` action moves the shell (its cd runs when the trap fires, before a later command under DEBUG or at exit), so where the shell is when the command runs is not known'); movedHere(); markFunctionBody(); }
+    if (opts.trapMove && sub.rebound) opts.rebind();   // a `set` or `shift` inside a trap action rebinds the list when the trap fires: values not read (trapText says why; `rebound`, since the action's list starts as values not read and a `shift` leaves it so)
+    if (sub.moved && opts.trapMove) { setUnknown('an earlier `trap` action moves the shell (its cd runs when the trap fires, before a later command under DEBUG or at exit), so where the shell is when the command runs is not known'); movedHere(); markFunctionBody(); }
   };
   // What a command at segment `idx` reads on stdin, as text the hook holds: its own heredocs and
   // here-strings, those of the commands piped into it (cat <<EOF | python3 -), and THE PIPED SCRIPT (round 5's fifth addendum,
@@ -6311,6 +6395,15 @@ function extractIn(command, ctx) {
     }
   };
   const popFunction = (f, upTo = walkIdx) => {
+    // THE BODY'S OWN STATE (round 7's twenty-third commit, 2026-09-23; the reviewer's verifier on the twenty-second commit, by execution: `g() { cd ../notes; };
+    // f() { g; }; f; cp ../base/report.md n1.md` from docs/ was allowed at every head while every shell moved and copied onto the tracked note, and so were
+    // `g() { . ../scratch/x; }; f() { g; }; f` with the file holding the cd, `g() { . /dev/stdin; }; f() { g; }; f < ../scratch/x`, `x=$(cat ../scratch/x); f() { cd
+    // $x; }; f`, `f() { popd >/dev/null; }; f` after two pushds and `v=$(cat ../scratch/x); f() { $v; }; f`): the body's walk ends with the directory somewhere
+    // else, or not known, so a call of the function moves the shell (cdFunctions), whatever moved it inside the body: a literal cd (which marked the body
+    // itself), a call of a function that moves, a `popd`, a `cd` to a directory not read, or a text not read. Read here, at the frame's close, before the
+    // definition's walk restores the directory; a body replayed for a call (`running`) is read by its caller through the state it returns, and a coproc's
+    // body runs in a subshell.
+    if (!f.coproc && (dir !== f.dir || (unknownDir && !f.unknownDir))) f.bodyMoved = true;
     if (f.bodyMoved && f.name) cdFunctions.add(f.name);
     // THE CALLED BODY: the definition's text as spelled, from its first word to the end of the segment its body closes on (`upTo`), kept by
     // each name it defines for a fed call to replay
@@ -6590,23 +6683,30 @@ function extractIn(command, ctx) {
     const nameWordOf = (w) => (w && (plainWord(w) || (w.glob && w.marks && /^u+$/.test(w.marks) && (w.text === '[' || w.text === '[['))) ? w.text : null);
     const nameRoads = (hw, hIdx, hashRoad = true) => {   // hashRoad false: dash's reading of a keyword (THE KEYWORD DASH RUNS), whose `hash` binds no name to a path
       const name = nameWordOf(hw);
-      if (name == null) return;
+      // THE RESOLVED NAME (round 7's twenty-third commit, 2026-09-23; the reviewer's verifier on the twenty-second commit, by execution: `hash -p/usr/bin/cp foo;
+      // set -- foo; $1 ../base/report.md report.md` from docs/ was allowed at every head while bash copied onto the tracked file, and so were `c=foo; $c ..`,
+      // the separated `-p PATH` through both, `"$1"`, a name with two values, and zsh's `hash foo=/usr/bin/cp; c=foo; $c ..`): the shells look a command
+      // name up in the hash table AFTER expansion (bash: Command Search and Execution; zshmisc(1), Command Execution), so a head the walk resolved to a
+      // literal (a positional, a plain value, a quoted spelling) is looked up by its TEXT; an alias is expanded on the word as typed, before any expansion,
+      // so the alias roads keep the plain word. Before, the hash road read the plain word too, and a resolved head met no road.
+      const hashed = hw && hw.literal && !hw.text.includes('/') && !hw.text.includes('\0') ? hw.text : null;
+      if (name == null && hashed == null) return;
       const here = lineOf(seg);
-      const a = aliases.get(name);
-      if (a && !a.suffix && a.line < here && !aliasChain.has(name)) {
+      const a = name != null ? aliases.get(name) : undefined;
+      if (name != null && a && !a.suffix && a.line < here && !aliasChain.has(name)) {
         if (a.body == null) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `\`${name}\` is an alias this command defines with a text I do not read, so what runs in its place is not known` });
         else headTexts.push({ text: a.body, chain: new Set([...aliasChain, name]), at: hIdx, kind: 'alias' });
       }
-      for (const [suf, sa] of aliases) if (sa.suffix && sa.line < here && name.endsWith('.' + suf) && !aliasChain.has(suf)) {
+      if (name != null) for (const [suf, sa] of aliases) if (sa.suffix && sa.line < here && name.endsWith('.' + suf) && !aliasChain.has(suf)) {
         if (sa.body == null) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `\`${name}\` ends in a suffix this command aliases to a text I do not read` });
         else headTexts.push({ text: sa.body + ' ' + hw.raw, chain: new Set([...aliasChain, suf]), at: hIdx, kind: 'alias' });
       }
-      if (hashRoad && hashes.has(name)) {
-        const p = hashes.get(name);
-        if (p == null) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `\`${name}\` is hashed by this command to a path I do not read` });
+      if (hashRoad && hashed != null && hashes.has(hashed)) {
+        const p = hashes.get(hashed);
+        if (p == null) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `\`${hashed}\` is hashed by this command to a path I do not read` });
         else headTexts.push({ text: p, chain: aliasChain, at: hIdx, kind: 'hash' });
       }
-      if (aliasState.unread && !a) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `an earlier \`alias\` of this command binds a name I do not read (${aliasState.unread}), so \`${name}\` may run another command` });
+      if (name != null && aliasState.unread && !a) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `an earlier \`alias\` of this command binds a name I do not read (${aliasState.unread}), so \`${name}\` may run another command` });
     };
     // THE BOUND PATH (round 6's fourth commit, 2026-09-21; the residuals lens ran `cp /usr/bin/cp ../scratch/c2` and then the copy through
     // `'../scratch/c2'`, `"../scratch/c2"`, `$x` with x the path, `"$PWD/../scratch/c2"`, `../scratch/c?` and `~/c2` after `HOME=$PWD/../scratch`,
@@ -6896,12 +6996,36 @@ function extractIn(command, ctx) {
     // another command (`bound`: the source's text). A binding whose text the resolver cannot read makes the name a target the hook
     // cannot read (refused while a project is in play); after an alias whose NAME is unreadable, every later command name is one.
     // The splice runs in this shell with this command's names (not a fresh shell), the chain of alias names bounding the recursion.
+    let unreadHead = null;   // THE UNREAD HEAD's road, taken after the splices (below)
     if (headWord) {
       const meta = {};
+      const refusedBefore = unresolved.length;
       const texts = scriptTexts(headWord, 'command name', 'head', meta);
+      const refusedHead = unresolved.length > refusedBefore;   // scriptTexts recorded the head as a text it cannot read (THE RESOLVER'S CONTRACT): refused while a project is in play
       // THE CONDITIONAL TEXT: scriptTexts marks the texts THE VANISHED HEAD TEXT gives (the word has no candidate text and no reading of its own) as
       // one reading of a head that may be empty, tagged so the splice's door knows (`${c}set -- other.md` runs the set where `$c` is empty)
       for (const t of texts) headTexts.push({ text: t, chain: aliasChain, at: headIdx, kind: meta.vanished ? 'vanish' : 'text' });
+      // THE UNREAD HEAD (round 7's twenty-third commit, 2026-09-23; the reviewer's verifier on the twenty-second commit, by execution: `printf 'set -- report.md\n'
+      // > ../scratch/x; v=$(cat ../scratch/x); set -- other.md; $v; cp ../base/report.md $1` from docs/ was refused at the round-5 head and allowed since round 6
+      // while bash and dash copied onto the tracked file, and so were `$(cat ../scratch/x)` and a backtick as the whole command (every shell), the same head
+      // with operands (`$v -- report.md`, `"$v" -- report.md`), in a loop body, an if body, a `{ }` group, an `&&` list and a function body; and the move face,
+      // `$v ../notes`, `$v ..`, `$(cat ../scratch/x) ../notes`, allowed at every head while every shell moved and copied onto the tracked note): a command
+      // name that is an expansion the resolver did not read, or read as THE VANISHED HEAD TEXT or THE VANISHED VALUE (one reading beside a text not read),
+      // stands for any command, a `set`, a `cd`, a `.` or an `eval` among them, with the words after it as its operands, so it takes THE UNHELD ROAD through
+      // the frame door (the head runs in this shell's frame where the command does: a subshell's or a pipeline's binds the frame's, a wrapper's names the
+      // wrapper), before the splices, so a spliced reading's own bind names its road (THE CONDITIONAL TEXT's) and its move never hides this one. A head the
+      // resolver established (readings, THE HEAD CANDIDATES over values read, a positional the list holds) is spliced and read; a literal head is the command.
+      // Taken AFTER the splices (below runHeadSplices): a spliced reading is a command this head may run here, judged in the directory the shell is in
+      // (`(set -- a); $1 cp ../base/report.md report.md` is refused by name through the reading where `$1` is empty), and its own bind names its road.
+      // A positional head is THE POSITIONAL VALUE's, not this road's: inside a function body being defined it is the call's operand, read when THE CALLED
+      // BODY replays the call (`c() { shift; "$@"; }; c x cp a b` is judged by name there), and at the top level before any `set` (the list not modelled) it
+      // keeps the residual the property names (the tool's shell hands none); with the list bound it was resolved to a literal above, or is values not read.
+      // A head scriptTexts REFUSED (a word the resolver looked at and could not establish: `${s:-set -- other.md}` over a name the command never sets, a
+      // value it could not establish, IFS named) is a target the hook cannot read, refused while a project is in play, and the later words keep their
+      // readings, so a write they name is refused by name (the more useful answer); the road would add nothing in play and, from a cwd in no project, a
+      // relative target under an unknown directory is the B2 residual either way.
+      const positionalHead = positionalSpelling(headWord.raw) != null || (zshMayRun && !!headWord.marks && /^x+u*$/.test(headWord.marks) && ZSH_POSITIONAL_SUBSCRIPT.test(headWord.raw)) || allPositional(headWord.raw);   // one positional, or a word glued from positionals alone (`$argv[1]$argv[2]`, `$1$2`): the call's operands in a body
+      if (!headWord.literal && headWord.marks && headWord.marks.includes('x') && (!texts.length || meta.vanished) && !refusedHead && !(positionalHead && (positionals === null || !positionalsApply()))) unreadHead = () => frameText(seg, idx, cmd, `\`${headWord.raw}\``).unheld('a text I do not read', `an earlier \`${headWord.raw}\`, a command name that stands for a text I do not read,`);
     }
     // a glob in the command name (round 6's third commit, 2026-09-21: `/usr/bin/[c]p a b` ran cp in bash, zsh and dash while the walk read an
     // unknown command named so): the matches, sorted as the shells sort them, stand in the name's place as the words the shell makes (the
@@ -6932,6 +7056,7 @@ function extractIn(command, ctx) {
     for (const w of seg.words) if (w !== headWord && plainWord(w)) { const g = aliases.get(w.text); if (g && g.global && g.line < lineOf(seg)) cannotRead(w, 'a global alias', { kind: 'aliasUnread', text: `\`${w.text}\` is a global alias this command defines (zsh expands it in every position), so the word is not the text spelled` }); }
     for (const r of seg.redirects) if (plainWord(r.target)) { const g = aliases.get(r.target.text); if (g && g.global && g.line < lineOf(seg)) cannotRead(r.target, 'a global alias', { kind: 'aliasUnread', text: `\`${r.target.text}\` is a global alias this command defines (zsh expands it at a redirection target too), so the target is not the text spelled` }); }   // round 6's fourth commit: `alias -g R=report.md` then `echo x > R` wrote report.md in zsh while the target escaped the rule
     runHeadSplices(headIdx);
+    if (unreadHead) unreadHead();   // THE UNREAD HEAD: the road after the readings (the comment at the head site says why)
     const asSpelled = cmd.args;
     let { name } = cmd;
     if (/^(python[0-9.]*|pypy[0-9]*)$/.test(name)) name = 'python';
@@ -6998,8 +7123,11 @@ function extractIn(command, ctx) {
     // the guard read the name `cd` of the definition as a bare `cd` before the definition registered a segment later, and judged the body's write
     // there): the name before an empty `()` defines a function and runs nothing, so a builtin's own reading (a move) must not fire on it
     const isDefName = !cmd.wrapped && segments[idx + 1] && segments[idx + 1].paren === '(' && segments[idx + 2] && segments[idx + 2].paren === ')';
-    if (cdFunctions.has(name)) setUnknown(`an earlier call of the function \`${name}\` may change the directory, which I do not follow`);
-    else if (calledAsSpelled != null && cdFunctions.has(calledAsSpelled)) setUnknown(`an earlier call of the function \`${calledAsSpelled}\` may change the directory, which I do not follow`);
+    // `!isDefName` (round 7's twenty-third commit): the name before an empty `()` defines and runs nothing, so a body already marked (a redefinition, or THE
+    // CALLED BODY's replay of the definition's own text once the top-level walk marked it) does not set the directory unknown here; before, a replay
+    // walked its body with the directory unknown from its own first word, and a write inside lost its refusal by name (`f() { c=$1; $c a b; }; f cp`)
+    if (!isDefName && cdFunctions.has(name)) setUnknown(`an earlier call of the function \`${name}\` may change the directory, which I do not follow`);
+    else if (!isDefName && calledAsSpelled != null && cdFunctions.has(calledAsSpelled)) setUnknown(`an earlier call of the function \`${calledAsSpelled}\` may change the directory, which I do not follow`);
     // a file a wrapper itself writes (`time -o FILE`): judged in the shell's cwd, and again below once the wrappers'
     // chdirs are entered, since the guard does not order one wrapper's option against another's chdir (over-counting is
     // the refuse direction)
@@ -7260,26 +7388,34 @@ function extractIn(command, ctx) {
         // readings (THE RESOLVER'S CONTRACT: a word the resolver could not establish refuses through scriptTexts); an expansion the resolver
         // never reads keeps what the base did, the command marked opaque (`eval "$cmd"`: a script held in a variable, the residual named)
         let ws = args.length && args[0].literal && args[0].text === '--' ? args.slice(1) : args;   // `eval -- TEXT`: bash and zsh read the `--` as the option terminator (round 6's fourth commit: `eval -- cp a b` copied in both while the `--` stood as eval's first word); trap's `--` was read before
+        const sigs = name === 'trap' && ws.length >= 2 && !(ws[0].literal && /^-/.test(ws[0].text)) ? ws.slice(1) : [];   // the signal words after the action (trapText: an EXIT trap acts after the last command)
         if (name === 'trap') { ws = ws.length >= 2 && !(ws[0].literal && /^-/.test(ws[0].text)) ? [ws[0]] : []; }
-        let texts = [''];
-        let unread = !ws.length;
-        vanishedRead = false;
-        for (const w of ws) {
-          const ts = scriptTexts(w, name === 'eval' ? 'eval' : 'trap action', 'text');
-          if (!ts.length) { unread = true; break; }
-          texts = texts.flatMap((a) => ts.map((b) => (a ? a + ' ' : '') + b));
-          if (texts.length > 64) { unread = true; break; }
-        }
-        if (vanishedRead && !unread && name === 'eval') { sawOpaqueCommand = true; if (positionals !== null) rebindHere(seg, idx, cmd, '`eval`', UNKNOWN_POSITIONALS, 'an earlier `eval` of a text I do not read may rebind the positional parameters'); }   // THE VANISHED TEXT read one text of an operand; its other values are not read, and a text this shell runs and the guard does not read may set or shift the positional parameters
-        if (unread) { if (name === 'eval') { sawOpaqueCommand = true; if (positionals !== null) rebindHere(seg, idx, cmd, '`eval`', UNKNOWN_POSITIONALS, 'an earlier `eval` of a text I do not read may rebind the positional parameters'); } break; }   // THE POSITIONAL VALUE: a text this shell runs and the guard does not read may set or shift them
-        for (const t of texts) recurse(t, shell, false, ` through \`${name}\``, null, aliasChain, false, { adopt: name === 'eval', trapMove: name === 'trap', rebind: (ws, why) => rebindHere(seg, idx, cmd, '`eval`', ws, why) });   // eval's text runs in this shell and moves it (THE MOVED SHELL); a trap action that moves leaves the directory unknown
+        if (!ws.length) break;   // `eval` alone, `trap SIG`, `trap -p`, `trap - SIG`: no text runs
+        // THE UNHELD ROAD (frameText says why): the texts the words stand for, eval's joined by one blank (the product capped at 64: past it, or where a word
+        // stands for none, the text is not read), each read through the site's door; an unread or vanished text takes the road (eval's text runs in this
+        // shell's frame and moves it, THE MOVED SHELL; a trap action's `set`, `shift` or cd acts when the trap fires, trapText)
+        const door = name === 'eval' ? frameText(seg, idx, cmd, '`eval`') : trapText(seg, idx, cmd, sigs);
+        const read = readInPlace(() => {
+          let texts = [''];
+          for (const w of ws) {
+            const ts = scriptTexts(w, name === 'eval' ? 'eval' : 'trap action', 'text');
+            if (!ts.length) return [];
+            texts = texts.flatMap((a) => ts.map((b) => (a ? a + ' ' : '') + b));
+            if (texts.length > 64) return [];
+          }
+          return texts;
+        }, door, 'a text I do not read', (t) => recurse(t, shell, false, ` through \`${name}\``, null, aliasChain, false, door), { road: !positionalResidual(ws) });   // `f() { eval "$1"; }; f 'cp a b'` is the call's text, replayed by name; `eval "$1"` at the top level the residual
+        if (name === 'eval' && !read.held) sawOpaqueCommand = true;   // a script held in a name the guard does not read: the residual named
         break;
       }
       case 'xargs': sawOpaqueCommand = true; break;
       case 'emulate': {
         // zsh's `emulate [-LR] [shell [flags]] -c TEXT` runs TEXT under the emulation, in this shell (round 6's third commit: `emulate sh -c 'cp a
         // b'` copied in zsh while the walk read an unknown command); the text after `-c` is a script of zsh, read as `eval`'s text is
-        for (let k = 0; k < args.length; k++) if (args[k].literal && args[k].text === '-c' && args[k + 1]) for (const tx of scriptTexts(args[k + 1], '`emulate -c` script')) recurse(tx, 'zsh', false, ' through `emulate -c`', null, aliasChain, false, shell === 'zsh' ? frameText(seg, idx, cmd, '`emulate -c`') : conditionalText('`emulate -c`', 'text runs in zsh alone (bash and dash find no `emulate`)'));   // THE CONDITIONAL TEXT: the walk knows the shell is zsh inside a script handed to it alone
+        for (let k = 0; k < args.length; k++) if (args[k].literal && args[k].text === '-c' && args[k + 1]) {
+          const door = shell === 'zsh' ? frameText(seg, idx, cmd, '`emulate -c`') : conditionalText('`emulate -c`', 'text runs in zsh alone (bash and dash find no `emulate`)');   // THE CONDITIONAL TEXT: the walk knows the shell is zsh inside a script handed to it alone
+          readInPlace(() => scriptTexts(args[k + 1], '`emulate -c` script'), door, 'a text I do not read', (tx) => recurse(tx, 'zsh', false, ' through `emulate -c`', null, aliasChain, false, door), { road: !positionalResidual([args[k + 1]]) });   // THE UNHELD ROAD: `emulate sh -c "$(cat ../scratch/x)"` ran the file's `set` in zsh while its text was read as nothing (round 7's twenty-third commit)
+        }
         break;
       }
       case 'mapfile': case 'readarray': {
@@ -7301,7 +7437,8 @@ function extractIn(command, ctx) {
           if (glued && !glued.literal) { cannotRead(a, `\`${name} -C\` callback`, { kind: 'unresolvableReading', spelling: a.raw, text: `the callback glued to \`-C\` holds an expansion I do not read here, so the command bash runs for the lines read is not known` }); continue; }
           const cb = glued || args[k + 1];
           if (!cb) continue;
-          for (const tx of scriptTexts(cb, `\`${name} -C\` callback`)) recurse(tx, shell, false, ` through \`${name} -C\``, null, aliasChain, false, conditionalText(`\`${name} -C\``, `callback runs in bash alone, once per \`-c\` count of lines read (an input of fewer lines never runs it; zsh and dash find no \`${name}\`)`));   // THE CONDITIONAL TEXT
+          const door = conditionalText(`\`${name} -C\``, `callback runs in bash alone, once per \`-c\` count of lines read (an input of fewer lines never runs it; zsh and dash find no \`${name}\`)`);   // THE CONDITIONAL TEXT
+          readInPlace(() => scriptTexts(cb, `\`${name} -C\` callback`), door, 'a text I do not read', (tx) => recurse(tx, shell, false, ` through \`${name} -C\``, null, aliasChain, false, door), { road: !positionalResidual([cb]) });   // THE UNHELD ROAD: `mapfile -C "$(cat ../scratch/x)" -c 1 <<< x` ran the file's `set` in bash while its callback was read as nothing (round 7's twenty-third commit)
         }
         break;
       }
@@ -7384,19 +7521,22 @@ function extractIn(command, ctx) {
         // Before, a standard input with no held text took no door at all (the loop over the bodies ran zero times, and the file operand's bind on the
         // same `if` chain was never reached), so the bind and the move were lost; and the file operand's road bound the list and left the directory
         // where it was. A text the guard holds (a here-document, a here-string, a process substitution, a literal printer piped in) is read as before.
-        const unheld = (what) => {
-          if (positionals !== null) rebindHere(seg, idx, cmd, `\`${name}\``, UNKNOWN_POSITIONALS, `an earlier \`${name}\` of ${what} may rebind the positional parameters`);   // THE POSITIONAL VALUE: a sourced text runs in this shell and may set or shift them
-          moveUnknown(`an earlier \`${name}\` of ${what} may move the shell, so where the shell is when a later command runs is not known`);   // THE MOVED SHELL: and may cd
-          movedHere(); markFunctionBody();   // in a function body, the body moves the shell when the function is called (cdFunctions), as a literal cd there does
-        };
-        const fed = ops.length && ops[0].literal && isStdinName(ops[0].text) ? stdinBodies(idx, fdOfName(ops[0].text)) : null;   // the texts this command feeds the descriptor named (THE DESCRIPTOR FEED: `. /dev/fd/3 3< <(..)`); null where the operand is not a name of the standard input
-        const inDefinition = frames.some((f) => f.kind === 'function' && !f.running && !f.coproc);   // a body being defined reads the standard input of its CALL, which THE CALLED BODY's replay feeds it (`f() { . /dev/stdin; }; echo 'cp a b' | f` is read by name there; `f < ../scratch/x` takes the unheld road there and marks the body, so the call leaves the directory unknown); the definition's own walk has no feed to judge
-        if (fed && fed.length) for (const body of fed) recurse(body, shell, false, ` through \`${name} ${ops[0].text}\``, [], aliasChain, false, sourceDoor());   // a sourced text runs in this shell and moves it (THE MOVED SHELL) by the door's reading
-        else if (fed) { if (!inDefinition) unheld(`a text read from \`${ops[0].text}\` that is not in the command`); }   // THE UNHELD TEXT: the standard input, or a descriptor, fed by nothing the hook holds
+        // THE UNHELD ROAD at this site (frameText says why; round 7's twenty-third commit, the reviewer's verifier on the twenty-second: `. <(cat ../scratch/x)`,
+        // `source <(cat ..)`, zsh's `. =(cat ..)`, `<(cat .. | cat)`, `<(sed '' ..)`, `<(cat < ..)`, under `bash -c` and `zsh -c`, with operands after, from the
+        // root, and the move face, each took no door: the loop over the operand's texts ran zero times for a substitution whose command is no printer, and the
+        // final `else` was never reached): the frame door for every unheld text of either spelling, as the twenty-second commit's road was (a `source` dash
+        // finds no command for still runs in bash and zsh, so its unread text may rebind and move this shell there); a READ standard input goes through
+        // sourceDoor (THE CONDITIONAL TEXT's for `source` where dash may run the line)
+        const frameDoor = frameText(seg, idx, cmd, `\`${name}\``);
+        const inDefinition = frames.some((f) => f.kind === 'function' && !f.running && !f.coproc);   // a body being defined reads the standard input of its CALL, which THE CALLED BODY's replay feeds it (`f() { . /dev/stdin; }; echo 'cp a b' | f` is read by name there; `f < ../scratch/x` takes the unheld road there and marks the body, so the call leaves the directory unknown); the definition's own walk has no feed to judge (readInPlace's emptyIsUnheld), while a vanished here-string of its own is the body's text not read
+        const fedName = ops.length && ops[0].literal && isStdinName(ops[0].text) ? ops[0].text : null;   // the standard input, or a descriptor, by name (THE DESCRIPTOR FEED: `. /dev/fd/3 3< <(..)`)
+        const feedResidual = (seg.stdin || []).length > 0 && (seg.stdin || []).every((s) => s.herestring) && positionalResidual(seg.stdin);   // `. /dev/stdin <<< "$1"` at the top level: the residual; in a body being defined, the call's
+        if (fedName != null) readInPlace(() => stdinBodies(idx, fdOfName(fedName)), frameDoor, `a text read from \`${fedName}\` that is not in the command`, (body) => recurse(body, shell, false, ` through \`${name} ${fedName}\``, [], aliasChain, false, sourceDoor()), { emptyIsUnheld: !inDefinition, road: !feedResidual });   // the texts this command feeds the descriptor named; a sourced text runs in this shell and moves it (THE MOVED SHELL) by the door's reading; none held (a `<` of a file or of /dev/null, a descriptor opened on a file, a pipe from a cat of one, no feed at all): THE UNHELD TEXT
         // a sourced process substitution is the text a literal echo or printf prints, as a script operand that is one is (round 6's third
-        // commit: `. <(echo 'cp a b')` copied in bash and zsh, zsh's `. =(echo '..')` too, while the operand was read as a file outside the command)
-        else if (ops.length && procsubOf(ops[0]) != null) for (const t of scriptTexts(ops[0], `\`${name}\` operand`, 'file')) recurse(t, shell, false, ` through \`${name} <(..)\``, null, aliasChain, false, frameText(seg, idx, cmd, `\`${name}\``));   // the operand is a form dash does not parse: every shell that reaches the next command ran the text (the frame door for both spellings)
-        else unheld('a file whose contents are not in the command');   // THE UNHELD TEXT: the file operand (literal, or a word the resolver did not read), or no operand at all
+        // commit: `. <(echo 'cp a b')` copied in bash and zsh, zsh's `. =(echo '..')` too, while the operand was read as a file outside the command); the
+        // operand is a form dash does not parse: every shell that reaches the next command ran the text (the frame door for both spellings)
+        else if (ops.length && procsubOf(ops[0]) != null) readInPlace(() => scriptTexts(ops[0], `\`${name}\` operand`, 'file'), frameDoor, 'a process substitution whose output is not in the command', (t) => recurse(t, shell, false, ` through \`${name} <(..)\``, null, aliasChain, false, frameDoor));
+        else frameDoor.unheld('a file whose contents are not in the command');   // THE UNHELD TEXT: the file operand (literal, or a word the resolver did not read), or no operand at all
         break;
       }
       default:
@@ -7472,7 +7612,7 @@ function extractIn(command, ctx) {
   // will follow it once it exists (`ln -s <proj>/notes <out>/d && echo x > <out>/d/x-$$.md` landed in the tracked folder
   // while the numeric view resolved `<out>/d` through a filesystem where the link did not yet exist).
   // the directory state at the text's end, for a caller whose shell ran this text in place (recurse's adopt: THE MOVED SHELL, round 6's fifth commit)
-  return { targets, opaque: opaque || sawOpaqueCommand, unresolved, links, dir, unknownDir, unknownWhy, oldDir, moved: movedAny || dir !== ctx.dir || unknownDir !== !!ctx.unknownDir, positionals, positionalsWhy };
+  return { targets, opaque: opaque || sawOpaqueCommand, unresolved, links, dir, unknownDir, unknownWhy, oldDir, moved: movedAny || dir !== ctx.dir || unknownDir !== !!ctx.unknownDir, positionals, positionalsWhy, rebound };
 }
 
 // ── the verdict ─────────────────────────────────────────────────────

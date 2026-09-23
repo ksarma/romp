@@ -3931,7 +3931,7 @@ test("the attacker's twins keep their verdicts, and the reviewer's four false re
       } else {
         assert.equal(h.status, 2, `${id}: refused: ${cmd}`);
         if (want === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
-        else assert.ok(NOT_LITERAL.test(h.reason) || BY_NAME_RE.test(h.reason), `${id}: refused (as not literal, or by name where the value the shell keeps is the tracked file): ${h.reason.split('\n')[0]}`);
+        else assert.ok(NOT_LITERAL.test(h.reason) || BY_NAME_RE.test(h.reason) || (id === 'R5-T5' && /a command name that stands for a text I do not read, may move the shell/.test(h.reason)), `${id}: refused (as not literal, or by name where the value the shell keeps is the tracked file; R5-T5 since round 7's twenty-third commit through THE UNREAD HEAD: \`$(x=other.md)\` is a command name standing for a text the resolver does not read, so the directory after it is unknown and the relative target refuses with that road named): ${h.reason.split('\n')[0]}`);
       }
     }
     // the costs the reviewer asked to see priced (17:24Z), each shell's behaviour by EXECUTION (round 5, 2026-09-20, bash 5.2, zsh
@@ -10712,9 +10712,9 @@ test("round 7, nineteenth commit, the rows: a `set` or `shift` in a subshell, a 
     assert.ok(hook.includes("(opts.rebind || bindPositionals)(sub.positionals, sub.positionalsWhy)"), "an in-place text's list is adopted through the caller's door (behaviour: S19-eval-subshell, S19-splice-subshell, S19-emulate-subshell, S19-source-*)");
     const SITE_MSG = 'the adoption site carries a door (the frame door, or THE CONDITIONAL TEXT\'s since round 7\'s twentieth commit; the head splice\'s door is chosen by the text\'s kind, pinned in "round 7, twentieth commit, the rows")';
     // round 7's twenty-first commit gathered the doors into three builders (frameText, conditionalText, externalText); each site names its builder
-    for (const site of ["{ adopt: name === 'eval', trapMove: name === 'trap', rebind: (ws, why) => rebindHere(seg, idx, cmd, '`eval`', ws, why) }", "const door = external ? externalText : conditional ? conditionalText(label, conditional) : frameText(seg, idx, null, label);", "conditionalText(`\\`${name} -C\\``, `callback runs in bash alone, once per \\`-c\\` count of lines read (an input of fewer lines never runs it; zsh and dash find no \\`${name}\\`)`)", "const sourceDoor = () => (inPlace ? frameText(seg, idx, cmd, `\\`${name}\\``) : conditionalText('`source`', 'text runs in bash and zsh alone (dash finds no `source`, and goes on to the next command)'));", "recurse(t, shell, false, ` through \\`${name} <(..)\\``, null, aliasChain, false, frameText(seg, idx, cmd, `\\`${name}\\``));"]) assert.ok(hook.includes(site), `${SITE_MSG}: ${site}`);
+    for (const site of ["const door = name === 'eval' ? frameText(seg, idx, cmd, '`eval`') : trapText(seg, idx, cmd, sigs);", "const door = external ? externalText : conditional ? conditionalText(label, conditional) : frameText(seg, idx, null, label);", "conditionalText(`\\`${name} -C\\``, `callback runs in bash alone, once per \\`-c\\` count of lines read (an input of fewer lines never runs it; zsh and dash find no \\`${name}\\`)`)", "const sourceDoor = () => (inPlace ? frameText(seg, idx, cmd, `\\`${name}\\``) : conditionalText('`source`', 'text runs in bash and zsh alone (dash finds no `source`, and goes on to the next command)'));", "(t) => recurse(t, shell, false, ` through \\`${name} <(..)\\``, null, aliasChain, false, frameDoor));"]) assert.ok(hook.includes(site), `${SITE_MSG}: ${site}`);   // the eval site's door and the procsub operand's reader moved with THE UNHELD ROAD (round 7's twenty-third commit): readInPlace reads the texts through the door named here
     assert.ok(hook.includes("shell === 'zsh' ? frameText(seg, idx, cmd, '`emulate -c`') : conditionalText('`emulate -c`', 'text runs in zsh alone (bash and dash find no `emulate`)')"), `${SITE_MSG}: the emulate site (on its own line: the legs scan reads a literal list spelling a shell as a shell leg)`);
-    assert.deepEqual(hook.match(/\{ adopt: [^}]*\}/g) || [], ["{ adopt: true, rebind: (ws, why) => rebindHere(seg, idx, cmd, label, ws, why) }", "{ adopt: true, rebind: () => rebindConditional(label, how), conditional: label + ' ' + how }", "{ adopt: false }", "{ adopt: name === 'eval', trapMove: name === 'trap', rebind: (ws, why) => rebindHere(seg, idx, cmd, '`eval`', ws, why) }"], "every adoption option object in the hook is one of the four, in source order (frameText's, conditionalText's, externalText's, eval's own), so a new `adopt:` spelled at a site reds here (the twentieth commit added the conditional door, the twenty-first gathered the doors; behaviour: S19-*, S20-*, S21-*)");
+    assert.deepEqual(hook.match(/\{ adopt: [^}]*\}/g) || [], ["{ adopt: true, rebind: (ws, why) => rebindHere(seg, idx, cmd, label, ws, why), unheld: (what, subject = `an earlier ${label}", "{ adopt: true, rebind: () => rebindConditional(label, how), conditional: label + ' ' + how, unheld: (what) => unheldRoad((ws, why) => rebindConditional(label, how, why), `an earlier ${label}", "{ adopt: false }", "{ adopt: false }", "{ adopt: false, trapMove: true, rebind: () => bind(`an earlier \\`trap\\` action rebinds the positional parameters ${TRAP_FIRES}"], "every adoption option object in the hook is one of the five, in source order (frameText's, conditionalText's, externalText's, and trapText's two: the EXIT trap's, which adopts nothing, and the standing trap's), so a new `adopt:` spelled at a site reds here (the twentieth commit added the conditional door, the twenty-first gathered the doors, the twenty-third gave them THE UNHELD ROAD and eval its frame door; the census reads to a brace, so a door's text ends at its first `}`; behaviour: S19-*, S20-*, S21-*, the twenty-third commit's rows)");
     assert.ok(hook.includes("if (g.positionals) bindPositionals(UNKNOWN_POSITIONALS, `an earlier ${g.positionals} stands in ${how}") && hook.includes("if (g.positionals) frames[frames.length - 1].positionals = g.positionals;"), 'a `{ }` group notes the bind and its closer settles or hands it on (behaviour: S19-set-group-pipe, S19-set-group-bg, S19-set-group-nested-pipe, S19-shift-group-pipe, S19-eval-group-pipe)');
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
@@ -10813,7 +10813,7 @@ test("round 7, twentieth commit, the rows: a `set` or `shift` inside an `emulate
       ["S20-splice-leading-blank-set", "nad", "set -- report.md; s=' set'; $s -- other.md; cp ../base/report.md $1", Z, SPLICE("$s")],
       ["S20-splice-tab-set", "nad", "set -- report.md; s=\"$(printf 'set\\t--\\tother.md')\"; $s; cp ../base/report.md $1", Z, SPLICE("$s")],
       ["S20-splice-newline-set", "nad", "set -- report.md; s='set\n-- other.md'; $s; cp ../base/report.md $1", Z, SPLICE("$s")],
-      ["S20-splice-var-zsh-eq-set", "nad", "set -- report.md; s='set -- other.md'; ${=s}; cp ../base/report.md $1", N, 'name'],
+      ["S20-splice-var-zsh-eq-set", "nad", "set -- report.md; s='set -- other.md'; ${=s}; cp ../base/report.md $1", N, ['text', 'an earlier `${=s}`, a command name that stands for a text I do not read, may rebind the positional parameters']],   // round 7's twenty-third commit: the operator form is a head the resolver does not read (THE UNREAD HEAD), so the list is values not read; before, the refusal read `$1` as report.md, a value zsh's split had replaced
       ["S20-splice-cmdsub-set", "nad", "set -- report.md; $(echo 'set -- other.md'); cp ../base/report.md $1", N, 'allow'],
       ["S20-splice-cmdsub-quoted-set", "nad", "set -- report.md; \"$(echo 'set -- other.md')\"; cp ../base/report.md $1", A, 'name'],
       ["S20-splice-backtick-set", "nad", "set -- report.md; `echo 'set -- other.md'`; cp ../base/report.md $1", N, 'allow'],
@@ -10986,7 +10986,7 @@ test("round 7, twentieth commit, the rows: a `set` or `shift` inside an `emulate
     assert.equal(n, 181);
     // where the code lives (the rows above prove what it does)
     const hook = fs.readFileSync(HOOK, 'utf8');
-    assert.ok(hook.includes("const rebindConditional = (label, how) => {") && hook.includes("bindPositionals(UNKNOWN_POSITIONALS, `an earlier ${label} ${how}, and whether it rebinds this shell's positional parameters is not known`);"), "THE CONDITIONAL TEXT's door binds values not read, the road named, whatever the frame (behaviour: every refused S20 row)");
+    assert.ok(hook.includes("const rebindConditional = (label, how, why = null) => {") && hook.includes("bindPositionals(UNKNOWN_POSITIONALS, why || `an earlier ${label} ${how}, and whether it rebinds this shell's positional parameters is not known`);"), "THE CONDITIONAL TEXT's door binds values not read, the road named, whatever the frame (behaviour: every refused S20 row; `why` is THE UNHELD ROAD's own reason since round 7's twenty-third commit)");
     assert.ok(hook.includes("shell === 'zsh' ? frameText(seg, idx, cmd, '`emulate -c`') : conditionalText('`emulate -c`', 'text runs in zsh alone (bash and dash find no `emulate`)')"), 'the emulate site takes the conditional door, the frame door under a known zsh (behaviour: S20-emulate-*, S20-ctl-emulate-under-zsh; the doors are built by frameText and conditionalText since round 7\'s twenty-first commit)');
     assert.ok(hook.includes("conditionalText(`\\`${name} -C\\``, `callback runs in bash alone, once per \\`-c\\` count of lines read (an input of fewer lines never runs it; zsh and dash find no \\`${name}\\`)`)"), 'the mapfile and readarray site takes the conditional door (behaviour: S20-mapfile-*, S20-readarray-*)');
     assert.ok(hook.includes("const door = external ? externalText : conditional ? conditionalText(label, conditional) : frameText(seg, idx, null, label);") && hook.includes("const conditional = kind === 'alias' ? ") && hook.includes(": kind === 'vanish' ? ") && hook.includes(": kind === 'text' && /\\s/.test(text) ? "), 'the head splice picks its door by the kind of text: an alias, a head that may be empty, a text with a blank (behaviour: S20-alias-*, S20-vanish-*, S20-splice-*; the one-word splice keeps the frame door: S20-ctl-splice-single*; an external kind adopts nothing since the twenty-first commit: S21-equals-*, S21-hash-*, S21-bound-*)');
@@ -11243,7 +11243,7 @@ test("round 7, twenty-first commit, the rows: a `set`, `shift` or `cd` inside a 
     assert.ok(hook.includes("const externalText = { adopt: false };") && hook.includes("const external = kind === 'equals' || kind === 'hash' || kind === 'bound';") && hook.includes("const door = external ? externalText : conditional ? conditionalText(label, conditional) : frameText(seg, idx, null, label);"), "the head splice of zsh's `=name`, a hashed path or a bound path adopts nothing of the sub-walk's shell state (behaviour: S21-equals-*, S21-hash-*, S21-bound-*; the writes still read: S21-ctl-equals-cp, S21-ctl-hash-p-cp)");
     assert.ok(hook.includes("const inPlace = name === '.' || shell === 'bash' || shell === 'zsh' || seg.herestring;") && hook.includes("const sourceDoor = () => (inPlace ? frameText(seg, idx, cmd, `\\`${name}\\``) : conditionalText('`source`', 'text runs in bash and zsh alone (dash finds no `source`, and goes on to the next command)'));"), "`source` takes THE CONDITIONAL TEXT's door unless the walk knows the shell is bash or zsh or the command carries a here-string (behaviour: S21-source-*, S21-ctl-dot-heredoc-set, S21-ctl-source-herestring-set, S21-ctl-source-under-bash, S21-ctl-source-under-zsh)");
     assert.ok(hook.includes("seg.herestring = true;") && hook.includes("paramAssigns: [], herestring: false })"), 'the lexer marks a segment that carries a here-string (behaviour: S21-ctl-source-herestring-set, S21-ctl-move-source-herestring, S21-ctl-move-source-herestring-notes)');
-    assert.ok(hook.includes("if (opts.conditional) moveUnknown(`an earlier ${opts.conditional}, so where the shell is when a later command runs is not known`);") && hook.includes("const conditionalText = (label, how) => ({ adopt: true, rebind: () => rebindConditional(label, how), conditional: label + ' ' + how });"), 'a move inside a conditional text leaves the directory unknown, the road named (behaviour: S21-move-*)');
+    assert.ok(hook.includes("if (opts.conditional) moveUnknown(`an earlier ${opts.conditional}, so where the shell is when a later command runs is not known`);") && hook.includes("const conditionalText = (label, how) => ({ adopt: true, rebind: () => rebindConditional(label, how), conditional: label + ' ' + how, unheld: (what) => unheldRoad((ws, why) => rebindConditional(label, how, why), `an earlier ${label} ${how}, and it is ${what}, which`) });"), 'a move inside a conditional text leaves the directory unknown, the road named (behaviour: S21-move-*; the door carries THE UNHELD ROAD since round 7\'s twenty-third commit)');
     assert.ok(hook.includes("const m = a.text.match(/^-[A-Za-z]*?C/);") && hook.includes("const glued = a.text.length > m[0].length ? sliceWord(a, m[0].length) : null;") && hook.includes("if (glued && !glued.literal) { cannotRead(a, `\\`${name} -C\\` callback`") && hook.includes("const cb = glued || args[k + 1];"), 'the mapfile site reads a value glued to `-C` as the callback and refuses a glued expansion (behaviour: S21-mapfile-glued-*, S21-readarray-glued-C-cp, S21-ctl-mapfile-sep-C-cp)');
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
@@ -11448,11 +11448,291 @@ test("round 7, twenty-second commit, the rows: a `.` or `source` of a text the g
     assert.equal(n, 125);
     // where the code lives (the rows above prove what it does)
     const hook = fs.readFileSync(HOOK, 'utf8');
-    assert.ok(hook.includes("const fed = ops.length && ops[0].literal && isStdinName(ops[0].text) ? stdinBodies(idx, fdOfName(ops[0].text)) : null;") && hook.includes("if (fed && fed.length) for (const body of fed) recurse(body, shell, false, ` through \\`${name} ${ops[0].text}\\``, [], aliasChain, false, sourceDoor());") && hook.includes("if (!inDefinition) unheld(`a text read from \\`${ops[0].text}\\` that is not in the command`);"), 'THE UNHELD TEXT: a standard input the hook holds no text for takes the unheld road instead of no road (behaviour: S22-dot-lt-file-set and the rows of part 1 and 2; the held texts: S22-ctl-dot-heredoc-set and the controls of part 4)');
-    assert.ok(hook.includes("else unheld('a file whose contents are not in the command');"), 'the file operand, literal or not, takes the same road (behaviour: S22-move-dot-file-notes, S22-move-dot-var-notes, S22-ctl-dot-file-set)');
-    assert.ok(hook.includes("const inDefinition = frames.some((f) => f.kind === 'function' && !f.running && !f.coproc);") && hook.includes("else if (fed) { if (!inDefinition) unheld(`a text read from \\`${ops[0].text}\\` that is not in the command`); }"), 'inside a function body being defined the standard input is the call\'s, judged when the call is replayed (behaviour: S22-fn-dot-stdin-call-lt-file, S22-ctl-fn-dot-stdin-piped-text, S22-ctl-fn-dot-stdin-uncalled)');
-    assert.ok(hook.includes("if (positionals !== null) rebindHere(seg, idx, cmd, `\\`${name}\\``, UNKNOWN_POSITIONALS, `an earlier \\`${name}\\` of ${what} may rebind the positional parameters`);") && hook.includes("moveUnknown(`an earlier \\`${name}\\` of ${what} may move the shell, so where the shell is when a later command runs is not known`);") && hook.includes("movedHere(); markFunctionBody();   // in a function body, the body moves the shell when the function is called (cdFunctions), as a literal cd there does"), 'the unheld road binds the list through the frame door, leaves the directory unknown and marks a function body it stands in (behaviour: S22-dot-lt-file-set, S22-ctl-dot-lt-file-subshell-set, S22-move-dot-lt-file-notes, S22-move-dot-file-fn)');
+    // the source site reads through THE UNHELD ROAD's one reader since round 7's twenty-third commit (readInPlace; the twenty-third commit's rows pin the reader itself)
+    assert.ok(hook.includes("const fedName = ops.length && ops[0].literal && isStdinName(ops[0].text) ? ops[0].text : null;") && hook.includes("if (fedName != null) readInPlace(() => stdinBodies(idx, fdOfName(fedName)), frameDoor, `a text read from \\`${fedName}\\` that is not in the command`, (body) => recurse(body, shell, false, ` through \\`${name} ${fedName}\\``, [], aliasChain, false, sourceDoor()), { emptyIsUnheld: !inDefinition, road: !feedResidual });"), 'THE UNHELD TEXT: a standard input the hook holds no text for takes the unheld road instead of no road (behaviour: S22-dot-lt-file-set and the rows of part 1 and 2; the held texts: S22-ctl-dot-heredoc-set and the controls of part 4)');
+    assert.ok(hook.includes("else frameDoor.unheld('a file whose contents are not in the command');"), 'the file operand, literal or not, takes the same road (behaviour: S22-move-dot-file-notes, S22-move-dot-var-notes, S22-ctl-dot-file-set)');
+    assert.ok(hook.includes("const inDefinition = frames.some((f) => f.kind === 'function' && !f.running && !f.coproc);") && hook.includes("sourceDoor()), { emptyIsUnheld: !inDefinition, road: !feedResidual });"), 'inside a function body being defined the standard input is the call\'s, judged when the call is replayed (readInPlace\'s emptyIsUnheld; behaviour: S22-fn-dot-stdin-call-lt-file, S22-ctl-fn-dot-stdin-piped-text, S22-ctl-fn-dot-stdin-uncalled)');
+    assert.ok(hook.includes("const frameDoor = frameText(seg, idx, cmd, `\\`${name}\\``);") && hook.includes("if (positionals !== null && positionals !== UNKNOWN_POSITIONALS) rebind(UNKNOWN_POSITIONALS, `${subject} may rebind the positional parameters`);") && hook.includes("moveUnknown(`${subject} may move the shell, so where the shell is when a later command runs is not known`);") && hook.includes("movedHere(); markFunctionBody();   // in a function body, the body moves the shell when the function is called (cdFunctions), as a literal cd there does"), 'the unheld road binds the list through the frame door, leaves the directory unknown and marks a function body it stands in (behaviour: S22-dot-lt-file-set, S22-ctl-dot-lt-file-subshell-set, S22-move-dot-lt-file-notes, S22-move-dot-file-fn)');
     assert.ok(hook.includes("const j = t.indexOf('p', 1);") && hook.includes("if (t.slice(1, j < 0 ? t.length : j).includes('t')) prints = true;") && hook.includes("hp = j + 1 < t.length ? sliceWord(args[k], j + 1) : args[++k];") && hook.includes("if (hp !== undefined && !prints) for (const n of args.slice(k)) if (n.literal) hashes.set(n.text, hp && hp.literal ? hp.text : null);"), 'THE GLUED PATH: the hash site reads a `p` anywhere in an option word, its value the glued rest or the next word, the last `p` winning, a `t` binding nothing (behaviour: S22-hash-p-glued-cp, S22-hash-dp-glued, S22-hash-p-glued-last-wins, S22-ctl-hash-tp-glued, S22-ctl-hash-p-sep-cp)');
     assert.ok(!hook.includes("args[0].text === '-p'"), 'the whole-word `-p` test is gone (behaviour: S22-hash-p-glued-cp)');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+test("round 7, twenty-third commit, the rows: THE UNHELD ROAD by construction: every text this shell runs in place (eval's operands, a trap action, a `.` or `source` operand or feed, a command name that is an expansion, an `emulate -c` text, a `mapfile -C` or `readarray -C` callback) that the guard does not hold, or holds as a vanished reading, rebinds the positional parameters to values not read and leaves the directory unknown, the construct named, so a later positional target, command name, script or relative write is refused as the round-5 head refused the bind; a trap action's bind stands over the later binds of this shell and an EXIT trap binds nothing; a body whose walk ends elsewhere, or not knowing where, moves the shell when called; a hashed name reached through a resolved head is looked up; the read texts, the controls and the everyday heads stay as before", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const BZ = ['bash', 'zsh'];
+    const BD = ['bash', 'dash'];
+    const ZD = ['zsh', 'dash'];
+    const Z = ['zsh'];
+    const B = ['bash'];
+    const N = [];
+    // THE UNHELD ROAD's reasons, by door: the frame door names the construct and the text (`an earlier X of WHAT may rebind the positional parameters`,
+    // `.. may move the shell, so where the shell is when a later command runs is not known`); THE UNREAD HEAD names the head word; THE CONDITIONAL
+    // TEXT's door names the shells that run the text and that it is not read; a trap's names when it fires
+    const UH_BIND = ['text', 'a command name that stands for a text I do not read, may rebind the positional parameters'];
+    const UH_MOVE = ['text', 'a command name that stands for a text I do not read, may move the shell, so where the shell is when a later command runs is not known'];
+    const PS_BIND = ['text', 'of a process substitution whose output is not in the command may rebind the positional parameters'];
+    const PS_MOVE = ['text', 'of a process substitution whose output is not in the command may move the shell, so where the shell is when a later command runs is not known'];
+    const UNHELD = ['text', 'of a text read from `/dev/stdin` that is not in the command may rebind the positional parameters'];   // the twenty-second commit's road, reached by a here-string whose text is a substitution the resolver did not read (lex hands the sourced text a NUL for it)
+    const MOVE_UNHELD = ['text', 'of a text read from `/dev/stdin` that is not in the command may move the shell, so where the shell is when a later command runs is not known'];
+    const FILE_BIND = ['text', 'of a file whose contents are not in the command may rebind the positional parameters'];
+    const EVAL_BIND = ['text', 'an earlier `eval` of a text I do not read may rebind the positional parameters'];
+    const EVAL_MOVE = ['text', 'an earlier `eval` of a text I do not read may move the shell, so where the shell is when a later command runs is not known'];
+    const EMU_FRAME_BIND = ['text', 'an earlier `emulate -c` of a text I do not read may rebind the positional parameters'];   // under a known zsh the emulate site has the frame door
+    const COND_BIND = ['text', 'and it is a text I do not read, which may rebind the positional parameters'];
+    const COND_MOVE = ['text', 'and it is a text I do not read, which may move the shell, so where the shell is when a later command runs is not known'];
+    const TRAP_BIND = ['text', 'an earlier `trap` action rebinds the positional parameters when the trap fires (before every command under DEBUG, on an error under ERR, at a signal), so what they hold when a later command runs is not known'];
+    const TRAP_UNREAD_BIND = ['text', 'an earlier `trap` action that is a text I do not read, which runs when the trap fires (before every command under DEBUG, on an error under ERR, at a signal), may rebind the positional parameters'];
+    const TRAP_UNREAD_MOVE = ['text', 'an earlier `trap` action that is a text I do not read, which runs when the trap fires (before every command under DEBUG, on an error under ERR, at a signal), may move the shell, so where the shell is when a later command runs is not known'];
+    const TRAP_LIST = ['text', 'an earlier `trap` action runs when the trap fires (before every command under DEBUG, on an error under ERR, at a signal), so which values the positional parameters hold then is not known'];   // the action reads the list as it stands when the trap fires
+    const FN = ['text', 'an earlier call of the function `f` may change the directory, which I do not follow'];   // THE BODY'S OWN STATE: the body's walk ended elsewhere or not knowing where
+    const W_BODY = ['text', 'stands in an if, loop, case or function body, or a subshell, and whether it rebinds this shell\'s positional parameters is not known'];   // THE BIND'S FRAME's reasons, through the same door
+    const W_PIPE = ['text', 'stands in a pipeline, whose members bash and dash run in a subshell (zsh keeps the last in this shell), and whether it rebinds this shell\'s positional parameters is not known'];
+    const W_AND = ['text', 'stands in a command after `&&`, which may not run, and whether it rebinds this shell\'s positional parameters is not known'];
+    const WRAPPER_OPT = ['text', 'wrapper carries the option $v, which I do not read in that spelling'];   // rule (b): a wrapper's option word that is an expansion, as before
+    const SEVERAL = ['text', 'stands for a text of several words'];   // THE CONDITIONAL TEXT's splice of a value read, as before
+    const PRINTER_SUB = ['text', 'holds a substitution or an arithmetic body whose text I do not read, so the text printed is not known'];   // a printer whose operand is a substitution the resolver did not read: the operand is unresolvable, as before
+    const NOT_SET_C = ['text', 'this command does not set `c`, so its value is the shell\'s own, which I do not read'];   // THE PARAMETER'S VALUE: a head refused before the road (the road adds nothing to a head already refused)
+    // [id, cwd, command, the shells that write (measured), the verdict ('allow', 'name', or ['text', a substring of the reason]), the verdict from a
+    // cwd in no project ('allow' unless given; null: the row's paths are absolute or its own cwd is that cwd)]. Ids: U and T rows are the reviewer's
+    // verifier's on the twenty-second commit (re-spelled here); G rows its glued-path twins; P rows the population derived from them.
+    // 1. THE UNHELD ROAD at the `.`/`source` operand that is a process substitution whose command is no printer (the class the twenty-second commit's
+    //    stdin road left open): cat, `cat | cat`, sed, `cat <`, `source`, zsh's `=(..)`, under `bash -c` and `zsh -c`, with operands after, from
+    //    notes/ and the root, through mv, a redirection, shift, the head and script roads, inside eval and a function body; the controls (a printer,
+    //    a `<` of one, a subshell, a move to scratch/ now the road's refusal, dash's syntax error as the twenty-second commit's cost)
+    // 2. THE UNREAD HEAD: a command name that stands for a text the resolver did not read (`$v` after `v=$(cat ..)`, `$(cat ..)`, a backtick, `"$v"`,
+    //    a never-valued name, `${=s}`), alone and with operands, in a loop, if, group, `&&` list, pipeline (the frame's reason) and function body, from
+    //    every cwd, in every write form and on the head and script roads; the move face (`cd` from the file, `..`); the controls (a candidate read, a
+    //    default word read, a literal unknown command, no later write, an absolute target after, a subshell, a wrapper's own refusal, B2 from out/)
+    // 3. THE VANISHED VALUE and the NUL text: `v=$(cat ..)` holds the empty text beside a text not read, so `<<< "$v"`, `$v` after `v=cp; v=$(cat ..)`,
+    //    `c=$d` chains and `eval "cd $d"` take the road; a here-string whose word is `$(cat ..)` hands the sourced text a NUL (the twenty-second commit's
+    //    road, by name of the standard input); a here-document line that is `$(cat ..)`, a backtick or `$v` is the sub-walk's unread head
+    // 4. eval, emulate and mapfile texts not read (or read as vanished), bind and move faces; `eval` alone runs nothing
+    // 5. THE STANDING TRAP: a DEBUG or ERR action that sets or shifts, or is not read, stands over the later binds (a later `set`, an eval's, under
+    //    `bash -c`, from a function body); an action reads the list as it stands when it fires; EXIT (`EXIT`, `exit`, `0`) binds nothing; a trap in a
+    //    subshell, a pipeline, a background job or a fresh shell is not this shell's; `trap - SIG`, `trap -p`, a no-op action and an action that
+    //    reads `$1` bind nothing (the trap's move keeps round 6's model: recorded, not changed)
+    // 6. THE BODY'S OWN STATE: a call of a function that moves, `. file`, a fed `. /dev/stdin`, `cd $x` with x not read, `cd -`, popd, chdir, pushd,
+    //    an unread head or eval inside the body, three bodies deep; the controls (a body that does not move, a subshell's cd)
+    // 7. THE RESOLVED NAME: a hashed name reached through a positional, a value, a quoted spelling, two values, a default word (refused before the
+    //    road), zsh's `NAME=PATH`, mv, under `bash -c`, from out/; the controls (a hashed ls, an alias, which no shell expands on a resolved head)
+    const rows = [
+      ["U25-procsub-cat-operand-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . <(cat ../scratch/x); cp ../base/report.md $1", BZ, PS_BIND],
+      ["T15-source-procsub-cat-operand-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; source <(cat ../scratch/x); cp ../base/report.md $1", BZ, PS_BIND],
+      ["T16-zsh-eq-procsub-cat-operand-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . =(cat ../scratch/x); cp ../base/report.md $1", Z, PS_BIND],
+      ["T31-procsub-cat-operand-under-bash", "nad", "bash -c \"printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . <(cat ../scratch/x); cp ../base/report.md \\$1\"", A, PS_BIND],
+      ["T32-procsub-printf-piped-operand", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . <(cat ../scratch/x | cat); cp ../base/report.md $1", BZ, PS_BIND],
+      ["U28-move-procsub-cat-operand", "nad", "printf 'cd ../notes\\n' > ../scratch/x; . <(cat ../scratch/x); cp ../base/report.md n1.md", BZ, PS_MOVE],
+      ["T21-procsub-cat-operand-head-road", "nad", "printf 'set -- cp\\n' > ../scratch/x; set -- ls; . <(cat ../scratch/x); $1 ../base/report.md report.md", BZ, PS_BIND],
+      ["U26-lt-procsub-cat-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin < <(cat ../scratch/x); cp ../base/report.md $1", BZ, UNHELD],
+      ["T13-lt-procsub-cat-move", "nad", "printf 'cd ../notes\\n' > ../scratch/x; . /dev/stdin < <(cat ../scratch/x); cp ../base/report.md n1.md", BZ, MOVE_UNHELD],
+      ["T01-unread-var-head-set-toplevel", "nad", "printf 'set -- report.md\\n' > ../scratch/x; v=$(cat ../scratch/x); set -- other.md; $v; cp ../base/report.md $1", BD, UH_BIND],
+      ["T02-csub-head-set-toplevel", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; $(cat ../scratch/x); cp ../base/report.md $1", A, UH_BIND],
+      ["U21-herestring-csub-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin <<< \"$(cat ../scratch/x)\"; cp ../base/report.md $1", BZ, UNHELD],
+      ["U23-herestring-unread-var-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; v=$(cat ../scratch/x); set -- other.md; . /dev/stdin <<< \"$v\"; cp ../base/report.md $1", BZ, UH_BIND],
+      ["U24-heredoc-csub-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin <<EOF\n$(cat ../scratch/x)\nEOF\ncp ../base/report.md $1", A, UH_BIND],
+      ["U60-heredoc-unread-var-line-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; v=$(cat ../scratch/x); set -- other.md; . /dev/stdin <<EOF\n$v\nEOF\ncp ../base/report.md $1", A, UH_BIND],
+      ["T27-heredoc-backtick-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin <<EOF\n`cat ../scratch/x`\nEOF\ncp ../base/report.md $1", A, UH_BIND],
+      ["T28-heredoc-csub-with-literal-after", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin <<EOF\n$(cat ../scratch/x)\ntrue\nEOF\ncp ../base/report.md $1", A, UH_BIND],
+      ["T22-heredoc-csub-shift", "nad", "printf 'shift\\n' > ../scratch/x; set -- other.md report.md; . /dev/stdin <<EOF\n$(cat ../scratch/x)\nEOF\ncp ../base/report.md $1", A, UH_BIND],
+      ["T29-herestring-csub-set-eval", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; eval '. /dev/stdin <<< \"$(cat ../scratch/x)\"'; cp ../base/report.md $1", BZ, UNHELD],
+      ["T19-herestring-csub-move", "nad", "printf 'cd ../notes\\n' > ../scratch/x; . /dev/stdin <<< \"$(cat ../scratch/x)\"; cp ../base/report.md n1.md", BZ, MOVE_UNHELD],
+      ["U27-move-heredoc-csub", "nad", "printf 'cd ../notes\\n' > ../scratch/x; . /dev/stdin <<EOF\n$(cat ../scratch/x)\nEOF\ncp ../base/report.md n1.md", A, UH_MOVE],
+      ["U22-herestring-read-var-set", "nad", "v='set -- report.md'; set -- other.md; . /dev/stdin <<< \"$v\"; cp ../base/report.md $1", BZ, SEVERAL],
+      ["G11-hash-p-glued-positional-head", "nad", "hash -p/usr/bin/cp foo; set -- foo; $1 ../base/report.md report.md", B, 'name'],
+      ["G26-hash-p-glued-splice-name", "nad", "hash -p/usr/bin/cp foo; c=foo; $c ../base/report.md report.md", B, 'name'],
+      ["T04-hash-p-sep-positional-head", "nad", "hash -p /usr/bin/cp foo; set -- foo; $1 ../base/report.md report.md", B, 'name'],
+      ["T05-hash-p-sep-splice-name", "nad", "hash -p /usr/bin/cp foo; c=foo; $c ../base/report.md report.md", B, 'name'],
+      ["T06-hash-zsh-eq-splice-name", "nad", "hash foo=/usr/bin/cp; c=foo; $c ../base/report.md report.md", Z, 'name'],
+      ["U29-nested-fn-call-fed-file-move", "nad", "printf 'cd ../notes\\n' > ../scratch/x; g() { . /dev/stdin; }; f() { g; }; f < ../scratch/x; cp ../base/report.md n1.md", A, FN],
+      ["T33-nested-fn-inner-dot-file-move", "nad", "printf 'cd ../notes\\n' > ../scratch/x; g() { . ../scratch/x; }; f() { g; }; f; cp ../base/report.md n1.md", A, FN],
+      ["T03-nested-fn-literal-cd", "nad", "g() { cd ../notes; }; f() { g; }; f; cp ../base/report.md n1.md", A, FN],
+      ["P-eval-unread-var-move", "nad", "printf 'cd ../notes\\n' > ../scratch/x; v=$(cat ../scratch/x); eval \"$v\"; cp ../base/report.md n1.md", A, EVAL_MOVE],
+      ["P-eval-csub-move", "nad", "printf 'cd ../notes\\n' > ../scratch/x; eval \"$(cat ../scratch/x)\"; cp ../base/report.md n1.md", A, EVAL_MOVE],
+      ["P-eval-csub-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; eval \"$(cat ../scratch/x)\"; cp ../base/report.md $1", A, EVAL_BIND],
+      ["P-emulate-csub-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; emulate sh -c \"$(cat ../scratch/x)\"; cp ../base/report.md $1", Z, COND_BIND],
+      ["P-emulate-csub-move", "nad", "printf 'cd ../notes\\n' > ../scratch/x; emulate sh -c \"$(cat ../scratch/x)\"; cp ../base/report.md n1.md", Z, COND_MOVE],
+      ["P-mapfile-csub-cb-set", "nad", "printf 'set -- report.md #\\n' > ../scratch/x; set -- other.md; mapfile -C \"$(cat ../scratch/x)\" -c 1 <<< x; cp ../base/report.md $1", B, COND_BIND],
+      ["P-mapfile-csub-cb-move", "nad", "printf 'cd ../notes #\\n' > ../scratch/x; mapfile -C \"$(cat ../scratch/x)\" -c 1 <<< x; cp ../base/report.md n1.md", B, COND_MOVE],
+      ["P-trap-literal-set-debug", "nad", "trap 'set -- report.md' DEBUG; set -- other.md; cp ../base/report.md $1", BZ, TRAP_BIND],
+      ["P-trap-unread-move-debug", "nad", "printf 'cd ../notes\\n' > ../scratch/x; v=$(cat ../scratch/x); trap \"$v\" DEBUG; cp ../base/report.md n1.md", BZ, TRAP_UNREAD_MOVE],
+      ["P-head-unread-cd-operand", "nad", "printf 'cd\\n' > ../scratch/x; v=$(cat ../scratch/x); $v ../notes; cp ../base/report.md n1.md", A, UH_MOVE],
+      ["P-head-unread-set-operands", "nad", "printf 'set\\n' > ../scratch/x; v=$(cat ../scratch/x); set -- other.md; $v -- report.md; cp ../base/report.md $1", A, UH_BIND],
+      ["P-head-unread-cd-dotdot", "nad", "printf 'cd\\n' > ../scratch/x; v=$(cat ../scratch/x); $v ..; cp base/report.md notes/n1.md", A, UH_MOVE],
+      ["P-head-dq-unread-cd-operand", "nad", "printf 'cd\\n' > ../scratch/x; v=$(cat ../scratch/x); \"$v\" ../notes; cp ../base/report.md n1.md", A, UH_MOVE],
+      ["P-head-csub-cd-operand", "nad", "printf 'cd\\n' > ../scratch/x; $(cat ../scratch/x) ../notes; cp ../base/report.md n1.md", A, UH_MOVE],
+      ["P-head-backtick-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; `cat ../scratch/x`; cp ../base/report.md $1", A, UH_BIND],
+      ["P-head-unread-in-fn-move", "nad", "printf 'cd ../notes\\n' > ../scratch/x; v=$(cat ../scratch/x); f() { $v; }; f; cp ../base/report.md n1.md", BD, FN],
+      ["P-head-never-valued-set", "nad", "set -- other.md; $Q780_NEVER; cp ../base/report.md $1", N, UH_BIND],
+      ["P-fn-cd-unread-var-move", "nad", "printf '../notes\\n' > ../scratch/x; x=$(cat ../scratch/x); f() { cd $x; }; f; cp ../base/report.md n1.md", A, FN],
+      ["P-fn-popd-move", "nad", "pushd ../notes >/dev/null; pushd ../docs >/dev/null; f() { popd >/dev/null; }; f; cp ../base/report.md n1.md", BZ, FN],
+      ["P2-cand-tainted-herestring-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; v=cp; v=$(cat ../scratch/x); set -- other.md; . /dev/stdin <<< \"$v\"; cp ../base/report.md $1", BZ, UH_BIND],
+      ["P2-cand-tainted-head-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; v=cp; v=$(cat ../scratch/x); set -- other.md; $v; cp ../base/report.md $1", BD, UH_BIND],
+      ["P2-cand-vanished-value-head-move", "nad", "printf 'cd ../notes\\n' > ../scratch/x; x=\"$(cat ../scratch/x)\"; $x; cp ../base/report.md n1.md", BD, UH_MOVE],
+      ["P2-value-chain-move", "nad", "printf 'cd ../notes\\n' > ../scratch/x; d=$(cat ../scratch/x); c=$d; $c; cp ../base/report.md n1.md", BD, UH_MOVE],
+      ["P2-eval-vanished-move", "nad", "printf '../notes\\n' > ../scratch/x; d=$(cat ../scratch/x); eval \"cd $d\"; cp ../base/report.md n1.md", A, EVAL_MOVE],
+      ["P2-trap-reset-control", "nad", "trap - INT; set -- other.md; cp ../base/report.md $1", N, 'allow'],
+      ["P2-trap-p-control", "nad", "trap -p; set -- other.md; cp ../base/report.md $1", N, 'allow'],
+      ["P2-trap-literal-shift-debug", "nad", "trap 'shift' DEBUG; set -- other.md report.md; cp ../base/report.md $1", BZ, TRAP_BIND],
+      ["P2-trap-literal-cd-exit-control", "nad", "trap 'cd ../notes' EXIT; cp ../base/report.md n1.md", N, 'allow'],
+      ["P2-trap-unread-set-debug", "nad", "printf 'set -- report.md\\n' > ../scratch/x; v=$(cat ../scratch/x); trap \"$v\" DEBUG; set -- other.md; cp ../base/report.md $1", BZ, TRAP_UNREAD_BIND],
+      ["P2-emulate-unread-var-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; v=$(cat ../scratch/x); set -- other.md; emulate sh -c \"$v\"; cp ../base/report.md $1", Z, COND_BIND],
+      ["P2-emulate-R-csub-move", "nad", "printf 'cd ../notes\\n' > ../scratch/x; emulate -R sh -c \"$(cat ../scratch/x)\"; cp ../base/report.md n1.md", Z, COND_MOVE],
+      ["P2-readarray-csub-cb-set", "nad", "printf 'set -- report.md #\\n' > ../scratch/x; set -- other.md; readarray -C \"$(cat ../scratch/x)\" -c 1 <<< x; cp ../base/report.md $1", B, COND_BIND],
+      ["P2-mapfile-c1-C-unread-var-move", "nad", "printf 'cd ../notes #\\n' > ../scratch/x; v=$(cat ../scratch/x); mapfile -c 1 -C \"$v\" <<< x; cp ../base/report.md n1.md", B, COND_MOVE],
+      ["P2-mapfile-cb-unread-devnull-cost", "nad", "printf 'cd ../notes #\\n' > ../scratch/x; mapfile -C \"$(cat ../scratch/x)\" -c 1 </dev/null; cp ../base/report.md n1.md", N, COND_MOVE],
+      ["P2-loop-head-unread-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; while read -r l; do $l; done < ../scratch/x; cp ../base/report.md $1", BD, W_BODY],
+      ["P2-for-head-csub-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; for c in \"$(cat ../scratch/x)\"; do $c; done; cp ../base/report.md $1", BD, W_BODY],
+      ["P2-if-body-head-unread-move", "nad", "printf 'cd ../notes\\n' > ../scratch/x; v=$(cat ../scratch/x); if true; then $v; fi; cp ../base/report.md n1.md", BD, UH_MOVE],
+      ["P2-group-head-unread-move", "nad", "printf 'cd ../notes\\n' > ../scratch/x; v=$(cat ../scratch/x); { $v; }; cp ../base/report.md n1.md", BD, UH_MOVE],
+      ["P2-subshell-head-unread-move-control", "nad", "printf 'cd ../notes\\n' > ../scratch/x; v=$(cat ../scratch/x); ($v); cp ../base/report.md n1.md", N, 'allow'],
+      ["P2-pipe-head-unread-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; v=$(cat ../scratch/x); set -- other.md; $v | cat; cp ../base/report.md $1", N, W_PIPE],
+      ["P2-and-list-head-unread-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; v=$(cat ../scratch/x); set -- other.md; true && $v; cp ../base/report.md $1", BD, W_AND],
+      ["P2-fn-eval-csub-move", "nad", "printf 'cd ../notes\\n' > ../scratch/x; f() { eval \"$(cat ../scratch/x)\"; }; f; cp ../base/report.md n1.md", A, FN],
+      ["P2-fn-head-unread-operand-move", "nad", "printf 'cd\\n' > ../scratch/x; v=$(cat ../scratch/x); f() { $v ../notes; }; f; cp ../base/report.md n1.md", A, FN],
+      ["P2-procsub-sed-operand-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . <(sed '' ../scratch/x); cp ../base/report.md $1", BZ, PS_BIND],
+      ["P2-procsub-cat-lt-operand-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . <(cat < ../scratch/x); cp ../base/report.md $1", BZ, PS_BIND],
+      ["P2-procsub-printf-csub", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . <(printf '%s\\n' \"$(cat ../scratch/x)\"); cp ../base/report.md $1", BZ, PRINTER_SUB],
+      ["P2-source-procsub-under-zsh", "nad", "zsh -c \"printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; source <(cat ../scratch/x); cp ../base/report.md \\$1\"", A, PS_BIND],
+      ["P2-dot-procsub-with-args-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . <(cat ../scratch/x) a b; cp ../base/report.md $1", B, PS_BIND],
+      ["P2-procsub-operand-move-root", "na", "printf 'cd docs\\n' > scratch/x; . <(cat scratch/x); cp ../base/report.md report.md", BZ, PS_MOVE],
+      ["P2-head-unread-cd-then-abs-control", "nad", "printf 'cd\\n' > ../scratch/x; v=$(cat ../scratch/x); $v ../notes; cp ../base/report.md {NA}/scratch/y.md", N, 'allow', null],
+      ["P2-head-unread-no-later-write-control", "nad", "v=$(cat ../scratch/keep.md); $v; ls", N, 'allow'],
+      ["P2-dq-head-set-operands", "nad", "printf 'set\\n' > ../scratch/x; v=$(cat ../scratch/x); set -- other.md; \"$v\" -- report.md; cp ../base/report.md $1", A, UH_BIND],
+      ["P2-head-backtick-cd-operand", "nad", "printf 'cd\\n' > ../scratch/x; `cat ../scratch/x` ../notes; cp ../base/report.md n1.md", A, UH_MOVE],
+      ["P2-wrapper-command-head-unread-set", "nad", "printf 'set\\n' > ../scratch/x; v=$(cat ../scratch/x); set -- other.md; command $v -- report.md; cp ../base/report.md $1", BD, WRAPPER_OPT],
+      ["P2-hash-positional-quoted", "nad", "hash -p/usr/bin/cp foo; set -- foo; \"$1\" ../base/report.md report.md", B, 'name'],
+      ["P2-hash-candidate-two-values", "nad", "hash -p/usr/bin/cp foo; c=ls; c=foo; $c ../base/report.md report.md", B, 'name'],
+      ["P2-bound-through-resolved", "nad", "cp /usr/bin/cp ../scratch/c2; c=../scratch/c2; $c ../base/report.md report.md", A, 'name'],
+      ["P2-head-never-valued-then-relative-cost", "nad", "$Q780_NEVER main.c; cp ../base/report.md ../scratch/y.md", N, UH_MOVE],
+      ["P2-cc-then-relative-cost", "nad", "$CC -o ../scratch/out ../scratch/keep.md; echo x > ../scratch/log.txt", N, UH_MOVE],
+      ["P3-herestring-csub-unquoted-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin <<< $(cat ../scratch/x); cp ../base/report.md $1", BZ, UNHELD],
+      ["P3-trap-cd-debug-then-abs-cd", "nad", "trap 'cd ../notes' DEBUG; cd {NA}/docs; cp ../base/report.md n1.md", BZ, 'allow', null],
+      ["P3-trap-set-in-fn-called", "nad", "f() { trap 'set -- report.md' DEBUG; }; f; set -- other.md; cp ../base/report.md $1", BZ, W_BODY],
+      ["P3-trap-set-in-subshell-control", "nad", "(trap 'set -- report.md' DEBUG); set -- other.md; cp ../base/report.md $1", N, 'allow'],
+      ["P3-trap-set-exit-control", "nad", "trap 'set -- report.md' EXIT; set -- other.md; cp ../base/report.md $1", N, 'allow'],
+      ["P3-trap-reads-list-at-fire", "nad", "set -- other.md; trap 'cp ../base/report.md $1' DEBUG; set -- report.md; true", BZ, TRAP_LIST],
+      ["P4-trap-exit-write-control", "nad", "trap 'cp ../base/report.md report.md' EXIT", A, 'name'],
+      ["P4-trap-set-err", "nad", "trap 'set -- report.md' ERR; set -- other.md; false; cp ../base/report.md $1", BZ, TRAP_BIND],
+      ["P4-trap-set-sigexit-lower", "nad", "trap 'set -- report.md' exit; set -- other.md; cp ../base/report.md $1", N, 'allow'],
+      ["P4-trap-set-zero", "nad", "trap 'set -- report.md' 0; set -- other.md; cp ../base/report.md $1", N, 'allow'],
+      ["P4-trap-set-debug-and-exit", "nad", "trap 'set -- report.md' EXIT DEBUG; set -- other.md; cp ../base/report.md $1", BZ, TRAP_BIND],
+      ["P4-trap-set-debug-pipe-control", "nad", "trap 'set -- report.md' DEBUG | cat; set -- other.md; cp ../base/report.md $1", N, 'allow'],
+      ["P4-trap-set-debug-bg-control", "nad", "trap 'set -- report.md' DEBUG & wait; set -- other.md; cp ../base/report.md $1", N, 'allow'],
+      ["P4-trap-set-debug-under-bash", "nad", "bash -c \"trap 'set -- report.md' DEBUG; set -- other.md; cp ../base/report.md \\$1\"", A, TRAP_BIND],
+      ["P4-trap-set-debug-then-eval-set", "nad", "trap 'set -- report.md' DEBUG; eval 'set -- other.md'; cp ../base/report.md $1", BZ, TRAP_BIND],
+      ["P4-trap-debug-in-fresh-shell-control", "nad", "trap 'set -- report.md' DEBUG; bash -c 'set -- other.md; cp ../base/report.md $1'", N, 'allow'],
+      ["P4-trap-noop-debug-control", "nad", "trap 'true' DEBUG; set -- other.md; cp ../base/report.md $1", N, 'allow'],
+      ["P4-trap-echo-dollar1-debug", "nad", "trap 'echo $1' DEBUG; set -- other.md; cp ../base/report.md $1", N, 'allow'],
+      ["P5-head-unread-set-notes-cwd", "nan", "printf 'set -- n1.md\\n' > ../scratch/x; v=$(cat ../scratch/x); set -- ../scratch/other.md; $v; cp ../base/report.md $1", BD, UH_BIND],
+      ["P5-head-unread-set-root", "na", "printf 'set -- docs/report.md\\n' > scratch/x; v=$(cat scratch/x); set -- scratch/other.md; $v; cp base/report.md $1", BD, UH_BIND],
+      ["P5-head-unread-set-out-b2", "out", "printf 'set -- {NA}/docs/report.md\\n' > scratch/x; v=$(cat scratch/x); set -- {NA}/scratch/other.md; $v; cp {NA}/base/report.md $1", BD, 'allow', null],
+      ["P5-head-unread-set-under-zsh", "nad", "zsh -c \"printf 'set -- report.md\\n' > ../scratch/x; v=\\$(cat ../scratch/x); set -- other.md; \\$v; cp ../base/report.md \\$1\"", N, UH_BIND],
+      ["P5-head-unread-set-under-dash", "nad", "dash -c \"printf 'set -- report.md\\n' > ../scratch/x; v=\\$(cat ../scratch/x); set -- other.md; \\$v; cp ../base/report.md \\$1\"", A, UH_BIND],
+      ["P5-head-unread-set-mv", "nad", "printf 'set -- report.md\\n' > ../scratch/x; v=$(cat ../scratch/x); set -- other.md; $v; mv ../base/report.md $1", BD, UH_BIND],
+      ["P5-head-unread-set-install", "nad", "printf 'set -- report.md\\n' > ../scratch/x; v=$(cat ../scratch/x); set -- other.md; $v; install ../base/report.md $1", BD, UH_BIND],
+      ["P5-head-unread-set-tee", "nad", "printf 'set -- report.md\\n' > ../scratch/x; v=$(cat ../scratch/x); set -- other.md; $v; echo x | tee $1", BD, UH_BIND],
+      ["P5-head-unread-set-redirect", "nad", "printf 'set -- report.md\\n' > ../scratch/x; v=$(cat ../scratch/x); set -- other.md; $v; echo x > $1", BD, UH_BIND],
+      ["P5-head-unread-script", "nad", "printf 'set -- report.md\\n' > ../scratch/x; v=$(cat ../scratch/x); set -- other.md; $v; bash -c \"cp ../base/report.md $1\"", BD, UH_BIND],
+      ["P5-time-head-unread-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; v=$(cat ../scratch/x); set -- other.md; time $v; cp ../base/report.md $1", B, WRAPPER_OPT],
+      ["P5-head-unread-move-tee", "nad", "printf 'cd ../notes\\n' > ../scratch/x; v=$(cat ../scratch/x); $v; echo x | tee n1.md", BD, UH_MOVE],
+      ["P5-head-unread-move-root", "na", "printf 'cd docs\\n' > scratch/x; v=$(cat scratch/x); $v; cp ../base/report.md report.md", BD, UH_MOVE],
+      ["P5-procsub-operand-set-notes-cwd", "nan", "printf 'set -- n1.md\\n' > ../scratch/x; set -- ../scratch/other.md; . <(cat ../scratch/x); cp ../base/report.md $1", BZ, PS_BIND],
+      ["P5-cost-procsub-operand-under-dash", "nad", "dash -c \"printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . <(cat ../scratch/x); cp ../base/report.md \\$1\"", N, FILE_BIND],
+      ["P5-procsub-operand-set-mv", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . <(cat ../scratch/x); mv ../base/report.md $1", BZ, PS_BIND],
+      ["P5-procsub-operand-set-redirect", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . <(cat ../scratch/x); echo x > $1", BZ, PS_BIND],
+      ["P5-procsub-operand-shift", "nad", "printf 'shift\\n' > ../scratch/x; set -- other.md report.md; . <(cat ../scratch/x); cp ../base/report.md $1", BZ, PS_BIND],
+      ["P5-procsub-operand-script", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . <(cat ../scratch/x); bash -c \"cp ../base/report.md $1\"", BZ, PS_BIND],
+      ["P5-procsub-operand-in-fn-move", "nad", "printf 'cd ../notes\\n' > ../scratch/x; f() { . <(cat ../scratch/x); }; f; cp ../base/report.md n1.md", BZ, FN],
+      ["P5-procsub-operand-in-eval-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; eval '. <(cat ../scratch/x)'; cp ../base/report.md $1", BZ, PS_BIND],
+      ["P5-ctl-procsub-operand-subshell-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; (. <(cat ../scratch/x)); cp ../base/report.md $1", N, W_BODY],
+      ["P5-ctl-procsub-operand-move-scratch", "nad", "printf 'cd ../scratch\\n' > ../scratch/x; . <(cat ../scratch/x); cp ../base/report.md report.md", N, PS_MOVE],
+      ["P5-ctl-eval-unread-then-abs", "nad", "v=$(cat ../scratch/keep.md); eval \"$v\"; cp ../base/report.md {NA}/scratch/y.md", N, 'allow', null],
+      ["P5-eval-unread-var-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; d=$(cat ../scratch/x); set -- other.md; eval \"$d\"; cp ../base/report.md $1", A, EVAL_BIND],
+      ["P5-eval-unread-shift", "nad", "printf 'shift\\n' > ../scratch/x; d=$(cat ../scratch/x); set -- other.md report.md; eval \"$d\"; cp ../base/report.md $1", A, EVAL_BIND],
+      ["P5-ctl-eval-bare", "nad", "set -- other.md; eval; cp ../base/report.md $1", N, 'allow'],
+      ["P5-ctl-eval-read-set", "nad", "set -- other.md; eval 'set -- report.md'; cp ../base/report.md $1", A, 'name'],
+      ["P5-emulate-unread-under-zsh-set", "nad", "zsh -c \"printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; emulate sh -c \\\"\\$(cat ../scratch/x)\\\"; cp ../base/report.md \\$1\"", A, EMU_FRAME_BIND],
+      ["P5-mapfile-unread-cb-sep-var-set", "nad", "printf 'set -- report.md #\\n' > ../scratch/x; v=$(cat ../scratch/x); set -- other.md; mapfile -c 1 -C \"$v\" <<< x; cp ../base/report.md $1", B, COND_BIND],
+      ["P5-cost-fn-body-unread-head-set-call", "nad", "printf 'set -- report.md\\n' > ../scratch/x; v=$(cat ../scratch/x); f() { $v; }; set -- other.md; f; cp ../base/report.md $1", N, FN],
+      ["P5-ctl-head-candidate-read-set", "nad", "set -- report.md; c=true; $c; cp ../base/report.md $1", A, 'name'],
+      ["P5-ctl-head-default-word-read", "nad", "set -- other.md; c=ls; ${c:-cp}; cp ../base/report.md $1", N, 'allow'],
+      ["P5-ctl-head-literal-unknown-cmd", "nad", "set -- other.md; frobnicate; cp ../base/report.md $1", N, 'allow'],
+      ["P5-nested-fn-unread-head-inner-move", "nad", "printf 'cd ../notes\\n' > ../scratch/x; v=$(cat ../scratch/x); g() { $v; }; f() { g; }; f; cp ../base/report.md n1.md", BD, FN],
+      ["P5-fn-cd-dash-move", "nad", "f() { cd -; }; cd ../notes; cd ../docs; f; cp ../base/report.md n1.md", A, FN],
+      ["P5-fn-cd-back-to-start", "nad", "f() { cd ../notes; cd {NA}/docs; }; f; cp ../base/report.md report.md", A, FN, null],
+      ["P5-ctl-fn-no-move-called", "nad", "f() { ls; }; f; cp ../base/report.md n1.md", N, 'allow'],
+      ["P5-ctl-fn-subshell-cd-called", "nad", "f() { (cd ../notes); }; f; cp ../base/report.md n1.md", N, 'allow'],
+      ["P5-fn-chdir-move", "nad", "f() { chdir ../notes; }; f; cp ../base/report.md n1.md", ZD, FN],
+      ["P5-fn-pushd-move", "nad", "f() { pushd ../notes >/dev/null; }; f; cp ../base/report.md n1.md", BZ, FN],
+      ["P5-nested-three-deep-move", "nad", "h() { cd ../notes; }; g() { h; }; f() { g; }; f; cp ../base/report.md n1.md", A, FN],
+      ["P5-hash-resolved-out-b2", "out", "hash -p/usr/bin/cp foo; c=foo; $c {NA}/base/report.md {NA}/docs/report.md", B, 'name', null],
+      ["P5-hash-resolved-under-bash", "nad", "bash -c 'hash -p/usr/bin/cp foo; c=foo; $c ../base/report.md report.md'", A, 'name'],
+      ["P5-hash-resolved-mv", "nad", "hash -p/usr/bin/mv foo; c=foo; $c ../base/report.md report.md", B, 'name'],
+      ["P5-hash-resolved-default-word", "nad", "hash -p/usr/bin/cp foo; ${c:-foo} ../base/report.md report.md", B, NOT_SET_C],
+      ["P5-ctl-hash-resolved-ls", "nad", "hash -p/usr/bin/ls foo; c=foo; $c ../base/report.md report.md", N, 'allow'],
+      ["P5-ctl-alias-resolved-head", "nad", "alias foo=cp; c=foo; $c ../base/report.md report.md", N, 'allow'],
+      // 8. the frames and exemptions the older rows asked for (round 6's sixth to twelfth commit rows, the attacker's twins): a positional head in a called
+      //    body and at the top level before any `set` is the call's or the residual, so a relative write after the call stays allowed (THE UNREAD HEAD's
+      //    exemption, positionalResidual at eval and the here-string feed); the call's replay reads the write by name (THE DEFINITION'S NAME no longer
+      //    sets the directory unknown on a replay's own first word); a head that pipes into another command moves nothing (the consumer keeps its by-name
+      //    refusal), a backgrounded one neither, zsh's last member may (no writer: zsh does not split `$v`); a body redefined after its call keeps the call's move
+      ["P6-ctl-fn-positional-head-called-then-relative", "nad", "c() { \"$@\"; }; c true; cp ../base/report.md ../scratch/y.md", N, 'allow'],
+      ["P6-ctl-top-positional-head-then-relative", "nad", "$1; cp ../base/report.md ../scratch/y.md", N, 'allow'],
+      ["P6-ctl-fn-eval-positional-called-then-relative", "nad", "f() { eval \"$1\"; }; f true; cp ../base/report.md ../scratch/y.md", N, 'allow'],
+      ["P6-fn-eval-positional-call-by-name", "nad", "f() { eval \"$1\"; }; f 'cp ../base/report.md report.md'", A, 'name'],
+      ["P6-fn-c-from-call-by-name", "nad", "f() { c=$1; $c ../base/report.md report.md; }; f cp", A, 'name'],
+      ["P6-fn-eval-literal-positional-mix-by-name", "nad", "f() { eval cp $1 ../base/report.md report.md; }; f", A, 'name'],
+      ["P6-ctl-top-eval-positional-then-relative", "nad", "eval \"$1\"; cp ../base/report.md ../scratch/y.md", N, 'allow'],
+      ["P6-ctl-top-herestring-positional-then-relative", "nad", ". /dev/stdin <<< \"$1\"; cp ../base/report.md ../scratch/y.md", N, 'allow'],
+      ["P6-pipe-vanishing-head-consumer-by-name", "nad", "$c echo 'cp ../base/report.md report.md' | bash", A, 'name'],
+      ["P6-pipe-unread-head-consumer-by-name", "nad", "v=$(cat ../scratch/keep.md); $v echo 'cp ../base/report.md report.md' | bash", N, 'name'],
+      ["P6-ctl-pipe-unread-head-move", "nad", "printf 'cd ../notes\\n' > ../scratch/x; v=$(cat ../scratch/x); $v | cat; cp ../base/report.md n1.md", N, 'allow'],
+      ["P6-ctl-bg-unread-head-move", "nad", "printf 'cd ../notes\\n' > ../scratch/x; v=$(cat ../scratch/x); $v & wait; cp ../base/report.md n1.md", N, 'allow'],
+      ["P6-pipe-last-unread-head-move", "nad", "printf 'cd ../notes\\n' > ../scratch/x; v=$(cat ../scratch/x); true | $v; cp ../base/report.md n1.md", N, UH_MOVE],
+      ["P6-fn-redefined-after-call-relative", "nad", "f() { cd ../notes; }; f; f() { :; }; cp ../base/report.md n1.md", A, FN],
+    ];
+    const judge = (id, cwd, raw, writers, expect, outside = 'allow') => {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      w.build();
+      const h = w.hook(cmd, at);
+      assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error: ${h.reason.split('\n')[0]}`);
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      if (outside != null) {
+        w.build();
+        const o = w.hook(cmd, w.cwds.out);
+        assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
+      }
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    };
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect, outside] of rows) { judge(id, cwd, raw, writers, expect, outside); n++; }
+    assert.equal(n, 169);
+    // where the code lives (the rows above prove what it does)
+    const hook = fs.readFileSync(HOOK, 'utf8');
+    assert.ok(hook.includes("const readInPlace = (getTexts, door, what, run, { emptyIsUnheld = true, road = true } = {}) => {") && hook.includes("const held = texts.length > 0 && !vanished && texts.every((t) => !String(t).includes('\\0'));") && hook.includes("if (road && !held && door.unheld && (texts.length || emptyIsUnheld)) door.unheld(what);") && hook.includes("const positionalResidual = (words) => words.length > 0 && (positionals === null || !positionalsApply()) && words.every((w) => w.literal || allPositional(w.raw));"), 'THE UNHELD ROAD has one reader: the texts first, each run through the door, the road when the set is empty, a text is a vanished reading or a text carries a NUL (behaviour: U25-procsub-cat-operand-set, U21-herestring-csub-set, P-eval-csub-move, P-emulate-csub-set, P-mapfile-csub-cb-set)');
+    assert.equal((hook.match(/readInPlace\(/g) || []).length, 5, 'the reader (defined once, spelled `readInPlace = (`) is called at the five in-place sites: eval and trap, the sourced standard input, the sourced process substitution, `emulate -c`, `mapfile -C` (a site added or removed reds here, so its rows are asked for)');
+    assert.ok(!/for \(const (t|tx|body) of scriptTexts\((ops\[0\]|args\[k \+ 1\]|cb),/.test(hook) && !hook.includes("for (const body of fed) recurse("), 'no in-place site loops over its texts on its own any more (the loop that ran zero times for a text not held; behaviour: T21-procsub-cat-operand-head-road, U28-move-procsub-cat-operand)');
+    assert.ok(hook.includes("const unheldRoad = (rebind, subject) => {") && hook.includes("const frameText = (seg, idx, cmd, label) => ({ adopt: true, rebind: (ws, why) => rebindHere(seg, idx, cmd, label, ws, why), unheld: (what, subject = `an earlier ${label} of ${what}`) => unheldRoad((ws, why) => rebindHere(seg, idx, cmd, label, ws, why), subject) });") && hook.includes("const externalText = { adopt: false };"), 'the doors carry the road (the frame door through THE BIND\'S FRAME, the external door not at all; behaviour: P5-ctl-procsub-operand-subshell-set, P2-pipe-head-unread-set, P5-ctl-hash-resolved-ls)');
+    assert.ok(hook.includes("if (!headWord.literal && headWord.marks && headWord.marks.includes('x') && (!texts.length || meta.vanished) && !refusedHead && !(positionalHead && (positionals === null || !positionalsApply()))) unreadHead = ") && hook.includes("if (unreadHead) unreadHead();   // THE UNREAD HEAD: the road after the readings"), 'THE UNREAD HEAD takes the road after the splices, not for a positional head that is the call\'s or unmodelled, not for a head already refused (behaviour: T01-unread-var-head-set-toplevel, P-head-unread-cd-operand, P5-hash-resolved-default-word; S19-ctl-function-shift-head and S19-head-subshell by name in the nineteenth commit\'s rows)');
+    assert.ok(hook.includes("const allPositional = (raw) => /\\$/.test(raw) && !/[$`]/.test(raw.replace(POSITIONAL_FORM, ''));"), 'a head glued from positionals alone is the call\'s in a body (behaviour: RT-zs-body-glued stays a residual row)');
+    assert.ok(hook.includes("const vanishedValues = ctx.vanishedValues || new Set();") && hook.includes("if (v) vanishedValues.add(m[1]);") && hook.includes("return { texts, vanished };") && hook.includes("if (c) { if (c.vanished) { vanishedRead = true; if (meta) meta.vanished = true; }"), 'THE VANISHED VALUE: a name whose value is a vanished reading marks the texts over it (behaviour: U23-herestring-unread-var-set, P2-cand-tainted-head-set, P2-value-chain-move)');
+    assert.ok(hook.includes("if (trapBinds && ws !== UNKNOWN_POSITIONALS) { ws = UNKNOWN_POSITIONALS; why = trapBinds; }") && hook.includes("if (sigs.length && sigs.every((s) => s.literal && EXIT_SPEC.test(s.text))) return { adopt: false };") && hook.includes("if (opts.trapMove && sub.rebound) opts.rebind();") && hook.includes("callArgs: opts.callArgs !== undefined ? opts.callArgs : opts.trapMove ? UNKNOWN_POSITIONALS :"), 'THE STANDING TRAP: a trap action\'s bind stands over later binds, an EXIT trap binds nothing, the action reads the list as values not read (behaviour: P-trap-literal-set-debug, P2-trap-literal-shift-debug, P3-trap-set-exit-control, P3-trap-reads-list-at-fire, P4-trap-set-debug-then-eval-set)');
+    assert.ok(hook.includes("if (!f.coproc && (dir !== f.dir || (unknownDir && !f.unknownDir))) f.bodyMoved = true;"), 'THE BODY\'S OWN STATE: a body whose walk ends elsewhere or not knowing where moves the shell when called (behaviour: T03-nested-fn-literal-cd, P-fn-popd-move, P-fn-cd-unread-var-move, P5-nested-three-deep-move)');
+    assert.ok(hook.includes("const hashed = hw && hw.literal && !hw.text.includes('/') && !hw.text.includes('\\0') ? hw.text : null;") && hook.includes("if (hashRoad && hashed != null && hashes.has(hashed)) {") && hook.includes("if (name != null && a && !a.suffix && a.line < here && !aliasChain.has(name)) {"), 'THE RESOLVED NAME: the hash road reads the head\'s text, the alias roads the plain word (behaviour: G11-hash-p-glued-positional-head, T06-hash-zsh-eq-splice-name, P5-ctl-alias-resolved-head)');
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
