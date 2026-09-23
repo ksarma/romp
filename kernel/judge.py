@@ -19395,23 +19395,31 @@ def _remote_sids_mirror():
     ValueError and lands in the unparsable arm below, said once and naming the file (until that commit the
     decode sat outside the try, under the OSError catch alone, and raised out of _presumed_closed_verdict for
     every sid; a replacing decode would read a document with one stray byte inside a sid as naming another sid,
-    and a host vouching for absence would let rule 5 presume the sid it named closed). A document nested past the
-    JSON parser's depth raises RecursionError, which is not a ValueError, and raised out of the ladder the same way
-    until that commit; it lands in the same arm (found by that commit's builder, the same class as the bytes). Returns
-    (hosts, None) with the table as the bus wrote it; (None,
-    "no-mirror") when there is no file (the bus has not written under this root); (None, "mirror-unparsable")
-    when the file is not a document of that shape, a whitespace list written by a bus from before 2026-09-22,
-    a document whose `v` is not 2 and a file whose bytes are not UTF-8 among them, said once per distinct text
-    in this process's log, so a shape drift between the two modules is seen and never read as an empty
-    roster."""
+    and a host vouching for absence would let rule 5 presume the sid it named closed). The bus's own
+    previous-read replaces for its parse and validates every sid it carries (postal_service.py
+    _remote_sids_previous); this reader stays strict, and the bus's next write replaces the file. A BYTE-ORDER
+    MARK is accepted and dropped (utf-8-sig; round 3 of fork PR #897, the reviewer's ruling of 14:57Z, the
+    twenty-second commit): the document behind it is read, where until that commit it was unparsable. A document
+    nested past the JSON parser's depth raises RecursionError, which is not a ValueError, and raised out of the
+    ladder the same way until the twentieth commit; it lands in the same arm (found by that commit's builder, the
+    same class as the bytes). THE LOST-CARRY MARK (the same ruling): a document whose previous file the bus could
+    not read whole carries "carryLost", {"cause": str, "at": int}, until the bus has heard every host its kernel
+    links to since (postal_service.py _remote_sids_lost_cleared); it is returned beside the table, and a mark in
+    any other shape, a second before 1970 or past the year 9999 among them (the verdict prints it, and time.gmtime
+    raises past the platform's range), makes the file unparsable. Returns (hosts, None, lost) with the table as the bus wrote it and
+    the mark, or None; (None, "no-mirror", None) when there is no file (the bus has not written under this root);
+    (None, "mirror-unparsable", None) when the file is not a document of that shape, a whitespace list written by
+    a bus from before 2026-09-22, a document whose `v` is not 2 and a file whose bytes are not UTF-8 among them,
+    said once per distinct text in this process's log, so a shape drift between the two modules is seen and never
+    read as an empty roster."""
     path = STATE / "postal" / "remote-sids"
     try:
         raw = path.read_bytes()
     except OSError:
-        return None, "no-mirror"
+        return None, "no-mirror", None
     try:
-        doc = json.loads(raw.decode("utf-8"))           # strict, inside this try: a UnicodeDecodeError is a ValueError
-        if not isinstance(doc, dict):
+        doc = json.loads(raw.decode("utf-8-sig"))       # strict, inside this try (a UnicodeDecodeError is a ValueError);
+        if not isinstance(doc, dict):                   # a byte-order mark accepted and dropped
             raise ValueError("not a JSON object")
         if doc.get("v") != 2:                           # the version gate: the writer stamps 2
             raise ValueError("the document's version is %r, not 2" % (doc.get("v"),))
@@ -19424,12 +19432,16 @@ def _remote_sids_mirror():
                     and all(isinstance(row.get(k), bool) for k in ("heard", "expired", "linkDown", "linkUp",
                                                                        "answered", "reachable", "vouchesAbsence"))):
                 raise ValueError("host %r is not a roster row" % (key,))
+        lost = doc.get("carryLost")                     # the lost-carry mark, while it stands: a second the verdict can print
+        if lost is not None and not (isinstance(lost, dict) and isinstance(lost.get("cause"), str)
+                                     and type(lost.get("at")) is int and 0 <= lost["at"] <= 253402300799):
+            raise ValueError("the lost-carry mark is not the shape the bus writes")
     except (ValueError, KeyError, TypeError, RecursionError) as e:   # RecursionError: nesting past json's depth
         _say_once_judge("romp-judge: the postal bus's presence mirror %s is not the shape the bus writes (%s: %s); "
                         "rules 4 and 5 of the dead-session ladder answer cannot-determine until the bus rewrites it"
                         % (path, type(e).__name__, str(e)[:120]))
-        return None, "mirror-unparsable"
-    return hosts, None
+        return None, "mirror-unparsable", None
+    return hosts, None, lost
 
 
 Deadness = collections.namedtuple("Deadness", "closed rule why")
@@ -19438,7 +19450,9 @@ Deadness = collections.namedtuple("Deadness", "closed rule why")
 #   why     one token per arm, matched by value in tests/test_dead_session_staleness.py and
 #           tests/test_judge_propagate_loads.py: parsed, parse-failed (rules 1 and 2); ext (3);
 #           named-by-reachable-host (4); no-reachable-host-names-it (5); and the cannot-determine arms
-#           no-mirror, mirror-unparsable, named-by-unreachable-host, no-host-vouches-absence. The rule is
+#           no-mirror, mirror-unparsable, named-by-unreachable-host, no-host-vouches-absence, carry-lost (the
+#           bus's lost-carry mark stands where rule 5 would fire: "carry-lost: <the mark's cause> at <its UTC
+#           second>"; round 3 of fork PR #897, the reviewer's ruling of 14:57Z, the twenty-second commit). The rule is
 #           two-sided (round 2 of fork PR #897, the reviewer's ruling): a heard source that is not held
 #           down vouches for the PRESENCE of the sids it names (`reachable`), and a source vouches for the
 #           ABSENCE of a sid it does not name (`vouchesAbsence`) only when its link is known up (or, under
@@ -19517,13 +19531,17 @@ def _presumed_closed_verdict(sid, now):
          4's and a sid it does not name is cannot-determine by it; round 3 of fork PR #897, the reviewer's
          ruling); a far host gossiped through a hub vouches by the
          hub's link and by its own bit, which the hub stamps on the gossip.
-    Cannot determine, False, in four arms: no mirror file (the bus has not written under this root); a
+    Cannot determine, False, in five arms: no mirror file (the bus has not written under this root); a
     mirror not in the bus's shape (a document whose `v` is not 2, a row without the seven booleans, bytes that
-    are not UTF-8: _remote_sids_mirror; said once in this process's log; never read as an empty roster); the
-    sid named only by an UNREACHABLE host, whose last roster stands until the host is heard again; no host
-    vouches for absence (a bus that has heard nobody since it started, a mirror carried from before, every
-    heard host expired or held down, every heard host with NO LINK STATE, or every heard host whose last
-    exchange served a cached roster). The rule is two-sided (round 2 of fork PR #897, the reviewer's
+    are not UTF-8, a lost-carry mark of another shape: _remote_sids_mirror; said once in this process's log;
+    never read as an empty roster); the sid named only by an UNREACHABLE host, whose last roster stands until
+    the host is heard again; no host vouches for absence (a bus that has heard nobody since it started, a
+    mirror carried from before, every heard host expired or held down, every heard host with NO LINK STATE, or
+    every heard host whose last exchange served a cached roster); and a host vouches for absence, none names
+    the sid, but the bus's LOST-CARRY MARK stands ("carry-lost", its cause and its second: the bus could not
+    read its previous file whole, so a session a lost row named is in no row; round 3 of fork PR #897, the
+    reviewer's ruling of 14:57Z, the twenty-second commit), which the bus clears once it has heard every host
+    its kernel links to since. The rule is two-sided (round 2 of fork PR #897, the reviewer's
     ruling): a heard host vouches for presence; a host vouches for absence only when its link is known up,
     so a heard host with no link state answers cannot-determine for a sid it does not name, as a down host
     does, and rule 4 for the sids it names; and so does a heard host whose roster is a cache (round 3): the
@@ -19547,15 +19565,19 @@ def _presumed_closed_verdict(sid, now):
     empty memory wrote its first mirror from that memory, so until its first exchange every sid live on
     another host was absent from the file and its local mirror store settled; the bus now carries every
     host it has not heard forward, unreachable,
-    and the event that closes the road is that host's heartbeat or exchange arriving in the new process;
-    but the carry reads the previous file, and a previous file the bus cannot read carries NOTHING (bytes
-    that are not UTF-8, one stray byte inside a sid being enough; text that is not JSON; a byte-order mark;
-    nesting past the JSON parser's depth; a value of neither shape), so for a session that file named on a
-    host the new process has not heard yet this road is OPEN, disclosed and not closed (round 3 of fork PR
-    #897, the reviewer's verifier at the twentieth commit; the twenty-first commit): once a heard host
-    vouches for absence, rule 5 presumes that session closed until its host is heard in the new process. The
-    bus says so once in its log; postal_service.py _remote_sids_previous has the files and why the carry's
-    read stays strict, and ReaderFollowsTheWriter's unreadable previous file phase is the witness;
+    and the event that closes the road is that host's heartbeat or exchange arriving in the new process.
+    The carry reads the previous file (round 3 of fork PR #897, the reviewer's ruling of 14:57Z on its
+    verifier's finding at the twentieth commit, the twenty-second commit): one bad byte there costs one sid,
+    never the document (the bus decodes with replacement for its JSON parse alone and drops a sid that fails
+    the session-id shape, saying so once in its log), and a byte-order mark is read; a file the bus cannot read
+    whole (text that is not JSON, bytes that are not UTF-8 in a file that is not a document at v 2 after that
+    decode, an empty file, a value of neither shape, a path it cannot open) carries no row, so the bus marks
+    the document and this ladder answers carry-lost, cannot-determine, where rule 5 would fire, until the bus
+    has heard every host its kernel links to since the mark. Until that commit such a file carried nothing
+    and a session it named on a host the new process had not heard answered rule 5 while a heard host
+    vouched. postal_service.py _remote_sids_previous and _remote_sids_lost_cleared have the files, the
+    clearing rule and its bound, and ReaderFollowsTheWriter's one-byte, byte-order-mark and lost-carry phases
+    are the witnesses;
     (2) under the legacy singleton scheme the bus pruned an expired heartbeat's sid from the file, so a
     tunnel drop or a stalled peer longer than the TTL settled a live session on no new information; the
     row now stays, marked expired, and a beat from the session (the event) makes it reachable again. A
@@ -19591,7 +19613,7 @@ def _presumed_closed_verdict(sid, now):
                 return Deadness(False, 2, "parse-failed")
     if str(sid).startswith("ext:"):
         return Deadness(True, 3, "ext")
-    hosts, why = _remote_sids_mirror()
+    hosts, why, lost = _remote_sids_mirror()
     if hosts is None:
         return Deadness(False, None, why)               # the bus has not spoken in a shape this reader knows
     sid = str(sid)
@@ -19603,6 +19625,9 @@ def _presumed_closed_verdict(sid, now):
         return Deadness(False, None, "named-by-unreachable-host: " + _source_causes(naming))
     if not any(row["vouchesAbsence"] for row in hosts.values()):         # the writer's second flag: nobody heard with its
         return Deadness(False, None, "no-host-vouches-absence: " + _source_causes(hosts))   # link known up (or a live beat)
+    if lost is not None:                                                 # the bus lost the rows it would have carried: a sid
+        return Deadness(False, None, "carry-lost: %s at %s" % (           # nothing names may be one of theirs (the mark)
+            lost["cause"], time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(lost["at"]))))
     return Deadness(True, 5, "no-reachable-host-names-it")               # a vouching host is reachable and none names it
 
 

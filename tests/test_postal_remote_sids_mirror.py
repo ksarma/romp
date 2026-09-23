@@ -102,14 +102,19 @@ the release reaching heartbeat rows alone, a carried legacy list, peer row and v
 carried whole (the reviewer's verifier at the seventeenth commit: a carry with its kind test deleted passed every pin),
 and a heard peer row and via row doing so written whole (its verifier at the eighteenth: an in-memory drop of the via
 row passed every pin); the release's order across a write that fails, at the temporary file or at the replace, the
-entry kept and the row re-emitted heard until a write succeeds; and the previous-read's strictness (round 3 of fork PR
-#897, the reviewer's ruling, the twentieth commit): a file whose bytes are not UTF-8 carries nothing and the write
-replaces it (a replacing decode would carry the garbage's safe-id-shaped runs as legacy sids), so does a document nested
-past the JSON parser's depth (RecursionError, found by the commit's builder), and a carried row's values
-are coerced, never dropped: its flags bool(), its sids str(), a busId that is not a str ignored; and a previous file the
-read cannot read named once in the bus log with the consequence the twenty-first commit discloses (a session it named on
-a host not yet heard can be presumed closed until that host is heard), for each such file, and nothing said for no file,
-an empty one, or a readable one.
+entry kept and the row re-emitted heard until a write succeeds; the previous-read's bytes (round 3 of fork PR #897, the
+reviewer's ruling, the twentieth commit, and its ruling of 14:57Z, the twenty-second): a file whose bytes are not UTF-8 no
+longer fails every write, a document nested past the JSON parser's depth neither (RecursionError, found by the twentieth
+commit's builder), and a carried row's values are coerced, never dropped: its flags bool(), a busId that is not a str
+ignored, each sid str() and then validated, one that fails the session-id shape dropped and counted; one bad byte costs one
+sid, never the document (the replacing decode for the JSON parse alone, the whitespace list keeping the strict decode, so
+garbage whose runs look like session ids is never carried as legacy sids), with one line in the bus log naming the file
+and the count; a byte-order mark read before the document and before the list; and a previous file the read cannot read
+whole carrying no row and MARKING the document with the cause and the second, said once, for each such file (an empty
+one among them), nothing said or marked for no file or a readable one, the mark carried by every write and across a
+restart until the bus process that read the kernel's list of links at its start has heard every dialable PEERS host since
+it, kept while a linked host stays down, kept in a bus whose seed failed or whose link table is empty, kept when it is read
+in another shape or a stray byte hits a top-level key, and cleared, said once, on the ruled event.
 tests/test_dead_session_staleness.py ReaderFollowsTheWriter
 runs this writer and the judge's reader together over one root; tests/test_postal_bus_lifetime.py
 MonitorTick pins the poll's write. SYNTHETIC fixtures only: private synthetic sids, hostname TESTHOST."""
@@ -169,14 +174,16 @@ class Mirror(unittest.TestCase):
         pm.STATE.mkdir(parents=True, exist_ok=True)
         self.path = pm.STATE / "remote-sids"
         self.path.unlink(missing_ok=True)
-        saved = (dict(pm.HEARTBEATS), dict(pm.PEER_STATE), dict(pm.PEERS), _listing_record())
+        saved = (dict(pm.HEARTBEATS), dict(pm.PEER_STATE), dict(pm.PEERS), _listing_record(), pm._PEERS_SEEDED[0])
         pm.HEARTBEATS.clear(); pm.PEER_STATE.clear(); pm.PEERS.clear()
         _forget_listing()                             # no listing read yet in this "process": the writer releases nothing
+        pm._PEERS_SEEDED[0] = False                   # ...and no seed from the kernel's list of links
 
         def restore():
             for d, v in zip((pm.HEARTBEATS, pm.PEER_STATE, pm.PEERS), saved):
                 d.clear(); d.update(v)
             _forget_listing(saved[3])
+            pm._PEERS_SEEDED[0] = saved[4]
             self.path.unlink(missing_ok=True)
         self.addCleanup(restore)
         reconcile = pm._peer_threads_reconcile
@@ -246,8 +253,10 @@ class Mirror(unittest.TestCase):
         pm.PEER_STATE[host] = st
 
     def _restart(self):
-        """A restarted bus process's memory: nothing heard yet, no listing read yet, the file still on disk."""
+        """A restarted bus process's memory: nothing heard yet, no listing read yet, no seed from the kernel's list of links
+        yet, the file still on disk."""
         pm.HEARTBEATS.clear(); pm.PEER_STATE.clear(); _forget_listing()
+        pm._PEERS_SEEDED[0] = False
 
     def _local_listing_answered_empty(self):
         """The local sessions listing the dialed side's handler gossips in its response presence, answered and
@@ -1156,78 +1165,191 @@ class Mirror(unittest.TestCase):
         self.assertEqual(self._rows(), {HB + A: (True, False, [A]), HB + B: (True, False, [B])},
                          "every sid heard: the legacy source is gone")
 
-    def test_a_file_of_neither_shape_carries_nothing(self):
-        for text in ("[1, 2]\n", '{"hosts": 3}\n', '{"hosts": {"TESTHOST": "x"}}\n', "\x00\x01\n"):
+    def _mark(self):
+        """The document's lost-carry mark, {"cause", "at"}, or None when the document carries none (round 3 of fork PR #897,
+        the reviewer's ruling of 14:57Z, the twenty-second commit)."""
+        return self._doc().get("carryLost")
+
+    def _own_document(self):
+        """The bus's own document naming B on HOST and C on HUB, both heard and vouching, as a previous process wrote it."""
+        row = lambda sids: {"kind": "peer", "sids": sids, "heard": True, "expired": False, "linkDown": False, "linkUp": True,
+                            "answered": True, "reachable": True, "vouchesAbsence": True, "seenAt": 1}
+        return json.dumps({"v": 2, "busStarted": 1, "writtenAt": 1, "hosts": {HOST: row([B]), HUB: row([C])}},
+                          sort_keys=True) + "\n"
+
+    def _write_saying(self):
+        """One write through the real writer; returns the bus log lines it said."""
+        pm._REMOTE_SIDS_SAID.clear()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            pm._write_remote_sids()
+        return err.getvalue().splitlines()
+
+    def _seed(self, links):
+        """The kernel's tunnel list read at the bus's start, through the REAL seed (_seed_peers_from_kernel) with its transport
+        stubbed: `links` is [(host, status)]. The seed applies each row through peer_update, which writes the mirror, and
+        then sets _PEERS_SEEDED, which this returns for the caller to assert after its own verdicts; the transport is put back
+        as found."""
+        body = json.dumps({"tunnels": [{"host": h, "busPort": 50002, "status": st} for h, st in links], "known": []}).encode()
+
+        class Answer:
+            def read(self):
+                return body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+        real = pm.urllib.request.urlopen
+        pm.urllib.request.urlopen = lambda req, timeout=None: Answer()
+        try:
+            pm._seed_peers_from_kernel()
+        finally:
+            pm.urllib.request.urlopen = real
+        return pm._PEERS_SEEDED[0]
+
+    def _heard_now(self, host, sids):
+        """An exchange from `host` landing now, after every write before this call (seenAt is the recorders' own stamp,
+        int(time.time()) at the exchange), then the write it makes."""
+        self._peer(host, [{"id": s, "name": "api"} for s in sids])
+        pm.PEER_STATE[host]["seenAt"] = int(pm.time.time())
+        pm._write_remote_sids()
+
+    def test_a_file_of_neither_shape_carries_nothing_and_marks_the_document(self):
+        for text in ("[1, 2]\n", '{"hosts": 3}\n', "\x00\x01\n"):
             with self.subTest(text=text):
                 self.path.write_text(text)
                 pm.HEARTBEATS[A] = ("web", self.now)
                 pm._write_remote_sids()
                 self.assertEqual(self._rows(), {HB + A: (True, False, [A])}, "rewritten as a document from memory alone")
+                self.assertIsNotNone(self._mark(), "the rows it may have held are lost: the document is marked (round 3 of fork "
+                                     "PR #897, the reviewer's ruling of 14:57Z; until the twenty-second commit it carried no mark)")
+        self.path.write_text('{"hosts": {"TESTHOST": "x"}}\n')
+        pm._write_remote_sids()
+        self.assertEqual((self._rows(), self._mark()), ({HB + A: (True, False, [A])}, None),
+                         "a document whose one row is not a roster row: the row is dropped and counted, the document read, "
+                         "so no mark")
 
-    def test_a_file_whose_bytes_are_not_utf8_carries_nothing_and_the_write_replaces_it(self):
-        """Round 3 of fork PR #897, the reviewer's ruling on its refuters' corrections, the twentieth commit: bytes that are
-        not UTF-8 are no bus's word (both shapes a bus writes are ASCII), so the previous-read returns {} and the write
-        replaces the file from memory. Until the commit the decode's UnicodeDecodeError passed the read's OSError catch and
-        failed every write, the file never replaced. A replacing decode (errors="replace") hands the whitespace parser the
-        garbage's safe-id-shaped runs (IHDR and tEXt here) to carry as legacy sids; the strict decode refuses them."""
+    def test_a_file_whose_bytes_are_not_utf8_and_no_document_carries_nothing_marks_the_document_and_the_write_replaces_it(self):
+        """Round 3 of fork PR #897, the reviewer's ruling on its refuters' corrections, the twentieth commit, and its ruling of
+        14:57Z, the twenty-second commit: bytes that are not UTF-8 are decoded with replacement for the JSON parse alone, so
+        garbage that is no document at v 2 after it is a file this read cannot read whole: no row carried, the document
+        marked, the write replacing the file. Until the twentieth commit the decode's UnicodeDecodeError passed the read's
+        OSError catch and failed every write, the file never replaced. The whitespace list keeps the strict decode, so the
+        garbage's safe-id-shaped runs (IHDR and tEXt here) never reach its parser (a replacing decode handed to it carries
+        them as a legacy row)."""
         garbage = b"\x89PNG\r\n\x1a\n\xff\xd8 IHDR tEXt\n"
         self.path.write_bytes(garbage)
         pm.HEARTBEATS[A] = ("web", self.now)
-        pm._REMOTE_SIDS_SAID.clear()
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            pm._write_remote_sids()
+        lines = self._write_saying()
         self.assertNotEqual(self.path.read_bytes(), garbage,
-                            "the write replaced the file (a read whose decode error passes its catch fails every write: %r)"
-                            % err.getvalue())
+                            "the write replaced the file (a read whose decode error passes its catch fails every write: %r)" % lines)
         self.assertEqual(self._rows(), {HB + A: (True, False, [A])},
-                         "rewritten from memory alone: the garbage carries nothing (a replacing decode carries its "
-                         "safe-id-shaped runs as a legacy row)")
-        self.assertEqual([ln for ln in err.getvalue().splitlines() if "not written" in ln], [],
-                         "no write failure said: %r" % err.getvalue())
-        said = [ln for ln in err.getvalue().splitlines() if "previous remote-sids mirror" in ln]
-        self.assertEqual(len(said), 1, "the discarded file is said once in the bus log (until the twenty-first commit the bus "
-                         "said nothing): %r" % err.getvalue())
+                         "rewritten from memory alone: the garbage carries nothing (a replacing decode handed to the whitespace "
+                         "parser carries its safe-id-shaped runs as a legacy row)")
+        self.assertIn("UnicodeDecodeError", (self._mark() or {}).get("cause", ""), "the document marked with the cause")
+        self.assertEqual([ln for ln in lines if "not written" in ln], [], "no write failure said: %r" % lines)
+        said = [ln for ln in lines if "is unreadable" in ln]
+        self.assertEqual(len(said), 1, "the discarded file is said once in the bus log: %r" % lines)
         self.assertIn("UnicodeDecodeError", said[0], "the line says what failed")
 
-    def test_a_file_this_read_cannot_read_is_said_once_in_the_bus_log_with_its_consequence(self):
-        """Round 3 of fork PR #897, the reviewer's verifier at the twentieth commit; the twenty-first commit. A previous file
-        the previous-read cannot read carries nothing, so a session it named on a host the restarted bus has not heard is
-        in no row, and once a heard host vouches for absence the judge's rule 5 presumes it closed until that host is heard
-        (DISCLOSED at _remote_sids_previous; the verdict's witness is tests/test_dead_session_staleness.py
-        ReaderFollowsTheWriter). Until the commit the bus log said nothing. Each file of the disclosure's list, planted
-        where the bus writes: the write lands from memory and the bus log names the file once, with its error and the
-        consequence, and says no write failure. A path the bus cannot open is read directly (a directory there: the write's
-        replace would fail too)."""
-        doc = json.dumps({"v": 2, "busStarted": 1, "writtenAt": 1, "hosts": {
-            HOST: {"kind": "peer", "sids": [B], "heard": True, "expired": False, "linkDown": False, "linkUp": True,
-                   "answered": True, "reachable": True, "vouchesAbsence": True, "seenAt": 1}}}, sort_keys=True) + "\n"
-        files = (("bytes that are not UTF-8, one stray byte inside a sid of the bus's own document",
-                  doc.encode().replace(B.encode(), B[:-1].encode() + b"\xff"), "UnicodeDecodeError"),
-                 ("text that is not JSON, a stray brace", doc.replace('"sids"', '"sids"}', 1).encode(), "JSONDecodeError"),
-                 ("the bus's own document behind a byte-order mark", ("﻿" + doc).encode(), "JSONDecodeError"),
+    def test_one_bad_byte_costs_one_sid_never_the_document(self):
+        """Round 3 of fork PR #897, the reviewer's ruling of 14:57Z, clause 1 (the twenty-second commit): the previous-read
+        decodes the bus's own document with replacement for its JSON parse, validates every sid, drops the one a stray byte
+        made fail the session-id shape, carries every other row, and says once in the bus log which file and how many. Until
+        the commit the read was strict and the file carried nothing: HUB's row, which no bad byte touched, was lost with
+        HOST's, and a session HUB named was presumed closed by rule 5 once another host vouched (the reviewer's verifier, by
+        execution; the verdicts are tests/test_dead_session_staleness.py ReaderFollowsTheWriter's one-byte phase). A stray
+        byte inside the key `sids` of a row costs that row alone; one inside a host's key keeps the row under the key as
+        read, its sid still named. No mark: the document was read."""
+        doc = self._own_document().encode()
+        for name, data, rows, sids_dropped, rows_dropped in (
+                ("inside the sid HOST names", doc.replace(B.encode(), B[:-1].encode() + b"\xff"),
+                 {HB + A: (True, False, [A]), HOST: (False, False, []), HUB: (False, False, [C])}, 1, 0),
+                ("inside the key sids of HOST's row", doc.replace(b'"sids"', b'"sid\xff"', 1),
+                 {HB + A: (True, False, [A]), HUB: (False, False, [C])}, 0, 1),
+                ("inside HUB's key", doc.replace(HUB.encode(), HUB[:-1].encode() + b"\xff"),
+                 {HB + A: (True, False, [A]), HOST: (False, False, [B]), HUB[:-1] + "\ufffd": (False, False, [C])}, 0, 0)):
+            with self.subTest(byte=name):
+                self.path.write_bytes(data)
+                pm.HEARTBEATS.clear()
+                pm.HEARTBEATS[A] = ("web", self.now)
+                lines = self._write_saying()
+                self.assertEqual(self._rows(), rows, "every row the byte did not break is carried (a strict read carries none)")
+                self.assertIsNone(self._mark(), "the document was read: no mark")
+                said = [ln for ln in lines if "previous remote-sids mirror" in ln]
+                self.assertEqual(len(said), 1, "said once: %r" % lines)
+                self.assertIn(str(self.path), said[0], "the line names the file")
+                self.assertIn("%d session id(s) not in the session-id shape and %d row(s)" % (sids_dropped, rows_dropped),
+                              said[0], "the line says how many")
+                self.assertIn("UnicodeDecodeError", said[0], "the line says the bytes were not UTF-8")
+                self.assertEqual([ln for ln in lines if "not written" in ln or "is unreadable" in ln], [],
+                                 "no write failure and no whole-file line")
+
+    def test_a_byte_order_mark_is_read_and_its_file_carried(self):
+        """Round 3 of fork PR #897, the reviewer's ruling of 14:57Z, clause 1 (the twenty-second commit): a byte-order mark is
+        accepted (utf-8-sig) in the previous-read, before the bus's document and before the whitespace list alike, and
+        nothing is said. Until the commit the mark made the file unreadable, so it carried nothing."""
+        for name, data, rows in (("the bus's own document", b"\xef\xbb\xbf" + self._own_document().encode(),
+                                  {HB + A: (True, False, [A]), HOST: (False, False, [B]), HUB: (False, False, [C])}),
+                                 ("the whitespace list", b"\xef\xbb\xbf" + (B + "\n").encode(),
+                                  {HB + A: (True, False, [A]), LEGACY: (False, False, [B])})):
+            with self.subTest(file=name):
+                self.path.write_bytes(data)
+                pm.HEARTBEATS.clear()
+                pm.HEARTBEATS[A] = ("web", self.now)
+                lines = self._write_saying()
+                self.assertEqual(self._rows(), rows, "read behind the mark and carried (a read refusing the mark carries nothing)")
+                self.assertIsNone(self._mark(), "no mark")
+                self.assertEqual(lines, [], "nothing said")
+
+    def test_a_file_this_read_cannot_read_whole_carries_no_row_marks_the_document_and_is_said_once(self):
+        """Round 3 of fork PR #897, the reviewer's ruling of 14:57Z, clause 2 (the twenty-second commit): a previous file the
+        previous-read cannot read whole carries no row, and the write stamps the new document with the lost-carry mark,
+        {"cause", "at"}, the cause and the second of the write, and says so once in the bus log naming the file, so the judge
+        answers cannot-determine where rule 5 would fire (the verdicts: tests/test_dead_session_staleness.py). Until the
+        commit such a file carried nothing, the document carried no mark, and the judge answered rule 5 for a session a lost
+        row named. The whitespace list keeps the strict decode, so the list with one byte that is not UTF-8 is such a file
+        (a replacing decode handed to its parser carries B as a legacy row); a text that opens with a brace is a document,
+        never the list, so the document cut short after `true` is never read as naming the session "true"; an empty file,
+        which no bus since 2026-09-22 writes and a crash can leave, is one too. A path the bus cannot open is read directly
+        (a directory there: the write's replace would fail too)."""
+        doc = self._own_document()
+        v1 = doc.replace('"v": 2', '"v": 1')
+        files = (("text that is not JSON, a stray brace", doc.replace('"sids"', '"sids"}', 1).encode(), "JSONDecodeError"),
+                 ("the document cut short after a literal the whitespace parser would take for a session id",
+                  doc[:doc.index("true") + 4].encode(), "JSONDecodeError"),
                  ("nesting past the parser's depth", ("[" * 100000 + "\n").encode(), "RecursionError"),
                  ("a JSON list", b"[1, 2]\n", "a JSON list, not a document with a hosts table"),
                  ("a JSON object whose hosts are a list", b'{"v": 2, "hosts": []}\n', "a JSON dict, not a document"),
-                 ("a text naming no session id", b"??? !!!\n", "JSONDecodeError"))
+                 ("a text naming no session id", b"??? !!!\n", "JSONDecodeError"),
+                 ("an empty file", b"", "an empty file"),
+                 ("bytes that are not UTF-8 in no document", b"\x89PNG\r\n\x1a\n\xff\xd8 IHDR tEXt\n", "UnicodeDecodeError"),
+                 ("bytes that are not UTF-8 in a document at v 1", v1.encode().replace(B.encode(), B[:-1].encode() + b"\xff"),
+                  "not a document at v 2 after the replacing decode"),
+                 ("the whitespace list with one byte that is not UTF-8", (B + "\n" + C[:-1]).encode() + b"\xff\n",
+                  "UnicodeDecodeError"))
         for name, data, error in files:
             with self.subTest(file=name):
                 self.path.write_bytes(data)
                 pm.HEARTBEATS.clear()
                 pm.HEARTBEATS[A] = ("web", self.now)
-                pm._REMOTE_SIDS_SAID.clear()
-                err = io.StringIO()
-                with contextlib.redirect_stderr(err):
-                    pm._write_remote_sids()
-                self.assertEqual(self._rows(), {HB + A: (True, False, [A])}, "the write lands from memory: the file carries nothing")
-                lines = err.getvalue().splitlines()
+                before = int(pm.time.time())
+                lines = self._write_saying()
+                after = int(pm.time.time())
+                self.assertEqual(self._rows(), {HB + A: (True, False, [A])}, "the write lands from memory: no row carried")
+                mark = self._mark()
+                self.assertIsNotNone(mark, "the document is marked (until the twenty-second commit it carried no mark)")
+                self.assertEqual(sorted(mark), ["at", "cause"], "the mark's shape")
+                self.assertTrue(before <= mark["at"] <= after, "stamped with the write's second: %r" % mark)
+                self.assertTrue(mark["cause"].startswith("previous mirror unreadable ("), "the cause: %r" % mark)
+                self.assertIn(error, mark["cause"], "the cause says what failed")
                 said = [ln for ln in lines if "previous remote-sids mirror" in ln]
-                self.assertEqual(len(said), 1, "said once in the bus log (a read that discards the file in silence says "
-                                 "nothing): %r" % lines)
+                self.assertEqual(len(said), 1, "said once in the bus log: %r" % lines)
                 self.assertIn(str(self.path), said[0], "the line names the file")
                 self.assertIn(error, said[0], "the line says what failed")
-                self.assertIn("presumed closed by the judge's rule 5 until that host is heard", said[0],
-                              "the line says the consequence")
+                self.assertIn("marks the mirror", said[0], "the line says the consequence")
                 self.assertEqual([ln for ln in lines if "not written" in ln], [], "and no write failure")
         with self.subTest(file="a path the bus cannot open"):
             self.path.unlink(missing_ok=True)
@@ -1236,30 +1358,29 @@ class Mirror(unittest.TestCase):
             pm._REMOTE_SIDS_SAID.clear()
             err = io.StringIO()
             with contextlib.redirect_stderr(err):
-                got = pm._remote_sids_previous(self.path)
+                got, mark = pm._remote_sids_previous(self.path, self.now)
             self.assertEqual(got, {}, "carries nothing")
+            self.assertIsNotNone(mark, "marked (until the twenty-second commit such a path carried nothing and marked nothing)")
+            self.assertEqual((mark["at"], "IsADirectoryError" in mark["cause"]), (int(self.now), True), "marked: %r" % mark)
             said = [ln for ln in err.getvalue().splitlines() if "previous remote-sids mirror" in ln]
             self.assertEqual(len(said), 1, "said once: %r" % err.getvalue())
             self.assertIn("IsADirectoryError", said[0], "the line says what failed")
 
-    def test_no_file_an_empty_one_and_a_readable_one_say_nothing_and_an_unreadable_one_is_said_once_per_text(self):
-        """The twenty-first commit's line has no false alarm: no file (the first write under a root), an empty file (the list
-        shape until 2026-09-22 naming no session: that writer wrote an empty file), the list shape naming a session, and the
-        bus's own document say nothing. And it is said once per distinct text, as the write-failure line is: the same
-        unreadable file planted again says nothing more."""
+    def test_no_file_and_a_readable_one_say_nothing_and_an_unreadable_one_is_said_once_per_text(self):
+        """No false alarm: no file (the first write under a root), the list shape naming a session, and the bus's own document
+        say nothing and mark nothing. And the whole-file line is said once per distinct text, as the write-failure line is:
+        the same unreadable file planted again says nothing more. (An empty file, which the twenty-first commit held silent as
+        the empty list of the shape until 2026-09-22, is marked since the twenty-second: a crash can leave one, and this read
+        cannot tell the two apart.)"""
         pm.HEARTBEATS[A] = ("web", self.now)
         for name, plant in (("no file", lambda: self.path.unlink(missing_ok=True)),
-                            ("an empty file", lambda: self.path.write_text("")),
                             ("the list shape naming a session", lambda: self.path.write_text(B + "\n")),
                             ("the bus's own document", lambda: None)):        # the previous subtest's write left one
             with self.subTest(file=name):
                 plant()
-                pm._REMOTE_SIDS_SAID.clear()
-                err = io.StringIO()
-                with contextlib.redirect_stderr(err):
-                    pm._write_remote_sids()
-                self.assertEqual(err.getvalue(), "", "nothing said")
+                self.assertEqual(self._write_saying(), [], "nothing said")
                 self.assertIn(HB + A, self._rows(), "the write landed")
+                self.assertIsNone(self._mark(), "nothing marked")
         pm._REMOTE_SIDS_SAID.clear()
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
@@ -1269,20 +1390,138 @@ class Mirror(unittest.TestCase):
         said = [ln for ln in err.getvalue().splitlines() if "previous remote-sids mirror" in ln]
         self.assertEqual(len(said), 1, "the same file twice: said once (%r)" % said)
 
-    def test_a_file_nested_past_the_parsers_depth_carries_nothing_and_the_write_replaces_it(self):
+    def test_a_file_nested_past_the_parsers_depth_carries_nothing_marks_the_document_and_the_write_replaces_it(self):
         """Round 3 of fork PR #897, the twentieth commit, found by its builder in the class of the bytes: a document nested past
         the JSON parser's depth raises RecursionError, which is not a ValueError, so the previous-read's parse let it pass and
-        every write failed, the file never replaced. The parse catches it, and the write rewrites the file from memory."""
+        every write failed, the file never replaced. The parse catches it, the write rewrites the file from memory, and since
+        the twenty-second commit the document is marked, the rows it may have held being lost."""
         deep = "[" * 100000 + "\n"
         self.path.write_text(deep)
         pm.HEARTBEATS[A] = ("web", self.now)
+        lines = self._write_saying()
+        self.assertNotEqual(self.path.read_text(), deep,
+                            "the write replaced the file (a parse catching ValueError alone fails every write: %r)" % lines)
+        self.assertEqual(self._rows(), {HB + A: (True, False, [A])}, "rewritten from memory alone: the nesting carries nothing")
+        self.assertIn("RecursionError", (self._mark() or {}).get("cause", ""), "marked with the cause")
+
+    def test_the_lost_carry_mark_is_carried_until_every_linked_host_is_heard_since_it_and_then_cleared(self):
+        """Round 3 of fork PR #897, the reviewer's ruling of 14:57Z, clause 2 (the twenty-second commit): the mark is carried by
+        every write, and across a restart, until the bus process that read the kernel's list of links at its start has heard
+        every host that list put in PEERS since the mark (_remote_sids_lost_cleared). A restarted bus seeds both links up
+        through the real seed, whose own writes read the unreadable file and mark the document; HOST heard while HUB, linked,
+        is not: the mark stands (a clearing on one host heard drops it here, and HUB's lost rows with it); a further restart
+        carries it, the same cause and second; HOST and then HUB heard: cleared, said once, and no later write brings it back."""
+        self.path.write_text("{not json\n")
+        seeded = self._seed([(HOST, "up"), (HUB, "up")])   # the seed's own writes read the file: the mark
+        mark = self._mark()
+        self.assertIsNotNone(mark, "the seed's first write read the unreadable file and marked the document")
+        self.assertTrue(seeded, "the seed read the kernel's list")
+        self._heard_now(HOST, [B])
+        self.assertEqual(self._mark(), mark, "HOST heard, HUB linked and not heard since the mark: the mark stands")
+        self._restart()
+        pm.PEERS.clear()
+        self.assertTrue(self._seed([(HOST, "up"), (HUB, "up")]), "the restarted bus's seed read the list")
+        self.assertEqual(self._mark(), mark, "carried across a restart: the same cause and second")
+        self._heard_now(HOST, [B])
+        self.assertEqual(self._mark(), mark, "HOST heard in the new process, HUB not: the mark stands")
         pm._REMOTE_SIDS_SAID.clear()
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
+            self._heard_now(HUB, [C])
+        self.assertIsNone(self._mark(), "every linked host heard since the mark: cleared")
+        cleared = [ln for ln in err.getvalue().splitlines() if "lost-carry mark" in ln]
+        self.assertEqual(len(cleared), 1, "said once: %r" % err.getvalue())
+        self.assertIn(pm.time.strftime("%Y-%m-%dT%H:%M:%SZ", pm.time.gmtime(mark["at"])), cleared[0], "naming the mark's second")
+        self.assertIn("cleared", cleared[0])
+        pm._write_remote_sids()
+        self.assertEqual((self._mark(), self._rows()), (None, {HOST: (True, False, [B]), HUB: (True, False, [C])}),
+                         "a later write carries no mark")
+
+    def test_a_linked_host_that_stays_down_keeps_the_mark(self):
+        """Round 3 of fork PR #897, the reviewer's ruling of 14:57Z (the twenty-second commit): a host the kernel holds DOWN is
+        never heard, so it keeps the mark for as long as it stays down: cannot-determine, never a false rule 5. The up notify
+        alone is no hearing; HUB's exchange after it is the event."""
+        self.path.write_text("{not json\n")
+        seeded = self._seed([(HOST, "up"), (HUB, "down")])
+        mark = self._mark()
+        self.assertIsNotNone(mark, "the seed's first write marked the document")
+        self.assertTrue(seeded, "the seed read the kernel's list")
+        self._heard_now(HOST, [B])
+        pm._write_remote_sids()
+        self.assertEqual(self._mark(), mark, "HUB down and never heard: the mark stands")
+        self._notify(HUB, up=True)
+        self.assertEqual(self._mark(), mark, "the up notify alone hears nothing: the mark stands")
+        self._heard_now(HUB, [C])
+        self.assertIsNone(self._mark(), "HUB heard: every linked host heard since the mark, cleared")
+
+    def test_the_mark_clears_only_in_a_bus_that_read_the_kernels_list_of_links_and_holds_a_link(self):
+        """Round 3 of fork PR #897, the twenty-second commit: PEERS in a restarted bus is the kernel's whole list only once the
+        seed has read it. When the seed fails (no kernel answering at the bus's start: the real seed, its route pointed at a
+        loopback port nothing listens on), PEERS fills one host per notify as the kernel re-tells them, so every host it
+        holds heard does not mean every host the kernel links to heard: the mark stands for this process's life (a clearing
+        without the seed drops it here, over the lost rows of a host the kernel has not re-told yet). And a seeded bus whose
+        table holds no dialable link clears nothing (a vacuous clear would drop the mark before the first link is told):
+        HOST notified and heard after it is the event."""
+        with self.subTest(seed="failed"):
+            self.path.write_text("{not json\n")
+            base = pm.KERNEL_BASE
+            pm.KERNEL_BASE = "http://127.0.0.1:9"
+            self.addCleanup(setattr, pm, "KERNEL_BASE", base)
+            pm._seed_peers_from_kernel()
+            pm.KERNEL_BASE = base
+            self._notify(HOST, up=True)                  # the kernel's re-notify, one host at a time
+            mark = self._mark()
+            self.assertIsNotNone(mark, "the notify's write marked the document")
+            self.assertFalse(pm._PEERS_SEEDED[0], "the seed did not read the list")
+            self._heard_now(HOST, [B])
             pm._write_remote_sids()
-        self.assertNotEqual(self.path.read_text(), deep,
-                            "the write replaced the file (a parse catching ValueError alone fails every write: %r)" % err.getvalue())
-        self.assertEqual(self._rows(), {HB + A: (True, False, [A])}, "rewritten from memory alone: the nesting carries nothing")
+            self.assertEqual(self._mark(), mark, "every host PEERS holds heard, the list never read: the mark stands")
+        self._restart()
+        pm.PEERS.clear()
+        self.path.unlink()
+        with self.subTest(seed="read, no link"):
+            self.path.write_text("{not json\n")
+            seeded = self._seed([])                      # the kernel's list, empty: no notify, so no write yet
+            pm._write_remote_sids()
+            mark = self._mark()
+            self.assertIsNotNone(mark, "the write marked the document")
+            self.assertTrue(seeded, "the seed read the kernel's list")
+            pm._write_remote_sids()
+            self.assertEqual(self._mark(), mark, "no dialable link: the mark stands")
+            self._notify(HOST, up=True)
+            self._heard_now(HOST, [B])
+            self.assertIsNone(self._mark(), "the one link heard since the mark: cleared")
+
+    def test_a_standing_mark_survives_a_mark_of_another_shape_and_a_stray_byte_inside_a_top_level_key(self):
+        """Round 3 of fork PR #897, the twenty-second commit: a mark read back as written is carried as written; a mark in a
+        shape this module does not write is kept, re-stamped at the write's second (a mark present is the restricted side);
+        and when the parse read a replacing decode and a top-level key carries a replacement character, the document is
+        marked, since that key may have been the mark's (one stray byte inside "carryLost" would otherwise drop a standing
+        mark, and every session its lost rows named would answer rule 5)."""
+        base = json.loads(self._own_document())
+        for name, mark, data_of, expect in (
+                ("a mark as written", {"cause": "earlier", "at": 7}, lambda t: t.encode(), {"cause": "earlier", "at": 7}),
+                ("a mark of another shape", "x", lambda t: t.encode(), None),
+                ("a mark whose second is past the year 9999", {"cause": "earlier", "at": 10 ** 20}, lambda t: t.encode(), None),
+                ("a stray byte inside the mark's key", {"cause": "earlier", "at": 7},
+                 lambda t: t.encode().replace(b'"carryLost"', b'"carryLos\xff"'), None)):
+            with self.subTest(mark=name):
+                self.path.write_bytes(data_of(json.dumps(dict(base, carryLost=mark), sort_keys=True) + "\n"))
+                pm.HEARTBEATS.clear()
+                pm.HEARTBEATS[A] = ("web", self.now)
+                before = int(pm.time.time())
+                self._write_saying()
+                after = int(pm.time.time())
+                got = self._mark()
+                self.assertIsNotNone(got, "a standing mark survives: %s" % name)
+                if expect is not None:
+                    self.assertEqual(got, expect, "carried as written")
+                else:
+                    self.assertTrue(before <= got["at"] <= after, "re-stamped at the write's second (a second past the year "
+                                    "9999 carried as written is refused by the judge's reader, and fails the clearing's log "
+                                    "line): %r" % got)
+                self.assertEqual(self._rows(), {HB + A: (True, False, [A]), HOST: (False, False, [B]), HUB: (False, False, [C])},
+                                 "the rows carried beside the mark")
 
     def test_a_carried_rows_non_bool_flags_are_coerced_never_dropped(self):
         """Round 3 of fork PR #897, the reviewer's ruling on its refuters' corrections, the twentieth commit: a row carried
@@ -1334,21 +1573,27 @@ class Mirror(unittest.TestCase):
                              "the hub's carried word about the far host stands: an int busId is no identity (a carry comparing "
                              "str() of it reads the hub as heard under another name and drops the via row, C in no row)")
 
-    def test_a_carried_rows_sids_are_coerced_to_str_never_dropped(self):
+    def test_a_carried_rows_sids_are_coerced_to_str_and_one_not_in_the_session_id_shape_is_dropped_and_said(self):
         """Round 3 of fork PR #897, the twentieth commit, the class of the busId guard: a carried row's sids are str() of
-        their values, as the document's final pass writes every sid. Until the commit the legacy list's filter tested each
-        carried sid for membership in a set, so an unhashable one raised TypeError and failed every write."""
+        their values, as the document's final pass writes every sid (until that commit the legacy list's filter tested each
+        carried sid for membership in a set, so an unhashable one raised TypeError and failed every write). Since the
+        twenty-second commit (the reviewer's ruling of 14:57Z, clause 1) every carried sid is validated as well: the text of
+        the unhashable value fails the session-id shape and is dropped, counted in one line of the bus log, and B, beside
+        it, is carried. The file is UTF-8, so the line says no replacing decode."""
         self.path.write_text(json.dumps({"v": 2, "busStarted": 1, "writtenAt": 1, "hosts": {
             LEGACY: {"kind": "legacy", "sids": [["x"], B], "heard": False, "expired": False, "answered": False,
                      "seenAt": 0}}}) + "\n")
         pm.HEARTBEATS[A] = ("web", self.now)
-        pm._REMOTE_SIDS_SAID.clear()
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            pm._write_remote_sids()
-        self.assertEqual(self._rows(), {HB + A: (True, False, [A]), LEGACY: (False, False, sorted([str(["x"]), B]))},
-                         "the write lands and the list is carried with B, the other value as its text (a filter testing an "
-                         "unhashable sid for set membership fails every write: %r)" % err.getvalue())
+        lines = self._write_saying()
+        self.assertEqual(self._rows(), {HB + A: (True, False, [A]), LEGACY: (False, False, [B])},
+                         "the write lands and the list is carried with B; the unhashable value's text is no session id and "
+                         "is dropped (a filter testing an unhashable sid for set membership fails every write; a carry "
+                         "without the shape check writes its text as a sid): %r" % lines)
+        said = [ln for ln in lines if "previous remote-sids mirror" in ln]
+        self.assertEqual(len(said), 1, "said once: %r" % lines)
+        self.assertIn("1 session id(s) not in the session-id shape and 0 row(s)", said[0], "the count")
+        self.assertNotIn("UnicodeDecodeError", said[0], "the file was UTF-8")
+        self.assertIsNone(self._mark(), "the document was read: no mark")
 
     def test_the_kernels_down_notify_makes_a_heard_host_unreachable_at_once_and_its_next_exchange_with_the_link_up_reachable(self):
         """Round 2 of fork PR #897, the reviewer's ruling: a host that is down cannot vouch for absence, and neither

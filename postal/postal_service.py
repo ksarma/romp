@@ -3882,104 +3882,194 @@ REMOTE_SIDS_VIA = "via:"               # a hub's word about a far host, via:<hub
 # carries no slash, so the via key reads back as its two names).
 _REMOTE_SIDS_FLAGS = ("heard", "expired", "linkDown", "linkUp", "answered", "reachable", "vouchesAbsence")   # a row's
 #                                        seven booleans, the ones the reader requires (kernel/judge.py _remote_sids_mirror)
+REMOTE_SIDS_LOST = "carryLost"         # the document's lost-carry mark, {"cause": str, "at": int} (_remote_sids_previous)
+_PEERS_SEEDED = [False]                # this bus process read the kernel's list of links at its start (_seed_peers_from_kernel)
 
 
-def _remote_sids_previous(path):
-    """The hosts table of the mirror on disk, for the carry-forward: {key: row} from a document this
-    module wrote; the whitespace list of the shape until 2026-09-22 as one row under REMOTE_SIDS_LEGACY
-    (those sids were live remote sessions when the last bus wrote them, and this bus cannot vouch for them
-    until it hears them: never heard, and `answered` False, since no listing this process can speak for
-    answered for that list); {} for no file, a file whose bytes are not UTF-8, or a file of neither shape, which
-    carries nothing.
+def _remote_sids_say(line):
+    """One line in the bus log, said once per distinct text (a state that holds across writes is said when it starts)."""
+    if line not in _REMOTE_SIDS_SAID:
+        _REMOTE_SIDS_SAID.add(line)
+        _log(line)
 
-    The read is strict and raises nothing (round 3 of fork PR #897, the reviewer's ruling on its refuters'
-    corrections, the twentieth commit). The bytes are decoded as UTF-8 inside the try, never with errors="replace":
-    both shapes a bus writes are ASCII, so bytes that are not UTF-8 are no bus's word, and a replacing decode would
-    hand the whitespace parser below the safe-id-shaped runs of the garbage to carry as legacy sids. Until this
-    commit the decode's UnicodeDecodeError passed the OSError catch, so every later write failed at this read and the
-    file was never replaced; a document nested past the JSON parser's depth raises RecursionError, which is not a
-    ValueError either and failed every write the same way, so the parse catches both (found by this commit's
-    builder, the same class as the bytes). A document's rows are CARRIED WHATEVER ITS `v` (the version gate is the reader's,
-    kernel/judge.py _remote_sids_mirror, which reads a document at v 2 alone): a carried row vouches for nothing,
-    heard being the first condition of both flags, so carrying an older document's roster is the restricted side,
-    and dropping it would leave its sids in no row. A row's values are COERCED to the types the carry and the reader
-    need, never dropped: each of the seven flags present is bool() of its value (a non-bool flag was carried
-    verbatim, and the reader, which requires seven booleans per row, answered cannot-determine for every sid until
-    that source was heard again; a drop of the row would instead leave the sids it named in no row, and a host
-    vouching for absence would let rule 5 presume them closed); each sid is str() of its value, as the document's
-    final pass writes every sid (the legacy list's filter tests carried sids for membership in a set, and an
-    unhashable one failed every write); and a busId that is not a str is IGNORED, never compared (the carry tests it
-    for membership in the set of the heard rows' ids, where an unhashable one failed every write, and one of another
-    type could match a heard id through str()). On a carried row the coerced flags feed its reason alone ("expired"
-    among the causes): both of its vouching flags are recomputed from `heard`, False on every carried row.
 
-    A FILE THIS READ CANNOT READ CARRIES NOTHING, and the consequence is DISCLOSED, not closed (round 3 of fork PR
-    #897, the reviewer's verifier at the twentieth commit, by execution through this writer and the judge's reader;
-    the twenty-first commit). The files: bytes that are not UTF-8 (one stray byte inside a sid of this module's own
-    document is enough), text that is not JSON (a stray brace), a document behind a byte-order mark, a document nested
-    past the JSON parser's depth at this read's stack (on Python 3.10 a little under a thousand levels at the
-    writer's depth), a JSON value of neither shape, a text naming no session id, and a path this bus cannot open.
-    The write after such a read carries no row, so the first road of round 1 of fork PR #897 (a restarted bus's
-    first mirror naming nobody it has not heard) stays OPEN for one class of session: a session the file named on a
-    host this process has NOT HEARD yet is in no row, and once any heard host vouches for absence the judge's rule 5
-    presumes it closed, until that host's heartbeat or exchange arrives in this process (the event), which lasts as
-    long as the kernel holds that host's link down (a down notify files no row). Before the twentieth commit a file
-    whose bytes are not UTF-8, or one nested past the depth, failed every write (nothing settled, but the judge's
-    ladder raised for every sid that reached the mirror until the file was removed), and a UTF-8 file of neither
-    shape (the stray brace, the byte-order mark) carried nothing then as it does now. The read stays
-    strict because the reviewer's ruling on this function refused a replacing decode (garbage bytes must not become
-    a legacy sid). What this read does is say it: such a file is named once per distinct text in the bus log, with
-    its error and the consequence, so the window is visible when it opens. No file (the first write under a root)
-    says nothing, and neither does an empty file, the list shape until 2026-09-22 naming no session (that writer
-    wrote an empty file). The witnesses: tests/test_dead_session_staleness.py ReaderFollowsTheWriter (the unreadable
-    previous file: a live session on a host not yet heard presumed closed until that host is heard, and the line),
-    and tests/test_postal_remote_sids_mirror.py (the line for each file above, and silence for no file and an empty
-    one)."""
+def _remote_sids_previous(path, now):
+    """(hosts, lost): the hosts table of the mirror on disk, for the carry-forward, and the LOST-CARRY MARK the next
+    document carries, or None. The table is {key: row} from a document this module wrote, or the whitespace list of the
+    shape until 2026-09-22 as one row under REMOTE_SIDS_LEGACY (those sids were live remote sessions when the last bus
+    wrote them, and this bus cannot vouch for them until it hears them: never heard, and `answered` False, since no
+    listing this process can speak for answered for that list); no file, the first write under a root, is ({}, None).
+    Nothing here raises (until the twentieth commit of round 3 of fork PR #897 a UnicodeDecodeError, and the
+    RecursionError of a document nested past the JSON parser's depth, passed the catches and failed every later write).
+
+    ONE BAD BYTE COSTS ONE SID, NEVER THE DOCUMENT (round 3 of fork PR #897, the reviewer's ruling of 14:57Z on its
+    verifier's finding at the twentieth commit; the twenty-second commit). The bytes are decoded as UTF-8 with a
+    byte-order mark accepted and dropped (utf-8-sig: a mark is no reason to lose a readable file). When that decode is
+    not clean, the bytes are decoded again with errors="replace" FOR THE JSON PARSE ONLY, and a document at v 2 read
+    that way is carried row by row (_remote_sids_carry): a sid that fails the session-id shape (_safe_id, which a
+    replacement character U+FFFD fails) is dropped, every other row is carried, and one line in the bus log names the
+    file and the count. The twentieth commit's ruled "never errors=replace" is AMENDED FOR THIS PARSE ALONE: its reason,
+    garbage bytes becoming a legacy sid, belongs to the whitespace list, which KEEPS the strict decode, so bytes that are
+    not UTF-8 never reach the whitespace parser. Until this commit the read was strict throughout and such a file
+    carried nothing: one stray byte inside the sid host B names, a restart and B heard first, and rule 5 presumed the
+    live session host A named closed until A was heard (the verifier's road, by execution through this writer and the
+    judge's reader). A document read cleanly is carried whatever its `v` (the version gate is the reader's,
+    kernel/judge.py _remote_sids_mirror): a carried row vouches for nothing, heard being the first condition of both
+    flags, so an older document's roster is the restricted side.
+
+    A FILE THIS READ CANNOT READ WHOLE MARKS THE NEXT DOCUMENT (the same ruling): bytes that are not UTF-8 in a file that
+    is not a document at v 2 after the replacing decode; text that is neither JSON nor the whitespace list (a stray
+    brace; nesting past the parser's depth; a text that opens with a brace, which is a document and never the list, so
+    a document cut short is never read as naming the session "true"); a text naming no session id; an EMPTY file, which
+    no bus since 2026-09-22 writes and a crash can leave, and which this read cannot tell from the empty list of the
+    shape before (the restricted side); a JSON value of neither shape; and an OSError other than no file. Such a
+    file's rows are lost, so the write carries none and stamps the new document with the mark {"cause", "at"}, the
+    cause and the second of the write, said once in the bus log (_remote_sids_lost). While the mark stands the judge
+    answers NOT ESTABLISHED where rule 5 would presume a session closed (kernel/judge.py _presumed_closed_verdict,
+    "carry-lost"), and rule 4 still answers for a sid a reachable host names. Every write carries the mark, across a
+    restart too, until it is cleared (_remote_sids_lost_cleared has the rule and its bound). Until this commit such a
+    file carried nothing and the judge said "no reachable host names it" for a sid whose row was lost: a false rule 5
+    under a loud log line, which the reviewer refused. The witnesses: tests/test_postal_remote_sids_mirror.py (each file
+    above) and tests/test_dead_session_staleness.py ReaderFollowsTheWriter (the one-byte case, the byte-order mark and
+    the lost carry through this writer and the judge's reader)."""
     try:
-        text = path.read_bytes().decode("utf-8")   # strict, inside the try: a UnicodeDecodeError is a ValueError
+        raw = path.read_bytes()
     except FileNotFoundError:
-        return {}                                  # no file: the first write under this root, nothing to carry or to say
-    except (OSError, ValueError) as e:
-        return _remote_sids_unreadable(path, e)
+        return {}, None                            # no file: the first write under this root, nothing to carry or to say
+    except OSError as e:
+        return _remote_sids_lost(path, now, "%s: %s" % (type(e).__name__, str(e)[:120]))
+    try:
+        text, replaced = raw.decode("utf-8-sig"), None          # strict; a byte-order mark accepted and dropped
+    except UnicodeDecodeError as e:
+        text, replaced = raw.decode("utf-8-sig", "replace"), e  # for the JSON parse ONLY: never the whitespace parser
     why = None
     try:
         doc = json.loads(text)
     except (ValueError, RecursionError) as e:     # RecursionError: nesting past the parser's depth, not a ValueError
         doc, why = None, e
-    if isinstance(doc, dict) and isinstance(doc.get("hosts"), dict):
-        out = {}
-        for key, row in doc["hosts"].items():
-            if isinstance(row, dict) and isinstance(row.get("sids"), list):
-                row = dict(row, sids=[str(s) for s in row["sids"]])
-                for flag in _REMOTE_SIDS_FLAGS:
-                    if flag in row:
-                        row[flag] = bool(row[flag])  # coerced, never dropped: a dropped row un-names its sids
-                if not isinstance(row.get("busId", ""), str):
-                    del row["busId"]                 # ignored, never compared (the carry's set membership test)
-                out[str(key)] = row
-        return out
-    if doc is None:
+    if isinstance(doc, dict) and isinstance(doc.get("hosts"), dict) and (replaced is None or doc.get("v") == 2):
+        return _remote_sids_carry(path, now, doc, replaced)
+    if replaced is not None:                       # not a document at v 2 after the replacing decode: the list keeps the strict read
+        return _remote_sids_lost(path, now, "%s: %s, and not a document at v 2 after the replacing decode"
+                                 % (type(replaced).__name__, str(replaced)[:120]))
+    if doc is None and not text.lstrip().startswith("{"):
         sids = sorted({t for t in text.split() if _safe_id(t)})
         if sids:
             return {REMOTE_SIDS_LEGACY: {"kind": "legacy", "sids": sids, "heard": False, "expired": False, "answered": False,
-                                         "seenAt": 0}}
+                                         "seenAt": 0}}, None
         if not text.split():
-            return {}                              # an empty file: the list shape until 2026-09-22 naming no session
-        return _remote_sids_unreadable(path, why)  # not JSON, and no token of it a session id (JSON null names "null")
-    return _remote_sids_unreadable(path, ValueError("a JSON %s, not a document with a hosts table" % type(doc).__name__))
+            return _remote_sids_lost(path, now, "an empty file")   # no bus since 2026-09-22 writes one; a crash can leave one
+    if doc is None:
+        return _remote_sids_lost(path, now, "%s: %s" % (type(why).__name__, str(why)[:120]))
+    return _remote_sids_lost(path, now, "a JSON %s, not a document with a hosts table" % type(doc).__name__)
 
 
-def _remote_sids_unreadable(path, e):
-    """{}, for a previous file _remote_sids_previous cannot read: it carries nothing, and the bus log says so once per
-    distinct text, with the consequence (the disclosure in _remote_sids_previous; round 3 of fork PR #897, the
-    twenty-first commit)."""
-    line = ("the previous remote-sids mirror %s is unreadable (%s: %s) and this write carries none of its rows: a session "
-            "it named on a host this bus has not heard since it started can be presumed closed by the judge's rule 5 until "
-            "that host is heard" % (path, type(e).__name__, str(e)[:120]))
-    if line not in _REMOTE_SIDS_SAID:
-        _REMOTE_SIDS_SAID.add(line)
-        _log(line)
-    return {}
+def _remote_sids_carry(path, now, doc, replaced):
+    """(hosts, lost) from a document _remote_sids_previous parsed (`replaced`: the UnicodeDecodeError when the parse read
+    a replacing decode, else None). Every roster row is carried with its values COERCED to the types the carry and the
+    reader need, never dropped for a flag (round 3 of fork PR #897, the reviewer's ruling on its refuters' corrections,
+    the twentieth commit): each of the seven flags present is bool() of its value (a non-bool flag was carried verbatim,
+    and the reader, which requires seven booleans per row, answered cannot-determine for every sid until that source was
+    heard again; a drop of the row would leave the sids it named in no row, and a host vouching for absence would let
+    rule 5 presume them closed); a busId that is not a str is IGNORED, never compared (the carry tests it for membership
+    in the set of the heard rows' ids, where an unhashable one failed every write, and one of another type could match
+    a heard id through str()).
+    EVERY SID IS VALIDATED (the reviewer's ruling of 14:57Z, the twenty-second commit): str() of its value, as the
+    document's final pass writes every sid, then DROPPED when it fails the session-id shape (_safe_id), which a
+    replacement character from the replacing decode fails, and so does the text of an unhashable value (the twentieth
+    commit carried such a text; no writer mints one, and every road that takes a session id in refuses any other
+    shape). A row that is not a roster row (not an object, or no `sids` list, which one bad byte inside the key `sids`
+    makes it) is dropped whole. When a sid or a row was dropped, or the parse read a replacing decode, one line in the bus
+    log, once per distinct text, names the file and the counts: a session a dropped sid or row named is in no row until
+    its host is heard, the ruled cost of one bad byte. A replacement character anywhere else costs no sid: a key, a
+    kind, a bus id or a name that carries one keeps its row, heard false and vouching for nothing, and at most delays the
+    carry's drops that match on those values (the same bus heard under another name; a hub's word once the far host
+    speaks), so the row names its sids for longer, the restricted side. On a carried row the coerced flags feed its
+    reason alone ("expired" among the causes): both of its vouching flags are recomputed from `heard`, False on every
+    carried row.
+    The document's lost-carry mark (REMOTE_SIDS_LOST) is carried: {"cause", "at"} as written, or, for a mark in a shape
+    this module does not write (a second that is not an int from 1970 through the year 9999 among them, which the
+    judge refuses and time.gmtime cannot print), one re-stamped at this write's second (a mark present is kept, the
+    restricted side).
+    And when the parse read a replacing decode and a TOP-LEVEL key carries a replacement character, the next document is
+    marked: that key may have been the mark's, and one bad byte must not cost a standing mark."""
+    out, dropped, rows_dropped = {}, 0, 0
+    for key, row in doc["hosts"].items():
+        if not (isinstance(row, dict) and isinstance(row.get("sids"), list)):
+            rows_dropped += 1                        # not a roster row: dropped whole, and counted
+            continue
+        sids = [str(s) for s in row["sids"]]
+        kept = [s for s in sids if _safe_id(s)]      # the session-id shape; a replacement character fails it
+        dropped += len(sids) - len(kept)
+        row = dict(row, sids=kept)
+        for flag in _REMOTE_SIDS_FLAGS:
+            if flag in row:
+                row[flag] = bool(row[flag])          # coerced, never dropped: a dropped row un-names its sids
+        if not isinstance(row.get("busId", ""), str):
+            del row["busId"]                         # ignored, never compared (the carry's set membership test)
+        out[str(key)] = row
+    lost = doc.get(REMOTE_SIDS_LOST)
+    if lost is not None:
+        if isinstance(lost, dict) and type(lost.get("at")) is int and 0 <= lost["at"] <= 253402300799:
+            lost = {"cause": str(lost.get("cause")), "at": lost["at"]}   # as written: a second through the year 9999
+        else:
+            lost = {"cause": "a lost-carry mark in a shape this bus does not write", "at": int(now)}
+    key_hit = replaced is not None and lost is None and any("\ufffd" in str(k) for k in doc)
+    if key_hit:
+        lost = {"cause": "a byte that is not UTF-8 inside a top-level key of the previous mirror, which may have been the "
+                         "lost-carry mark's", "at": int(now)}
+    if dropped or rows_dropped or replaced is not None:
+        _remote_sids_say("the previous remote-sids mirror %s: %d session id(s) not in the session-id shape and %d row(s) that "
+                         "are not a roster row dropped%s%s, every other row carried: a session a dropped id or row named can "
+                         "be presumed closed by the judge's rule 5 until its host is heard"
+                         % (path, dropped, rows_dropped,
+                            " (bytes that are not UTF-8, decoded with replacement for the parse: %s: %s)"
+                            % (type(replaced).__name__, str(replaced)[:120])
+                            if replaced is not None else "",
+                            "; a top-level key carried a replacement character, so the mirror is marked" if key_hit else ""))
+    return out, lost
+
+
+def _remote_sids_lost(path, now, cause):
+    """({}, mark) for a previous file _remote_sids_previous cannot read whole: no row carried, and the lost-carry mark
+    stamped with the cause and this write's second, said once per distinct text in the bus log (round 3 of fork PR #897,
+    the reviewer's ruling of 14:57Z; the twenty-second commit replaced the twenty-first commit's disclosure of the open
+    road, which the reviewer refused, with this mark)."""
+    _remote_sids_say("the previous remote-sids mirror %s is unreadable (%s): this write carries none of its rows and marks the "
+                     "mirror, so the judge answers cannot-determine where its rule 5 would presume a session closed, until every "
+                     "host the kernel holds a link to is heard" % (path, cause))
+    return {}, {"cause": "previous mirror unreadable (%s)" % cause, "at": int(now)}
+
+
+def _remote_sids_lost_cleared(lost):
+    """True when the lost-carry mark `lost` is CLEARED at this write (round 3 of fork PR #897, the reviewer's ruling of
+    14:57Z, the twenty-second commit). The rule, event-keyed and never a timer: this bus process read the kernel's list
+    of links at its start (_seed_peers_from_kernel set _PEERS_SEEDED), PEERS holds at least one DIALABLE row (a port: a
+    link the kernel holds, up or down; an origin-only row is no link), and every such host has been HEARD in this process
+    no earlier than the mark's second (its PEER_STATE row's seenAt, the exchange's own stamp, at or after `at`). The event
+    is the exchange that makes the last of them heard; the write after it drops the mark and says so once in the bus log.
+    Why that set: a heard host's own row, and its current word about the hosts it gossips, are rebuilt from memory at
+    every write, so once every host the kernel links to has been heard no roster this bus can hear is missing from the
+    file; a host the kernel holds no link to has no direct row to lose, and a hub re-gossips its via rows on its next
+    exchange. A host heard earlier in the marking process, or earlier in the mark's second, lost no row either, its
+    roster being in memory, so the whole-second comparison cannot clear the mark over a lost row. Why the seed: PEERS
+    starts empty in a restarted bus and fills from the kernel's tunnel list before the bus serves; when that read fails
+    (no kernel answering at the bus's start) PEERS fills one host per notify as the kernel re-tells them, and a host
+    heard before a later host's notify landed would clear the mark over that later host's lost rows, so a bus that could
+    not read the list keeps the mark for its life and a later process clears it. An empty link table clears nothing:
+    in peer mode no row vouches for absence without a dialable link, so the mark there costs nothing, and a vacuous
+    clear would drop it before the first link is told.
+    THE BOUND. The mark stands while any dialable PEERS host has not been heard since it: a host the kernel holds DOWN
+    keeps it for as long as it stays down, and a departed host whose row the kernel still holds keeps it for the life of
+    this process; a sid nothing names answers cannot-determine meanwhile, never rule 5. Under the legacy singleton scheme
+    the seed does not run and the bus holds no list of links, so the mark stands for the life of the state root and rule
+    5 answers cannot-determine there, as it did before 2026-09-22. What the rule does not reach: a host the lost file
+    named that the kernel no longer holds a link to (a departed host the kernel has forgotten, heard by an earlier
+    process); once the mark clears, a session that host named answers rule 5 while another host vouches for absence."""
+    if not _PEERS_SEEDED[0]:
+        return False
+    links = [h for h, p in list(PEERS.items()) if p.get("port")]
+    return bool(links) and all(int((PEER_STATE.get(h) or {}).get("seenAt") or 0) >= lost["at"] for h in links)
 
 
 def _link_down(host):
@@ -4145,13 +4235,17 @@ def _local_listing_owned():
     return last[1] if last and last[0] else frozenset()
 
 
-def _remote_sids_document(now, previous, owned=frozenset()):
-    """The mirror's content, {"v": 2, "busStarted", "writtenAt", "hosts": {key: row}}: one row per PRESENCE
-    SOURCE, the roster it last reported and whether THIS bus process can vouch for it. `v` is the shape's version,
-    and the reader GATES on it (round 3 of fork PR #897, the reviewer's ruling, the twentieth commit): kernel/judge.py
-    _remote_sids_mirror reads a document at v 2 alone and answers cannot-determine for any other version, or none,
-    whatever its rows carry, so the number this writer stamps is part of the shape and not decorative; the carry
-    reads any version's rows (_remote_sids_previous: a carried row vouches for nothing).
+def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
+    """The mirror's content, {"v": 2, "busStarted", "writtenAt", "hosts": {key: row}}, plus "carryLost" while the
+    lost-carry mark stands: one row per PRESENCE SOURCE, the roster it last reported and whether THIS bus process can
+    vouch for it. `v` is the shape's version, and the reader GATES on it (round 3 of fork PR #897, the reviewer's ruling,
+    the twentieth commit): kernel/judge.py _remote_sids_mirror reads a document at v 2 alone and answers cannot-determine
+    for any other version, or none, whatever its rows carry, so the number this writer stamps is part of the shape and
+    not decorative; the carry reads any version's rows from a clean read (_remote_sids_previous: a carried row vouches
+    for nothing). `lost` is the lost-carry mark _remote_sids_previous returned, {"cause", "at"}, the stamp of a previous
+    file that could not be read whole (the reviewer's ruling of 14:57Z, the twenty-second commit): written as
+    "carryLost" until _remote_sids_lost_cleared clears it at this write, said once in the bus log; the reader answers
+    NOT ESTABLISHED where rule 5 would fire while it stands.
       key      a peer host by name (its own sessions); a hub's word about a far host as via:<hub>/<far> (kind
                `via`, the hub in `via`, the far host in `host`, its bus id in `viaBus` when the hub stamped one;
                _remote_sids_via_key); a legacy heartbeat as heartbeat:<sid>; REMOTE_SIDS_LEGACY
@@ -4231,10 +4325,11 @@ def _remote_sids_document(now, previous, owned=frozenset()):
           exchange every sid live on another host was absent from the file: every key the previous file
           named that this process has not heard is CARRIED FORWARD with its last roster and heard=false,
           so a restarted bus writes a first mirror whose hosts are all unreachable, and each becomes
-          reachable on the event that closes the road, its heartbeat or exchange arriving in this process (a
-          previous file this process cannot read carries nothing, so for a session it named on a host not yet
-          heard the road stays open, disclosed with its witness at _remote_sids_previous: the twenty-first
-          commit of round 3 of fork PR #897);
+          reachable on the event that closes the road, its heartbeat or exchange arriving in this process (one
+          bad byte in the previous file costs one sid, never the document; a previous file this process cannot
+          read whole carries no row and marks the document, so the judge answers cannot-determine where rule 5
+          would fire until every host the kernel links to is heard: _remote_sids_previous, the reviewer's ruling
+          of 14:57Z, the twenty-second commit of round 3 of fork PR #897);
       (2) an expired legacy heartbeat was pruned from the file, so a tunnel drop or a stalled peer longer
           than HEARTBEAT_TTL removed a live session's sid: the row stays, marked expired, unreachable, and a
           beat from the session (the event) makes it reachable again; a session that has ended beats no more,
@@ -4451,7 +4546,14 @@ def _remote_sids_document(now, previous, owned=frozenset()):
                                           or (row["kind"] == "heartbeat" and legacy)))          # an answered listing; in peer
         #                                                                                          mode a beat is a local session's
         #                                                                                          (round 3 of fork PR #897)
-    return {"v": 2, "busStarted": BUS_EPOCH, "writtenAt": int(now), "hosts": hosts}
+    doc = {"v": 2, "busStarted": BUS_EPOCH, "writtenAt": int(now), "hosts": hosts}
+    if lost is not None and _remote_sids_lost_cleared(lost):
+        _remote_sids_say("the remote-sids mirror's lost-carry mark of %s is cleared: every host the kernel holds a link to "
+                         "has been heard since" % time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(lost["at"])))
+        lost = None
+    if lost is not None:
+        doc[REMOTE_SIDS_LOST] = lost                  # carried by every write until cleared (_remote_sids_lost_cleared)
+    return doc
 
 
 def _write_remote_sids():
@@ -4473,9 +4575,10 @@ def _write_remote_sids():
     carries as `presenceAnswered`; round 3 of fork PR #897): its roster says nothing about a session started
     there since, and its next exchange with an answered listing is the event that releases it. The FILE
     alone no longer means the bus has spoken: a bus restarted from
-    empty memory writes a first mirror whose hosts are all unreachable (carried from the previous file; a
-    previous file it cannot read carries nothing, said once in the bus log, the consequence disclosed at
-    _remote_sids_previous) until their heartbeats and exchanges arrive; a host whose link the kernel reports
+    empty memory writes a first mirror whose hosts are all unreachable (carried from the previous file; one bad
+    byte there costs one sid, and a previous file it cannot read whole carries no row and marks the document, said
+    once in the bus log, until every host the kernel links to is heard: _remote_sids_previous) until their
+    heartbeats and exchanges arrive; a host whose link the kernel reports
     down is unreachable from that notify until its next heartbeat or exchange arrives with the link up, and vouches for absence
     from that exchange (the up notify plus the host heard since). This
     module's STATE is the romp state root plus `postal`, so the file's one home is
@@ -4517,7 +4620,9 @@ def _write_remote_sids():
         try:
             owned = _local_listing_owned()            # the sids the local kernel's answered listing owns: released below
             path = STATE / "remote-sids"
-            doc = _remote_sids_document(time.time(), _remote_sids_previous(path), owned)
+            now = time.time()
+            previous, lost = _remote_sids_previous(path, now)   # the rows to carry, and the lost-carry mark
+            doc = _remote_sids_document(now, previous, owned, lost)
             tmp = STATE / "remote-sids.tmp"
             tmp.write_text(json.dumps(doc, sort_keys=True) + "\n")
             os.replace(tmp, path)
@@ -5974,7 +6079,10 @@ def _seed_peers_from_kernel():
     seed from the kernel's /tunnels so peering resumes without waiting for the next transition. The seed
     learns each peer's port, up-state and trust; the peer's TOKEN is not in that payload (a page reads it
     too, 2026-09-08), so a seeded row cannot dial yet. The kernel supplies it: its next supervisor pass
-    sees a new busId/epoch on GET /peers and re-notifies every peer (peer_update fills the token in)."""
+    sees a new busId/epoch on GET /peers and re-notifies every peer (peer_update fills the token in). A seed that
+    read the list sets _PEERS_SEEDED, after every row is applied: the mirror's lost-carry mark clears only in a bus
+    process whose PEERS holds the kernel's whole list of links (_remote_sids_lost_cleared; round 3 of fork PR #897,
+    the twenty-second commit)."""
     try:
         req = urllib.request.Request(KERNEL_BASE + "/tunnels", headers={"X-Romp-Token": SERVE_TOKEN})
         with urllib.request.urlopen(req, timeout=3) as r:
@@ -5995,6 +6103,7 @@ def _seed_peers_from_kernel():
             if k.get("host") and k["host"] not in attached:
                 peer_update({"host": k["host"], "trust": k.get("trust") or "directed",
                              "originOnly": True})
+        _PEERS_SEEDED[0] = True                      # the kernel's whole list of links is in PEERS (the mirror's mark reads it)
     except Exception:
         pass                                         # no kernel yet → the notify path fills the table
 

@@ -54,8 +54,12 @@ beside the cached row (the reviewer's verifier at the eleventh commit, by execut
 word into the cached row, and rule 5 presumed a session the hub named closed while the hub vouched).
 Since the twentieth commit the reader gates on the document's version (`v` 2, the version the writer stamps; any other
 version, or none, is unparsable whatever its rows carry) and decodes the file's bytes as UTF-8 inside its parse try, so
-bytes that are not UTF-8 answer unparsable, said once, rather than raising out of the ladder; the writer's previous-read
-is as strict, and a carried row's values are coerced, never dropped (the reviewer's ruling on its refuters' corrections).
+bytes that are not UTF-8 answer unparsable, said once, rather than raising out of the ladder, and a carried row's values are
+coerced, never dropped (the reviewer's ruling on its refuters' corrections). Since the twenty-second commit (the reviewer's
+ruling of 14:57Z) one bad byte in the previous file costs the writer one sid, never the document (its previous-read decodes
+with replacement for the JSON parse alone and drops a sid that fails the session-id shape), a byte-order mark is read by
+both modules, and a previous file the writer cannot read whole marks the mirror, so where rule 5 would fire the ladder
+answers carry-lost, cannot-determine, until the bus has heard every host its kernel links to since the mark.
 The fixtures here write the bus's document shape (_bus_wrote) and every test that writes one
 asserts the ladder's verdict, the rule that answered and its reason, so a fixture at a path nothing
 reads turns its test red. SYNTHETIC fixtures only; private synthetic sids; hostname TESTHOST."""
@@ -67,6 +71,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from romp_load import load_source
 from pathlib import Path
@@ -154,6 +159,15 @@ def NO_VOUCH(*sources):
     return (False, None, "no-host-vouches-absence: " + ", ".join(sources))
 
 
+def CARRY_LOST(mark):
+    """The cannot-determine verdict while the bus's LOST-CARRY MARK stands (round 3 of fork PR #897, the reviewer's ruling of
+    14:57Z, the twenty-second commit): a host vouches for absence and none names the sid, but the bus could not read its
+    previous file whole, so a session one of its lost rows named is in no row. Hand-spelled here as "carry-lost: <the
+    mark's cause> at <its second in UTC, %Y-%m-%dT%H:%M:%SZ>" from the mark as the bus wrote it, {"cause", "at"}; the
+    format is this module's, not the reader's formatter."""
+    return (False, None, "carry-lost: %s at %s" % (mark["cause"], time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(mark["at"]))))
+
+
 def _mirror():
     """The deadness mirror where the BUS writes it: the bus's STATE is the judge's plus `postal`
     (postal_service.py _write_remote_sids), and _presumed_closed reads it there. Until 2026-09-22
@@ -194,11 +208,15 @@ def _row(sids, heard=True, expired=False, kind="peer", link_down=False, link_up=
             "seenAt": NOW - 5}
 
 
-def _bus_wrote(hosts):
+def _bus_wrote(hosts, lost=None):
     """Write the mirror in the bus's document shape (postal_service.py _remote_sids_document: v 2 and a
-    `hosts` table of rows). A restatement of the writer's shape, held to it by ReaderFollowsTheWriter,
-    whose frame pin reads the real writer's document back and asserts these fields."""
-    _mirror().write_text(json.dumps({"v": 2, "busStarted": NOW - 100, "writtenAt": NOW, "hosts": hosts}) + "\n")
+    `hosts` table of rows, and `carryLost`, the lost-carry mark, when `lost` is given). A restatement of the
+    writer's shape, held to it by ReaderFollowsTheWriter, whose frame pin reads the real writer's document back
+    and asserts these fields."""
+    doc = {"v": 2, "busStarted": NOW - 100, "writtenAt": NOW, "hosts": hosts}
+    if lost is not None:
+        doc["carryLost"] = lost
+    _mirror().write_text(json.dumps(doc) + "\n")
 
 
 def _bus_hears_nobody_remote():
@@ -505,6 +523,37 @@ class PresumedClosed(World):
                                  "vouches: unparsable (a reader that never reads `v` answers rule 5 here)" % label)
         _bus_wrote({HOST: _row([], link_up=True)})
         self.assertEqual(self._verdict(DEAD), RULE_5, "the same row at v 2: rule 5, so the verdicts above are the version's")
+        # a BYTE-ORDER MARK before the bus's document (round 3 of fork PR #897, the reviewer's ruling of 14:57Z, the
+        # twenty-second commit): read, not refused
+        _bus_wrote({HOST: _row([DEAD], link_up=True)})
+        _mirror().write_bytes(b"\xef\xbb\xbf" + _mirror().read_bytes())
+        self.assertEqual((self._verdict(DEAD), self._verdict(REMOTE)), (RULE_4, RULE_5),
+                         "the document behind a byte-order mark is read (a strict utf-8 decode answers mirror-unparsable here)")
+        # THE LOST-CARRY MARK (the same ruling): the bus could not read its previous file whole, so a session one of its lost
+        # rows named is in no row; while the mark stands a sid nothing names is cannot-determine where rule 5 would fire, and
+        # rule 4 and the carried rows still answer
+        mark = {"cause": "previous mirror unreadable (JSONDecodeError: Expecting value: line 1 column 1 (char 0))", "at": NOW - 50}
+        _bus_wrote({HOST: _row([DEAD], link_up=True), HOST2: _row([CARRIED], heard=False)}, lost=mark)
+        self.assertEqual(self._verdict(REMOTE), CARRY_LOST(mark),
+                         "a vouching host names nobody, but the mark stands: not established, the reason naming the lost carry, "
+                         "its cause and its second (a reader ignoring the mark answers rule 5 here)")
+        self.assertEqual(self._verdict(DEAD), RULE_4, "rule 4 still answers: a reachable host names the sid")
+        self.assertEqual(self._verdict(CARRIED), LOST(HOST2 + " (not heard)"), "a carried row still holds the sid it names")
+        _bus_wrote({HOST: _row([], heard=False)}, lost=mark)
+        self.assertEqual(self._verdict(REMOTE), NO_VOUCH(HOST + " (not heard)"),
+                         "no host vouches for absence: that arm answers first, the mark or not")
+        _bus_wrote({HOST: _row([], link_up=True)})
+        self.assertEqual(self._verdict(REMOTE), RULE_5, "the same vouching row with no mark: rule 5, so the verdict above is the "
+                         "mark's")
+        for label, bad in (("a string", "x"), ("a cause that is not a str", {"cause": 1, "at": NOW}),
+                           ("a boolean second", {"cause": "c", "at": True}), ("a float second", {"cause": "c", "at": 1.5}),
+                           ("no second", {"cause": "c"}), ("a second past the year 9999", {"cause": "c", "at": 10 ** 20}),
+                           ("a second before 1970", {"cause": "c", "at": -1})):
+            _bus_wrote({HOST: _row([], link_up=True)}, lost=bad)
+            with self.subTest(mark=label):
+                self.assertEqual(self._verdict_caught(REMOTE), UNPARSABLE, "a lost-carry mark in a shape the bus does not write: "
+                                 "unparsable (a reader skipping the check answers carry-lost or raises here: time.gmtime cannot "
+                                 "print a second past its range)")
         # no mirror file at all: cannot determine, conservative
         _mirror().unlink()
         self.assertEqual(self._verdict(DEAD), NO_MIRROR)
@@ -806,25 +855,39 @@ class ReaderFollowsTheWriter(unittest.TestCase):
                     not UTF-8 at the bus's path: the reader answers cannot-determine for every sid, said once naming the file
                     (until the commit its decode sat outside the parse's try and raised out of the ladder); a fourteenth
                     restart's first writes replace them from memory, carrying nothing (until the commit the writer's
-                    previous-read raised there too, so every write failed and the file was never replaced), and B vouches
-                    again: rule 5 and rule 4. One stray byte inside the sid B names in the writer's own document: unparsable,
+                    previous-read raised there too, so every write failed and the file was never replaced), and B names its
+                    session, rule 4; since the twenty-second commit the garbage is a file the writer cannot read whole, so
+                    the mirror is marked and a sid nothing names is carry-lost while B vouches. One stray byte inside the sid B names in the writer's own document: unparsable,
                     never repaired into another sid (a replacing decode reads B as naming another sid, and B's vouch answers
-                    rule 5 for the sid B named). A document nested past the JSON parser's depth: unparsable, and B's next
-                    exchange replaces it (RecursionError is not a ValueError: until the commit the reader raised it out of
+                    rule 5 for the sid B named; the reader stays strict, the writer's parse alone replacing). A document
+                    nested past the JSON parser's depth: unparsable, and B's next exchange replaces it, marked (RecursionError is not a ValueError: until the commit the reader raised it out of
                     the ladder and the writer's previous-read failed every write; found by the commit's builder, the class
                     of the bytes). A hand-written document whose rows carry a non-bool flag, an unhashable busId
                     and an unhashable sid beside a live session's: the reader refuses it, and B's next exchange writes the
-                    three rows carried and coerced, so each sid they name is cannot-determine by its row while B vouches
-                    (until the commit the unhashable values failed every write and the non-bool flag left every later
+                    three rows carried and coerced, the unhashable sid's text dropped as no session id since the
+                    twenty-second commit, so each sid they name is cannot-determine by its row while B vouches (until the commit the unhashable values failed every write and the non-bool flag left every later
                     mirror unparsable; a writer DROPPING the row with the non-bool flag answers rule 5 for the sid it named).
                     A document at v 1 and one with no v, whose row names a sid and vouches: the reader refuses both (until the
                     commit `v` was decorative, and they answered rule 4 and rule 5); B's next exchange writes over the one
                     with no v, carrying its roster (the carry reads any version, a carried row vouching for nothing) and
-                    stamping v 2. Last the unreadable previous file, a WITNESS of a disclosed road (the reviewer's verifier
-                    at the twentieth commit; the twenty-first commit): A heard with its link up beside B, one byte inside
-                    the sid B names made a stray byte in the writer's own document, a fifteenth restart, B heard first. The
-                    strict previous-read carries nothing, the bus log says so once naming the file, A's row is gone, and
-                    B's vouch lets rule 5 presume A's live session closed until A is heard in the new process (rule 4);
+                    stamping v 2;
+      one bad byte  the reviewer's verifier at the twentieth commit, and the reviewer's ruling of 14:57Z, clause 1, the
+                    twenty-second commit. A heard with its link up beside B, one byte inside the sid B names made a stray
+                    byte in the writer's own document, a fifteenth restart, B heard first. The previous-read decodes with
+                    replacement for its JSON parse, drops the one sid and carries A's row, so A's live session is held by
+                    A's last word while B vouches, and the bus log says once which file and how many (at the twenty-first
+                    commit the strict read carried nothing and rule 5 presumed A's session closed until A was heard);
+      the byte-order mark  the same ruling, clause 1: the writer's own document behind a byte-order mark is read by the
+                    reader (until the commit: unparsable) and, after a sixteenth restart with B heard first, carried by the
+                    writer, A's row with it;
+      the lost carry  the same ruling, clauses 2 and 3. The writer's own document made not JSON (a stray brace); a
+                    seventeenth restart whose seed reads the kernel's list with both links up (the real seed, its transport
+                    stubbed), its own writes reading the file and marking the mirror with the cause and the second; B heard
+                    first: A's live session, its row lost, and a sid nothing names are carry-lost, cannot-determine, and
+                    B's session is rule 4's (at the twenty-first commit both answered rule 5). An eighteenth restart whose
+                    seed fails, B and A notified one at a time and heard: the mark stands, carried. A nineteenth restart
+                    whose seed reads the list: B heard, A linked and unheard, the mark stands; A heard, the last linked
+                    host heard since the mark: cleared, said once in the bus log, and rule 5 answers again;
       legacy shape  the whitespace list a bus before 2026-09-22 wrote, at the bus's path: the reader
                     answers cannot-determine for the sid it does not name AND for the one it does, and
                     says once in the judge's log that the file is not the shape the bus writes; it is
@@ -1278,11 +1341,17 @@ def mirror_rows():                                 # link_phase's rows, read fro
                 for k, r in doc["hosts"].items()}
     except (ValueError, KeyError, TypeError, AttributeError, RecursionError):
         return repr(data[:60])
-def mirror_phase(**sids):                          # the verdicts for the named sids, the rows, and the judge's log lines they said
+def mirror_mark():                                 # the document's lost-carry mark, or None (no mark, or no document to hold one)
+    try:
+        return json.loads(bus_file.read_bytes().decode("utf-8")).get("carryLost")
+    except (OSError, ValueError, AttributeError, RecursionError):
+        return None
+def mirror_phase(**sids):                          # the verdicts for the named sids, the rows, the mark, and the judge's log lines they said
     err = io.StringIO()
     with contextlib.redirect_stderr(err):
         got = {name: caught(sid) for name, sid in sids.items()}
     got["hosts"] = mirror_rows()
+    got["mark"] = mirror_mark()
     got["log"] = [ln for ln in err.getvalue().splitlines() if ln.startswith("romp-judge:")]
     return got
 garbage = b"\x89PNG\r\n\x1a\n\xff\xd8 IHDR tEXt\n"   # bytes no bus wrote, with two safe-id-shaped runs a replacing decode would carry
@@ -1319,10 +1388,10 @@ out["noVRead"] = mirror_phase(carried=carried, nobody=dead)
 exchange(pm15, host_b, [other], bus_id="bus-b2")   # the writer over the document with no version: its roster carried, v 2 stamped
 out["versionWritten"] = mirror_phase(carried=carried, nobody=dead)
 out["versionWritten"]["v"] = json.loads(bus_file.read_text()).get("v")
-# THE UNREADABLE PREVIOUS FILE (the reviewer's verifier at the twentieth commit; DISCLOSED by the twenty-first commit, not
-# closed): A heard with its link up beside B; one byte inside the sid B names made a stray byte in the writer's own document; a
-# fifteenth restart; B heard first. The file carries nothing, so A's session is in no row and B's vouch lets rule 5 presume it
-# closed until A is heard in the new process; the bus log says so once
+# ONE BAD BYTE (the reviewer's verifier at the twentieth commit; the reviewer's ruling of 14:57Z, clause 1, the twenty-second
+# commit): A heard with its link up beside B; one byte inside the sid B names made a stray byte in the writer's own document; a
+# fifteenth restart; B heard first. The previous-read decodes with replacement for its parse and drops the one sid: A's row is
+# carried, so A's session is held by A's last word while B vouches, and the bus log says once which file and how many
 notify(pm15, host_a, True)
 exchange(pm15, host_a, [carried])
 out["unreadBefore"] = mirror_phase(carried=carried, other=other)
@@ -1337,8 +1406,74 @@ with contextlib.redirect_stderr(err):
 out["unreadWritten"] = mirror_phase(carried=carried, other=other, nobody=dead)
 out["unreadWritten"]["busLog"] = [ln for ln in err.getvalue().splitlines() if "remote-sids" in ln]
 notify(pm16, host_a, True)
-exchange(pm16, host_a, [carried])                  # A heard in the new process: the event that ends the window
+exchange(pm16, host_a, [carried])                  # A heard in the new process: its own row names its session
 out["unreadAHeard"] = mirror_phase(carried=carried, other=other, nobody=dead)
+# THE BYTE-ORDER MARK (the reviewer's ruling of 14:57Z, clause 1): the writer's own document behind a byte-order mark, read by the
+# reader, then a sixteenth restart, B heard first: the file carried
+bus_file.write_bytes(b"\xef\xbb\xbf" + bus_file.read_bytes())
+out["bomRead"] = mirror_phase(carried=carried, other=other, nobody=dead)
+pm17, out["restartMemory16"] = restarted("romp_postal_oneroot_restarted_sixteenth", pm16)
+pm17.KERNEL_BASE = "http://127.0.0.1:9"           # no listing fetch reaches anything
+err = io.StringIO()
+with contextlib.redirect_stderr(err):
+    notify(pm17, host_b, True)
+    exchange(pm17, host_b, [other], bus_id="bus-b2")
+out["bomWritten"] = mirror_phase(carried=carried, other=other, nobody=dead)
+out["bomWritten"]["busLog"] = [ln for ln in err.getvalue().splitlines() if "remote-sids" in ln]
+# THE LOST CARRY (the reviewer's ruling of 14:57Z, clause 2): A heard beside B; the writer's own document made not JSON (a stray
+# brace); a seventeenth restart whose seed reads the kernel's list, both links up (the REAL seed, its transport stubbed), and whose
+# seed writes read the file and mark the mirror; B heard first, A linked and not heard. An eighteenth restart whose seed fails
+# (nothing answers), B and A notified one at a time and heard. A nineteenth restart whose seed reads the list; B heard; A heard,
+# the last linked host heard since the mark: the event that clears it
+def seed(bus, links):                              # the kernel's tunnel list read at the bus's start, every link up
+    body = json.dumps({"tunnels": [{"host": h, "busPort": 50002, "status": "up"} for h in links], "known": []}).encode()
+    class Answer:
+        def read(self):
+            return body
+        def __enter__(self):
+            return self
+        def __exit__(self, *exc):
+            return False
+    real = bus.urllib.request.urlopen
+    bus.urllib.request.urlopen = lambda req, timeout=None: Answer()
+    try:
+        bus._seed_peers_from_kernel()
+    finally:
+        bus.urllib.request.urlopen = real
+    return bus._PEERS_SEEDED[0]
+notify(pm17, host_a, True)
+exchange(pm17, host_a, [carried])
+out["lostBefore"] = mirror_phase(carried=carried, other=other, nobody=dead)
+bus_file.write_text(bus_file.read_text().replace('"sids"', '"sids"}', 1))
+pm18, out["restartMemory17"] = restarted("romp_postal_oneroot_restarted_seventeenth", pm17)
+pm18.KERNEL_BASE = "http://127.0.0.1:9"
+out["lostFloor"] = int(time.time())
+err = io.StringIO()
+with contextlib.redirect_stderr(err):
+    out["lostSeeded"] = seed(pm18, [host_a, host_b])   # the seed's own writes read the file: the mark
+    exchange(pm18, host_b, [other], bus_id="bus-b2")   # B heard first; A linked and not heard
+out["lostCeiling"] = int(time.time())
+out["lostWritten"] = mirror_phase(carried=carried, other=other, nobody=dead)
+out["lostWritten"]["busLog"] = [ln for ln in err.getvalue().splitlines() if "remote-sids" in ln]
+pm19, out["restartMemory18"] = restarted("romp_postal_oneroot_restarted_eighteenth", pm18)
+pm19.KERNEL_BASE = "http://127.0.0.1:9"           # nothing answers there: the real seed fails
+pm19._seed_peers_from_kernel()
+out["lostUnseeded"] = pm19._PEERS_SEEDED[0]
+notify(pm19, host_b, True)                         # the kernel's re-notify, one host at a time, each heard
+exchange(pm19, host_b, [other], bus_id="bus-b2")
+notify(pm19, host_a, True)
+exchange(pm19, host_a, [carried])
+out["lostNoSeed"] = mirror_phase(carried=carried, other=other, nobody=dead)
+pm20, out["restartMemory19"] = restarted("romp_postal_oneroot_restarted_nineteenth", pm19)
+pm20.KERNEL_BASE = "http://127.0.0.1:9"
+out["lostReseeded"] = seed(pm20, [host_a, host_b])
+exchange(pm20, host_b, [other], bus_id="bus-b2")
+out["lostOneHeard"] = mirror_phase(carried=carried, other=other, nobody=dead)
+err = io.StringIO()
+with contextlib.redirect_stderr(err):
+    exchange(pm20, host_a, [carried])              # A heard: the last linked host heard since the mark
+out["lostCleared"] = mirror_phase(carried=carried, other=other, nobody=dead)
+out["lostCleared"]["busLog"] = [ln for ln in err.getvalue().splitlines() if "remote-sids" in ln]
 bus_file.write_text(remote + "\n")                 # the shape a bus before 2026-09-22 wrote
 err = io.StringIO()
 with contextlib.redirect_stderr(err):
@@ -2263,12 +2398,18 @@ print(json.dumps(out))
                 self.assertEqual(got["restartMemory14"], {"heartbeats": 0, "peers": 0, "links": 0, "freshObject": True},
                                  "the fourteenth restart is a fresh module object, its memory and its link table empty")
                 wrote = got["bytesWritten"]
-                self.assertEqual((self._v(wrote, "nobody"), self._v(wrote, "other")), (RULE_5, RULE_4),
-                                 "the restarted writer replaced the garbage: B vouches for absence and names its sid (a previous-read "
-                                 "whose decode error passes its catch fails every write, and the reader still meets the garbage)")
+                self.assertNotEqual(self._v(wrote, "nobody"), RULE_5, "the garbage is no document at v 2 after the replacing "
+                                    "decode, a file the writer cannot read whole: a sid nothing names is never rule 5's while the "
+                                    "mark stands (the reviewer's ruling of 14:57Z, the twenty-second commit)")
+                self.assertIn("UnicodeDecodeError", (wrote["mark"] or {}).get("cause", ""), "the document is marked with the "
+                              "cause: %r" % wrote["mark"])
+                self.assertEqual((self._v(wrote, "nobody"), self._v(wrote, "other")), (CARRY_LOST(wrote["mark"]), RULE_4),
+                                 "the restarted writer replaced the garbage: B names its sid, and a sid nothing names is "
+                                 "not established while the mark stands (a previous-read whose decode error passes its catch fails "
+                                 "every write, and the reader still meets the garbage)")
                 self.assertEqual(wrote["hosts"], {HOST2: L(True, False, False, True, True, True, [OTHER])},
-                                 "the garbage carried nothing: B's row alone (a replacing decode carries IHDR and tEXt as a "
-                                 "legacy row)")
+                                 "the garbage carried nothing: B's row alone (a replacing decode handed to the whitespace parser "
+                                 "carries IHDR and tEXt as a legacy row)")
                 stray = got["strayByte"]
                 self.assertEqual((self._v(stray, "other"), self._v(stray, "nobody")), (UNPARSABLE, UNPARSABLE),
                                  "one stray byte inside the sid B names: the unparsable arm (a decode with errors='replace' reads "
@@ -2290,8 +2431,13 @@ print(json.dumps(out))
                 self.assertEqual(len(read["log"]), 1, "said once: %r" % read["log"])
                 self.assertIn("RecursionError", read["log"][0], "the line says what failed")
                 wrote = got["deepWritten"]
-                self.assertEqual((self._v(wrote, "nobody"), self._v(wrote, "other")), (RULE_5, RULE_4),
-                                 "the writer replaced the file (a previous-read catching ValueError alone fails every write)")
+                self.assertNotEqual(self._v(wrote, "nobody"), RULE_5, "a file the writer cannot read whole: a sid nothing names "
+                                    "is never rule 5's while the mark stands (the twenty-second commit)")
+                self.assertIn("RecursionError", (wrote["mark"] or {}).get("cause", ""), "the document is marked with the cause: %r"
+                              % wrote["mark"])
+                self.assertEqual((self._v(wrote, "nobody"), self._v(wrote, "other")), (CARRY_LOST(wrote["mark"]), RULE_4),
+                                 "the writer replaced the file (a previous-read catching ValueError alone fails every write); a sid "
+                                 "nothing names is not established while the mark stands")
                 self.assertEqual(wrote["hosts"], {HOST2: L(True, False, False, True, True, True, [OTHER])},
                                  "the nested document carried nothing: B's row alone")
 
@@ -2322,8 +2468,10 @@ print(json.dumps(out))
                 self.assertEqual(wrote["hosts"], {HOST2: L(True, False, False, True, True, True, [OTHER]),
                                                   HOST: L(False, True, False, False, False, False, [CARRIED]),
                                                   ALIAS: L(False, False, False, False, False, False, [FARSID]),
-                                                  LEGACY: L(False, False, False, False, False, False, sorted([str(["x"]), LATER]))},
-                                 "B heard and vouching; the three rows carried heard=false, their values coerced")
+                                                  LEGACY: L(False, False, False, False, False, False, [LATER])},
+                                 "B heard and vouching; the three rows carried heard=false, their values coerced, and the text of "
+                                 "the unhashable value, which is no session id, dropped (the twenty-second commit, the reviewer's "
+                                 "ruling of 14:57Z: every carried sid validated)")
 
     def test_a_document_of_another_version_is_unparsable_and_the_writer_carries_its_roster(self):
         """Round 3 of fork PR #897, the reviewer's ruling, the twentieth commit (the version half of the mirror's bytes and
@@ -2349,16 +2497,15 @@ print(json.dumps(out))
                                                   HOST: L(False, False, False, False, False, False, [CARRIED])},
                                  "B heard and vouching; the row from the document with no v carried heard=false")
 
-    def test_an_unreadable_previous_file_carries_nothing_so_a_session_on_a_host_not_yet_heard_is_presumed_closed_until_heard(self):
-        """A WITNESS of a DISCLOSED road, not a fix (round 3 of fork PR #897, the reviewer's verifier at the twentieth commit, by
-        execution through this writer and this reader; the twenty-first commit discloses it in postal_service.py
-        _remote_sids_previous, in the judge's _presumed_closed_verdict and in the ledger entry, and makes the bus say it). Host
-        A is heard with its link up beside B; one byte inside the sid B names becomes a stray byte in the writer's own
-        document; the bus restarts and hears B first. The previous-read is strict (the reviewer's ruling on this function
-        refused a replacing decode), so the file carries nothing: A's row is gone, and B, heard and vouching, lets rule 5
-        presume A's live session closed, (True, 5), until A is heard in the new process. The bus log says so once, naming the
-        file. A change that carries such a file's rows answers named-by-unreachable-host at the (True, 5) step and turns this
-        pin red; a change that closes the road updates the three disclosures along with this pin. On both root shapes."""
+    def test_one_bad_byte_in_the_previous_file_costs_one_sid_and_the_carried_row_holds_the_other_hosts_session(self):
+        """Round 3 of fork PR #897, the reviewer's verifier at the twentieth commit, by execution through this writer and this
+        reader, and the reviewer's ruling of 14:57Z, clause 1 (the twenty-second commit): host A is heard with its link up
+        beside B; one byte inside the sid B names becomes a stray byte in the writer's own document; the bus restarts and
+        hears B first. The previous-read decodes with replacement for its JSON parse, drops the one sid that fails the
+        session-id shape and carries every other row, so A's row is carried and A's live session is held by A's last word
+        while B vouches, never rule 5; the bus log says once which file and how many. At the twenty-first commit the strict
+        read carried nothing and A's session answered (True, 5, no-reachable-host-names-it) here, the road the ruling closed.
+        On both root shapes."""
         L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
         for shape, got in self.got.items():
             with self.subTest(shape=shape):
@@ -2368,22 +2515,115 @@ print(json.dumps(out))
                 self.assertEqual(got["restartMemory15"], {"heartbeats": 0, "peers": 0, "links": 0, "freshObject": True},
                                  "the fifteenth restart is a fresh module object, its memory and its link table empty")
                 wrote = got["unreadWritten"]
-                self.assertEqual(self._v(wrote, "carried"), RULE_5,
-                                 "THE DISCLOSED ROAD: A's session, live on A, which the new process has not heard, is in no row, "
-                                 "and B vouches, so rule 5 presumes it closed (a carry of the file's rows answers "
-                                 "named-by-unreachable-host here; update the disclosures with this pin)")
+                self.assertEqual(self._v(wrote, "carried"), LOST(HOST + " (not heard)"),
+                                 "A's row carried: A's live session, which the new process has not heard, is held by A's last word "
+                                 "while B vouches (a strict read carries nothing and answers (True, 5, no-reachable-host-names-it) "
+                                 "here: the verifier's road)")
                 self.assertEqual((self._v(wrote, "other"), self._v(wrote, "nobody")), (RULE_4, RULE_5),
-                                 "B heard, vouching and naming its session")
-                self.assertEqual(wrote["hosts"], {HOST2: L(True, False, False, True, True, True, [OTHER])},
-                                 "the unreadable file carried nothing: B's row alone, A's gone")
+                                 "B heard, vouching and naming its session; no mark, so a sid nothing names is rule 5's")
+                self.assertEqual(wrote["hosts"], {HOST2: L(True, False, False, True, True, True, [OTHER]),
+                                                  HOST: L(False, False, False, False, False, False, [CARRIED])},
+                                 "B's row from memory and A's carried: one bad byte cost one sid, never the document")
+                self.assertIsNone(wrote["mark"], "the document was read: no mark")
                 said = [ln for ln in wrote["busLog"] if "previous remote-sids mirror" in ln]
-                self.assertEqual(len(said), 1, "the bus says once that the previous file carries nothing (until the twenty-first "
-                                 "commit it said nothing): %r" % wrote["busLog"])
+                self.assertEqual(len(said), 1, "said once: %r" % wrote["busLog"])
                 self.assertIn(got["busFile"], said[0], "the line names the file")
-                self.assertIn("UnicodeDecodeError", said[0], "the line says what failed")
-                self.assertEqual([ln for ln in wrote["busLog"] if "not written" in ln], [], "every write landed")
-                self.assertEqual(self._v(got["unreadAHeard"], "carried"), RULE_4,
-                                 "A heard in the new process: the event that ends the window")
+                self.assertIn("1 session id(s) not in the session-id shape and 0 row(s)", said[0], "the line says how many")
+                self.assertIn("UnicodeDecodeError", said[0], "the line says the bytes were not UTF-8")
+                self.assertEqual([ln for ln in wrote["busLog"] if "not written" in ln or "is unreadable" in ln], [],
+                                 "every write landed, and no whole-file line")
+                self.assertEqual(self._v(got["unreadAHeard"], "carried"), RULE_4, "A heard in the new process: its own row names it")
+
+    def test_a_byte_order_mark_is_read_by_the_reader_and_carried_by_the_writer(self):
+        """Round 3 of fork PR #897, the reviewer's ruling of 14:57Z, clause 1 (the twenty-second commit): the writer's own document
+        behind a byte-order mark is read by the reader (until the commit: mirror-unparsable, 'Unexpected UTF-8 BOM') and, after a
+        sixteenth restart with B heard first, carried by the writer (until the commit the previous-read refused it, carried
+        nothing, and A's live session answered (True, 5) while B vouched). On both root shapes."""
+        L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                read = got["bomRead"]
+                self.assertEqual((self._v(read, "carried"), self._v(read, "other"), self._v(read, "nobody")),
+                                 (RULE_4, RULE_4, RULE_5), "the reader reads the document behind the mark (a strict utf-8 decode "
+                                 "answers mirror-unparsable for all three)")
+                self.assertEqual(read["log"], [], "nothing said in the judge's log")
+                self.assertEqual(got["restartMemory16"], {"heartbeats": 0, "peers": 0, "links": 0, "freshObject": True},
+                                 "the sixteenth restart is a fresh module object")
+                wrote = got["bomWritten"]
+                self.assertEqual((self._v(wrote, "carried"), self._v(wrote, "other"), self._v(wrote, "nobody")),
+                                 (LOST(HOST + " (not heard)"), RULE_4, RULE_5),
+                                 "A's row carried through the mark: its session held by its last word while B vouches (a "
+                                 "previous-read refusing the mark answers (True, 5) for it)")
+                self.assertEqual(wrote["hosts"], {HOST2: L(True, False, False, True, True, True, [OTHER]),
+                                                  HOST: L(False, False, False, False, False, False, [CARRIED])},
+                                 "B's row from memory, A's carried")
+                self.assertIsNone(wrote["mark"], "read, so no mark")
+                self.assertEqual([ln for ln in wrote["busLog"] if "previous remote-sids mirror" in ln], [], "nothing said")
+
+    def test_a_previous_file_the_bus_cannot_read_whole_marks_the_mirror_until_every_linked_host_is_heard(self):
+        """Round 3 of fork PR #897, the reviewer's ruling of 14:57Z, clauses 2 and 3 (the twenty-second commit), through this
+        writer and this reader. A heard beside B; the writer's own document made not JSON (a stray brace); a seventeenth restart
+        whose seed reads the kernel's list with both links up (the real seed, its transport stubbed), whose own writes read the
+        file and mark the mirror; B heard first, A linked and not heard. The mark carries the cause and the write's second;
+        A's live session, whose row is lost, and a sid nothing names are both NOT ESTABLISHED (at the twenty-first commit both
+        answered (True, 5, no-reachable-host-names-it), a false rule 5 under a loud log line, the shape the reviewer refused),
+        and B's session is rule 4's. An eighteenth restart whose seed fails: B and A notified one at a time and heard, every
+        host PEERS holds heard, and the mark stands (PEERS may not be the kernel's whole list: a clearing without the seed drops
+        it here). A nineteenth restart whose seed reads the list: B heard, A linked and not heard, the mark stands (a clearing
+        on a single host heard drops it here); A heard, the last linked host heard since the mark: cleared, said once, and rule
+        5 answers again. On both root shapes."""
+        L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                before = got["lostBefore"]
+                self.assertEqual((self._v(before, "carried"), self._v(before, "other")), (RULE_4, RULE_4),
+                                 "before the restart A and B are heard, each naming its session")
+                self.assertEqual(got["restartMemory17"], {"heartbeats": 0, "peers": 0, "links": 0, "freshObject": True},
+                                 "the seventeenth restart is a fresh module object")
+                wrote = got["lostWritten"]
+                self.assertEqual([self._v(wrote, "carried")[:2], self._v(wrote, "nobody")[:2]], [(False, None), (False, None)],
+                                 "A's live session, its row lost, and a sid nothing names: not established, never rule 5 (at the "
+                                 "twenty-first commit both answered (True, 5, no-reachable-host-names-it): %r"
+                                 % [wrote["carried"], wrote["nobody"]])
+                self.assertTrue(got["lostSeeded"], "the seed read the kernel's list")
+                mark = wrote["mark"]
+                self.assertIsInstance(mark, dict, "the mirror is marked: %r" % (mark,))
+                self.assertEqual(sorted(mark), ["at", "cause"], "the mark's shape")
+                self.assertTrue(mark["cause"].startswith("previous mirror unreadable (JSONDecodeError"), "the cause: %r" % mark)
+                self.assertTrue(got["lostFloor"] <= mark["at"] <= got["lostCeiling"], "the write's second: %r" % mark)
+                self.assertEqual((self._v(wrote, "carried"), self._v(wrote, "nobody")), (CARRY_LOST(mark), CARRY_LOST(mark)),
+                                 "A's live session, its row lost, and a sid nothing names: not established while the mark stands "
+                                 "(a writer that writes no mark, or a reader that ignores it, answers (True, 5) for both)")
+                self.assertEqual(self._v(wrote, "other"), RULE_4, "rule 4 still answers: B names its session")
+                self.assertEqual(wrote["hosts"], {HOST2: L(True, False, False, True, True, True, [OTHER])},
+                                 "no row carried from the file: B's row alone")
+                said = [ln for ln in wrote["busLog"] if "previous remote-sids mirror" in ln]
+                self.assertEqual(len(said), 1, "said once: %r" % wrote["busLog"])
+                self.assertIn(got["busFile"], said[0], "the line names the file")
+                self.assertIn("is unreadable (JSONDecodeError", said[0], "the line says what failed")
+                self.assertEqual(got["restartMemory18"], {"heartbeats": 0, "peers": 0, "links": 0, "freshObject": True},
+                                 "the eighteenth restart is a fresh module object")
+                self.assertFalse(got["lostUnseeded"], "the seed failed: nothing answered")
+                noseed = got["lostNoSeed"]
+                self.assertEqual(noseed["mark"], mark, "carried across a restart, the same cause and second")
+                self.assertEqual((self._v(noseed, "carried"), self._v(noseed, "other"), self._v(noseed, "nobody")),
+                                 (RULE_4, RULE_4, CARRY_LOST(mark)),
+                                 "every host PEERS holds heard, the kernel's list never read: the mark stands (a clearing "
+                                 "without the seed answers rule 5 for the sid nothing names)")
+                self.assertTrue(got["lostReseeded"], "the nineteenth restart's seed read the list")
+                one = got["lostOneHeard"]
+                self.assertEqual(one["mark"], mark, "carried across a further restart")
+                self.assertEqual((self._v(one, "carried"), self._v(one, "other"), self._v(one, "nobody")),
+                                 (LOST(HOST + " (not heard)"), RULE_4, CARRY_LOST(mark)),
+                                 "B heard, A linked and not heard since the mark: the mark stands (a clearing on one host heard "
+                                 "answers rule 5 for the sid nothing names)")
+                cleared = got["lostCleared"]
+                self.assertIsNone(cleared["mark"], "A heard, the last linked host heard since the mark: cleared")
+                self.assertEqual((self._v(cleared, "carried"), self._v(cleared, "other"), self._v(cleared, "nobody")),
+                                 (RULE_4, RULE_4, RULE_5), "rule 5 answers again (a mark never cleared answers carry-lost here)")
+                said = [ln for ln in cleared["busLog"] if "lost-carry mark" in ln]
+                self.assertEqual(len(said), 1, "the clearing said once: %r" % cleared["busLog"])
+                self.assertIn(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(mark["at"])), said[0], "naming the mark's second")
 
     def test_a_mirror_of_the_legacy_shape_is_cannot_determine_and_said_once(self):
         for shape, got in self.got.items():
