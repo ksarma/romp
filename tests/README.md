@@ -75,10 +75,30 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   on) and the `ROMP_SESSIONS_FILE` seam ten postal modules wrote at module level
   (one live row, so the bus never autostopped); it wrote into a shared state root
   every 30 s and turned another module's snapshot test red. What put the first write
-  inside that test's 50 ms window on the cell stays unknown (no kick, restart road or
-  removal of `postal/` in the 21 modules between the bus-restore module and the
-  asserting module; `server.pid` and `server.log` were not among the files added, so
-  no bus started inside the window), and the disclosure is conditional: a run carries
+  inside that test's 50 ms window on the cell stays unknown. Reading ruled out a kick,
+  a restart road or a removal of `postal/` in the 21 modules between the bus-restore
+  module and the asserting module (`server.pid` and `server.log` were not among the
+  files added, so no bus started inside the window), but it read only those modules.
+  It did not rule out one source that ran in every run at the round-1 head of fork
+  PR #894 and showed in 4 of 5 CI cells. Every kernel a test module loads in-process read
+  `BUS_PORT` 25302, the machine's fixed bus port, because conftest pops
+  `ROMP_POSTAL_PORT`, so its bus calls reached whatever bus a developer's box runs
+  there. The postal service loaded in-process built its client's `BASE` from the same
+  popped name, and three set_working tests of `tests/test_postal_relay_honesty.py`
+  sent heartbeats through it. Where nothing listened, the refused detach notify of
+  three tests (`tests/test_kernel_known_hosts.py`'s two `KnownHostMemory` detach tests
+  and `tests/test_peer_reconnect.py`'s `test_detach_is_the_one_end_of_intent`) revived
+  the bus with a real `romp-postal-service ensure` from the test process; a revive
+  still in flight absorbs a later one, so a run records two or three. This is closed
+  now: conftest's `_dead_bus_port` gives every loaded `romp_kernel*` module a dead
+  `BUS_PORT` and every loaded `romp_postal*` module a dead `BASE` for each test and
+  puts them back after it, and the three detach tests stub the revive. The hermetic
+  module's pin runs the modules whose calls dialled the fixed port
+  (`BUS_DIALLING_MODULES`, derived by a spy over one full serial run) together in both
+  orders under a connect and spawn spy, and asserts no connect to 25302 and no
+  postal-service process. Two things would settle fork PR #813's cell: that spy over
+  one serial run of its head, or `PYTEST_CURRENT_TEST` and the thread name logged
+  beside the kernel's refusal line. The disclosure is conditional: a run carries
   the contaminant only when the revive wins the race AND a write lands in an asserting
   window; the witness is the leaked process the run's log names, with the test name
   when the spawn carried it. THE RULE, a property and
@@ -132,7 +152,13 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   upstream's client-only floor of "1". A write whose keys the scan
   cannot read fails the test naming the file and line rather than passing unread. A
   module-level `pop` is outside that pin: unset is the production default and what a
-  clean shell gives every module.
+  clean shell gives every module. Writes at a module's setup rather than its import
+  (`setUpModule`, `setUpClass`, a module- or class-scoped fixture) are outside the
+  census and checked by conftest's `_module_env_restored` for the names it watches
+  (`MODULE_WATCHED_ENV_NAMES`: the seams below and the postal trio): it takes its
+  snapshot before the module's first setup and fails naming the module when a watched
+  name differs after the module's teardown (the port against its floor, unset, since
+  conftest pops it before every test); every other name is outside it.
   `python -m tests.test_hermetic_kernel_postal --census` prints the counts by name
   and shape. The per-test half, set in setUp and put back by a cleanup registered
   right after the write (`restore_env` from `tests/conftest.py`, or a method of the
@@ -140,15 +166,22 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   the value leaks the same way), is a convention and not a pinned rule, except for
   the tunnels module, whose placement the hermetic module checks by position: all
   three postal legs and the kernel's `BUS_PORT` (read at import) set in the setUp of
-  every class that attaches or detaches and put back by cleanups, none at module
-  level. The same shape leaked `ROMP_SESSIONS_FILE` from `test_postal_bus_lifetime.py`
+  every class that attaches or detaches, its `_ensure_postal_bus` revive road stubbed
+  there with a recorder, all put back by cleanups, none at module level (a probe runs
+  the stub: a revive after the setUp lands in the recorder, the cleanups fail on it and
+  put the road back). The same shape leaked `ROMP_SESSIONS_FILE` from `test_postal_bus_lifetime.py`
   (a tearDown that put back only a prior value; fixed 2026-09-18 with a cleanup and a
-  pin that runs the case). conftest's `_shared_state_restored` names such a leftover,
-  but only in a run that collects no module writing the seam at import, so the module
-  alone is the run that shows it. The port the kernel reads at import used to be the
+  pin that runs the case). conftest's `_shared_state_restored` names such a leftover
+  in any run, since no module writes the seam at import, and it watches the bus-name
+  seam `ROMP_POSTAL_HOST` too; each fires only in a run where nothing set the name
+  beforehand (a leftover equal to what the shell or an earlier test left is no
+  change). The port the kernel reads at import used to be the
   one leg allowed before the load; since 2026-09-22 it is set per test beside
   `km.BUS_PORT`, and conftest pops `ROMP_POSTAL_PORT` before every test (the
-  dead-port fixture), so a stray value never reaches a child. A red in one of these
+  dead-port fixture), so a stray value never reaches a child; and since a kernel
+  loaded at import then reads the machine's fixed bus port, conftest's
+  `_dead_bus_port` gives every loaded kernel module a dead `BUS_PORT` for each test,
+  and every loaded postal module a dead `BASE` (the unknown above). A red in one of these
   under `-n` is still judged by the module alone: `python3 -m pytest tests/<module>.py -q`.
 - **No process of a run outlives the run** (2026-09-22). At the controller's session
   end `tests/conftest.py` reads `/proc` for every live process whose environment

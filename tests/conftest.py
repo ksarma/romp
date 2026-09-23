@@ -481,6 +481,59 @@ def _dead_manager_port():
     yield
 
 
+# No in-process kernel of the run dials the machine's fixed bus port (2026-09-23, the reviewer's ruling of round 1 on fork
+# PR #894). A kernel a test module loads IN-PROCESS (load_source of bin/romp-kernel under a name that starts romp_kernel)
+# reads its BUS_PORT from ROMP_POSTAL_PORT at import, and the fixture above pops that name before every test (this file
+# pops it at import too), so every such kernel of a whole run read 25302, the machine's fixed bus port: a spy over one full
+# serial run recorded the tests whose kernel's bus calls (a peer notify at a detach or a trust change, the GET /peers
+# behind the routes that list remotes) dialled it, which on a box whose own bus listens there reach that bus; where
+# nothing listens, as on CI, a refused notify kicked the revive into a real romp-postal-service ensure. A dead port cannot
+# be EXPORTED instead: the bus's fixed-port refusal licenses a port equal to the child's import-time ROMP_POSTAL_PORT
+# beside ROMP_POSTAL_HERMETIC, which this file sets, so an exported port would license a revive's child to bind a real bus
+# on it. So every loaded kernel module's BUS_PORT is set to DEAD_BUS_PORT before each test and put back after it. A refused
+# call then kicks the revive on every box, not only where nothing listens, so the tests whose notify is refused stub the
+# revive themselves (_revive_postal_bus, put back by a cleanup); the peer-notify guard test in tests/test_kernel.py and the
+# tunnels module's _PostalTrio exercise the revive road and keep their own handling (the guard waits the revive out under
+# a scoped fake of subprocess.run; the trio patches BUS_PORT to a port of the test's own and stubs _ensure_postal_bus).
+# The same spy found the postal service loaded in-process (load_source of bin/romp-postal-service under a name that starts
+# romp_postal) dialling the fixed port too, through its client's BASE, which it builds from the same popped name at
+# import: tests/test_postal_relay_honesty.py's three set_working tests, whose tool call beats the bus first. So every
+# loaded postal module's BASE points at DEAD_BUS_PORT for each test as well, put back after it; a postal module that
+# serves binds PORT, which this leaves alone.
+# What this does not reach: a kernel or postal module loaded under another module name, and one a test loads or re-loads
+# during the test (setUp or the body run after this fixture, and a load_source re-executes the module and reads the port
+# again); the pin (tests/test_hermetic_kernel_postal.py, the affected modules run with a connect and spawn spy in both
+# orders) and the spy's full run are what show none of those dials the fixed port today.
+DEAD_BUS_PORT = 1
+
+
+def _loaded_kernels():
+    """The kernel modules this process has loaded in-process: every module whose name starts romp_kernel and that has a
+    BUS_PORT, the port its bus calls dial."""
+    return [m for name, m in list(sys.modules.items()) if name.startswith("romp_kernel") and hasattr(m, "BUS_PORT")]
+
+
+def _loaded_postal_clients():
+    """The postal service modules this process has loaded in-process: every module whose name starts romp_postal and
+    that has the client's BASE (the bus URL its _http dials) and the HOST it is built from."""
+    return [m for name, m in list(sys.modules.items()) if name.startswith("romp_postal") and hasattr(m, "BASE") and hasattr(m, "HOST")]
+
+
+@pytest.fixture(autouse=True)
+def _dead_bus_port():
+    saved = [(m, m.BUS_PORT) for m in _loaded_kernels()]
+    saved_base = [(m, m.BASE) for m in _loaded_postal_clients()]
+    for m, _port in saved:
+        m.BUS_PORT = DEAD_BUS_PORT
+    for m, _base in saved_base:
+        m.BASE = "http://%s:%d" % (m.HOST, DEAD_BUS_PORT)
+    yield
+    for m, port in saved:
+        m.BUS_PORT = port
+    for m, base in saved_base:
+        m.BASE = base
+
+
 # No test may reach the REAL `claude` CLI (2026-08-12): _judge_claude_bin honors ROMP_CLAUDE_BIN
 # first, so this floors every judge call a test forgot to stub at /bin/false — empty stdout, the
 # dead-CLI row, byte-for-byte what a claude-less CI runner produces. Found when an unstubbed
@@ -579,10 +632,18 @@ def _stub_place_llm(monkeypatch):
 # module's km.jd is ONE process-wide object. A test that rebinds jd.STATE to a temp dir and removes
 # that dir in tearDown without restoring the prior value leaves every later STATE reader in the
 # process pointing at a removed directory: a FileNotFoundError on restart-audit.jsonl or
-# timeline-views.json, or a silent empty read where the writer swallows OSError. The postal
-# sessions-file seam has the same shape: postal_service reads ROMP_SESSIONS_FILE from os.environ at
-# call time, so a tearDown that pops it instead of restoring the prior value leaves a later module,
-# which set the seam once at import, resolving no local sessions. Neither shows when the victim runs
+# timeline-views.json, or a silent empty read where the writer swallows OSError. The postal seams
+# have the same shape: postal_service reads the sessions-file seam (ROMP_SESSIONS_FILE) and the
+# bus-name seam (ROMP_POSTAL_HOST, the machine name the bus answers as) from os.environ at call time,
+# so a test that leaves either changed hands its value to every later test in the process and every
+# child they spawn: a sessions file with one live row kept a leaked bus from ever autostopping, and a
+# test's TESTHOST reached a later test's probe subprocess (the reviewer's finding on fork PR #894,
+# round 1). No module writes either at import (the census in tests/test_hermetic_kernel_postal.py
+# forbids it), so this fixture names such a leftover in any run, whenever the value a test leaves
+# differs from the one it found (a leftover equal to what the shell or an earlier test had already set
+# is no change here); the postal modules set both per test and put them back by cleanups, and
+# tests/test_postal_self_host.py's _HostnameSeams pops and restores the bus name, so each is quiet
+# here. Neither shows when the victim runs
 # alone, and the serial order of the whole suite passes only because a test that loads a kernel
 # between the cause and the victim re-executes judge.py and rebinds the roots; any other order (a
 # subset, another scheduler) fails a module that did nothing wrong. This fixture names the cause
@@ -600,7 +661,7 @@ def _stub_place_llm(monkeypatch):
 # environment names are still checked. Values of the environment names are never printed (one of
 # them is a credential), only the kind of change.
 _SHARED_JUDGE_PATHS = ("STATE", "PROJECTS")
-_SEAM_ENV_NAMES = ("ROMP_SESSIONS_FILE", "ROMP_SERVE_TOKEN")
+_SEAM_ENV_NAMES = ("ROMP_SESSIONS_FILE", "ROMP_SERVE_TOKEN", "ROMP_POSTAL_HOST")
 
 
 def _shared_judge_paths():
@@ -660,6 +721,53 @@ def restore_env(name, prior):
         os.environ.pop(name, None)
     else:
         os.environ[name] = prior
+
+
+# No module leaves a watched environment name changed after its own teardown (2026-09-23, the reviewer's ruling of round
+# 1 on fork PR #894). The census in tests/test_hermetic_kernel_postal.py reads what executes at IMPORT, and
+# _shared_state_restored above is per test, its snapshot taken after the module's setUpModule, its classes' setUpClass
+# and its module- and class-scoped fixtures have run, so a seam written there with no restore reached every test
+# scheduled after it in the process, and every child those tests spawned, and no test failed. This fixture takes its
+# snapshot before any of those run (an autouse module-scoped fixture of this file is set up before the module's own
+# setUpModule, which pytest runs as a module-scoped autouse fixture registered on the module, after the ones registered
+# here, and before every class-scoped setup) and fails, naming the module, when a watched name differs after the
+# module's teardown (its tearDownModule, tearDownClass and fixtures have run by then). A write that reaches later
+# modules is what it names; one made and put back inside the module is quiet.
+# The watched names, MODULE_WATCHED_ENV_NAMES: the seams _shared_state_restored watches per test (_SEAM_ENV_NAMES) and
+# the postal trio. PYTEST_CURRENT_TEST is not among them (pytest writes it for every phase), nor is any name this file
+# re-asserts before every test (the dead ports, the service-env, claude-config, catalog, scope and CLI-binary floors,
+# ROMP_SUPERVISED and the credential names): conftest's own write would read as a change on the module whose first test
+# it ran in. The one trio leg this file re-asserts, ROMP_POSTAL_PORT (popped before every test), is watched
+# against the value that re-assert gives it, unset, rather than against the snapshot (MODULE_ENV_FLOORS): a port a
+# module leaves set after its teardown reaches the next module's setUpModule, setUpClass and module fixtures, and every
+# child they spawn, before that module's first test pops it. Every other name is outside this check: a diff of the
+# whole environment reds on the runner's own writes.
+MODULE_WATCHED_ENV_NAMES = _SEAM_ENV_NAMES + ("ROMP_POSTAL_PEERS", "ROMP_POSTAL_CLIENT_ONLY", "ROMP_POSTAL_PORT")
+MODULE_ENV_FLOORS = {"ROMP_POSTAL_PORT": None}
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _module_env_restored(request):
+    before = {name: os.environ.get(name) for name in MODULE_WATCHED_ENV_NAMES}
+    yield
+    left = []
+    for name in MODULE_WATCHED_ENV_NAMES:
+        v0 = MODULE_ENV_FLOORS[name] if name in MODULE_ENV_FLOORS else before[name]
+        v1 = os.environ.get(name)
+        if v0 == v1:
+            continue
+        if v1 is None:
+            left.append("%s was set and is now unset" % name)
+        elif v0 is None:
+            left.append("%s was unset and is now set" % name)
+        else:
+            left.append("%s was changed" % name)
+    if left:
+        pytest.fail("module %s left the environment changed after its teardown: %s. A write the module does not put back "
+                    "(in setUpModule, setUpClass, a module- or class-scoped fixture, or a test) holds for every test "
+                    "scheduled after the module and every child they spawn: save the prior value and put it back in the "
+                    "matching teardown, or set it per test in setUp with a cleanup." % (request.node.nodeid, "; ".join(left)),
+                    pytrace=False)
 
 
 # No test report may carry a process-environment VALUE, or a credential-shaped token (2026-09-05). A

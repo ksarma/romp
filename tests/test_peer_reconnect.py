@@ -68,6 +68,13 @@ class PersistedIntent(unittest.TestCase):
         self._saved = (km.REMOTES_FILE, dict(km._remotes))
         km.REMOTES_FILE = Path(self.td.name) / "remotes.json"
         km._remotes.clear()
+        # The detach tells the bus, and conftest gives this module's kernel a dead BUS_PORT for the test (the reviewer's
+        # ruling of round 1 on fork PR #894: at the import-time 25302 the notify reached the machine's own bus), so the
+        # notify is refused on every box and kicks the revive, which would run a real romp-postal-service ensure from
+        # this process: stubbed for the test, put back by a cleanup.
+        revive = km._revive_postal_bus
+        km._revive_postal_bus = lambda: None
+        self.addCleanup(setattr, km, "_revive_postal_bus", revive)
 
     def tearDown(self):
         km.REMOTES_FILE = self._saved[0]

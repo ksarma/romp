@@ -80,7 +80,11 @@ The census pin passes one floor write of a leak name, upstream's client-only "1"
 probe compares client-only with the value the floor modules left. `python -m tests.test_hermetic_kernel_postal
 --census` prints the counts by name and shape (fork PR #871's by-product figures, derived by ast). Beside it,
 tests/conftest.py's run-end process check makes a run red that leaves any process holding its temp root
-(tests/test_run_end_leaked_processes.py).
+(tests/test_run_end_leaked_processes.py). Every kernel a module loads in-process gets a dead BUS_PORT for each test,
+and every postal service loaded in-process a dead client BASE (conftest's _dead_bus_port: with ROMP_POSTAL_PORT popped,
+each read the machine's fixed bus port at import and its bus calls reached the bus running there, the reviewer's ruling
+of round 1 on fork PR #894), and the pin over BUS_DIALLING_MODULES runs the modules whose calls dialled it together in
+both orders under a connect and spawn spy.
 The fixup of the same day (the verifier's findings on this PR) made "module level" mean everything that EXECUTES AT
 IMPORT: the class bodies (a write planted in one had left the pin green), the header parts of a def, class or block
 statement (decorators, default argument values, bases, an if test, the with items) and the writes reached through a
@@ -563,7 +567,10 @@ def _import_time_nodes(body, nested=False):
 # the first argument): `operator.setitem(os.environ, K, v)`, a bound method held in a name or fetched by getattr
 # (`_set = os.environ.__setitem__; _set(K, v)`), a functools.partial of one, `posix.putenv`, and an unbound update or
 # setdefault on the mapping's class (`MutableMapping.update(os.environ, {...})`, which the scan cannot tell from
-# `saved.update(os.environ)`, a read). None of these is in the tree at module level. The census at this head found two
+# `saved.update(os.environ)`, a read). None of these is in the tree at module level. And what runs after the import: a
+# write in setUpModule, setUpClass or a module- or class-scoped fixture is outside the scan, and conftest's
+# _module_env_restored checks it for the names it watches (the seams and the postal trio), naming the module that leaves
+# one changed after its teardown (the reviewer's ruling of round 1 on fork PR #894). The census at this head found two
 # calls at import that reach a write, both licensed: tests/test_intr_marks_memo.py and tests/test_merge_tx_sets_light.py
 # call test_asm_checkpoint.kernel_module() at module level (`import test_asm_checkpoint as TA; km = TA.kernel_module()`)
 # and its body setdefaults ROMP_KERNEL_NO_OPEN to "1"; the verifier's own walker had counted the shape empty, so the
@@ -1167,7 +1174,11 @@ def _placement_faults(tree, where="test_kernel_tunnels.py"):
     exactly this module's port (the run's own, so the bus's belt licensed the bind) and its client-only (inert with
     peers on); peers never was, since the leak of 2026-09-18. Every class that attaches or detaches has a setUp (its
     own or through super()) that sets all three names AND assigns the kernel's BUS_PORT (the import-time read, patched
-    to the test's port), and registers a cleanup that restores the three names and BUS_PORT. A list rather than
+    to the test's port) and its _ensure_postal_bus (the revive road, stubbed with a recorder), and registers a cleanup
+    that restores the three names and both attributes (the reviewer's ruling of round 1 on fork PR #894: before it the
+    stub, the restore of the road and the recorder's check could each be deleted with no test failing). What the stub
+    does and what the cleanup checks is not read here, since a read of the assignments cannot tell a stub that records
+    from one that does not: the revive probe runs them (_REVIVE_PROBE). A list rather than
     assertions so the check itself can be run over a synthetic module with the leak planted and shown to go red; a
     write the scan cannot read raises UnreadableEnvWrite out of it."""
     faults = []
@@ -1202,6 +1213,9 @@ def _placement_faults(tree, where="test_kernel_tunnels.py"):
         if "BUS_PORT" not in attrs:
             faults.append("%s.setUp (own or through super()) does not patch the kernel's BUS_PORT, which it read at import, to the "
                           "test's port" % cls.name)
+        if "_ensure_postal_bus" not in attrs:
+            faults.append("%s.setUp (own or through super()) does not stub the kernel's _ensure_postal_bus, the revive road a "
+                          "refused bus call the trio did not prevent would run the postal service's ensure through" % cls.name)
         restored, rattrs = _cleanup_restores(set_up, cls, classes, tree, names, where)
         for leg in TRIO:
             if leg not in restored:
@@ -1210,6 +1224,9 @@ def _placement_faults(tree, where="test_kernel_tunnels.py"):
                               "2026-09-18)" % (cls.name, leg))
         if "BUS_PORT" not in rattrs:
             faults.append("%s.setUp (own or through super()) registers no cleanup that restores the kernel's BUS_PORT" % cls.name)
+        if "_ensure_postal_bus" not in rattrs:
+            faults.append("%s.setUp (own or through super()) registers no cleanup that restores the kernel's _ensure_postal_bus"
+                          % cls.name)
     return faults
 
 
@@ -1234,25 +1251,41 @@ _HERMETIC_MARKER = 'os.environ["ROMP_POSTAL_HERMETIC"] = "1"\n'
 
 
 _DIAL_SPY = textwrap.dedent("""\
-    # sitecustomize for one child pytest run of the peer-notify guard test (tests/test_hermetic_kernel_postal.py): every
-    # Python process of the run records each socket connect by port (and whether its PYTHONPATH still names this spy, so
-    # a child forked then with its environment loads it too) and its own argv at exit, and refuses a connect to the
-    # machine's fixed bus port before it reaches the network
-    import atexit, errno, json, os, socket, sys
+    # sitecustomize for the child pytest runs of tests/test_hermetic_kernel_postal.py's spied pins (the peer-notify guard
+    # test; the modules whose in-process kernels dialled the fixed bus port): every Python process of the run records each
+    # socket connect by port (and whether its PYTHONPATH still names this spy, so a child forked then with its
+    # environment loads it too), each process it starts through subprocess.Popen whose command names
+    # romp-postal-service, its own start when its argv names romp-postal-service, and its own argv at exit, each record
+    # with the test phase (PYTEST_CURRENT_TEST) and the thread current at it; and it refuses a connect to the machine's
+    # fixed bus port before it reaches the network
+    import atexit, errno, json, os, socket, subprocess, sys, threading
     _OUT, _FIXED = os.environ.get("ROMP_TEST_DIAL_SPY"), os.environ.get("ROMP_TEST_DIAL_SPY_FIXED")
     _HERE = os.path.dirname(os.path.abspath(__file__))
     if _OUT and _FIXED:
         def _record(kind, **fields):
             fields.update(kind=kind, pid=os.getpid(), argv=[str(a) for a in getattr(sys, "argv", [])],
-                          spy_on_path=_HERE in os.environ.get("PYTHONPATH", "").split(os.pathsep))
+                          spy_on_path=_HERE in os.environ.get("PYTHONPATH", "").split(os.pathsep),
+                          test=os.environ.get("PYTEST_CURRENT_TEST", ""), thread=threading.current_thread().name)
             with open(_OUT, "a", encoding="utf-8") as f:
                 f.write(json.dumps(fields) + "\\n")
 
         def _port(address):
             try:
-                return int(address[1])
+                return int(address[1]) if isinstance(address, tuple) else None    # an AF_UNIX path is not a port
             except Exception:
                 return None
+
+        def _command(args):
+            return " ".join(str(a) for a in args) if isinstance(args, (list, tuple)) else str(args)
+        _popen_init = subprocess.Popen.__init__
+
+        def popen_init(self, args, *a, **kw):
+            if "romp-postal-service" in _command(args):
+                _record("spawn", command=_command(args)[:300])
+            return _popen_init(self, args, *a, **kw)
+        subprocess.Popen.__init__ = popen_init
+        if any("romp-postal-service" in str(a) for a in getattr(sys, "argv", [])):
+            _record("start")
         _connect, _connect_ex = socket.socket.connect, socket.socket.connect_ex
 
         def connect(self, address):
@@ -1269,6 +1302,30 @@ _DIAL_SPY = textwrap.dedent("""\
         socket.socket.connect, socket.socket.connect_ex = connect, connect_ex
         atexit.register(_record, "exit")
 """)
+
+
+def _fixed_bus_port():
+    """The machine's fixed bus port, the postal service's default, read from bin/romp-postal-service (named there once)."""
+    m = re.findall(r'^PORT = int\(os\.environ\.get\("ROMP_POSTAL_PORT", "(\d+)"\)\)',
+                   open(os.path.join(os.path.dirname(HERE), "bin", "romp-postal-service"), encoding="utf-8").read(), re.M)
+    if len(m) != 1:
+        raise AssertionError("bin/romp-postal-service names its default port %d times, not once" % len(m))
+    return int(m[0])
+
+
+BUS_DIALLING_MODULES = ("tests/test_kernel_known_hosts.py", "tests/test_peer_reconnect.py", "tests/test_kernel_remote_update.py",
+                        "tests/test_postal_relay_honesty.py")
+#   every module a connect to the fixed bus port, or a spawn of romp-postal-service with no port of the run's own, came
+#   from in one full serial run of tests/ at the head before the dead-port fixture, recorded by a spy with each record's
+#   PYTEST_CURRENT_TEST (the reviewer's ruling of round 1 on fork PR #894 derives the population by execution): the
+#   in-process kernels' peer notifies and GET /peers (the first three), and the in-process postal client's heartbeat in
+#   the fourth. The pin below runs them together in both orders. The same run recorded two classes of spawn outside the
+#   population, each for its reason: tests/test_postal_fixed_port_belt.py starts the postal service on purpose, as the
+#   subject of its tests, to show the belt refuses the fixed port (the spy does not see inside those children, whose bare
+#   environment carries no PYTHONPATH; by reading, each imports the module and calls _fixed_port_refusal, or runs serve
+#   under a test, which refuses before it binds, and none dials a port); and the served tests' lab kernels, started as
+#   processes by kernel_env with the trio, run their boot ensure with a port of their own and client-only, so it starts
+#   nothing
 
 
 _TRIES = tuple(getattr(ast, name) for name in ("Try", "TryStar") if hasattr(ast, name))
@@ -1494,7 +1551,10 @@ def _conftest_with_the_client_only_floor():
 
 def _teardown_only_restore(src):
     """`src` (the tunnels module) with _PostalTrio's restore moved back into a tearDown and no cleanup registered: the
-    shape the round-1 review found leaking on a subclass setUp that raises."""
+    shape the round-1 review found leaking on a subclass setUp that raises. The tearDown puts back the three names and,
+    from _restore_bus's body, which it takes over, both kernel attributes, BUS_PORT and the _ensure_postal_bus road
+    (checked on the rewritten class's tree, so each fault the copy draws is for the missing cleanup and none for a
+    restore the copy dropped)."""
     cleanups = ('        self.addCleanup(self._restore_bus, bus_port, ensure)\n'
                 '        self.addCleanup(restore_env, "ROMP_POSTAL_PEERS", prior["ROMP_POSTAL_PEERS"])\n'
                 '        self.addCleanup(restore_env, "ROMP_POSTAL_CLIENT_ONLY", prior["ROMP_POSTAL_CLIENT_ONLY"])\n'
@@ -1506,6 +1566,10 @@ def _teardown_only_restore(src):
     trio = out.split("class _PostalTrio", 1)[1].split("\nclass ", 1)[0]     # the rewritten class's body alone
     if "addCleanup" in trio or "def tearDown(self):" not in trio or out.count("def _restore_bus") != 0 or cleanups not in src:
         raise AssertionError("the tunnels module no longer has the _PostalTrio shape this synthetic copy rewrites")
+    cls = next(n for n in ast.parse(out).body if isinstance(n, ast.ClassDef) and n.name == "_PostalTrio")
+    down = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "tearDown")
+    if not {"BUS_PORT", "_ensure_postal_bus"} <= _attribute_assigns(down):
+        raise AssertionError("the rewritten tearDown does not put back both kernel attributes: %r" % sorted(_attribute_assigns(down)))
     return out
 
 
@@ -1563,6 +1627,41 @@ _PROBE = textwrap.dedent("""
     out["setup_raise_errors"] = len(result.errors)
     out["after_setup_raise"] = env()
     out["bus_port_after_setup_raise"] = t.km.BUS_PORT
+    for d in (case.td, os.environ.get("XDG_STATE_HOME")):
+        shutil.rmtree(d, ignore_errors=True)
+    print(json.dumps(out))
+""")
+
+
+_REVIVE_PROBE = textwrap.dedent("""
+    # The trio's second guard, run (the reviewer's ruling of round 1 on fork PR #894): a TunnelConcierge case of this
+    # probe's own drives the revive road after the trio's setUp and reports the recorder, what the cleanups return and
+    # which checks fired in them, and whether the road is the import-time function again after them.
+    import json, os, shutil, sys
+    here = sys.argv[1]
+    sys.path.insert(0, here)
+    sys.path.insert(0, os.path.dirname(here))    # the checkout: the module imports tests.conftest for restore_env
+    import tests, tests.conftest
+    import test_kernel_tunnels as t
+    at_import = t.km._ensure_postal_bus
+    case = t.TunnelConcierge("test_attach_requires_host")
+    case.setUp()
+    out = {"port": t.km.BUS_PORT, "stubbed_in_setup": t.km._ensure_postal_bus is not at_import}
+    t.km._revive_postal_bus()
+    out["revives"] = list(case.revives)
+    case.tearDown()
+    fired, check = [], case.assertEqual
+
+    def recorded_check(first, second, msg=None):
+        try:
+            return check(first, second, msg)
+        except AssertionError as e:
+            fired.append(str(e))
+            raise
+    case.assertEqual = recorded_check
+    out["cleanups_succeeded"] = case.doCleanups()
+    out["fired"] = fired
+    out["road_restored"] = t.km._ensure_postal_bus is at_import
     for d in (case.td, os.environ.get("XDG_STATE_HOME")):
         shutil.rmtree(d, ignore_errors=True)
     print(json.dumps(out))
@@ -1687,8 +1786,9 @@ class HermeticKernelPostal(unittest.TestCase):
 
     def test_the_module_that_loads_the_kernel_in_process_and_attaches_places_each_leg_of_the_trio_where_it_is_read(self):
         """Read by position from the module's ast, not by text (_placement_faults): no leg of the trio is written at
-        module level; the setUp of every class that attaches or detaches (its own or through super()) sets all three and
-        patches the kernel's BUS_PORT, the import-time read, and registers a cleanup that puts all four back. A
+        module level; the setUp of every class that attaches or detaches (its own or through super()) sets all three,
+        patches the kernel's BUS_PORT, the import-time read, and stubs its _ensure_postal_bus, the revive road, and
+        registers cleanups that put all five back. A
         module-level peers assignment is the leak of 2026-09-18 (the header); a module-level port or client-only
         assignment is the leak of 2026-09-22 (fork PR #813's CI: a real bus from another module's test with this module's
         port and client-only); a tearDown-only restore is the hole of review round 1 (a subclass setUp that raises skips
@@ -1704,7 +1804,9 @@ class HermeticKernelPostal(unittest.TestCase):
         each faulting once; the dunder and bytes spellings the second verification found passing silently (the third
         commit of 2026-09-22), each faulting once; a planted update whose keys the scan cannot read is loud, naming the
         line, never a clean pass; and the restore moved back into a tearDown with no cleanup registered, which faults
-        every leg and the BUS_PORT restore of both attaching classes."""
+        every leg and the BUS_PORT and _ensure_postal_bus restores of both attaching classes (the road joined BUS_PORT
+        on the reviewer's ruling of round 1 on fork PR #894); and the road's stub deleted from the setUp, and its restore
+        dropped from the cleanup, each faulting once per attaching class for that half and nothing else."""
         src = _tunnels_source()
         plants = (
             ("the port, as it was written until 2026-09-22", 'import socket as _socket\n_s = _socket.socket(); _s.bind(("127.0.0.1", 0)); os.environ["ROMP_POSTAL_PORT"] = str(_s.getsockname()[1]); _s.close()\n'),
@@ -1744,9 +1846,21 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertIn("cannot read the keys of this update at line %d" % planted_line, str(loud.exception))
         faults = _placement_faults(ast.parse(_teardown_only_restore(src)))
         self.assertTrue(faults and all("registers no cleanup" in f for f in faults), "tearDown-only restore: %r" % faults)
-        for leg in TRIO + ("BUS_PORT",):
+        for leg in TRIO + ("BUS_PORT", "_ensure_postal_bus"):
             self.assertEqual(sum(1 for f in faults if leg in f), 2, "%s: one fault per attaching class: %r" % (leg, faults))
-        self.assertEqual(len(faults), 2 * (len(TRIO) + 1), "the three legs and BUS_PORT, per attaching class, nothing else: %r" % faults)
+        self.assertEqual(len(faults), 2 * (len(TRIO) + 2),
+                         "the three legs, BUS_PORT and the _ensure_postal_bus road, per attaching class, nothing else: %r" % faults)
+        # the revive road's two halves, each planted out of a copy of the real module (the reviewer's ruling of round 1 on
+        # fork PR #894): the stub deleted from _PostalTrio.setUp, and the road's restore dropped from _restore_bus
+        for label, old, new, want in (
+                ("the stub deleted", "        km._ensure_postal_bus = lambda: self.revives.append(port)\n", "",
+                 "does not stub the kernel's _ensure_postal_bus"),
+                ("the road's restore dropped", "        km._ensure_postal_bus, km.BUS_PORT = ensure, bus_port\n",
+                 "        km.BUS_PORT = bus_port\n", "registers no cleanup that restores the kernel's _ensure_postal_bus")):
+            self.assertEqual(src.count(old), 1, "%s: the line the copy rewrites is in the module once" % label)
+            faults = _placement_faults(ast.parse(src.replace(old, new)))
+            self.assertEqual(len(faults), 2, "%s: one fault per attaching class and nothing else: %r" % (label, faults))
+            self.assertTrue(all(want in f for f in faults), "%s: %r" % (label, faults))
 
     def test_no_module_under_tests_writes_an_environment_name_at_module_level_outside_the_licensed_set(self):
         """The import-time half of the rule, held for every .py under tests/, walked recursively so fixtures/ is read too
@@ -2233,6 +2347,30 @@ class HermeticKernelPostal(unittest.TestCase):
                 self._assert_the_module_leaves_the_trio_as_the_floor_left_it(out)
             self.assertIn("importing the module writes no leg of the trio", str(caught.exception),
                           "%s: the shared check reds on the import leg, its floor value read before the import" % label)
+
+    def test_the_trio_stubs_the_revive_road_and_its_cleanup_fails_on_a_revive_and_puts_the_road_back(self):
+        """_PostalTrio's second guard, run in a fresh interpreter (_REVIVE_PROBE) on a TunnelConcierge case of its own, so
+        the import probe's after_cleanups and after_setup_raise stay independent of it: after the trio's setUp a call
+        of km._revive_postal_bus() lands in the stub's recorder (the test's port, once) and runs no ensure; the cleanups
+        then return False, because the recorder check in _restore_bus fired on that revive and no other check did; and
+        km._ensure_postal_bus is the import-time function again after them. Each of the three pieces the round-1 review
+        could delete with no test failing reds here: the stub deleted (M1: the revive runs the real ensure in the probe
+        child, with the trio's environment, and client-only makes that ensure start nothing: it pings the test's own
+        port and returns, so the recorder is empty and the cleanups succeed), the road's restore dropped from
+        _restore_bus (M2: the stub is still the road after the cleanups), and the recorder check disabled (M3: the
+        cleanups succeed with the recorder full). The placement check reds on M1 and M2 as well, from the assignments."""
+        env = dict(os.environ)
+        env.pop("ROMP_POSTAL_PEERS", None)
+        res = subprocess.run([sys.executable, "-c", _REVIVE_PROBE, HERE], capture_output=True, text=True, timeout=180, env=env, cwd=HERE)
+        self.assertEqual(res.returncode, 0, res.stderr[-2000:])
+        out = json.loads(res.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["revives"], [out["port"]], "a revive after the setUp lands in the stub's recorder, the test's port, once, "
+                                                        "and runs no ensure")
+        self.assertIs(out["cleanups_succeeded"], False, "the cleanups fail on a revive the test did not expect")
+        self.assertEqual(len(out["fired"]), 1, "...because one check fired in them: %r" % out["fired"])
+        self.assertIn("a refused bus call revived the bus from this test", out["fired"][0], "...the recorder check in _restore_bus")
+        self.assertTrue(out["road_restored"], "the cleanups put the import-time _ensure_postal_bus back, the check's failure notwithstanding")
+        self.assertTrue(out["stubbed_in_setup"], "the trio's setUp replaced the kernel's _ensure_postal_bus for the test")
 
     def _guard_test(self, src=None):
         """tests/test_kernel.py's PostalPeerTunnels.test_notify_bus_peer_is_guarded as a parsed function node, or the same
@@ -2782,6 +2920,235 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual([r for r in dials if r["port"] == fixed], [], "no process of the run dials the machine's fixed bus port %d" % fixed)
         self.assertEqual([r for r in recs if r["kind"] == "exit" and any(a.endswith("romp-postal-service") for a in r["argv"])], [],
                          "no romp-postal-service process starts: the test's fake answers the revive's ensure")
+
+    def _spied_pytest(self, targets, fixed):
+        """A child pytest over `targets` from the checkout with _DIAL_SPY as its sitecustomize, refusing and recording every
+        connect to the port `fixed`; returns (returncode, output, records, the child's pid)."""
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        with open(os.path.join(d, "sitecustomize.py"), "w", encoding="utf-8") as f:
+            f.write(_DIAL_SPY)
+        out = os.path.join(d, "dials.jsonl")
+        env = dict(os.environ, ROMP_TEST_DIAL_SPY=out, ROMP_TEST_DIAL_SPY_FIXED=str(fixed),
+                   PYTHONPATH=os.pathsep.join([d] + ([os.environ["PYTHONPATH"]] if os.environ.get("PYTHONPATH") else [])))
+        env.pop("PYTEST_CURRENT_TEST", None)
+        p = subprocess.Popen([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"] + list(targets),
+                             cwd=os.path.dirname(HERE), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, text=True)
+        try:
+            text = p.communicate(timeout=300)[0]
+        finally:
+            if p.poll() is None:
+                p.kill()
+                p.wait()
+        recs = [json.loads(line) for line in open(out, encoding="utf-8")] if os.path.exists(out) else []
+        return p.returncode, text, recs, p.pid
+
+    def test_the_modules_whose_kernels_dialled_the_fixed_bus_port_dial_none_and_start_no_postal_service_in_either_order(self):
+        """THE PIN for the path from the run's in-process kernels to the machine's fixed bus port (the reviewer's ruling of
+        round 1 on fork PR #894). Every kernel a test module loads in-process read BUS_PORT 25302 at import (conftest pops
+        ROMP_POSTAL_PORT), so a bus call of one dialled the machine's own bus; where nothing listened, a refused peer
+        notify revived the bus with a real romp-postal-service ensure. The population was derived by execution, a spy over
+        one full serial run of tests/ recording every connect to the fixed port and every romp-postal-service spawn with
+        its PYTEST_CURRENT_TEST: BUS_DIALLING_MODULES holds every module a recorded connect or spawn came from, the
+        in-process postal client's heartbeat in tests/test_postal_relay_honesty.py among them (its BASE was built from the
+        same popped name). They run here together, in both orders, in a child pytest with _DIAL_SPY as its sitecustomize
+        (every Python process of the run records each connect and refuses one to the fixed port, and records each
+        romp-postal-service process started through subprocess.Popen, each such process's own start and every process's
+        argv at exit): no process dials the fixed port and none starts the postal service. conftest's _dead_bus_port gives
+        every loaded romp_kernel* module DEAD_BUS_PORT for each test and points every loaded romp_postal* module's BASE at
+        it, and the tests whose notify is refused stub _revive_postal_bus. The spy is shown live where it must be: the
+        test process records its dials to the dead port. The spawn half holds under this
+        kernel and under fork PR #875's, whose floor skips the revive and not the connect. What the spy does not read: a
+        process that is not Python, or is started with -S or -I or an environment without this PYTHONPATH (none loads
+        the sitecustomize), a connect below socket.socket, and a spawn outside subprocess.Popen whose child is not a
+        Python process that loads the spy (os.system, os.exec*, os.posix_spawn called directly). At the round-1 head
+        (951479a14) five tests of these modules dialled the fixed port and three started the postal service."""
+        self.maxDiff = None
+        fixed = _fixed_bus_port()
+        phase = lambda r: r["test"] or "(no test phase, thread %s)" % r["thread"]     # noqa: E731
+        runs, seen = {}, {}
+        for order in (list(BUS_DIALLING_MODULES), list(reversed(BUS_DIALLING_MODULES))):
+            label = " then ".join(os.path.basename(m) for m in order)
+            runs[label] = self._spied_pytest(order, fixed)
+            recs = runs[label][2]
+            seen[label] = {"dials to the fixed port": sorted({phase(r) for r in recs if r["kind"] == "dial" and r["port"] == fixed}),
+                           "romp-postal-service starts": sorted({phase(r) for r in recs if r["kind"] in ("spawn", "start") or (
+                               r["kind"] == "exit" and any(a.endswith("romp-postal-service") for a in r["argv"]))})}
+        self.assertEqual(seen, {label: {"dials to the fixed port": [], "romp-postal-service starts": []} for label in runs},
+                         "no process of either run dials the machine's fixed bus port %d or starts the postal service (each "
+                         "listed by the test phase current at it)" % fixed)
+        from tests.conftest import DEAD_BUS_PORT
+        for label, (rc, text, recs, pid) in runs.items():
+            self.assertEqual(rc, 0, "%s: %s" % (label, text[-3000:]))
+            live = [r for r in recs if r["kind"] == "dial" and r["pid"] == pid and r["port"] == DEAD_BUS_PORT]
+            self.assertTrue(live, "%s: the spy is live in the test process: its dials to the dead port %d" % (label, DEAD_BUS_PORT))
+
+    def _scratch_conftest_run(self, modules, env=None):
+        """A child pytest over `modules` ({file name: text}) in a scratch directory holding copies of tests/conftest.py and
+        the pattern module it loads by path, the checkout on PYTHONPATH (the copied conftest imports the tests package),
+        built as tests/test_env_value_redaction.py builds its child runs; `env` names to set, a None value a name to
+        remove. Returns (returncode, output, the scratch directory, which is the child's TMPDIR)."""
+        d = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
+        for name in ("conftest.py", "credential_patterns.py"):
+            shutil.copy(os.path.join(HERE, name), os.path.join(d, name))
+        for name, text in modules.items():
+            with open(os.path.join(d, name), "w", encoding="utf-8") as f:
+                f.write(text)
+        child = dict(os.environ)
+        child.pop("PYTEST_CURRENT_TEST", None)
+        for k, v in (env or {}).items():
+            if v is None:
+                child.pop(k, None)
+            else:
+                child[k] = v
+        child["PYTHONPATH"] = os.pathsep.join(p for p in (os.path.dirname(HERE), child.get("PYTHONPATH")) if p)
+        child["TMPDIR"] = d
+        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", d] + sorted(modules),
+                           cwd=d, env=child, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
+        return r.returncode, r.stdout + r.stderr, d
+
+    def test_the_dead_bus_port_holds_for_each_test_and_comes_back_after_it(self):
+        """conftest's _dead_bus_port, run: a child pytest (a copy of tests/conftest.py) over a module that registers two
+        synthetic modules, the shapes loaded in-process at import, romp_kernel_restore_probe with BUS_PORT 45678 and
+        romp_postal_restore_probe with HOST 127.0.0.1 and BASE http://127.0.0.1:45678; its test reads DEAD_BUS_PORT in
+        both, and teardown_module, which runs after the test's fixtures are torn down, reads 45678 in both again: the port
+        and the URL are put back by the fixture's own cleanup, as the ruling of round 1 on fork PR #894 asks, and neither is
+        left dead outside a test."""
+        probe = textwrap.dedent("""\
+            import json, os, sys, types
+            _km = types.ModuleType("romp_kernel_restore_probe")
+            _km.BUS_PORT = 45678
+            _pm = types.ModuleType("romp_postal_restore_probe")
+            _pm.HOST, _pm.BASE = "127.0.0.1", "http://127.0.0.1:45678"
+            sys.modules["romp_kernel_restore_probe"], sys.modules["romp_postal_restore_probe"] = _km, _pm
+            _seen = []
+
+            def test_during():
+                _seen.append(["during", _km.BUS_PORT, _pm.BASE])
+
+            def teardown_module():
+                _seen.append(["after", _km.BUS_PORT, _pm.BASE])
+                with open(os.environ["ROMP_TEST_BUS_PORT_PROBE"], "w") as f:
+                    json.dump(_seen, f)
+        """)
+        marker = os.path.join(tempfile.mkdtemp(), "seen.json")
+        self.addCleanup(shutil.rmtree, os.path.dirname(marker), True)
+        rc, out, _d = self._scratch_conftest_run({"test_bus_port_probe.py": probe}, env={"ROMP_TEST_BUS_PORT_PROBE": marker})
+        self.assertEqual(rc, 0, out[-3000:])
+        with open(marker, encoding="utf-8") as f:
+            seen = json.load(f)
+        from tests import conftest
+        dead = getattr(conftest, "DEAD_BUS_PORT", "conftest.DEAD_BUS_PORT")
+        self.assertEqual(seen, [["during", dead, "http://127.0.0.1:%s" % dead], ["after", 45678, "http://127.0.0.1:45678"]],
+                         "the kernel's BUS_PORT and the postal client's BASE name the dead port during the test and their "
+                         "import-time values after it")
+
+    def test_the_module_env_fixture_watches_the_seams_and_the_trio_and_no_name_conftest_re_asserts_but_the_port(self):
+        """The list conftest's _module_env_restored watches (the reviewer's ruling of round 1 on fork PR #894): at least the
+        seams _shared_state_restored watches per test and the postal trio; not PYTEST_CURRENT_TEST, which pytest writes
+        for every phase; and no name conftest re-asserts before every test (read from its autouse fixtures by
+        _conftest_reasserted_names, which reads a name written or popped in the fixture's own body and not one reached
+        through a call or a loop, the credential names and the scope limits among them, none of which is watched), since
+        conftest's own write would read as the module's, except ROMP_POSTAL_PORT, which the fixture compares with the
+        value conftest's pop gives it (unset) instead of with its snapshot."""
+        from tests import conftest
+        watched = set(conftest.MODULE_WATCHED_ENV_NAMES)
+        self.assertLessEqual(set(conftest._SEAM_ENV_NAMES) | set(TRIO), watched)
+        self.assertIn("ROMP_POSTAL_HOST", conftest._SEAM_ENV_NAMES, "the bus-name seam is watched per test beside the sessions file")
+        self.assertNotIn("PYTEST_CURRENT_TEST", watched)
+        self.assertEqual(watched & _conftest_reasserted_names(), {"ROMP_POSTAL_PORT"})
+        self.assertEqual(conftest.MODULE_ENV_FLOORS, {"ROMP_POSTAL_PORT": None}, "the port is compared with its floor, unset")
+
+    def test_a_seam_written_in_setupmodule_setupclass_or_a_module_fixture_with_no_restore_is_named_by_its_module(self):
+        """THE PLANTS for conftest's _module_env_restored (the reviewer's ruling of round 1 on fork PR #894): a child pytest
+        (a copy of tests/conftest.py) over three planted modules that write ROMP_SESSIONS_FILE with no restore, one in
+        setUpModule, one in setUpClass and one in a module-scoped autouse fixture, each followed by a module whose test
+        spawns a child that reports the value it inherited. Each later child inherits its planted module's value (the
+        leak: the census reads import time, and the per-test fixture's snapshot is taken after module and class setup),
+        and the run is red naming each planted module and no other; the setUpModule plant red shows the snapshot is taken
+        before setUpModule runs. At the round-1 head (951479a14) the same run was green. A fourth plant leaves
+        ROMP_POSTAL_PORT set in its tearDownModule, and the module after it, whose snapshot then carries that port and
+        whose test's per-test pop clears it, is not named: the port is compared with its floor (unset), not with the
+        snapshot, so conftest's own pop is never read as the next module's change."""
+        later = textwrap.dedent("""\
+            import os, subprocess, sys
+
+            def test_a_child_reports_what_it_inherited():
+                v = subprocess.run([sys.executable, "-c", "import os; print(os.environ.get('ROMP_SESSIONS_FILE'))"],
+                                   capture_output=True, text=True, timeout=60).stdout.strip()
+                with open(os.environ["ROMP_TEST_MODULE_ENV_MARKER"], "a") as f:
+                    f.write("%s %s\\n" % (os.path.basename(__file__), v))
+        """)
+        plants = {
+            "test_a1_setupmodule.py": textwrap.dedent("""\
+                import os
+
+                def setUpModule():
+                    os.environ["ROMP_SESSIONS_FILE"] = os.path.join(os.environ["ROMP_TEST_PLANT_DIR"], "a1-sessions.json")
+
+                def test_one():
+                    pass
+            """),
+            "test_b1_setupclass.py": textwrap.dedent("""\
+                import os, unittest
+
+                class Seam(unittest.TestCase):
+                    @classmethod
+                    def setUpClass(cls):
+                        os.environ["ROMP_SESSIONS_FILE"] = os.path.join(os.environ["ROMP_TEST_PLANT_DIR"], "b1-sessions.json")
+
+                    def test_one(self):
+                        pass
+            """),
+            "test_c1_module_fixture.py": textwrap.dedent("""\
+                import os, pytest
+
+                @pytest.fixture(scope="module", autouse=True)
+                def _seam():
+                    os.environ["ROMP_SESSIONS_FILE"] = os.path.join(os.environ["ROMP_TEST_PLANT_DIR"], "c1-sessions.json")
+                    yield
+
+                def test_one():
+                    pass
+            """),
+            "test_d1_port_left.py": textwrap.dedent("""\
+                import os
+
+                def tearDownModule():
+                    os.environ["ROMP_POSTAL_PORT"] = "45679"
+
+                def test_one():
+                    pass
+            """),
+        }
+        after_port = textwrap.dedent("""\
+            import os
+
+            def test_the_port_is_popped_for_the_test():
+                assert os.environ.get("ROMP_POSTAL_PORT") is None
+        """)
+        modules = dict(plants, **{"test_a2_later.py": later, "test_b2_later.py": later, "test_c2_later.py": later,
+                                  "test_d2_after_the_port.py": after_port})
+        marker = os.path.join(tempfile.mkdtemp(), "inherited.txt")
+        self.addCleanup(shutil.rmtree, os.path.dirname(marker), True)
+        plant_dir = os.path.dirname(marker)
+        rc, out, _d = self._scratch_conftest_run(modules, env={"ROMP_TEST_MODULE_ENV_MARKER": marker, "ROMP_TEST_PLANT_DIR": plant_dir,
+                                                               "ROMP_SESSIONS_FILE": None})
+        with open(marker, encoding="utf-8") as f:
+            inherited = dict(line.split(" ", 1) for line in f.read().splitlines())
+        self.assertEqual(inherited,
+                         {"test_%s2_later.py" % p: os.path.join(plant_dir, "%s1-sessions.json" % p) for p in "abc"},
+                         "each later module's child inherits the value its planted module wrote: %s" % out[-2000:])
+        self.assertEqual(rc, 1, "the run is red on the planted modules: %s" % out[-3000:])
+        self.assertIn("8 passed, 4 errors", out, "every test passes; the four errors are the planted modules' teardowns")
+        named = sorted(set(re.findall(r"module (test_\w+\.py) left the environment changed after its teardown", out)))
+        self.assertEqual(named, sorted(plants), "each planted module is named, and no other: %s" % out[-3000:])
+        self.assertIn("module test_a1_setupmodule.py left the environment changed after its teardown: ROMP_SESSIONS_FILE was "
+                      "unset and is now set", out, "the setUpModule plant: the snapshot precedes setUpModule")
+        self.assertIn("module test_d1_port_left.py left the environment changed after its teardown: ROMP_POSTAL_PORT was unset "
+                      "and is now set", out, "the port a module leaves set is named against its floor")
 
     def test_the_scan_completes_and_derives_the_same_records_under_a_tag_another_census_left_on_the_parsers_shared_singletons(self):
         """THE PLANT for the contract _fresh states (the reviewer's ruling of 2026-09-22, from a CI red on fork PR #891):
