@@ -97,7 +97,10 @@ ANSWERED listing owns, as this bus last read it through local_agents_checked, is
 carried, and the entry forgotten with it so no later write re-emits it; a beat filed while the listing did not answer
 is kept, by the recorder's write and by a bare one (a writer reading the presence producer's cache, or the last answered
 listing's sids through the blink, drops it); a row the listing does not own is kept, and an answered empty listing
-releases nothing; a read without thread rows owns no thread's sid, and the recorder's read, which asks for them, does.
+releases nothing; a read without thread rows owns no thread's sid, and the recorder's read, which asks for them, does;
+the release reaching heartbeat rows alone, a carried legacy list, peer row and via row naming an owned sid beside another
+carried whole (the reviewer's verifier at the seventeenth commit: a carry with its kind test deleted passed every pin);
+and the release's order across a write that fails, the entry kept and the row re-emitted heard until a write succeeds.
 tests/test_dead_session_staleness.py ReaderFollowsTheWriter
 runs this writer and the judge's reader together over one root; tests/test_postal_bus_lifetime.py
 MonitorTick pins the poll's write. SYNTHETIC fixtures only: private synthetic sids, hostname TESTHOST."""
@@ -140,18 +143,16 @@ LEGACY = "legacy:list"                         # the key a whitespace-list mirro
 
 
 def _listing_record():
-    """The writer's record of the local listing as the bus last read it (_LOCAL_LISTING, round 3 of fork PR #897), or None
-    for a bus module without it: read with getattr so this module, overlaid on the product before the seventeenth commit
-    for its red-before, reaches its assertions instead of failing in setUp."""
-    rec = getattr(pm, "_LOCAL_LISTING", None)
-    return rec[0] if rec is not None else None
+    """The writer's record of the local listing as the bus last read it (_LOCAL_LISTING, round 3 of fork PR #897), read
+    directly, so a record renamed or removed fails this module loudly in setUp (the seventeenth commit read it with getattr
+    for its red-before over the product before the record, and a fixture that silently did nothing would have outlived
+    that need: the reviewer's verifier, the eighteenth commit)."""
+    return pm._LOCAL_LISTING[0]
 
 
 def _forget_listing(value=None):
-    """Set the record to `value` (None: no listing read yet in this "process") when the module has one."""
-    rec = getattr(pm, "_LOCAL_LISTING", None)
-    if rec is not None:
-        rec[0] = value
+    """Set the record to `value` (None: no listing read yet in this "process")."""
+    pm._LOCAL_LISTING[0] = value
 
 
 class Mirror(unittest.TestCase):
@@ -442,6 +443,88 @@ class Mirror(unittest.TestCase):
         self.assertTrue(pm._record_heartbeat(D, "web-comment-1"), "the recorder asks for thread rows: local")
         self.assertNotIn(HB + D, self._rows(), "...and the recorder's own write releases the row")
         self.assertNotIn(D, pm.HEARTBEATS, "...and forgets the entry")
+
+    def test_the_release_reaches_heartbeat_rows_alone_and_a_carried_row_of_another_kind_naming_an_owned_sid_is_carried_whole(self):
+        """Round 3 of fork PR #897, the reviewer's verifier at the seventeenth commit (by execution through the real writer and
+        reader): a carry with its kind test deleted, releasing EVERY carried row that names a sid the answered local listing
+        owns, passed every pin, and it drops the legacy list a bus before 2026-09-22 wrote when that list names a local
+        session beside a session on a host this process has not heard yet; that session is then in no row, and a host
+        vouching for absence lets rule 5 presume it closed. The release reaches heartbeat rows alone: the legacy list, a peer
+        row and a via row naming an owned sid beside another are that source's word about the other sid and are carried
+        whole, while the owned sid's own heartbeat row is released at the same write. The composition with the reader's
+        verdict (the unheard host's session named-by-unreachable-host, never rule 5) is tests/test_dead_session_staleness.py
+        ReaderFollowsTheWriter (the release's reach phase)."""
+        self.assertTrue(pm.peers_on(), "peer mode, the default this module runs under")
+        self.path.write_text(A + "\n" + B + "\n")     # a bus before 2026-09-22 wrote A (a local session now) and B (live on a
+        self._local_listing_answered([{"id": A, "name": "web"}])   # host this process has not heard yet)
+        self.assertEqual([r["id"] for r in pm.local_agents_checked()[0]], [A], "the listing answered, owning A: the record the release reads")
+        self._peer(HOST, [{"id": C, "name": "api"}])   # a host heard, its listing answered, naming neither
+        self._notify(HOST, up=True)                     # the kernel holds its link up: the notify's own write
+        self.assertEqual(self._vouch()[HOST], (True, True, True), "HOST vouches for absence, so a sid in no row here is rule 5's")
+        self.assertEqual(self._rows(), {HOST: (True, False, [C]), LEGACY: (False, False, [A, B])},
+                         "THE RELEASE'S REACH, the legacy list: carried whole, B with A, though the listing owns A (a carry releasing "
+                         "every row kind that names an owned sid drops the list here, B is in no row while HOST vouches, and the "
+                         "reader presumes B closed: the verifier's false rule 5)")
+        self.path.unlink()                              # a fresh file: a beat of A, a hub naming A beside D and, as its word about
+        self._restart(); pm.PEERS.clear()               # the far host, A beside E
+        self._local_listing_unanswered()
+        self.assertFalse(pm._record_heartbeat(A, "web"), "A's beat during a blink: filed as remote presence")
+        self._peer(HUB, [{"id": A, "name": "web"}, {"id": D, "name": "api"},
+                         {"id": A, "name": "web", "via": FAR, "viaBus": "far-bus"}, {"id": E, "name": "api", "via": FAR, "viaBus": "far-bus"}],
+                   bus_id="hub-bus")
+        pm._write_remote_sids()
+        self.assertEqual(self._rows(), {HB + A: (True, False, [A]), HUB: (True, False, [A, D]), VIA_FAR: (True, False, [A, E])})
+        self._restart()                                 # a restart: every row carried, heard by nobody
+        self._local_listing_answered([{"id": A, "name": "web"}])
+        pm.local_agents_checked()                       # the listing answers, owning A
+        pm._write_remote_sids()
+        self.assertEqual(self._rows(), {HUB: (False, False, [A, D]), VIA_FAR: (False, False, [A, E])},
+                         "THE RELEASE'S REACH, a peer row and a via row: each carried whole, A with D and A with E, while A's own "
+                         "carried heartbeat row is released at the same write (a carry releasing every row kind that names an "
+                         "owned sid drops both rows here, and D and E with them)")
+
+    def test_a_released_entry_survives_a_write_that_fails_and_its_row_is_written_heard_until_a_write_succeeds(self):
+        """Round 3 of fork PR #897, the reviewer's verifier at the seventeenth commit: _write_remote_sids forgets a released
+        HEARTBEATS entry only AFTER the file without the row is in place, and the docstring says the order matters, but a
+        writer popping the entry before the replace passed every pin. What the order buys, driven through the real writer: a
+        write that fails (the temporary path a directory, so the write never reaches the replace) keeps the entry, and the
+        next write under a listing that does not answer re-emits the row heard, reachable, this process's own word (rule 4
+        for the sid); a writer that popped before the replace has lost the entry, and that write carries the row from the
+        previous file heard=false, unreachable (cannot-determine for the sid: conservative, never closed, but no longer this
+        process's word) until a write under an answered listing releases it. The next write that succeeds under an answered
+        listing owning the sid releases the row and forgets the entry, as ever."""
+        self.assertTrue(pm.peers_on(), "peer mode, the default this module runs under")
+        self._local_listing_unanswered()
+        self.assertFalse(pm._record_heartbeat(A, "web"), "A's beat during a blink: filed, and the recorder's write puts its row down")
+        self.assertEqual(self._rows(), {HB + A: (True, False, [A])})
+        self._local_listing_answered([{"id": A, "name": "web"}])
+        pm.local_agents_checked()                       # the listing answers, owning A: the next write releases A
+        tmp = pm.STATE / "remote-sids.tmp"
+        tmp.mkdir()                                     # the write's temporary path a directory: the write fails before the replace
+        self.addCleanup(lambda: tmp.rmdir() if tmp.is_dir() else None)
+        said = set(pm._REMOTE_SIDS_SAID)
+        self.addCleanup(lambda: (pm._REMOTE_SIDS_SAID.clear(), pm._REMOTE_SIDS_SAID.update(said)))
+        pm._REMOTE_SIDS_SAID.clear()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            pm._write_remote_sids()
+        self.assertIn("remote-sids mirror was not written (IsADirectoryError", err.getvalue(),
+                      "the write failed at the temporary path, before the replace, and said so")
+        self.assertIn(A, pm.HEARTBEATS, "THE ORDER: the entry is forgotten only once the file without the row is in place, so a "
+                      "write that fails keeps it (a writer popping before the replace has lost it here)")
+        self.assertEqual(self._rows(), {HB + A: (True, False, [A])}, "the file is still the recorder's write")
+        tmp.rmdir()
+        self._local_listing_unanswered()
+        pm.local_agents_checked()                       # the listing blinks: the record says unanswered, so nothing is released
+        pm._write_remote_sids()
+        self.assertEqual(self._reach()[HB + A], (True, False, False, True, [A]),
+                         "the kept entry re-emits the row heard and reachable, rule 4 for A (a writer that popped before the "
+                         "replace carries the row from the previous file here, (False, False, False, False, [A]), unreachable)")
+        self._local_listing_answered([{"id": A, "name": "web"}])
+        pm.local_agents_checked()
+        pm._write_remote_sids()
+        self.assertEqual(self._rows(), {}, "the next write that succeeds under an answered listing owning A releases the row")
+        self.assertNotIn(A, pm.HEARTBEATS, "...and forgets the entry")
 
     def test_a_peers_own_rows_under_its_name_and_its_gossip_as_a_via_row_under_the_hub_and_the_far_host(self):
         self._peer(HUB, [{"id": A, "name": "web"}, {"id": B, "name": "api", "via": FAR, "viaBus": "far-bus"}], bus_id="hub-bus")

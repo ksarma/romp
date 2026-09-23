@@ -19,7 +19,11 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()      # hermetic; constants resolve under here at import
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
+os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 pm = load_source("romp_postal", os.path.join(BIN, "romp-postal-service"))
+# The kernel, under a private name, for the one witness that writes a session flag through the kernel's own routes
+# (ThreadOwnSendRefused, fork PR #897): the key the bus's thread gate reads, written by the kernel's WebSocket arm.
+km = load_source("romp_kernel_isolation", os.path.join(BIN, "romp-kernel"))
 
 SID = "11111111-2222-3333-4444-555555555555"
 # The mailbox case drains a box of its OWN (2026-09-10). Every postal test module loads
@@ -216,7 +220,9 @@ class ThreadOwnSendRefused(unittest.TestCase):
     broken out (final; the isolation refusal a peer must not route around). The gate is also the witness the
     deadness mirror's disclosure rests on (fork PR #897, round 3): the mirror's roster omits comment threads, and
     the road to a false presumed-closed for a live thread runs only through a thread's mail crossing a host, which
-    this gate refuses before the relay unless the `threadMail` flag is hand-set."""
+    this gate refuses before the relay unless the `threadMail` flag is set. No control of the UI sends that key, but
+    the kernel's WebSocket setSessionFlag arm writes any flag name a client sends (only POST /flag holds the name to
+    the kernel's _LANE_FLAGS), so a client message sets it as well as a hand edit of the file."""
 
     @classmethod
     def setUpClass(cls):
@@ -273,12 +279,19 @@ class ThreadOwnSendRefused(unittest.TestCase):
         rows ride only when asked), so a live thread's sid is in no roster a peer's mirror holds, and a peer whose host
         vouches for absence would presume a thread that mailed it closed (rule 5). The road is closed here: a thread's own
         send is refused with 403 before resolve_recipient and any relay, so no thread's mail crosses a host; the one way
-        through is `threadMail` at the literal True in session-flags.json, a key no route of the kernel or the bus writes.
-        Executed over the real handler: the listing with thread rows has the thread and the roster omits it; a send to a
+        through is `threadMail` at the literal True in session-flags.json. No control of the UI sends that key, but it has
+        two writers: a hand edit of the file, and the kernel's WebSocket setSessionFlag arm (Handler._dispatch_ws), which
+        writes ANY flag name an authenticated dashboard client sends, because only POST /flag (_state_write_route) holds the
+        name to _LANE_FLAGS (the seventeenth commit said no route of the kernel or the bus writes the key; the reviewer's
+        verifier refuted that by execution, and the eighteenth commit corrects it and pins both kernel routes here).
+        Executed over the real handlers: the listing with thread rows has the thread and the roster omits it; a send to a
         session on a peer host, a relay destination for any session whose mail is on, is refused and nothing is parked in
-        the peer's outbox; with the flag hand-set the same send is parked (the disclosed road, whose shape, if thread mail
-        is ever re-enabled, is a separate exchange field carrying the mirror-relevant thread sids, never the roster with
-        thread rows: fork PR #897's ledger entry). A gate that let a thread's send through fails the 403 pin here."""
+        the peer's outbox; POST /flag refuses the key and the send is still refused; the key written through the kernel's
+        real WebSocket arm, into the file the bus reads, lets the same send be parked (the disclosed road, whose shape, if
+        thread mail is ever re-enabled, is a separate exchange field carrying the mirror-relevant thread sids, never the
+        roster with thread rows; closing the arm, which would hold the name to _LANE_FLAGS as the route does, is a kernel
+        change recorded in fork PR #897's ledger entry, and turns the WebSocket pin here red so the disclosure moves with it). A
+        gate that let a thread's send through fails the 403 pin here."""
         far_host, far = "TESTHOST-far", "88888888-9999-aaaa-bbbb-cccccccccccc"
         self.assertTrue(pm.peers_on(), "peer mode: a name on a peer host is a relay destination")
         pm.PEER_STATE[far_host] = {"presence": [{"id": far, "name": "far"}], "epoch": 1, "holds": [],
@@ -299,12 +312,33 @@ class ThreadOwnSendRefused(unittest.TestCase):
         self.assertFalse(outbox.exists() and any(outbox.iterdir()),
                          "REFUSED BEFORE THE RELAY: nothing is parked for the peer, so the thread's sid never reaches a far host as a "
                          "sender (a gate that opened parks the message here)")
-        _flags({THREAD: {"threadMail": True}})                # the hand-set flag: the one way through
+        saved_state = km.jd.STATE                             # the kernel writes the flags file the bus reads: one root, as in
+        km.jd._rebind_state(pm.SESSION_FLAGS.parent)          # production (the kernel's STATE is the bus's STATE.parent)
+        self.addCleanup(km.jd._rebind_state, saved_state)
+        km._flags_cache.clear(); self.addCleanup(km._flags_cache.clear)
+        dirty = km._mark_views_dirty
+        km._mark_views_dirty = lambda: None                   # the pusher's wake is not under test
+        self.addCleanup(setattr, km, "_mark_views_dirty", dirty)
+        pm.SESSION_FLAGS.unlink(missing_ok=True)              # no flags yet: what the file carries below is the kernel's write alone
+        code, resp = km._state_write_route("/flag", {"id": THREAD, "flag": "threadMail", "value": True})
+        self.assertEqual((code, resp.get("ok")), (400, False), resp)
+        self.assertIn('"threadMail"', resp.get("error", ""), "POST /flag holds the name to _LANE_FLAGS and refuses the key")
+        self.assertFalse(pm.SESSION_FLAGS.exists(), "the refused route wrote nothing")
+        status, body = self._send(THREAD, "web-comment-1", "far")
+        self.assertEqual(status, 403, "the route refused the key, so the gate is still closed: %r" % (body,))
+        sent = []
+        client = {"app": "timeline", "wid": "w1", "alive": True, "send": lambda raw: sent.append(json.loads(raw))}
+        km.Handler._dispatch_ws(None, {"type": "setSessionFlag", "id": THREAD, "flag": "threadMail", "value": True}, client)
+        flags = json.loads(pm.SESSION_FLAGS.read_text()) if pm.SESSION_FLAGS.exists() else None
+        self.assertEqual((sent, flags), ([], {THREAD: {"threadMail": True}}),
+                         "THE KERNEL'S WEBSOCKET ARM writes the key, unrefused, into the file the bus reads: it holds no flag name to "
+                         "_LANE_FLAGS (a hand edit of the file writes the same bytes; an arm that held the name to _LANE_FLAGS "
+                         "writes nothing, and fails here)")
         status, body = self._send(THREAD, "web-comment-1", "far")
         self.assertEqual(status, 200, body)
         self.assertTrue(outbox.exists() and any(outbox.iterdir()),
-                        "with the flag hand-set the same send is parked for the peer while the roster still omits the thread: the "
-                        "disclosed road, reachable through this flag alone")
+                        "with the key written through the kernel's WebSocket arm the same send is parked for the peer while the "
+                        "roster still omits the thread: the disclosed road, open to a client message")
 
 
 class ThreadMailOffFollowUp(unittest.TestCase):

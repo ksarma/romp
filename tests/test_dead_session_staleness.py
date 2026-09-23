@@ -118,6 +118,9 @@ HUB_NAMED = "a11f0001-1111-4222-8333-000000000017"   # a session started on HOST
 #                                                      with HOST2 answered, names while HOST2's row here is still the cache
 BLINK_BEAT = "a11f0001-1111-4222-8333-000000000018"  # a LOCAL session whose beat lands while THIS bus's kernel listing does not answer:
 #                                                      the recorder files it as remote presence (the blink), a heartbeat row in peer mode
+LEGACY_NAMED = "a11f0001-1111-4222-8333-000000000019"   # a session live on a host this process has not heard yet, named by the
+#                                                         whitespace list a bus before 2026-09-22 wrote, beside BLINK_BEAT
+LEGACY = "legacy:list"                               # the key a whitespace-list mirror is carried under (postal_service.py REMOTE_SIDS_LEGACY)
 
 RULE_5 = (True, 5, "no-reachable-host-names-it")               # the ladder's verdicts, (closed, rule, why), as
 RULE_4 = (False, 4, "named-by-reachable-host")                 # _presumed_closed_verdict spells them; a fixture
@@ -721,6 +724,13 @@ class ReaderFollowsTheWriter(unittest.TestCase):
                     ladder shows the mirror's answer, naming B alone); a blink's bare write after it does not bring the
                     row back (the sixteenth commit had kept the key and the row, refusing a pop in the recorder that left
                     the carry a key to re-file from the file; the writer's own drop leaves it none);
+      the release's reach  the release reaches heartbeat rows alone (the reviewer's verifier at the seventeenth commit: a
+                    carry with its kind test deleted passed every pin). A thirteenth restart over the whitespace list a bus
+                    before 2026-09-22 wrote, naming the beating local session beside a session live on a host this process
+                    has not heard yet; the listing answers owning the local session (a consumer's read); B heard with its
+                    link up, naming neither. The list is carried whole, so the unheard host's session is cannot-determine
+                    by it, while B vouches and a sid nothing names is rule 5's (a carry releasing every row kind that names
+                    an owned sid drops the list, and the reader presumes that live session closed on B's word);
       legacy shape  the whitespace list a bus before 2026-09-22 wrote, at the bus's path: the reader
                     answers cannot-determine for the sid it does not name AND for the one it does, and
                     says once in the judge's log that the file is not the shape the bus writes; it is
@@ -777,7 +787,7 @@ class ReaderFollowsTheWriter(unittest.TestCase):
 import contextlib, io, json, os, sys, time
 (tests_dir, bin_dir, remote, remote2, dead, host_a, host_b, carried, other, alias, declared, far_sid, hub, gossiped, later,
  collided, ended, decl_named, spoke_kept, spoke_gone, hub_declared, spoke, spoke_declared, hub2, spoke_new, blinked,
- hub_named, blink_beat) = sys.argv[1:29]
+ hub_named, blink_beat, legacy_named) = sys.argv[1:30]
 sys.path.insert(0, tests_dir)
 from romp_load import load_source
 pm = load_source("romp_postal_oneroot", os.path.join(bin_dir, "romp-postal-service"))
@@ -1134,6 +1144,17 @@ out["peerBeatLocal"] = beat_phase(pm13)
 listing_blinks()                                   # a blink's bare write after the release: the row does not return
 pm13._write_remote_sids()
 out["peerBeatLocalBlinkAgain"] = beat_phase(pm13)
+# THE RELEASE'S REACH (the reviewer's verifier at the seventeenth commit): the release reaches heartbeat rows alone. A thirteenth
+# restart over the whitespace list a bus before 2026-09-22 wrote, naming the local session beside a session live on a host this
+# process has not heard yet; this bus's listing answers owning the local session; B heard with its link up, naming neither
+bus_file.write_text(blink_beat + "\n" + legacy_named + "\n")
+pm14, out["restartMemory13"] = restarted("romp_postal_oneroot_restarted_thirteenth", pm13)
+pm14.KERNEL_BASE = "http://127.0.0.1:9"           # the seam decides below; with it unset the fetch goes where nothing listens
+listing_answers([blink_beat])                      # this bus's listing answers, owning the local session
+out["reachOwned"] = [r.get("id") for r in pm14.local_agents_checked()[0]]   # a consumer's read: the record the release reads
+notify(pm14, host_b, True)
+exchange(pm14, host_b, [other], bus_id="bus-b2")   # B heard with its link up, answered, naming neither sid of the list
+out["releaseReach"] = link_phase({"legacyNamed": verdict(legacy_named), "owned": verdict(blink_beat)})
 bus_file.write_text(remote + "\n")                 # the shape a bus before 2026-09-22 wrote
 err = io.StringIO()
 with contextlib.redirect_stderr(err):
@@ -1150,7 +1171,7 @@ out["controlOldPathOnly"] = ask(dead)
 print(json.dumps(out))
 """, HERE, BIN, REMOTE, REMOTE2, DEAD, HOST, HOST2, CARRIED, OTHER, ALIAS, DECLARED, FARSID, HUB, GOSSIPED, LATER, COLLIDED,
                               ENDED, DECL_NAMED, SPOKE_KEPT, SPOKE_GONE, HUB_DECLARED, SPOKE, SPOKE_DECLARED, HUB2, SPOKE_NEW, BLINKED,
-                              HUB_NAMED, BLINK_BEAT],
+                              HUB_NAMED, BLINK_BEAT, LEGACY_NAMED],
                              capture_output=True, text=True, env=full,
                              cwd=str(home), timeout=120)
         assert out.returncode == 0, "%s child failed: %s" % (shape, out.stderr[-2000:])
@@ -1985,6 +2006,32 @@ print(json.dumps(out))
                 self.assertEqual((back["keyKept"], back["hosts"]), (False, {HOST2: L(True, False, True, False, False, False, [OTHER])}),
                                  "a blink's bare write after the release does not bring the row back: no memory and no file carries "
                                  "it (a writer that dropped the row and kept the key re-emits it here)")
+
+    def test_the_release_reaches_heartbeat_rows_alone_and_a_carried_legacy_list_naming_an_owned_sid_protects_its_other_sid(self):
+        """Round 3 of fork PR #897, the reviewer's verifier at the seventeenth commit (the release's reach phase of the class
+        docstring): the writer's one release drops a heartbeat row whose sid the answered local listing owns, and nothing
+        else. A carried whitespace list naming that sid beside a session on a host this process has not heard yet is carried
+        whole, so while B vouches for absence the session is cannot-determine by the list's last word, never rule 5. A carry
+        with its kind test deleted passed every earlier pin and answers rule 5 here (the verifier's false rule 5, by
+        execution through this writer and this reader). The verdicts first, then the rows, on both root shapes."""
+        L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                self.assertEqual(got["restartMemory13"], {"heartbeats": 0, "peers": 0, "links": 0, "freshObject": True},
+                                 "the thirteenth restart is a fresh module object, its memory and its link table empty")
+                self.assertEqual(got["reachOwned"], [BLINK_BEAT], "the listing answered, owning the local session")
+                reach = got["releaseReach"]
+                self.assertEqual(self._v(reach, "legacyNamed"), LOST(LEGACY + " (not heard)"),
+                                 "THE RELEASE'S REACH: the list is carried whole, so the session on the unheard host is named by it "
+                                 "and cannot-determine (a carry releasing every row kind that names an owned sid drops the list and "
+                                 "answers (True, 5, no-reachable-host-names-it) here: a live session presumed closed on B's word)")
+                self.assertEqual(self._v(reach, "nobody"), RULE_5,
+                                 "B vouches for absence, so the verdict above is the list's protection and not a mirror nobody vouches in")
+                self.assertEqual(self._v(reach, "owned"), LOST(LEGACY + " (not heard)"),
+                                 "the owned local session is named by the list too (on a real root rules 1 and 2 answer for it first)")
+                self.assertEqual(reach["hosts"], {HOST2: L(True, False, False, True, True, True, [OTHER]),
+                                                  LEGACY: L(False, False, False, False, False, False, [BLINK_BEAT, LEGACY_NAMED])},
+                                 "B heard, its link up, vouching; the list carried heard=false with both of its sids")
 
     def test_a_mirror_of_the_legacy_shape_is_cannot_determine_and_said_once(self):
         for shape, got in self.got.items():

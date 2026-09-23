@@ -127,9 +127,7 @@ def _forget_presence():
     deadness mirror's release (_LOCAL_LISTING; round 3 of fork PR #897)."""
     pm._LOCAL_PRESENCE_GOOD[0], pm._LOCAL_PRESENCE_GOOD[1] = [], False
     pm._PRESENCE_GOOD_FILE.unlink(missing_ok=True)
-    rec = getattr(pm, "_LOCAL_LISTING", None)        # getattr: the red-before overlays this module on the product before the record
-    if rec is not None:
-        rec[0] = None
+    pm._LOCAL_LISTING[0] = None                      # read directly: a renamed record fails loudly (the eighteenth commit)
 
 
 def _mirror_rows():
