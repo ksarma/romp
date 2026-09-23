@@ -52,6 +52,7 @@ import urllib.request
 from contextlib import redirect_stderr
 from unittest import mock
 from romp_load import load_source
+from tests.thread_ends import join_started
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -415,13 +416,17 @@ class SayOnceLatches(PriceFeedCase):
     fire, and block, and the park would run out with the lock intact. Without the lock nobody holds it at the latch,
     the shim never fires, and the park ends on the second read with both having captured False."""
 
-    def _race(self, key, value, marker, target=None):
-        """Two threads run `target` (km._refresh_remote_prices by default) at NOW under ROMP_PRICE_FEED=`value`, the read
-        of `_price_feed[key]` gated as the class docstring says; returns (the count of `marker` in stderr, the log).
+    def _race(self, key, value, marker, target):
+        """Two threads run `target` (a product function each caller names: km._refresh_remote_prices for the off and
+        unrecognised latches, km._model_prices for the row latch) at NOW under ROMP_PRICE_FEED=`value`, the read of
+        `_price_feed[key]` gated as the class docstring says; returns (the count of `marker` in stderr, the log).
         Asserts on the way out, in this order, that the gate saw the first read, that the park ended on one of its two
         edges and not by running out, and that both attempts finished: the park's return is read before the threads'
         liveness, because a park that ran out at its 5 s bound races the threads' own 5 s join and would otherwise be
-        reported as a live thread instead of as the park it is."""
+        reported as a live thread instead of as the park it is. The threads' stop is a cleanup registered before their
+        start (tests/thread_ends.py's join_started with the park's release: setting it ends a parked reader, and the
+        helper joins the threads that started), so a failed assertion cannot leave the two attempts running; the joins
+        after the starts stay as the fast path."""
         first_read, release, ended, parked = threading.Event(), threading.Event(), [], []
         shim_lock, waiting, holder = threading.Lock(), set(), [None]
         prefix = "price-feed-latch-"
@@ -471,8 +476,8 @@ class SayOnceLatches(PriceFeedCase):
         km._price_feed_lock = Shim()
         self.addCleanup(setattr, km, "_price_feed_lock", real_lock)   # LIFO: the lock is restored before the dict
         os.environ["ROMP_PRICE_FEED"] = value
-        run = target or km._refresh_remote_prices
-        threads = [threading.Thread(target=run, args=(NOW,), name=prefix + str(i)) for i in (1, 2)]
+        threads = [threading.Thread(target=target, args=(NOW,), name=prefix + str(i)) for i in (1, 2)]
+        self.addCleanup(join_started, release, threads, 5)       # on every exit path: end a parked reader, join the attempts that started
         err = io.StringIO()
         with redirect_stderr(err):
             for t in threads:
@@ -490,7 +495,7 @@ class SayOnceLatches(PriceFeedCase):
         """The off latch, the one the switch arrived with. The lock's proof is the mutation run: the test-and-set moved
         outside the lock in a scratch copy of kernel/kernel.py reads 2 here, on both interpreters, and still reads 2 when
         the second attempt starts 0.6 s late, the delay the half-second park passed."""
-        count, log = self._race("offSaid", "off", OFF_LINE)
+        count, log = self._race("offSaid", "off", OFF_LINE, km._refresh_remote_prices)
         self.assertEqual(count, 1, "one off line per kernel life, whatever arrives together:\n" + log)
         self.assertEqual(self.calls, [])
 
@@ -499,7 +504,7 @@ class SayOnceLatches(PriceFeedCase):
         never read (the gate assertion fails first) and no line was written: the subject is the new arm, and the
         lock's own proof for this latch is the mutation run (the test-and-set moved outside the lock in a scratch
         copy reads 2 here, on both interpreters, and still reads 2 when the second attempt starts 0.6 s late)."""
-        count, log = self._race("unrecognisedSaid", "maybe", UNRECOGNISED_LINE)
+        count, log = self._race("unrecognisedSaid", "maybe", UNRECOGNISED_LINE, km._refresh_remote_prices)
         self.assertEqual(count, 1, "one line per kernel life for a value that is not off:\n" + log)
         self.assertIn("'maybe'", log)
 
@@ -511,7 +516,7 @@ class SayOnceLatches(PriceFeedCase):
         moved outside the lock in a scratch copy reads 2 here, and still reads 2 when the second attempt starts 0.6 s
         late)."""
         km.PRICE_CONFIG.write_text(json.dumps({"note": "my rates"}))
-        count, log = self._race("overrideRowsSaid", "off", ROW_LINE % "'note'", target=km._model_prices)
+        count, log = self._race("overrideRowsSaid", "off", ROW_LINE % "'note'", km._model_prices)
         self.assertEqual(count, 1, "one line per kernel life per row, whatever arrives together:\n" + log)
         self.assertEqual(km._price_feed["overrideRowsSaid"], frozenset({"note"}), "the latch holds the row's key")
 
