@@ -7328,7 +7328,27 @@ function extractIn(command, ctx) {
       case 'hash': {
         // bash's `hash -p PATH NAME...` and zsh's `hash NAME=PATH` bind a command name to a path (measured: each shell ran the copy through
         // the bound name); every other option word (`-r`, `-d`, `-l`, `-t`, `-v`, `-f`, `-m`) binds nothing the walk reads
-        if (args.length >= 3 && args[0].literal && args[0].text === '-p') { for (const n of args.slice(2)) if (n.literal) hashes.set(n.text, args[1].literal ? args[1].text : null); }
+        // THE GLUED PATH (round 7's twenty-second commit, 2026-09-23; the reviewer's verifier on the twenty-first commit, by execution: `hash -p/usr/bin/cp
+        // foo; foo ../base/report.md report.md` from docs/ was allowed at every head while bash copied onto the tracked file, the site reading `-p` as a
+        // whole word): bash reads a value-taking letter's value from the rest of its word when the rest is not empty, else from the next word, the rule
+        // THE GLUED CALLBACK applies to mapfile's `C`. Measured in bash 5.2: the letters before the `p` are flags (`-dp/usr/bin/cp`, `-lp`, `-rp` and `-d
+        // -p PATH` bind; `-pd/usr/bin/cp` takes `d/usr/bin/cp` as the path, which is no program); the last `p` wins (`-p/usr/bin/ls -p/usr/bin/cp foo`
+        // copied, the reverse did not); a `t` anywhere among the option words prints and binds nothing (`-tp/usr/bin/cp foo`, `-p/usr/bin/cp -t foo`:
+        // `foo: not found`); `--` ends the options (`-p/usr/bin/cp -- foo` bound; `-- -p/usr/bin/cp foo` bound nothing); every word after the options
+        // is a NAME. zsh and dash refuse `-p` as a bad option and bind nothing, so this is bash's road alone, and the bind holds for a script the walk
+        // does not know the shell of (the safe side). A path word the resolver did not read binds the name to a path not read (refused at the head).
+        let hp;   // the path word the last `p` named: undefined until a `p` is read
+        let prints = false;
+        let k = 0;
+        for (; k < args.length && args[k].literal && /^-./.test(args[k].text); k++) {
+          const t = args[k].text;
+          if (t === '--') { k++; break; }
+          const j = t.indexOf('p', 1);
+          if (t.slice(1, j < 0 ? t.length : j).includes('t')) prints = true;
+          if (j < 0) continue;
+          hp = j + 1 < t.length ? sliceWord(args[k], j + 1) : args[++k];   // the glued rest, else the next word (which the loop then steps past)
+        }
+        if (hp !== undefined && !prints) for (const n of args.slice(k)) if (n.literal) hashes.set(n.text, hp && hp.literal ? hp.text : null);
         for (const w of args) {
           const eq = w.text.indexOf('=');
           if (eq <= 0 || (w.marks && w.marks.slice(0, eq).includes('x'))) continue;
@@ -7351,11 +7371,32 @@ function extractIn(command, ctx) {
         // measured, so no later command runs there); anywhere else `source` takes THE CONDITIONAL TEXT's door
         const inPlace = name === '.' || shell === 'bash' || shell === 'zsh' || seg.herestring;
         const sourceDoor = () => (inPlace ? frameText(seg, idx, cmd, `\`${name}\``) : conditionalText('`source`', 'text runs in bash and zsh alone (dash finds no `source`, and goes on to the next command)'));
-        if (ops.length && ops[0].literal && isStdinName(ops[0].text)) for (const body of stdinBodies(idx, fdOfName(ops[0].text))) recurse(body, shell, false, ` through \`${name} ${ops[0].text}\``, [], aliasChain, false, sourceDoor());   // the descriptor named is read (THE DESCRIPTOR FEED: `. /dev/fd/3 3< <(..)`); a sourced text runs in this shell and moves it (THE MOVED SHELL) by the door's reading
+        // THE UNHELD TEXT (round 7's twenty-second commit, 2026-09-23; the reviewer's verifier on the twenty-first commit, by execution: `printf 'set --
+        // report.md\n' > ../scratch/x; set -- other.md; . /dev/stdin < ../scratch/x; cp ../base/report.md $1` from docs/ was refused at the round-5 head
+        // and allowed since round 6 while every shell copied onto the tracked file; the same through /dev/fd/0 and /proc/self/fd/0, `/dev/fd/3 3<`, a
+        // descriptor an earlier `exec 3<` opened, a `<&3` dup, a `{ }` group's closer, `cat ../scratch/x | . /dev/stdin` (zsh runs the last member in
+        // this shell), the `source` spelling, `shift`, under `bash -c` and `sh -c`, from the root and notes/, through mv and a redirection; and `printf
+        // 'cd ../notes\n' > ../scratch/x; . /dev/stdin < ../scratch/x; cp ../base/report.md n1.md` allowed at every head while every shell moved and
+        // copied onto the tracked note, exactly as `. ../scratch/x` with the same file was): a sourced text the guard does not hold (a file's contents;
+        // the standard input when nothing this command carries feeds it: a `<` of a file or of /dev/null, a descriptor opened on a file, a pipe from a
+        // cat of one, or no feed at all, since what the hook's own standard input holds is not known) runs in this shell and may `set`, `shift` or
+        // `cd`, so the list is values not read (through the frame door, as the file operand's was) and the directory is unknown, the road named.
+        // Before, a standard input with no held text took no door at all (the loop over the bodies ran zero times, and the file operand's bind on the
+        // same `if` chain was never reached), so the bind and the move were lost; and the file operand's road bound the list and left the directory
+        // where it was. A text the guard holds (a here-document, a here-string, a process substitution, a literal printer piped in) is read as before.
+        const unheld = (what) => {
+          if (positionals !== null) rebindHere(seg, idx, cmd, `\`${name}\``, UNKNOWN_POSITIONALS, `an earlier \`${name}\` of ${what} may rebind the positional parameters`);   // THE POSITIONAL VALUE: a sourced text runs in this shell and may set or shift them
+          moveUnknown(`an earlier \`${name}\` of ${what} may move the shell, so where the shell is when a later command runs is not known`);   // THE MOVED SHELL: and may cd
+          movedHere(); markFunctionBody();   // in a function body, the body moves the shell when the function is called (cdFunctions), as a literal cd there does
+        };
+        const fed = ops.length && ops[0].literal && isStdinName(ops[0].text) ? stdinBodies(idx, fdOfName(ops[0].text)) : null;   // the texts this command feeds the descriptor named (THE DESCRIPTOR FEED: `. /dev/fd/3 3< <(..)`); null where the operand is not a name of the standard input
+        const inDefinition = frames.some((f) => f.kind === 'function' && !f.running && !f.coproc);   // a body being defined reads the standard input of its CALL, which THE CALLED BODY's replay feeds it (`f() { . /dev/stdin; }; echo 'cp a b' | f` is read by name there; `f < ../scratch/x` takes the unheld road there and marks the body, so the call leaves the directory unknown); the definition's own walk has no feed to judge
+        if (fed && fed.length) for (const body of fed) recurse(body, shell, false, ` through \`${name} ${ops[0].text}\``, [], aliasChain, false, sourceDoor());   // a sourced text runs in this shell and moves it (THE MOVED SHELL) by the door's reading
+        else if (fed) { if (!inDefinition) unheld(`a text read from \`${ops[0].text}\` that is not in the command`); }   // THE UNHELD TEXT: the standard input, or a descriptor, fed by nothing the hook holds
         // a sourced process substitution is the text a literal echo or printf prints, as a script operand that is one is (round 6's third
         // commit: `. <(echo 'cp a b')` copied in bash and zsh, zsh's `. =(echo '..')` too, while the operand was read as a file outside the command)
         else if (ops.length && procsubOf(ops[0]) != null) for (const t of scriptTexts(ops[0], `\`${name}\` operand`, 'file')) recurse(t, shell, false, ` through \`${name} <(..)\``, null, aliasChain, false, frameText(seg, idx, cmd, `\`${name}\``));   // the operand is a form dash does not parse: every shell that reaches the next command ran the text (the frame door for both spellings)
-        else if (positionals !== null) rebindHere(seg, idx, cmd, `\`${name}\``, UNKNOWN_POSITIONALS, `an earlier \`${name}\` of a file whose contents are not in the command may rebind the positional parameters`);   // THE POSITIONAL VALUE: a sourced file runs in this shell and may set or shift them
+        else unheld('a file whose contents are not in the command');   // THE UNHELD TEXT: the file operand (literal, or a word the resolver did not read), or no operand at all
         break;
       }
       default:

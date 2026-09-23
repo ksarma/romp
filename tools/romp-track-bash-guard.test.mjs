@@ -7439,6 +7439,7 @@ const RESIDUAL_TABLE = [
   ['RT-script-file-path', 'a reader outside the roads', null, "printf 'cp \"$@\"\\n' > ../scratch/c2; chmod +x ../scratch/c2; PATH=../scratch:$PATH; c2 ../base/report.md report.md", ['bash', 'zsh', 'dash']],
   ['RT-run-written-prefix', 'a reader outside the roads', null, "printf 'cp \"$@\"\\n' > ../scratch/env; chmod +x ../scratch/env; PATH=../scratch:$PATH; env ../base/report.md report.md", ['bash', 'zsh', 'dash']],   // round 6's tenth commit: a written script bound through PATH under a wrapper's name (`env`); THE PEELED NAME reads a copy or link of a command, not a script the command writes, so this stays the reader class RT-script-file-path names
   ['RT-source-written', 'a reader outside the roads', null, "printf 'cp ../base/report.md report.md\\n' > ../scratch/s.sh; . ../scratch/s.sh", ['bash', 'zsh', 'dash']],
+  ['RT-source-stdin-lt-written', 'a reader outside the roads', null, "printf 'cp ../base/report.md report.md\\n' > ../scratch/x; . /dev/stdin < ../scratch/x", ['bash', 'zsh', 'dash']],   // round 7's twenty-second commit: the same file read through the standard input (a `<` of a file the hook does not open); a `set`, `shift` or `cd` in such a text is THE UNHELD TEXT's refusal, pinned in "round 7, twenty-second commit, the rows"
   ['RT-perl-system', 'a reader outside the roads', 'perl', "perl -e 'system(\"cp ../base/report.md report.md\")'", ['bash', 'zsh', 'dash']],
   ['RT-python-system', 'a reader outside the roads', 'python3', "python3 -c 'import os; os.system(\"cp ../base/report.md report.md\")'", ['bash', 'zsh', 'dash']],
   ['RT-python-subprocess', 'a reader outside the roads', 'python3', "python3 -c 'import subprocess; subprocess.call([\"cp\",\"../base/report.md\",\"report.md\"])'", ['bash', 'zsh', 'dash']],
@@ -11244,5 +11245,214 @@ test("round 7, twenty-first commit, the rows: a `set`, `shift` or `cd` inside a 
     assert.ok(hook.includes("seg.herestring = true;") && hook.includes("paramAssigns: [], herestring: false })"), 'the lexer marks a segment that carries a here-string (behaviour: S21-ctl-source-herestring-set, S21-ctl-move-source-herestring, S21-ctl-move-source-herestring-notes)');
     assert.ok(hook.includes("if (opts.conditional) moveUnknown(`an earlier ${opts.conditional}, so where the shell is when a later command runs is not known`);") && hook.includes("const conditionalText = (label, how) => ({ adopt: true, rebind: () => rebindConditional(label, how), conditional: label + ' ' + how });"), 'a move inside a conditional text leaves the directory unknown, the road named (behaviour: S21-move-*)');
     assert.ok(hook.includes("const m = a.text.match(/^-[A-Za-z]*?C/);") && hook.includes("const glued = a.text.length > m[0].length ? sliceWord(a, m[0].length) : null;") && hook.includes("if (glued && !glued.literal) { cannotRead(a, `\\`${name} -C\\` callback`") && hook.includes("const cb = glued || args[k + 1];"), 'the mapfile site reads a value glued to `-C` as the callback and refuses a glued expansion (behaviour: S21-mapfile-glued-*, S21-readarray-glued-C-cp, S21-ctl-mapfile-sep-C-cp)');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+test("round 7, twenty-second commit, the rows: a `.` or `source` of a text the guard does not hold (the standard input, or a descriptor, fed by a `<` of a file, a descriptor opened on one, a `{ }` group's closer, a pipe from a cat of one, /dev/null or nothing at all; a file operand, literal or not) may set, shift or cd in this shell, so the positional parameters are values not read and the directory is unknown, the road named, and a later positional target, command name, script or relative write is refused; a text the guard holds is read as before; bash's `hash -pPATH NAME` binds the name to the glued path, the last `p` winning, a `t` binding nothing", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const BZ = ['bash', 'zsh'];
+    const Z = ['zsh'];
+    const B = ['bash'];
+    const N = [];
+    const NOT_OWN = ['text', "whether it rebinds this shell's positional parameters is not known"];   // THE BIND'S FRAME's reason: the `.` stands in a subshell or a pipeline
+    // THE UNHELD TEXT's reasons: the bind's names the operand (`an earlier \`.\` of a text read from \`/dev/stdin\` that is not in the command may rebind the
+    // positional parameters`; the file operand's `of a file whose contents are not in the command`, as before) and the move's ends as every unknown move does
+    const UNHELD = ['text', 'that is not in the command may rebind the positional parameters'];
+    const FILE_BIND = ['text', 'of a file whose contents are not in the command may rebind the positional parameters'];
+    const MOVE_UNHELD = ['text', 'that is not in the command may move the shell, so where the shell is when a later command runs is not known'];
+    const MOVE_FILE = ['text', 'of a file whose contents are not in the command may move the shell, so where the shell is when a later command runs is not known'];
+    const FN = ['text', 'an earlier call of the function `f` may change the directory, which I do not follow'];   // the body sources the unheld text; the call moves the shell (cdFunctions)
+    const NOT_LIT = ['text', 'not a literal path'];   // dd's `of=`: the positional's plain refusal
+    // [id, cwd, command, the shells that write (measured), the verdict ('allow', 'name', or ['text', a substring of the reason]), the verdict from a
+    // cwd in no project ('allow' unless given; null: the row's paths are absolute or its own cwd is that cwd)]
+    // 1. the bind through a standard input the hook does not hold: `.` and `source`, /dev/stdin, /dev/fd/0, /proc/self/fd/0, a numbered descriptor by
+    // both names (`3<`), a descriptor an `exec 3<` opened, a `<&3` dup, a `{ }` group's closer and a `<` inside the group, a pipe from a cat of the
+    // file (zsh alone runs the `.` in this shell; the frame's reason, since a pipeline is not this shell's frame), a `<` of a variable, quoted and not;
+    // a `<` of a file the command did not write, of /dev/null and no feed at all (the costs, which the round-5 head charged too); inside eval; `shift`;
+    // the head and script roads (allowed at every head before); under `bash -c`, `sh -c`, `zsh -c` and `dash -c` (every shell writes); the cwds (a cwd
+    // in no project keeps the B2 residual); nine write forms
+    // 2. the move through the same feeds, to notes/ (every shell that runs the text moves and copies onto the tracked note) and to scratch/ (no shell
+    // writes: a refusal by name at every head before, now the road's), through tee and a redirection, under `sh -c`, from the root, in a function body
+    // 3. the move through a file operand, allowed at every head before while every shell moved: `.`, `source`, a variable, `. -- FILE`, an absolute
+    // path, `~/x`, under `bash -c`, from the root, inside eval, a `{ }` group, an `&&` list and a function body; the bind through a file operand as before
+    // 4. the costs (a relative write to an untracked place after an unheld text: refused, no shell writes) and the controls: an absolute target after
+    // one is judged as before, a sourced text in a subshell moves nothing outside it (its bind takes the frame's reason), a text the guard holds (a
+    // here-document, a here-string, a `<` or an operand that is a process substitution, a numbered descriptor on one, a printer piped in, a
+    // here-document beside a `<` of a file) is read as before, so its `set` is refused by name and its `cd` to scratch/ followed
+    //    a function body being defined reads the standard input of its call: a call fed a file (or a descriptor, or nothing) leaves the directory unknown
+    //    through the body (cdFunctions), a call fed a text the guard holds is read by name (or its cd followed: zsh runs the last member of a pipeline in this
+    //    shell), an uncalled body moves nothing; the body's `set` binds the call's own list in every shell (no shell writes), and the call fed a file still
+    //    leaves the directory unknown (the cost, refused through the body)
+    // 5. THE GLUED PATH: `hash -p/usr/bin/cp foo` then `foo` in every write form, quoted spellings, the cwds, after a cd, with bash as the path, under
+    // `bash -c` (every shell writes), two names, the flags `d`, `l`, `r` before the `p` and `-d` as its own word, `--` after the value, the last `p`
+    // winning, a hashed `set` (the twenty-first commit's external splice), a path from a variable glued and separate; the controls: the separated
+    // `-p PATH`, zsh's `NAME=PATH`, a `t` anywhere (prints, binds nothing: allowed), `-pt` (the `p` takes `t/usr/bin/cp`, a program that does not exist,
+    // and the splice reads its basename: refused by name with no writer, the cost), the first `p` losing, `--` before the option word, no name, a
+    // path that writes nothing, an untracked target
+    const rows = [
+      ["S22-dot-lt-file-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin < ../scratch/x; cp ../base/report.md $1", A, UNHELD],
+      ["S22-source-lt-file-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; source /dev/stdin < ../scratch/x; cp ../base/report.md $1", BZ, UNHELD],
+      ["S22-dot-fd0-lt-file-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/fd/0 < ../scratch/x; cp ../base/report.md $1", A, UNHELD],
+      ["S22-dot-procfd0-lt-file-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /proc/self/fd/0 < ../scratch/x; cp ../base/report.md $1", A, UNHELD],
+      ["S22-dot-fd3-lt-file-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/fd/3 3< ../scratch/x; cp ../base/report.md $1", A, UNHELD],
+      ["S22-dot-procfd3-lt-file-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /proc/self/fd/3 3< ../scratch/x; cp ../base/report.md $1", A, UNHELD],
+      ["S22-dot-exec3-then-fd3-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; exec 3< ../scratch/x; . /dev/fd/3; cp ../base/report.md $1", A, UNHELD],
+      ["S22-dot-dup-from-3-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin 3< ../scratch/x <&3; cp ../base/report.md $1", A, UNHELD],
+      ["S22-dot-group-closer-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; { . /dev/stdin; } < ../scratch/x; cp ../base/report.md $1", A, UNHELD],
+      ["S22-dot-group-inner-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; { . /dev/stdin < ../scratch/x; }; cp ../base/report.md $1", A, UNHELD],
+      ["S22-dot-pipe-cat-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; cat ../scratch/x | . /dev/stdin; cp ../base/report.md $1", Z, NOT_OWN],
+      ["S22-dot-lt-var-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; f=../scratch/x; set -- other.md; . /dev/stdin < $f; cp ../base/report.md $1", A, UNHELD],
+      ["S22-dot-lt-quoted-var-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; f=../scratch/x; set -- other.md; . /dev/stdin < \"$f\"; cp ../base/report.md $1", A, UNHELD],
+      ["S22-dot-lt-keep-set", "nad", "set -- other.md; . /dev/stdin < ../scratch/keep.md; cp ../base/report.md $1", N, UNHELD],
+      ["S22-dot-lt-devnull-set", "nad", "set -- other.md; . /dev/stdin < /dev/null; cp ../base/report.md $1", N, UNHELD],
+      ["S22-dot-no-feed-set", "nad", "set -- other.md; . /dev/stdin; cp ../base/report.md $1", N, UNHELD],
+      ["S22-dot-in-eval-lt-file-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; eval '. /dev/stdin' < ../scratch/x; cp ../base/report.md $1", A, UNHELD],
+      ["S22-dot-lt-file-shift", "nad", "printf 'shift\\n' > ../scratch/x; set -- other.md report.md; . /dev/stdin < ../scratch/x; cp ../base/report.md $1", A, UNHELD],
+      ["S22-dot-lt-file-head", "nad", "printf 'set -- cp\\n' > ../scratch/x; set -- ls; . /dev/stdin < ../scratch/x; $1 ../base/report.md report.md", A, UNHELD],
+      ["S22-dot-lt-file-script", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin < ../scratch/x; bash -c \"cp ../base/report.md $1\"", A, UNHELD],
+      ["S22-dot-lt-file-under-bash", "nad", "bash -c \"printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin < ../scratch/x; cp ../base/report.md \\$1\"", A, UNHELD],
+      ["S22-dot-lt-file-under-sh", "nad", "sh -c \"printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin < ../scratch/x; cp ../base/report.md \\$1\"", A, UNHELD],
+      ["S22-dot-lt-file-under-zsh", "nad", "zsh -c \"printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin < ../scratch/x; cp ../base/report.md \\$1\"", A, UNHELD],
+      ["S22-dot-lt-file-under-dash", "nad", "dash -c \"printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin < ../scratch/x; cp ../base/report.md \\$1\"", A, UNHELD],
+      ["S22-source-lt-file-under-bash", "nad", "bash -c \"printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; source /dev/stdin < ../scratch/x; cp ../base/report.md \\$1\"", A, UNHELD],
+      ["S22-cwd-root-dot-lt-file", "na", "printf 'set -- docs/report.md\\n' > scratch/x; set -- scratch/other.md; . /dev/stdin < scratch/x; cp base/report.md $1", A, UNHELD],
+      ["S22-cwd-scratch-dot-lt-file", "nas", "printf 'set -- ../docs/report.md\\n' > x; set -- other.md; . /dev/stdin < x; cp ../base/report.md $1", A, UNHELD],
+      ["S22-cwd-notes-dot-lt-file", "nan", "printf 'set -- n1.md\\n' > ../scratch/x; set -- ../scratch/other.md; . /dev/stdin < ../scratch/x; cp ../base/report.md $1", A, UNHELD],
+      ["S22-cwd-notes-new-dot-lt-file", "nan", "printf 'set -- n2.md\\n' > ../scratch/x; set -- ../scratch/other.md; . /dev/stdin < ../scratch/x; cp ../base/report.md $1", A, UNHELD],
+      ["S22-cwd-out-b2-dot-lt-file", "out", "printf 'set -- {NA}/docs/report.md\\n' > scratch/x; set -- {NA}/scratch/other.md; . /dev/stdin < scratch/x; cp {NA}/base/report.md $1", A, 'allow', null],
+      ["S22-cwd-web-from-docs-dot-lt-file", "nad", "printf 'set -- {WEB}/docs/report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin < ../scratch/x; cp {WEB}/base/report.md $1", A, UNHELD, null],
+      ["S22-w-dot-lt-file-mv", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin < ../scratch/x; mv ../base/report.md $1", A, UNHELD],
+      ["S22-w-dot-lt-file-install", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin < ../scratch/x; install ../base/report.md $1", A, UNHELD],
+      ["S22-w-dot-lt-file-ln", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin < ../scratch/x; ln -sf ../base/report.md $1", A, UNHELD],
+      ["S22-w-dot-lt-file-tee", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin < ../scratch/x; echo x | tee $1", A, UNHELD],
+      ["S22-w-dot-lt-file-redirect", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin < ../scratch/x; echo x > $1", A, UNHELD],
+      ["S22-w-dot-lt-file-append", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin < ../scratch/x; echo x >> $1", A, UNHELD],
+      ["S22-w-dot-lt-file-cp-R", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin < ../scratch/x; cp -R ../base/report.md $1", A, UNHELD],
+      ["S22-w-dot-lt-file-sed", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin < ../scratch/x; sed -i 's/ORIG/X/' $1", A, UNHELD],
+      ["S22-w-dot-lt-file-dd", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . /dev/stdin < ../scratch/x; dd if=../base/report.md of=$1 status=none", A, NOT_LIT],
+      ["S22-move-dot-lt-file-notes", "nad", "printf 'cd ../notes\\n' > ../scratch/x; . /dev/stdin < ../scratch/x; cp ../base/report.md n1.md", A, MOVE_UNHELD],
+      ["S22-move-source-lt-file-notes", "nad", "printf 'cd ../notes\\n' > ../scratch/x; source /dev/stdin < ../scratch/x; cp ../base/report.md n1.md", BZ, MOVE_UNHELD],
+      ["S22-move-dot-fd3-lt-file-notes", "nad", "printf 'cd ../notes\\n' > ../scratch/x; . /dev/fd/3 3< ../scratch/x; cp ../base/report.md n1.md", A, MOVE_UNHELD],
+      ["S22-move-dot-exec3-notes", "nad", "printf 'cd ../notes\\n' > ../scratch/x; exec 3< ../scratch/x; . /dev/fd/3; cp ../base/report.md n1.md", A, MOVE_UNHELD],
+      ["S22-move-dot-group-closer-notes", "nad", "printf 'cd ../notes\\n' > ../scratch/x; { . /dev/stdin; } < ../scratch/x; cp ../base/report.md n1.md", A, MOVE_UNHELD],
+      ["S22-move-dot-pipe-cat-notes", "nad", "printf 'cd ../notes\\n' > ../scratch/x; cat ../scratch/x | . /dev/stdin; cp ../base/report.md n1.md", Z, MOVE_UNHELD],
+      ["S22-move-dot-lt-file-scratch", "nad", "printf 'cd ../scratch\\n' > ../scratch/x; . /dev/stdin < ../scratch/x; cp ../base/report.md report.md", N, MOVE_UNHELD],
+      ["S22-move-dot-lt-file-tee", "nad", "printf 'cd ../notes\\n' > ../scratch/x; . /dev/stdin < ../scratch/x; echo x | tee n1.md", A, MOVE_UNHELD],
+      ["S22-move-dot-lt-file-redirect", "nad", "printf 'cd ../notes\\n' > ../scratch/x; . /dev/stdin < ../scratch/x; echo x > n1.md", A, MOVE_UNHELD],
+      ["S22-move-dot-lt-file-under-sh", "nad", "sh -c \"printf 'cd ../notes\\n' > ../scratch/x; . /dev/stdin < ../scratch/x; cp ../base/report.md n1.md\"", A, MOVE_UNHELD],
+      ["S22-move-dot-lt-file-root", "na", "printf 'cd docs\\n' > scratch/x; . /dev/stdin < scratch/x; cp ../base/report.md report.md", A, MOVE_UNHELD],
+      ["S22-move-dot-file-notes", "nad", "printf 'cd ../notes\\n' > ../scratch/x; . ../scratch/x; cp ../base/report.md n1.md", A, MOVE_FILE],
+      ["S22-move-source-file-notes", "nad", "printf 'cd ../notes\\n' > ../scratch/x; source ../scratch/x; cp ../base/report.md n1.md", BZ, MOVE_FILE],
+      ["S22-move-dot-var-notes", "nad", "printf 'cd ../notes\\n' > ../scratch/x; f=../scratch/x; . $f; cp ../base/report.md n1.md", A, MOVE_FILE],
+      ["S22-move-dot-dashdash-notes", "nad", "printf 'cd ../notes\\n' > ../scratch/x; . -- ../scratch/x; cp ../base/report.md n1.md", A, MOVE_FILE],
+      ["S22-move-dot-abs-notes", "nad", "printf 'cd ../notes\\n' > ../scratch/x; . {NA}/scratch/x; cp ../base/report.md n1.md", A, MOVE_FILE, null],
+      ["S22-move-dot-home-notes", "nad", "printf 'cd ../notes\\n' > ~/x; . ~/x; cp ../base/report.md n1.md", A, MOVE_FILE],
+      ["S22-move-dot-file-under-bash", "nad", "bash -c \"printf 'cd ../notes\\n' > ../scratch/x; . ../scratch/x; cp ../base/report.md n1.md\"", A, MOVE_FILE],
+      ["S22-move-dot-file-scratch", "nad", "printf 'cd ../scratch\\n' > ../scratch/x; . ../scratch/x; cp ../base/report.md report.md", N, MOVE_FILE],
+      ["S22-move-dot-file-root", "na", "printf 'cd docs\\n' > scratch/x; . scratch/x; cp ../base/report.md report.md", A, MOVE_FILE],
+      ["S22-move-dot-file-in-eval", "nad", "printf 'cd ../notes\\n' > ../scratch/x; eval '. ../scratch/x'; cp ../base/report.md n1.md", A, MOVE_FILE],
+      ["S22-move-dot-file-in-group", "nad", "printf 'cd ../notes\\n' > ../scratch/x; { . ../scratch/x; }; cp ../base/report.md n1.md", A, MOVE_FILE],
+      ["S22-move-dot-file-and-list", "nad", "printf 'cd ../notes\\n' > ../scratch/x; true && . ../scratch/x; cp ../base/report.md n1.md", A, MOVE_FILE],
+      ["S22-move-dot-file-fn", "nad", "printf 'cd ../notes\\n' > ../scratch/x; f() { . ../scratch/x; }; f; cp ../base/report.md n1.md", A, FN],
+      ["S22-move-dot-lt-file-fn", "nad", "printf 'cd ../notes\\n' > ../scratch/x; f() { . /dev/stdin < ../scratch/x; }; f; cp ../base/report.md n1.md", A, FN],
+      ["S22-fn-dot-stdin-call-lt-file", "nad", "printf 'cd ../notes\\n' > ../scratch/x; f() { . /dev/stdin; }; f < ../scratch/x; cp ../base/report.md n1.md", A, FN],
+      ["S22-fn-dot-stdin-call-fd3", "nad", "printf 'cd ../notes\\n' > ../scratch/x; f() { . /dev/fd/3; }; f 3< ../scratch/x; cp ../base/report.md n1.md", A, FN],
+      ["S22-fn-dot-stdin-call-no-feed", "nad", "f() { . /dev/stdin; }; f; cp ../base/report.md n1.md", N, FN],
+      ["S22-ctl-fn-dot-stdin-piped-text", "nad", "f() { . /dev/stdin; }; echo 'cp ../base/report.md report.md' | f", A, 'name'],
+      ["S22-ctl-fn-dot-stdin-piped-cd", "nad", "f() { . /dev/stdin; }; echo 'cd ../notes' | f; cp ../base/report.md n1.md", Z, FN],
+      ["S22-ctl-fn-dot-stdin-uncalled", "nad", "f() { . /dev/stdin; }; cp ../base/report.md n1.md", N, 'allow'],
+      ["S22-ctl-fn-dot-stdin-call-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; f() { . /dev/stdin; }; f < ../scratch/x; cp ../base/report.md $1", N, FN],
+      ["S22-ctl-dot-file-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; . ../scratch/x; cp ../base/report.md $1", A, FILE_BIND],
+      ["S22-ctl-dot-var-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; f=../scratch/x; set -- other.md; . $f; cp ../base/report.md $1", A, FILE_BIND],
+      ["S22-cost-dot-lt-file-rel-untracked", "nad", "printf 'true\\n' > ../scratch/x; . /dev/stdin < ../scratch/x; cp ../base/report.md ../scratch/y.md", N, MOVE_UNHELD],
+      ["S22-cost-dot-file-rel-untracked", "nad", ". ../scratch/keep.md; cp ../base/report.md ../scratch/y.md", N, MOVE_FILE],
+      ["S22-cost-source-file-rel-untracked", "nad", "source ../scratch/keep.md; echo x > ../scratch/y.md", N, MOVE_FILE],
+      ["S22-ctl-dot-lt-file-abs-untracked", "nad", "printf 'true\\n' > ../scratch/x; . /dev/stdin < ../scratch/x; cp ../base/report.md {NA}/scratch/y.md", N, 'allow', null],
+      ["S22-ctl-dot-file-abs-untracked", "nad", ". ../scratch/keep.md; cp ../base/report.md {NA}/scratch/y.md", N, 'allow', null],
+      ["S22-ctl-dot-file-no-write", "nad", ". ../scratch/keep.md; ls", N, 'allow'],
+      ["S22-ctl-dot-file-subshell-move", "nad", "printf 'cd ../notes\\n' > ../scratch/x; (. ../scratch/x); cp ../base/report.md n1.md", N, 'allow'],
+      ["S22-ctl-dot-lt-file-subshell-move", "nad", "printf 'cd ../notes\\n' > ../scratch/x; (. /dev/stdin < ../scratch/x); cp ../base/report.md n1.md", N, 'allow'],
+      ["S22-ctl-dot-lt-file-subshell-set", "nad", "printf 'set -- report.md\\n' > ../scratch/x; set -- other.md; (. /dev/stdin < ../scratch/x); cp ../base/report.md $1", N, NOT_OWN],
+      ["S22-ctl-dot-heredoc-set", "nad", "set -- other.md; . /dev/stdin <<'EOF'\nset -- report.md\nEOF\ncp ../base/report.md $1", A, 'name'],
+      ["S22-ctl-dot-herestring-set", "nad", "set -- other.md; . /dev/stdin <<< 'set -- report.md'; cp ../base/report.md $1", BZ, 'name'],
+      ["S22-ctl-dot-lt-procsub-set", "nad", "set -- other.md; . /dev/stdin < <(printf 'set -- report.md\\n'); cp ../base/report.md $1", BZ, 'name'],
+      ["S22-ctl-dot-procsub-operand-set", "nad", "set -- other.md; . <(printf 'set -- report.md\\n'); cp ../base/report.md $1", BZ, 'name'],
+      ["S22-ctl-dot-pipe-printf-set", "nad", "set -- other.md; printf 'set -- report.md\\n' | . /dev/stdin; cp ../base/report.md $1", Z, NOT_OWN],
+      ["S22-ctl-dot-fd3-procsub-set", "nad", "set -- other.md; . /dev/fd/3 3< <(printf 'set -- report.md\\n'); cp ../base/report.md $1", BZ, 'name'],
+      ["S22-ctl-move-dot-heredoc-notes", "nad", ". /dev/stdin <<'EOF'\ncd ../notes\nEOF\ncp ../base/report.md n1.md", A, 'name'],
+      ["S22-ctl-move-dot-heredoc-scratch", "nad", ". /dev/stdin <<'EOF'\ncd ../scratch\nEOF\ncp ../base/report.md report.md", N, 'allow'],
+      ["S22-ctl-dot-lt-file-heredoc-set", "nad", "set -- other.md; . /dev/stdin < ../scratch/keep.md <<'EOF'\nset -- report.md\nEOF\ncp ../base/report.md $1", A, 'name'],
+      ["S22-hash-p-glued-cp", "nad", "hash -p/usr/bin/cp foo; foo ../base/report.md report.md", B, 'name'],
+      ["S22-hash-p-glued-mv", "nad", "hash -p/usr/bin/mv foo; foo ../base/report.md report.md", B, 'name'],
+      ["S22-hash-p-glued-install", "nad", "hash -p/usr/bin/install foo; foo ../base/report.md report.md", B, 'name'],
+      ["S22-hash-p-glued-tee", "nad", "hash -p/usr/bin/tee foo; echo x | foo report.md", B, 'name'],
+      ["S22-hash-p-glued-dq", "nad", "hash -p\"/usr/bin/cp\" foo; foo ../base/report.md report.md", B, 'name'],
+      ["S22-hash-p-glued-sq-word", "nad", "hash '-p/usr/bin/cp' foo; foo ../base/report.md report.md", B, 'name'],
+      ["S22-hash-p-glued-root", "na", "hash -p/usr/bin/cp foo; foo base/report.md docs/report.md", B, 'name'],
+      ["S22-hash-p-glued-notes", "nan", "hash -p/usr/bin/cp foo; foo ../base/report.md n1.md", B, 'name'],
+      ["S22-hash-p-glued-scratch", "nas", "hash -p/usr/bin/cp foo; foo ../base/report.md ../docs/report.md", B, 'name'],
+      ["S22-hash-p-glued-out-abs", "out", "hash -p/usr/bin/cp foo; foo {NA}/base/report.md {NA}/docs/report.md", B, 'name', null],
+      ["S22-hash-p-glued-cd-move", "nad", "hash -p/usr/bin/cp foo; cd ../notes; foo ../base/report.md n1.md", B, 'name'],
+      ["S22-hash-p-glued-bash-script", "nad", "hash -p/bin/bash foo; foo -c 'cp ../base/report.md report.md'", B, 'name'],
+      ["S22-hash-p-glued-under-bash", "nad", "bash -c 'hash -p/usr/bin/cp foo; foo ../base/report.md report.md'", A, 'name'],
+      ["S22-hash-p-glued-two-names", "nad", "hash -p/usr/bin/cp foo bar; bar ../base/report.md report.md", B, 'name'],
+      ["S22-hash-dp-glued", "nad", "hash -dp/usr/bin/cp foo; foo ../base/report.md report.md", B, 'name'],
+      ["S22-hash-lp-glued", "nad", "hash -lp/usr/bin/cp foo; foo ../base/report.md report.md", B, 'name'],
+      ["S22-hash-rp-glued", "nad", "hash -rp/usr/bin/cp foo; foo ../base/report.md report.md", B, 'name'],
+      ["S22-hash-d-then-p-glued", "nad", "hash -d -p/usr/bin/cp foo; foo ../base/report.md report.md", B, 'name'],
+      ["S22-hash-p-glued-dashdash", "nad", "hash -p/usr/bin/cp -- foo; foo ../base/report.md report.md", B, 'name'],
+      ["S22-hash-p-glued-last-wins", "nad", "hash -p/usr/bin/ls -p/usr/bin/cp foo; foo ../base/report.md report.md", B, 'name'],
+      ["S22-hash-p-glued-set", "nad", "hash -p/usr/bin/set foo; set -- report.md; foo -- other.md; cp ../base/report.md $1", A, 'name'],
+      ["S22-hash-p-glued-var", "nad", "p=/usr/bin/cp; hash -p\"$p\" foo; foo ../base/report.md report.md", B, 'name'],
+      ["S22-hash-p-sep-var", "nad", "p=/usr/bin/cp; hash -p \"$p\" foo; foo ../base/report.md report.md", B, 'name'],
+      ["S22-ctl-hash-p-sep-cp", "nad", "hash -p /usr/bin/cp foo; foo ../base/report.md report.md", B, 'name'],
+      ["S22-ctl-hash-zsh-eq-cp", "nad", "hash foo=/usr/bin/cp; foo ../base/report.md report.md", Z, 'name'],
+      ["S22-ctl-hash-tp-glued", "nad", "hash -tp/usr/bin/cp foo; foo ../base/report.md report.md", N, 'allow'],
+      ["S22-ctl-hash-p-glued-then-t", "nad", "hash -p/usr/bin/cp -t foo; foo ../base/report.md report.md", N, 'allow'],
+      ["S22-ctl-hash-pt-glued", "nad", "hash -pt/usr/bin/cp foo; foo ../base/report.md report.md", N, 'name'],
+      ["S22-ctl-hash-p-glued-first-loses", "nad", "hash -p/usr/bin/cp -p/usr/bin/ls foo; foo ../base/report.md report.md", N, 'allow'],
+      ["S22-ctl-hash-dashdash-first", "nad", "hash -- -p/usr/bin/cp foo; foo ../base/report.md report.md", N, 'allow'],
+      ["S22-ctl-hash-p-glued-no-name", "nad", "hash -p/usr/bin/cp; foo ../base/report.md report.md", N, 'allow'],
+      ["S22-ctl-hash-p-glued-ls", "nad", "hash -p/usr/bin/ls foo; foo ../base/report.md report.md", N, 'allow'],
+      ["S22-ctl-hash-p-glued-untracked", "nad", "hash -p/usr/bin/cp foo; foo ../base/report.md ../scratch/y.md", N, 'allow'],
+    ];
+    const judge = (id, cwd, raw, writers, expect, outside = 'allow') => {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      w.build();
+      const h = w.hook(cmd, at);
+      assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error: ${h.reason.split('\n')[0]}`);
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      if (outside != null) {
+        w.build();
+        const o = w.hook(cmd, w.cwds.out);
+        assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
+      }
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    };
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect, outside] of rows) { judge(id, cwd, raw, writers, expect, outside); n++; }
+    assert.equal(n, 125);
+    // where the code lives (the rows above prove what it does)
+    const hook = fs.readFileSync(HOOK, 'utf8');
+    assert.ok(hook.includes("const fed = ops.length && ops[0].literal && isStdinName(ops[0].text) ? stdinBodies(idx, fdOfName(ops[0].text)) : null;") && hook.includes("if (fed && fed.length) for (const body of fed) recurse(body, shell, false, ` through \\`${name} ${ops[0].text}\\``, [], aliasChain, false, sourceDoor());") && hook.includes("if (!inDefinition) unheld(`a text read from \\`${ops[0].text}\\` that is not in the command`);"), 'THE UNHELD TEXT: a standard input the hook holds no text for takes the unheld road instead of no road (behaviour: S22-dot-lt-file-set and the rows of part 1 and 2; the held texts: S22-ctl-dot-heredoc-set and the controls of part 4)');
+    assert.ok(hook.includes("else unheld('a file whose contents are not in the command');"), 'the file operand, literal or not, takes the same road (behaviour: S22-move-dot-file-notes, S22-move-dot-var-notes, S22-ctl-dot-file-set)');
+    assert.ok(hook.includes("const inDefinition = frames.some((f) => f.kind === 'function' && !f.running && !f.coproc);") && hook.includes("else if (fed) { if (!inDefinition) unheld(`a text read from \\`${ops[0].text}\\` that is not in the command`); }"), 'inside a function body being defined the standard input is the call\'s, judged when the call is replayed (behaviour: S22-fn-dot-stdin-call-lt-file, S22-ctl-fn-dot-stdin-piped-text, S22-ctl-fn-dot-stdin-uncalled)');
+    assert.ok(hook.includes("if (positionals !== null) rebindHere(seg, idx, cmd, `\\`${name}\\``, UNKNOWN_POSITIONALS, `an earlier \\`${name}\\` of ${what} may rebind the positional parameters`);") && hook.includes("moveUnknown(`an earlier \\`${name}\\` of ${what} may move the shell, so where the shell is when a later command runs is not known`);") && hook.includes("movedHere(); markFunctionBody();   // in a function body, the body moves the shell when the function is called (cdFunctions), as a literal cd there does"), 'the unheld road binds the list through the frame door, leaves the directory unknown and marks a function body it stands in (behaviour: S22-dot-lt-file-set, S22-ctl-dot-lt-file-subshell-set, S22-move-dot-lt-file-notes, S22-move-dot-file-fn)');
+    assert.ok(hook.includes("const j = t.indexOf('p', 1);") && hook.includes("if (t.slice(1, j < 0 ? t.length : j).includes('t')) prints = true;") && hook.includes("hp = j + 1 < t.length ? sliceWord(args[k], j + 1) : args[++k];") && hook.includes("if (hp !== undefined && !prints) for (const n of args.slice(k)) if (n.literal) hashes.set(n.text, hp && hp.literal ? hp.text : null);"), 'THE GLUED PATH: the hash site reads a `p` anywhere in an option word, its value the glued rest or the next word, the last `p` winning, a `t` binding nothing (behaviour: S22-hash-p-glued-cp, S22-hash-dp-glued, S22-hash-p-glued-last-wins, S22-ctl-hash-tp-glued, S22-ctl-hash-p-sep-cp)');
+    assert.ok(!hook.includes("args[0].text === '-p'"), 'the whole-word `-p` test is gone (behaviour: S22-hash-p-glued-cp)');
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
