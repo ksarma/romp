@@ -1017,19 +1017,27 @@ function partition(files: string[], classes: Array<[string, RegExp]>, where: str
   return out;
 }
 /** The modules the page bundles load: esbuild's metafile of the shipped `webview` config (vscode-extension/esbuild.js exports the config and
- *  emits no metafile of its own) built in memory, nothing written, the shape ui/webview/editor-lazy.test.ts builds the editor chunk with;
- *  every input keyed by its path relative to vscode-extension/, made repo-relative here with forward slashes. Inputs under node_modules are
- *  third-party and left out; the rest are partitioned into modules and styles (the `.css` inputs), the remainder asserted empty. Built once,
- *  in the census cell, its one caller (the memo below holds that build, so a failed build rejects the promise the census awaits and reds that
- *  cell with esbuild's message); the witness cell runs synthetic sources through the walker (censusViewWrites) and needs no build. */
+ *  emits no metafile of its own; its entry list is taken in any of the three forms esbuild documents, the guard below) built in memory,
+ *  nothing written, the shape ui/webview/editor-lazy.test.ts builds the editor chunk with; every input keyed by its path relative to
+ *  vscode-extension/, made repo-relative here with forward slashes. Inputs under node_modules are third-party and left out; the rest are
+ *  partitioned into modules and styles (the `.css` inputs), the remainder asserted empty. Built once, in the census cell, its one caller (the
+ *  memo below holds that build, so a failed build rejects the promise the census awaits and reds that cell with esbuild's message); the
+ *  witness cell runs synthetic sources through the walker (censusViewWrites) and needs no build. */
 let bundledP: Promise<string[]> | null = null;
 function bundledModules(): Promise<string[]> {
   if (!bundledP) bundledP = (async () => {
     const { webview } = pkgRequire("./esbuild.js") as { webview?: import("esbuild").BuildOptions };
     // the config is checked before it is spread (a spread of undefined is legal) and the build's metafile before it is read: esbuild resolves
     // an undefined config or an empty entry list with zero inputs and zero errors, and the census would then red three assertions later
-    // blaming modules that stopped being loaded, with the figure 0 loaded in a parenthesis (the maintainer's round 7 ruling, extra7-2)
-    assert.ok(webview && typeof webview === "object" && Array.isArray(webview.entryPoints) && webview.entryPoints.length > 0, "vscode-extension/esbuild.js's `webview` export, the shipped page config this census builds in memory, is an object with a non-empty entryPoints array (a renamed export or an emptied entry list builds nothing): got " + (webview && typeof webview === "object" ? "an object whose entryPoints is " + JSON.stringify(webview.entryPoints) : String(webview)));
+    // blaming modules that stopped being loaded, with the figure 0 loaded in a parenthesis (the maintainer's round 7 ruling, extra7-2). The
+    // entry list is taken in each of the three forms esbuild documents, an array of paths, an array of in-and-out objects (the shipped list
+    // mixes the two: the pdf worker's entry is an object among strings) and a record of output names to paths, which builds the same inputs
+    // as the array; it is refused when empty in any form or of another type, the message naming the form found (the maintainer's round 8
+    // ruling, correctness-2)
+    const ep: unknown = webview && typeof webview === "object" ? webview.entryPoints : undefined;
+    const form = Array.isArray(ep) ? "an array of " + ep.length + " entries" : ep !== null && typeof ep === "object" ? "a record of " + Object.keys(ep).length + " names" : ep === undefined ? "undefined" : "a " + typeof ep + ", " + JSON.stringify(ep);
+    const filled = Array.isArray(ep) ? ep.length > 0 : ep !== null && typeof ep === "object" && Object.keys(ep).length > 0;
+    assert.ok(webview && typeof webview === "object" && filled, "vscode-extension/esbuild.js's `webview` export, the shipped page config this census builds in memory, is an object whose entryPoints is non-empty in one of the three forms esbuild documents (an array of paths, an array of in-and-out objects, or a record of output names to paths; a renamed export, an emptied array or an emptied record builds nothing): got " + (webview && typeof webview === "object" ? "an object whose entryPoints is " + form : String(webview)));
     const esbuild = pkgRequire("esbuild") as typeof import("esbuild");
     const r = await esbuild.build({ ...webview, write: false, metafile: true, logLevel: "silent" });
     const inputs = Object.keys(r.metafile!.inputs);
