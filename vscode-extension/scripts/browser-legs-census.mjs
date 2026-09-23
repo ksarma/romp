@@ -37,7 +37,9 @@
 //              specifier that names no file beside the module resolves
 //              against the repo root and vscode-extension/, the bases loaders in this tree are anchored to, under the root alone:
 //              a candidate outside it is never looked up, so a sibling directory beside the checkout is neither read nor an
-//              ambiguity) is read by this same
+//              ambiguity; a relative path INTO node_modules naming a playwright package is that package to resolveSpec, not a
+//              local module, so a test that spells it is class own and a helper that spells it is refused at its importer as
+//              naming the package) is read by this same
 //              walker, transitively, for what it BINDS OR CALLS: a module that binds the launcher's inBrowser (imports it,
 //              imports the launcher whole, or re-exports it) or calls it (on a binding, or on a load where it stands) while the
 //              test itself never calls inBrowser, names a playwright package, holds a driver string, holds a form the walker
@@ -47,8 +49,10 @@
 //              line with the chain. The
 //              walker follows nothing THROUGH such a module (it does not read what the test calls on it), so the verdict is a
 //              refusal with the remedy, never a silent non-leg. A file under node_modules is a package and binds nothing of
-//              the tree; a json or css file is not a script.
-//   playwright: the module names a playwright package (playwright, playwright-core, @playwright/test, or a subpath) by any
+//              the tree (a playwright package named by such a path is read by resolveSpec before the file is looked up); a json or
+//              css file is not a script.
+//   playwright: the module names a playwright package (playwright, playwright-core, @playwright/test, or a subpath; a relative
+//              path into node_modules whose segments after node_modules name one, resolveSpec's reading, included) by any
 //              specifier form, either quote, in any position (an import, a loader call bound to a name by a declaration or a plain
 //              = assignment, or a loader call whose
 //              result is used where it stands: `require("playwright").chromium.launch()`, `(await import("playwright"))`,
@@ -75,9 +79,19 @@
 //   swallow:   a shared inBrowser call inside a try statement that has a catch clause, with its line: REPORTED, not refused
 //              (such a leg is admitted to the roster; the count over the tree is printed by the census test).
 //   embedded:  a string or template literal whose TEXT loads a playwright package (a child-process driver's source): counted
-//              as reaching a browser, on the safe side, and never rosterable (the switch never reaches a child process). A
+//              as reaching a browser, on the safe side, and never rosterable (the switch never reaches a child process). The
+//              text is read two ways, either one enough: by the driver regex (require(, import( or from before the package
+//              name), and, when it parses as code, by THIS SAME WALKER one level down (driverLoads: the text classified with
+//              the module's own readers, its record's playwright set the verdict), so a loader applied through createRequire, a
+//              loader bound by a declaration in the text, a subpath and a relative path into node_modules are read as the
+//              module's own code would be. The string boundary, stated: a text that does not parse is read by the regex alone;
+//              a text that names the package and loads it by no form the walker reads (a title, a message, a wrapper around a
+//              non-literal require) is no driver to the walker, class none from it, and THE SAFETY NET refuses the module when
+//              the name stands in a specifier-capable position of that text; a string inside a driver's text is not read as a
+//              driver of its own. A
 //              template with substitutions and a `+` concatenation are FOLDED before the text is read (a substitution that is
-//              an identifier bound to one const literal takes its value; any other piece a placeholder), so a driver assembled
+//              an identifier bound to one const literal takes its value; any other piece a placeholder, which the code read
+//              sees as an identifier), so a driver assembled
 //              from pieces is read; a piece the fold cannot take (a value from the environment) is the third residual below.
 //   REFUSALS:  a form the walker cannot classify refuses with file and line, never reports it absent: an import or loader
 //              specifier that is not a string literal and folds through no closed form; a computed member with a name it
@@ -158,10 +172,10 @@
 // for any MENTION of a browser load, keyed on the walker's own name-sets and readers and on nothing else: a string literal, a
 // no-substitution template, or a template or `+` chain folded by foldText, standing in a specifier-capable position (an import or
 // export specifier, import = require, any call's or new's argument, an array literal that is a call's argument, a tagged
-// template's text), whose text isPwPackage, resolves through resolveSpec to the launcher, or is a relative path whose segments
-// after its last node_modules satisfy isPwPackage; a string whose text names a playwright package and parses as code without a
-// diagnostic (the fold's placeholders rewritten to an identifier first), read by the compiler for a specifier so positioned inside
-// it, the driver-string road the regex reader misses (a loader applied through createRequire, a bound loader, a subpath); and the
+// template's text), whose text isPwPackage or resolves through resolveSpec to the launcher or to a playwright package (a relative
+// path into node_modules, resolveSpec's own reading); a string whose text names a playwright package and parses as code without a
+// diagnostic (the same rewritten text the walker's driver read classifies), read by the compiler for a specifier so positioned
+// inside it, a read wider than the walker's (any call's argument, where the walker reads a loader's); and the
 // identifiers requireCjs and createRequire (the latter through its import binding, so an alias counts) and the member
 // module.require, in every position. A mention is ACCOUNTED when the walker's own records show it read, and only then: a
 // specifier when the import, export or loader call holding it is in `resolved`; a driver string when the string reader noted its
@@ -269,6 +283,12 @@ export function classify(ts, file, src, opts = {}) {
   const resolveSpec = (spec) => {
     if (!spec.startsWith(".")) return { kind: isPwPackage(spec) ? "playwright" : "package", spec };
     let abs = path.resolve(path.dirname(file), spec);
+    // a relative path INTO node_modules naming a playwright package (`../../vscode-extension/node_modules/playwright`, a subpath, an
+    // index or a file of it): the package, by the resolved path's segments after its last node_modules (.js, .ts and /index
+    // stripped), so the load is recorded, bound and read as the bare specifier is, for a test module and a loaded helper alike (the
+    // one home of the road; THE SAFETY NET keys its relative-path mention on this reader, so the two agree by construction)
+    const segs = abs.split(path.sep), nm = segs.lastIndexOf("node_modules");
+    if (nm >= 0 && isPwPackage(segs.slice(nm + 1).join("/").replace(/\.[cm]?[jt]s$/, "").replace(/\/index$/, ""))) return { kind: "playwright", spec, abs };
     if (/\.[cm]?js$/.test(abs)) abs = abs.replace(/\.[cm]?js$/, ".ts"); else if (!/\.[cm]?ts$/.test(abs)) abs += ".ts";
     return { kind: abs === launcherAbs ? "launcher" : "local", spec, abs };
   };
@@ -928,7 +948,10 @@ export function classify(ts, file, src, opts = {}) {
       } else if (ts.isPropertyAccessExpression(c) || ts.isElementAccessExpression(c)) {
         const names = memberNames(c);
         const obj = unwrap(c.expression);
-        if (names === null) { const r = rootOf(c); if (isTrackedRoot(r) || (loadRoot(c) || {}).kind === "playwright") { refuse(c, "a computed member with a name the walker cannot fold on a playwright or launcher binding or load"); refusedRoots.add(r); } }
+        // a computed member the walker cannot fold in CALLEE position (`pw[k]()`, `require("playwright")[k]()`, `(leg as any)[k](t, ...)`):
+        // read through pwChain, whose computed-member arm is the one home of that refusal (it refuses by name when the chain stands
+        // on a tracked binding or a playwright load, and records the reference in refusedRoots for the value-use arm)
+        if (names === null) pwChain(c);
         else {
           if (names.some((x) => x === "skip" || x === "todo")) skipTodo.push({ line: lineOf(n), what: "." + names.join("|") + "(" });
           // launcher namespace or default binding: leg.inBrowser(...); or the loader call's own result: require(launcher).inBrowser(...)
@@ -1080,11 +1103,28 @@ export function classify(ts, file, src, opts = {}) {
     return "<" + x.getText(sf).slice(0, 40) + ">";
   };
   const noteEmbedded = (n) => { const line = lineOf(n); if (!embedded.some((e) => e.line === line)) embedded.push({ line, what: "playwright loaded by source held in a string (a child-process driver)" }); };
+  /** A string's text as the compiler reads it: the fold's <placeholder> pieces (a substitution the fold could not take) rewritten
+   *  to an identifier, so the rest parses. One rewrite for the driver reader below and THE SAFETY NET's read of the same text. */
+  const driverText = (text) => text.replace(/<[^<>]*>/g, "_");
+  /** Does a string's text LOAD a playwright package, read AS CODE by this same walker? The text (its package-name pre-filter the
+   *  one foldSpecifier uses) is classified one level down (opts.driverText: a string inside a driver's text is not read as a driver
+   *  of its own) and the record's playwright set read, so the string reader is exactly as wide as the code walker: a loader call
+   *  by any name in loaders, createRequire applied directly or bound by a declaration, an import, a subpath, a relative path into
+   *  node_modules. A text that does not parse yields the parser's refusal record, which carries no playwright set: false, and the
+   *  regex alone reads such a text (the stated bound). A text that names the package and loads it by no form the walker reads is
+   *  no driver to the walker (a title, a message, a wrapper around a non-literal require): class none from the walker, and THE
+   *  SAFETY NET's refusal when the name stands in a specifier-capable position of the text. */
+  const driverLoads = (text) => {
+    if (opts.driverText || !PW_PACKAGES.some((p) => text.includes(p))) return false;
+    const rec = classify(ts, file, driverText(text), { ...opts, testModule: false, driverText: true });
+    return !!(rec.playwright && rec.playwright.length);
+  };
   const walkStr = (n) => {
     if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) {
-      if (DRIVER_RE.test(n.text)) noteEmbedded(n);
+      if (DRIVER_RE.test(n.text) || driverLoads(n.text)) noteEmbedded(n);
     } else if (ts.isTemplateExpression(n) || (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.PlusToken)) {
-      if (DRIVER_RE.test(foldText(n))) noteEmbedded(n);
+      const t = foldText(n);
+      if (DRIVER_RE.test(t) || driverLoads(t)) noteEmbedded(n);
     }
     ts.forEachChild(n, walkStr);
   };
@@ -1115,8 +1155,8 @@ export function classify(ts, file, src, opts = {}) {
   {
     const hit = (n, what, token) => netHits.push({ line: lineOf(n), what, token: String(token).split("\n")[0].slice(0, 80) });
     const pwText = (t) => PW_PACKAGES.some((p) => t.includes(p));
-    // a relative path whose segments after its last node_modules name a playwright package (.js, .ts and /index stripped)
-    const nmPw = (t) => { const segs = t.split("/"); const i = segs.lastIndexOf("node_modules"); return i >= 0 && isPwPackage(segs.slice(i + 1).join("/").replace(/\.[cm]?[jt]s$/, "").replace(/\/index$/, "")); };
+    // a relative path into node_modules naming a playwright package: resolveSpec's own reading of a dotted specifier (kind playwright)
+    const nmPw = (t) => t.startsWith(".") && resolveSpec(t).kind === "playwright";
     /** The node a specifier-capable position hands `n`'s text to, the one noteResolved keys when the walker reads it: the import,
      *  export or import = declaration whose specifier it is, the call or new whose argument it is (an array literal that is a call's
      *  argument too, .apply's list), the tagged template whose text it is; null in any other position (a declaration's initializer,
@@ -1140,12 +1180,14 @@ export function classify(ts, file, src, opts = {}) {
       else if (text.startsWith(".") && resolveSpec(text).kind === "launcher") hit(n, "the launcher module's name", text);
     };
     // a string whose text names a playwright package is read AS CODE one level down (the driver-string road the regex reader
-    // misses): the fold's <placeholder> pieces rewritten to an identifier, the text parsed with the compiler, and a specifier so
-    // positioned inside it matched by isPwPackage or nmPw; a text that parses with a diagnostic is not code and is not read (the
-    // walker's regex still reads it: the stated bound). Accounted when the string reader noted the string's line (embedded).
+    // misses): the same rewritten text the walker's driver reader classifies (driverText), parsed with the compiler, and a specifier
+    // so positioned inside it matched by isPwPackage or nmPw, a read WIDER than the walker's (any call's argument, not a loader's
+    // alone); a text that parses with a diagnostic is not code and is not read (the walker's regex still reads it: the stated
+    // bound). Accounted when the string reader noted the string's line (embedded), which the walker's driver read does for every
+    // load it folds, so a text this scan flags and that read did not fold is refused by name.
     const scanAsCode = (n, text) => {
       if (!pwText(text) || embedded.some((e) => e.line === lineOf(n))) return;
-      const isf = ts.createSourceFile("driver.ts", text.replace(/<[^<>]*>/g, "_"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+      const isf = ts.createSourceFile("driver.ts", driverText(text), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
       if (isf.parseDiagnostics.length) return;
       let found = null;
       const look = (x) => { if (found !== null) return; if ((ts.isStringLiteral(x) || ts.isNoSubstitutionTemplateLiteral(x)) && (isPwPackage(x.text) || nmPw(x.text)) && specHolder(x) !== null) found = x.text; ts.forEachChild(x, look); };

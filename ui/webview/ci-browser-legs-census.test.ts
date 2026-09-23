@@ -256,12 +256,14 @@ test("the roster plus the exclusions whose source is present equals the census's
  *  gives it. `gap` is a substring of rosterGap's sentence (null: the gate passes); `refused` a substring of the refusal, with the
  *  line; `strictRefused`: refused under --strict-computed, where computed names are not folded. The round-1 findings each plant
  *  answers are named beside it. A round-3 row (p38 to p88) also says whether it discriminates against the census before round 3
- *  (the round-2 base): `holds` on a row that stays green under that census, one of the four Held forms and the row's detail;
+ *  (the round-2 base): `holds` on a row that stays green under that census, one of the five Held forms and the row's detail;
  *  `carried` on a row that reds under it, but not on the property its section names, naming the plant that carries that property.
- *  A round-4 row (p89 onward) carries the same two fields against the census before round 4 (the module at the round-3 head).
+ *  A round-4 row (p89 to p155) carries the same two fields against the census before round 4 (the module at the round-3 head), and
+ *  a round-5 row (p156 onward) against the census before round 5 (the module at the round-4 head), where the fifth Held form, a
+ *  pin of an arm no plant carried, names a row refused there already by an arm no earlier row exercised.
  *  The plant-table test holds the table to these fields; the discrimination itself was established by running that census over
  *  the plants (the PR's notes) and is not re-run here. */
-type Held = `${"a stated residual boundary" | "the no-refusal half of a pair whose partner reds" | "a guard of round 3's own scoping" | "a shape another plant carries"}: ${string}`;
+type Held = `${"a stated residual boundary" | "the no-refusal half of a pair whose partner reds" | "a guard of round 3's own scoping" | "a shape another plant carries" | "a pin of an arm no plant carried"}: ${string}`;
 type Plant = {
   dir: string; file: string; leg: boolean; cls: string; gap: string | null; engines?: string[]; playwright?: string[];
   launches?: string[]; skipTodo?: string[]; swallow?: number[]; refused?: string; strictRefused?: boolean; launcherImported?: boolean;
@@ -559,9 +561,9 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p180-n07b-or-assign-require.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], playwright: ["playwright"], refused: "p180-n07b-or-assign-require.test.ts:3: " + COMPOUND_PLAYWRIGHT }, // n07b: pw ||= require("playwright") inside the test body, WebKit: walk2 walks every node, so the position inside a function changes nothing (before: as p179; net alone: the read-through clause)
   { dir: W, file: "p181-n07c-and-assign-await-import.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], playwright: ["playwright"], refused: "p181-n07c-and-assign-await-import.test.ts:3: " + COMPOUND_PLAYWRIGHT }, // n07c: pw &&= await import("playwright") inside the test, Firefox: the await unwrapped, the dynamic import a loader call (before: as p179; net alone: the read-through clause)
   { dir: W, file: "p182-n08c-launcher-rebound-to-playwright.test.ts", leg: true, cls: "own", gap: "never calls its inBrowser through that import", launcherImported: true, engines: [], launches: [], playwright: ["playwright"], refused: "p182-n08c-launcher-rebound-to-playwright.test.ts:3: " + WRITE_REFUSAL("launcher", "leg", WHAT_PW_LOAD) }, // n08c (tests-1): let leg = require(the launcher), then leg = require("playwright"), leg.firefox.launch(): the write-time refusal, the binding kept as the launcher's and written with a load of the OTHER kind, so the Firefox launch through the name is unread (before round 5: class own, engines [], launches [], launcherImported true, no refusal; net alone: the read-through clause at line 3)
-  { dir: W, file: "p183-n10a-driver-createrequire-applied.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p183-n10a-driver-createrequire-applied.test.ts:2: " + NET_HEAD + NET_DRIVER + "\"playwright\"" + NET_NO_REACH }, // n10a (correctness-3): a driver string applying createRequire(...)("playwright"), which the regex reader (require( or import( or from before the name) cannot match: the net parses the text as code and finds the specifier in a call's argument (before round 5: class none, embedded [], no refusal)
-  { dir: W, file: "p184-n10b-driver-subpath.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p184-n10b-driver-subpath.test.ts:2: " + NET_HEAD + NET_DRIVER + "\"playwright/test\"" + NET_NO_REACH }, // n10b: require("playwright/test") in the text, a subpath the regex's closing quote excludes (before: class none, no refusal)
-  { dir: W, file: "p185-n10c-driver-bound-loader.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p185-n10c-driver-bound-loader.test.ts:2: " + NET_HEAD + NET_DRIVER + "\"playwright\"" + NET_NO_REACH }, // n10c: const req = createRequire(import.meta.url), req("playwright") in the text (before: class none, no refusal)
+  { dir: W, file: "p183-n10a-driver-createrequire-applied.test.ts", leg: true, cls: "embedded", gap: "drives playwright from a child process whose source is held in a string (line 2)" }, // n10a (correctness-3): a driver string applying createRequire(...)("playwright"), which the regex reader (require( or import( or from before the name) cannot match: the walker now reads the text as code with its own loader walk, so the string is embedded (before round 5: class none, embedded [], no refusal; net alone: the specifier inside the string's text read as code, at line 2)
+  { dir: W, file: "p184-n10b-driver-subpath.test.ts", leg: true, cls: "embedded", gap: "drives playwright from a child process whose source is held in a string (line 2)" }, // n10b: require("playwright/test") in the text, a subpath the regex's closing quote excludes and isPwPackage reads (before: class none, no refusal; net alone: the subpath inside the text)
+  { dir: W, file: "p185-n10c-driver-bound-loader.test.ts", leg: true, cls: "embedded", gap: "drives playwright from a child process whose source is held in a string (line 2)" }, // n10c: const req = createRequire(import.meta.url), req("playwright") in the text: the bound loader read by the same walk1 rule the module's own code is (before: class none, no refusal; net alone: the specifier inside the text)
   { dir: W, file: "p186-n12-tagged-template-loader.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p186-n12-tagged-template-loader.test.ts:2: " + NET_HEAD + NET_PW + NET_NO_REACH }, // n12 (the round-5 verifiers' twelfth form): require`playwright`.firefox.launch(), a tagged template the walker reads as no call: the template's text is a specifier-capable position to the net, no fold reads the form, and the net's refusal is its outcome (before round 5: class none, no refusal)
   // net-only rows (round 5's folds): one row per KIND of mention the net names whose planted forms the folds now read, so every arm of
   // the net keeps a plant that reds when it is silenced; each is a form no fold reads, and each is a stated false refusal of the p74
@@ -581,6 +583,17 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p196-n08e-write-in-function-before-bind.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true, refused: "p196-n08e-write-in-function-before-bind.test.ts:2: " + WRITE_REFUSAL("launcher", "leg", WHAT_NO_LOAD) }, // n08e: function reset() { leg = { inBrowser: stub } } declared ABOVE let leg = require(the launcher): the write is visited before the declaration binds the name and refused on the fixpoint's next pass, which is why the arm sits inside the loop (before: as p193, fold-only)
   { dir: W, file: "p197-n08z-null-try-launcher-control.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true, holds: "the no-refusal half of a pair whose partner reds: p193 to p196 (a launcher binding written with a value the walker does not follow) red under the census before round 5, which read this row's null writes and same-kind load as the census does now: class shared, gap null, no refusal" }, // n08z: let leg = null, try { leg = require(the launcher) } catch { leg = null }: the tree's own idiom, null and the same-kind load exempt, green before and after
   { dir: W, file: "p198-n06z-pw-guard-control.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["firefox"], launches: [".launch("], playwright: ["playwright"], holds: "the no-refusal half of a pair whose partner reds: p174 to p178 (a playwright binding handed on as a value) red under the census before round 5, which read this row's guards (!pw, pw !== null, typeof pw) as value tests, as the census does now: class own, engines [firefox], the launch read, no refusal" }, // n06z: let pw = null, try { pw = require("playwright") } catch { pw = null }, then if (!pw || (pw !== null && typeof pw !== "object")) return, pw.firefox.launch(): the tree's guard idiom (116 !pw guards and one pw !== null at the round-4 head), every test position exempt for playwright, green before and after
+  // correctness-3 (round 5): a driver text the walker's own read loads nothing from, while the net's wider read of the same text sees
+  // the package name in a call's argument: the net's refusal, the string boundary stated in the census header's embedded clause
+  { dir: W, file: "p199-n10d-driver-wrapped-loader.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p199-n10d-driver-wrapped-loader.test.ts:2: " + NET_HEAD + NET_DRIVER + "\"playwright\"" + NET_NO_REACH }, // n10d: a driver text whose loader is a wrapper, function load(s) { return require(s) }, then load("playwright"): the walker's read of the text folds no load (require's specifier is a parameter, refused inside the text's own record, which is not read), so the string is no driver to it, and the net refuses the module on the specifier in the text (before round 5: class none, no refusal, the regex matching nothing)
+  // extra7-3 (round 5): a computed member on a playwright load or binding in CALLEE position is refused through pwChain, the one home
+  // of the computed-member refusal; these rows are pins of an arm no plant carried (refused at the round-4 head already, by the call
+  // arm's own copy of the refusal, which the reroute removed), so they hold rather than red: with pwChain's refusal deleted, p15a,
+  // p31, p64, p65, p112 to p114, p133 to p138, p151 to p153 and these three red together (the round's records), where under the
+  // two-homes module these three and p65 kept the callee copy's refusal
+  { dir: W, file: "p200-n11a-callee-computed-require.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], playwright: ["playwright"], refused: "p200-n11a-callee-computed-require.test.ts:2: " + COMPUTED_REFUSAL, holds: "a pin of an arm no plant carried: the computed member on a playwright load in callee position (the load of the package where it stands, indexed by a name from the environment and called), refused at the round-4 head by the call arm's own copy of the computed-member refusal and since round 5 through pwChain alone; no earlier row held the callee position of a playwright load, so this row is green under the census before round 5 and pins the one home" }, // n11a: the playwright-callee twin of p65
+  { dir: W, file: "p201-n11b-callee-computed-binding.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], playwright: ["playwright"], refused: "p201-n11b-callee-computed-binding.test.ts:4: " + COMPUTED_REFUSAL, holds: "a pin of an arm no plant carried: the computed member on a playwright BINDING in callee position, pw[k]() with k bound to a value from the environment, refused at the round-4 head by the call arm's copy and since round 5 through pwChain alone; green under the census before round 5, a pin of the one home" }, // n11b: import pw from playwright, const k = process.env.K, pw[k]()
+  { dir: W, file: "p202-n11c-callee-computed-await-import.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], playwright: ["playwright"], refused: "p202-n11c-callee-computed-await-import.test.ts:2: " + COMPUTED_REFUSAL, holds: "a pin of an arm no plant carried: the computed member on an awaited dynamic import of playwright in callee position (the awaited import indexed by a name from the environment and called), refused at the round-4 head by the call arm's copy and since round 5 through pwChain alone; green under the census before round 5, a pin of the one home" }, // n11c: the await import twin
 ];
 const bundleOf = (p: Plant): string => "out-tests/" + p.dir + "/" + p.file.replace(/\.test\.ts$/, ".test.js");
 
@@ -859,10 +872,12 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   const NOT_RERUN = " (the discrimination was established by running the census before round 3 over the plants, recorded in the PR's notes, and is not re-run here, since that census is not in the tree at test time: this assertion holds the table's statement, not the fact)";
   const r3 = PLANT_TABLE.filter(inRound3);
   assert.deepEqual(r3.map(idOf).sort(byNum), Array.from({ length: 51 }, (_, i) => "p" + (38 + i)), "the round-3 rows are p38 to p88, 51 of them, one row each, so every one takes a verdict below: red under the census before round 3 (no holds field) or green with holds set" + NOT_RERUN);
-  const FORMS = ["a stated residual boundary", "the no-refusal half of a pair whose partner reds", "a guard of round 3's own scoping", "a shape another plant carries"];
+  // the five forms a holds field opens with: the four the round-3 and round-4 rows use, and round 5's pin of an arm no plant carried (a
+  // row refused at the head before its round by an arm no earlier row exercised, which the round rerouted or kept: green before and after)
+  const FORMS = ["a stated residual boundary", "the no-refusal half of a pair whose partner reds", "a guard of round 3's own scoping", "a shape another plant carries", "a pin of an arm no plant carried"];
   const held = r3.filter((p) => p.holds !== undefined);
   assert.deepEqual(held.map(idOf).sort(byNum), ["p68", "p69", "p70", "p71", "p72", "p87"], "the round-3 rows that stay green under the census before round 3 are exactly these 6, each with holds set (p74 held until round 5, whose safety net refuses it, so its row now reds under that census and is counted red): a row marked as holding something else that reds under that census, or a green row left unmarked, is red here" + NOT_RERUN);
-  for (const p of held) assert.ok(FORMS.some((f) => (p.holds as string).startsWith(f + ": ") && (p.holds as string).length > f.length + 2), idOf(p) + ": holds begins with one of the four forms, a colon and the row's detail: " + JSON.stringify(p.holds));
+  for (const p of held) assert.ok(FORMS.some((f) => (p.holds as string).startsWith(f + ": ") && (p.holds as string).length > f.length + 2), idOf(p) + ": holds begins with one of the five forms, a colon and the row's detail: " + JSON.stringify(p.holds));
   const carried = r3.filter((p) => p.carried !== undefined);
   assert.deepEqual(carried.map(idOf).sort(byNum), ["p41", "p42", "p47"], "the round-3 rows that red under the census before round 3 on a property other than their section's are exactly these 3, each with carried set" + NOT_RERUN);
   const rows = new Map(PLANT_TABLE.map((p) => [idOf(p), p] as [string, Plant]));
@@ -886,7 +901,7 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   assert.deepEqual(r4.map(idOf).sort(byNum), Array.from({ length: R4_LAST - 88 }, (_, i) => "p" + (89 + i)), "the round-4 rows are p89 to p" + R4_LAST + ", " + (R4_LAST - 88) + " of them, one row each, so every one takes a verdict below: red under the census before round 4 (no holds field) or green with holds set" + NOT_RERUN4);
   const held4 = r4.filter((p) => p.holds !== undefined);
   assert.deepEqual(held4.map(idOf).sort(byNum), R4_HELD, "the round-4 rows that stay green under the census before round 4 are exactly " + JSON.stringify(R4_HELD) + ", each with holds set: a row marked as holding something else that reds under that census, or a green row left unmarked, is red here" + NOT_RERUN4);
-  for (const p of held4) assert.ok(FORMS.some((f) => (p.holds as string).startsWith(f + ": ") && (p.holds as string).length > f.length + 2), idOf(p) + ": holds begins with one of the four forms, a colon and the row's detail: " + JSON.stringify(p.holds));
+  for (const p of held4) assert.ok(FORMS.some((f) => (p.holds as string).startsWith(f + ": ") && (p.holds as string).length > f.length + 2), idOf(p) + ": holds begins with one of the five forms, a colon and the row's detail: " + JSON.stringify(p.holds));
   const carried4 = r4.filter((p) => p.carried !== undefined);
   assert.deepEqual(carried4.map(idOf).sort(byNum), R4_CARRIED, "the round-4 rows that red under the census before round 4 on a property other than their section's are exactly " + JSON.stringify(R4_CARRIED) + ", each with carried set" + NOT_RERUN4);
   for (const p of carried4) {
@@ -901,8 +916,8 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // holds set (a control, a pin of an arm no plant carried, a stated boundary); a round-5 builder who adds a row moves R5_LAST to it
   // and, when the row stays green under that census, adds it to R5_HELD with holds set (the round-4 population above is closed)
   const NOT_RERUN5 = " (the discrimination was established by running the census before round 5, the module at the round-4 head, over the plants, recorded in the PR's notes, and is not re-run here, since that census is not in the tree at test time: this assertion holds the table's statement, not the fact)";
-  const R5_FIRST = R4_LAST + 1, R5_LAST = 198;
-  const R5_HELD = ["p197", "p198"];
+  const R5_FIRST = R4_LAST + 1, R5_LAST = 202;
+  const R5_HELD = ["p197", "p198", "p200", "p201", "p202"];
   const R5_CARRIED: string[] = [];
   const inRound5 = (p: Plant) => num(p) >= R5_FIRST && num(p) <= R5_LAST;
   const r5 = PLANT_TABLE.filter(inRound5);
@@ -910,7 +925,7 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   assert.deepEqual(r5.map(idOf).sort(byNum), Array.from({ length: R5_LAST - R5_FIRST + 1 }, (_, i) => "p" + (R5_FIRST + i)), "the round-5 rows are p" + R5_FIRST + " to p" + R5_LAST + ", " + (R5_LAST - R5_FIRST + 1) + " of them, one row each, so every one takes a verdict below: red under the census before round 5 (no holds field) or green with holds set" + NOT_RERUN5);
   const held5 = r5.filter((p) => p.holds !== undefined);
   assert.deepEqual(held5.map(idOf).sort(byNum), R5_HELD, "the round-5 rows that stay green under the census before round 5 are exactly " + JSON.stringify(R5_HELD) + ", each with holds set: a row marked as holding something else that reds under that census, or a green row left unmarked, is red here" + NOT_RERUN5);
-  for (const p of held5) assert.ok(FORMS.some((f) => (p.holds as string).startsWith(f + ": ") && (p.holds as string).length > f.length + 2), idOf(p) + ": holds begins with one of the four forms, a colon and the row's detail: " + JSON.stringify(p.holds));
+  for (const p of held5) assert.ok(FORMS.some((f) => (p.holds as string).startsWith(f + ": ") && (p.holds as string).length > f.length + 2), idOf(p) + ": holds begins with one of the five forms, a colon and the row's detail: " + JSON.stringify(p.holds));
   const carried5 = r5.filter((p) => p.carried !== undefined);
   assert.deepEqual(carried5.map(idOf).sort(byNum), R5_CARRIED, "the round-5 rows that red under the census before round 5 on a property other than their section's are exactly " + JSON.stringify(R5_CARRIED) + ", each with carried set" + NOT_RERUN5);
   for (const p of carried5) {
@@ -922,35 +937,48 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   assert.deepEqual(PLANT_TABLE.filter((p) => (p.holds !== undefined || p.carried !== undefined) && !inRound3(p) && !inRound4(p) && !inRound5(p)).map(idOf), [], "holds and carried are fields of the round-3 rows (p38 to p88), the round-4 rows (p89 to p" + R4_LAST + ") and the round-5 rows (p" + R5_FIRST + " to p" + R5_LAST + "), the populations the statements are about; an earlier row carries neither");
 });
 
-test("THE SAFETY NET's relative node_modules road (n09), over a synthetic root whose vscode-extension/node_modules is the extension's own: a test module that imports playwright by a relative path into node_modules, one that requires it so, and one that loads a helper doing so are each refused by name with the path and the line, one refusal each, class none, and the refusal reaches the census's list; the plants live under tests/fixtures/browser-legs-plants/relative-node-modules, outside the tree the table enumerates, since their path resolves only beside a node_modules the fixtures cannot carry (before round 5 each was class none with no refusal: the walker reads the path as a local module and the census skips a file under node_modules, a silent Firefox or WebKit leg)", async (t) => {
+test("the relative node_modules road (n09, extra5-3), over a synthetic root whose vscode-extension/node_modules is the extension's own: a test module that imports playwright by a relative path into node_modules is class own with the engine and the launch read, one that requires it so the same, one that loads a helper doing so is refused by name as loading a module that names a playwright package, and one that spells the path as the argument of a call the walker knows no loader for is refused by THE SAFETY NET's relative-path kind (keyed on resolveSpec, the fold's own reader); the plants live under tests/fixtures/browser-legs-plants/relative-node-modules, outside the tree the table enumerates, since their path resolves only beside a node_modules the fixtures cannot carry (before round 5 each was class none with no refusal: the walker read the path as a local module and the census skipped a file under node_modules, a silent Firefox or WebKit leg; under the net alone the first three were refused by the relative-path kind, n09c through its helper)", async (t) => {
   const { census, classOf } = await load();
   const RELPW = path.join(PLANTS, "relative-node-modules", "ui", "webview");
   const { root } = syntheticRoot(t, []);
   const files = fs.readdirSync(RELPW).sort();
-  assert.deepEqual(files, ["n09a-relative-node-modules-import.test.ts", "n09b-relative-node-modules-require.test.ts", "n09c-relative-node-modules-helper.test.ts", "relpw-helper.ts"], "the fixture directory holds the three plants and the helper, and nothing else (a plant added without a row below is a plant with no expected outcome)");
+  assert.deepEqual(files, ["n09a-relative-node-modules-import.test.ts", "n09b-relative-node-modules-require.test.ts", "n09c-relative-node-modules-helper.test.ts", "n09d-relative-node-modules-unknown-callee.test.ts", "relpw-helper.ts"], "the fixture directory holds the four plants and the helper, and nothing else (a plant added without a row below is a plant with no expected outcome)");
   for (const f of files) fs.copyFileSync(path.join(RELPW, f), path.join(root, "ui", "webview", f));
   // the precondition, derived from the fixture rather than restated (a package name spelled as a call's argument here would be the
   // p74 form in a module of the tree, and the net refused this file on that spelling when the precondition was first written so):
   // the path the helper spells resolves, beside the synthetic root's linked node_modules, to the extension's own copy of the package
   const spelled = (/ from "([^"]+)";/.exec(read(path.join(RELPW, "relpw-helper.ts"))) as RegExpExecArray)[1];
-  assert.ok(fs.existsSync(path.join(root, "ui", "webview", spelled, "package.json")), "the extension's node_modules carries the package the plants spell by relative path (" + spelled + "; npm ci installs it): without it the load names no file and the refusal would be the missing-module one, not the net's, so the precondition is asserted rather than left to the rows");
+  assert.ok(fs.existsSync(path.join(root, "ui", "webview", spelled, "package.json")), "the extension's node_modules carries the package the plants spell by relative path (" + spelled + "; npm ci installs it): without it the load names no file and the refusal would be the missing-module one, not the census's reading of the package, so the precondition is asserted rather than left to the rows");
   const c = census(root);
-  const rows: [string, string][] = [
-    ["n09a-relative-node-modules-import.test.ts", "n09a-relative-node-modules-import.test.ts:2: " + NET_HEAD + NET_NMPW + NET_NO_REACH],
-    ["n09b-relative-node-modules-require.test.ts", "n09b-relative-node-modules-require.test.ts:2: " + NET_HEAD + NET_NMPW + NET_NO_REACH],
-    ["n09c-relative-node-modules-helper.test.ts", "n09c-relative-node-modules-helper.test.ts:2: " + VIA_COMPANION("ui/webview/relpw-helper.ts", "ui/webview/relpw-helper.ts", NET_NMPW)],
-  ];
-  assert.equal(c.byBundle.size, rows.length, "the census read the three plants and nothing else");
-  for (const [file, want] of rows) {
-    const r = c.byBundle.get("out-tests/ui/webview/" + file.replace(/\.test\.ts$/, ".test.js")) as Rec;
+  const bundle = (file: string) => "out-tests/ui/webview/" + file.replace(/\.test\.ts$/, ".test.js");
+  assert.equal(c.byBundle.size, 4, "the census read the four plants and nothing else");
+  // the two direct loads: class own, the package recorded under the spelled path, the engine read through the binding, the launch read
+  const own: [string, string][] = [["n09a-relative-node-modules-import.test.ts", "firefox"], ["n09b-relative-node-modules-require.test.ts", "webkit"]];
+  for (const [file, engine] of own) {
+    const r = c.byBundle.get(bundle(file)) as Rec;
     assert.ok(r, file + ": the census read the module");
-    assert.equal(r.refusals.length, 1, file + ": one refusal, the net's: " + JSON.stringify(r.refusals));
-    assert.ok(r.refusals[0].includes(want), file + ": refused by name with the path and the line (holds the SENTENCE through the NET_ constants); expected a refusal containing " + JSON.stringify(want) + ", got " + JSON.stringify(r.refusals));
-    assert.ok(c.refusals.includes(r.refusals[0]), file + ": the refusal reaches the census's own list (the CLI exits 2 on it)");
-    assert.equal(classOf(r), "none", file + ": class none (the walker reads the relative path as a local module and follows nothing)");
-    assert.equal(r.reaches, false, file + ": no reach");
+    assert.deepEqual(r.refusals, [], file + ": no refusal (the fold reads the load; a refusal here is the net's relative-path kind, which means resolveSpec stopped reading the path as the package)");
+    assert.equal(classOf(r), "own", file + ": class own, the package loaded by the module itself");
+    assert.deepEqual(r.playwright, [spelled], file + ": the playwright set carries the specifier as spelled (the relative path), read by resolveSpec as the package");
+    assert.deepEqual(r.engines, [engine], file + ": the engine read through the binding");
+    assert.equal((r.launches || []).length, 1, file + ": the launch read: " + JSON.stringify(r.launches));
+    assert.ok(c.legs.includes(bundle(file)), file + ": a leg");
   }
-  assert.equal(c.refusals.length, rows.length, "one refusal per plant on the census's list");
+  // the helper: read transitively, its package named at the importer with the spelled path, the importer class none
+  const helperRow = c.byBundle.get(bundle("n09c-relative-node-modules-helper.test.ts")) as Rec;
+  const helperWant = "n09c-relative-node-modules-helper.test.ts:2: loads ui/webview/relpw-helper.ts, which names a playwright package (" + spelled + "), so this module reaches a browser through it";
+  assert.equal(helperRow.refusals.length, 1, "n09c: one refusal, the importer's: " + JSON.stringify(helperRow.refusals));
+  assert.ok(helperRow.refusals[0].includes(helperWant), "n09c: refused as loading a module that names a playwright package, the spelled path named (holds the SENTENCE of localRefusals' arm); expected a refusal containing " + JSON.stringify(helperWant) + ", got " + JSON.stringify(helperRow.refusals));
+  assert.equal(classOf(helperRow), "none", "n09c: class none (the walker follows nothing through the helper)");
+  // the unknown callee: no fold reads load(<path>), so the mention stands and the net refuses by its relative-path kind, at line 3
+  const netRow = c.byBundle.get(bundle("n09d-relative-node-modules-unknown-callee.test.ts")) as Rec;
+  const netWant = "n09d-relative-node-modules-unknown-callee.test.ts:3: " + NET_HEAD + NET_NMPW + NET_NO_REACH;
+  assert.equal(netRow.refusals.length, 1, "n09d: one refusal, the net's: " + JSON.stringify(netRow.refusals));
+  assert.ok(netRow.refusals[0].includes(netWant), "n09d: refused by name with the path and the line (holds the SENTENCE through the NET_ constants); expected a refusal containing " + JSON.stringify(netWant) + ", got " + JSON.stringify(netRow.refusals));
+  assert.equal(classOf(netRow), "none", "n09d: class none, no reach");
+  for (const r of [helperRow, netRow]) assert.ok(c.refusals.includes(r.refusals[0]), r.rel + ": the refusal reaches the census's own list (the CLI exits 2 on it)");
+  assert.equal(c.refusals.length, 2, "two refusals on the census's list, n09c's and n09d's");
+  assert.deepEqual(c.legs, own.map(([f]) => bundle(f)).sort(), "the legs are the two direct loads");
 });
 
 test("THE INVARIANT is armed: one mutation of the walker per clause, over the plants, is refused by the invariant naming what the mutation silenced (a playwright package resolved and not recorded; a launcher load the walker stopped reading; a launcher binding handed on that the value-use arm stopped refusing; a computed member on the binding that rootOf stopped seeing), and each mutation's anchor is found once, so a rewrite of the walker re-anchors this test rather than passing it empty", async (t) => {
