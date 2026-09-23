@@ -5025,13 +5025,36 @@ class HostProcess(unittest.TestCase):
             self.assertFalse(_host_imports_sdk(), "the gate's probe must run under the blocker this process's PYTHONPATH "
                              "carries, as the host it stands for would")
 
+    # The variables that decide where a child's import resolves, each given a marker value inside the drift case below so
+    # that a drop of one the test's own environment leaves unset shows in its comparison (review round 4, 2026-09-23: on
+    # a non-venv 3.12, dropping PYTHONUSERBASE from the probe flipped the gate from True to False with the one-way check
+    # green). The set was checked against CPython's sys.path initialisation on 2026-09-23, one child per variable reading
+    # sys.path, on a 3.12 venv, the base 3.12 and a 3.14t venv: PYTHONPATH, PYTHONHOME, PYTHONSAFEPATH and
+    # PYTHONPLATLIBDIR changed it on all three; PYTHONEXECUTABLE and __PYVENV_LAUNCHER__ on the two venvs (they move the
+    # executable getpath starts from, and the venv's site-packages dropped out); PYTHONUSERBASE, PYTHONNOUSERSITE and
+    # HOME (the user base where PYTHONUSERBASE is unset) on the base interpreter, where a user site directory exists.
+    # Not marked, each unchanged on all three: PYTHONSTARTUP (read by interactive sessions only), PYTHONCASEOK (how a
+    # name matches on a case-insensitive filesystem, not where the search runs) and VIRTUAL_ENV (CPython does not read
+    # it). Nor APPDATA, the user base on Windows, which no job in ci.yml runs.
+    IMPORT_PATH_VARS = ("PYTHONPATH", "PYTHONHOME", "PYTHONSAFEPATH", "PYTHONPLATLIBDIR", "PYTHONEXECUTABLE",
+                        "__PYVENV_LAUNCHER__", "PYTHONUSERBASE", "PYTHONNOUSERSITE", "HOME")
+
     def test_the_sdk_probes_child_runs_under_the_environment_start_hands_a_host(self):
-        """The probe's environment and the spawn's cannot drift apart again: the environment the probe's child receives
-        (captured at sdk_blocker's subprocess.run) and the one _start hands the host (captured at its Popen) carry the same
-        PYTHONPATH, a marker path set for the test so an absent key on both sides cannot read as equal, and every key the
-        probe's child sees the host sees with the same value (_start's ROMP_SDK_SITE decision comes after, on the host's
-        side alone). Keyed on the captured values by execution, never on the two callers sharing a builder."""
-        marker = os.path.join(self.state, "marker-site")
+        """The probe's environment and the spawn's are the same keys with the same values, ROMP_SDK_SITE aside, in both
+        directions: the environment the probe's child receives (captured at sdk_blocker's subprocess.run) equals the one
+        _start hands the host (captured at its Popen) with ROMP_SDK_SITE removed, since that key is _start's decision on
+        the host's side alone, taken after _host_env (removed, not required: _start(sdk=True) with no SDK venv, CI's
+        road, adds nothing, and the call here, sdk=False, points it at a path that does not exist). One equality, so a
+        key the probe drops and the spawn keeps is red, and so is a key the spawn alone adds (review round 4, 2026-09-23:
+        the case compared the probe's keys alone, and a probe that dropped HOME, or a spawn that added PYTHONSAFEPATH,
+        read green). Inside the case, every variable in IMPORT_PATH_VARS carries a marker value, so a drop of one that
+        the test's own environment leaves unset is a difference and not two absent keys reading as equal; the markers
+        are asserted to reach both sides, so a builder that dropped one on both sides is red too. Both captures raise
+        before a child starts: _host_imports_sdk builds its dict and calls subprocess.run, and _start writes its spec
+        and builds its dict before its Popen, neither spawning anything earlier, so no process runs under a marker
+        PYTHONHOME. The failure names the keys and never their values: the environment can carry a credential. Keyed
+        on the captured values by execution, never on the two callers sharing a builder."""
+        markers = {name: os.path.join(self.state, "marker-" + name.strip("_").lower()) for name in self.IMPORT_PATH_VARS}
         seen = {}
 
         class Captured(Exception):
@@ -5043,18 +5066,24 @@ class HostProcess(unittest.TestCase):
                 raise Captured()
             return side_effect
 
-        with mock.patch.dict(os.environ, {"PYTHONPATH": marker}):
+        with mock.patch.dict(os.environ, markers):
             with mock.patch.object(sdk_blocker.subprocess, "run", side_effect=capture("probe")):
                 with self.assertRaises(Captured):
                     _host_imports_sdk()
             with mock.patch.object(subprocess, "Popen", side_effect=capture("spawn")):
                 with self.assertRaises(Captured):
                     self._start()
-        self.assertEqual(seen["probe"].get("PYTHONPATH"), marker, "the probe's child runs under this process's PYTHONPATH")
-        self.assertEqual(seen["spawn"].get("PYTHONPATH"), marker, "the host runs under this process's PYTHONPATH")
         self.assertNotIn("ROMP_SDK_SITE", seen["probe"], "the probe asks what the interpreter and PYTHONPATH give, with no site")
-        differing = {k: (v, seen["spawn"].get(k)) for k, v in seen["probe"].items() if seen["spawn"].get(k) != v}
-        self.assertEqual(differing, {}, "every key the probe's child sees, the host sees with the same value")
+        for slot in ("probe", "spawn"):
+            lost = sorted(name for name, value in markers.items() if seen[slot].get(name) != value)
+            self.assertEqual(lost, [], "the %s's environment does not carry this process's value of %s: a child started "
+                             "with it resolves its imports elsewhere" % (slot, ", ".join(lost)))
+        spawn = {k: v for k, v in seen["spawn"].items() if k != "ROMP_SDK_SITE"}
+        probe = seen["probe"]
+        self.assertTrue(spawn == probe, "the probe's child and the host run under different environments (ROMP_SDK_SITE "
+                        "aside; keys named, values withheld): only the host has %r, only the probe's child has %r, the two "
+                        "differ in the value of %r" % (sorted(set(spawn) - set(probe)), sorted(set(probe) - set(spawn)),
+                                                       sorted(k for k in set(spawn) & set(probe) if spawn[k] != probe[k])))
 
     def test_the_switch_case_fails_a_run_that_requires_the_sdk_when_its_host_cannot_import_it(self):
         """The switch case above run against ITS refusing input: pytest in a child over that case's node id, HOME at an
