@@ -12,6 +12,7 @@ import ast
 import base64
 import contextlib
 import errno
+import functools
 import inspect
 import io
 import json
@@ -424,23 +425,60 @@ class SocketFlagWhitelist(_Routes):
             self._gone(wid)
 
 
-def _kernel_functions():
-    """The kernel's source, parsed: {qualified name: def} for every module-level function and every method of a
-    module-level class, plus the module's other top-level statements."""
-    tree = ast.parse(open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py"), encoding="utf-8").read())
+_KERNEL_DIR = os.path.join(os.path.dirname(HERE), "kernel")
+
+
+def _kernel_modules():
+    """Every Python module in the kernel's directory, the directory the kernel loads its own modules from by file name
+    (`load_source("romp_judge", HERE / "judge.py")`)."""
+    return sorted(f for f in os.listdir(_KERNEL_DIR) if f.endswith(".py"))
+
+
+@functools.lru_cache(maxsize=None)
+def _parsed(name):
+    """kernel/<name>, parsed once per process. The trees are only read, never annotated."""
+    with open(os.path.join(_KERNEL_DIR, name), encoding="utf-8") as fh:
+        return ast.parse(fh.read())
+
+
+def _module_qual(module, name):
+    """A function's key in the census: kernel.py's bare (`_set_session_flag`, `Handler._dispatch_ws`), another module's
+    by its file (`judge.py:_hidden_from_feed`)."""
+    return name if module == "kernel.py" else "%s:%s" % (module, name)
+
+
+def _short(qual):
+    """The name a function is mentioned by in code: `_set_session_flag` for itself, `_dispatch_ws` for
+    Handler._dispatch_ws, `_hidden_from_feed` for judge.py:_hidden_from_feed (the kernel calls it as jd._hidden_from_feed)."""
+    return qual.rsplit(":", 1)[-1].rsplit(".", 1)[-1]
+
+
+@functools.lru_cache(maxsize=None)
+def _source_functions():
+    """Every module of the kernel's directory, parsed (_kernel_modules): {qualified name (_module_qual): def} for every
+    module-level function and every method of a module-level class, and [(module, statement)] for the other top-level
+    and class-level statements. Read-only: the tests read these, never change them."""
     fns, rest = {}, []
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            fns[node.name] = node
-        elif isinstance(node, ast.ClassDef):
-            for sub in node.body:
-                if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    fns["%s.%s" % (node.name, sub.name)] = sub
-                else:
-                    rest.append(sub)
-        else:
-            rest.append(node)
+    for module in _kernel_modules():
+        for node in _parsed(module).body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                fns[_module_qual(module, node.name)] = node
+            elif isinstance(node, ast.ClassDef):
+                for sub in node.body:
+                    if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        fns[_module_qual(module, "%s.%s" % (node.name, sub.name))] = sub
+                    else:
+                        rest.append((module, sub))
+            else:
+                rest.append((module, node))
     return fns, rest
+
+
+def _loads_by_name(tree):
+    """The file names a module loads its sibling modules by: each ".py" string constant inside a call to load_source or
+    spec_from_file_location (`load_source("romp_judge", HERE / "judge.py")`)."""
+    return {c.value for n in ast.walk(tree) if isinstance(n, ast.Call) and _callee(n) in ("load_source", "spec_from_file_location")
+            for c in ast.walk(n) if isinstance(c, ast.Constant) and isinstance(c.value, str) and c.value.endswith(".py")}
 
 
 def _callee(call):
@@ -448,21 +486,37 @@ def _callee(call):
     return f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
 
 
+_DOTTED = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
+
+
+def _mentioned(node):
+    """The names a node mentions as code: a Name's id, an Attribute's attr, and every part of a string constant that is
+    an identifier or a dotted chain of them. A string reaches a function as surely as its name does
+    (`globals()["_set_session_flag"](...)`, `getattr(self, "_dispatch_ws")`, `attrgetter("Handler._dispatch_ws")`). A
+    name inside a longer string (source text handed to eval) or built from pieces is outside, as FlagWriterPopulation's
+    docstring says."""
+    if isinstance(node, ast.Name):
+        return {node.id}
+    if isinstance(node, ast.Attribute):
+        return {node.attr}
+    if isinstance(node, ast.Constant) and isinstance(node.value, str) and _DOTTED.fullmatch(node.value):
+        return set(node.value.split("."))
+    return set()
+
+
 def _refs(node):
-    """Every name `node` mentions as code, a call or a bare reference (a setter handed on as a callback counts)."""
-    return ({n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
-            | {n.attr for n in ast.walk(node) if isinstance(n, ast.Attribute)})
-
-
-def _mention(node):
-    """The name a node mentions as _refs reads it: a Name's id or an Attribute's attr, else None."""
-    return node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
+    """Every name `node` mentions as code (_mentioned): a call, a bare reference (a setter handed on as a callback), or
+    a string naming it."""
+    out = set()
+    for n in ast.walk(node):
+        out |= _mentioned(n)
+    return out
 
 
 def _mentions(node, names):
-    """Every node under `node` that mentions a name in `names` as code (_mention): a call by name, and equally a setter
-    bound to a local, put in a table, given as a default or handed on as a callback."""
-    return [n for n in ast.walk(node) if _mention(n) in names]
+    """Every node under `node` that mentions a name in `names` as code (_mentioned): a call by name, and equally a setter
+    bound to a local, put in a table, given as a default, handed on as a callback, or named by a string."""
+    return [n for n in ast.walk(node) if _mentioned(n) & names]
 
 
 def _door_names(test):
@@ -523,12 +577,12 @@ def _doors_reaching(fn, qual, targets):
 
 
 def _doors_naming(fn, qual, targets):
-    """{door: [line of each mention]} for every node in `fn` that mentions a name in `targets` (_mention), keyed as
-    _door_walk keys it. The setters are read this way: an arm that binds a setter to a local, picks it from a table or
-    hands it on writes through it as surely as one that calls it by name, so the mention makes the door."""
+    """{door: [line of each mention]} for every node in `fn` that mentions a name in `targets` (_mentioned), keyed as
+    _door_walk keys it. The setters are read this way: an arm that binds a setter to a local, picks it from a table, hands
+    it on or names it by a string writes through it as surely as one that calls it by name, so the mention makes the door."""
     found = {}
     for door, node in _door_walk(fn, qual):
-        if _mention(node) in targets:
+        if _mentioned(node) & targets:
             found.setdefault(door, []).append(node.lineno)
     return found
 
@@ -637,22 +691,25 @@ def _unwrap_str(node):
 
 class FlagWriterPopulation(unittest.TestCase):
     """The doors that write a session flag, derived from the kernel's source and pinned as a set (the reviewer's
-    ruling in the round-3 review of fork PR #897): the setSessionFlag socket op and POST /flag, nothing else, and
-    each asks the one predicate, _lane_flag_refusal, before its setter, and hands each setter the name it asked about.
-    A new door (a socket op arm, a route, or a helper that calls a setter of session-flags.json) reds here until it is
-    added on purpose. An arm is a door when it MENTIONS a setter (_doors_naming), called by name or not, so an arm that
-    binds a setter to a local or picks it from a table is a door too. Every road from a request to a setter is pinned
-    (ROADS), derived upward from the setters by mention, so a new function or arm that hands a door function a client's
-    input (a socket op forwarding to _state_write_route("/flag", ...), a second POST path onto it) reds as well. The
-    setters are found without trusting how a function writes: every function that names the store in code is pinned
-    by role (NAMERS), and one that hands the store's path to anything but a read (READS) is a writer, so a writer
-    spelled with open(), os.replace or a helper of its own reds as surely as one that calls _write_state_json. The
-    census keys on the store's name in the kernel's source: a function that reached the file through a name it did not
-    spell (a file name a client sent) would be outside it, and so would a function reached by a name built as a string
-    (getattr), the way the stdlib's handler enters do_GET and do_POST. These read WHERE the code lives,
-    so they guard the population and the predicate's place, not the behaviour; the behaviour is executed in
-    SocketFlagWhitelist (the socket op, in process and over a real socket) and in
-    FlagRoute.test_an_unknown_flag_key_or_a_missing_id_is_a_400_naming_it (the route)."""
+    ruling in the round-3 review of fork PR #897): the setSessionFlag socket op and POST /flag, nothing else. Each asks
+    the one predicate, _lane_flag_refusal, before its setter, returns on its answer before any setter runs, and hands
+    each setter the name it asked about. A new door (a socket op arm, a route, or a helper that calls a setter of
+    session-flags.json) reds here until it is added on purpose. An arm is a door when it MENTIONS a setter
+    (_doors_naming), so an arm that calls it by name, binds it to a local, picks it from a table or names it by a string
+    (`globals()["_set_session_flag"]`) is a door. Every road from a request to a setter is pinned (ROADS), derived upward
+    from the setters by mention, so a new function or arm that hands a door function a client's input (a socket op
+    forwarding to _state_write_route("/flag", ...), a second POST path onto it) reds as well. The setters are found
+    without trusting how a function writes: every function that names the store in code is pinned by role (NAMERS),
+    and one that hands the store's path to anything but a read (READS) is a writer, so a writer spelled with open(),
+    os.replace or a helper of its own reds as surely as one that calls _write_state_json. The census reads every
+    module in the kernel's directory, which holds every module the kernel loads (LOADED), so a writer in the judge or
+    another loaded module counts as one in kernel.py does. It keys on names the source spells: a function that reached
+    the file through a name it did not spell (a file name a client sent), or reached a setter or a door function by a
+    name built from pieces or buried in source text handed to eval, would be outside it, and so is a module loaded by
+    a path that names no ".py" file. The stdlib's handler enters do_GET and do_POST by a name it builds, which is
+    where the roads end. These read WHERE the code lives, so they guard the population and the arms' shape, not the
+    behaviour; the behaviour is executed in SocketFlagWhitelist (the socket op, in process and over a real socket) and
+    in FlagRoute.test_an_unknown_flag_key_or_a_missing_id_is_a_400_naming_it (the route)."""
 
     WRITERS = {"_set_session_flag", "_set_notify_session"}
     DOORS = {("socket op", "setSessionFlag"), ("route", "/flag")}
@@ -661,13 +718,20 @@ class FlagWriterPopulation(unittest.TestCase):
     NAMERS = {"_set_session_flag": "writer", "_set_notify_session": "writer",
               "_session_flags_proved": "reader", "_session_flags": "reader", "_flags_unknown_cold": "reader",
               "_thread_rows_key": "reader", "_chat_sig_shared": "reader", "_dead_lane_key": "reader",
-              "_fleet_view_sig": "reader", "_state_quarantine": "reader"}
+              "_fleet_view_sig": "reader", "_state_quarantine": "reader", "judge.py:_hidden_from_feed": "reader"}
     # what a reader hands the store's path, or a value computed from it, to (_store_flow): a stat, the strict reader
-    # _read_state_json (which may move torn bytes aside, never write a flag), the quarantine bookkeeping (a mark
-    # retired, a fault noted or cleared, the refusal's text), a cache lookup, and plain value handling
-    READS = {".get", ".stat", "os.stat", "_read_state_json", "_flags_quarantined", "_flags_exit_text", "_StateUnreadable",
-             "_note_state_fault", "_clear_state_fault", "_retire_flags_quarantine", "_stat_key", "_chat_ident",
-             "_files_stat_observe_sig", ".append", ".items", "dict", "isinstance", "str", "sorted", "tuple"}
+    # _read_state_json (which may move torn bytes aside, never write a flag), the judge's read of the text and its
+    # parse (_hidden_from_feed), the quarantine bookkeeping (a mark retired, a fault noted or cleared, the refusal's
+    # text), a cache lookup, and plain value handling
+    READS = {".get", ".stat", "os.stat", "_read_state_json", ".read_text", "json.loads", "_flags_quarantined",
+             "_flags_exit_text", "_StateUnreadable", "_note_state_fault", "_clear_state_fault", "_retire_flags_quarantine",
+             "_stat_key", "_chat_ident", "_files_stat_observe_sig", ".append", ".items", "bool", "dict", "isinstance",
+             "str", "sorted", "tuple"}
+    # the modules the kernel loads by file name, from kernel.py to a fixpoint (_loads_by_name): every one lives in the
+    # kernel's directory, and the census reads that whole directory
+    LOADED = {"kernel.py", "loadsource.py", "event_model.py", "judge.py", "colormap.py", "palette.py",
+              "session_backend.py", "logins.py", "credentials.py", "sdk_backend.py", "host_transport.py",
+              "session_host.py", "codex_backend.py", "codex_events.py", "codex_runtime.py"}
     SETTER_CALLS = {"_set_session_flag": 1, "_set_notify_session": 1}   # per door: each setter called once
     # every road from a request to a setter, as {(function, a function on the way it mentions): mentions} (_roads): the two
     # door functions mention each setter once, do_POST hands _state_write_route the request, the socket's receive loop
@@ -681,11 +745,20 @@ class FlagWriterPopulation(unittest.TestCase):
     ROUTE_ARMS = {frozenset({("route", "/flag"), ("route", "/views"), ("route", "/order")})}
 
     def setUp(self):
-        self.fns, self.rest = _kernel_functions()
-        self.modules = {n for n, v in vars(km).items() if isinstance(v, type(os))}
+        self.fns, self.rest = _source_functions()
+        # the names bound to a module in the kernel and in its judge (the other module that names the store), so a
+        # call spells as os.replace, not .replace (_call_spelling); an unknown spelling is outside READS, a write
+        self.modules = {n for m in (km, km.jd) for n, v in vars(m).items() if isinstance(v, type(os))}
+
+    _derived = {}   # the derivations below, once per process: they read only the parsed source and this class's sets
+
+    def _once(self, key, derive):
+        if key not in FlagWriterPopulation._derived:
+            FlagWriterPopulation._derived[key] = derive()
+        return FlagWriterPopulation._derived[key]
 
     def _namers(self):
-        return {q for q, fn in self.fns.items() if _store_seeds(fn)}
+        return self._once("namers", lambda: {q for q, fn in self.fns.items() if _store_seeds(fn)})
 
     def _writers(self):
         """The setters of session-flags.json, three ways: the functions that name the file and call a store write
@@ -693,35 +766,46 @@ class FlagWriterPopulation(unittest.TestCase):
         every landed write of that store runs (_flags_written); and the functions that hand the store's path to
         anything outside READS (_store_flow), whatever the call is spelled."""
         writes = {"_write_state_json", "_atomic_write", "write_text", "write_bytes"}
-        named = self._namers()
-        by_write = {q for q in named if {_callee(n) for n in ast.walk(self.fns[q]) if isinstance(n, ast.Call)} & writes}
-        by_hook = {q for q, fn in self.fns.items()
-                   if "_flags_written" in {_callee(n) for n in ast.walk(fn) if isinstance(n, ast.Call)}}
-        by_flow = {q for q in named if set(_store_flow(self.fns[q], self.modules)) - self.READS}
-        return by_write, by_hook, by_flow
+
+        def derive():
+            named = self._namers()
+            by_write = {q for q in named if {_callee(n) for n in ast.walk(self.fns[q]) if isinstance(n, ast.Call)} & writes}
+            by_hook = {q for q, fn in self.fns.items()
+                       if "_flags_written" in {_callee(n) for n in ast.walk(fn) if isinstance(n, ast.Call)}}
+            by_flow = {q for q in named if set(_store_flow(self.fns[q], self.modules)) - self.READS}
+            return by_write, by_hook, by_flow
+        return self._once("writers", derive)
 
     def _setters(self):
         """Every setter any derivation finds, so a new one is also a name the doors below are derived against."""
         return self.WRITERS.union(*self._writers())
 
+    def _shorts(self):
+        """The setters as code mentions them (_short): a judge setter is called jd.<name> from the kernel."""
+        return {_short(q) for q in self._setters()}
+
     def _callers(self):
-        setters = self._setters()
-        return {q for q, fn in self.fns.items() if q not in setters and _refs(fn) & setters}
+        setters, shorts = self._setters(), self._shorts()
+        return self._once("callers", lambda: {q for q, fn in self.fns.items() if q not in setters and _refs(fn) & shorts})
 
     def _roads(self):
         """{(function, target): mentions} for every function that mentions a setter, then every function that mentions
-        one of those, to a fixpoint (a mention as _mention reads it; a method matched by its bare name, so two methods
-        sharing a name both count, on the safe side). A function's mentions of itself are left out."""
+        one of those, to a fixpoint, over every module of the kernel's directory (a mention as _mentioned reads it; a
+        function matched by its bare name, so two sharing a name both count, on the safe side). A function's mentions of
+        itself are left out."""
+        return self._once("roads", self._derive_roads)
+
+    def _derive_roads(self):
         on_road = set(self._setters())
         frontier, roads = set(on_road), {}
         while frontier:
             short = {}
             for t in frontier:
-                short.setdefault(t.rsplit(".", 1)[-1], set()).add(t)
+                short.setdefault(_short(t), set()).add(t)
             grown = set()
             for q, fn in self.fns.items():
                 for n in _mentions(fn, set(short)):
-                    for t in short[_mention(n)] - {q}:
+                    for t in set().union(*(short[m] for m in _mentioned(n) & set(short))) - {q}:
                         roads[(q, t)] = roads.get((q, t), 0) + 1
                         if q not in on_road:
                             grown.add(q)
@@ -729,14 +813,29 @@ class FlagWriterPopulation(unittest.TestCase):
             frontier = grown
         return roads
 
+    def test_the_census_reads_every_module_the_kernel_loads(self):
+        """A writer in the judge, called from a socket op on a client's field, writes a flag as surely as one in
+        kernel.py. So the census reads every module in the kernel's directory, and this pins that the modules the kernel
+        loads, by file name and to a fixpoint, all live there; the executed refusal is SocketFlagWhitelist."""
+        scanned = set(_kernel_modules())
+        loaded, frontier = {"kernel.py"}, {"kernel.py"}
+        while frontier:
+            new = set().union(*(_loads_by_name(_parsed(f)) for f in frontier)) - loaded
+            self.assertLessEqual(new, scanned, "a module the kernel loads lives outside kernel/, out of this census's sight")
+            loaded |= new
+            frontier = new
+        self.assertEqual(loaded, self.LOADED, "the modules the kernel loads by file name, each read by the census")
+        self.assertEqual({q.split(":", 1)[0] if ":" in q else "kernel.py" for q in self.fns} | {m for m, _ in self.rest},
+                         scanned, "the census holds the functions and statements of every module of the kernel's directory")
+
     def test_the_functions_that_name_the_flags_store_are_pinned_by_role(self):
         self.assertEqual(self._namers(), set(self.NAMERS),
                          "the functions that name session-flags.json in code. A new one reds here whatever it does with "
                          "the file: class it in NAMERS, a reader handing the path only to READS, or a writer, a setter "
                          "whose doors must ask _lane_flag_refusal and refuse threadMail by execution (SocketFlagWhitelist)")
-        self.assertEqual([getattr(st, "lineno", 0) for st in self.rest if _store_seeds(st)], [],
-                         "no module-level statement names the store: a constant there would let a function reach the file "
-                         "without naming it, out of this census's sight")
+        self.assertEqual(["%s:%d" % (m, getattr(st, "lineno", 0)) for m, st in self.rest if _store_seeds(st)], [],
+                         "no module-level statement, in any module of the kernel's directory, names the store: a constant "
+                         "there would let a function reach the file without naming it, out of this census's sight")
         for q, role in sorted(self.NAMERS.items()):
             outside = {c: ln for c, ln in _store_flow(self.fns[q], self.modules).items() if c not in self.READS}
             if role == "reader":
@@ -761,19 +860,20 @@ class FlagWriterPopulation(unittest.TestCase):
                          "the functions that call a setter of session-flags.json. A new one is a new way for a client to "
                          "write a flag: route it through _lane_flag_refusal, prove it refuses threadMail by execution "
                          "(SocketFlagWhitelist is the model), and add it here")
-        setters = self._setters()
-        self.assertEqual([getattr(st, "lineno", 0) for st in self.rest if _refs(st) & setters], [],
+        shorts = self._shorts()
+        self.assertEqual(["%s:%d" % (m, getattr(st, "lineno", 0)) for m, st in self.rest if _refs(st) & shorts], [],
                          "no module-level table hands a setter on")
         doors = {}
         for q in callers:
-            named = _doors_naming(self.fns[q], q, setters)
-            self.assertEqual(sum(len(v) for v in named.values()), len(_mentions(self.fns[q], setters)),
+            named = _doors_naming(self.fns[q], q, shorts)
+            self.assertEqual(sum(len(v) for v in named.values()), len(_mentions(self.fns[q], shorts)),
                              "%s: every mention of a setter is keyed to a door (_door_walk walks the whole def)" % q)
             doors.update(named)
         population = set().union(*doors)
         self.assertEqual(population, self.DOORS,
                          "the doors whose arm mentions a setter of session-flags.json (a call by name, or the setter "
-                         "bound to a local, picked from a table, handed on): the setSessionFlag socket op and POST /flag. "
+                         "bound to a local, picked from a table, handed on, named by a string): the setSessionFlag socket "
+                         "op and POST /flag. "
                          "A new door reds here until it applies the one whitelist (_lane_flag_refusal) and an executed "
                          "test proves its refusal, as SocketFlagWhitelist does for the socket op")
 
@@ -791,8 +891,8 @@ class FlagWriterPopulation(unittest.TestCase):
                          "on one, or a new mention on a pinned one, is a new way for a client to reach a flag write: "
                          "route it through a door that asks _lane_flag_refusal, prove it refuses threadMail by execution "
                          "(SocketFlagWhitelist is the model), and add it here")
-        on_road = {t.rsplit(".", 1)[-1] for road in roads for t in road}
-        self.assertEqual([getattr(st, "lineno", 0) for st in self.rest if _refs(st) & on_road], [],
+        on_road = {_short(t) for road in roads for t in road}
+        self.assertEqual(["%s:%d" % (m, getattr(st, "lineno", 0)) for m, st in self.rest if _refs(st) & on_road], [],
                          "no module-level or class-level statement mentions a function on these roads: a table there "
                          "would hand one on out of this walk's sight")
         post = self.fns["Handler.do_POST"]
@@ -807,9 +907,9 @@ class FlagWriterPopulation(unittest.TestCase):
                          "POST to /flag reaches the route function's /flag arm")
 
     def test_every_door_asks_the_one_predicate_before_its_setter(self):
-        setters = self._setters()
+        shorts = self._shorts()
         for q in self._callers():
-            writes = _doors_naming(self.fns[q], q, setters)
+            writes = _doors_naming(self.fns[q], q, shorts)
             asks = _doors_reaching(self.fns[q], q, {"_lane_flag_refusal"})
             for door, lines in writes.items():
                 self.assertIn(door, asks, "%s: the %s arm mentions a setter without asking _lane_flag_refusal; the executed "
@@ -818,6 +918,51 @@ class FlagWriterPopulation(unittest.TestCase):
                               % (q, sorted(door)))
                 self.assertLess(min(asks[door]), min(lines), "%s %s: the predicate is asked before the first setter mention"
                                 % (q, sorted(door)))
+
+    def test_the_predicates_answer_gates_every_setter(self):
+        """Asking is not refusing: the answer has to stop the write. In each door the ask is the whole value of an
+        assignment to one name (`err = _lane_flag_refusal(flag)`); the very next statement is `if <that name>:`, with no
+        else, whose body ends in a return; and every setter call sits in a statement after that `if` in the same block,
+        so only a name the predicate passed reaches a setter. An ask made conditional on a client's field
+        (`... if msg.get("strict", True) else None`), a gate that tests more than the answer, the answer rebound before
+        its gate, a gate nested under another condition, or a refusal that falls through all red here. Read from the
+        source, so it guards the arm's shape; the executed refusal is SocketFlagWhitelist (socket op) and
+        FlagRoute.test_an_unknown_flag_key_or_a_missing_id_is_a_400_naming_it (route)."""
+        shorts = self._shorts()
+        checked = set()
+        for q in sorted(self._callers()):
+            fn = self.fns[q]
+            blocks = [getattr(n, f) for n in ast.walk(fn) for f in ("body", "orelse", "finalbody")
+                      if isinstance(getattr(n, f, None), list)]
+            by_door = {}
+            for door, node in _door_walk(fn, q):
+                by_door.setdefault(door, []).append(node)
+            for door, nodes in by_door.items():
+                sets = [n for n in nodes if isinstance(n, ast.Call) and _callee(n) in shorts]
+                if not sets:
+                    continue
+                where = "%s %s" % (q, sorted(door))
+                asks = [n for n in nodes if isinstance(n, ast.Call) and _callee(n) == "_lane_flag_refusal"]
+                self.assertEqual(len(asks), 1, "%s: one ask of the predicate" % where)
+                held = [(b, i) for b in blocks for i, st in enumerate(b) if isinstance(st, ast.Assign) and st.value is asks[0]]
+                self.assertEqual(len(held), 1, "%s line %d: the ask is the whole value of an assignment, so nothing decides "
+                                 "whether it is made" % (where, asks[0].lineno))
+                block, i = held[0]
+                targets = block[i].targets
+                self.assertTrue(len(targets) == 1 and isinstance(targets[0], ast.Name),
+                                "%s line %d: the answer is bound to one name" % (where, block[i].lineno))
+                answer = targets[0].id
+                gate = block[i + 1] if i + 1 < len(block) else None
+                self.assertTrue(
+                    isinstance(gate, ast.If) and isinstance(gate.test, ast.Name) and gate.test.id == answer
+                    and not gate.orelse and isinstance(gate.body[-1], ast.Return),
+                    "%s line %d: the statement after the ask is `if %s:` with no else, ending in a return, got %s"
+                    % (where, block[i].lineno, answer, ast.unparse(gate).splitlines()[0] if gate is not None else None))
+                after = {id(n) for st in block[i + 2:] for n in ast.walk(st)}
+                self.assertEqual([c.lineno for c in sets if id(c) not in after], [],
+                                 "%s: setter calls not in a statement after the gate, in the gate's own block" % where)
+                checked.add(door)
+        self.assertEqual(checked, {frozenset({d}) for d in self.DOORS}, "both doors were read")
 
     def test_every_setter_writes_the_name_its_door_asked_about(self):
         """Asking the predicate proves nothing unless the setter writes the name it was asked about. In each door: one
@@ -829,7 +974,7 @@ class FlagWriterPopulation(unittest.TestCase):
         container it is read from. Read from the source, so it guards the arm's shape; the
         executed refusal is SocketFlagWhitelist (socket op) and
         FlagRoute.test_an_unknown_flag_key_or_a_missing_id_is_a_400_naming_it (route)."""
-        setters = self._setters()
+        setters, shorts = self._setters(), self._shorts()
         self.assertEqual(set(self.SETTER_CALLS), setters, "every setter has a rule below")
         self.assertIn("notify", km._LANE_FLAGS)
         flag_at = list(inspect.signature(km._set_session_flag).parameters).index("flag")
@@ -843,14 +988,15 @@ class FlagWriterPopulation(unittest.TestCase):
                 by_door.setdefault(door, []).append(node)
             for door, nodes in by_door.items():
                 calls = [n for n in nodes if isinstance(n, ast.Call)]
-                sets = [c for c in calls if _callee(c) in setters]
-                named = [n for n in nodes if _mention(n) in setters]
+                sets = [c for c in calls if _callee(c) in shorts]
+                named = [n for n in nodes if _mentioned(n) & shorts]
                 if not named:
                     continue
                 where = "%s %s" % (q, sorted(door))
                 self.assertEqual(sorted(n.lineno for n in named if all(n is not c.func for c in sets)), [],
                                  "%s: lines where a setter is mentioned other than as the callee of a call by name (bound "
-                                 "to a local, picked from a table, handed on), so the rules below cannot read what it writes"
+                                 "to a local, picked from a table, handed on, named by a string), so the rules below cannot "
+                                 "read what it writes"
                                  % where)
                 asks = [c for c in calls if _callee(c) == "_lane_flag_refusal"]
                 self.assertEqual(len(asks), 1, "%s: one ask of the predicate, so there is one name the setters must write" % where)
@@ -907,7 +1053,7 @@ class FlagWriterPopulation(unittest.TestCase):
     def test_the_list_is_a_whitelist_in_one_place(self):
         # a membership test against _LANE_FLAGS outside the predicate is a second whitelist that can drift from it
         where = set()
-        for q, fn in list(self.fns.items()) + [("<module>", st) for st in self.rest]:
+        for q, fn in list(self.fns.items()) + [("<module %s>" % m, st) for m, st in self.rest]:
             for n in ast.walk(fn):
                 if (isinstance(n, ast.Compare) and any(isinstance(op, (ast.In, ast.NotIn)) for op in n.ops)
                         and any(isinstance(c, ast.Name) and c.id == "_LANE_FLAGS" for c in n.comparators)):
