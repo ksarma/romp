@@ -69,11 +69,11 @@ green, since the tree held no instance of those shapes and the table was written
 ninth review round). So the comparison
 case runs the regex pair, copied verbatim (_round8_regex_census), beside the scan over every module the trio test
 reads and every row, and reds on a call the regex flags that the scan accounts for by none of a site, a listed entry
-containing the match, a refusal, or one of three exclusions derived from the call: a word collision (a word a
-one-line binding named, which resolves at the call to no path; the name is read through the scan itself, so a value
-bound on one line that the scan cannot read is excused there, and each shape the scan once dropped has an inline row
-too), a match inside a -c program (the ruling point below; tests/test_chat_pages.py in the tree), and the CLI with a
-verb outside KERNEL_VERBS, while every verb in it is one bin/romp dispatches.
+containing the match, a refusal, or one of the exclusions derived from the call: a word collision (a word a
+one-line binding named, which resolves at the call to no path, and not to that one-line binding when the scan reads
+its value as no path, since the regex then read the declaration the call runs), a match inside a -c program (the
+ruling point below; tests/test_chat_pages.py in the tree), and the CLI with a verb outside KERNEL_VERBS, while every
+verb in it is one bin/romp dispatches.
 
 Roads and residual, derived by one command (`python tests/test_hermetic_kernel_postal.py --roads [directory]`, one
 line per module the trio test reads, then the unresolved names, then a summary line with every count): a module's
@@ -95,9 +95,9 @@ function reached through functools.partial or getattr (N30), a spawn function ou
 function imported from any module, a helper of another test module included, or any method but the path-preserving
 ones: `os.path.relpath(K)`, `shutil.which(K)`, `K.replace(...)`; N32). The comparison case measures the split with
 the regex pair: it flags no call in the rows of the first three classes, which it missed as well; it flags a
-consumer call whose arguments spell the path or name a one-line binding it read, and the comparison reds on that
-call, so only a consumer call the regex misses too passes both (N32 binds its path across two lines). The regex
-pair's other matches the scan does not read are the comparison's three exclusions.
+consumer call whose arguments spell the path or name a one-line binding it read, and a name bound on one line to a
+value the scan cannot read, and the comparison reds on each (N32 binds its path across two lines, which the regex
+misses too). The regex pair's other matches the scan does not read are the comparison's exclusions.
 
 Ruling point, the maintainers' to decide (2026-09-21): a child interpreter that load_sources the kernel
 (`[sys.executable, "-c", <program>]`) is read here as NOT a kernel process. It is the in-process shape one process
@@ -923,11 +923,12 @@ def _print_roads(directory, skip=()):
 
 def _round8_regex_census(src):
     """The census the spawn scan replaced, run beside it by the old-versus-new comparison and by nothing else
-    (test_the_scan_covers_every_call_the_regex_census_it_replaced_flagged). The five definitions below are copied
+    (test_the_scan_covers_every_call_the_regex_census_it_replaced_flagged). The definitions below are copied
     verbatim from this module as it stood at the head of PR #850's eighth review round, the last head to run them as
     the census. Returns, for each call span _spawns_kernel reads that matches, (offset of the call's opening
-    parenthesis, [(offset, matched text, name)]): every KERNEL_ARGV match with name None and every match of a name
-    KERNEL_NAME bound, with that name. Loud if that per-call reading disagrees with the verbatim verdict."""
+    parenthesis, [(offset, matched text, name, lines)]): every KERNEL_ARGV match with name None and no lines, and every
+    match of a name KERNEL_NAME bound, with that name and the lines of the source KERNEL_NAME binds it on. Loud if that
+    per-call reading disagrees with the verbatim verdict."""
     # -- verbatim: the round-8 regex census ---------------------------------------------------------------------------
     CALL = re.compile(r"(?:subprocess\.(?:Popen|run|check_output|check_call|call)|(?<![\w.])Popen)\s*\(")
     # the kernel's path as an argv spells it: the script's name, the bare CLI (not the other bin/romp-* scripts), a path
@@ -952,10 +953,13 @@ def _round8_regex_census(src):
         names = [re.compile(r"\b%s\b" % re.escape(n)) for n in KERNEL_NAME.findall(src)]
         return any(KERNEL_ARGV.search(span) or any(n.search(span) for n in names) for span in _call_spans(src))
     # -- end of the verbatim copy ---------------------------------------------------------------------------------------
+    bound = {}   # each name KERNEL_NAME binds: the lines of the source it binds the name on
+    for b in KERNEL_NAME.finditer(src):
+        bound.setdefault(b.group(1), set()).add(src.count("\n", 0, b.start(1)) + 1)
     hits = []
     for m, span in zip(CALL.finditer(src), _call_spans(src)):
-        found = [(m.end() + x.start(), x.group(0), None) for x in KERNEL_ARGV.finditer(span)]
-        found += [(m.end() + x.start(), x.group(0), n) for n in KERNEL_NAME.findall(src)
+        found = [(m.end() + x.start(), x.group(0), None, frozenset()) for x in KERNEL_ARGV.finditer(span)]
+        found += [(m.end() + x.start(), x.group(0), n, frozenset(bound[n])) for n in KERNEL_NAME.findall(src)
                   for x in re.finditer(r"\b%s\b" % re.escape(n), span)]
         if found:
             hits.append((m.end() - 1, sorted(found, key=lambda f: f[0])))
@@ -1017,7 +1021,9 @@ def _regex_scan_comparison(src, name, verbs_hold=True, scan_all=False, scanned=N
     entry listed under `unresolved` whose expression contains the match (a listing requires no trio, so an unrelated
     one at the same call, sys.executable most often, explains nothing); the module refused (UnreadableSpawn, loud); or
     one of three exclusions, each derived from the call: (a) a match of a word a one-line binding named, where no name
-    or attribute of that spelling in the call resolves to the path (the word collisions); (b) a match inside the
+    or attribute of that spelling in the call resolves to the path and none resolves to that one-line binding when the
+    scan reads its value as no path (the word collisions; a name that reaches the binding the regex read, a value the
+    scan cannot read, is no collision); (b) a match inside the
     program element after a "-c" (the ruling point below); (c) the CLI followed by a verb outside KERNEL_VERBS, a
     string constant as the next argv element or the next word of a command string, and only while every verb in
     KERNEL_VERBS is one bin/romp dispatches (`verbs_hold`: an exclusion keyed on a list that names a verb the CLI has
@@ -1062,28 +1068,38 @@ def _regex_scan_comparison(src, name, verbs_hold=True, scan_all=False, scanned=N
         flagged.add(call.lineno)
         if refused or call.lineno in site_lines:
             continue
-        for offset, text, word in matches:
+        for offset, text, word, bound in matches:
             if any(start <= offset < end for line, node in listed if line == call.lineno for start, end in [extent(node)]):
                 continue
-            if not _regex_match_excluded(scan, call, offset, text, word, extent, verbs_hold):
+            if not _regex_match_excluded(scan, call, offset, text, word, bound, extent, verbs_hold):
                 dropped.append((call.lineno, text, ast.unparse(call)))
     return dropped, sorted(site_lines - flagged), not_calls, len(hits) - len(not_calls)
 
 
-def _regex_match_excluded(scan, call, offset, text, word, extent, verbs_hold):
-    """Is one regex match in `call` one of the comparison's three exclusions (_regex_scan_comparison)?"""
+def _regex_match_excluded(scan, call, offset, text, word, bound, extent, verbs_hold):
+    """Is one regex match in `call` one of the comparison's exclusions (_regex_scan_comparison)? `bound` holds the lines
+    the regex's one-line binding of `word` sits on."""
     scan._line = call.lineno
     if word is not None:   # (a): every name or attribute of the word's spelling in the call resolves to no path, each read
         parent = {id(c): n for n in ast.walk(call) for c in ast.iter_child_nodes(n)}   # with the subscripts taken from it
+        named = [n for n in ast.walk(call) if (isinstance(n, ast.Name) and n.id == word) or (isinstance(n, ast.Attribute) and n.attr == word)]
         spelled = []
-        for n in ast.walk(call):
-            if (isinstance(n, ast.Name) and n.id == word) or (isinstance(n, ast.Attribute) and n.attr == word):
-                while isinstance(parent.get(id(n)), ast.Subscript) and parent[id(n)].value is n:   # loop-ok: climbs the call's tree
-                    n = parent[id(n)]
-                spelled.append(n)
+        for n in named:
+            while isinstance(parent.get(id(n)), ast.Subscript) and parent[id(n)].value is n:   # loop-ok: climbs the call's tree
+                n = parent[id(n)]
+            spelled.append(n)
+
+        def blind(n):
+            # the name resolves to the very one-line binding the regex read, and the scan reads that binding's value as no
+            # path: the regex read the declaration the call runs, so the match is no collision, whatever the scan reads
+            scope = scan.bindings.scope_of(n)
+            decls = scope.resolve(n.id)[0] if isinstance(n, ast.Name) else [d for ds in scope.resolve_target(n)[0] for d in ds]
+            return any(d.lineno in bound and d.value is not None
+                       and not (scan.is_kernel_path(d.value, scan.bindings.scope_of(d.value))
+                                or scan.holds_kernel_path(d.value, scan.bindings.scope_of(d.value))) for d in decls)
         try:
-            if not any(scan.is_kernel_path(n, scan.bindings.scope_of(n)) or scan.holds_kernel_path(n, scan.bindings.scope_of(n))
-                       for n in spelled):
+            if not any(blind(n) for n in named) and not any(
+                    scan.is_kernel_path(n, scan.bindings.scope_of(n)) or scan.holds_kernel_path(n, scan.bindings.scope_of(n)) for n in spelled):
                 return True
         except UnreadableSpawn:
             pass
@@ -2004,18 +2020,21 @@ class HermeticKernelPostal(unittest.TestCase):
         and the proof is the old and the new run over one population). The census the scan replaced
         (_round8_regex_census, round 8's regex pair copied verbatim) and the scan run over every module the trio test
         reads and every PLANT_TABLE row: for each call the regex flags, the scan gives a site at the call's line, lists
-        an unresolved entry whose expression contains the match, or refuses the module, or the match is one of three
+        an unresolved entry whose expression contains the match, or refuses the module, or the match is one of the
         exclusions derived from the call (_regex_scan_comparison: a word a one-line binding named that resolves to no
-        path at the call, a match inside a -c program, the CLI with a verb outside KERNEL_VERBS). A match in none of
+        path at the call and not to that binding when the scan cannot read its value, a match inside a -c program, the
+        CLI with a verb outside KERNEL_VERBS). A match in none of
         these reds the case, naming the module or row, the line and the match. The tree has no instance of a shape the
         scan once dropped, so the rows are where such a shape reds. The rows whose label says the regex missed them
         too are held to carrying no call it flags. Reported and asserting nothing: the rows and the modules whose sites
         the regex missed (B1 and the rest of round 8's silent half) and the rows whose regex match lies at no call of
         the ast (N11, N12). The tree half is read from the roads table (_roads_table), whose one derivation compared
         each module with the scan it ran for the roads, so this case scans no module of the tree again. Then the
-        comparison is run against two plants it must red: a consumer call the regex flags (os.path.relpath of a name
-        bound to the path, beside a listed sys.executable that does not cover it), and the refresh row with
-        KERNEL_VERBS taken to name a verb bin/romp lacks."""
+        comparison is run against plants it must red: consumer calls the regex flags (os.path.relpath of a name bound
+        to the path, beside a listed sys.executable that does not cover it, and of the path spelled inline); names bound
+        on one line that reach the binding the regex read (through .replace, which the scan does not read, and through
+        os.path.relpath, whose arguments it does); and the refresh row with KERNEL_VERBS taken to name a verb bin/romp
+        lacks."""
         text = _bin_romp_text()
         verbs_hold = not _verbs_bin_romp_lacks(KERNEL_VERBS, text)
         table = _roads_table(HERE, TREE_SKIP)
@@ -2050,6 +2069,17 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual([(line, match) for line, match, _ in _regex_scan_comparison(consumer, "planted.py", verbs_hold)[0]],
                          [(2, "KERNEL")], "a consumer call the regex flags is dropped by the scan, and the comparison names it "
                          "(the listed sys.executable at that call does not contain the match)")
+        for plant, match, what in (
+                ('subprocess.run([sys.executable, os.path.relpath(os.path.join(BIN, "romp-kernel"))])', (1, "romp-kernel"),
+                 "a consumer call whose argument spells the path"),
+                ('KERNEL = os.path.join(BIN, "romp-kernel").replace("//", "/")\nsubprocess.Popen([KERNEL, "--serve"])', (2, "KERNEL"),
+                 "a name bound on one line through a method the scan does not read (.replace), reaching the binding the regex read"),
+                ('K = os.path.relpath(os.path.join(BIN, "romp-kernel"))\nsubprocess.run([sys.executable, K])', (2, "K"),
+                 "a name bound on one line to a consumer's value, whose arguments the scan reads as holding the path")):
+            self.assertEqual(_kernel_spawn_sites(plant, "planted.py"), [], "%s: the scan reads no site: %s" % (what, plant))
+            self.assertEqual([(line, m) for line, m, _ in _regex_scan_comparison(plant, "planted.py", verbs_hold)[0]], [match],
+                             "%s: the regex flags it and the scan reads no site, so the comparison names it, and no exclusion "
+                             "takes it for a word collision: %s" % (what, plant))
         refresh = next(src for label, _, _, src in PLANT_TABLE if label.startswith("N26 "))
         self.assertEqual(_regex_scan_comparison(refresh, "planted.py", verbs_hold)[0], [], "the refresh row: the CLI with a verb "
                          "outside KERNEL_VERBS, excluded while every verb in it is one bin/romp dispatches")
