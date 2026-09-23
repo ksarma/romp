@@ -108,7 +108,10 @@
 //   REFUSALS:  a form the walker cannot classify refuses with file and line, never reports it absent: an import or loader
 //              specifier that is not a string literal and folds through no closed form (a let or var some statement of the module
 //              writes to is no closed form for a specifier, as it is none for an engine: before the closing pass after round 5 a
-//              specifier rebound from a decoy to the package's name folded to the decoy and loaded the package silently); a
+//              specifier rebound from a decoy to the package's name folded to the decoy and loaded the package silently; a name is
+//              folded by LEXICAL SCOPE, so a parameter or an inner declaration sharing a const's name is that binding and not the
+//              const: before round 6 the read was by name over the module, and a package or the launcher passed in through such a
+//              parameter loaded silently); a
 //              computed member with a name it
 //              cannot fold on a playwright or launcher binding or load (`require("playwright")[k]` where k folds through no
 //              closed form, bound or where it stands); the inBrowser binding used as a value, not called (an
@@ -147,7 +150,13 @@
 //              reads, the callee, a declaration's initializer or an assignment's right side, and the value tests the tree's guard
 //              idiom spells, `!pw`, typeof, void, a comparison, the condition of if, while, for or a conditional, the left operand
 //              of &&, which read the binding for truth and hand nothing on; those tests are exempt for playwright and NOT for the
-//              launcher binding, which is refused as an operand); a playwright load, binding or chain, or a load of the launcher,
+//              launcher binding, which is refused as an operand); a playwright package LOADED where it stands in a position the
+//              walker does not read (the twin of THE INVARIANT's clause 2 for the launcher: passed as an argument, returned from a
+//              wrapper, held in a class field, an object property or an array, handed to a promise callback through .then, .catch
+//              or .finally, read into a template, an operand or a default value; the read positions are a statement of its own, a
+//              declaration's initializer or an assignment's right side under any operator, the object of a member chain the walker
+//              reads, reached through wrappers, a conditional's branches and a logical's operands, and a call on that chain, where
+//              derivation stops); a playwright load, binding or chain, or a load of the launcher,
 //              on the right of a COMPOUND assignment (??=, ||=, &&=, or any operator but =: which value the name takes is unread,
 //              the launcher load followed by that refusal); a tracked launcher or playwright binding WRITTEN, by any operator,
 //              with a value the walker does not follow (not null or undefined, not a loader call of the binding's own kind, not a
@@ -235,7 +244,8 @@
 // refuses is respelled through a form the walker reads, or the walker is taught the form, which accounts for the mention by
 // construction. Its bounds, stated: the read-through clause is per module, since engines and launches are the record's sets, so
 // a module with one load read through and a second handed on passes it on the second (the hand-on refusals above name that
-// form); a driver text that parses with a diagnostic is read by the regex alone; the net reads the text of a literal, a template
+// form, for a binding and, since round 6, for a load where it stands: a class field, an object property, a promise callback, an
+// argument, a return); a driver text that parses with a diagnostic is read by the regex alone; the net reads the text of a literal, a template
 // or a `+` chain where it stands and folds no identifier (a name bound to the package's text by a const, or by a let or var no
 // statement writes to, is a mention at its declaration, a position the net does not read, and a load through that name is the
 // walker's fold when the callee is a loader and the hand-on refusals' when it is not; a let or var written after its declaration
@@ -558,14 +568,17 @@ export function classify(ts, file, src, opts = {}) {
   /** `module.require`, CommonJS's loader off the module object: a loader callee when called (loaderCall); handed on otherwise. */
   const isModuleRequire = (c) => ts.isPropertyAccessExpression(c) && ts.isIdentifier(c.expression) && c.expression.text === "module" && c.name.text === "require";
   const CALL_APPLY_BIND = (names) => names.some((x) => x === "call" || x === "apply" || x === "bind");
-  /** The position a loader or a playwright binding is handed on in, for the refusal's parenthetical (the launcher binding's is
-   *  handedHow, whose parentheticals name inBrowser): `q` is the reference up through the wrappers, `pp` its parent. */
+  /** The position a loader, a playwright binding or a playwright load where it stands (refusePwLoadPosition) is handed on in, for
+   *  the refusal's parenthetical (the launcher binding's is handedHow, whose parentheticals name inBrowser): `q` is the reference up
+   *  through the wrappers, `pp` its parent. One home for the four arms, so a position is named the same way by each. */
   const valueHandedHow = (q, pp) => {
     if (!pp) return "in a position the walker does not read";
     if (ts.isElementAccessExpression(pp) && pp.argumentExpression === q) return "read as a computed member's name";
     if (ts.isPropertyAccessExpression(pp) || ts.isElementAccessExpression(pp)) { const names = memberNames(pp); return names === null ? "read for a computed member the walker cannot fold" : "read for ." + names.join("|") + (CALL_APPLY_BIND(names) ? ", through which a load is made or a loader bound where the walker does not follow" : ""); }
     if (ts.isVariableDeclaration(pp) && pp.initializer === q) return ts.isIdentifier(pp.name) ? "aliased by a declaration" : "destructured";
     if (ts.isBinaryExpression(pp) && isAssignmentOp(pp) && pp.right === q) return "aliased by an assignment";
+    if (ts.isParameter(pp) && pp.initializer === q) return "as a parameter's default value";   // `function load(r = require)`: the parameter's NAME is a name position, its default a value the walker does not follow (extra5-1, extra5-2, round 5)
+    if (ts.isPropertyDeclaration(pp) && pp.initializer === q) return "held in a class field";   // `class T { pw = require("playwright") }` (extra5-3, round 5)
     if (ts.isBinaryExpression(pp)) return "read as an operand of " + ts.tokenToString(pp.operatorToken.kind);
     if (ts.isNewExpression(pp)) return pp.expression === q ? "constructed with new" : "passed as an argument";
     if (ts.isCallExpression(pp)) return "passed as an argument";
@@ -610,8 +623,9 @@ export function classify(ts, file, src, opts = {}) {
     noteResolved(e, r.kind, r.spec, "load");
     return r;
   };
-  /** A non-literal specifier folded through closed forms: an identifier bound to a const, or to a let or var no statement of the
-   *  module writes to (one level down, recursively; a written let or var is no closed form: constInitializer), a
+  /** A non-literal specifier folded through closed forms: an identifier bound, by lexical scope (constInitializer, through
+   *  declOfUse: a parameter or an inner declaration sharing a const's name is not that const), to a const, or to a let or var no
+   *  statement of the module writes to (one level down, recursively; a written let or var is no closed form), a
    *  path.resolve/path.join/pathToFileURL(...).href/new URL(...) call or a `+`/template concatenation whose literal pieces are
    *  read: such an expression is a filesystem path, which names a playwright package or the launcher only when one of its
    *  literal pieces does (over-inclusive, on the safe side); otherwise a local file. Anything else: null (refuse). */
@@ -626,7 +640,7 @@ export function classify(ts, file, src, opts = {}) {
       const l = literalName(x); if (l !== null) { pieces.push(l); return true; }
       if (ts.isTemplateExpression(x)) { pieces.push(x.head.text); for (const sp of x.templateSpans) { if (!collect(sp.expression)) return false; pieces.push(sp.literal.text); } return true; }
       if (ts.isBinaryExpression(x) && x.operatorToken.kind === ts.SyntaxKind.PlusToken) return collect(x.left) && collect(x.right);
-      if (ts.isIdentifier(x)) { const init = constInitializer(x.text); if (init === undefined) return false; if (init === null) { pieces.push("<" + x.text + ">"); return true; } return collect(init); }
+      if (ts.isIdentifier(x)) { const init = constInitializer(x); if (init === undefined) return false; if (init === null) { pieces.push("<" + x.text + ">"); return true; } return collect(init); }
       if (ts.isPropertyAccessExpression(x)) { const r = rootOf(x); if (ts.isIdentifier(r) && ["process", "import", "path", "os"].includes(r.text)) { pieces.push("<" + x.getText(sf) + ">"); return true; } if (x.name.text === "href" || x.name.text === "pathname") return collect(x.expression); return false; }
       if (ts.isMetaProperty(x)) { pieces.push("<import.meta>"); return true; }
       if (ts.isCallExpression(x)) {
@@ -645,20 +659,24 @@ export function classify(ts, file, src, opts = {}) {
     if (text.includes("real-viewer-leg")) return { kind: "launcher", spec: text };
     return { kind: "local", spec: text };
   };
-  /** The initializer of the one top-level or block const/let `name` in the module (undefined: not found or several, or a let or var
-   *  some statement of the module writes to, which is bound to no one text; null: declared without one). The write check is the
-   *  engine fold's (assignedSomewhere, foldIdentifier's rule for a let or var), added here by the closing pass after the review's
-   *  round 5: before it, `let spec = "./decoy"; spec = "playwright"; require(spec)` folded to the decoy and loaded the package
-   *  silently (class none, no refusal, under the census and under THE SAFETY NET alike, since neither reads an assignment's right
-   *  side); undefined here makes the loader call refuse as folding through no closed form, and a driver template's substitution a
-   *  placeholder. The plants p237 to p244 record the outcome, p245 the never-written control. */
-  const constInitializer = (name) => {
-    let hits = [];
-    const visit = (n) => { if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === name) hits.push(n); ts.forEachChild(n, visit); };
-    visit(sf);
-    if (hits.length !== 1) return undefined;
-    if (!isConstDecl(hits[0]) && assignedSomewhere(name, hits[0])) return undefined;   // written after its declaration: no closed form (the closing pass after round 5)
-    return hits[0].initializer === undefined ? null : hits[0].initializer;
+  /** The initializer of the variable declaration the identifier `id` reaches by LEXICAL SCOPE (declOfUse: the innermost enclosing
+   *  scope that declares the name decides, the read the header promises for every name), or undefined when `id` reaches no variable
+   *  declaration (a parameter, a binding pattern's element, a catch variable, an import, a function or class, a name no scope
+   *  declares) or a let or var some statement of the module writes to (assignedSomewhere, the engine fold's rule for a let or var,
+   *  which is bound to no one text), and null when the declaration carries no initializer. Before round 6 the read was by NAME over
+   *  the whole module (the one variable declaration so named, wherever it stood), so a loader's parameter sharing a module const's
+   *  name read that const: `const spec = "./decoy-helper"; function load(spec: string) { return require(spec); } load("playwright")`
+   *  folded to the decoy and the package passed in through the parameter loaded silently, class none with no refusal, under the
+   *  census and under THE SAFETY NET alike (the package's name stands in a declaration's initializer or a call's argument to a
+   *  callee the net knows no loader for). The write check is the closing pass after round 5's: before it, `let spec = "./decoy";
+   *  spec = "playwright"; require(spec)` folded to the decoy and loaded the package silently; undefined here makes the loader call
+   *  refuse as folding through no closed form, and a driver template's substitution a placeholder. The plants p237 to p244 record
+   *  the write outcome, p245 the never-written control; p249 to p254 the lexical read (round 6), p252 its renamed-parameter control. */
+  const constInitializer = (id) => {
+    const d = declOfUse(id);
+    if (!d || !ts.isVariableDeclaration(d) || !ts.isIdentifier(d.name)) return undefined;
+    if (!isConstDecl(d) && assignedSomewhere(d.name.text, d)) return undefined;   // written after its declaration: no closed form (the closing pass after round 5)
+    return d.initializer === undefined ? null : d.initializer;
   };
   /** The branches of a ConditionalExpression or of a ??, || or && BinaryExpression, unwrapped and flattened through nested ones;
    *  null for any other node. */
@@ -976,6 +994,47 @@ export function classify(ts, file, src, opts = {}) {
     if (ts.isQualifiedName(pp)) return "aliased by a dotted name outside a type (an import = declaration or another non-type position), which the walker does not follow: import the launcher and call its inBrowser";
     return "in a position the walker does not read (" + ts.SyntaxKind[pp.kind] + ")";
   };
+  /** A playwright package loaded where it stands (a loader call loaderCall resolved to the package, recorded in `playwright` by that
+   *  call) in a POSITION the walker does not read: the twin of THE INVARIANT's clause 2 for the launcher, asked of the load itself,
+   *  since clause 1 holds by construction (the package is recorded in the resolving call) and says nothing of what is read THROUGH
+   *  the load. The load is walked up through the wrappers (parentheses, await, as, !, satisfies, a type assertion), through a
+   *  conditional's branches and a logical's operands (the position the value REACHES is judged; a conditional root standing in a
+   *  binder, assignment or chain position is refuseCondRoot's, one refusal per line), and through the member chain the walker reads
+   *  (a property, a bracketed literal or a folded name: pwChain's own road, the engines noted there). The walk ends READ at a call on
+   *  the chain (the result of launch() is a browser and a non-loader call is derivation's stated stop; the call arm counted the
+   *  launch), at a computed member the walker cannot fold (pwChain refuses it by name), at a statement of its own, at a declaration's
+   *  initializer or an assignment's right side under any operator (bindLoaded binds the target or refuses its kind, refuseCompoundLoad
+   *  the operator). A promise member (then, catch or finally) hands the load to a callback the walker does not follow: REFUSED. Any
+   *  other position (passed as an argument, returned from a wrapper, held in a class field, an object property or an array, read
+   *  into a template, an operand, a default value) hands the load on where the engines and launches reached through it are unread:
+   *  REFUSED by name, the position named (valueHandedHow). The exempt set is the positions the walker reads; the predicate refuses
+   *  whatever is not one, so a position no list names is refused, never passed (extra5-3, round 5: before it a second load held in
+   *  a class field, an object property, .then, an argument or a return stood unread beside a read engine, and the exclusions reason
+   *  under-named an engine with both checkers green; THE SAFETY NET's read-through clause is per module and a read engine defeats it). */
+  const PW_LOAD_HANDED = ", so the engines and launches reached through the load are unread by the walker: bind the load to a name in a statement of its own and launch on that name";
+  const refusePwLoadPosition = (call) => {
+    let q = call;
+    for (;;) {
+      const pp = q.parent;
+      if (!pp) return;
+      if (ts.isParenthesizedExpression(pp) || ts.isAwaitExpression(pp) || ts.isAsExpression(pp) || ts.isNonNullExpression(pp) || ts.isSatisfiesExpression(pp) || ts.isTypeAssertionExpression(pp)) { q = pp; continue; }
+      if (ts.isConditionalExpression(pp) && (pp.whenTrue === q || pp.whenFalse === q)) { q = pp; continue; }
+      if (isLogical(pp)) { q = pp; continue; }
+      if ((ts.isPropertyAccessExpression(pp) || ts.isElementAccessExpression(pp)) && pp.expression === q) {
+        const names = memberNames(pp);
+        if (names === null) return;   // a computed member the walker cannot fold: pwChain's refusal names it
+        const promise = names.find((x) => x === "then" || x === "catch" || x === "finally");
+        if (promise !== undefined) { refuse(call, "a playwright package loaded where it stands and handed to a promise callback through ." + promise + PW_LOAD_HANDED); return; }
+        q = pp; continue;
+      }
+      if (ts.isCallExpression(pp) && pp.expression === q) return;   // a call on the chain: a launch the call arm counted, or a non-loader call, derivation's stop
+      if (ts.isExpressionStatement(pp)) return;
+      if (ts.isVariableDeclaration(pp) && pp.initializer === q) return;
+      if (ts.isBinaryExpression(pp) && isAssignmentOp(pp) && pp.right === q) return;
+      refuse(call, "a playwright package loaded where it stands and handed on (" + valueHandedHow(q, pp) + ")" + PW_LOAD_HANDED);
+      return;
+    }
+  };
   const walk3 = (n) => {
     if (ts.isCallExpression(n)) {
       {
@@ -987,7 +1046,7 @@ export function classify(ts, file, src, opts = {}) {
           // position stays unfollowed and THE INVARIANT refuses it
           let q = n; while (q.parent && (ts.isParenthesizedExpression(q.parent) || ts.isAwaitExpression(q.parent) || ts.isAsExpression(q.parent) || ts.isNonNullExpression(q.parent) || ts.isSatisfiesExpression(q.parent) || ts.isTypeAssertionExpression(q.parent))) q = q.parent;
           if (q.parent && ts.isExpressionStatement(q.parent)) { followed.add(unwrap(n)); launcherImported.push(lineOf(n)); }
-        }
+        } else if (l && l.kind === "playwright") refusePwLoadPosition(n);   // the package's twin of clause 2: the load's position, refused by name when the walker does not read it
         // a createRequire(...) call, the loader itself made where it stands: READ when a declaration binds it under a plain name
         // (walk1 added the name to loaders), when it is applied directly as a loader callee (loaderCall reads the outer call), or
         // when a member other than call, apply or bind is read off it (`createRequire(x).resolve(y)` makes no load); in any other
@@ -1056,7 +1115,8 @@ export function classify(ts, file, src, opts = {}) {
       // and not the loader. Exempt, as for requireCjs: the callee position (loaderCall reads the call), a name position (a
       // declaration, import, parameter or property name, an assignment's target), a type position, and the object of a member
       // other than call, apply or bind (`req.resolve(x)` makes no load; those three make a load or bind a loader where the walker
-      // does not follow, so they are refused with the position named). A requireCjs binding is the next arm's.
+      // does not follow, so they are refused with the position named). A parameter's NAME is the name position, never its default
+      // value (`function load(r = require)` hands the loader on: extra5-1, round 5). A requireCjs binding is the next arm's.
       if (loaders.has(n.text) && !(b !== null && b.module === "launcher" && b.member === "requireCjs")) {
         const d = declOfUse(n);
         const isTheLoader = d === null || (ts.isVariableDeclaration(d) && (!d.initializer || isCreateRequireCall(unwrap(d.initializer))));
@@ -1066,7 +1126,7 @@ export function classify(ts, file, src, opts = {}) {
           // here deliberately, since THE SAFETY NET reads the template's text as a specifier-capable position and refuses the module
           // (the round-5 ruling records the net's refusal for that form and folds it nowhere; p186 holds it)
           const called = !!pp && ((ts.isCallExpression(pp) && pp.expression === q) || (ts.isTaggedTemplateExpression(pp) && pp.tag === q));
-          const isName = !!p && (ts.isImportSpecifier(p) || ts.isImportClause(p) || ts.isNamespaceImport(p) || ts.isParameter(p) || (ts.isBindingElement(p) && (p.name === n || p.propertyName === n)) || (ts.isVariableDeclaration(p) && p.name === n) || (ts.isFunctionDeclaration(p) && p.name === n) || (ts.isBinaryExpression(p) && p.left === n && isAssignmentOp(p)));
+          const isName = !!p && (ts.isImportSpecifier(p) || ts.isImportClause(p) || ts.isNamespaceImport(p) || (ts.isParameter(p) && p.name === n) || (ts.isBindingElement(p) && (p.name === n || p.propertyName === n)) || (ts.isVariableDeclaration(p) && p.name === n) || (ts.isFunctionDeclaration(p) && p.name === n) || (ts.isBinaryExpression(p) && p.left === n && isAssignmentOp(p)));
           const isPropName = !!p && ((ts.isPropertyAccessExpression(p) && p.name === n) || (ts.isPropertyAssignment(p) && p.name === n) || (ts.isPropertySignature(p) && p.name === n) || (ts.isMethodDeclaration(p) && p.name === n));
           const isType = !!p && (ts.isTypeQueryNode(p) || ts.isTypeReferenceNode(p));
           let memberRead = false;
@@ -1119,7 +1179,8 @@ export function classify(ts, file, src, opts = {}) {
       // handed on as a value: the mirror of the launcher arm above with the exemptions the round-4 refuters converged on. The
       // reference is walked up through the wrappers (parentheses, as, !, satisfies, a type assertion), await, a conditional's
       // branches and a logical's carrying operands (the right of &&, either side of || and ??), to the position that receives the
-      // value. Exempt: a name position (a declaration, import, binding element, parameter or property name) and a type position; the
+      // value. Exempt: a name position (a declaration, import, binding element, parameter or property name; a parameter's default
+      // value is a value position, `go(p = pw)`: extra5-2, round 5) and a type position; the
       // object of a member access (pwChain reads the chain, or refuses its computed member by name); the callee (the call arm reads
       // a derived launch); a declaration's initializer or an assignment's right side (bindLoaded tracks the target, refuses it by
       // its kind, or refuseWrite refuses the rebinding, so the line carries one refusal); and the value tests the tree's own guard
@@ -1131,7 +1192,7 @@ export function classify(ts, file, src, opts = {}) {
       const pwName = (b !== null && b.module === "playwright") ? n.text : (derivedAt(n) !== null ? n.text : null);
       if (pwName !== null) {
         const p = n.parent;
-        const isName = !!p && (ts.isImportSpecifier(p) || ts.isNamespaceImport(p) || ts.isImportClause(p) || ts.isImportEqualsDeclaration(p) || ts.isParameter(p) || (ts.isBindingElement(p) && (p.name === n || p.propertyName === n)) || (ts.isVariableDeclaration(p) && p.name === n) || (ts.isPropertyAccessExpression(p) && p.name === n) || (ts.isPropertyAssignment(p) && p.name === n) || (ts.isBinaryExpression(p) && p.left === n && isAssignmentOp(p)));
+        const isName = !!p && (ts.isImportSpecifier(p) || ts.isNamespaceImport(p) || ts.isImportClause(p) || ts.isImportEqualsDeclaration(p) || (ts.isParameter(p) && p.name === n) || (ts.isBindingElement(p) && (p.name === n || p.propertyName === n)) || (ts.isVariableDeclaration(p) && p.name === n) || (ts.isPropertyAccessExpression(p) && p.name === n) || (ts.isPropertyAssignment(p) && p.name === n) || (ts.isBinaryExpression(p) && p.left === n && isAssignmentOp(p)));
         const isType = !!p && (ts.isTypeQueryNode(p) || ts.isTypeReferenceNode(p));
         if (!(isName || isType)) {
           let q = n;
@@ -1167,7 +1228,7 @@ export function classify(ts, file, src, opts = {}) {
   const foldText = (x) => {
     x = unwrap(x);
     const l = literalName(x); if (l !== null) return l;
-    if (ts.isTemplateExpression(x)) { let t = x.head.text; for (const sp of x.templateSpans) { const inner = ts.isIdentifier(unwrap(sp.expression)) ? constInitializer(unwrap(sp.expression).text) : undefined; const v = inner ? literalName(unwrap(inner)) : null; t += (v !== null && v !== undefined ? v : "<" + sp.expression.getText(sf) + ">") + sp.literal.text; } return t; }
+    if (ts.isTemplateExpression(x)) { let t = x.head.text; for (const sp of x.templateSpans) { const inner = ts.isIdentifier(unwrap(sp.expression)) ? constInitializer(unwrap(sp.expression)) : undefined; const v = inner ? literalName(unwrap(inner)) : null; t += (v !== null && v !== undefined ? v : "<" + sp.expression.getText(sf) + ">") + sp.literal.text; } return t; }
     if (ts.isBinaryExpression(x) && x.operatorToken.kind === ts.SyntaxKind.PlusToken) return foldText(x.left) + foldText(x.right);
     return "<" + x.getText(sf).slice(0, 40) + ">";
   };
