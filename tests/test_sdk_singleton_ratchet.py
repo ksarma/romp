@@ -2989,15 +2989,19 @@ class TheStatedLimitIsWorded(unittest.TestCase):
         """number_word spells a count from NUMBER_WORDS and refuses one the table does not reach with an AssertionError
         naming the ceiling, the count and what it counts, so the four sites that spell a count fail that way and not
         with an index error (the round-8 review found the three tree-count sites indexing the table bare); the ceiling
-        is pinned as written (twelve), so a table extended past it moves this pin's counts with it."""
-        self.assertEqual(number_word(12, "x"), "twelve", "number_word(12) is not twelve: this pin keys on the table's "
-                         "ceiling as written, NUMBER_WORDS' last word; a table extended past twelve moves the 12 and 13 here")
+        is read from the table (its length and its last word, unpacked, since only number_word subscripts it), so the
+        remedy the failure names, extending NUMBER_WORDS, moves the ceiling this pin holds with it."""
+        top = len(NUMBER_WORDS) - 1
+        *_, last = NUMBER_WORDS
+        self.assertEqual(number_word(top, "x"), last, "number_word(%d) is not %r, NUMBER_WORDS' last word: the count the "
+                         "table's last word spells is not spelled" % (top, last))
         self.assertEqual(number_word(0, "x"), "zero", "number_word(0) is not zero, the table's first word")
         what = "the count of private names shared by two or more files"
-        with self.assertRaises(AssertionError) as caught:     # an IndexError is not caught here: it is the red-before shape
-            number_word(13, what)
+        with self.assertRaises(AssertionError, msg="number_word(%d), one past the table's last word, is not refused with an "
+                               "AssertionError" % (top + 1)) as caught:     # an IndexError is not caught here: it is the red-before shape
+            number_word(top + 1, what)
         text = str(caught.exception)
-        for part in ("the count word table stops at twelve (NUMBER_WORDS)", "%s is 13" % what, "extend NUMBER_WORDS"):
+        for part in ("the count word table stops at %s (NUMBER_WORDS)" % last, "%s is %d" % (what, top + 1), "extend NUMBER_WORDS"):
             self.assertTrue(part in text, "the ceiling failure does not say %r; it says %r (keyed on the text naming the "
                             "ceiling, the count with what it counts, and the repair)" % (part, text))
         with self.assertRaises(AssertionError) as caught:
