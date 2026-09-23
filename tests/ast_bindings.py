@@ -164,6 +164,7 @@ class Bindings:
         self.scopes = {}
         self._deferred = []
         self._mro = {}   # id(class scope) -> its mro (Bindings.mro), filled on first read
+        self._concrete = {}   # id(class scope) -> its concrete_classes, likewise
 
     @classmethod
     def of(cls, tree, statements=None):
@@ -243,9 +244,12 @@ class Bindings:
 
     def concrete_classes(self, klass):
         """klass and every class of the module whose mro holds it (klass first, the rest in the order the walk met
-        them): the classes whose instances can run a method klass defines."""
-        return [klass] + [c for c in self.scopes.values() if c.kind == "class" and c is not klass
-                          and any(k is klass for k in self.mro(c))]
+        them): the classes whose instances can run a method klass defines. Memoized per class."""
+        memo = self._concrete.get(id(klass))
+        if memo is None:
+            memo = self._concrete[id(klass)] = [klass] + [c for c in self.scopes.values() if c.kind == "class" and c is not klass
+                                                          and any(k is klass for k in self.mro(c))]
+        return memo
 
     def instance_class(self, node, scope):
         """The class scope whose instance `node`, an ast.Attribute, is read on: the receiver resolves, from `scope`, to

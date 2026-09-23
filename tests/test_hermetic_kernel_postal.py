@@ -42,12 +42,17 @@ splatted next element being no verb; the comment at KERNEL_VERBS says why each v
 INDEX is not read: a wrapper launch (`["timeout", "30", KERNEL]`) is a
 kernel process, and so, an accepted false red, is a grep or a git over the kernel's file, the side that requires
 the trio; a subscript whose slice the scan cannot read (`SCRIPTS[i]`) is read as any element of its container, the
-same side. A name bound twice in the scope the call reads, once to the path and once to something else, is refused
-loudly (UnreadableSpawn, naming the call's line and both declarations), never read either way; a declaration with
-no readable value beside one bound to the path leaves the path standing. A string that MENTIONS the path inside a
-word (a -c program that load_sources the kernel, `load_source('k', %r)`), a comment or a docstring is not a kernel
-process: that is the
-in-process shape in a child, met by the bus belt below like the in-process shape itself (the ruling point below).
+same side. A name bound twice in the scope the call reads by declarations that do not read it, once to the path and
+once to something else, is refused loudly (UnreadableSpawn, naming the call's line and both declarations), never read
+either way; a declaration with no readable value beside one bound to the path leaves the path standing. A declaration
+whose value reads the name itself (`cmd += [...]`, `cmd = cmd + [...]`, `KERNEL = os.path.realpath(KERNEL)`; found by
+the binding, a name or target in the value that resolves to declarations among which it is) is read with the name
+standing for the verdict of the declarations that do not read it: holding the path, the name is the path whatever
+those say, so an extension that adds the path to a base without it is caught; lacking the path while they hold it
+(`KERNEL = os.path.dirname(KERNEL)`), a rebinding away from the path, refused loudly the same way; neither, no path.
+A string that MENTIONS the path inside a word (a -c program that load_sources the kernel, `load_source('k', %r)`), a
+comment or a docstring is not a kernel process: that is the in-process shape in a child, met by the bus belt below
+like the in-process shape itself (the ruling point below).
 The scan replaced a regex pair on 2026-09-21, in the author's pass applying the ruling of PR #850's eighth review
 round: the old KERNEL_NAME pattern took any name bound on ONE line that spelled romp-kernel as a name bound to the
 kernel's path and looked for it as a whole WORD in every subprocess call span, so a local `p` bound to TEXT that
@@ -59,8 +64,9 @@ spawn); at that head most of the names the pattern bound were the `km` of an in-
 no path (the author's pass measured it before the rewrite). PLANT_TABLE below runs both halves, every row labelled
 with what the scan must do; the guard test's report carries the row count. The rewrite then read less than the regex
 pair in places (a command string with the path after its first word, a placeholder template, an env-override default,
-Popen's executable=, a comprehension argv, `romp up`) with every check green, since the tree held no instance of
-those shapes and the table was written from what the scan read (PR #850's ninth review round). So the comparison
+Popen's executable=, a comprehension argv, a subclass's override of a base attribute, `romp up`) with every check
+green, since the tree held no instance of those shapes and the table was written from what the scan read (PR #850's
+ninth review round). So the comparison
 case runs the regex pair, copied verbatim (_round8_regex_census), beside the scan over every module the trio test
 reads and every row, and reds on a call the regex flags that the scan accounts for by none of a site, a listed entry
 containing the match, a refusal, or one of three exclusions derived from the call: a word collision (a word a
@@ -193,12 +199,15 @@ PERCENT_FIELD = re.compile(r"%(?:\((?P<key>[^)]*)\))?[#0 +-]*(?P<width>\*|\d+)?(
 
 class UnreadableSpawn(AssertionError):
     """A spawn whose argv the scan can read neither way: a name, or a target of the form self.X, with two declarations
-    in the scope the call reads, one bound to the kernel's path and one bound to something else, so the census cannot
-    say which the call runs. Raised naming the module, the call's line and both declarations, never a verdict either
-    way (2026-09-21: a silent miss of a two-line binding and a loud match on a word were the regex census's failures).
-    Two declarations that agree
-    are read as one; a declaration with no readable value (a parameter, an import, a loop or with target, a None
-    placeholder) beside one bound to the path leaves the path standing, the side that requires the trio."""
+    in the scope the call reads (for self.X, in one concrete class's reading) that disagree about the kernel's path, so
+    the census cannot say which the call runs: two that do not read the name, one bound to the path and one to
+    something else; or one bound to the path and one that reads the name and rebinds it away from the path (`KERNEL =
+    os.path.dirname(KERNEL)`). Raised naming the module, the call's line and both declarations, never a verdict
+    either way (2026-09-21: a silent miss of a two-line binding and a loud match on a word were the regex census's
+    failures). Two declarations that agree are read as one; a declaration that reads the name and holds the path
+    (`cmd += [KERNEL]`) makes the name the path whatever the others say; a declaration with no readable value (a
+    parameter, an import, a loop or with target, a None placeholder) beside one bound to the path leaves the path
+    standing, the side that requires the trio."""
 
 
 class _SpawnScan:
@@ -234,6 +243,7 @@ class _SpawnScan:
         self._unresolved_keys = set()
         self._bound_paths = 0         # resolutions that yielded the path while reading one argv (the road label)
         self._line = 0
+        self._self_reads = {}         # id(declaration) -> does its value read its own name (_reads_itself)
 
     def _is_spawn(self, call):
         """Keyed on the callee's binding: any of the canonical names it resolves to is a spawn function (SPAWN_FUNCTIONS;
@@ -314,16 +324,24 @@ class _SpawnScan:
 
     def _decide(self, readings, node, key, seen, evaluate, scope):
         """The verdict on a name or target from its declarations, `readings` one declaration list per value it can hold
-        (a name one; self.X one per concrete class, ast_bindings.Bindings.resolve_target), each decided on its own: each
-        declaration with a value is read in the scope its value is read in; one with none (a parameter, an import, a
-        loop, with or except target, an unpacking the scan cannot split, a del) or bound to None says nothing. Path and
-        not-path together inside one reading: loud. A path in any reading: the path (and the binding road), so two
-        classes reading self.X differently are no refusal. A reading in which nothing says anything, while none holds
-        the path: no path, listed as unresolved."""
+        (a name one; self.X one per concrete class, ast_bindings.Bindings.resolve_target), each decided on its own.
+        Inside a reading, a declaration whose value reads the name itself (_reads_itself: `cmd += [...]`, whose value is
+        the composed `cmd + [...]`, `cmd = cmd + [...]`, `KERNEL = os.path.realpath(KERNEL)`) is an extension, and the
+        others are its bases. Each base with a value is read in the scope its value is read in; one with none (a
+        parameter, an import, a loop, with or except target, an unpacking the scan cannot split, a del) or bound to None
+        says nothing; bases on both sides of the path: loud. Each extension is read with the name standing for the
+        bases' verdict (a stand-in key in `seen`, which _resolve answers before its cycle guard): holding the path, the
+        reading is the path whatever the bases say, so an extension that adds the path to a base without it is caught;
+        lacking it while the bases hold it (`KERNEL = os.path.dirname(KERNEL)`), a rebinding away from the path: loud,
+        as a rebinding is; neither: no path. A path in any reading: the path (and the binding road), so two classes
+        reading self.X differently are no refusal. A reading whose bases say nothing and no extension of which holds the
+        path (a parameter extended in place): no path, listed as unresolved with its bases' kinds."""
         verdicts, path, silent = {}, False, []
         for decls in readings:
+            bases = [d for d in decls if not self._reads_itself(d)]
+            extensions = [d for d in decls if self._reads_itself(d)]
             said = []
-            for d in decls:
+            for d in bases:
                 if d.value is None or (isinstance(d.value, ast.Constant) and d.value.value is None):
                     continue
                 if id(d) not in verdicts:
@@ -337,9 +355,21 @@ class _SpawnScan:
                                       "bind it once, or under two names" % (self.filename, self._line, ast.unparse(node), paths[0].lineno,
                                                                             ast.unparse(paths[0].node), others[0].lineno,
                                                                             ast.unparse(others[0].node)))
-            path = path or bool(paths)
-            if not said:
-                silent.append(decls)
+            held, extended = bool(paths), False
+            for d in extensions:
+                stand = ("stand-in", id(d), held)
+                if stand not in verdicts:
+                    verdicts[stand] = evaluate(d.value, self.bindings.scope_of(d.value), seen | {key, stand})
+                if verdicts[stand]:
+                    extended = True
+                elif held:
+                    raise UnreadableSpawn("%s line %d: %s is bound to the kernel's path (line %d: %s) and rebound from its own value "
+                                          "to something else (line %d: %s), so the census cannot say which the call runs: bind it "
+                                          "once, or under two names" % (self.filename, self._line, ast.unparse(node), paths[0].lineno,
+                                                                        ast.unparse(paths[0].node), d.lineno, ast.unparse(d.node)))
+            path = path or held or extended
+            if not said and not extended:
+                silent.append(bases)
         if path:
             self._bound_paths += 1
             return True
@@ -347,6 +377,38 @@ class _SpawnScan:
             kinds = {d.kind for decls in silent for d in decls}
             self._note_unresolved(node, "+".join(sorted(kinds)) if kinds else self._receiver_kind(node, scope))
         return False
+
+    def _reads_itself(self, d):
+        """Does declaration `d`'s value read the name or target `d` binds? Keyed on the binding, never the spelling: a
+        name, attribute or subscript in the value that resolves, where it is read, to declarations among which `d` is (a
+        name to the same scope's declarations of that name, self.X to its class's readings, any other dotted target to
+        the writes of its spelling). Memoized per declaration."""
+        known = self._self_reads.get(id(d))
+        if known is None:
+            known = False
+            for n in ast.walk(d.value) if d.value is not None else ():
+                if isinstance(n, ast.Name):
+                    found = self.bindings.scope_of(n).resolve(n.id)[0]
+                elif isinstance(n, (ast.Attribute, ast.Subscript)):
+                    found = [x for decls in self.bindings.scope_of(n).resolve_target(n)[0] for x in decls]
+                else:
+                    continue
+                if any(x is d for x in found):
+                    known = True
+                    break
+            self._self_reads[id(d)] = known
+        return known
+
+    @staticmethod
+    def _stand_in(readings, seen):
+        """The verdict an extension under way stands in for its own name (_decide), when one of `readings` is that
+        extension: True or False; else None."""
+        for decls in readings:
+            for d in decls:
+                for held in (True, False):
+                    if ("stand-in", id(d), held) in seen:
+                        return held
+        return None
 
     def _note_unresolved(self, node, kind, value=None):
         """List `node` under the residual as (line, text, kind); `value` is the expression whose value is unread when it
@@ -374,16 +436,22 @@ class _SpawnScan:
                                   ast.Constant: "a constant"}.get(type(receiver), type(receiver).__name__)
 
     def _resolve(self, node, scope, seen, evaluate):
-        """A Name or a dotted target, read through its declarations; False (and a `seen` key, against a cycle) when the
-        same name is already being read."""
+        """A Name or a dotted target, read through its declarations (_decide); inside an extension of it, the verdict the
+        extension stands in for (_stand_in); False (and a `seen` key, against a cycle) when the same name is already
+        being read."""
         if isinstance(node, ast.Name):
             decls, where = scope.resolve(node.id)
-            key = (id(where), node.id)
-            return key not in seen and self._decide([decls], node, key, seen, evaluate, scope)
-        readings, road = scope.resolve_target(node)
-        key = ("target", ast.unparse(node), id(self.bindings.instance_class(node, scope)) if road == "instance" else 0)
+            readings, key = [decls], (id(where), node.id)
+        else:
+            readings, road = scope.resolve_target(node)
+            key = ("target", ast.unparse(node), id(self.bindings.instance_class(node, scope)) if road == "instance" else 0)
+        stood = self._stand_in(readings, seen)
+        if stood is not None:   # the name read inside its own extension: the verdict of the declarations it extends
+            return stood
         if key in seen:
             return False
+        if isinstance(node, ast.Name):
+            return self._decide(readings, node, key, seen, evaluate, scope)
         if not any(readings):
             if isinstance(node, ast.Attribute):   # a subscript with no binding is read through its container instead
                 self._note_unresolved(node, self._receiver_kind(node, scope))
@@ -1468,6 +1536,21 @@ PLANT_TABLE = (
      'class Base:\n    SCRIPT = os.path.join(BIN, "romp-judge")\n    def setUp(self):\n        subprocess.Popen([sys.executable, self.SCRIPT])\n'
      'class KernelRoot:\n    SCRIPT = os.path.join(BIN, "romp-kernel")\nclass KernelMixin(KernelRoot):\n    pass\n'
      'class T(KernelMixin, Base):\n    pass'),
+    ('B55 an argv extended in place by +=, the path in the base', 'caught-by-binding', 3,
+     'cmd = [sys.executable, os.path.join(BIN, "romp-kernel")]\ncmd += ["--serve"]\nsubprocess.run(cmd)'),
+    ('B56 an argv extended in place by +=, the path in the extension', 'caught-by-binding', 3,
+     'cmd = [sys.executable]\ncmd += [os.path.join(BIN, "romp-kernel"), "--serve"]\nsubprocess.run(cmd)'),
+    ('B57 an argv rebound to itself plus more under an if', 'caught-by-binding', 4,
+     'cmd = [sys.executable, os.path.join(BIN, "romp-kernel")]\nif FLAG:\n    cmd = cmd + ["--serve"]\nsubprocess.run(cmd)'),
+    ('B58 the path rebound to its own realpath', 'caught-by-binding', 3,
+     'KERNEL = os.path.join(BIN, "romp-kernel")\nKERNEL = os.path.realpath(KERNEL)\nsubprocess.run([KERNEL])'),
+    ('B59 the bin directory extended by += into the path', 'caught-by-binding', 3,
+     'K = BIN\nK += "/romp-kernel"\nsubprocess.run([K])'),
+    ('B60 the path rebound to its own str()', 'caught-by-binding', 3,
+     'K = Path(BIN, "romp-kernel")\nK = str(K)\nsubprocess.run([K])'),
+    ("B61 an instance's argv extended in place by +=, the path in the extension", 'caught-by-binding', 6,
+     'class T:\n    def setUp(self):\n        self.cmd = [sys.executable]\n        self.cmd += [os.path.join(BIN, "romp-kernel")]\n'
+     '    def test_a(self):\n        subprocess.run(self.cmd)'),
     ('A1 the library under an alias', 'caught-by-argv', 2,
      'import subprocess as sp\nsp.Popen([os.path.join(BIN, "romp-kernel")])'),
     ('A2 a from-import of run', 'caught-by-argv', 2,
@@ -1589,10 +1672,16 @@ PLANT_TABLE = (
     ("N38 a subclass's own method reading an attribute it overrides with another script, the base's the kernel", 'no-spawn', None,
      'class Base:\n    SCRIPT = os.path.join(BIN, "romp-kernel")\nclass T(Base):\n    SCRIPT = os.path.join(BIN, "romp-judge")\n'
      '    def test_a(self):\n        subprocess.Popen([sys.executable, self.SCRIPT])'),
+    ('N39 an argv extended in place by +=, the path in neither the base nor the extension', 'no-spawn', None,
+     'cmd = [sys.executable, "serve.py"]\ncmd += ["--serve"]\nsubprocess.run(cmd)'),
+    ('N40 a parameter extended in place by += (the stated residual, listed)', 'no-spawn', None,
+     'def start(cmd):\n    cmd += ["--serve"]\n    return subprocess.run(cmd)'),
     ('R1 a rebinding in one function', 'refused-loud', (4, 2, 3),
      'def t():\n    k = os.path.join(BIN, "romp-kernel")\n    k = [sys.executable, "-m", "pytest", "-k", "boot"]\n    subprocess.run(k)'),
     ('R2 two module-level bindings that disagree', 'refused-loud', (3, 1, 2),
      'K = os.path.join(BIN, "romp-kernel")\nK = os.path.join(BIN, "romp-judge")\nsubprocess.run([K])'),
+    ('R3 the path rebound to its own dirname, away from the path', 'refused-loud', (3, 1, 2),
+     'KERNEL = os.path.join(BIN, "romp-kernel")\nKERNEL = os.path.dirname(KERNEL)\nsubprocess.run([KERNEL])'),
 )
 
 
@@ -1635,9 +1724,9 @@ class HermeticKernelPostal(unittest.TestCase):
         run and held to its label, the site's LINE held to the planted call's, the road held to the label's, the
         refusal's message held to name the call's line and both declarations. (4) The listed residual: a helper's
         call, a passthrough's splatted parameter, a star import's name, a class attribute read through the class
-        name, a comprehension's parameter iterable and a keywords splat handed alone are no site and each is under
-        `unresolved` with its line, text and kind; a comprehension's own target is not, and neither is a builtin's
-        call, a consumer."""
+        name, a comprehension's parameter iterable, a keywords splat handed alone and a parameter extended in place
+        are no site and each is under `unresolved` with its line, text and kind; a comprehension's own target is
+        not, and neither is a builtin's call, a consumer."""
         roads = spawn_roads(HERE, skip=(os.path.basename(__file__),))
         counts = {r: sum(1 for road, _, _ in roads.values() if road == r) for r in ("argv", "binding", "neither", "refused")}
         report = ("the roads table over %d modules under tests/ (python tests/test_hermetic_kernel_postal.py --roads): argv %d, "
@@ -1684,7 +1773,8 @@ class HermeticKernelPostal(unittest.TestCase):
                             ('from helpers import *\nsubprocess.run([kernel_argv()])', (2, "kernel_argv", "call of an unbound name")),
                             ('class Lab:\n    K = os.path.join(BIN, "romp-kernel")\nsubprocess.run([Lab.K])', (3, "Lab.K", "attribute of class")),
                             ('def start(args):\n    return subprocess.run([a for a in args])', (2, "args", "parameter")),
-                            ('def start(**kw):\n    return subprocess.run(**kw)', (2, "kw", "keywords splat of parameter"))):
+                            ('def start(**kw):\n    return subprocess.run(**kw)', (2, "kw", "keywords splat of parameter")),
+                            ('def start(cmd):\n    cmd += ["--serve"]\n    return subprocess.run(cmd)', (3, "cmd", "parameter"))):
             scan = _SpawnScan(ast.parse(src), "planted.py")
             self.assertEqual(scan.sites(), [], "no site, the value unread (keyed on the declarations the scan resolves to): " + src)
             self.assertIn(listed, scan.unresolved, "the unread value is listed under the residual as (line, text, kind), never passed "
