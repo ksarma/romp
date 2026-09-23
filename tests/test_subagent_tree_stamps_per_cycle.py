@@ -1483,9 +1483,6 @@ class Guards(_World):
         s_drop = self._stats()
         with _Spy(oset, other) as osp:
             got = km._subagent_tree(str(other))
-        self.assertEqual(self._delta(s_drop)["served"], 0,
-                         "memos.subagentTree served over the holder's read that dropped its stale pair and lstat'd the %s root: %d; keyed on 0 "
-                         "(a hold dropped at the lookup is not a served read, and what the lstat found is no tree)" % (shape, self._delta(s_drop)["served"]))
         moved, answered, lstats = km._SUBAGENT_TREES_GEN[0] - g0, len(got[0]), osp.total()["dir_lstat"]
         self.assertEqual((moved, answered, lstats), (1, 0, 1),
                          "(_SUBAGENT_TREES_GEN's move on the %s-root pop, directories the holding thread is answered for that root on its "
@@ -1493,6 +1490,12 @@ class Guards(_World):
                          "the holder's pair dropped at the lookup since the vouch fails on that record, and the root's own lstat paid; a "
                          "pop that recorded nothing is (0, D = %d, 0), the held pair served stale for the rest of the cycle"
                          % (shape, (moved, answered, lstats), D))
+        # The served count over the same read, asserted after the key above and not before it (round 2 of #882, tests-2): a pop
+        # that recorded no eviction leaves the pair held and served, which moves served too, and a red on this message, which
+        # presents the read as one that dropped its pair, would name the opposite of that defect; the key above names it.
+        self.assertEqual(self._delta(s_drop)["served"], 0,
+                         "memos.subagentTree served over the holder's read that dropped its stale pair and lstat'd the %s root: %d; keyed on 0 "
+                         "(a hold dropped at the lookup is not a served read, and what the lstat found is no tree)" % (shape, self._delta(s_drop)["served"]))
         self.assertEqual(km._SUBAGENT_ROOT_EVICTED.get(str(other)), seen.get("gen"),
                          "the table names the %s root at the value the gen moved to: %r against %r; keyed on equality (the record that "
                          "outdates every scope's hold on this root)" % (shape, km._SUBAGENT_ROOT_EVICTED.get(str(other)), seen.get("gen")))
