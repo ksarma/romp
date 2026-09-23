@@ -54,17 +54,25 @@ module's snapshot test red in the 3.10 CI cell. The port and client-only join pe
 BUS_PORT, read at import, patched beside them and restored by the same cleanups), conftest pops the bus port before
 every test, the seam moves per test in the ten postal modules that wrote it at import, and the repo-wide pin holds the
 set of names the test modules write at module level EQUAL to a licensed set (LICENSED_MODULE_LEVEL_WRITES: each name
-with a checked condition, a temporary licence dated and pointed at the item it waits on), never a floor. The guard test
-keeps its trio around the call, and its restore waits for the revive to end (an Event set when the revive returns).
-The round-1 rewrite that stubbed the revive and asserted one ensure is gone (the reviewer's ruling of round 1 on fork
-PR #894: upstream's fix, their PR 1848, skips the revive under client-only, and fork PR #875 folds it with the skip
-gated on the kernel having ensured no bus of its own). The wait is back since round 2, when the verifier found the
-restore winning the race in every run: the ensure's child, forked with the restored environment, which names no port,
-pinged the machine's fixed bus port, so on a box whose own bus listens there a plain run reached that bus. The bus's
-fixed-port refusal (tests/test_postal_fixed_port_belt.py) stops a bind, not that ping. The test asserts nothing about
-what the revive does, so it holds under this kernel, upstream's and fork PR #875's, and it merges with fork PR #875's
-copy of the test without a conflict (the two changes are on different lines). An executed pin below runs it with a
-sitecustomize that records every connect of every Python process of the run: none dials the fixed port.
+with a checked condition, a temporary licence dated and pointed at the item it waits on), never a floor. Under this
+kernel the guard test's refused notify kicks the revive on EVERY run, and the test holds that revive inside itself
+(the reviewer's re-ruling of round 2 on fork PR #894): its trio stays around the call, the revive is rebound to a
+wrapper that sets an Event in a finally, the restore waits on that Event, and for the whole window subprocess.run is a
+scoped fake that records and answers any call whose argv names romp-postal-service and passes every other call, from
+any thread, to the real run; its one assertion on the fake is that no postal-service call reached the real run. Why:
+with the test at its base text (round 2's first commit) the restore won the race in every run, and the ensure's
+child, forked with the restored environment, which names no port, pinged the machine's fixed bus port, so on a box
+whose own bus listens there a plain run reached that bus; the bus's fixed-port refusal
+(tests/test_postal_fixed_port_belt.py) stops a bind, not that ping. The round-1 rewrite asserted that the refused
+notify runs the ensure once, the opposite of upstream's fix (their PR 1848 returns before the ensure under
+client-only; fork PR #875 folds it with the skip gated on the kernel having ensured no bus of its own), and the
+reviewer's ruling of round 1 removed that assertion: the test asserts nothing about whether the revive runs the
+ensure, so it holds under this kernel, upstream's and fork PR #875's. Its text conflicts with fork PR #875's copy of
+the test, and whichever of the two lands second keeps fork PR #875's assertion beside this wait and fake. The pins
+below read the test's parts as statements that run (the trio, the wrap and the fake set before the call; the wait
+before the fake and the environment are put back), run its fake's own def over the argv shapes it must
+tell apart, and run the test in a child pytest with a sitecustomize that records every connect and every Python
+process of the run: none dials the fixed port, and no ensure child starts.
 The census pin passes one floor write of a leak name, upstream's client-only "1" (FLOOR_LEAK_WRITES), and the tunnels
 probe compares client-only with the value the floor modules left. `python -m tests.test_hermetic_kernel_postal
 --census` prints the counts by name and shape (fork PR #871's by-product figures, derived by ast). Beside it,
@@ -804,7 +812,8 @@ def _census_table(paths=None):
 # tests/test_kernel_tunnels.py's module-level ROMP_POSTAL_PORT and ROMP_POSTAL_CLIENT_ONLY, and the sessions-file seam
 # ten postal modules set at import, were the environment a real bus started with from inside the peer-notify guard test
 # (the revive road's ensure runs with the test process's environment, and the guard's own trio was restored by the time
-# the thread spawned; its restore waits the revive out since round 2 of fork PR #894's review): the port named as the
+# the thread spawned; since round 2 of fork PR #894's review the test waits the revive out before its restore, and a
+# scoped fake answers the revive's ensure, so no ensure child starts from it): the port named as the
 # run's own (conftest's marker beside it) licensed the bind, client-only was inert with peers on, and the seam's one
 # row kept the bus from ever autostopping. The pin below holds the set of names
 # written at module level by the test modules EQUAL to this table, with every licence's condition checked per write, so
@@ -1223,13 +1232,16 @@ _HERMETIC_MARKER = 'os.environ["ROMP_POSTAL_HERMETIC"] = "1"\n'
 
 _DIAL_SPY = textwrap.dedent("""\
     # sitecustomize for one child pytest run of the peer-notify guard test (tests/test_hermetic_kernel_postal.py): every
-    # Python process of the run records each socket connect by port and its own argv at exit, and refuses a connect to
-    # the machine's fixed bus port before it reaches the network
+    # Python process of the run records each socket connect by port (and whether its PYTHONPATH still names this spy, so
+    # a child forked then with its environment loads it too) and its own argv at exit, and refuses a connect to the
+    # machine's fixed bus port before it reaches the network
     import atexit, errno, json, os, socket, sys
     _OUT, _FIXED = os.environ.get("ROMP_TEST_DIAL_SPY"), os.environ.get("ROMP_TEST_DIAL_SPY_FIXED")
+    _HERE = os.path.dirname(os.path.abspath(__file__))
     if _OUT and _FIXED:
         def _record(kind, **fields):
-            fields.update(kind=kind, pid=os.getpid(), argv=[str(a) for a in getattr(sys, "argv", [])])
+            fields.update(kind=kind, pid=os.getpid(), argv=[str(a) for a in getattr(sys, "argv", [])],
+                          spy_on_path=_HERE in os.environ.get("PYTHONPATH", "").split(os.pathsep))
             with open(_OUT, "a", encoding="utf-8") as f:
                 f.write(json.dumps(fields) + "\\n")
 
@@ -1254,6 +1266,62 @@ _DIAL_SPY = textwrap.dedent("""\
         socket.socket.connect, socket.socket.connect_ex = connect, connect_ex
         atexit.register(_record, "exit")
 """)
+
+
+def _executed(body):
+    """The statements of a function body that run whenever it runs through: each top-level statement and, for a try among
+    them, the statements of its body and of its finally, recursively. Never an if or loop body, a with body, an except or
+    else clause, or a nested def's body: a statement under `if False:`, or in a def the test never calls, is in the tree
+    and never runs (the verifier's two mutants of round 2 on fork PR #894 passed a pin that walked the whole function)."""
+    out = []
+    for stmt in body:
+        out.append(stmt)
+        if isinstance(stmt, ast.Try):
+            out += _executed(stmt.body) + _executed(stmt.finalbody)
+    return out
+
+
+def _own_calls(stmt):
+    """The calls a SIMPLE statement makes itself, a lambda's body excluded; none for a compound statement or a def, whose
+    bodies hold statements of their own."""
+    if isinstance(stmt, _COMPOUND + (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return []
+
+    def calls(n):
+        if isinstance(n, ast.Lambda):
+            return []
+        return ([n] if isinstance(n, ast.Call) else []) + [c for child in ast.iter_child_nodes(n) for c in calls(child)]
+    return calls(stmt)
+
+
+def _call_stmt(stmt, dotted):
+    """`stmt` is an expression statement whose value is a call of the dotted chain `dotted` (["os", "environ", "update"])."""
+    return isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call) and _dotted(stmt.value.func) == dotted
+
+
+def _assign_to(stmt, target):
+    """`stmt` is an assignment with one target, the dotted chain `target` (["km", "subprocess", "run"])."""
+    return isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and _dotted(stmt.targets[0]) == target
+
+
+def _names_bound(stmts, value):
+    """(index, name) for each `name = <value>` among `stmts`, `value` a dotted chain (["km", "_revive_postal_bus"]) or, as
+    ("call", chain), a call of one."""
+    def matches(v):
+        if isinstance(value, tuple):
+            return isinstance(v, ast.Call) and _dotted(v.func) == value[1]
+        return _dotted(v) == value
+    return [(i, s.targets[0].id) for i, s in enumerate(stmts) if isinstance(s, ast.Assign) and len(s.targets) == 1
+            and isinstance(s.targets[0], ast.Name) and matches(s.value)]
+
+
+def _environ_writes(node):
+    """Every write to os.environ inside `node`, nested defs included: a call of pop, popitem, update, setdefault, clear,
+    __setitem__ or __delitem__ on it, or a subscript of it stored or deleted."""
+    return [n for n in ast.walk(node)
+            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and _dotted(n.func.value) == ["os", "environ"]
+                and n.func.attr in ("pop", "popitem", "update", "setdefault", "clear", "__setitem__", "__delitem__"))
+            or (isinstance(n, ast.Subscript) and _dotted(n.value) == ["os", "environ"] and isinstance(n.ctx, (ast.Store, ast.Del)))]
 
 
 def _conftest_with_the_client_only_floor():
@@ -2017,78 +2085,170 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual(len(fns), 1, "PostalPeerTunnels defines test_notify_bus_peer_is_guarded once")
         return fns[0]
 
-    def test_the_peer_notify_guard_test_sets_the_trio_for_the_call_and_waits_the_revive_out_before_the_restore(self):
-        """Read by ast from tests/test_kernel.py's PostalPeerTunnels.test_notify_bus_peer_is_guarded: the one
-        km._notify_bus_peer call (the refusal that kicks the bus revive on a thread) is preceded by the trio,
-        os.environ.update(ROMP_POSTAL_CLIENT_ONLY="1", ROMP_POSTAL_PEERS="0", ROMP_POSTAL_PORT="1"), and by
-        km._revive_postal_bus rebound to a function of the test that runs the real revive and sets an Event in a finally
-        (so the Event is set whether the kernel's revive runs the ensure, returns before it, or raises); the call sits in
-        a try whose finally waits on that Event BEFORE it restores the environment (os.environ.pop), keeps the wait's
-        result, and puts the real revive back; after the try the result is asserted, so a revive never kicked, or never
-        ended, fails the test. Why the wait: without it the restore won the race, and the ensure's child, forked with the
-        restored environment, which names no port, pinged the machine's fixed bus port (the reviewer's verification of
-        round 2 on fork PR #894; before round 1 the test set the trio and nothing else). The test asserts nothing about
-        what the revive does, so it holds under upstream's PR 1848 and fork PR #875's gate as under this kernel. Read from
-        the tree, not the text, since the pin that stood here in round 2's first commit read substrings, and a copy with
-        the trio commented out passed it and the guard test both (the verifier's mutation). What this pin GUARANTEES is
-        placement, the weaker thing; that the revive's ensure never dials the fixed port is the executed test below."""
+    def _guard_shape(self):
+        """The guard test's parts, each required as a statement that RUNS (_executed): at the test's top level before the
+        try that makes the notify call, in that try's finally, after the try, or in the body and the finally of the
+        wrapper's own try. A statement under an if, in a loop or in a def the test never calls satisfies nothing here.
+        The safe side is read over the whole function instead: no statement anywhere in it, run or not, may put the fake,
+        the revive or the environment back other than the ones required, so a conditional early restore still reds.
+        Returns what the pin on the fake's behaviour needs."""
         fn = self._guard_test()
-        calls = [n for n in ast.walk(fn) if isinstance(n, ast.Call)]
-        notify = [c for c in calls if _dotted(c.func) == ["km", "_notify_bus_peer"]]
-        self.assertEqual(len(notify), 1, "the guarded test makes one notify call")
-        notify = notify[0]
-        trio = [c for c in calls if _dotted(c.func) == ["os", "environ", "update"]]
-        self.assertEqual(len(trio), 1, "the trio is set by one os.environ.update call (a commented-out call is not one)")
+        top = fn.body
+        tries = [i for i, s in enumerate(top) if isinstance(s, ast.Try)
+                 and any(_dotted(c.func) == ["km", "_notify_bus_peer"] for st in _executed(s.body) for c in _own_calls(st))]
+        self.assertEqual(len(tries), 1, "the notify call runs in one try at the test's top level")
+        before, final, after = top[:tries[0]], _executed(top[tries[0]].finalbody), top[tries[0] + 1:]
+        defs = {s.name: i for i, s in enumerate(before) if isinstance(s, ast.FunctionDef)}
+        # the trio, set before the call
+        trio = [s.value for s in before if _call_stmt(s, ["os", "environ", "update"])]
+        self.assertEqual(len(trio), 1, "the trio is set by one os.environ.update statement that runs before the call")
         self.assertEqual((trio[0].args, sorted((k.arg, ast.unparse(k.value)) for k in trio[0].keywords)),
                          ([], [("ROMP_POSTAL_CLIENT_ONLY", "'1'"), ("ROMP_POSTAL_PEERS", "'0'"), ("ROMP_POSTAL_PORT", "'1'")]),
                          "client-only with peers off and a port nothing can bind")
-        self.assertLess(trio[0].lineno, notify.lineno, "...set before the call")
-        rebinds = [n for n in ast.walk(fn) if isinstance(n, ast.Assign) and any(_dotted(t) == ["km", "_revive_postal_bus"] for t in n.targets)]
-        before = [a for a in rebinds if a.lineno < notify.lineno]
-        self.assertEqual(len(before), 1, "km._revive_postal_bus is rebound once before the call")
-        self.assertIsInstance(before[0].value, ast.Name, "...to a function of the test")
-        wrappers = [d for d in ast.walk(fn) if isinstance(d, ast.FunctionDef) and d.name == before[0].value.id]
-        self.assertEqual(len(wrappers), 1, "the function the revive is rebound to is defined in the test")
-        tries = [t for t in fn.body if isinstance(t, ast.Try) and any(notify in list(ast.walk(b)) for b in t.body)]
-        self.assertEqual(len(tries), 1, "the call sits in a try at the test's top level")
-        final = tries[0].finalbody
-        waits = [(i, c) for i, stmt in enumerate(final) for c in ast.walk(stmt)
-                 if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "wait"]
-        pops = [i for i, stmt in enumerate(final) for c in ast.walk(stmt) if isinstance(c, ast.Call) and _dotted(c.func) == ["os", "environ", "pop"]]
-        self.assertEqual(len(waits), 1, "the finally waits once")
-        self.assertTrue(pops, "the finally restores the trio")
-        at, wait = waits[0]
-        self.assertLess(at, min(pops), "...the wait before the restore: an ensure the revive runs forks while the trio holds")
-        event = ast.unparse(wait.func.value)
-        sets = [c for t in ast.walk(wrappers[0]) if isinstance(t, ast.Try) for stmt in t.finalbody for c in ast.walk(stmt)
-                if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "set" and ast.unparse(c.func.value) == event]
-        self.assertTrue(sets, "the rebound revive sets the waited Event (%s) in a finally" % event)
-        self.assertTrue(any(isinstance(stmt, ast.Assign) and any(_dotted(t) == ["km", "_revive_postal_bus"] for t in stmt.targets) for stmt in final),
-                        "the finally puts the real revive back")
-        kept = final[at]
-        self.assertTrue(isinstance(kept, ast.Assign) and len(kept.targets) == 1 and isinstance(kept.targets[0], ast.Name) and kept.value is wait,
-                        "the wait's result is kept in a name")
-        result = kept.targets[0].id
-        after = fn.body[fn.body.index(tries[0]) + 1:]
-        self.assertTrue(any(isinstance(c, ast.Call) and _dotted(c.func) == ["self", "assertTrue"] and c.args
-                            and isinstance(c.args[0], ast.Name) and c.args[0].id == result for stmt in after for c in ast.walk(stmt)),
-                        "after the try the wait's result (%s) is asserted: a revive never kicked or never ended fails the test" % result)
+        # the wrap: the real revive kept, a wrapper of the test's own, the revive rebound to it before the call
+        kept_revive = _names_bound(before, ["km", "_revive_postal_bus"])
+        self.assertEqual(len(kept_revive), 1, "the real revive is kept in a name before the call")
+        events = _names_bound(before, ("call", ["threading", "Event"]))
+        self.assertEqual(len(events), 1, "one Event is made before the call")
+        event = events[0][1]
+        rebind = [i for i, s in enumerate(before) if _assign_to(s, ["km", "_revive_postal_bus"])]
+        self.assertEqual(len(rebind), 1, "km._revive_postal_bus is rebound by one statement that runs before the call")
+        wrapper = before[rebind[0]].value
+        self.assertTrue(isinstance(wrapper, ast.Name) and defs.get(wrapper.id, len(before)) < rebind[0] and kept_revive[0][0] < rebind[0],
+                        "...to a function the test defines first, after keeping the real revive")
+        self.assertTrue(any(any(isinstance(s, ast.Expr) and isinstance(s.value, ast.Call) and isinstance(s.value.func, ast.Name)
+                                and s.value.func.id == kept_revive[0][1] for s in _executed(t.body))
+                            and any(_call_stmt(s, [event, "set"]) for s in _executed(t.finalbody))
+                            for t in _executed(before[defs[wrapper.id]].body) if isinstance(t, ast.Try)),
+                        "the wrapper runs the real revive in a try whose finally sets the Event (%s), whatever the revive does" % event)
+        # the scoped fake: the real run kept, a fake of the test's own taking (*a, **kw), installed before the call
+        kept_run = _names_bound(before, ["km", "subprocess", "run"])
+        self.assertEqual(len(kept_run), 1, "the real subprocess.run is kept in a name before the call")
+        install = [i for i, s in enumerate(before) if _assign_to(s, ["km", "subprocess", "run"])]
+        self.assertEqual(len(install), 1, "km.subprocess.run is replaced by one statement that runs before the call: the fake holds from the start of the window")
+        fake = before[install[0]].value
+        self.assertTrue(isinstance(fake, ast.Name) and defs.get(fake.id, len(before)) < install[0] and kept_run[0][0] < install[0],
+                        "...by a function the test defines first, after keeping the real run")
+        sig = before[defs[fake.id]].args
+        self.assertTrue(sig.vararg and sig.kwarg and not (sig.posonlyargs or sig.args or sig.kwonlyargs),
+                        "the fake takes (*a, **kw): a call that passes the argv by keyword, or anything else, reaches it")
+        # the finally: the wait, then the fake, the revive and the environment put back
+        waits = [i for i, s in enumerate(final) if isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Name)
+                 and isinstance(s.value, ast.Call) and _dotted(s.value.func) == [event, "wait"]]
+        self.assertEqual(len(waits), 1, "the finally waits on the Event (%s) once, in a statement that runs, keeping the result" % event)
+        wait = waits[0]
+        ended = final[wait].targets[0].id
+        unfake = [i for i, s in enumerate(final) if _assign_to(s, ["km", "subprocess", "run"]) and _dotted(s.value) == [kept_run[0][1]]]
+        self.assertEqual(len(unfake), 1, "the finally puts the real run back")
+        self.assertLess(wait, unfake[0], "...after the wait: every call the revive makes goes through the fake")
+        unwrap = [i for i, s in enumerate(final) if _assign_to(s, ["km", "_revive_postal_bus"]) and _dotted(s.value) == [kept_revive[0][1]]]
+        self.assertEqual(len(unwrap), 1, "the finally puts the real revive back")
+        restores = [i for i, s in enumerate(final) if _environ_writes(s)]
+        self.assertTrue(restores, "the finally restores the trio")
+        self.assertLess(wait, min(restores), "...after the wait: the revive's calls run under the trio")
+        # the safe side, over every statement of the test, run or not
+        for target, allowed in ((["km", "subprocess", "run"], (before[install[0]], final[unfake[0]])),
+                                (["km", "_revive_postal_bus"], (before[rebind[0]], final[unwrap[0]]))):
+            self.assertEqual([n.lineno for n in ast.walk(fn) if _assign_to(n, target) and not any(n is a for a in allowed)], [],
+                             "no other statement of the test binds %s" % ".".join(target))
+        late = [w for s in final[wait + 1:] for w in _environ_writes(s)]
+        self.assertEqual([w.lineno for w in _environ_writes(fn) if w is not trio[0] and not any(w is x for x in late)], [],
+                         "the test writes the environment only in the trio and in the finally after the wait")
+        # after the try: the wait's result, and the one assertion on the fake
+        asserted = [s.value for s in after if isinstance(s, ast.Expr) and isinstance(s.value, ast.Call)]
+        self.assertTrue(any(_dotted(c.func) == ["self", "assertTrue"] and c.args and _dotted(c.args[0]) == [ended] for c in asserted),
+                        "after the try the wait's result (%s) is asserted: a revive never kicked, or never ended, fails the test" % ended)
+        reached = [c.args[0].id for c in asserted if _dotted(c.func) == ["self", "assertEqual"] and len(c.args) >= 2
+                   and isinstance(c.args[0], ast.Name) and isinstance(c.args[1], ast.List) and not c.args[1].elts]
+        self.assertEqual(len(reached), 1, "after the try one list is asserted empty: the postal-service calls that reached the real run")
+        return {"fn": fn, "fake": fake.id, "real_run": kept_run[0][1], "reached": reached[0]}
 
-    def test_the_peer_notify_guard_tests_revive_never_dials_the_machines_fixed_bus_port(self):
+    def test_the_peer_notify_guard_test_runs_the_trio_the_wrap_the_wait_and_the_scoped_fake_as_statements_that_run(self):
+        """Read by ast from tests/test_kernel.py's PostalPeerTunnels.test_notify_bus_peer_is_guarded, each part required as
+        a statement that runs (_guard_shape; the reviewer's re-ruling of round 2 on fork PR #894): the trio,
+        os.environ.update(ROMP_POSTAL_CLIENT_ONLY="1", ROMP_POSTAL_PEERS="0", ROMP_POSTAL_PORT="1"), set before the one
+        km._notify_bus_peer call (the refusal that kicks the bus revive on a thread); km._revive_postal_bus rebound before
+        the call to a wrapper of the test's own that runs the real revive in a try whose finally sets an Event;
+        km.subprocess.run replaced before the call by a fake of the test's own taking (*a, **kw); the call in a try whose
+        finally waits on that Event, keeping the result, BEFORE it puts the fake and the environment back, and puts the
+        real revive back; and, after the try, the wait's result asserted and one list asserted empty, the postal-service
+        calls that reached the real run. No other statement of the test, run or not, puts the fake, the revive or the
+        environment back.
+        Why the wait and the fake: with the test at its base text the restore won the race in every run, and the ensure's
+        child, forked with the restored environment, which names no port, pinged the machine's fixed bus port (the
+        verifier's plant in round 2); the fake answers the revive's ensure, so under this kernel no ensure child starts at
+        all, and the wait keeps every call the revive makes inside the window the fake covers. The test asserts nothing
+        about whether the revive runs the ensure, so it holds under upstream's PR 1848 and fork PR #875's gate as under
+        this kernel. What this pin GUARANTEES is the shape, the weaker thing; what the fake does with each argv is run by
+        the pin below it, and that no process of the test's run dials the fixed port or starts an ensure child by the
+        executed pin after that."""
+        self._guard_shape()
+
+    def test_the_guard_tests_fake_answers_only_a_postal_service_call_and_passes_every_other_call_to_the_real_run(self):
+        """The guard test's own fake, run: its def (and any def of the test it calls by name) is compiled from the test's
+        source inside a factory that binds the test's top-level names, the kept real run bound to a recorder, and called
+        with the argv shapes it must tell apart (regression-2 of round 1 on fork PR #894, with its refuter's corrected
+        shape). A call whose argv names romp-postal-service, positional or by the args keyword, a list, a tuple or one
+        string, the verb at argv[2] or moved off it, never reaches the recorder and is answered with a CompletedProcess
+        the kernel can read; a foreign call (a one-element argv, which indexing argv[1] or argv[2] would raise on; an
+        empty argv; the argv by keyword; a shell string) reaches the recorder exactly as made and gets the recorder's own
+        answer, never a fake one; and the list the guard test asserts empty stays empty. What this does not run: the
+        fake inside the guard test's window, under a live revive thread (the guard test itself, and the executed pin
+        below, do that)."""
+        shape = self._guard_shape()
+        fn = shape["fn"]
+        src = open(os.path.join(HERE, "test_kernel.py"), encoding="utf-8", errors="replace").read()
+        defs = {s.name: s for s in fn.body if isinstance(s, ast.FunctionDef)}
+        called = sorted({c.func.id for c in ast.walk(defs[shape["fake"]]) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+                         and c.func.id in defs and c.func.id != shape["fake"]})
+        bound = sorted({t.id for s in fn.body if isinstance(s, ast.Assign) for target in s.targets
+                        for t in (target.elts if isinstance(target, ast.Tuple) else [target]) if isinstance(t, ast.Name)})
+        body = "".join(textwrap.indent(textwrap.dedent(ast.get_source_segment(src, defs[n], padded=True)) + "\n", "    ")
+                       for n in [shape["fake"]] + called)
+        ns = {"km": type("km", (), {"subprocess": subprocess})}
+        exec(compile("def _factory(%s):\n%s    return %s\n" % (", ".join(bound), body, shape["fake"]), "<the guard test's fake>", "exec"), ns)
+        real_calls, answer = [], object()
+
+        def recorder(*a, **kw):
+            real_calls.append((a, kw))
+            return answer
+        names = {n: [] for n in bound}
+        names[shape["real_run"]] = recorder
+        fake = ns["_factory"](**names)
+        postal = [sys.executable, "/nonexistent/bin/romp-postal-service", "ensure"]
+        for label, a, kw in (("the argv positional, as the kernel passes it", (postal,), {"stdout": subprocess.DEVNULL, "timeout": 30}),
+                             ("the argv by keyword", (), {"args": postal}),
+                             ("a tuple", (tuple(postal),), {}),
+                             ("the verb moved off argv[2]", ([sys.executable, "/nonexistent/bin/romp-postal-service", "--quiet", "ensure"],), {}),
+                             ("a two-element argv", (["/nonexistent/bin/romp-postal-service", "ensure"],), {}),
+                             ("one string", ("romp-postal-service ensure",), {"shell": True})):
+            r = fake(*a, **kw)
+            self.assertEqual(real_calls, [], "%s: a postal-service call never reaches the real run" % label)
+            self.assertIsInstance(r, subprocess.CompletedProcess, "%s: ...and is answered with a CompletedProcess the kernel can read" % label)
+        for label, a, kw in (("a one-element argv", (["true"],), {}),
+                             ("an empty argv", ([],), {}),
+                             ("a foreign argv by keyword", (), {"args": ["true"], "capture_output": True}),
+                             ("a foreign shell string", ("true",), {"shell": True})):
+            del real_calls[:]
+            self.assertIs(fake(*a, **kw), answer, "%s: a foreign call gets the real run's own answer" % label)
+            self.assertEqual(real_calls, [(a, kw)], "%s: ...passed to the real run exactly as made" % label)
+        self.assertEqual(names[shape["reached"]], [], "nothing the fake passed to the real run names the postal service")
+
+    def test_the_peer_notify_guard_test_starts_no_ensure_child_and_dials_no_fixed_port(self):
         """Executed: a child pytest runs tests/test_kernel.py's PostalPeerTunnels.test_notify_bus_peer_is_guarded with a
-        sitecustomize (_DIAL_SPY) on its PYTHONPATH, so every Python process of that run, the test process and the
-        revive's `romp-postal-service ensure` child it starts with its environment, records each socket connect by port
-        and its argv at exit, and refuses a connect to the machine's fixed bus port (the postal service's default port,
-        read from bin/romp-postal-service) before it reaches the network. No process of the run dials the fixed port.
-        The spy is shown live where it must be: in the test process it records the notify's refused dial to BUS_PORT 1,
-        and every ensure child that ran recorded a dial of its own (its ping). What it does not read, and why that leaves
-        the revive's ensure read: a process that is not Python, one started with -S or -I, or one handed an environment
-        without the PYTHONPATH (none of them loads the sitecustomize; the ensure is Python, started with neither flag, and
-        inherits the test process's environment), and a connect made below socket.socket (a C extension's own socket;
-        the postal service's ping goes through urllib.request, which connects through socket.socket). Before round 2 of
-        fork PR #894's review this run's ensure child, forked after the test's restore, dialled the fixed port in every
-        run (the verifier's plant), which on a box whose own bus listens there reached that bus;
-        under a kernel whose revive returns before the ensure (upstream's PR 1848, fork PR #875's gate) no child starts."""
+        sitecustomize (_DIAL_SPY) on its PYTHONPATH, so every Python process of that run records each socket connect by
+        port and its argv at exit, and refuses a connect to the machine's fixed bus port (the postal service's default
+        port, read from bin/romp-postal-service) before it reaches the network. No process of the run dials the fixed
+        port, and no romp-postal-service process starts: the test's fake answers the revive's ensure. The spy is shown
+        live where it must be: in the test process it records the notify's refused dial to BUS_PORT 1, and at that dial
+        the test process's PYTHONPATH still names the spy, so an ensure child forked in the window (it inherits that
+        environment) would load it and be recorded. What it does not read, and why that leaves the revive's ensure read:
+        a process that is not Python, one started with -S or -I, or one handed an environment without the PYTHONPATH
+        (none of them loads the sitecustomize; the ensure is Python, started with neither flag, and inherits the test
+        process's environment), and a connect made below socket.socket (a C extension's own socket; the postal service's
+        ping goes through urllib.request, which connects through socket.socket). With the test at its base text (round
+        2's first commit on fork PR #894) this run's ensure child, forked after the test's restore, dialled the fixed
+        port in every run (the verifier's plant), which on a box whose own bus listens there reached that bus."""
         m = re.findall(r'^PORT = int\(os\.environ\.get\("ROMP_POSTAL_PORT", "(\d+)"\)\)', open(os.path.join(os.path.dirname(HERE), "bin", "romp-postal-service"), encoding="utf-8").read(), re.M)
         self.assertEqual(len(m), 1, "bin/romp-postal-service names its default port once")
         fixed = int(m[0])
@@ -2114,11 +2274,13 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertIn("1 passed", text)
         recs = [json.loads(line) for line in open(out, encoding="utf-8")] if os.path.exists(out) else []
         dials = [r for r in recs if r["kind"] == "dial"]
-        self.assertIn(1, [r["port"] for r in dials if r["pid"] == p.pid], "the spy is live in the test process: the notify's dial to BUS_PORT 1: %r" % recs)
+        notify = [r for r in dials if r["pid"] == p.pid and r["port"] == 1]
+        self.assertTrue(notify, "the spy is live in the test process: the notify's dial to BUS_PORT 1: %r" % recs)
+        self.assertTrue(all(r["spy_on_path"] for r in notify),
+                        "...and the test process's PYTHONPATH names the spy at that dial, so a child forked in the window loads it: %r" % notify)
         self.assertEqual([r for r in dials if r["port"] == fixed], [], "no process of the run dials the machine's fixed bus port %d" % fixed)
-        ensures = [r["pid"] for r in recs if r["kind"] == "exit" and any(a.endswith("romp-postal-service") for a in r["argv"])]
-        for pid in ensures:
-            self.assertTrue([r for r in dials if r["pid"] == pid], "the ensure child %d recorded its ping: the spy is live there: %r" % (pid, recs))
+        self.assertEqual([r for r in recs if r["kind"] == "exit" and any(a.endswith("romp-postal-service") for a in r["argv"])], [],
+                         "no romp-postal-service process starts: the test's fake answers the revive's ensure")
 
     def test_the_scan_completes_and_derives_the_same_records_under_a_tag_another_census_left_on_the_parsers_shared_singletons(self):
         """THE PLANT for the contract _fresh states (the reviewer's ruling of 2026-09-22, from a CI red on fork PR #891):
