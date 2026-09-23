@@ -1435,7 +1435,9 @@ def unread_yaml_forms(src):
     switch on; and a double-quoted run's `\\n` escape started a second pytest command, without the flag, that the
     parser read as part of the first. The real ci.yml uses none of these, so each is red at its line and never
     modelled. Keyed on a line scan, not a YAML parser: a node starts at a line's first character, after a sequence's
-    `- `, after a key's colon, and after `[`, `{` or `,` inside a flow collection; a block scalar's lines (every line
+    `- `, after an explicit key's `? ` and a document start marker's `---` (the first verify pass: an anchor or alias
+    after either was not read), after a key's colon, and after `[`, `{` or `,` inside a flow collection; a block
+    scalar's lines (every line
     indented past the key or dash that opened it with `|` or `>`) are text and are not read, and a refused quoted
     scalar or flow collection is followed to its close, so its later lines are not read as nodes. The scan's error
     runs one way: a line that continues a plain scalar is read as if it began a node, so one that opens with `&`, `*`
@@ -1508,6 +1510,12 @@ def unread_yaml_forms(src):
                 continue
             if not flow and ch == "-" and raw[i + 1:i + 2] in ("", " ", "\t"):
                 col, i = i, i + 1         # a sequence entry: a block scalar here is text past the dash's column
+                continue
+            if ch == "?" and raw[i + 1:i + 2] in ("", " ", "\t"):
+                col, i = i, i + 1         # an explicit key: its node starts after the `?`, as a sequence entry's does
+                continue
+            if not flow and i == 0 and raw.startswith("---") and raw[3:4] in ("", " ", "\t"):
+                i = 3                     # a document start marker: a node may start after it on its line
                 continue
             if ch in "&*!":
                 j = i + 1
@@ -2758,6 +2766,15 @@ class PopulationCheckReds(unittest.TestCase):
                 self.assertEqual(unread_yaml_forms(src), sorted(want), label)
                 self.assertEqual((self._new_bad(src), pytest_line_census(src)[1], switch_line_census(src)[1], unread_job_keys(src)[1]),
                                  ([], [], [], []), "%s: the refusal is the one red" % label)
+        # an anchor or alias after an explicit key's `?`, and an anchor after the document start marker, are refused
+        # at their lines too (the first verify pass's Y21 and Y22: neither line was named; Y21's pytest value line is
+        # also named by the line census, a layout the parser does not read)
+        src, first = self._with_first_step_in_shell_job("      - name: Explicit key\n        ? &rk run\n        : echo one\n"
+                                                        "      - name: Explicit alias (pytest)\n        ? *rk\n"
+                                                        "        : python -m pytest tests/test_a.py -q\n")
+        self.assertEqual([(n - first + 1, w) for n, _t, w in unread_yaml_forms(src)], [(2, "an anchor (&rk)"), (5, "an alias (*rk)")])
+        self.assertEqual([n - first + 1 for n, _t in pytest_line_census(src)[1]], [6])
+        self.assertEqual(unread_yaml_forms("--- &doc\n" + self.src), [(1, "--- &doc", "an anchor (&doc)")])
         # the controls, the real file's own shapes: `&&`, `2>&1` and a `*` glob in a run; a literal block whose lines
         # open with `*)` and `&>`; a quoted scalar holding `*` and `&`; each reads as text
         for label, text in (("operators and a glob in a plain run", "      - name: Plain\n        run: make a && ls tests/*.py 2>&1 | tee log\n"),
