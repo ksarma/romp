@@ -15,7 +15,7 @@
 //              module.require(), await import(), a createRequire-bound loader (createRequire by its own name or through its import
 //              alias) or the launcher's own exported requireCjs, by its named import, as a
 //              member of a whole-module or default launcher binding or of the launcher loaded where it stands, or destructured
-//              from a load of the launcher, declared or assigned,
+//              from a load of the launcher, declared or assigned by a plain = (a compound assignment is refused, below),
 //              destructured or whole) and calls that module's inBrowser THROUGH the binding (an identifier bound to the
 //              export, or a literal inBrowser member of a namespace or default binding, or of the loader call's own result,
 //              `require("./real-viewer-leg").inBrowser(...)`; through parentheses, !, as, .call/.apply; .bind makes no call,
@@ -49,7 +49,8 @@
 //              refusal with the remedy, never a silent non-leg. A file under node_modules is a package and binds nothing of
 //              the tree; a json or css file is not a script.
 //   playwright: the module names a playwright package (playwright, playwright-core, @playwright/test, or a subpath) by any
-//              specifier form, either quote, in any position (an import, a loader call bound to a name, or a loader call whose
+//              specifier form, either quote, in any position (an import, a loader call bound to a name by a declaration or a plain
+//              = assignment, or a loader call whose
 //              result is used where it stands: `require("playwright").chromium.launch()`, `(await import("playwright"))`,
 //              `import("playwright").then(...)`), other than a type-only import or export (`import type`, `export type ... from`,
 //              or named bindings every one inline type-only, `import { type Page }`: erased at build time, it binds nothing and
@@ -101,7 +102,19 @@
 //              tagged template, a call form THE SAFETY NET reads the text of); a createRequire(...) call in a position other than
 //              a declaration's initializer under a plain name, a direct loader callee, or the object of a member other than
 //              call, apply or bind (passed as an argument, an assignment's right side, held in a literal: the loader is handed
-//              on and every load through it is unread); a playwright load or binding, or a load of
+//              on and every load through it is unread); a playwright binding, or a name derived from one, handed on as a value
+//              (passed as an argument, returned, held in an array or an object literal, read into a template: the engines and
+//              launches reached through it are unread; the exempt positions are a name, a type, the object of a member the walker
+//              reads, the callee, a declaration's initializer or an assignment's right side, and the value tests the tree's guard
+//              idiom spells, `!pw`, typeof, void, a comparison, the condition of if, while, for or a conditional, the left operand
+//              of &&, which read the binding for truth and hand nothing on; those tests are exempt for playwright and NOT for the
+//              launcher binding, which is refused as an operand); a playwright load, binding or chain, or a load of the launcher,
+//              on the right of a COMPOUND assignment (??=, ||=, &&=, or any operator but =: which value the name takes is unread,
+//              the launcher load followed by that refusal); a tracked launcher or playwright binding WRITTEN, by any operator,
+//              with a value the walker does not follow (not null or undefined, not a loader call of the binding's own kind, not a
+//              chain the walker read: a stub, a load of the other kind, another module), refused at the write in one home, since
+//              the binding keeps its module and a call through the rebound name would count as a shared call with the switch
+//              never read, or a launch through it go unread; a playwright load or binding, or a load of
 //              the launcher, read through a conditional or logical expression (`cond ? require("playwright") : null`, `?? null`,
 //              `|| null`, `ok && require(...)`, as a binding's initializer, an assignment's right side or a member chain's root:
 //              the walker does not follow which branch the value takes, so the engines and launches read through it, or where
@@ -115,7 +128,8 @@
 // parse resolved (an import, an export from, import =, a loader call in ANY position) is in `playwright`, or, for a type-only
 // import or export, in typeOnly. (2) The launcher the
 // parse resolved is carried as an import (launcherImported), a type-only import (typeOnly), or a FOLLOWED load: a loader call
-// bound by a binding's initializer or an assignment's right side, standing as a statement of its own, or the object of a
+// bound by a binding's initializer or a plain = assignment's right side (a compound assignment's is refused by name and followed
+// by that refusal), standing as a statement of its own, or the object of a
 // member the walker read (`require(launcher).inBrowser(...)` counted as a shared call, another member read as an import,
 // where then, catch, finally and default are not another member: they hand the load on, and the call arm refuses the
 // promise members by name); a load in any other position (returned from a wrapper, passed as an argument, held in a class
@@ -483,6 +497,7 @@ export function classify(ts, file, src, opts = {}) {
    *  handedHow, whose parentheticals name inBrowser): `q` is the reference up through the wrappers, `pp` its parent. */
   const valueHandedHow = (q, pp) => {
     if (!pp) return "in a position the walker does not read";
+    if (ts.isElementAccessExpression(pp) && pp.argumentExpression === q) return "read as a computed member's name";
     if (ts.isPropertyAccessExpression(pp) || ts.isElementAccessExpression(pp)) { const names = memberNames(pp); return names === null ? "read for a computed member the walker cannot fold" : "read for ." + names.join("|") + (CALL_APPLY_BIND(names) ? ", through which a load is made or a loader bound where the walker does not follow" : ""); }
     if (ts.isVariableDeclaration(pp) && pp.initializer === q) return ts.isIdentifier(pp.name) ? "aliased by a declaration" : "destructured";
     if (ts.isBinaryExpression(pp) && isAssignmentOp(pp) && pp.right === q) return "aliased by an assignment";
@@ -739,18 +754,66 @@ export function classify(ts, file, src, opts = {}) {
     if (chain && !chain.refused) {
       let changed = false;
       if (ts.isIdentifier(target)) { const k = keyOf(target); if (!pwDerived.has(k) && !bindings.has(k)) { track(pwDerived, k, { name: target.text, chain }); changed = true; } }
-      else if (ts.isObjectBindingPattern(target)) for (const el of target.elements) { const prop = el.propertyName ? (ts.isIdentifier(el.propertyName) ? el.propertyName.text : literalName(el.propertyName)) : (ts.isIdentifier(el.name) ? el.name.text : null); if (prop === null || !ts.isIdentifier(el.name)) { refuse(el, "a destructuring of a playwright expression the walker cannot read"); continue; } if (!pwDerived.has(el)) { track(pwDerived, el, { name: el.name.text, chain: [...chain, [prop]] }); changed = true; } if (LAUNCHES.has(prop)) launches.push({ line: lineOf(el), how: "destructured " + prop }); }
+      // each destructured element's own chain is noted (`const { firefox } = pw` records firefox whether or not the name is chained
+      // later), as a destructuring of the load itself does through the binding's member
+      else if (ts.isObjectBindingPattern(target)) for (const el of target.elements) { const prop = el.propertyName ? (ts.isIdentifier(el.propertyName) ? el.propertyName.text : literalName(el.propertyName)) : (ts.isIdentifier(el.name) ? el.name.text : null); if (prop === null || !ts.isIdentifier(el.name)) { refuse(el, "a destructuring of a playwright expression the walker cannot read"); continue; } if (!pwDerived.has(el)) { track(pwDerived, el, { name: el.name.text, chain: [...chain, [prop]] }); changed = true; } noteChain([...chain, [prop]]); if (LAUNCHES.has(prop)) launches.push({ line: lineOf(el), how: "destructured " + prop }); }
       else refuse(target, targetKind(target) + " of a playwright expression the walker does not follow");
       noteChain(chain);
       return changed;
     }
     return false;
   };
+  /** The loader call a value stands on, peeled through the member chain bindLoaded reads (`require("x").y`): null when the value is
+   *  no call, or the chain holds a computed member the walker cannot fold. */
+  const loadUnder = (v) => { let e = v; while (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) { if (memberNames(e) === null) return null; e = unwrap(e.expression); } return ts.isCallExpression(e) ? { call: e, l: loaderCall(e) } : null; };
+  /** A COMPOUND assignment (??=, ||=, &&=, +=, any operator but =) whose right side is a playwright load, binding or chain, or a
+   *  load of the launcher: walk2 binds under = alone, and which value the name takes through a compound operator is unread, so the
+   *  line is REFUSED by name (the predicate is isAssignmentOp minus =, not a list of operators), the launcher load marked followed so
+   *  THE INVARIANT does not refuse it a second time. A compound whose right side resolves no tracked load refuses nothing here (the
+   *  write-time arm below asks whether its target is a tracked binding). Returns true when it refused, or when the right side was
+   *  refused by name already (a refused loader, a conditional root pwChain refused), so the write-time arm stands down. */
+  const refuseCompoundLoad = (n) => {
+    const v = unwrap(n.right);
+    const u = loadUnder(v), l = u ? u.l : null;
+    if (l && l.kind === "launcher") { followed.add(u.call); refuse(n, "the shared launcher loaded by a compound assignment the walker does not follow, so where inBrowser is called from is unread: bind the load with = in a statement of its own"); return true; }
+    if (l && l.kind === "refused") return true;
+    let pw = !!(l && l.kind === "playwright") || (ts.isIdentifier(v) && (derivedAt(v) !== null || (bindingAt(v) !== null && bindingAt(v).module === "playwright")));
+    if (!pw && !l) { const c = pwChain(v); if (c && c.refused) return true; pw = !!c; }
+    if (pw) { refuse(n, "a playwright load or binding bound by a compound assignment the walker does not follow (which value the name takes is unread): bind it with = in a statement of its own"); return true; }
+    return false;
+  };
+  /** A WRITE to a tracked launcher or playwright binding (the target an identifier, or a destructured element's name, resolving by
+   *  scope to the binding) with a value the walker does not follow: not null or undefined, not a loader call of the SAME kind as the
+   *  binding (a refused loader counts as read), and for a playwright binding not a chain pwChain read or refused. The binding keeps
+   *  its module, so a call through the rebound name would count as a shared call while the stub runs and the switch is never read,
+   *  or a launch through a launcher name rebound to playwright would go unread: REFUSED by name, in this one home, whatever the
+   *  operator (walk3's value-use arms keep the target exempt as a name position). Inside the fixpoint, so a write the walk visits
+   *  before the declaration that binds the name (a function declared above the let) is refused on the next pass. */
+  const refuseWrite = (n) => {
+    const t = unwrap(n.left);
+    if (!ts.isIdentifier(t)) return false;
+    const b = bindingAt(t);
+    if (b === null || !["launcher", "playwright"].includes(b.module)) return false;
+    const v = unwrap(n.right);
+    if (v.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(v) && v.text === "undefined")) return false;
+    const u = loadUnder(v), l = u ? u.l : null;
+    if (l && (l.kind === b.module || l.kind === "refused")) return false;
+    if (b.module === "playwright" && !l && pwChain(v)) return false;   // a chain the walker followed, or one it refused by name
+    const what = l ? (l.kind === "launcher" ? "a load of the shared launcher" : l.kind === "playwright" ? "a load of a playwright package" : "a load of another module") : "a value that is no load the walker reads";
+    refuse(n, "a " + b.module + " binding (" + t.text + ") written with " + what + ", which the walker does not follow: a call through the rebound name would count as a call through the binding while what the name holds is unread: bind the load once, or give the other value a name of its own");
+    return true;
+  };
   for (let pass = 0, changed = true; changed && pass < 8; pass++) {
     changed = false;
     const walk2 = (n) => {
       if (ts.isVariableDeclaration(n) && n.initializer) { if (bindLoaded(n.name, n.initializer, n)) changed = true; }
-      else if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) { if (bindLoaded(unwrap(n.left), n.right, n)) changed = true; }
+      else if (ts.isBinaryExpression(n) && isAssignmentOp(n)) {
+        // = binds (bindLoaded); a compound operator with a tracked load or binding on its right refuses by name; and any operator
+        // writing a tracked launcher or playwright binding with a value the walker does not follow refuses at the write
+        const eq = n.operatorToken.kind === ts.SyntaxKind.EqualsToken;
+        if (eq) { if (bindLoaded(unwrap(n.left), n.right, n)) changed = true; }
+        if (eq || !refuseCompoundLoad(n)) refuseWrite(n);
+      }
       ts.forEachChild(n, walk2);
     };
     walk2(sf);
@@ -958,6 +1021,43 @@ export function classify(ts, file, src, opts = {}) {
           if (read) refRead.add(n);
           else if (handed) { refuse(n, "the launcher's module binding handed on as a value (" + handedHow(q, pp) + "), so the walker cannot follow where inBrowser is called from"); refRefused.add(n); }
           // a computed member no arm refused: left to THE INVARIANT below
+        }
+      }
+      // a PLAYWRIGHT binding (the load or import bound to a name), or a name derived from one (pwDerived: `const { firefox } = pw`),
+      // handed on as a value: the mirror of the launcher arm above with the exemptions the round-4 refuters converged on. The
+      // reference is walked up through the wrappers (parentheses, as, !, satisfies, a type assertion), await, a conditional's
+      // branches and a logical's carrying operands (the right of &&, either side of || and ??), to the position that receives the
+      // value. Exempt: a name position (a declaration, import, binding element, parameter or property name) and a type position; the
+      // object of a member access (pwChain reads the chain, or refuses its computed member by name); the callee (the call arm reads
+      // a derived launch); a declaration's initializer or an assignment's right side (bindLoaded tracks the target, refuses it by
+      // its kind, or refuseWrite refuses the rebinding, so the line carries one refusal); and the value tests the tree's own guard
+      // idiom spells (`!pw`, typeof, void, a comparison, instanceof, in, the condition of if, while, do, for or a conditional, the
+      // left operand of &&), which read the binding for truth and hand nothing on; these tests are exempt for playwright and NOT for
+      // the launcher, whose binding carries inBrowser and is refused as an operand (p149). Everything else hands the binding on
+      // where the walker does not read (passed as an argument, returned, held in a literal), and the engines and launches reached
+      // through it are unread: REFUSED, the position named (valueHandedHow).
+      const pwName = (b !== null && b.module === "playwright") ? n.text : (derivedAt(n) !== null ? n.text : null);
+      if (pwName !== null) {
+        const p = n.parent;
+        const isName = !!p && (ts.isImportSpecifier(p) || ts.isNamespaceImport(p) || ts.isImportClause(p) || ts.isImportEqualsDeclaration(p) || ts.isParameter(p) || (ts.isBindingElement(p) && (p.name === n || p.propertyName === n)) || (ts.isVariableDeclaration(p) && p.name === n) || (ts.isPropertyAccessExpression(p) && p.name === n) || (ts.isPropertyAssignment(p) && p.name === n) || (ts.isBinaryExpression(p) && p.left === n && isAssignmentOp(p)));
+        const isType = !!p && (ts.isTypeQueryNode(p) || ts.isTypeReferenceNode(p));
+        if (!(isName || isType)) {
+          let q = n;
+          for (;;) {
+            const pp = q.parent;
+            if (!pp) break;
+            if (ts.isParenthesizedExpression(pp) || ts.isAsExpression(pp) || ts.isNonNullExpression(pp) || ts.isSatisfiesExpression(pp) || ts.isTypeAssertionExpression(pp) || ts.isAwaitExpression(pp)) { q = pp; continue; }
+            if (ts.isConditionalExpression(pp) && (pp.whenTrue === q || pp.whenFalse === q)) { q = pp; continue; }
+            if (isLogical(pp) && !(pp.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken && pp.left === q)) { q = pp; continue; }
+            break;
+          }
+          const pp = q.parent;
+          const COMPARISONS = [ts.SyntaxKind.EqualsEqualsToken, ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken, ts.SyntaxKind.LessThanToken, ts.SyntaxKind.GreaterThanToken, ts.SyntaxKind.LessThanEqualsToken, ts.SyntaxKind.GreaterThanEqualsToken, ts.SyntaxKind.InstanceOfKeyword, ts.SyntaxKind.InKeyword];
+          const memberObject = !!pp && (ts.isPropertyAccessExpression(pp) || ts.isElementAccessExpression(pp)) && pp.expression === q;
+          const callee = !!pp && ts.isCallExpression(pp) && pp.expression === q;
+          const bound = !!pp && ((ts.isVariableDeclaration(pp) && pp.initializer === q) || (ts.isBinaryExpression(pp) && isAssignmentOp(pp) && pp.right === q));
+          const valueTest = !!pp && ((ts.isPrefixUnaryExpression(pp) && pp.operator === ts.SyntaxKind.ExclamationToken) || ts.isTypeOfExpression(pp) || ts.isVoidExpression(pp) || (ts.isBinaryExpression(pp) && COMPARISONS.includes(pp.operatorToken.kind)) || (ts.isBinaryExpression(pp) && pp.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken && pp.left === q) || ((ts.isIfStatement(pp) || ts.isWhileStatement(pp) || ts.isDoStatement(pp)) && pp.expression === q) || (ts.isForStatement(pp) && pp.condition === q) || (ts.isConditionalExpression(pp) && pp.condition === q));
+          if (!(memberObject || callee || bound || valueTest)) refuse(n, "a playwright binding (" + pwName + ") handed on as a value (" + valueHandedHow(q, pp) + "), so the engines and launches reached through it are unread by the walker: launch on the binding where it is bound, or bind the load in the module that launches");
         }
       }
     }
