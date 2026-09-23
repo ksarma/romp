@@ -43,55 +43,37 @@ worker count, build the tests and start the runner yourself, from `vscode-extens
 `node esbuild.js --tests && node --max-old-space-size=2048 --test --test-concurrency=N
 'out-tests/**/*.test.js'`.
 
-CI's vscode-extension job runs `npm test` before it installs a browser, so every browser leg of the
-extension's test build (a test module `vscode-extension/esbuild.js` testBuild bundles into `out-tests/`
-that launches a Playwright browser; `tests/ui-bench.test.mjs` under `ROMP_UI_BENCH_REQUIRE` and the served
-pytest files under `ROMP_SERVED_TESTS_REQUIRE` carry their own switch) skips at launch there. The legs named in
-`vscode-extension/ci-browser-legs.txt`, one compiled bundle path per line, run again after the
-job's Chromium install with `ROMP_BROWSER_LEGS_REQUIRE=1`. The one shared launcher, `inBrowser`
-in `ui/webview/real-viewer-leg.ts`, reads the switch (any non-empty value arms it): under it a
-leg that cannot launch fails naming the switch and the reason instead of skipping. A rostered
-leg launches through `inBrowser` with no launch or skip of its own, and in the gating job that
-is Chromium; a leg's Firefox and WebKit runs live elsewhere (a served pytest step, a local run),
-and a leg that launches on its own is refused from the roster until it takes the shared
-launcher; after the run a skipped test, or a leg that registered no test, is red. Every other
-browser leg is listed in `vscode-extension/ci-browser-legs-excluded.txt`
-with a reason. What a browser leg is, `vscode-extension/scripts/browser-legs-census.mjs` reads
-from each test module's tree with the TypeScript compiler (a call of the shared launcher through
-its import under any name, a playwright package named by any specifier other than a type-only
-import or export, or a driver string that loads one; a form it cannot classify is refused with
-file and line). A PR that wants its legs
-run moves them to the roster (a leg already in the exclusions loses its line there in the same
-commit). `ui/webview/ci-browser-legs-census.test.ts`, in the extension's `npm test`, holds every
-browser leg of the extension's test build to one file or the other and fails on a line whose source is gone, and
-the step's script checks the same before it runs a leg; `tools/ci-browser-legs.test.mjs`, which
-CI's shell job runs without `npm ci`, holds the two files' shape and reasons and runs the script
-over synthetic trees.
-A PR that adds a browser leg files its roster or exclusions line after merging main; until then
-an exclusions line reading `pending #<PR>: <why>` names the leg, allowed while its source is absent
-from the tree, and once the source is present (the PR merged main, or the checkers run on its
-branch) every checker turns the line red with the promotion remedy derived from the source (a roster
-line for a leg that passes the gate and reaches Chromium alone; the engine form, or the embedded-driver
-sentence, when one is true of it; for a Chromium-only leg that misses the gate, pass the gate and roster
-it, since the exclusions admit no reason of its own; no line for a module that is no leg), so the owner
-promotes it in that merge; a leg in neither file is red with the same derived remedy. A pending line whose PR closes without the
-leg never turns red on its own and is removed by hand;
-`grep '^out-tests.*pending #' vscode-extension/ci-browser-legs-excluded.txt` lists the pending lines (the rows; the
-file's header spells the form too, which a grep for the bare prefix would list). The rows at the roster's creation
-were derived, not recalled: the fork's open PRs listed with `gh api "repos/<owner>/<repo>/pulls?state=open&per_page=100" --paginate`,
-each PR's added or modified `.test.ts` files under the census's directories read with
-`gh api "repos/<owner>/<repo>/pulls/<N>/files?per_page=100" --paginate`, and each candidate's content at the PR's head
-classified by the census module's `classify()` (the exclusions header records the date and time of the read); a PR opened after that read
-takes the pending-row remedy when its leg arrives. A pending row alone does not clear a PR whose module the census
-refuses: the census refuses before the equality runs, so that PR stays red until the form is rewritten or the census is
-taught it.
-Before you push, `node --test tools/ci-browser-legs.test.mjs` from the repo root runs the tree checks
-CI's shell job runs (no `npm ci` needed); from `vscode-extension/`, after `npm ci`,
-`node esbuild.js --tests && node --test out-tests/ui/webview/ci-browser-legs-census.test.js` runs the
-parsed census (it needs the TypeScript compiler, so it lives in the extension's suite and in `npm test`),
-and `bash scripts/ci-browser-legs.sh --check` runs the step's pre-run checks alone, without starting a
-browser; the step itself is `bash scripts/ci-browser-legs.sh` with `ROMP_BROWSER_LEGS_REQUIRE=1`, after
-`node esbuild.js --tests`.
+CI's vscode-extension job runs `npm test` before it installs a browser, so every browser leg (a test
+module that launches a Playwright browser; `tests/ui-bench.test.mjs` under `ROMP_UI_BENCH_REQUIRE` and the
+served pytest files under `ROMP_SERVED_TESTS_REQUIRE` carry their own switch) skips at launch there. The
+legs named in `vscode-extension/ci-browser-legs.txt`, one compiled bundle path per line, run again after
+the job's Chromium install with `ROMP_BROWSER_LEGS_REQUIRE=1`. The one shared launcher, `inBrowser` in
+`ui/webview/real-viewer-leg.ts`, reads the switch (any non-empty value arms it): under it a leg that
+cannot launch fails naming the switch and the reason instead of skipping. A PR that wants its legs run
+adds their bundle paths to the roster and puts the step's measured seconds in its body.
+
+The roster rule is checked by the PR's reviewer, not by CI: a rostered leg launches through `inBrowser`
+alone, with no playwright load, launch, skip or todo of its own, in Chromium, the one engine the job
+installs (a leg's Firefox and WebKit runs live elsewhere, a served pytest step or a local run). Only
+`inBrowser` reads the switch, so a leg's own skip stays a skip and its own failed launch is never the
+failure naming the switch. Nothing in the tree reads a leg's source for the rule, so the step reads these
+four cases green: a rostered leg that launches its own browser and swallows a failed launch without
+skipping; a rostered module that launches nothing; a leg that drives a browser from a child process and
+tolerates the child's failure; a todo test that passes beside a real pass
+(`tools/ci-browser-legs.test.mjs` runs a synthetic leg of each case and reads it green). Nothing checks
+that every browser leg in the tree is rostered, and main has no such check: a leg with no line runs only
+under the Test step, before the job installs a browser.
+
+The step's script, `vscode-extension/scripts/ci-browser-legs.sh`, refuses before `node --test` a roster
+line that is malformed, duplicated or names a source that moved or was deleted, and a rostered bundle
+that is not built. After `node --test` it reads its own reporter's record, and a rostered leg with no
+passing test, a skipped test, a failure inside a todo, or a file that failed as a whole is red, naming
+the leg or the test; a leg whose launch failed under the switch is named with the remedy to check the
+Chromium install step. Before you push, `node --test tools/ci-browser-legs.test.mjs` from the repo root
+runs the tree checks CI's shell job runs (no `npm ci` needed). From `vscode-extension/`,
+`bash scripts/ci-browser-legs.sh --check` runs the step's pre-run checks alone, without starting a
+browser, and the step itself is `bash scripts/ci-browser-legs.sh` with `ROMP_BROWSER_LEGS_REQUIRE=1`,
+after `node esbuild.js --tests`.
 
 `tests/gitleaks-config.bats` checks the secret-scanning rules in `.gitleaks.toml`
 against the real scanner and skips itself when `gitleaks` is not installed

@@ -10,27 +10,25 @@
 # (ui/webview/<name>-browser.test.ts builds to out-tests/ui/webview/<name>-browser.test.js), for example
 #   out-tests/ui/webview/gear-sub-focus-browser.test.js
 # Blank lines and lines starting with # are ignored. A PR that wants its legs run adds them as lines here and puts
-# the step's measured seconds in its body. A leg the job does not run is listed in ci-browser-legs-excluded.txt
-# with a reason; every browser leg of the extension's test build is in exactly one of the two files, never neither. What a browser
-# leg is, the census scripts/browser-legs-census.mjs reads from each test module's tree with the TypeScript
-# compiler (a call of the shared launcher through its import under any binding, a playwright package named by any
-# specifier other than a type-only import or export, or a driver string that loads one; a form it cannot classify is
-# refused with file and line, and so is a module that reaches inBrowser or playwright only through another module of
-# the tree it loads, which the census reads for what it binds or calls and follows nothing through);
-# ui/webview/ci-browser-legs-census.test.ts (the vscode-extension job) holds the two files to it and
-# scripts/ci-browser-legs.sh checks the same before it runs a leg, while tools/ci-browser-legs.test.mjs (the Shell
-# job, no compiler) holds the files' shape; a line whose source moved or was deleted turns all three red. A leg listed
-# here passes the roster gate the census reads: it calls inBrowser through its import of ui/webview/real-viewer-leg.ts
-# (an alias is a call), loads no playwright itself, holds no launch, skip or todo of its own, and does not drive
-# playwright from a child process whose source is held in a string, which the switch never reaches (the gate reads the
-# string, not a spawn): only inBrowser reads the switch, so a launch or a skip of the leg's own stands outside it (a private
-# skip stays a skip, and a private launch that fails is never the failure naming the switch), and the checkers
-# refuse its line with the gap the census read until it launches through inBrowser alone (a shared call inside a
-# try with a catch clause is admitted; the census test prints how many there are). After the run, a skipped test or
-# a leg that registered no test is red: either is coverage the step would claim and not have. The gating job runs a
-# rostered leg in the Chromium it installs; a leg's Firefox and WebKit runs live elsewhere (a served pytest step, a
-# local run), and a line whose source reaches another engine is refused. A leg already in
-# ci-browser-legs-excluded.txt is moved, not copied: its line there goes in the same commit as its line here arrives.
-# The switch test below spawns three child node --test runs of its own bundle (the switch set to "1", to another non-empty
-# value, and unset); they hold no driver string, and the gate reads the string, not the spawn.
+# the step's measured seconds in its body. The script refuses a malformed or duplicated line, a line whose source
+# moved or was deleted, and a line whose bundle is not built; tools/ci-browser-legs.test.mjs (the Shell job) holds
+# the same shape.
+#
+# The roster rule is checked by the PR's reviewer, not by the step: a leg listed here launches its browser through
+# inBrowser alone (an alias is a call), with no playwright load, launch, skip or todo of its own, in Chromium, the one
+# engine the job installs. Only inBrowser reads the switch, so a launch or a skip of the leg's own stands outside it:
+# a private skip stays a skip, and a private launch that fails is never the failure naming the switch. Nothing in the
+# tree reads a leg's source for the rule, so the step reads these four cases green: a rostered leg that launches its
+# own browser and swallows a failed launch without skipping; a rostered module that launches nothing; a leg that
+# drives a browser from a child process and tolerates the child's failure; a todo test that passes beside a real pass.
+# tools/ci-browser-legs.test.mjs runs a synthetic leg of each case and reads it green.
+# Nothing checks that every browser leg in the tree is rostered, and main has no such check. After the run, a skipped
+# test, a failure inside a todo, a file that failed as a whole, or a leg that ran no passing test is red: each is
+# coverage the step would claim and not have. A leg's Firefox and WebKit runs live elsewhere (a served pytest step,
+# a local run).
+#
+# The switch test below spawns three child node --test runs of its own first test (the switch set to "1", to another
+# non-empty value, and unset) with PLAYWRIGHT_BROWSERS_PATH pointed at an empty directory, and asserts that the two
+# children under the switch fail and the one without it skips: that is its test of the switch, not a browser driven
+# from a child process, and its own first test opens a page through inBrowser.
 out-tests/ui/webview/real-viewer-leg-switch.test.js

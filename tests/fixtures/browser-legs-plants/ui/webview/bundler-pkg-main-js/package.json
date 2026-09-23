@@ -1,4 +1,0 @@
-{
-  "description": "a plant's companion, not a package: its main field names ./index.js, which the bundler rewrites to index.ts, the file it loads for a specifier spelled ./bundler-pkg-main-js, where the directory's index in the test build's order is index.tsx (p394)",
-  "main": "./index.js"
-}

@@ -1,4 +1,0 @@
-{
-  "description": "a plant's companion, not a package: its main field names leg.ts, the file the bundler loads for a specifier spelled ./bundler-pkg-main before the directory's index (p393), and node for ../ui/webview/bundler-pkg-main from vscode-extension/ (p399)",
-  "main": "leg.ts"
-}

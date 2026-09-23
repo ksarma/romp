@@ -1,4 +1,0 @@
-{
-  "description": "a plant's companion, not a package: its module field names leg.ts, the file the bundler loads for an import statement spelled ./bundler-pkg-module before the directory's index (p395)",
-  "module": "leg.ts"
-}
