@@ -101,7 +101,8 @@ regression-2: this sentence had been written at the head of the build's verifier
 head's cases, said every case green of all three plants, and went stale as cases and the pin were added, so the count here is pinned by
 a Docs case against the loader's count of this module's cases, and the plants are re-taken whenever it moves). The two
 witnesses answer different questions: the recorders say
-who loaded, the delta says that something did. By the served counter: `memos.nudgeWalk.loads`, bumped at the walk's one call site, must
+who loaded, the delta says that something did. By the served counter: `memos.nudgeWalk.loads`, bumped on the line before the walk's one
+call site, so a look that reaches the read counts once whether the read returns a store, returns a fault or raises out of the look, must
 move by the walk's count per pass. A skipped look repeats its verdict and writes nothing (the wake-only memo of PR 784),
 so it needs no data: the recorder sees no call from either.
 
@@ -1014,7 +1015,8 @@ _UNSET = object()
 # _walk refuses a node of any other class, and TheGrammarIsTheOneTheWalkersClassify checks at test time that the running
 # interpreter defines no node class outside the three rosters, so a grammar that gains a node form reds naming the new class
 # instead of scanning less. The classification itself is the walkers': _loader_sites reads Name, Attribute and alias as sites and
-# every other class here as no site; _bump_sites reads AugAssign and its target; _pass_through_lines reads Call; _loader_births
+# every other class here as no site; _bump_sites reads AugAssign and its target, and with a load's line the statement lists of the
+# nodes it yielded; _pass_through_lines reads Call; _loader_births
 # reads Attribute, Name, alias, arg, keyword, the two def classes, Subscript, Call and Constant; a class outside this table is classified by
 # none of them and is refused before any of them answers (held by execution over every census entry point of this module, the
 # roster _CENSUSES, in TheWalkersRefuseAStrangerByExecution: a stranger planted in a real tree at every node position of the
@@ -1282,21 +1284,43 @@ def _loader_sites(obj, needle):
     return sorted(out)
 
 
-def _bump_sites(obj):
+def _bump_sites(obj, before=None):
     """The line indices (as _loader_sites indexes) of every `_NUDGE_WALK_STATS["loads"] += 1` in `obj`'s source, read as a
     statement from the AST: an augmented add on a constant "loads" subscript of the Name _NUDGE_WALK_STATS, never a line of
     text (review round 2: a comment quoting the statement counted as a bump). Any other spelling (a plain assignment, the key in
     a variable, the dict under a local alias or qualified by its module, `-= -1`, `__setitem__`, `update`) is no bump here, so
-    the walk census reds on it, conservatively; the increment's value is not read (the served counter's delta holds it), and a
-    bump under a one-line `if` or `for` on the line after the load counts with its adjacency intact. The bump forms are
-    enumerated in TheCensusOverEveryForm (the consolidation pass). Derives: the bump lines from the AST of `obj`'s source. Bounds:
-    the one spelling read, an augmented Add on a constant "loads" subscript of the Name _NUDGE_WALK_STATS, so every other spelling
-    is no bump and the walk census reds on it, conservatively, each form held on its side by the bump enumeration (_BUMP_FORMS)."""
+    the walk census reds on it, conservatively; the increment's value is not read (the served counter's delta holds it). With
+    `before`, the line index of the load, only the bumps that are the statement directly before the load's own statement in
+    the statement list holding it: the load's statement is the innermost statement spanning that line, and when two statements
+    share the line (neither inside the other) the answer is empty. So a bump under a one-line `if` or `for`, a bump with another
+    statement between it and the load, and a bump in another statement list are none of these, and the walk census reds on
+    each (review round 8, extra5-1: the adjacency read lines alone and took a one-line `if` around the bump as correct). The
+    tree is walked whole before either answer, so a node no table classifies is refused in both; the statement lists are the
+    fields of nodes the walk yielded (ast.iter_fields lists them and traverses nothing). The bump forms are enumerated in
+    TheCensusOverEveryForm (the consolidation pass). Derives: the bump lines from the AST of `obj`'s source. Bounds: the one
+    spelling read, an augmented Add on a constant "loads" subscript of the Name _NUDGE_WALK_STATS, so every other spelling is no
+    bump and the walk census reds on it, conservatively, each form held on its side by the bump enumeration (_BUMP_FORMS)."""
     tree = ast.parse(textwrap.dedent(inspect.getsource(obj)))
-    return [n.lineno - 1 for n in _walk(tree)
-            if isinstance(n, ast.AugAssign) and isinstance(n.op, ast.Add) and isinstance(n.target, ast.Subscript)
-            and isinstance(n.target.value, ast.Name) and n.target.value.id == "_NUDGE_WALK_STATS"
-            and isinstance(n.target.slice, ast.Constant) and n.target.slice.value == "loads"]
+    nodes = list(_walk(tree))                         # the whole tree first: a stranger anywhere is refused before either answer
+    bumps = [n for n in nodes
+             if isinstance(n, ast.AugAssign) and isinstance(n.op, ast.Add) and isinstance(n.target, ast.Subscript)
+             and isinstance(n.target.value, ast.Name) and n.target.value.id == "_NUDGE_WALK_STATS"
+             and isinstance(n.target.slice, ast.Constant) and n.target.slice.value == "loads"]
+    if before is not None:
+        blocks = [val for node in nodes for _field, val in ast.iter_fields(node)
+                  if isinstance(val, list) and val and all(isinstance(s, ast.stmt) for s in val)]
+        holding = [(blk, i) for blk in blocks for i, s in enumerate(blk) if s.lineno <= before + 1 <= s.end_lineno]
+
+        def inside(t, s):
+            return ((s.lineno, s.col_offset) <= (t.lineno, t.col_offset)
+                    and (t.end_lineno, t.end_col_offset) <= (s.end_lineno, s.end_col_offset))
+        inner = [(blk, i) for blk, i in holding if not any(b[j] is not blk[i] and inside(b[j], blk[i]) for b, j in holding)]
+        if len(inner) == 1 and inner[0][1] > 0:
+            blk, i = inner[0]
+            bumps = [b for b in bumps if b is blk[i - 1]]
+        else:
+            bumps = []
+    return [n.lineno - 1 for n in bumps]
 
 
 _DYNAMIC_LOOKUPS = ("getattr", "exec", "eval", "compile", "__import__", "import_module", "attrgetter", "vars", "__getattribute__")
@@ -1945,7 +1969,8 @@ def _plant_at(tree, key, positions):
 # value) attributed to its enclosing def or class chain, whatever the container. A module-level def in the floor must be a row
 # here; every class chain in the floor (a method, a nested class's method, a class-body statement) and every module-level statement
 # in the floor is pinned by the roster case with the reason it is outside the roster (the readers inside the test classes, each a
-# helper of a case or a case reading the tree it hands to a row, and the _door_regions row's drive lambda below, which reads the
+# helper of a case or a case reading the tree it hands to a row, the site case's census of the counter across the kernel, which the
+# round-8 ruling placed in that case, and the _door_regions row's drive lambda below, which reads the
 # door's source as the argument of the parse the witness hands it). The floor's boundary is the spelling of the reader alone: a
 # reference is in it only when it names _walk or spells one of the three exactly, base name and attribute; a census that parses
 # under any other road (compile with ast.PyCF_ONLY_AST, the module under an alias, importlib) or is handed a pre-parsed tree under
@@ -2686,6 +2711,44 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                          "kernel's skip branch reds the bound here, and with the bound gone this line)")
         # no owned record, so the sweep's bound in _pass holds the sweep to zero on every pass: nothing to assert about it here
 
+    def test_a_look_whose_read_raises_out_of_the_look_is_counted_on_every_pass(self):
+        """A read that raises anything but an OSError leaves the look (_or_fault turns an OSError into a fault and lets any other
+        exception through) and reaches the tick's per-session handler, which writes it to stderr; the look recorded no memo, so
+        the session is read again on the next pass. memos.nudgeWalk.loads counts a look that reaches the read whatever the read
+        does, so on each such pass it moves by the walk's recorded calls, the raising session's call among them (review round 8,
+        correctness-1 and kernel-1: the bump sat on the line after the read, and every raising read went uncounted, on every
+        pass). Two roads, one subTest each, raise out of the shared door's fill after its miss bump, so _pass's reconciliation
+        balances on both: a journal row whose instant is not a number (the replay's int() raises ValueError) and journal bytes
+        that do not decode (UnicodeDecodeError out of _journal_read). Nothing here is asserted about goals.loads_shared, which the
+        decode road never moves."""
+        jdir = jd._overrides_dir()
+        jdir.mkdir(parents=True, exist_ok=True)
+        journal = jdir / (SID_A + ".jsonl")               # _restore unlinks it with the other journals under this test's root
+        roads = (("a journal row whose instant is not a number", "ValueError",
+                  (json.dumps({"op": "block", "node": SID_A + ":g1", "t": "abc"}) + "\n").encode()),
+                 ("journal bytes that do not decode", "UnicodeDecodeError", b"\xff\xfe\xfa\n"))
+        now = NOW
+        for road, exc, data in roads:
+            with self.subTest(road=road):
+                journal.write_bytes(data)
+                for n in (1, 2):
+                    err = io.StringIO()
+                    with contextlib.redirect_stderr(err):
+                        p = self._pass(now)
+                    now += 5
+                    last = (err.getvalue().strip().splitlines() or [""])[-1]
+                    self.assertIn("auto-nudge (session %s)" % SID_A, err.getvalue(),
+                                  "%s, pass %d: the look of ..%s raised out of the tick's per-session handler, which wrote it to stderr "
+                                  "(last line: %r)" % (road, n, SID_A[-4:], last))
+                    self.assertTrue(last.startswith(exc + ":"), "%s, pass %d: the read raised %s, not an OSError the boundary turns into "
+                                                                "a fault: %r" % (road, n, exc, last))
+                    self.assertEqual(p["walk"][SID_A], 1, "%s, pass %d: the raising look recorded no memo, so its read runs on every "
+                                                          "pass: %r" % (road, n, p["walk"]))
+                    self.assertEqual(p["loads"], sum(p["walk"].values()),
+                                     "%s, pass %d: memos.nudgeWalk.loads moves by the walk's recorded calls, one per look that reached "
+                                     "the read whatever the read did, the raising look's included: loads %d, walk %r"
+                                     % (road, n, p["loads"], p["walk"]))
+
 
 class TheSweepIsItsOwnBoundedReader(_WalkHarness):
     """The wake sweep reads the store once per wake record it owns per pass, keeps no memo, and is counted apart from the
@@ -3414,23 +3477,84 @@ class TheCountersOneSite(unittest.TestCase):
     def test_the_walk_has_one_shared_load_site_and_the_counter_is_bumped_beside_it(self):
         """A census over the look's own source (the gate decorator unwraps): one shared load by either spelling of the shared
         door (`jd.load_goals_shared` is a prefix of both), read from the AST (_loader_sites: a name in code is a site, a
-        mention in a comment, a docstring or a string is not), the counter bumped on the line after it so the two cannot
-        drift, and the gate around the look reads no store (a skipped look needs no data), scanned by the same rule. The bump
+        mention in a comment, a docstring or a string is not); the counter bumped by an unconditional statement on the line
+        before the load, the statement directly before the load's own in the statement list holding it, so a look that reaches
+        the read counts once whatever the read does (review round 8, correctness-1 and kernel-1: the bump sat on the line after
+        the read and missed a read that raised out of the look; extra5-1: a one-line `if` around the bump passed the line
+        check); and the gate around the look reads no store (a skipped look needs no data), scanned by the same rule. The bump
         is read as a statement too, an augmented `+= 1` on `_NUDGE_WALK_STATS["loads"]`, never as a line of text (review round
         2, correctness-3: a comment quoting the statement counted as a second bump). Each object is first checked to be the
         named def (_the_named_def; review round 4, correctness-3): the look behind its gate decorator, whose wraps dropped red the
-        site count with the opposite cause, and the gate factory, whose scan read a decorator's wrapper and answered no site."""
+        site count with the opposite cause, and the gate factory, whose scan read a decorator's wrapper and answered no site.
+        Then the counter across the whole kernel (review round 8, extra5-1, extra6-1 and correctness-3: the census read the
+        look's source alone, so a second bump in a callee, in the real body of a helper the fixture stubs or on a road only the
+        toggle on reaches left the module green): kernel/kernel.py parsed and walked with _walk, every reference to the Name
+        _NUDGE_WALK_STATS is one of the admitted forms (the one module-level assignment of its dict display with "loads" among
+        its keys, a plain or augmented store to a constant key, `.get` with a constant key, a `dict(...)` copy), any other form
+        named by line, and exactly one of them writes the "loads" key: the look's bump. The value that write adds is the served
+        delta's to hold, on every driven road that reaches the read."""
         self._the_named_def("_auto_nudge_session", km._auto_nudge_session, "_auto_nudge_session")
         at = [i for i, _ln in _loader_sites(km._auto_nudge_session, "jd.load_goals_shared")]
         self.assertEqual(len(at), 1, "one shared load in the walk's look, by either spelling of the shared door: a second call site is "
                                      "a second load per look (condition 7, the walk's bound)")
         bump = _bump_sites(km._auto_nudge_session)
         self.assertEqual(len(bump), 1, "the counter is bumped once, by one `_NUDGE_WALK_STATS[\"loads\"] += 1` statement")
-        self.assertEqual(bump[0], at[0] + 1, "on the line after the load")
+        self.assertEqual(bump[0], at[0] - 1, "on the line before the load, so the count covers a look that reaches the read whatever "
+                                             "the read does (a store, a fault, or a raise out of the look): bump at index %d, load at %d"
+                                             % (bump[0], at[0]))
+        self.assertEqual(_bump_sites(km._auto_nudge_session, before=at[0]), bump,
+                         "and the bump is an unconditional statement of the load's own statement list, the statement directly before "
+                         "the load's: a bump under a one-line `if` or `for`, or in another statement list, counts looks the read does not "
+                         "match (bump at index %d)" % bump[0])
         self._the_named_def("_nudge_look_gated", km._nudge_look_gated, "_nudge_look_gated")
         gated = [ln.strip() for _i, ln in _loader_sites(km._nudge_look_gated, "load_goals")]
         self.assertEqual(gated, [], "the gate around the look reads no store: a skipped look loads through neither mechanism: %s" % "; ".join(gated))
         self.assertIn("loads", km._NUDGE_WALK_STATS, "the counter is a key of the served block")
+        # the counter across the kernel: every reference to the Name classified, and exactly one write of the loads key
+        name = "_NUDGE_WALK_STATS"
+        src = Path(os.path.realpath(km.__file__)).read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        nodes = list(_walk(tree))                     # the whole tree: a node no table classifies is refused before a reference is read
+        lines = src.splitlines()
+        admitted, loads_writes = set(), []
+        displays = [s for s in tree.body if isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Name)
+                    and s.targets[0].id == name and isinstance(s.value, ast.Dict)
+                    and any(isinstance(k, ast.Constant) and k.value == "loads" for k in s.value.keys)]
+        if len(displays) == 1:                        # the one module-level definition; a second is named below as a form outside the list
+            admitted.add(id(displays[0].targets[0]))
+        for n in nodes:
+            targets = n.targets if isinstance(n, ast.Assign) else [n.target] if isinstance(n, ast.AugAssign) else []
+            for t in targets:                         # a plain or augmented store to a constant key
+                if (isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name) and t.value.id == name
+                        and isinstance(t.slice, ast.Constant) and isinstance(t.slice.value, str)):
+                    admitted.add(id(t.value))
+                    if t.slice.value == "loads":
+                        loads_writes.append(t)
+            if isinstance(n, ast.Call) and not n.keywords:
+                f = n.func
+                if (isinstance(f, ast.Attribute) and f.attr == "get" and isinstance(f.value, ast.Name) and f.value.id == name
+                        and 1 <= len(n.args) <= 2 and isinstance(n.args[0], ast.Constant)):
+                    admitted.add(id(f.value))         # .get with a constant key
+                elif (isinstance(f, ast.Name) and f.id == "dict" and len(n.args) == 1 and isinstance(n.args[0], ast.Name)
+                        and n.args[0].id == name):
+                    admitted.add(id(n.args[0]))       # a dict(...) copy
+        refs = [n for n in nodes if isinstance(n, ast.Name) and n.id == name]
+        self.assertTrue(refs and displays, "the kernel refers to %s and defines it by a module-level dict display (a derived population "
+                                           "fails on empty): %d references, %d displays" % (name, len(refs), len(displays)))
+        outside = ["line %d: %s" % (n.lineno, lines[n.lineno - 1].strip()) for n in refs if id(n) not in admitted]
+        self.assertEqual(outside, [], "every reference to %s in kernel/kernel.py is one of the admitted forms: the one module-level "
+                                      "assignment of its dict display, a plain or augmented store to a constant key, `.get` with a constant "
+                                      "key, or a `dict(...)` copy; any other form (an alias, a key that is not a constant, a method that "
+                                      "writes, a second definition) could write the counter where this census does not read: %s"
+                                      % (name, "; ".join(outside)))
+        looks = [s for s in tree.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)) and s.name == "_auto_nudge_session"]
+        self.assertEqual(len(looks), 1, "kernel/kernel.py defines the look once at module level")
+        first = min([looks[0].lineno] + [d.lineno for d in looks[0].decorator_list])   # the first line inspect.getsource gives
+        writes = ["line %d: %s" % (t.lineno, lines[t.lineno - 1].strip()) for t in loads_writes]
+        self.assertEqual([t.lineno for t in loads_writes], [first + bump[0]],
+                         "exactly one write of the \"loads\" key in kernel/kernel.py, the look's bump at line %d: a second write anywhere "
+                         "in the kernel moves memos.nudgeWalk.loads on a road that is not the look's read, whether or not the harness "
+                         "drives it; writes of the key: %s" % (first + bump[0], "; ".join(writes) or "none"))
 
     def test_the_shared_doors_bump_roster_is_the_reconciliations_and_its_second_bumps_sit_below_the_fills(self):
         """The second-bump bound in _pass is derived from load_goals_shared's body; this pin reads that body (the AST of the
@@ -4064,26 +4188,27 @@ _LOADER_FORMS = [
     ('F77', 'getattr with a constant casefold folds to the name and str.lower leaves as it is (a long s for each s, so the text str.lower leaves contains no door spelling either; a case fold the pin does not undo)',
      "def f(sid):\n    return getattr(jd, 'load_goal\\u017f_\\u017fhared'.casefold())(sid)\n", 'f', None, [], 0, 'assembled'),
 ]
-# The bump forms: the statement placed on the line after the load in `def f(sid)`, the bump indices _bump_sites answers, and
-# whether the walk census's adjacency (one bump, one load, the bump on the line after) holds.
+# The bump forms: the statement placed on the line before the load in `def f(sid)`, the bump indices _bump_sites answers, and
+# whether the walk census's adjacency (one bump, one load, the bump an unconditional statement directly before the load's, on
+# the line before it) holds.
 _BUMP_FORMS = [
-    ('B01', "_NUDGE_WALK_STATS['loads'] += 1 (the kernel's statement)", "    _NUDGE_WALK_STATS['loads'] += 1\n", [2], True),
+    ('B01', "_NUDGE_WALK_STATS['loads'] += 1 (the kernel's statement)", "    _NUDGE_WALK_STATS['loads'] += 1\n", [1], True),
     ('B02', 'plain assignment x = x + 1', "    _NUDGE_WALK_STATS['loads'] = _NUDGE_WALK_STATS['loads'] + 1\n", [], False),
-    ('B03', '+= 2 (the value is not checked by the scan)', "    _NUDGE_WALK_STATS['loads'] += 2\n", [2], True),
-    ('B04', '+= 1.0 (a float)', "    _NUDGE_WALK_STATS['loads'] += 1.0\n", [2], True),
+    ('B03', '+= 2 (the value is not checked by the scan)', "    _NUDGE_WALK_STATS['loads'] += 2\n", [1], True),
+    ('B04', '+= 1.0 (a float)', "    _NUDGE_WALK_STATS['loads'] += 1.0\n", [1], True),
     ('B05', 'key in a variable', "    key = 'loads'\n    _NUDGE_WALK_STATS[key] += 1\n", [], False),
     ('B06', 'the dict in a local alias', "    _S = _NUDGE_WALK_STATS\n    _S['loads'] += 1\n", [], False),
     ('B07', 'attribute-qualified dict km._NUDGE_WALK_STATS', "    km._NUDGE_WALK_STATS['loads'] += 1\n", [], False),
     ('B08', '-= -1', "    _NUDGE_WALK_STATS['loads'] -= -1\n", [], False),
     ('B09', '__setitem__', "    _NUDGE_WALK_STATS.__setitem__('loads', _NUDGE_WALK_STATS['loads'] + 1)\n", [], False),
-    ('B10', "implicit string concatenation 'lo' 'ads'", "    _NUDGE_WALK_STATS['lo' 'ads'] += 1\n", [2], True),
-    ('B11', 'parenthesised key', "    _NUDGE_WALK_STATS[('loads')] += 1\n", [2], True),
-    ('B12', '+= +1', "    _NUDGE_WALK_STATS['loads'] += +1\n", [2], True),
+    ('B10', "implicit string concatenation 'lo' 'ads'", "    _NUDGE_WALK_STATS['lo' 'ads'] += 1\n", [1], True),
+    ('B11', 'parenthesised key', "    _NUDGE_WALK_STATS[('loads')] += 1\n", [1], True),
+    ('B12', '+= +1', "    _NUDGE_WALK_STATS['loads'] += +1\n", [1], True),
     ('B13', 'dict.update', "    _NUDGE_WALK_STATS.update(loads=_NUDGE_WALK_STATS['loads'] + 1)\n", [], False),
     ('B14', 'the statement quoted in a comment and a string (no bump)', '    note = "_NUDGE_WALK_STATS[\'loads\'] += 1"   # _NUDGE_WALK_STATS[\'loads\'] += 1\n', [], False),
-    ('B15', 'two bumps on one line', "    _NUDGE_WALK_STATS['loads'] += 1; _NUDGE_WALK_STATS['loads'] += 1\n", [2, 2], False),
-    ('B16', 'bump under a one-line if', "    if X: _NUDGE_WALK_STATS['loads'] += 1\n", [2], True),
-    ('B17', 'bump in a one-line for', "    for _ in range(1): _NUDGE_WALK_STATS['loads'] += 1\n", [2], True),
+    ('B15', 'two bumps on one line', "    _NUDGE_WALK_STATS['loads'] += 1; _NUDGE_WALK_STATS['loads'] += 1\n", [1, 1], False),
+    ('B16', 'bump under a one-line if', "    if X: _NUDGE_WALK_STATS['loads'] += 1\n", [1], False),
+    ('B17', 'bump in a one-line for', "    for _ in range(1): _NUDGE_WALK_STATS['loads'] += 1\n", [1], False),
     ('B18', "bump on a bytes key b'loads'", "    _NUDGE_WALK_STATS[b'loads'] += 1\n", [], False),
     ('B19', "bump of a NESTED key _NUDGE_WALK_STATS['x']['loads']", "    _NUDGE_WALK_STATS['x']['loads'] += 1\n", [], False),
     ('B20', 'bump through operator.iadd', "    _NUDGE_WALK_STATS['loads'] = operator.iadd(_NUDGE_WALK_STATS['loads'], 1)\n", [], False),
@@ -4212,15 +4337,16 @@ class TheCensusOverEveryForm(unittest.TestCase):
     def test_every_bump_form_reads_as_the_table_says(self):
         self.assertEqual(len(_BUMP_FORMS), 20, "the table carries the lens's 20 bump forms")
         for bid, form, stmt, bumps, adjacent in _BUMP_FORMS:
-            f = self._target(bid, "def f(sid):\n    store = jd.load_goals_shared_or_fault(sid)\n" + stmt + "    return store\n", "f")
+            f = self._target(bid, "def f(sid):\n" + stmt + "    store = jd.load_goals_shared_or_fault(sid)\n    return store\n", "f")
             at = [i for i, _ln in _loader_sites(f, "jd.load_goals_shared")]
-            self.assertEqual(at, [1], "%s (%s): the load sits at index 1 in every bump form" % (bid, form))
+            self.assertEqual(at, [1 + stmt.count("\n")], "%s (%s): the load sits on the line after the form's statement" % (bid, form))
             got = _bump_sites(f)
             self.assertEqual(got, bumps, "%s (%s): _bump_sites answers %r and the table expects %r (a spelling other than the kernel's "
                                          "`_NUDGE_WALK_STATS[\"loads\"] += 1` is no bump, and the walk census reds on it, conservatively)"
                                          % (bid, form, got, bumps))
-            self.assertEqual(len(got) == 1 and got[0] == at[0] + 1, adjacent,
-                             "%s (%s): the walk census's adjacency, one bump on the line after the one load, %s here" % (bid, form, "holds" if adjacent else "fails"))
+            self.assertEqual(len(got) == 1 and got[0] == at[0] - 1 and _bump_sites(f, before=at[0]) == got, adjacent,
+                             "%s (%s): the walk census's adjacency, one bump, an unconditional statement directly before the one load's "
+                             "and on the line before it, %s here" % (bid, form, "holds" if adjacent else "fails"))
 
     def test_every_hand_off_form_reads_as_the_table_says(self):
         self.assertEqual(len(_HANDOFF_FORMS), 7, "the table carries the lens's 7 hand-off forms")
@@ -4677,7 +4803,8 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
         to the one lambda. Bounds: the count, nine, a tripwire that makes a row added or removed carry a reason; the reason beside
         each pinned chain and the module statement, a judgment (each is outside the roster because it hands its parse to a row, reads
         a subtree a row holds, keeps a parse as a value, reads a line number or a def's first statement and walks nothing, or reads
-        a synthetic grammar tree); and the floor's own boundary, the spelling of the reader (_TREE_READERS and _walk by Name), so a
+        a synthetic grammar tree; the site case's census of the counter across the kernel walks a whole tree with _walk and is
+        outside the roster by the round-8 ruling that placed it in the case); and the floor's own boundary, the spelling of the reader (_TREE_READERS and _walk by Name), so a
         census parsing under another road or handed a pre-parsed tree joins the roster by the comment's rule alone."""
         tree = ast.parse(Path(os.path.realpath(__file__)).read_text(encoding="utf-8"))
         defs, classes, module = _census_floor(tree)
@@ -4706,6 +4833,10 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
                 ["inspect.getsourcelines"],                  # a line number for the table's rows; walks nothing
             "TheCountersOneSite._the_named_def":
                 ["ast.parse", "inspect.getsource"],          # parses a helper and reads .body[0]; walks nothing
+            "TheCountersOneSite.test_the_walk_has_one_shared_load_site_and_the_counter_is_bumped_beside_it":
+                ["_walk", "ast.parse"],                      # the counter's census across the kernel, in this case and not a row by the
+                                                             # round-8 ruling: the whole kernel walked with _walk, which refuses a stranger
+                                                             # at any position before a reference is classified
             "TheCountersOneSite.test_the_shared_doors_bump_roster_is_the_reconciliations_and_its_second_bumps_sit_below_the_fills":
                 ["_walk", "ast.parse", "inspect.getsource"], # the roster pin's inline reads (the deep count per list, the bumps under each
                                                              # finalbody, the try subtrees) are over subtrees _door_regions, a row, holds

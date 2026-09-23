@@ -3570,7 +3570,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `skippedParses` rises toward `looks` on a quiet board, where until then
   every wake-only look parsed), `wakeOnlyRecorded` (memo rows a wake-only
   look recorded) and `loads` (the walk's shared goal-store loads: one per
-  look that reaches the store, none on a look that is skipped or that a
+  look that reaches the store, whether the read returns a store, returns a
+  fault or raises out of the look, none on a look that is skipped or that a
   state gate ends before the store read, the walk's bound under fold ruling
   A condition 7 since 2026-09-19, at most one per alive session per pass;
   the condition bounds two loaders, this one and the placement gate's
