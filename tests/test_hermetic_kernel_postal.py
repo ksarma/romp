@@ -1551,6 +1551,24 @@ PLANT_TABLE = (
     ("B61 an instance's argv extended in place by +=, the path in the extension", 'caught-by-binding', 6,
      'class T:\n    def setUp(self):\n        self.cmd = [sys.executable]\n        self.cmd += [os.path.join(BIN, "romp-kernel")]\n'
      '    def test_a(self):\n        subprocess.run(self.cmd)'),
+    ("B62 an argv a nested function binds through nonlocal, a None placeholder in the enclosing one (ast_bindings: nonlocal "
+     "redirects the binding)", 'caught-by-binding', 7,
+     'def launch():\n    cmd = None\n    def fill():\n        nonlocal cmd\n        cmd = [sys.executable, os.path.join(BIN, "romp-kernel")]\n'
+     '    fill()\n    subprocess.Popen(cmd)'),
+    ('B63 a walrus inside a comprehension, read after it (ast_bindings: the walrus binds in the enclosing scope)', 'caught-by-binding', 3,
+     'def launch():\n    [k := os.path.join(BIN, "romp-kernel") for _ in (1,)]\n    subprocess.Popen([sys.executable, k])'),
+    ("B64 an attribute of a module object written, then spawned (ast_bindings: the spelled road)", 'caught-by-binding', 3,
+     'cfg = types.SimpleNamespace()\ncfg.kernel = os.path.join(BIN, "romp-kernel")\nsubprocess.run([sys.executable, cfg.kernel])'),
+    ("B65 a dict entry written by subscript, then spawned (ast_bindings: the spelled road)", 'caught-by-binding', 3,
+     'PATHS = {}\nPATHS["kernel"] = os.path.join(BIN, "romp-kernel")\nsubprocess.run([sys.executable, PATHS["kernel"]])'),
+    ("B66 a module constant read bare in a method whose class binds the name to a pytest argv (ast_bindings: a class body "
+     "encloses no method)", 'caught-by-binding', 5,
+     'KERNEL = os.path.join(BIN, "romp-kernel")\nclass T:\n    KERNEL = [sys.executable, "-m", "pytest"]\n'
+     '    def test_a(self):\n        subprocess.Popen([KERNEL])'),
+    ("B67 a class body reading its own binding into an argv read through self (ast_bindings: a read in the class body "
+     "resolves there)", 'caught-by-binding', 5,
+     'class T:\n    KERNEL = os.path.join(BIN, "romp-kernel")\n    CMD = [sys.executable, KERNEL]\n'
+     '    def test_a(self):\n        subprocess.Popen(self.CMD)'),
     ('A1 the library under an alias', 'caught-by-argv', 2,
      'import subprocess as sp\nsp.Popen([os.path.join(BIN, "romp-kernel")])'),
     ('A2 a from-import of run', 'caught-by-argv', 2,
@@ -1676,6 +1694,13 @@ PLANT_TABLE = (
      'cmd = [sys.executable, "serve.py"]\ncmd += ["--serve"]\nsubprocess.run(cmd)'),
     ('N40 a parameter extended in place by += (the stated residual, listed)', 'no-spawn', None,
      'def start(cmd):\n    cmd += ["--serve"]\n    return subprocess.run(cmd)'),
+    ("N41 a class attribute read bare in a method, which resolves to no class attribute (B66's twin; ast_bindings: a class "
+     "body encloses no method)", 'no-spawn', None,
+     'class T:\n    KERNEL = os.path.join(BIN, "romp-kernel")\n    def test_a(self):\n        subprocess.Popen([KERNEL])'),
+    ("N42 a staticmethod whose first parameter is named self, reading an attribute the class binds to the path (no receiver: "
+     "the stated residual, listed)", 'no-spawn', None,
+     'class T:\n    kernel = os.path.join(BIN, "romp-kernel")\n    @staticmethod\n    def launch(self):\n'
+     '        subprocess.Popen([sys.executable, self.kernel])'),
     ('R1 a rebinding in one function', 'refused-loud', (4, 2, 3),
      'def t():\n    k = os.path.join(BIN, "romp-kernel")\n    k = [sys.executable, "-m", "pytest", "-k", "boot"]\n    subprocess.run(k)'),
     ('R2 two module-level bindings that disagree', 'refused-loud', (3, 1, 2),
@@ -1724,9 +1749,10 @@ class HermeticKernelPostal(unittest.TestCase):
         run and held to its label, the site's LINE held to the planted call's, the road held to the label's, the
         refusal's message held to name the call's line and both declarations. (4) The listed residual: a helper's
         call, a passthrough's splatted parameter, a star import's name, a class attribute read through the class
-        name, a comprehension's parameter iterable, a keywords splat handed alone and a parameter extended in place
-        are no site and each is under `unresolved` with its line, text and kind; a comprehension's own target is
-        not, and neither is a builtin's call, a consumer."""
+        name, a comprehension's parameter iterable, a keywords splat handed alone, a parameter extended in place and
+        a staticmethod's attribute read through a parameter named self (row N42) are no site and each is under
+        `unresolved` with its line, text and kind; a comprehension's own target is not, and neither is a builtin's
+        call, a consumer."""
         roads = spawn_roads(HERE, skip=(os.path.basename(__file__),))
         counts = {r: sum(1 for road, _, _ in roads.values() if road == r) for r in ("argv", "binding", "neither", "refused")}
         report = ("the roads table over %d modules under tests/ (python tests/test_hermetic_kernel_postal.py --roads): argv %d, "
@@ -1774,7 +1800,9 @@ class HermeticKernelPostal(unittest.TestCase):
                             ('class Lab:\n    K = os.path.join(BIN, "romp-kernel")\nsubprocess.run([Lab.K])', (3, "Lab.K", "attribute of class")),
                             ('def start(args):\n    return subprocess.run([a for a in args])', (2, "args", "parameter")),
                             ('def start(**kw):\n    return subprocess.run(**kw)', (2, "kw", "keywords splat of parameter")),
-                            ('def start(cmd):\n    cmd += ["--serve"]\n    return subprocess.run(cmd)', (3, "cmd", "parameter"))):
+                            ('def start(cmd):\n    cmd += ["--serve"]\n    return subprocess.run(cmd)', (3, "cmd", "parameter")),
+                            (next(src for label, _, _, src in PLANT_TABLE if label.startswith("N42 ")),
+                             (5, "self.kernel", "attribute of parameter"))):
             scan = _SpawnScan(ast.parse(src), "planted.py")
             self.assertEqual(scan.sites(), [], "no site, the value unread (keyed on the declarations the scan resolves to): " + src)
             self.assertIn(listed, scan.unresolved, "the unread value is listed under the residual as (line, text, kind), never passed "

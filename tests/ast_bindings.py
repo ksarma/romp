@@ -25,13 +25,15 @@ A Declaration has the name, the kind (assign, augassign, unpack, def, class, imp
 except, match, del), the statement (`node`), the bound expression (`value`: the right side, the matching element
 of a tuple or list right side for a tuple target of equal length, the composed `target op value` for an augmented
 assignment; None for a kind that binds no readable value), the line and the scope. Two declarations of one name
-in one scope are both returned, in source order: the caller decides whether they agree (the spawn census refuses
-loudly when they disagree; the ratchet's text maps take the union). A `global` statement redirects the function's
-bindings and reads of that name to the module scope; `nonlocal` to the nearest enclosing function that binds it.
-A walrus in a comprehension binds in the enclosing scope, as the language does. An import binds its alias with
-`origin` naming what the bound name denotes, and no value: the module (`subprocess`; `os` for `import os.path`,
-which binds the name os), the dotted module of an `as` alias (`os.path` for `import os.path as osp`), or the
-imported name (`subprocess.run`).
+in one scope are both returned: the caller decides whether they agree (the spawn census refuses loudly when they
+disagree; the ratchet's text maps take the union). A `global` statement redirects the function's bindings and
+reads of that name to the module scope; `nonlocal` redirects its bindings to the nearest enclosing function that
+binds it, so the declaring function owns no declaration of the name and a read there resolves past it. A walrus
+in a comprehension binds in the enclosing scope, as the language does. With a reach (Bindings.of's `statements`),
+a binding that lands in the module scope is recorded only from a statement the reach yields. An import binds its
+alias with `origin` naming what the bound name denotes, and no value: the module (`subprocess`; `os` for `import
+os.path`, which binds the name os), the dotted module of an `as` alias (`os.path` for `import os.path as osp`),
+or the imported name (`subprocess.run`).
 
 Imported by tests/test_hermetic_kernel_postal.py and tests/test_sdk_singleton_ratchet.py after
 `sys.path.insert(0, HERE)`, so a direct script run and a pytest run resolve the same file; registering the
@@ -79,10 +81,10 @@ class Declaration:
 
 
 class Scope:
-    """One scope of a module: the module, a function (a def or a lambda), a class body or a comprehension; `names`
-    holds the declarations it owns by name, in source order; `attrs` (a class scope) the writes to the instance's
-    attributes made through a method's own receiver (`self.X = ...` in any method of the class); `self_name` (a
-    method's scope) the name of the receiver parameter, None for a staticmethod or a function outside a class."""
+    """One scope of a module: the module, a function (a def or a lambda), a class body or a comprehension; `names` holds
+    the declarations it owns by name; `attrs` (a class scope) the writes to the instance's attributes made through a
+    method's own receiver (`self.X = ...` in any method of the class); `self_name` (a method's scope) the name of the
+    receiver parameter, None for a staticmethod or a function outside a class."""
     __slots__ = ("kind", "node", "parent", "bindings", "names", "attrs", "globals", "nonlocals", "self_name")
 
     def __init__(self, kind, node, parent, bindings):
@@ -126,7 +128,8 @@ class Scope:
         scope; ([], None) for a name no scope binds (a builtin, a star import, a global of another module). A class
         scope is read only when the read is in the class body itself; from a method or a nested function it is
         skipped, as the interpreter skips it. A name declared global in the function read from resolves at the
-        module; one declared nonlocal skips the declaring function."""
+        module. A scope that declares a name nonlocal owns no declaration of it (binding_scope_for sends each of its
+        bindings of the name to the enclosing function), so the read resolves past it."""
         scope, first = self, True
         while scope is not None:
             if scope.kind == "class" and not first:
@@ -135,10 +138,6 @@ class Scope:
             if name in scope.globals:
                 module = scope.module()
                 return list(module.names.get(name, [])), (module if module.names.get(name) else None)
-            if name in scope.nonlocals:
-                first = False
-                scope = scope.parent
-                continue
             found = scope.names.get(name)
             if found:
                 return list(found), scope
@@ -165,17 +164,23 @@ class Bindings:
         self._deferred = []
         self._mro = {}   # id(class scope) -> its mro (Bindings.mro), filled on first read
         self._concrete = {}   # id(class scope) -> its concrete_classes, likewise
+        self._reach = None   # the ids of the statements `statements` yielded (Bindings.of), None for every statement
 
     @classmethod
     def of(cls, tree, statements=None):
-        """The bindings of `tree` (an ast.Module). With `statements` (a callable over the tree yielding module-level
-        statements, module_statements say), a module-scope binding is recorded only when its statement is among
-        those yielded, so a census whose stated reach is "the module's own statements and the bodies of a
-        module-level if or try" resolves nothing bound under a module-level for, while or with; every function and
-        class is still entered and every expression is still read, so scope_of is total either way."""
+        """The bindings of `tree` (an ast.Module). With `statements` (a callable over the tree yielding statements,
+        module_statements say), a binding that lands in the MODULE scope is recorded only when the statement it is made
+        in is among those yielded, wherever that statement sits: a module-level statement's own binding, one a def or
+        a class body makes through `global`, and a comprehension walrus's that binds in the module. So a census whose
+        stated reach is "the module's own statements and the bodies of a module-level if or try" resolves nothing
+        bound under a module-level for, while or with, and nothing a def or a class body binds through `global`, whose
+        statements module_statements never yields. A binding that lands in a function, a lambda, a class body or a
+        comprehension is recorded either way (so is a dotted write, except one a module-level statement outside the
+        reach makes); every function and class is still entered and every expression is still read, so scope_of is
+        total either way."""
         bindings = cls(tree)
-        reach = None if statements is None else {id(s) for s in statements(tree)}
-        bindings._body(tree.body, bindings.module, reach)
+        bindings._reach = None if statements is None else {id(s) for s in statements(tree)}
+        bindings._body(tree.body, bindings.module)
         bindings._place_dotted()
         return bindings
 
@@ -289,39 +294,39 @@ class Bindings:
         return [list(self.dotted.get(ast.unparse(node), []))], "spelled"
 
     # -- the walk -----------------------------------------------------------------------------------------------------
+    # `live`: the statement being read is among those Bindings.of's `statements` yielded (always, without them). It
+    # gates the bindings that land in the module scope alone (_bind_name) and a module-level statement's dotted writes
+    # (_bind_target); a binding that lands in any other scope is recorded either way.
 
-    def _body(self, statements, scope, reach=None):
+    def _body(self, statements, scope):
         for statement in statements:
-            self._statement(statement, scope, reach is None or id(statement) in reach, reach)
+            self._statement(statement, scope, self._reach is None or id(statement) in self._reach)
 
-    def _statement(self, s, scope, live, reach):
+    def _statement(self, s, scope, live):
         self.owner[id(s)] = scope
         if isinstance(s, _FUNCTIONS):
             for d in s.decorator_list:
-                self._expr(d, scope)
-            if live:
-                self._bind_name(s.name, "def", s, None, scope)
-            self._enter_function(s, scope)
+                self._expr(d, scope, live)
+            self._bind_name(s.name, "def", s, None, scope, live=live)
+            self._enter_function(s, scope, live)
         elif isinstance(s, ast.ClassDef):
             for d in list(s.decorator_list) + list(s.bases) + [k.value for k in s.keywords]:
-                self._expr(d, scope)
-            if live:
-                self._bind_name(s.name, "class", s, None, scope)
+                self._expr(d, scope, live)
+            self._bind_name(s.name, "class", s, None, scope, live=live)
             inner = Scope("class", s, scope, self)
             self.scopes[id(s)] = inner
             self._body(s.body, inner)
         elif isinstance(s, (ast.Import, ast.ImportFrom)):
-            if live:
-                for a in s.names:
-                    if a.name == "*":
-                        continue
-                    if isinstance(s, ast.Import):
-                        # `import os.path` binds os, the package, and that is what the bound name denotes; `import os.path
-                        # as osp` binds osp to the dotted module
-                        origin = a.name if a.asname else a.name.split(".")[0]
-                    else:
-                        origin = "%s.%s" % (s.module or "", a.name)
-                    self._bind_name((a.asname or a.name).split(".")[0], "import", a, None, scope, origin)
+            for a in s.names:
+                if a.name == "*":
+                    continue
+                if isinstance(s, ast.Import):
+                    # `import os.path` binds os, the package, and that is what the bound name denotes; `import os.path
+                    # as osp` binds osp to the dotted module
+                    origin = a.name if a.asname else a.name.split(".")[0]
+                else:
+                    origin = "%s.%s" % (s.module or "", a.name)
+                self._bind_name((a.asname or a.name).split(".")[0], "import", a, None, scope, origin, live=live)
         elif isinstance(s, ast.Global):
             scope.globals.update(s.names)
         elif isinstance(s, ast.Nonlocal):
@@ -330,64 +335,58 @@ class Bindings:
             self._expr(s.value, scope, live)
             for t in s.targets:
                 self._expr(t, scope, live)
-                if live:
-                    self._bind_target(t, s.value, "assign", s, scope)
+                self._bind_target(t, s.value, "assign", s, scope, live=live)
         elif isinstance(s, ast.AnnAssign):
             self._expr(s.annotation, scope, live)
             self._expr(s.target, scope, live)
             if s.value is not None:
                 self._expr(s.value, scope, live)
-                if live:
-                    self._bind_target(s.target, s.value, "assign", s, scope)
+                self._bind_target(s.target, s.value, "assign", s, scope, live=live)
         elif isinstance(s, ast.AugAssign):
             self._expr(s.value, scope, live)
             self._expr(s.target, scope, live)
-            if live:
-                composed = ast.copy_location(ast.BinOp(left=s.target, op=s.op, right=s.value), s)
-                self.owner[id(composed)] = scope
-                self._bind_target(s.target, composed, "augassign", s, scope)
+            composed = ast.copy_location(ast.BinOp(left=s.target, op=s.op, right=s.value), s)
+            self.owner[id(composed)] = scope
+            self._bind_target(s.target, composed, "augassign", s, scope, live=live)
         elif isinstance(s, ast.Delete):
             for t in s.targets:
                 self._expr(t, scope, live)
-                if live:
-                    self._bind_target(t, None, "del", s, scope)
+                self._bind_target(t, None, "del", s, scope, live=live)
         elif isinstance(s, (ast.For, ast.AsyncFor)):
             self._expr(s.iter, scope, live)
             self._expr(s.target, scope, live)
-            if live:
-                self._bind_target(s.target, None, "loop", s, scope)
-            self._body(s.body, scope, reach)
-            self._body(s.orelse, scope, reach)
+            self._bind_target(s.target, None, "loop", s, scope, live=live)
+            self._body(s.body, scope)
+            self._body(s.orelse, scope)
         elif isinstance(s, (ast.While, ast.If)):
             self._expr(s.test, scope, live)
-            self._body(s.body, scope, reach)
-            self._body(s.orelse, scope, reach)
+            self._body(s.body, scope)
+            self._body(s.orelse, scope)
         elif isinstance(s, (ast.With, ast.AsyncWith)):
             for item in s.items:
                 self._expr(item.context_expr, scope, live)
                 if item.optional_vars is not None:
                     self._expr(item.optional_vars, scope, live)
-                    if live:
-                        self._bind_target(item.optional_vars, None, "with", s, scope)
-            self._body(s.body, scope, reach)
+                    self._bind_target(item.optional_vars, None, "with", s, scope, live=live)
+            self._body(s.body, scope)
         elif isinstance(s, _TRIES):
-            self._body(s.body, scope, reach)
+            self._body(s.body, scope)
             for h in s.handlers:
                 self.owner[id(h)] = scope
                 if h.type is not None:
                     self._expr(h.type, scope, live)
-                if h.name and live:
-                    self._bind_name(h.name, "except", h, None, scope)
-                self._body(h.body, scope, reach)
-            self._body(s.orelse, scope, reach)
-            self._body(s.finalbody, scope, reach)
+                if h.name:
+                    self._bind_name(h.name, "except", h, None, scope, live=live)
+                self._body(h.body, scope)
+            self._body(s.orelse, scope)
+            self._body(s.finalbody, scope)
         elif isinstance(s, ast.Match):
             self._expr(s.subject, scope, live)
             for case in s.cases:
                 self._pattern(case.pattern, scope, live, s)
                 if case.guard is not None:
                     self._expr(case.guard, scope, live)
-                self._body(case.body, scope, reach)
+                self._body(case.body, scope)
         else:
             for child in ast.iter_child_nodes(s):
                 if isinstance(child, ast.expr):
@@ -396,32 +395,32 @@ class Bindings:
     def _pattern(self, p, scope, live, stmt):
         self.owner[id(p)] = scope
         name = getattr(p, "name", None) if isinstance(p, (ast.MatchAs, ast.MatchStar)) else getattr(p, "rest", None)
-        if name and live:
-            self._bind_name(name, "match", stmt, None, scope)
+        if name:
+            self._bind_name(name, "match", stmt, None, scope, live=live)
         for child in ast.iter_child_nodes(p):
             if isinstance(child, ast.expr):
                 self._expr(child, scope, live)
             elif isinstance(child, ast.pattern):
                 self._pattern(child, scope, live, stmt)
 
-    def _enter_function(self, node, scope):
+    def _enter_function(self, node, scope, live):
         inner = Scope("function", node, scope, self)
         self.scopes[id(node)] = inner
         if scope.kind == "class" and not any(isinstance(d, ast.Name) and d.id == "staticmethod" for d in node.decorator_list):
             positional = list(node.args.posonlyargs) + list(node.args.args)
             inner.self_name = positional[0].arg if positional else None
-        self._arguments(node.args, inner, scope)
+        self._arguments(node.args, inner, scope, live)
         if node.returns is not None:
-            self._expr(node.returns, scope)
+            self._expr(node.returns, scope, live)
         self._body(node.body, inner)
 
-    def _arguments(self, args, inner, outer):
+    def _arguments(self, args, inner, outer, live):
         for a in list(args.posonlyargs) + list(args.args) + list(args.kwonlyargs) + [x for x in (args.vararg, args.kwarg) if x]:
             if a.annotation is not None:
-                self._expr(a.annotation, outer)
+                self._expr(a.annotation, outer, live)
             self._bind_name(a.arg, "parameter", a, None, inner, redirect=False)
         for d in list(args.defaults) + [x for x in args.kw_defaults if x is not None]:
-            self._expr(d, outer)
+            self._expr(d, outer, live)
 
     def _expr(self, node, scope, live=True):
         if node is None:
@@ -430,28 +429,27 @@ class Bindings:
         if isinstance(node, ast.Lambda):
             inner = Scope("lambda", node, scope, self)
             self.scopes[id(node)] = inner
-            self._arguments(node.args, inner, scope)
-            self._expr(node.body, inner)
+            self._arguments(node.args, inner, scope, live)
+            self._expr(node.body, inner, live)
         elif isinstance(node, _COMPREHENSIONS):
             inner = Scope("comprehension", node, scope, self)
             self.scopes[id(node)] = inner
             for i, g in enumerate(node.generators):
                 self.owner[id(g)] = inner
-                self._expr(g.iter, scope if i == 0 else inner)
-                self._expr(g.target, inner)
-                self._bind_target(g.target, None, "loop", node, inner, redirect=False)   # the comprehension carries the line
+                self._expr(g.iter, scope if i == 0 else inner, live)
+                self._expr(g.target, inner, live)
+                self._bind_target(g.target, None, "loop", node, inner, redirect=False, live=live)   # the comprehension carries the line
                 for cond in g.ifs:
-                    self._expr(cond, inner)
+                    self._expr(cond, inner, live)
             if isinstance(node, ast.DictComp):
-                self._expr(node.key, inner)
-                self._expr(node.value, inner)
+                self._expr(node.key, inner, live)
+                self._expr(node.value, inner, live)
             else:
-                self._expr(node.elt, inner)
+                self._expr(node.elt, inner, live)
         elif isinstance(node, ast.NamedExpr):
             self._expr(node.value, scope, live)
             self._expr(node.target, scope, live)
-            if live:
-                self._bind_target(node.target, node.value, "assign", node, scope)
+            self._bind_target(node.target, node.value, "assign", node, scope, live=live)
         else:
             for child in ast.iter_child_nodes(node):
                 if isinstance(child, ast.expr):
@@ -460,25 +458,28 @@ class Bindings:
                     self.owner[id(child)] = scope
                     self._expr(child.value, scope, live)
 
-    def _bind_target(self, target, value, kind, stmt, scope, redirect=True):
+    def _bind_target(self, target, value, kind, stmt, scope, redirect=True, live=True):
         if isinstance(target, ast.Name):
-            self._bind_name(target.id, kind, stmt, value, scope, redirect=redirect)
+            self._bind_name(target.id, kind, stmt, value, scope, redirect=redirect, live=live)
         elif isinstance(target, (ast.Attribute, ast.Subscript)):
-            self._deferred.append((target, value, kind, stmt, scope))
+            if live or scope is not self.module:   # a module-level statement outside the reach records no dotted write
+                self._deferred.append((target, value, kind, stmt, scope))
         elif isinstance(target, ast.Starred):
-            self._bind_target(target.value, None, "unpack", stmt, scope, redirect)
+            self._bind_target(target.value, None, "unpack", stmt, scope, redirect, live)
         elif isinstance(target, (ast.Tuple, ast.List)):
             elements = list(target.elts)
             paired = (isinstance(value, (ast.Tuple, ast.List)) and len(value.elts) == len(elements)
                       and not any(isinstance(e, ast.Starred) for e in elements + list(value.elts)))
             for i, t in enumerate(elements):
                 if paired:
-                    self._bind_target(t, value.elts[i], kind, stmt, scope, redirect)
+                    self._bind_target(t, value.elts[i], kind, stmt, scope, redirect, live)
                 else:
-                    self._bind_target(t, None, "unpack" if kind in ("assign", "augassign") else kind, stmt, scope, redirect)
+                    self._bind_target(t, None, "unpack" if kind in ("assign", "augassign") else kind, stmt, scope, redirect, live)
 
-    def _bind_name(self, name, kind, node, value, scope, origin=None, redirect=True):
+    def _bind_name(self, name, kind, node, value, scope, origin=None, redirect=True, live=True):
         where = scope.binding_scope_for(name) if redirect else scope
+        if not live and where is self.module:   # the reach: a module-scope binding only from a statement it yields
+            return None
         declaration = Declaration(name, kind, node, value, where, origin)
         where.names.setdefault(name, []).append(declaration)
         return declaration
