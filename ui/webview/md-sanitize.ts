@@ -316,7 +316,7 @@ export function ownOrigins(): string[] {
  *  remote). It runs before the registered passes, so it never reads the math fill's inline styles. `opts.remoteRefs`
  *  defaults to "drop", so a new caller is covered without asking for it; "keep" is for the file viewer's mdBlock alone,
  *  which gates the same references on this body before adoption (figure-gate.ts) and would lose the click that restores
- *  them to a strip here (md-sanitize.test.ts pins the one caller). */
+ *  them to a strip here (file-view-seam.test.ts pins the one caller, the paint pass's ONE opt-out). */
 export function sanitizeMd(dirty: string, own?: (body: HTMLElement) => void, opts?: { remoteRefs?: "drop" | "keep" }): HTMLElement {
   installMdSanitizeHooks();
   const clean = purifier().sanitize(dirty, { ...MD_PURIFY, RETURN_DOM: true }) as HTMLElement;   // the sanitized <body>

@@ -16,11 +16,12 @@
 // with no placeholder and no click (review of Slice 4, round 2, 2026-09-09, over the real Files bundle and as a URL
 // document; a `<mask>` reads the whole CSS shorthand, so `image-set("https://host/a.png" 1x)` fetches there as well). What
 // was measured per attribute on 2026-09-23 (headless Chromium 151 through Playwright, a server's request log read, nine
-// passes per attribute over three runs and three referrer policies): each of the seven other than `filter` fetched a
-// document on another origin in every pass, and `filter` fetched a same-origin document and none on another origin in any
-// pass, nor in two other harnesses run that day; the 2026-09-09 measurement recorded no engine version, and why the two
-// differ is not known. Firefox 153 and WebKit 26.5 fetched a document on another origin for none of the eight but `mask`,
-// which they load as a CSS image. `filter` stays in PAINT_ATTRS by rule: all three engines read a url() from it (its
+// passes per attribute over three runs and three referrer variants, none, same-origin by meta and same-origin by
+// header): each of the seven other than `filter` fetched a document on another origin in every pass, and `filter`
+// fetched a same-origin document and none on another origin in any pass, nor in two other harnesses run that day; the
+// 2026-09-09 measurement recorded no engine version, and why the two differ is not known. Firefox 153 and WebKit 26.5
+// fetched a document on another origin for none of the eight but `mask`, which they load as a CSS image. `filter` stays
+// in PAINT_ATTRS by rule: all three engines read a url() from it (its
 // computed style carries one), the sanitizer keeps it, and it fetches same-origin. The sanitizer keeps all eight
 // (DOMPurify's `svg` attribute list) and its URI check passes `url(`, and the colour-only style hook reads the `style`
 // attribute alone. Outside the viewer the sanitizer then removes a reference to another origin itself (paint-refs.ts

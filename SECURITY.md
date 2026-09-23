@@ -101,8 +101,9 @@ UID can read.
   the sanitized markup before any node reaches the page, by the sanitizer and
   again by the file preview card, so none of them makes a request to another
   host when a chat message or a previewed file renders; a same-document
-  `url(#id)`, a `data:` URL and this origin's own stay, and the file viewer
-  gates the same references behind a click instead (`ui/webview/paint-refs.ts`,
+  `url(#id)`, a `data:` URL and this origin's own stay (in an editor webview
+  the sanitizer also keeps the kernel's origin), and the file viewer gates the
+  same references behind a click instead (`ui/webview/paint-refs.ts`,
   checked against the code by `ui/webview/paint-refs-census.test.ts` and, in
   the browser, by `ui/webview/chat-paint-refs-browser.test.ts` and
   `tests/test_file_preview_browser.py`). One renderer writes into that
