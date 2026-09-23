@@ -332,16 +332,17 @@ so only the paint references load there. On all three, in Chromium a `fill`,
 whose `url()` names another host loads from that host, in Firefox and WebKit at
 least a `mask` does, and a `filter` does in no engine; each such request
 carries no cookie and carries the page's origin (the dashboard's scheme, host
-and port) in its Origin header; in Chromium a `mask` request can also carry
-that origin as its Referer, from any page, framed or bare; and a paint request
-can carry the full page address with the serve token in its Referer, but only
-when the page's own address carries `?token=` (a pane page opened bare, such as
-`/chat?token=`; the shell drops the token from its address before it frames its
-panes, and frames them without it); these paint requests are the one exception
-to the trust model's sentence on `Referrer-Policy: same-origin` (the response
-is blocked as cross-origin; the request, with those headers, has reached the
-host); the editor extension's webviews block these loads by their content
-security policy, so this is the web dashboard's alone.
+and port, the port omitted when it is the scheme's default) in its Origin
+header; in Chromium a `mask` request can also carry that origin as its Referer,
+from any page, framed or bare; and a paint request can carry the full page
+address with the serve token in its Referer, but only when the page's own
+address carries `?token=` (a pane page opened bare, such as `/chat?token=`; the
+shell drops the token from its address before it frames its panes, and frames
+them without it); these paint requests are the one exception to the trust
+model's sentence on `Referrer-Policy: same-origin` (the response is blocked as
+cross-origin; the request, with those headers, has reached the host); the
+editor extension's webviews block these loads by their content security policy,
+so this is the web dashboard's alone.
 
 The other connections open when something sets them up, you or a session you
 are running: an attached machine (ssh commands to it and tunnels to it, and
@@ -409,18 +410,32 @@ route (Cmd or Ctrl with Enter or Space on a focused link does the same; for a
 file of a session on an attached machine the tab opens from the
 `/remote/<host>/file` relay, which sends the same headers), and the tab is an
 svg document, sandboxed so no script runs in it, that loads each resource its
-markup names from that resource's host, whether or not the host is on the
-gear's Pictures from the web in files list: an image, a CSS `@import`, an
-`xml-stylesheet` instruction, an `feImage`, HTML inside a `foreignObject` (an
-`img`, a stylesheet, a frame, a video, audio, an object or an embed), a cursor
-image, a web font, and paint references: in Chromium a `fill`, `stroke`,
-`clip-path`, `mask`, `marker-start`, `marker-mid` or `marker-end` whose `url()`
-names another host loads from that host, in Firefox and WebKit at least a
-`mask` does, and a `filter` does in no engine; a load the browser makes without
-CORS (an image, a stylesheet, a frame, a media element or an embedded object)
-carries whatever cookies that browser sends cross-site to that host, a paint
-reference or a web font (a CORS request) carries none, and none carries a
-Referer or a serve token.
+markup names from that resource's host (whether or not the host is on the
+gear's Pictures from the web in files list), among them an `image` element's
+`href` or `xlink:href`, a CSS `@import`, an `xml-stylesheet` instruction, an
+`feImage`, HTML inside a `foreignObject` (an `img`, a stylesheet, a frame, a
+video, audio, an object or an embed), a cursor image, a web font, and paint
+references: in Chromium a `fill`, `stroke`, `clip-path`, `mask`,
+`marker-start`, `marker-mid` or `marker-end` whose `url()` names another host
+loads from that host, in Firefox and WebKit at least a `mask` does, and a
+`filter` does in no engine; a `use` that names another host loads in no engine;
+a frame the markup embeds is a page from that host, which loads what that page
+names in turn; a load the browser makes without CORS (an image, a stylesheet, a
+frame, a media element, an embedded object, or in WebKit a web font), or a load
+the markup marks `crossorigin="use-credentials"` on an `img`, `image`,
+`link rel="stylesheet"`, `video` or `audio` element, carries whatever cookies
+that browser sends cross-site to that host; a paint reference, a web font in
+Chromium and Firefox, or a load the markup marks `crossorigin="anonymous"` on
+one of those elements (a video's poster aside), carries none; for a load to
+another site: in Chromium none of the tab's own loads carries a Referer, the
+sandbox withholding it; in Firefox and WebKit the page's `Referrer-Policy`
+withholds it, and markup that relaxes that policy (a referrer `meta` or a
+`referrerpolicy` attribute) makes such a load carry at most the dashboard's
+origin; a framed page's loads to another site carry at most that frame's
+origin, and those a stylesheet names in turn at most that stylesheet's own
+address in Chromium and Firefox and what the tab's own loads carry in WebKit;
+and the tab's address (`/file?path=...` or `/file?path=...&sid=...`, or its
+`/remote/<host>/file` form) carries no serve token.
 
 What those programs send is theirs, not the kernel's: a session's own CLI, the
 judges' CLIs, a watch predicate, the API key helper, a login's token program,

@@ -1730,26 +1730,27 @@ PAINT_ROW_LABEL = "an inline svg's paint references in the chat's file preview a
 # ties SECURITY.md's own text to what the attributes do. PAINT_LIST, the first half, is the .svg tab row's list too.
 PAINT_LIST = ("in Chromium a `fill`, `stroke`, `clip-path`, `mask`, `marker-start`, `marker-mid` or `marker-end` whose `url()` names another host "
               "loads from that host, in Firefox and WebKit at least a `mask` does, and a `filter` does in no engine")
-PAINT_CLAUSE = ("in Chromium a `fill`, `stroke`, `clip-path`, `mask`, `marker-start`, `marker-mid` or `marker-end` whose `url()` names another host "
-                "loads from that host, in Firefox and WebKit at least a `mask` does, and a `filter` does in no engine; each such request carries no "
-                "cookie and carries the page's origin (the dashboard's scheme, host and port) in its Origin header; in Chromium a `mask` request "
-                "can also carry that origin as its Referer, from any page, framed or bare; and a paint request can carry the full page address with "
-                "the serve token in its Referer, but only when the page's own address carries `?token=` (a pane page opened bare, such as "
-                "`/chat?token=`; the shell drops the token from its address before it frames its panes, and frames them without it); these paint "
-                "requests are the one exception to the trust model's sentence on `Referrer-Policy: same-origin` (the response is blocked as "
-                "cross-origin; the request, with those headers, has reached the host)")
+PAINT_CLAUSE = ("in Chromium a `fill`, `stroke`, `clip-path`, `mask`, `marker-start`, `marker-mid` or `marker-end` whose `url()` names another "
+                "host loads from that host, in Firefox and WebKit at least a `mask` does, and a `filter` does in no engine; each such request "
+                "carries no cookie and carries the page's origin (the dashboard's scheme, host and port, the port omitted when it is the "
+                "scheme's default) in its Origin header; in Chromium a `mask` request can also carry that origin as its Referer, from any page, "
+                "framed or bare; and a paint request can carry the full page address with the serve token in its Referer, but only when the "
+                "page's own address carries `?token=` (a pane page opened bare, such as `/chat?token=`; the shell drops the token from its "
+                "address before it frames its panes, and frames them without it); these paint requests are the one exception to the trust "
+                "model's sentence on `Referrer-Policy: same-origin` (the response is blocked as cross-origin; the request, with those headers, "
+                "has reached the host)")
 # The sent cell's clause on an inline svg's paint references (kept by the sanitizer, loading at render): one text with SECURITY.md's
 # sentence and the paint row's, which tests/test_security_price_feed.py holds to the same words; the claim it replaces, that no token
 # rides, is held absent, and PAINT_TOKEN_CONDITION is the token half's condition (fresh-2)
 CHAT_MEDIA_PAINT = ("an inline svg's paint references load at render too, with no click: in Chromium a `fill`, `stroke`, `clip-path`, `mask`, "
-                    "`marker-start`, `marker-mid` or `marker-end` whose `url()` names another host loads from that host, in Firefox and WebKit at "
-                    "least a `mask` does, and a `filter` does in no engine; each such request carries no cookie and carries the page's origin (the "
-                    "dashboard's scheme, host and port) in its Origin header; in Chromium a `mask` request can also carry that origin as its "
-                    "Referer, from any page, framed or bare; and a paint request can carry the full page address with the serve token in its "
-                    "Referer, but only when the page's own address carries `?token=` (a pane page opened bare, such as `/chat?token=`; the shell "
-                    "drops the token from its address before it frames its panes, and frames them without it); these paint requests are the one "
-                    "exception to the trust model's sentence on `Referrer-Policy: same-origin` (the response is blocked as cross-origin; the "
-                    "request, with those headers, has reached the host)")
+                    "`marker-start`, `marker-mid` or `marker-end` whose `url()` names another host loads from that host, in Firefox and WebKit "
+                    "at least a `mask` does, and a `filter` does in no engine; each such request carries no cookie and carries the page's origin "
+                    "(the dashboard's scheme, host and port, the port omitted when it is the scheme's default) in its Origin header; in Chromium "
+                    "a `mask` request can also carry that origin as its Referer, from any page, framed or bare; and a paint request can carry "
+                    "the full page address with the serve token in its Referer, but only when the page's own address carries `?token=` (a pane "
+                    "page opened bare, such as `/chat?token=`; the shell drops the token from its address before it frames its panes, and frames "
+                    "them without it); these paint requests are the one exception to the trust model's sentence on `Referrer-Policy: "
+                    "same-origin` (the response is blocked as cross-origin; the request, with those headers, has reached the host)")
 PAINT_TOKEN_CONDITION = "only when the page's own address carries `?token=`"
 CHAT_MEDIA_NO_TOKEN_WITHDRAWN = "no serve token, key or login token rides"
 # extra6-4: the clicked-link sent cell no longer says the serve token travels only on the bundles' own URLs; it says what romp adds

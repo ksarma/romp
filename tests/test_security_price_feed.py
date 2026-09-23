@@ -116,6 +116,27 @@ to every host in a copy of extension.ts (M28: red at the editor CSP precondition
 whole-statement needle red) and target.script re-pointed before the assignment (M31: the once-bound count red), the last two in
 copies of extension.ts.
 
+Before the sixth round's review (2026-09-23) the reviewer found that the paint clause's Origin half and the .svg tab row's wider list
+of loads rested on no executed witness. The chat-media witness now parses the Origin half from the section and holds every paint
+request to it in each scene of each engine, a scene at http's default port among them, Firefox and WebKit running the file preview and
+the notice card too; the chat-media case pins that parse by the needle PAINT_ORIGIN_RE, a source pin whose message names the browser
+leg as the executed proof. The .svg tab witness reads the row's list from the script and plants and observes each load in Chromium,
+Firefox and WebKit, and the texts follow what it observed: SVG_TAB_SENT names WebKit's web font as a load made without CORS, and beside
+those loads a load the markup marks `crossorigin="use-credentials"` on an `img`, `image`, `link rel="stylesheet"`, `video` or `audio`
+element, which on those elements is a CORS request that carries the cookies the browser sends cross-site, and names the CORS requests
+that carry none (a paint reference, a web font in Chromium and Firefox, or a load the markup marks `crossorigin="anonymous"` on the
+same elements, a video's poster aside); SVG_TAB_LOADS holds the section's list to the row's words, which name examples ("among them")
+of the rule that each resource the markup names loads from that resource's host, not the population; SVG_TAB_PAINT carries the `use`
+that loads in no engine; SVG_TAB_FRAME says a framed page loads what it names in turn; SVG_TAB_REFERER says, for a load to another
+site, per engine what withholds the tab's own Referer, what markup that relaxes the page's policy makes such a load carry, and what a
+framed page's loads and those a stylesheet names in turn carry; and SVG_TAB_TOKEN says the tab's address carries no serve token; each
+is required in the section and in the row's sent cell. The Origin half says the page's origin is its scheme, host and port, the port
+omitted at the scheme's default (PAINT_CLAUSE, read from the census module). With the head's SECURITY.md in a copy of the tree four
+cases are red: the every-road case, the chat-media case and the paint row's case at PAINT_CLAUSE, whose Origin half the head's section
+words without the default-port condition, and the .svg tab case at SVG_TAB_LOADS; with "a cursor image, " deleted from the row in a
+copy of the script the .svg tab case is red at the row's sent cell; with the needle removed from a copy of the witness the chat-media
+case is red at it.
+
 Text only: the behaviour is pinned in tests/test_price_feed_off.py (the kernel), the reference's prose in
 tests/test_reference_price_feed.py. The documents and the sources are read as files, and no module
 of romp's runtime is loaded here: the census script is loaded in this process through the census module (its
@@ -357,10 +378,37 @@ MD_CALL = re.compile(r"(?<![\w.$])(?<!function )(?:md|userMd)\(")   # a md() or 
 SVG_TAB_LABEL = "an .svg opened in its own tab (browser)"
 SVG_TAB = "a Cmd, Ctrl or middle click on a path link to an .svg in a viewed file opens the file in the browser's own tab from the kernel's `/file` route"
 SVG_TAB_RELAY = "the `/remote/<host>/file` relay, which sends the same headers"
-SVG_TAB_PAINT = "paint references: " + PAINT_LIST   # apd's list, one shared constant (b-svgtab, the round's ruling 4)
-SVG_TAB_SENT = ("a load the browser makes without CORS (an image, a stylesheet, a frame, a media element or an embedded object) carries whatever "
-                "cookies that browser sends cross-site to that host, a paint reference or a web font (a CORS request) carries none, and none "
-                "carries a Referer or a serve token")
+# apd's paint list, one shared constant (b-svgtab, the round's ruling 4), and the element that loads in no engine when it names another
+# host, which follows it in both homes (the witness reads both from the row)
+SVG_TAB_PAINT = "paint references: " + PAINT_LIST + "; a `use` that names another host loads in no engine"
+# the loads the tab makes, one text in both homes: the general rule (each resource the markup names loads from that resource's host)
+# and its named examples ("among them"), not the population; ui/webview/svg-tab-loads-browser.test.ts reads this list from the row and
+# plants and observes each example in Chromium, Firefox and WebKit, so the section's copy is held to the witnessed list here
+SVG_TAB_LOADS = ("loads each resource its markup names from that resource's host (whether or not the host is on the gear's Pictures from the web "
+                 "in files list), among them an `image` element's `href` or `xlink:href`, a CSS `@import`, an `xml-stylesheet` instruction, an "
+                 "`feImage`, HTML inside a `foreignObject` (an `img`, a stylesheet, a frame, a video, audio, an object or an embed), a cursor "
+                 "image, a web font")
+# the cookie clause, one text in both homes: the witness holds each load's cookie to these words, the credentialed and the anonymous
+# loads among them (each planted on the elements the clause names: an svg image, an img, a stylesheet link, a video and an audio)
+SVG_TAB_SENT = ("a load the browser makes without CORS (an image, a stylesheet, a frame, a media element, an embedded object, or in WebKit a web "
+                "font), or a load the markup marks `crossorigin=\"use-credentials\"` on an `img`, `image`, `link rel=\"stylesheet\"`, `video` or "
+                "`audio` element, carries whatever cookies that browser sends cross-site to that host; a paint reference, a web font in Chromium "
+                "and Firefox, or a load the markup marks `crossorigin=\"anonymous\"` on one of those elements (a video's poster aside), carries none")
+# what a frame the markup embeds loads in turn; the Referer those loads carry is SVG_TAB_REFERER's
+SVG_TAB_FRAME = "a frame the markup embeds is a page from that host, which loads what that page names in turn"
+# the Referer clause, one text in both homes, for a load to another site: per engine what withholds the tab's own Referer, what markup
+# that relaxes the page's policy makes such a load carry, and what a framed page's loads and those a stylesheet names in turn carry; the
+# witness reads the engines from these words and asserts each part, the relaxation in scenes of their own (every load there is to
+# another site)
+SVG_TAB_REFERER = ("for a load to another site: in Chromium none of the tab's own loads carries a Referer, the sandbox withholding it; in "
+                   "Firefox and WebKit the page's `Referrer-Policy` withholds it, and markup that relaxes that policy (a referrer `meta` or a "
+                   "`referrerpolicy` attribute) makes such a load carry at most the dashboard's origin; a framed page's loads to another site "
+                   "carry at most that frame's origin, and those a stylesheet names in turn at most that stylesheet's own address in Chromium "
+                   "and Firefox and what the tab's own loads carry in WebKit")
+# the token clause, its own clause: the tab's address, fileUrl's in ui/webview/preview.ts, carries no serve token; the witness holds
+# each address fileUrl builds to the clause's forms and to no token, and the tab Chromium opens to none
+SVG_TAB_TOKEN = ("and the tab's address (`/file?path=...` or `/file?path=...&sid=...`, or its `/remote/<host>/file` form) carries no serve "
+                 "token")
 SVG_TAB_WITNESS = "ui/webview/svg-tab-loads-browser.test.ts"
 # what a /file success for an .svg carries, in wire order, per-response headers (Content-Length, Last-Modified, X-Romp-Mtime-Ns)
 # aside: the witness serves exactly these (its SVG_FILE_HEADERS, read there from _send and _media_policy_headers), and the case
@@ -478,7 +526,7 @@ ROAD_PHRASES = {
     "a viewed file's pictures from the web (browser)": (IN_THE_BROWSER, PICTURES_DEFAULT),
     CHAT_MEDIA_LABEL: (CHAT_MEDIA, CHAT_MEDIA_COOKIES, PAINT_CLAUSE),
     PAINT_ROW_LABEL: (PAINT_FILE_PREVIEW, PAINT_NOTICE, PAINT_STRIPPED, PAINT_CLAUSE),
-    SVG_TAB_LABEL: (SVG_TAB, SVG_TAB_RELAY, SVG_TAB_PAINT, SVG_TAB_SENT),
+    SVG_TAB_LABEL: (SVG_TAB, SVG_TAB_RELAY, SVG_TAB_LOADS, SVG_TAB_PAINT, SVG_TAB_FRAME, SVG_TAB_SENT, SVG_TAB_REFERER, SVG_TAB_TOKEN),
     CLICKED_LABEL: (CLICKED_LINK, CLICKED_HOST, CLICKED_SIGNIN),
     "bootstrap.sh (install-time-by-hand)": ("Installing by hand (`bootstrap.sh`, `install.sh`) fetches from GitHub",),
     "bin/romp-sdk-setup (install-time-by-hand; also run by the kernel's self-update through install.sh)": (GET_PIP,),
@@ -1219,6 +1267,11 @@ class TheSectionIsTheTables(_Pins):
         for needle in ("cross_site=1", "media-src", "securitypolicyviolation", "Referrer-Policy"):
             self.assertQuoted(needle, witness, CHAT_MEDIA_WITNESS, "the executed proof is that browser leg: the cross-site cookie read at the media host, the "
                               "editor CSP's block, the header; it skips without a playwright browser, which CI has none of")
+        # the paint clause's Origin half (before the sixth round's review): a source pin, not the proof; the executed proof is that
+        # browser leg, which parses the half from this section and holds every paint request to it in each scene of each engine
+        self.assertQuoted("PAINT_ORIGIN_RE", witness, CHAT_MEDIA_WITNESS, "a source pin only: the witness parses the paint clause's Origin half; the "
+                          "executed proof is that browser leg (%s), which holds every paint request to the half in each scene of each engine and "
+                          "skips without a playwright browser" % CHAT_MEDIA_WITNESS)
 
     def test_the_echo_rule_and_the_served_pages_sentences_are_the_scripts_words(self):
         # the fourth round (correctness-1, regression-2, fresh-1): the census's disclosure gained the echo rule (a printed remedy is skipped
@@ -1495,12 +1548,17 @@ class TheSvgTabRoadIsNamedAndItsPopulationBounded(_Pins):
     served once by the real Handler in a child (tests/test_kernel_auth_hardening.py's harness, session-hosts off) and its Content-Type
     read off the wire, so a second document type (an .html served as text/html, an .xml as application/xml, the text branch's type
     changed) is red here, and a type that is not a document (an .avif) is not. The executed witness of the loads is the browser leg
-    SVG_TAB_WITNESS (the seven requests with their cookies and Referer, under the /file headers the case below reads on the wire)."""
+    SVG_TAB_WITNESS (every load the row's list names, read there from the row, in Chromium, Firefox and WebKit, with their cookies and
+    Referer, under the /file headers the case below reads on the wire; Chromium through the opener and the relay's URL, Firefox and
+    WebKit on the document at the same URL). The section's list is the row's by SVG_TAB_LOADS and SVG_TAB_PAINT (the paint list and
+    the `use` that loads in no engine), named examples of the rule SVG_TAB_LOADS states, and its framed-page, cookie, Referer and token
+    clauses are the row's by SVG_TAB_FRAME, SVG_TAB_SENT, SVG_TAB_REFERER and SVG_TAB_TOKEN, the words the witness holds its
+    assertions to."""
 
     def test_the_svg_tab_road_is_said_and_is_a_row_named_and_not_counted(self):
         self.assertNetwork()
         flat = _flat(NETWORK)
-        for phrase in (SVG_TAB, SVG_TAB_RELAY, SVG_TAB_PAINT, SVG_TAB_SENT):
+        for phrase in (SVG_TAB, SVG_TAB_RELAY, SVG_TAB_LOADS, SVG_TAB_PAINT, SVG_TAB_FRAME, SVG_TAB_SENT, SVG_TAB_REFERER, SVG_TAB_TOKEN):
             self.assertQuoted(phrase, flat, self.DOC, "the .svg tab road, in the section's one sentence")
         rows, rc, err = _table()
         self.assertTrue(rows, "%s --table printed no table (exit %s): %s" % (INVENTORY, rc, err))
@@ -1510,12 +1568,12 @@ class TheSvgTabRoadIsNamedAndItsPopulationBounded(_Pins):
         self.assertQuoted("`openFileTab`", cells[0], "the row's where cell", "the one site on the road's way, counted local by its URL")
         self.assertQuoted("Cmd, Ctrl or middle click on a path link to an .svg", cells[1], "the row's trigger cell")
         self.assertQuoted(SVG_TAB_RELAY, cells[1], "the row's trigger cell", "the relay arm, reached by the same click")
-        for phrase in (SVG_TAB_PAINT, SVG_TAB_SENT):
+        for phrase in (SVG_TAB_LOADS, SVG_TAB_PAINT, SVG_TAB_FRAME, SVG_TAB_SENT, SVG_TAB_REFERER, SVG_TAB_TOKEN):
             self.assertQuoted(phrase, cells[2], "the row's sent cell", "one text with the section")
         self.assertTrue(cells[3].startswith("none"), "the row's off-switch cell: no setting gates it: %r" % cells[3])
         self.assertTrue(os.path.isfile(os.path.join(ROOT, SVG_TAB_WITNESS)), "the executed witness is in the tree: " + SVG_TAB_WITNESS)
         witness = _read(*SVG_TAB_WITNESS.split("/"))
-        for needle in ("openFileTab", "cross_site=1", "Referrer-Policy", "sandbox", "-mask.svg"):
+        for needle in ("openFileTab", "cross_site=1", "Referrer-Policy", "sandbox", "-mask.svg", "scripts/network-inventory.py", "SVG_TAB_ROW"):
             self.assertQuoted(needle, witness, SVG_TAB_WITNESS, "the executed proof is that browser leg; it skips without a playwright browser")
 
     def test_image_svg_xml_is_the_one_document_type_the_file_route_serves(self):
