@@ -33,7 +33,8 @@ This module holds five things, and it never skips: a pin that skips reports gree
    red. The flag has no list: the constant pins the SDK alone, its dependency closure resolves fresh on every run (26
    packages on 2026-09-20, the 3.12 cell of run 35518107329), and one of them, anyio, registers a pytest plugin that
    every pytest process a cell runs would otherwise auto-load, the step's own process and every pytest child the
-   suite spawns in the same interpreter (item 5 holds the flag on those), which the box's default run never does and
+   suite spawns in the same interpreter (item 5 holds the flag on those in the forms its launcher census reads), which
+   the box's default run never does and
    tests/README.md's PYTHONPATH recipe would, so the recipe passes the same flag (the SDK step's comment states the
    decision, why, and the measurement behind it); pytest accepts the flag where anyio is absent, so an invocation
    whose interpreter has no anyio today (the served-page step: pip, pytest, pytest-timeout, cryptography) passes it
@@ -180,7 +181,9 @@ This module holds five things, and it never skips: a pin that skips reports gree
    resolve (a name bound other than by an import or a plain or annotated assignment: tuple unpacking, a walrus, a
    conditional expression, a parameter default; or getattr, importlib or runpy, among others); each of those named
    here has a case holding its outcome, no row. What the flag buys, in every pytest process the census and the
-   population check read: anyio's plugin is absent from that process's plugin set as it is from the box's default
+   population check read in which nothing loads the plugin again by its module name (`-p anyio.pytest_plugin` on the
+   line, PYTEST_PLUGINS in the environment, plugins= handed to pytest.main; both checks key on the flag's spelling and
+   read none of these): anyio's plugin is absent from that process's plugin set as it is from the box's default
    run's. The sets are not equal, and nothing here says they are: the box's default run loads pytest-xdist's two plugins, which no cell
    installs. Verified by execution before this landed: a synthetic broken anyio/pytest_plugin.py in a CI-shaped venv
    (the SDK pinned, the parent under the flag) red tests in each of the six modules that spawned unflagged children,
@@ -517,8 +520,9 @@ class NeverSkips(unittest.TestCase):
     own basename is in _NEVER_SKIP_FILES as written in tests/conftest.py, the literal every report is keyed on; the
     existence half of that check, every entry a file under tests/, lives in tests/test_served_tests_require.py,
     outside this module, where a deletion of this file can still red it. The children pass -p no:anyio, as
-    every pytest the suite spawns does (ChildPytestLaunchers holds it on each launcher), so in a cell no child loads a
-    plugin the box's default run does not (pytest accepts the flag where anyio is absent, as on the box venvs)."""
+    every pytest the suite spawns in a form the launcher census reads does (ChildPytestLaunchers holds it on each
+    launcher it reads), so in a cell these children leave anyio's plugin out, as the box's default run does, and load
+    it again by no module name (pytest accepts the flag where anyio is absent, as on the box venvs)."""
     INSTALLED_VERSION_TEST = "test_the_installed_sdk_is_the_pin_where_it_imports_and_the_pin_is_well_formed_where_it_does_not"
     INSTALLED_VERSION_NODE = "%s::%s::%s" % (os.path.relpath(os.path.realpath(__file__), ROOT), InstalledVersion.__name__,
                                              INSTALLED_VERSION_TEST)     # as pytest prints it from the repo root
@@ -1625,7 +1629,7 @@ class ListedInvocations(unittest.TestCase):
         spend_detail = os.path.realpath(os.path.join(HERE, "test_spend_detail.py"))
         self.assertNotIn(spend_detail, collected, "test_spend_detail.py is collected by the globs now: pick another witness")
         self.assertIn(spend_detail, loaded, "the import walk did not reach test_spend_detail.py, which "
-                      "tests/test_spend_modal_headless_served.py imports: the walk reads nothing")
+                      "tests/test_spend_modal_headless_served.py imports (keyed on that one import)")
         hit = sorted(os.path.relpath(p, ROOT) for p in readers & loaded)
         self.assertEqual(hit, [], "the served step collects or could load a module that spells %s in its text (keyed on the "
                          "spelling, docstrings and comments included, not on an environment read; a reader that spells the "
@@ -2373,7 +2377,7 @@ class PopulationCheckReds(unittest.TestCase):
 
 # ---------------------------------------------------------------------------------------------------------------------
 # The launcher census (round 3's ruling, 2026-09-20; item 5 of the module docstring): every pytest the suite itself
-# starts passes -p no:anyio. The workflow's flag blocks anyio's plugin in the step's own process; a pytest child a test
+# starts, in a form _launchers_in reads, passes -p no:anyio. The workflow's flag blocks anyio's plugin in the step's own process; a pytest child a test
 # spawns is a new pytest process in the same interpreter, where the SDK step installed anyio, and without the flag it
 # auto-loads the plugin, as an in-process pytest.main does. On 2026-09-20, before the launchers gained the flag, one of
 # nine passed it, and this module, ci.yml and tests/README.md said the cells' plugin set was the box's. The rule now:
@@ -2759,8 +2763,8 @@ def _describe_launcher(r):
 
 
 class ChildPytestLaunchers(unittest.TestCase):
-    """Every pytest the suite itself starts, as a child or in its own process, passes -p no:anyio, held on the
-    population of launchers under tests/ in the forms _launchers_in reads (item 5 of the module docstring). A child
+    """Every pytest the suite itself starts in a form _launchers_in reads, as a child or in its own process, passes
+    -p no:anyio, held on the population of launchers under tests/ in those forms (item 5 of the module docstring). A child
     pytest is a new pytest process in the cell's interpreter, where the SDK step installed anyio, and an in-process
     pytest.main runs plugin autoload again; the workflow's flag reaches the step's own session alone, so a launcher
     without the flag auto-loads the plugin there (on 2026-09-20, before the launchers gained the flag, eight of nine did, and a synthetic broken

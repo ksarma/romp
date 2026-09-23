@@ -5077,7 +5077,7 @@ class HostProcess(unittest.TestCase):
         for slot in ("probe", "spawn"):
             lost = sorted(name for name, value in markers.items() if seen[slot].get(name) != value)
             self.assertEqual(lost, [], "the %s's environment does not carry this process's value of %s: a child started "
-                             "with it resolves its imports elsewhere" % (slot, ", ".join(lost)))
+                             "with it may resolve its imports elsewhere" % (slot, ", ".join(lost)))
         spawn = {k: v for k, v in seen["spawn"].items() if k != "ROMP_SDK_SITE"}
         probe = seen["probe"]
         self.assertTrue(spawn == probe, "the probe's child and the host run under different environments (ROMP_SDK_SITE "

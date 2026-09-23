@@ -76,7 +76,7 @@ jobs:
     # pair of runs (35513531701 and 35516364698) the worst cell finished 4 to 5 minutes under 25, this
     # fork's binding constraint is the runner queue, and a higher cap holds a runner that much longer
     # on every stuck cell; a genuine slowdown is caught here first, and a stall that begins after
-    # minute 15 of a cell is ended by this cap, named by the job's timeout rather than the test's (on
+    # minute 15 of a Linux cell is ended by this cap, named by the job's timeout rather than the test's (on
     # that pair, the worst cell's last five minutes or so). The
     # macOS cells (a manual dispatch) run the same suite in
     # 17 to 25 minutes on the image's slower runners: the 3.10 cell took 24 min 43 s on one dispatch
@@ -148,7 +148,9 @@ jobs:
         # whose site joins sys.path at tests/test_host_transport.py's import, after plugin autoload, and the
         # box venvs carry no anyio; the one box road that would load it, tests/README.md's PYTHONPATH recipe,
         # which puts that site on the path before pytest starts, passes the same flag), so no pytest process
-        # the two checks below read loads a plugin the box's default run does not: the flag is on both of this
+        # the two checks below read loads a plugin the box's default run does not, unless something loads
+        # anyio's plugin again by its module name (-p anyio.pytest_plugin, PYTEST_PLUGINS, plugins= on
+        # pytest.main), which neither check reads: the flag is on both of this
         # file's pytest lines and on every pytest the suite starts in the cell's interpreter in a form the
         # launcher census reads (tests/test_ci_sdk_pin.py holds both populations, this file's by its population
         # check and the suite's by its launcher census, which reads argv literals under tests/, the positional
@@ -164,7 +166,8 @@ jobs:
         # default run loads pytest-xdist's two plugins, which no cell installs. Nothing under tests/ is marked
         # anyio or imports the one thing the plugin serves, the SDK's own pytest-marked conformance suite
         # claude_agent_sdk.testing, so the plugin does no work here; and blocked in every pytest process the
-        # two checks read, a bad anyio pytest plugin cannot fail one at pytest startup before a test runs.
+        # two checks read where nothing loads it again by module name, a bad anyio pytest plugin cannot fail
+        # one at pytest startup before a test runs.
         # Unblocked in a child it did: a synthetic broken anyio/pytest_plugin.py in a CI-shaped venv red tests
         # in each of the six modules whose pytest children lacked the flag, none of which imports the SDK
         # (2026-09-20, before the children gained it). A bad anyio itself, not its plugin, still surfaces
