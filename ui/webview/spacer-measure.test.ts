@@ -1305,7 +1305,9 @@ test("the page's guard literal is a member of the set the kernel admits for the 
   // or key, a surface or key that is not a string literal, named by position, a set or list literal, a single word in parentheses with no
   // trailing comma) is a red here NAMING the entry, never a silent miss
   // that leaves the one-entry assertion below green. tests/test_client_diag_allowlist.py reads the runtime object and reds on a second entry
-  // or a list too; this cell is the tree-side read of the table's text.
+  // whatever its spelling (its sorted-keys equality), on a value that is not a frozenset (its assertIsInstance) and on a frozenset of a bare
+  // string, whose members are the string's letters, by its one-word length assertion; the spelling of a frozenset's argument (a tuple, a
+  // list, a set) is the same runtime object and reds nowhere in Python, which is why this cell reads the text.
   const balanced = parseValuesTable(table![1]);
   assert.equal(balanced.entries.length, balanced.frozensets, "the balanced parse reads one entry per frozenset( in the table's body: " + JSON.stringify(balanced.entries));
   const entryName = (e: { surface: string; key: string }): string => e.surface + "/" + e.key;

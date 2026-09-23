@@ -79,8 +79,9 @@ function liftSeam(sessions: Map<string, any>, views: Map<string, any>, itemsOf: 
   const js = liftBetween("function syncViewInner(", "function patchWorkedFooters(");
   // itemFirstEvent is LIFTED with the seam, never hand-copied (the author's verifier pass over pass 1b): a copy re-creates the drift the
   // next time production's first-event rule moves, and the seam's footer `from` (the first re-rendered unit's first event) would then be
-  // modelled against a stale map while the harness stayed green. The seam's one call cannot see a gap (the plan rebuilds when a gap
-  // stands at or past u0), so the lift is proven by a production mutation of the run case, which a hand copy would have hidden.
+  // modelled against a stale map while the harness stayed green. No itemFirstEvent call in the lifted range can see a gap: compact mode's
+  // footer patch reads it at u0, where the plan has rebuilt for a gap at or past u0, and normal mode's lookup and its loop skip a gap item by
+  // its kind; so the lift is proven by a production mutation of the run case, which a hand copy would have hidden.
   const first = liftBetween("function itemFirstEvent(", "// The display-unit index");
   return new Function("HOOKS", SEAM_PRELUDE + first + js + "\nreturn syncViewInner;")({ sessions, views, itemsOf, calls, compactTailPlan, DayWalk, FakeEl, SENTINEL, compact }) as (id: string, atBottom?: boolean, anchored?: boolean) => any;
 }
