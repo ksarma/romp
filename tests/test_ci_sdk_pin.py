@@ -1447,7 +1447,13 @@ def unread_yaml_forms(src):
     read), after a key's colon, and after `[`, `{` or `,` inside a flow collection; a block scalar's lines (every line
     indented past the key, dash or `?` that opened it, on the header's line or, for a header on the next line, the
     line before) are text and are not read, and a refused quoted scalar or flow collection is followed to its close,
-    so its later lines are not read as nodes. The scan's error runs one way: a line that continues a plain scalar is
+    so its later lines are not read as nodes. A `#` inside a flow collection with no space before it (after `[`, `{`,
+    `,` or a closing quote) is refused, and the rest of its line is read as a comment, as PyYAML and yaml.v3 read it,
+    so the collection is refused as continued past its line and its later lines are read as flow content (the
+    fail-closed design's second verify pass, 2026-09-23: until then the scan read that `#` as a scalar and closed the
+    collection on its line, and behind it an anchored flow step and its alias, a flow mapping's anchored key and its
+    alias, and a flow step whose double-quoted run started a second pytest without the switch or the flag each read
+    green). The scan's error runs one way: a line that continues a plain scalar is
     read as if it began a node, so one that opens with `&`, `*`, `<<:`, `|` or `>`, or with a quote or a bracket that
     does not close on the line, is red on valid YAML; reword it."""
     out = []
@@ -1501,6 +1507,13 @@ def unread_yaml_forms(src):
                 i += 1
                 continue
             if ch == "#" and (i == 0 or raw[i - 1] in " \t"):
+                break
+            if ch == "#" and flow:
+                # the loop lands on a `#` in a flow collection only where a node or an indicator goes (a plain scalar
+                # holding one is read whole below), and PyYAML and yaml.v3 read it there as a comment though no space
+                # precedes it: the rest of the line is that comment, so the collection stays open onto the next lines
+                # (the fail-closed design's second verify pass, 2026-09-23)
+                refuse(n, "a comment in a flow collection with no space before it")
                 break
             if flow and ch in "]}":
                 close()
@@ -2931,6 +2944,47 @@ class PopulationCheckReds(unittest.TestCase):
         # without a backslash, in a run, a name and an action's inputs
         for label, text in (("closed quoted scalars", '      - name: "Quoted (x)"\n        run: \'echo \'\'a\'\' "b"\'\n'),
                             ("a double-quoted value in a flow mapping", '      - uses: ./a\n        with: {a: "x, *y", b: \'z\'}\n')):
+            with self.subTest(control=label):
+                self.assertEqual(unread_yaml_forms(self._with_first_step_in_shell_job(text)[0]), [], label)
+
+    def test_a_comment_in_a_flow_collection_with_no_space_before_it_is_refused_and_the_collection_read_as_open(self):
+        # the fail-closed design's second verify pass (2026-09-23): PyYAML and yaml.v3 read a `#` right after `[`, `{`,
+        # `,` or a closing quote inside a flow collection as a comment, so the collection stays open onto the next lines;
+        # the scan read it as a scalar, closed the collection on its line and read only the first node of each line
+        # after it. Behind such a `#` an anchored flow step and its alias (D01), a flow step whose double-quoted run
+        # holds `\n` and a second pytest without the switch or the flag (D02, which the census excused as a pip
+        # install), and a flow mapping's anchored key and its alias (D04) each read green at the round-4 takes head and
+        # at the fail-closed head. The `#` is refused, the collection is refused as continued past its line, and its
+        # later lines are read as flow content, so each form behind it is named; nothing else here is red
+        comment = "a comment in a flow collection with no space before it"
+        open_seq = "a flow collection ([) continued past its line"
+        open_map = "a flow collection ({) continued past its line"
+        for label, where, text, named in (
+                ("an anchored flow step and its alias, each behind `[#` (D01)", "job",
+                 "  anch:\n    runs-on: ubuntu-latest\n    steps: [#]\n"
+                 "      {uses: actions/checkout@v4}, &hidstep {name: Hidden, run: echo hidden} ]\n"
+                 "  alias:\n    runs-on: ubuntu-latest\n    steps: [#]\n      {uses: actions/checkout@v4}, *hidstep ]\n",
+                 ((3, comment), (3, open_seq), (4, "a flow mapping holding the key 'run'"), (4, "an anchor (&hidstep)"),
+                  (7, comment), (7, open_seq), (8, "an alias (*hidstep)"))),
+                ("a flow step whose double-quoted run starts a second, unflagged pytest, behind `[#` (D02)", "job",
+                 "  hid:\n    runs-on: ubuntu-latest\n    steps: [#]\n"
+                 '      {uses: actions/checkout@v4}, {run: "true; pip install pytest\\npytest tests/test_a.py -q"} ]\n',
+                 ((3, comment), (3, open_seq), (4, "a double-quoted scalar holding a backslash escape"),
+                  (4, "a flow mapping holding the key 'run'"))),
+                ("a flow mapping's anchored key and its alias, each behind a closing quote's `#` (D04)", "first",
+                 '      - uses: ./.github/actions/x\n        with: {a: "b"#}\n          , &hidkey c: e}\n'
+                 '      - uses: ./.github/actions/y\n        with: {a: "b"#}\n          , *hidkey : f}\n',
+                 ((2, comment), (2, open_map), (3, "an anchor (&hidkey)"), (5, comment), (5, open_map), (6, "an alias (*hidkey)")))):
+            with self.subTest(form=label):
+                src, first = (self._with_job_before_shell if where == "job" else self._with_first_step_in_shell_job)(text)
+                want = [(first + k - 1, src.splitlines()[first + k - 2].strip(), what) for k, what in named]
+                self.assertEqual(unread_yaml_forms(src), want, label)
+                self.assertEqual((self._new_bad(src), pytest_line_census(src)[1], switch_line_census(src)[1], unread_job_keys(src)[1]),
+                                 ([], [], [], []), "%s: the refusal is the one red" % label)
+        # the controls: a `#` inside a plain scalar in a flow collection is the scalar's text, and a spaced comment
+        # after a flow collection that closes on its line is a comment; neither is refused
+        for label, text in (("a plain scalar holding #", "      - uses: ./a\n        with: {pattern: a#b, list: [c#d]}\n"),
+                            ("a spaced comment after a closed collection", "      - uses: ./a\n        with: {a: b} # c\n")):
             with self.subTest(control=label):
                 self.assertEqual(unread_yaml_forms(self._with_first_step_in_shell_job(text)[0]), [], label)
 
