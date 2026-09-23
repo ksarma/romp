@@ -8029,9 +8029,61 @@ r8b3_scanner_log_short() {   # <cut bytes>: a gitleaks on ROMP_GITLEAKS that run
     calls_short_on git range-listing '[ "${1:-}" = rev-list ] && [ "${3:-}" = --not ]' "less:$((n - half + 1))"
     push_main_through_hook_with_shim
     fired_short range-listing "rev-list $sha --not --remotes $BASE"
-    grep -q -F -- "rev-list $sha --not --remotes $BASE [whole $((2 * (n + 1))) cut $((n + 1 + half))]" "$TEST_DIR/calls.range-listing"   # the tip's line and half the last name
+    grep -q -F -- "rev-list $sha --not --remotes $BASE [whole $((2 * (n + 1))) cut $((n + 1 + half))]" "$TEST_DIR/calls.range-listing"   # two lines, the tip's whole and the last name cut to half its digits: as many as git rev-list --count counts (the whole answer's two lines), so the line count agrees
     [ "$status" -ne 0 ]
     [[ "$output" == *"romp pre-push: the COMMITS of refs/heads/main (${sha:0:10}) were listed short (git rev-list exited 0 and answered \"${leak:0:$half}\" on a line that is no whole commit name)"* ]]
-    [[ "$output" != *"could not be listed whole"* ]]                   # the line count agrees: the count arm has nothing to refuse
+    at_base
+}
+
+# ── round 8b5 (A.8, a closing check): the parent count re-read from pcount, driven with its answer cut ──
+# The row's short column said none while its reason described a cut, and the r8b4 audit drove that cut
+# through a real push: a count of ten or more parents has a proper prefix that is not empty, whatever its
+# number of digits, and that prefix is a smaller count, so the report reads the previous versions of the
+# first parents alone. The case below cuts an eleven-parent merge's count to its first digit, the eleventh
+# parent alone holding the binary previous version: the report line becomes the two-fact line and the advice
+# under it the configuration key's, while the verdict and the remote are those of the whole count. The row's
+# short column names this case.
+r8b5_eleven_parent_merge() {   # a base on the remote (BASE); ten sides from it, the tenth alone adding bin.dat binary by its bytes, and main's own commit; an eleven-parent merge of main and the ten sides (merge) making bin.dat text carrying the string, parent 11 alone holding the binary version; bin.dat removed at the tip
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    local i sides=()
+    for i in 01 02 03 04 05 06 07 08 09 10; do
+        git -C "$REPO" checkout -q -b "s$i" main
+        if [ "$i" = 10 ]; then
+            printf 'ab\0cd\n' > "$REPO/bin.dat"
+            git -C "$REPO" add bin.dat
+            git -C "$REPO" commit -qm "side $i: a binary file"
+        else
+            commit_file "s$i.txt" "side $i" "side $i"
+        fi
+        sides+=("s$i")
+    done
+    git -C "$REPO" checkout -q main
+    commit_file main.txt "the api session's line" "main side"
+    git -C "$REPO" merge -q --no-ff --no-commit "${sides[@]}" > /dev/null 2>&1
+    printf 'seen on TESTHOST\n' > "$REPO/bin.dat"
+    git -C "$REPO" add bin.dat
+    git -C "$REPO" commit -qm "an eleven-parent merge making bin.dat text"
+    merge="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file bin.dat "remove it"
+}
+@test "round 8b5 short case: the parent count re-read from pcount, for the report: an awk whose read of an eleven-parent merge's count answers its first digit (exit 0), a smaller count, leaves the previous versions of the later parents unread: through a real push of an eleven-parent merge whose eleventh parent alone holds the binary previous version, the push is refused on the two-fact line with the configuration key's advice, as the whole count refuses it, and the remote stays at its base" {
+    r8b5_eleven_parent_merge
+    [ "$(git -C "$REPO" rev-list --parents -n 1 "$merge" | wc -w)" -eq 12 ]   # the merge and its eleven parents
+    git -C "$REPO" cat-file -e "$merge^11:bin.dat"                              # the binary previous version, in parent 11
+    run git -C "$REPO" cat-file -e "$merge^1:bin.dat"
+    [ "$status" -ne 0 ]                                                         # and none in parent 1, the version a count of 1 reads
+    mkdir -p "$TEST_DIR/shim"
+    calls_short_on_text awk pcount '$1 == r { print $2; exit }' bytes:1
+    push_main_through_hook_with_shim
+    fired_short pcount '$1 == r'
+    grep -F -- "-v r=$merge " "$TEST_DIR/calls.pcount" | grep -q -F -- "[whole 3 cut 1]"   # the merge's count, 11 and its newline, cut to its first digit
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: bin.dat in commit ${merge:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict (the blob is "*" bytes; core.bigFileThreshold is not set in this clone's configuration); the identifier scan did not read it, so the push is refused rather than scanned"* ]]
+    [[ "$output" != *"the previous version of the file"* ]]
+    [[ "$output" == *"Where a line names no attribute, a configuration key can be what makes git call the file binary"* ]]
+    [[ "$output" != *"Where a line names the previous version's bytes as the cause"* ]]
     at_base
 }

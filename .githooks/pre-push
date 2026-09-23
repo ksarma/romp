@@ -2372,13 +2372,13 @@ scan_identifiers() {
         # a new branch and on a ref update alike (the round 5 refuters,
         # 2026-09-22). A listing that answered SOMETHING is judged at its END by
         # a count read apart (the header's bound): git rev-list --count over the
-        # same range must equal the listing's line count, and each line must be
-        # a whole commit name (a hex run as long as the pushed commit's name),
-        # a count that differs or a line that is none refused as a short
-        # listing naming both answers (a rev-list cut to its first line, the
-        # pushed tip, with exit 0 published a middle commit's banned line
-        # through real pushes of a ref update and of a new branch alike; the
-        # r8b2 audit, 2026-09-23).
+        # same range must equal the listing's line count, a count that differs
+        # refused as a short listing naming both answers (a rev-list cut to its
+        # first line, the pushed tip, with exit 0 published a middle commit's
+        # banned line through real pushes of a ref update and of a new branch
+        # alike; the r8b2 audit, 2026-09-23); and each line must be a whole
+        # commit name (a hex run as long as the pushed commit's name), a line
+        # that is none refused as a short listing naming that line alone.
         fell_back=0
         # shellcheck disable=SC2046  # the range is deliberately word-split
         judged_read gate="the COMMIT listing of a pushed ref" 0,128 "the COMMITS of $local_ref (${local_sha:0:10}) could not be listed for the identifier scan (git rev-list exited {rc})" -q -- git rev-list $(rev_range "$local_sha" "$remote_sha") || :
