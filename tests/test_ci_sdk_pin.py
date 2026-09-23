@@ -657,7 +657,12 @@ PYTEST_CMD_RE = re.compile(r"^(?P<env>(?:[A-Za-z_][A-Za-z0-9_]*=\S*[ \t]+)*)"
 # 2026-09-21). An identifier that runs on past the word (an env: key PYTEST_ADDOPTS, pytest_args) is no mention unless
 # a `$` expands it. A mention that is not a command hit and not a pip install is `unparsed`.
 PYTEST_WORD_RE = re.compile(r"pytest\b|\bpy\.test\b|\$\{?pytest", re.I)
-PIP_INSTALL_RE = re.compile(r"\bpipx?\b.*\binstall\b")
+# a pip install, keyed on the command's program: pip or pipx (by path, with a version suffix, as `python -m pip` or
+# `uv pip`), then `install` after the program's own options, matched at the start of one command. Until 2026-09-23 it
+# matched pip and install as words anywhere in the command, so a pytest command whose arguments spelled both (`uvx
+# pytest -k "pip and install"`) read as a pip install and gave no row, and the census excused its line (probed).
+PIP_INSTALL_RE = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S*[ \t]+)*(?:\S*/)?(?:python[0-9.]*t?[ \t]+-m[ \t]*|uv[ \t]+)?"
+                            r"pipx?[0-9.]*(?:[ \t]+-\S+)*[ \t]+install(?=\s|$)")
 # a line whose key is `name` (`name:` or `- name:`, the value after a space or nothing): the census's first exclusion. A
 # line that merely contains "name:" (a flow mapping `- {name: ..., run: ...}`) is not one.
 NAME_KEY_RE = re.compile(r"^[ \t]*(?:-[ \t]+)?name:(?:[ \t]|$)")
@@ -665,6 +670,9 @@ NAME_KEY_RE = re.compile(r"^[ \t]*(?:-[ \t]+)?name:(?:[ \t]|$)")
 # quoting, so the commands of a YAML-quoted scalar are judged one by one (a split finer than the shell's never hides a
 # mention: it can only stand a piece of a pip command alone)
 CENSUS_SPLIT_RE = re.compile(r"&&|\|\||[;|&()]")
+# what a raw YAML line opens with before its value, stripped from each piece of that split before the pip test: the
+# indentation, a list dash or a flow mapping's brace, one key (plain or quoted) and its colon, and an opening quote
+YAML_KEY_PREFIX_RE = re.compile(r"""^[ \t]*(?:-[ \t]+)?\{?[ \t]*(?:(?:"[^"]*"|'[^']*'|[A-Za-z0-9_-]+)[ \t]*:[ \t]+)?["']?""")
 INLINE_ENV_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(\S*)")
 SWITCH = "ROMP_SDK_REQUIRE"
 FLAG_SPELLING = "-p no:anyio"
@@ -925,7 +933,7 @@ def pytest_invocations(src, read=None):
                 if unreadable:
                     # the pip exclusion per command, never per line: `pip install pytest && pytest` in such a block is a
                     # pytest command after a pip one (until 2026-09-23 the whole line was excused by its pip half)
-                    if any(PYTEST_WORD_RE.search(c) and not PIP_INSTALL_RE.search(c) for c in _shell_commands(cmd)):
+                    if any(PYTEST_WORD_RE.search(c) and not PIP_INSTALL_RE.match(c) for c in _shell_commands(cmd)):
                         parsed.append(dict(base, env=dict(env), args=None, unparsed=unreadable))
                     continue
                 for command in _shell_commands(cmd):
@@ -936,7 +944,7 @@ def pytest_invocations(src, read=None):
                         inv_env = dict(env)
                         inv_env.update(INLINE_ENV_RE.findall(hit.group("env")))
                         parsed.append(dict(base, env=inv_env, args=hit.group("args"), unparsed=None))
-                    elif not PIP_INSTALL_RE.search(command):
+                    elif not PIP_INSTALL_RE.match(command):
                         parsed.append(dict(base, env=dict(env), args=None, unparsed="a form the parser does not read as a command"))
         for inv in parsed:
             inv["job_run"] = "".join(job_runs)
@@ -980,11 +988,13 @@ def pytest_line_census(src):
     install, so a line that installs pytest and then runs it counts. The commands a line belongs to are the text the
     parser read for it when the parser read it (pytest_invocations' `read`: a pip install continued over two lines is
     one command), else the line itself with its backslash continuations joined, split at every operator character
-    (CENSUS_SPLIT_RE). A counted line is covered when it lies in the span of lines the parser read for a row, parsed
-    or unparsed: the row's first line through its last joined continuation (line..last_line). Keyed on the span, never
-    the first line alone, which would red a compliant command whose pytest word sits on a continuation line. The
-    census keys on the spelling over the whole file, not on YAML structure, so a line outside any run that spells
-    pytest (an artifact path, an action's input) counts and reds too: the census cannot tell it from a command."""
+    (CENSUS_SPLIT_RE), each piece with a YAML key's prefix stripped (YAML_KEY_PREFIX_RE); a pip install is a command
+    whose program is pip (PIP_INSTALL_RE, at the start of the command). A counted line is covered when it lies in the
+    span of lines the parser read for a row, parsed or unparsed: the row's first line through its last joined
+    continuation (line..last_line). Keyed on the span, never the first line alone, which would red a compliant command
+    whose pytest word sits on a continuation line. The census keys on the spelling over the whole file, not on YAML
+    structure, so a line outside any run that spells pytest (an artifact path, an action's input) counts and reds too:
+    the census cannot tell it from a command."""
     read = []
     found = pytest_invocations(src, read)
     covered = set()
@@ -1009,9 +1019,9 @@ def pytest_line_census(src):
             while hi + 1 < len(lines) and cut[hi].rstrip().endswith("\\"):
                 hi += 1
             joined = " ".join(c.rstrip().rstrip("\\") for c in cut[lo:hi + 1])
-            commands = [c.strip() for c in CENSUS_SPLIT_RE.split(joined) if c.strip()]
+            commands = [YAML_KEY_PREFIX_RE.sub("", c, count=1).strip() for c in CENSUS_SPLIT_RE.split(joined)]
         mentions = [c for c in commands if PYTEST_WORD_RE.search(c)]
-        if mentions and all(PIP_INSTALL_RE.search(c) for c in mentions):
+        if mentions and all(PIP_INSTALL_RE.match(c) for c in mentions):
             continue
         counted.append(idx + 1)
         if idx + 1 not in covered:
@@ -1659,6 +1669,10 @@ class PopulationCheckReds(unittest.TestCase):
                  "an indentation indicator (|2) on the block"),
                 ("a more-indented line in a folded block", "      - name: Folded (pytest)\n        run: >\n          echo start\n            python -m pytest tests/ -q -p no:anyio\n",
                  "a line indented deeper than the block's first line in a folded block"),
+                # a pip install is keyed on the command's program: until 2026-09-23 the words pip and install in a
+                # pytest command's arguments excused it as one
+                ("a wrapper whose arguments spell pip and install", '      - name: Pip words (pytest)\n        run: uvx pytest tests/ -q -k "pip and install"\n',
+                 "a form the parser does not read as a command"),
                 # the pip exclusion is per command in such a block too: until 2026-09-23 the pip half excused the line
                 ("pip then pytest in an indentation-indicator block", "      - name: Indented pip (pytest)\n        run: |2\n            python -m pip install pytest && python -m pytest tests/ -q -p no:anyio\n",
                  "an indentation indicator (|2) on the block")):
@@ -1752,7 +1766,10 @@ class PopulationCheckReds(unittest.TestCase):
                  '      - name: Pip then run\n        "run": "python -m pip install pytest && python -m pytest tests/test_a.py -q"\n', True),
                 ("run : , pip alone", "      - name: Pip only\n        run : python -m pip install --upgrade pip pytest pytest-timeout\n", False),
                 ("run : , pip alone over a backslash continuation",
-                 "      - name: Pip only\n        run : python -m pip install --upgrade pip \\\n          pytest-timeout\n", False)):
+                 "      - name: Pip only\n        run : python -m pip install --upgrade pip \\\n          pytest-timeout\n", False),
+                # a pip install is keyed on the command's program, not on the words pip and install anywhere in it
+                ("run : , a pytest command whose arguments spell pip and install",
+                 "      - name: Pip words\n        run : pytest tests/pip/install -q\n", True)):
             with self.subTest(form=label):
                 src, first = self._with_first_step_in_shell_job(step)
                 want = [(first + 1, src.splitlines()[first].strip())] if red else []
