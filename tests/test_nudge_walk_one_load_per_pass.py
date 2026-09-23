@@ -3713,15 +3713,15 @@ class TheCountersOneSite(unittest.TestCase):
         second verifier of those fixes: an exec of a statement naming the counter, in the kernel or in the judge against the
         kernel's globals, a globals() key sliced from a longer constant and a write from another kernel module each passed again,
         since the census compared a constant's whole text alone and read two files named by hand. The limit that stays, the
-        counter's copy of the assembled class of _LIMITS: a name completed at run time, by any transform _door_text does not undo,
-        from constants none of which reads as it whole or carries it whole into a subscript key or a listed lookup ('_NUDGE' +
-        '_WALK_STATS', a join, an interpolating f-string, a %-format, the result handed to getattr, setattr, operator.attrgetter,
-        vars() or a module's __dict__); a spelling in escape sequences alone, in a module whose text holds the name in no case;
-        and a write that reaches the dict with no spelling of its name at all (a function in another kernel module that finds the
-        dict through sys.modules by its keys, a scan of globals().values() for a dict holding the counter's keys) are outside
-        this census and outside any static census. Execution on the driven roads is what catches such a write: a case that
-        drives a road and asserts memos.nudgeWalk.loads on that pass, against the walk's recorded calls or an exact figure, reds
-        on the extra write, and a write on a road no case drives is caught by nothing here."""
+        counter's copy of the assembled class of _LIMITS: a name completed at run time, by any transform _door_text does not
+        undo, from constants none of which reads as it whole or carries it whole into a subscript key, a listed lookup or a dict
+        read ('_NUDGE' + '_WALK_STATS', a join, an interpolating f-string, a %-format, the result handed to getattr, setattr,
+        operator.attrgetter, vars() or a module's __dict__); a spelling in escape sequences alone, in a module whose text holds
+        the name in no case; and a write that reaches the dict with no spelling of its name at all (a function in another kernel
+        module that finds the dict through sys.modules by its keys, a scan of globals().values() for a dict holding the
+        counter's keys) are outside this census and outside any static census. Execution on the driven roads is what catches
+        such a write: a case that drives a road and asserts memos.nudgeWalk.loads on that pass, against the walk's recorded
+        calls or an exact figure, reds on the extra write, and a write on a road no case drives is caught by nothing here."""
         self._the_named_def("_auto_nudge_session", km._auto_nudge_session, "_auto_nudge_session")
         at = [i for i, _ln in _loader_sites(km._auto_nudge_session, "jd.load_goals_shared")]
         self.assertEqual(len(at), 1, "one shared load in the walk's look, by either spelling of the shared door: a second call site is "
