@@ -5460,6 +5460,13 @@ why, and the test that holds it:
    counted a URL document's candidates among those left as written). A `data:` source is cut to its head through the
    comma with an ellipsis (`shownSource`; the first forty characters when there is no comma): a broken inline image's
    label printed the whole encoded payload, 1518 px tall at 380 px, two screens of base64 where the note should go on.
+   Since the link-navigation follow-on, `shownSource` sends a source with any other scheme, or a protocol-relative
+   one, through `shownAddress`, the stripper the web picture's title uses: a source that parses is resolved against
+   the document and shown as origin plus path, with no userinfo, query or fragment, and one the URL parser refuses
+   (an out-of-range port) is cut as text, through the last `@` and then from the first `?` or `#`, so a refused
+   source with an `@` in its path prints a wrong host, never a secret. The scheme is read as the parser reads it, URL
+   parsing normalises the spelling, and a workspace path still prints as written. Chromium never requests a
+   `user:pass@` source, so its label was where such a credential showed.
    One label per img, found by the mark and never by the class (the figure gate's rule: an author can type the class):
    a second `error`, the chat page's heal retrying, rewrites the one label's text; the img's `load` removes it. The
    img keeps every attribute and its place, `img.onerror` is never set (the heal skips an img with one), the insertion

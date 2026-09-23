@@ -21,6 +21,7 @@
 // values only: an invented report, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import * as http from "node:http";
 import { inBrowser, openViewer, openPanel, frames, topBlock, putAtTop, PARA, ROOT, REPORT, type Mode, type Served } from "./real-viewer-leg";
 
 const FIGS = ROOT + "/docs/figs/";
@@ -297,4 +298,89 @@ test("in a browser (the Slice 7 review's round 1): a <picture>'s label names the
     assert.deepEqual(errors, [], "no uncaught page error");
     await page.close();
   });
+});
+
+// ── a credential in the label's words, and in a loaded picture's title (the file review's round 14, correctness-1 with extra5-3) ─
+// Chromium never requests a source carrying a user:pass@, an ftp: source or one the URL parser refuses, so each fails and its
+// label is where such a source would show; before the round-14 fix the label printed every source but a data: one as written,
+// and a loaded picture's title kept its query and fragment. A second local http server on another port stands for the remote
+// hosts: the page reaches it as http://example.test, https://example.test and https://bucket.example.test through a context
+// route that relays the bytes (file-figure-open-browser.test.ts's shape), answering /ok.svg with a picture and every other path
+// with a 404, and the hosts are on figureHosts before the open, so no figure is gated. CI skips this leg (the Test step runs
+// before the job's Chromium install), so file-view-figure-error.test.ts holds the rule on the label builder and through the
+// listener over the stand-in, which CI runs. Every planted value is assembled at run time: no credential-shaped literal here.
+/** The remote server: every request logged by its path, /ok.svg a 300 by 200 picture, anything else a 404. */
+function remoteServer(log: string[]): Promise<{ port: number; close: () => Promise<void> }> {
+  return new Promise((resolve) => {
+    const s = http.createServer((req, res) => {
+      log.push((req.method || "") + " " + (req.url || ""));
+      if ((req.url || "").split("?")[0] === "/ok.svg") { res.writeHead(200, { "Content-Type": "image/svg+xml" }); res.end('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200"><rect width="300" height="200" fill="#333"/></svg>'); return; }
+      res.writeHead(404, { "Content-Type": "text/plain" }); res.end("not found");
+    });
+    s.listen(0, "127.0.0.1", () => { const a = s.address() as { port: number }; resolve({ port: a.port, close: () => new Promise((r) => s.close(() => r())) }); });
+  });
+}
+/** The remote server's answer for `p`, read over loopback from node (the relay's other half). */
+const fromRemote = (port: number, p: string): Promise<{ status: number; type: string; body: string }> => new Promise((resolve, reject) => {
+  http.get({ host: "127.0.0.1", port, path: p }, (res) => { let b = ""; res.on("data", (c) => { b += c; }); res.on("end", () => resolve({ status: res.statusCode || 0, type: String(res.headers["content-type"] || ""), body: b })); }).on("error", reject);
+});
+
+test("in a browser: a failed figure's label never prints a userinfo, a query or a fragment for a source with a scheme other than data:, or a protocol-relative one (an http userinfo, a query token, an S3 presigned pair, a fragment's access token, a userinfo plus a query, a protocol-relative source in HTML and in markdown, a srcset candidate the browser chose, an ftp source, an out-of-range port, a tab inside the scheme, a refused source whose password holds a / or a ?), a loaded picture's title shows origin plus path, and a data: head and a workspace path print as they did (a property pin over the page, red at the head the round read, where each label printed its source as written and the title kept the query and the fragment)", { timeout: 300000 }, async (t) => {
+  const TOK = "tok" + "en", UI = "u" + "ser" + ":" + "p" + "w" + String(4 * 4) + "@";
+  const V = (k: string): string => k + "TOK" + String(k.length * 37);
+  const S3C = "AKID" + "EXAMPLE" + "%2F20260923%2Fus-east-1%2Fs3%2Faws4_request", S3S = "abc" + "def0123456789" + "fedcba";
+  /** [case, the paragraph's figure, the label's words (null for the loaded picture, which wears none)] */
+  const cases: Array<[string, string, string | null]> = [
+    ["an http userinfo", '<img src="http://' + UI + 'example.test/a.svg" alt="">', "http://example.test/a.svg"],
+    ["an https query token", '<img src="https://example.test/b.svg?' + TOK + "=" + V("QB") + '" alt="">', "https://example.test/b.svg"],
+    ["an S3 presigned pair", '<img src="https://bucket.example.test/fig.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&amp;X-Amz-Credential=' + S3C + "&amp;X-Amz-Signature=" + S3S + '" alt="">', "https://bucket.example.test/fig.png"],
+    ["a fragment's access token", '<img src="http://example.test/f.svg#access_' + "token=" + V("FR") + '" alt="">', "http://example.test/f.svg"],
+    ["a userinfo plus a query", '<img src="http://' + UI + "example.test/c.svg?" + TOK + "=" + V("UQ") + '" alt="">', "http://example.test/c.svg"],
+    ["a protocol-relative userinfo plus a query", '<img src="//' + UI + "example.test/r.svg?" + TOK + "=" + V("PR") + '" alt="">', "http://example.test/r.svg"],
+    ["a srcset 1x candidate with a userinfo plus a query", '<img src="figs/fallback.png" srcset="http://' + UI + "example.test/s.svg?" + TOK + "=" + V("SS") + ' 1x" alt="">', "http://example.test/s.svg"],
+    ["an ftp userinfo plus a query", '<img src="ftp://' + UI + "example.test/g.svg?" + TOK + "=" + V("FT") + '" alt="">', "ftp://example.test/g.svg"],
+    ["an out-of-range port with a userinfo plus a query", '<img src="http://' + UI + "example.test:99999/u.svg?" + TOK + "=" + V("UP") + '" alt="">', "http://example.test:99999/u.svg"],
+    ["a markdown protocol-relative userinfo plus a query", "![](//" + UI + "example.test/m.svg?" + TOK + "=" + V("MD") + ")", "http://example.test/m.svg"],
+    ["a tab inside the scheme", '<img src="ht&#9;tp://' + UI + "example.test/t.svg?" + TOK + "=" + V("TB") + '" alt="">', "http://example.test/t.svg"],
+    ["a refused source whose password holds a /", '<img src="http://u' + "ser:p/" + V("SL") + '@example.test/x1.png" alt="">', "http://example.test/x1.png"],
+    ["a refused source whose password holds a ?", '<img src="http://u' + "ser:p?" + V("QM") + '@example.test/x2.png" alt="">', "http://example.test/x2.png"],
+    ["a loaded picture whose address carries a query and a fragment", '<img src="https://example.test/ok.svg?' + TOK + "=" + V("LQ") + "#access_" + "token=" + V("LF") + '" alt="loaded">', null],
+    ["a control, a data: source", '<img src="data:image/png;base64,' + "A".repeat(40) + '" alt="">', "data:image/png;base64,…"],
+    ["a control, a workspace path with a query-looking tail", "![](figs/q.png?x=1)", "figs/q.png?x=1"],
+  ];
+  const planted = ["user:", "pw16", S3C, S3S, "X-Amz-", "access_", "?" + TOK, ...["QB", "FR", "UQ", "PR", "SS", "FT", "UP", "MD", "TB", "SL", "QM", "LQ", "LF"].map(V)];
+  const note = "# Report\n\n" + cases.map(([n, h], i) => "Case " + i + " (" + n + "): " + h + " end.").join("\n\n") + "\n";
+  const served: string[] = [];
+  const remote = await remoteServer(served);
+  try {
+    await inBrowser(t, async (browser) => {
+      const before = async (pg: any): Promise<void> => {
+        await pg.context().route((u: URL) => u.hostname === "example.test" || u.hostname === "bucket.example.test", async (route: any) => {
+          const a = await fromRemote(remote.port, new URL(route.request().url()).pathname);
+          return route.fulfill({ status: a.status, contentType: a.type, body: a.body });
+        });
+        await pg.evaluate(() => { localStorage.setItem("romp:settings", JSON.stringify({ figureHosts: ["example.test", "bucket.example.test"] })); });   // no figure gated: each is fetched, or refused by the browser, at the paint
+      };
+      const { page, errors } = await openViewer(browser, "pane", 900, 700, { docs: { [REPORT]: note }, serve, before });
+      await page.waitForFunction((n: number) => { const imgs = Array.from(document.querySelectorAll(".fileview-md img")) as HTMLImageElement[]; return imgs.length === n && imgs.every((i) => i.complete); }, cases.length, { timeout: 15000 });
+      await frames(page, 3);
+      const rows: Array<{ label: string | null; title: string | null; natural: number; visible: string }> = await page.evaluate(() => (Array.from(document.querySelectorAll(".fileview-md > p")) as HTMLElement[]).filter((p) => /^Case \d+/.test(p.textContent || "")).map((p) => {
+        const i = p.querySelector("img") as HTMLImageElement | null;
+        const lab = p.querySelector("[data-fv-figerr]") as HTMLElement | null;
+        return { label: lab ? lab.textContent : null, title: i ? i.getAttribute("title") : null, natural: i ? i.naturalWidth : -1, visible: p.innerText || "" };
+      }));
+      t.diagnostic("remote requests " + JSON.stringify(served));
+      assert.equal(rows.length, cases.length, "one paragraph per case");
+      assert.deepEqual(rows.map((r) => r.label), cases.map(([, , w]) => (w === null ? null : FAILED + " " + w)),
+        "each failed figure's label names its source as origin plus path, with no userinfo, query or fragment (the refused ones cut as text through the last @, then from the first ? or #), the data: head and the workspace path as they were, and the loaded picture none (a property pin over the label's text)");
+      const loaded = rows[cases.length - 3];
+      assert.ok(loaded.natural > 0, "the loaded case decoded, relayed from the remote server: " + JSON.stringify(served));
+      assert.equal(loaded.title, "Opens in a new tab: https://example.test/ok.svg", "the loaded picture's title is origin plus path: no query, no fragment (a property pin over the title attribute)");
+      const leaks: string[] = [];
+      rows.forEach((r, k) => { for (const x of planted) for (const [where, text] of [["label", r.label], ["title", r.title], ["visible text", r.visible]] as const) if ((text || "").includes(x)) leaks.push(cases[k][0] + ": the " + where + " carries " + JSON.stringify(x)); });
+      assert.deepEqual(leaks, [], "no planted value in a label, a title or a paragraph's visible text (a property pin)");
+      assert.deepEqual(errors, [], "no uncaught page error");
+      await page.close();
+    });
+  } finally { await remote.close(); }
 });

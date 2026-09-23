@@ -1043,3 +1043,49 @@ test("a picture from the web whose address carries credentials, and one whose ad
   assert.deepEqual(controls.map((c) => c!.getAttribute("aria-label")), words, "and the aria-label, the same words");
   assert.deepEqual(controls.map((c) => c!.classList.contains("fv-figopen-web")), [true, true, false], "the web class on the two remote controls alone");
 });
+
+// ── a credential in the address's query or fragment (the file review's round 14, correctness-1): the picture's title shows origin
+// plus path, the whole query and the whole fragment dropped beside the userinfo, so a raw link's token, a presigned URL's
+// signature pair or an OAuth fragment never stands in a tooltip. Every address is assembled at run time through the URL API and
+// every planted value from parts, so no credential-shaped literal stands in this file.
+test("a picture from the web whose address carries a query token, an S3 presigned signature pair, a fragment access_token, a userinfo plus a query, or a query plus a fragment, painted with its hosts loaded: the picture's title is origin plus path alone (shownAddress), after the author's title when one stands, with no planted value in it; the control's words name the host as before (a property pin over the paint, red at the head the round read, where the title kept the query and the fragment)", async (t) => {
+  const tok = "tok" + "en", qv = "Q" + "TOKVAL" + String(7 * 13);
+  const q = new URL("https://example.test/q.svg"); q.searchParams.set(tok, qv);
+  const s3 = new URL("https://bucket.example.test/fig.png");
+  const cred = "AKID" + "EXAMPLE" + "/20260923/us-east-1/s3/aws4_request", sig = "abc" + "def0123456789" + "fedcba";
+  s3.searchParams.set("X-Amz-Algorithm", "AWS4-HMAC-SHA256"); s3.searchParams.set("X-Amz-Credential", cred); s3.searchParams.set("X-Amz-Signature", sig);
+  const fr = new URL("http://example.test/f.svg"), hv = "H" + "ASHVAL" + String(3 * 11); fr.hash = "access_" + "token=" + hv;
+  const uq = new URL("http://example.test/c.svg"), us = "u" + "ser", pw = "p" + "w" + String(4 * 4), cv = "C" + "OMBO" + String(5 * 5);
+  uq.username = us; uq.password = pw; uq.searchParams.set(tok, cv);
+  const qf = new URL("http://example.test/p.svg"), sv = "S" + "ECRETVALUE", fv2 = "H" + "ASHVALUE"; qf.searchParams.set(tok, sv); qf.hash = "access_" + "token=" + fv2;
+  assert.deepEqual([q.search.includes(qv), s3.search.includes("X-Amz-Signature=" + sig), fr.hash.includes(hv), uq.username, uq.password, uq.search.includes(cv), qf.search.includes(sv), qf.hash.includes(fv2)], [true, true, true, us, pw, true, true, true],
+    "each assembled address carries its planted value (read back as parts)");
+  const planted = [qv, cred, encodeURIComponent(cred), sig, "X-Amz-", hv, "access_", us + ":", pw, cv, sv, fv2, "?", "#"];
+  loadGatedHost("example.test", doc as unknown as ParentNode); loadGatedHost("bucket.example.test", doc as unknown as ParentNode);   // the hosts on no list: lifted for this document before the paint
+  t.after(() => { forgetLoadedHosts(); });
+  const hrefs = [q.href, s3.href, fr.href, uq.href, qf.href];
+  const o = await open(REPORT, "# R\n\n" + hrefs.map((h, i) => '<img src="' + h + '" alt="c' + i + '"' + (i === 1 ? ' title="Fig"' : "") + ">").join("\n\n") + "\n", t);
+  const imgs = o.body.querySelector(".fileview-md")!.querySelectorAll("img");
+  assert.deepEqual(imgs.map((i) => i.getAttribute("alt")), ["c0", "c1", "c2", "c3", "c4"], "the five pictures painted, none gated");
+  const titles = imgs.map((i) => i.getAttribute("title"));
+  assert.deepEqual(titles, ["Opens in a new tab: https://example.test/q.svg", "Fig\nOpens in a new tab: https://bucket.example.test/fig.png", "Opens in a new tab: http://example.test/f.svg", "Opens in a new tab: http://example.test/c.svg", "Opens in a new tab: http://example.test/p.svg"],
+    "origin plus path in every title, the author's title first on its own line: no query, no fragment, no userinfo (a property pin over the title attribute)");
+  for (const ti of titles) for (const x of planted) assert.ok(!(ti || "").includes(x), "no planted value in a title (a property pin): " + JSON.stringify(x) + " in " + JSON.stringify(ti));
+  const words = imgs.map((i) => { const n = i.nextSibling; return n instanceof El && n.hasAttribute("data-fv-figopen") ? n.title : null; });
+  assert.deepEqual(words, ["Open the picture in a new tab at example.test", "Open the picture in a new tab at bucket.example.test", "Open the picture in a new tab at example.test", "Open the picture in a new tab at example.test", "Open the picture in a new tab at example.test"],
+    "the control's words name the host alone, as before (targetHost; a control, green at the head the round read by design)");
+});
+
+test("a picture from the web whose address the stand-in cannot resolve, a protocol-relative one (the node DOM has no base to resolve it against) and one with an out-of-range port, each carrying a userinfo and a query token: the picture's title is cut as text, no userinfo and nothing from the first ? (shownAddress's refused arm, which the label shares; in a browser neither loads, so neither gets a title there, and the failed label holds the same cut in file-view-figure-error.test.ts) (a property pin over the paint, red at the head the round read, where the title printed the address as written)", async (t) => {
+  const tok = "tok" + "en", us = "u" + "ser", pw = "p" + "w" + String(4 * 4), v1 = "PR" + "TOK" + String(9 * 9), v2 = "UP" + "TOK" + String(8 * 8);
+  const pr = "//" + us + ":" + pw + "@example.test/r.svg?" + tok + "=" + v1;
+  const up = "http://" + us + ":" + pw + "@example.test:99999/u.svg?" + tok + "=" + v2;
+  loadGatedHost("example.test", doc as unknown as ParentNode);
+  t.after(() => { forgetLoadedHosts(); });
+  const o = await open(REPORT, '# R\n\n<img src="' + pr + '" alt="pr">\n\n<img src="' + up + '" alt="up">\n', t);
+  const imgs = o.body.querySelector(".fileview-md")!.querySelectorAll("img");
+  assert.deepEqual(imgs.map((i) => i.getAttribute("alt")), ["pr", "up"], "the two pictures painted, none gated");
+  const titles = imgs.map((i) => i.getAttribute("title"));
+  assert.deepEqual(titles, ["Opens in a new tab: //example.test/r.svg", "Opens in a new tab: http://example.test:99999/u.svg"], "each title cut as text: the userinfo and the query gone, the port kept (a property pin over the title attribute)");
+  for (const ti of titles) for (const x of [us + ":", pw, v1, v2, "?"]) assert.ok(!(ti || "").includes(x), "no planted value in a title (a property pin): " + JSON.stringify(x) + " in " + JSON.stringify(ti));
+});

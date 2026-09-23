@@ -70,8 +70,8 @@ RENDER_FELL_SAYS = ("When a file cannot be shown as rendered Markdown, its text 
                     "it, under a line that says so and names the error; **Rendered** stays chosen, and the next reload "
                     "or click of that button tries again.")
 FIGURE_SAYS = ("A figure that cannot be loaded, because its file is missing or is not an image, shows a line where the "
-               "picture would be: **Image failed to load**, then the figure's path as written in the file, and its alt "
-               "text when it has one.")
+               "picture would be: **Image failed to load**, then the figure's path as written in the file (a web address "
+               "without its sign-in part, query and fragment), and its alt text when it has one.")
 DECODE_SAYS = ("A picture opened as a file of its own whose bytes will not decode, because it is still being written or "
                "was cut short, shows a line in its place (**this image failed to decode: it may be mid-write or "
                "truncated**), then the file's path, and **Download**, which saves the file to your device.")
@@ -235,7 +235,8 @@ class TheViewerDoesIt(unittest.TestCase):
 
     def test_a_failed_figure_wears_a_label_the_body_hears_the_error_for_and_both_text_walks_skip(self):
         # the source the label names: the candidate the browser asked for as the author wrote it (failedSource: pictureDest's rule
-        # for the img's own src, the srcset candidate in currentSrc otherwise), a data: source cut to its head (shownSource); the
+        # for the img's own src, the srcset candidate in currentSrc otherwise), a data: source cut to its head and a source with a
+        # scheme or a leading // shown as origin plus path (shownSource, whose rule file-view-figure-error.test.ts executes); the
         # Slice 7 review's round 1
         # ...and the words in the source's place when the figure names none (an empty destination; the review's round 2)
         self.assertIn('const src = failedSource(img);', self.viewer)

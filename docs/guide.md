@@ -756,7 +756,8 @@ viewer paints the rectangle on the picture. Drawing a rectangle needs a mouse or
 on a phone, comment on the file as a whole instead.
 A figure that cannot be loaded, because its file is missing or is not an image, shows a line
 where the picture would be: **Image failed to load**, then the figure's path as written in the
-file, and its alt text when it has one.
+file (a web address without its sign-in part, query and fragment), and its alt text when it has
+one.
 A picture opened as a file of its own whose bytes will not decode, because it is still being
 written or was cut short, shows a line in its place (**this image failed to decode: it may be
 mid-write or truncated**), then the file's path, and **Download**, which saves the file to your

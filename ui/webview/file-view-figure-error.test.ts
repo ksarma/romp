@@ -711,6 +711,98 @@ test("two failing figures under one wrapper (the Slice 7 review's closing pass):
   assert.equal(md.querySelectorAll("[data-fv-figerr]").length, 3, "both of the link's labels gone; the three standing labels are the earlier pairs' still-failing imgs' (p1's, w1's and q2's)");
 });
 
+// ── a credential in the label's words (the file review's round 14, correctness-1 with extra5-3) ──────────────────────
+// The label never prints a userinfo, a query or a fragment for a source with a scheme other than data:, or a protocol-relative
+// one: a source that parses is resolved against the document and printed as origin plus path (shownAddress), one the parser
+// refuses is cut as text through the LAST @ and then from the first ? or #, and a workspace path prints as written. Chromium
+// never requests a user:pass@ source, so the picture fails and its label is where such a source would show. CI runs this
+// module (the Test step of the vscode-extension job) and skips the Chromium leg, so the rule is executed here twice: on the
+// label builder itself (shownSource, form a) and through the real error listener over the stand-in (form b), each red at the
+// head the round read, where the label printed every source but a data: one as written. file-view-figure-error-browser.test.ts
+// holds the same cases in Chromium. Every planted value is assembled at run time: no credential-shaped literal stands here.
+const L_TOK = "tok" + "en", L_US = "u" + "ser", L_PW = "p" + "w" + String(4 * 4);
+const L_V = (k: string): string => k + "TOK" + String(k.length * 37);
+const L_S3_CRED = "AKID" + "EXAMPLE" + "/20260923/us-east-1/s3/aws4_request", L_S3_SIG = "abc" + "def0123456789" + "fedcba";
+const L_UI = L_US + ":" + L_PW + "@";
+const L_BASE = "http://notes-api.test/";   // the dashboard's own address, as document.baseURI reads there (the stand-in's document has none)
+/** [case, source, the label's source with no base (the stand-in), the label's source against the dashboard's base] */
+const L_CASES: Array<[string, string, string, string]> = [
+  ["an http userinfo", "http://" + L_UI + "example.test/a.svg", "http://example.test/a.svg", "http://example.test/a.svg"],
+  ["an https query token", "https://example.test/b.svg?" + L_TOK + "=" + L_V("QB"), "https://example.test/b.svg", "https://example.test/b.svg"],
+  ["an S3 presigned pair", "https://bucket.example.test/fig.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=" + encodeURIComponent(L_S3_CRED) + "&X-Amz-Signature=" + L_S3_SIG, "https://bucket.example.test/fig.png", "https://bucket.example.test/fig.png"],
+  ["a fragment access_token", "http://example.test/f.svg#access_" + "token=" + L_V("FR"), "http://example.test/f.svg", "http://example.test/f.svg"],
+  ["a userinfo plus a query", "http://" + L_UI + "example.test/c.svg?" + L_TOK + "=" + L_V("UQ"), "http://example.test/c.svg", "http://example.test/c.svg"],
+  ["a protocol-relative userinfo plus a query", "//" + L_UI + "example.test/r.svg?" + L_TOK + "=" + L_V("PR"), "//example.test/r.svg", "http://example.test/r.svg"],
+  ["an ftp userinfo plus a query", "ftp://" + L_UI + "example.test/g.svg?" + L_TOK + "=" + L_V("FT"), "ftp://example.test/g.svg", "ftp://example.test/g.svg"],
+  ["an unparsable port with a userinfo plus a query", "http://" + L_UI + "example.test:99999/u.svg?" + L_TOK + "=" + L_V("UP"), "http://example.test:99999/u.svg", "http://example.test:99999/u.svg"],
+  ["a file: query and fragment", "file:///srv/x.png?" + L_TOK + "=" + L_V("FQ") + "#frag", "file:///srv/x.png", "file:///srv/x.png"],
+  ["a file: userinfo, which the parser refuses", "file://" + L_UI + "host.test/x.png?" + L_TOK + "=" + L_V("FU"), "file://host.test/x.png", "file://host.test/x.png"],
+  ["a blob: address's inner userinfo, query and fragment", "blob:http://" + L_UI + "example.test/0000-1111?" + L_TOK + "=" + L_V("BL") + "#frag", "blob:http://example.test/0000-1111", "blob:http://example.test/0000-1111"],
+  ["an upper-case spelling", "HTTPS://" + L_UI.toUpperCase() + "Example.TEST/Up.svg?" + L_TOK + "=" + L_V("UC"), "https://example.test/Up.svg", "https://example.test/Up.svg"],
+  ["a leading space", " http://" + L_UI + "example.test/w.svg?" + L_TOK + "=" + L_V("WS"), "http://example.test/w.svg", "http://example.test/w.svg"],
+  ["a tab inside the scheme", "ht\ttp://" + L_UI + "example.test/t.svg?" + L_TOK + "=" + L_V("TB"), "http://example.test/t.svg", "http://example.test/t.svg"],
+  ["a refused source whose password holds a /", "http://" + L_US + ":p/" + L_V("SL") + "@example.test/x.png", "http://example.test/x.png", "http://example.test/x.png"],
+  ["a refused source whose password holds a ?", "http://" + L_US + ":p?" + L_V("QM") + "@example.test/x.png", "http://example.test/x.png", "http://example.test/x.png"],
+  ["a refused source whose password holds a #", "http://" + L_US + ":p#" + L_V("HM") + "@example.test/x.png", "http://example.test/x.png", "http://example.test/x.png"],
+  ["the ruled cost: a refused source with an @ in its path prints a wrong host, never a secret", "http://example.test:99999/a@2x.png?" + L_TOK + "=" + L_V("AT"), "http://2x.png", "http://2x.png"],
+];
+const L_PLANTED = [L_US + ":", L_US.toUpperCase() + ":", L_PW, L_PW.toUpperCase(), L_S3_CRED, encodeURIComponent(L_S3_CRED), L_S3_SIG, "X-Amz-", "access_", "?", "#",
+  ...["QB", "FR", "UQ", "PR", "FT", "UP", "FQ", "FU", "BL", "UC", "WS", "TB", "SL", "QM", "HM", "AT", "SS", "VB"].map(L_V)];
+/** The controls: a source the rule leaves as it was, printed as at the head the round read (green there by design). */
+const L_CONTROLS: Array<[string, string, string]> = [
+  ["a data: source keeps its head", "data:image/png;base64,iVBORw0KGgo" + "A".repeat(300), "data:image/png;base64,…"],
+  ["a workspace path with a query-looking tail, as written", "figs/a.png?x=1#y", "figs/a.png?x=1#y"],
+  ["a workspace path with an @, as written", "figs/a@2x.png", "figs/a@2x.png"],
+  ["a plain https source, as written", "https://cdn.example/plot.png", "https://cdn.example/plot.png"],
+];
+
+test("the label builder itself (shownSource, a pure function over strings; form a): a source with a scheme other than data:, or a protocol-relative one, prints origin plus path with no userinfo, query or fragment, resolved against the base when one is given (the dashboard's address, a VS Code webview's) and cut as text when the parser refuses it, through the LAST @ and then from the first ? or #, so a password holding a /, a ? or a # prints nothing of itself and a refused source with an @ in its path prints a wrong host, never a secret (the ruled cost); the controls print as they did (a property pin over the returned strings, red at the head the round read, where the label printed every source but a data: one as written)", async () => {
+  const fv = await mod();
+  assert.equal(typeof fv.shownSource, "function", "shownSource is exported, so this unit calls the label builder directly (a sentence pin on the export; the assertions below hold the property)");
+  const out: string[] = [];
+  for (const [name, src, nobase, based] of L_CASES) {
+    const a = fv.shownSource(src), b = fv.shownSource(src, L_BASE);
+    out.push(a, b);
+    assert.equal(a, nobase, name + ", with no base (the stand-in's document has none): a property pin over the returned string");
+    assert.equal(b, based, name + ", against the dashboard's base: a property pin over the returned string");
+  }
+  const webview = fv.shownSource("//" + L_UI + "example.test/r.svg?" + L_TOK + "=" + L_V("VB"), "vscode-webview://abc123/index.html?id=x");
+  out.push(webview);
+  assert.equal(webview, "vscode-webview://example.test/r.svg", "a protocol-relative source against a VS Code webview's base takes the webview's scheme and loses its userinfo and query: a property pin");
+  for (const s of out) for (const x of L_PLANTED) assert.ok(!s.includes(x), "no planted value in a label's source (a property pin): " + JSON.stringify(x) + " in " + JSON.stringify(s));
+  for (const [name, src, want] of L_CONTROLS) {
+    assert.equal(fv.shownSource(src), want, name + ", with no base: a control, green at the head the round read by design (the rule leaves it as it was)");
+    assert.equal(fv.shownSource(src, L_BASE), want, name + ", against the dashboard's base: the same control");
+  }
+});
+
+test("the label through the real error listener over the stand-in (form b): every source of the cases above, laid in the Rendered box and failed with its error event, wears a label naming it as origin plus path with no userinfo, query or fragment, and so does a srcset candidate the browser chose (currentSrc) carrying a userinfo and a query token behind a harmless workspace src; the controls' labels read as they did (a property pin over the label's text, red at the head the round read, where every label printed its source as written)", async (t) => {
+  const { md, fv } = await open(t);
+  const words: string[] = [];
+  for (const [name, src, nobase] of L_CASES) {
+    const i = img({ src, alt: "" });
+    md.appendChild(block("p", i)); fire(i, "error");
+    const l = labelAfter(i);
+    words.push(l ? l.textContent : "");
+    assert.equal(l ? l.textContent : null, fv.FIGURE_FAILED + " " + nobase, name + ": the label's words (a property pin over the label's text)");
+  }
+  const cand = "http://" + L_UI + "example.test/s.svg?" + L_TOK + "=" + L_V("SS");
+  const ss = img({ src: fileSrc("figs/fallback.png"), "data-fv-src": "figs/fallback.png", alt: "", srcset: cand + " 2x" });
+  (ss as any).currentSrc = cand;   // the candidate the browser chose and asked for (the stand-in fetches nothing)
+  md.appendChild(block("p", ss)); fire(ss, "error");
+  const sl = labelAfter(ss);
+  words.push(sl ? sl.textContent : "");
+  assert.equal(sl ? sl.textContent : null, fv.FIGURE_FAILED + " http://example.test/s.svg", "the srcset candidate failedSource returns is stripped the same way (a property pin over the label's text)");
+  for (const s of words) for (const x of L_PLANTED) assert.ok(!s.includes(x), "no planted value in a label (a property pin): " + JSON.stringify(x) + " in " + JSON.stringify(s));
+  for (const [name, src, want] of L_CONTROLS) {
+    const i = img({ src, alt: "" });
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(src)) { i.setAttribute("data-fv-src", src); i.setAttribute("src", fileSrc(src)); }   // a workspace path, as rewriteFigureSrcs leaves it
+    md.appendChild(block("p", i)); fire(i, "error");
+    const l = labelAfter(i);
+    assert.equal(l ? l.textContent : null, fv.FIGURE_FAILED + " " + want, name + ": a control, green at the head the round read by design (the rule leaves it as it was)");
+  }
+});
+
 // ── source pins: what the node cases cannot execute here (the browser leg executes the rest) ──────────────────────────
 test("source: armFigureLabels is armed in both viewers and dropped with each (ctx.onClose in the local one, closeHooks in the URL one); it arms exactly two capture listeners, error and load, removes both, and never assigns img.onerror; the label is span.fv-figerr with the mark data-fv-figerr; its text is FIGURE_FAILED, a space, pictureDest's answer and the alt in parentheses (contract C2); FIGURE_FAILED's text is contract C5's; headingWords skips the mark's element after its img line", () => {
   assert.match(VIEW, /\n  ctx\.onClose\(armFigureLabels\(body\)\);\n/, "the local viewer: armed once at the open beside the re-seat's listener and dropped by onClose");
@@ -734,12 +826,21 @@ test("source: armFigureLabels is armed in both viewers and dropped with each (ct
   // by the authored candidates rewriteFigureSrcs keeps in data-fv-srcset; the img's own src, or no currentSrc, keeps pictureDest's rule
   assert.match(VIEW, /\nconst FV_SRCSET = "data-fv-srcset";\n/, "the authored candidates' attribute");
   assert.match(VIEW, /if \(changed\) \{ el\.setAttribute\(FV_SRCSET, ref\.value\); el\.setAttribute\("srcset", serializeSrcset\(cands\)\); \}[^\n]*\n\s*else el\.removeAttribute\(FV_SRCSET\);/, "rewriteFigureSrcs keeps the authored srcset beside its rewrite, for the img's and a source's alike, and clears a stale one");
-  const fs = VIEW.slice(VIEW.indexOf("function failedSource(img: Element): string | null {"), VIEW.indexOf("function shownSource(src: string): string {"));
+  const fsAt = VIEW.indexOf("function failedSource(img: Element): string | null {"), fsEnd = VIEW.indexOf("export function shownSource(");
+  assert.ok(fsAt > 0 && fsEnd > fsAt, "the region from failedSource runs to shownSource's signature, found after it (a sentence pin on the two markers: a missing end would widen the region to the file's end)");
+  const fs = VIEW.slice(fsAt, fsEnd);
   assert.match(fs, /const cur = \(img as HTMLImageElement\)\.currentSrc \|\| "";\n\s*if \(!cur \|\| cur === absUrl\(img\.getAttribute\("src"\) \|\| ""\)\) return pictureDest\(img\);/, "the img's own src, or nothing to read: pictureDest's rule");
   assert.match(fs, /const picture = img\.closest\("picture"\);\n\s*const carriers: Element\[\] = picture \? \[\.\.\.Array\.from\(picture\.querySelectorAll\("source"\)\), img\] : \[img\];/, "the carriers: the picture's sources, then the img");
   assert.match(fs, /const was = c\.hasAttribute\(FV_SRCSET\) \? parseSrcset\(c\.getAttribute\(FV_SRCSET\) \|\| ""\) : now;\n\s*for \(let i = 0; i < now\.length; i\+\+\) if \(absUrl\(now\[i\]\.url\) === cur\) return \(was\[i\] \?\? now\[i\]\)\.url;/, "the candidate matched by its resolved URL, named by its authored spelling");
   assert.doesNotMatch(fs, /fetch\(|new Image\(|\.src = /, "no second request");
-  assert.match(VIEW, /function shownSource\(src: string\): string \{\n\s*if \(!\/\^data:\/i\.test\(src\)\) return src;\n\s*const comma = src\.indexOf\(","\);\n\s*return \(comma >= 0 \? src\.slice\(0, comma \+ 1\) : src\.slice\(0, 40\)\) \+ "\u2026";\n\}/, "a data: source cut to its head with an ellipsis; anything else as written");
+  assert.ok(VIEW.includes([
+    "export function shownSource(src: string, base: string | undefined = typeof document !== \"undefined\" ? document.baseURI : undefined): string {",
+    "  const read = src.replace(/[\\t\\n\\r]/g, \"\").replace(/^[\\u0000-\\u0020]+/, \"\");",
+    "  if (/^data:/i.test(read)) { const comma = read.indexOf(\",\"); return (comma >= 0 ? read.slice(0, comma + 1) : read.slice(0, 40)) + \"\u2026\"; }",
+    "  if (/^[a-z][a-z0-9+.-]*:/i.test(read) || read.startsWith(\"//\")) return shownAddress(read, base);",
+    "  return src;",
+    "}",
+  ].join("\n")), "shownSource's body as written (a sentence pin on the spelling; the two executed cases above, form a over the returned strings and form b through the error listener, hold the property): the source read as the URL parser reads it (tab and line breaks removed, leading control characters and spaces trimmed), a data: source cut to its head with an ellipsis, a source with a scheme or a leading // shown by shownAddress against the base, the document's own address by default, anything else as written");
   assert.match(VIEW, /function linkAround\(p: Element, a: Element\): boolean \{\n\s*return p\.localName === "a" && p\.children\.length === 1 && p\.children\[0\] === a && \(p\.textContent \|\| ""\)\.trim\(\) === "";\n\}/, "a link holding the figure alone is climbed (figureAnchor), so the label is not a click target that follows the link");
   assert.match(VIEW, /p\.localName === "picture" \|\| p\.classList\.contains\("fc-imgwrap"\) \|\| linkAround\(p, a\)/, "…beside the picture and the wrap");
   assert.match(VIEW, /p && oneImg\(p\) && \(p\.localName === "picture" \|\| p\.classList\.contains\("fc-imgwrap"\) \|\| linkAround\(p, a\)\)/, "a wrapper is climbed only when it holds exactly one img (the review's closing pass): two imgs an author puts in one picture or one wrap each keep a label of their own");

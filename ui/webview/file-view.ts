@@ -4641,7 +4641,9 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
   // candidate by candidate, its descriptors kept (`1x`, `100w`); the authored spelling stays in `data-fv-src` for the
   // img's src alone, the one attribute the comments panel pairs an embed by, and in `data-fv-srcset` (FV_SRCSET) for a
   // rewritten srcset, the img's or a `<source>`'s, so a failed figure's label can name the candidate the browser asked for
-  // as the author wrote it (failedSource; Slice 7 of plans/markdown-viewer.md, item 2, the review's round 1). An svg
+  // as the author wrote it (failedSource; Slice 7 of plans/markdown-viewer.md, item 2, the review's round 1), except that
+  // the label shows a candidate with a scheme or a leading // through shownSource: with no userinfo, query or fragment, and
+  // in the spelling URL parsing gives it (the scheme and the host lower-cased, a space percent-encoded). An svg
   // image's xlink:href is moved to the plain `href` as the anchors' is in mdBlock, so the element carries one attribute
   // every reader agrees on.
   const path = (src: string): string | null => {
@@ -4756,10 +4758,32 @@ const FIGWEB_MARK = "data-fv-figweb";
 function targetHost(href: string): string {
   try { return new URL(href).host; } catch { return href; }
 }
-/** The address as the picture's title shows it: the target's href with any credentials taken out (a `user:pass@` an author wrote
- *  into a source would otherwise stand in a tooltip); as written when it does not parse. */
-function shownAddress(href: string): string {
-  try { const u = new URL(href); u.username = ""; u.password = ""; return u.href; } catch { return href; }
+/** A picture's address as the viewer's words show it, in the picture's title (dressFigureTitle) and in the failed figure's
+ *  label (shownSource): origin plus path, never a userinfo, a query or a fragment. A `user:pass@`, a `?token=`, a presigned
+ *  URL's X-Amz-Credential and X-Amz-Signature or an `#access_token` an author wrote into a source would otherwise stand in a
+ *  tooltip or in visible text, and the whole query and the whole fragment go, so no reader here decides which parameters are
+ *  secret (the file review's round 14, correctness-1 with extra5-3). An address that parses, against `base` when one is given
+ *  (a protocol-relative source has no scheme of its own), is printed as its href with those four parts emptied, never as
+ *  `origin` plus the path, which prints "null" for a file: address or for one resolved against a VS Code webview, and the host
+ *  twice for a blob: address. An opaque path (`blob:` followed by an address) is shown the same way after its scheme. An
+ *  address the parser refuses (an out-of-range port, say) is cut as text: from the scheme's slashes, or a leading //, through
+ *  the LAST @, then from the first ? or #. So no userinfo prints even when the password holds a /, ? or #, at the cost that a
+ *  refused address with an @ in its path or query prints a wrong host (`http://example.test:99999/a@2x.png?x=1` prints as
+ *  `http://2x.png`), never a secret. URL parsing normalises the spelling (the scheme and the host lower-cased, a space
+ *  percent-encoded). */
+export function shownAddress(href: string, base?: string): string {
+  const cut = (s: string): string => {
+    const lead = (/^(?:[a-z][a-z0-9+.-]*:[/\\]*|[/\\]{2})/i.exec(s) || [""])[0];
+    const at = lead ? s.lastIndexOf("@") : -1;
+    const kept = at >= lead.length ? lead + s.slice(at + 1) : s;
+    const q = kept.search(/[?#]/);
+    return q >= 0 ? kept.slice(0, q) : kept;
+  };
+  try {
+    const u = new URL(href, base);
+    u.username = ""; u.password = ""; u.search = ""; u.hash = "";
+    return u.host || u.pathname.startsWith("/") ? u.href : u.protocol + shownAddress(u.pathname);
+  } catch { return cut(href); }
 }
 /** The element the label follows: the img, or the outermost of the wrappers standing between it and its block that the label
  *  must not go inside, climbed while one stands: a `<picture>` (a span is not a picture's content), the regions layer's
@@ -4847,11 +4871,16 @@ function chosenSource(img: Element): string | null {
 /** The source as the label shows it: a `data:` URI is an inline image's whole encoded payload, thousands of characters that
  *  the sheet's wrap turns into a box the height of the column (the review's round 1: a label 1518 px tall at 380 px, two
  *  screens of base64 where the note should go on), so it is cut to its head, the scheme and the media type through the
- *  comma, with an ellipsis; any other source as written. */
-function shownSource(src: string): string {
-  if (!/^data:/i.test(src)) return src;
-  const comma = src.indexOf(",");
-  return (comma >= 0 ? src.slice(0, comma + 1) : src.slice(0, 40)) + "…";
+ *  comma, with an ellipsis. A source with any other scheme, or a protocol-relative one, is shown as shownAddress shows an
+ *  address, resolved against `base`, the document's own address by default, as the browser resolved the fetch: origin plus
+ *  path, with no userinfo, query or fragment in a visible word. The scheme is read as the URL parser reads it (an ASCII tab or
+ *  line break removed, leading control characters and spaces trimmed), so a tab inside `http` does not hide an address from
+ *  the rule. A source with no scheme and no leading // (a workspace path) is shown as written. */
+export function shownSource(src: string, base: string | undefined = typeof document !== "undefined" ? document.baseURI : undefined): string {
+  const read = src.replace(/[\t\n\r]/g, "").replace(/^[\u0000-\u0020]+/, "");
+  if (/^data:/i.test(read)) { const comma = read.indexOf(","); return (comma >= 0 ? read.slice(0, comma + 1) : read.slice(0, 40)) + "…"; }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(read) || read.startsWith("//")) return shownAddress(read, base);
+  return src;
 }
 /** The words in the source's place when the figure names none (the Slice 7 review's round 2): an empty destination
  *  (`![alt]()`, which marked renders as `<img src="" alt="alt">`, or an authored `<img src="">`) fires the img's `error` with
@@ -4861,8 +4890,9 @@ function shownSource(src: string): string {
 const FIGURE_NO_SOURCE = "the source is empty";
 /** The label's words (the slice's contract C2, and its round 1 line): FIGURE_FAILED, the source the browser asked for as the
  *  author wrote it (failedSource: pictureDest's rule, `data-fv-src` when rewriteFigureSrcs rewrote the src, else `src`, or
- *  the srcset candidate the browser chose; a data: source cut to its head, shownSource) or FIGURE_NO_SOURCE when there is
- *  none to name, and the alt in parentheses when it is not empty. */
+ *  the srcset candidate the browser chose), as shownSource shows it (a data: source cut to its head, a source with a scheme
+ *  or a leading // as origin plus path, with no userinfo, query or fragment, in the spelling URL parsing gives it), or
+ *  FIGURE_NO_SOURCE when there is none to name, and the alt in parentheses when it is not empty. */
 function figureLabelText(img: Element): string {
   const alt = img.getAttribute("alt");
   const src = failedSource(img);
@@ -5188,8 +5218,8 @@ function dressFigureControl(b: HTMLElement, target: FigureTarget | null): void {
  *  figure, figureLinkOf from the img as the click listener reads it: inside an anchor with an href, a URL, section or path link
  *  the click is the link's and the line is withheld; inside a dead link or an author's named anchor the click is the figure's
  *  and the line stands; the control after a link holding the figure alone carries its own words)
- *  the outbound address on a line of its own after the author's title when one stands (figureWebTitleLine, shownAddress); for a
- *  file, or nothing to open, the author's title alone or none. The author's title is kept under FIGTITLE_MARK while the viewer's
+ *  the outbound address, origin plus path with no userinfo, query or fragment, on a line of its own after the author's title
+ *  when one stands (figureWebTitleLine, shownAddress); for a file, or nothing to open, the author's title alone or none. The author's title is kept under FIGTITLE_MARK while the viewer's
  *  line stands, so the next decision restores it when the candidate is local again (a `<picture>` at a media change) and a
  *  decision never appends the line twice. Whatever the control's verdict: a remote picture under the floor wears no control and
  *  its plain click still opens the tab (the guide's sentence), so its title says so too, and the mark for the picture no control
