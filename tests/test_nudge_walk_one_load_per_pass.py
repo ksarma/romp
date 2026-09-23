@@ -3737,7 +3737,51 @@ class TheCountersOneSite(unittest.TestCase):
         through sys.modules by its keys, a scan of globals().values() for a dict holding the counter's keys) are outside this
         census, and the last outside any static census. Execution on the driven roads is what catches
         such a write: a case that drives a road and asserts memos.nudgeWalk.loads on that pass, against the walk's recorded
-        calls or an exact figure, reds on the extra write, and a write on a road no case drives is caught by nothing here."""
+        calls or an exact figure, reds on the extra write, and a write on a road no case drives is caught by nothing here.
+
+        The module's stated limits, named here and in the ledger entry, each stated in full where the parentheses point: other readers
+        of the store on the same pass, outside both bounds and named with their bounds in the reference's jobs block (the module
+        docstring); a load outside the pass's `_auto_nudge_tick` call, outside the window (the module docstring, _pass); a reader below
+        the judge's loaders or beside its module, the kernel opening and parsing the store file itself or calling `jd._read_store_json`,
+        outside the recorders and both reconciliations (the module docstring, _pass); a second judge module loaded under another name,
+        outside both execution witnesses and refused by the birth pin alone (the module docstring); a load through a door of the judge
+        module no recorder wraps, or through a reference to a door taken before a recorder stood, noticed by the reconciliations and not
+        named (the module docstring, _pass); a load written on a boundary wrapper's hand-off line, named for the kernel caller and
+        counted under that caller's mechanism, since the step-over is line-granular (the module docstring); a loader in the real body of
+        a helper the fixture replaces, seen by the replaced-helpers source census alone and one level deep, so a loader in a callee of
+        that body is outside it (the module docstring, the replaced-helpers case); a wrapper handed to a census in place of the named
+        body, held by the identity check (the wrapper class of _LIMITS); a loader reached through a string constant, outside the site
+        census and refused by the birth pin in the kernel and the judge, and one reached under a name bound outside the scanned body,
+        refused by the same pin (the string and outside classes); a loader name, or jd, completed at run time from constants that spell
+        no door whole after the three transforms _door_text undoes, outside every static pin (the assembled class, _loader_births, the
+        birth case); a loader named in no code (prose, a string annotation, a keyword spelled like one), no site by the census's own
+        rule (the none class); a census form nobody listed, held by nothing, since the enumeration is a sample and its limit texts are
+        read by no assertion (TheCensusOverEveryForm); a stub installed before setUp or on a judge directory or path name the rebind
+        moves, outside setUp's agreement check and the cleanup's check, whose contract cases probe the two regions the check once
+        missed, and a stub in a container the cleanup does not read (a member of a module-level dict, list or set, an instance
+        attribute, an imported module's attribute, a class the module owns and binds in no global), outside the cleanup's check (setUp,
+        _restore, _class_attributes, TheAgreementCheckSpansSetUp); a retry of the whole look, by the gate, by the pass loop or by the
+        look calling itself, which leaves the load a statement of the look's own body and so satisfies the site census, that fires only
+        on a raise or a fault no case drives (a TypeError, a KeyError, an EMFILE or EIO fault), caught by nothing in the module (the
+        raise and fault cases); the fault case's mode-000 road, skipped under root, and goals.loads_shared, asserted nowhere in the
+        raise case (the fault and raise cases); the counter's name completed at run time, a constant carrying the name whole to a callee
+        the contained-name clause does not list (exec bound to another name, a partial of exec), and a spelling in escape sequences
+        alone, in a module whose text holds the name in no letter case, each outside the counter census, and a write that reaches the
+        counter with no spelling of its name, outside any static census, all of them caught only by execution on a driven road, so a
+        write on a road no case drives is caught by nothing (the site case); a second-key bump conditioned on state no drive arranges (a
+        drive has at most one node, one sid and one call) or placed in a callee of the door, on no driven road or seen by the counters
+        alone, and the constructs the roster pin's clauses do not name, which those clauses pass (the door witness, the bump-roster
+        pin); a traversal outside the finder's forms (a name read by string, a rebound getattr, an unlisted name, a recursion over
+        ast.iter_fields, node._fields or ast.dump), left to the stranger witness, and a form removed from the finder, its samples and
+        its roster at once, unseen (the finder case); the stranger witness's residue, the roots of the other parse modes, a census that
+        reads a child off the parent the walk yielded, which reds with an exception that is not the refusal, a census whose walk stops
+        before the module body's last statement, which the plant placed first no longer catches, and a census that parses under another
+        road or is handed a pre-parsed tree, outside the roster's floor (the stranger witness, _census_floor); the gate's equality,
+        asserted only where the fixture caches every parse, its bound the general pin (the module docstring); the prose pins' reach, the
+        Bounds pin reading a roster's spelling and not the truth of the sentence, the case-count sweep reading no count spelled as a
+        word and no historical figure by value, and the ledger entry, carried by hand and read by no case (the stranger witness's Bounds
+        case, the Docs cases); and the stranger witness's cost floor, every roster row at every plantable position with a breadth-first
+        first walk (the module docstring)."""
         self._the_named_def("_auto_nudge_session", km._auto_nudge_session, "_auto_nudge_session")
         at = [i for i, _ln in _loader_sites(km._auto_nudge_session, "jd.load_goals_shared")]
         self.assertEqual(len(at), 1, "one shared load in the walk's look, by either spelling of the shared door: a second call site is "
