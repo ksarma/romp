@@ -131,6 +131,10 @@ LEGACY_NAMED = "a11f0001-1111-4222-8333-000000000019"   # a session live on a ho
 #                                                         whitespace list a bus before 2026-09-22 wrote, beside BLINK_BEAT
 VIA_NAMED = "a11f0001-1111-4222-8333-000000000020"   # a session live on the spoke that HOST2, heard, names as its word about the spoke
 #                                                      beside BLINK_BEAT (the release's reach in memory)
+FAR_LOST = "a11f0001-1111-4222-8333-000000000021"    # a session live on the spoke that HOST2, a hub, names before a lost carry: the
+#                                                      clearing's disclosed bound once HOST2 restarts and names it no more
+REMEMBERED = "TESTHOST-remembered"                   # an unattached host the kernel remembers with a tier: the seed's origin-only row
+VIA_B_SPOKE = "via:" + HOST2 + "/" + SPOKE           # the key of HOST2's word about the spoke
 LEGACY = "legacy:list"                               # the key a whitespace-list mirror is carried under (postal_service.py REMOTE_SIDS_LEGACY)
 
 RULE_5 = (True, 5, "no-reachable-host-names-it")               # the ladder's verdicts, (closed, rule, why), as
@@ -887,7 +891,19 @@ class ReaderFollowsTheWriter(unittest.TestCase):
                     B's session is rule 4's (at the twenty-first commit both answered rule 5). An eighteenth restart whose
                     seed fails, B and A notified one at a time and heard: the mark stands, carried. A nineteenth restart
                     whose seed reads the list: B heard, A linked and unheard, the mark stands; A heard, the last linked
-                    host heard since the mark: cleared, said once in the bus log, and rule 5 answers again;
+                    host heard since the mark: cleared, said once in the bus log, and rule 5 answers again. Every seed
+                    also reads one remembered unattached host, an origin-only row, which is no link and never heard, so
+                    the clearing holds only because such a row does not count (the reviewer's verifier at the
+                    twenty-second commit);
+      the clearing's bound  the reviewer's verifier at the twenty-second commit, disclosed at postal_service.py
+                    _remote_sids_lost_cleared. B, a linked hub, names a session on the spoke, never linked here. With the
+                    file intact, a twentieth restart and B heard after its own restart, naming nothing on the spoke: the
+                    carried via row names the session, cannot-determine. With the file made not JSON, a twenty-first
+                    restart, the same road: the mark clears and the session answers rule 5 while B vouches, pinned as it
+                    stands;
+      a mark at second 0  the same verifier: a twenty-second restart over the writer's document with A's row removed and a
+                    hand-written mark at second 0; a drift note for A and B heard: the mark stands and A's session is
+                    carry-lost (a host with no seenAt read as second 0 cleared it); A heard: cleared;
       legacy shape  the whitespace list a bus before 2026-09-22 wrote, at the bus's path: the reader
                     answers cannot-determine for the sid it does not name AND for the one it does, and
                     says once in the judge's log that the file is not the shape the bus writes; it is
@@ -944,7 +960,7 @@ class ReaderFollowsTheWriter(unittest.TestCase):
 import contextlib, io, json, os, sys, time
 (tests_dir, bin_dir, remote, remote2, dead, host_a, host_b, carried, other, alias, declared, far_sid, hub, gossiped, later,
  collided, ended, decl_named, spoke_kept, spoke_gone, hub_declared, spoke, spoke_declared, hub2, spoke_new, blinked,
- hub_named, blink_beat, legacy_named, via_named) = sys.argv[1:31]
+ hub_named, blink_beat, legacy_named, via_named, far_lost, remembered) = sys.argv[1:33]
 sys.path.insert(0, tests_dir)
 from romp_load import load_source
 pm = load_source("romp_postal_oneroot", os.path.join(bin_dir, "romp-postal-service"))
@@ -1425,8 +1441,9 @@ out["bomWritten"]["busLog"] = [ln for ln in err.getvalue().splitlines() if "remo
 # seed writes read the file and mark the mirror; B heard first, A linked and not heard. An eighteenth restart whose seed fails
 # (nothing answers), B and A notified one at a time and heard. A nineteenth restart whose seed reads the list; B heard; A heard,
 # the last linked host heard since the mark: the event that clears it
-def seed(bus, links):                              # the kernel's tunnel list read at the bus's start, every link up
-    body = json.dumps({"tunnels": [{"host": h, "busPort": 50002, "status": "up"} for h in links], "known": []}).encode()
+def seed(bus, links):                              # the kernel's tunnel list read at the bus's start, every link up, and one
+    body = json.dumps({"tunnels": [{"host": h, "busPort": 50002, "status": "up"} for h in links],   # remembered unattached
+                       "known": [{"host": remembered, "trust": "trusted"}]}).encode()               # host: an origin-only row, no link
     class Answer:
         def read(self):
             return body
@@ -1474,6 +1491,55 @@ with contextlib.redirect_stderr(err):
     exchange(pm20, host_a, [carried])              # A heard: the last linked host heard since the mark
 out["lostCleared"] = mirror_phase(carried=carried, other=other, nobody=dead)
 out["lostCleared"]["busLog"] = [ln for ln in err.getvalue().splitlines() if "remote-sids" in ln]
+out["lostRemembered"] = pm20.PEERS.get(remembered)
+# THE CLEARING'S DISCLOSED BOUND (the reviewer's verifier at the twenty-second commit, by execution; postal_service.py
+# _remote_sids_lost_cleared, road (a)): B, a linked hub, gossips a session on the spoke, a far host never linked here. The file
+# intact: a twentieth restart, seeded; A heard; B heard after its own restart (a new bus id), gossiping nothing about the spoke:
+# the carried via row names the session, cannot-determine. B names it again; the file made not JSON; a twenty-first restart,
+# seeded; A heard; B heard after another restart of its own, gossiping nothing about the spoke: the mark clears, and the session
+# answers rule 5 while B vouches for absence
+def b_gossips(bus, bus_id, spoke_sids):            # B's exchange landing through the real fold: its own session and its word about the spoke
+    bus.peer_exchange_apply(host_b, {}, {"epoch": 1, "holds": [], "busId": bus_id, "presenceAnswered": True,
+                                         "presence": [{"id": other, "name": "api"}]
+                                         + [{"id": s, "name": "api", "via": spoke, "viaBus": "bus-spoke", "viaAnswered": True}
+                                            for s in spoke_sids]})
+b_gossips(pm20, "bus-b2", [far_lost])
+out["boundGossiped"] = mirror_phase(farLost=far_lost, other=other, carried=carried)
+pm21, out["restartMemory20"] = restarted("romp_postal_oneroot_restarted_twentieth", pm20)
+pm21.KERNEL_BASE = "http://127.0.0.1:9"
+out["boundIntactSeeded"] = seed(pm21, [host_a, host_b])
+exchange(pm21, host_a, [carried])
+b_gossips(pm21, "bus-b3", [])                      # B restarted since: heard, gossiping nothing about the spoke
+out["boundIntact"] = mirror_phase(farLost=far_lost, other=other, carried=carried, nobody=dead)
+b_gossips(pm21, "bus-b3", [far_lost])              # B has heard the spoke again: its word names the session
+out["boundRegossiped"] = mirror_phase(farLost=far_lost, other=other, carried=carried)
+bus_file.write_text(bus_file.read_text().replace('"sids"', '"sids"}', 1))
+pm22, out["restartMemory21"] = restarted("romp_postal_oneroot_restarted_twenty_first", pm21)
+pm22.KERNEL_BASE = "http://127.0.0.1:9"
+err = io.StringIO()
+with contextlib.redirect_stderr(err):
+    out["boundLostSeeded"] = seed(pm22, [host_a, host_b])
+    out["boundLostMark"] = mirror_mark()           # the seed's own writes read the file: the mark
+    exchange(pm22, host_a, [carried])
+    b_gossips(pm22, "bus-b4", [])                  # B restarted again: heard, gossiping nothing about the spoke
+out["boundLost"] = mirror_phase(farLost=far_lost, other=other, carried=carried, nobody=dead)
+out["boundLost"]["busLog"] = [ln for ln in err.getvalue().splitlines() if "remote-sids" in ln]
+# A MARK AT SECOND 0 (the reviewer's verifier at the twenty-second commit, by execution): the writer's own document with A's row
+# removed, as a lost carry leaves it, under a hand-written mark at second 0, which the carry and the reader accept; a
+# twenty-second restart, seeded; a drift note filed for A (no exchange landed, no seenAt) and B heard: the mark stands; A heard:
+# cleared
+doc = json.loads(bus_file.read_text())
+doc["hosts"].pop(host_a, None)
+doc["carryLost"] = {"cause": "hand-written", "at": 0}
+bus_file.write_text(json.dumps(doc) + "\n")
+pm23, out["restartMemory22"] = restarted("romp_postal_oneroot_restarted_twenty_second", pm22)
+pm23.KERNEL_BASE = "http://127.0.0.1:9"
+out["zeroSeeded"] = seed(pm23, [host_a, host_b])
+pm23.PEER_STATE[host_a] = {"drift": "proto"}       # _peer_exchange_once's note of a 409: no exchange landed, no seenAt
+exchange(pm23, host_b, [other], bus_id="bus-b5")
+out["zeroBHeard"] = mirror_phase(carried=carried, other=other, nobody=dead)
+exchange(pm23, host_a, [carried])
+out["zeroAHeard"] = mirror_phase(carried=carried, other=other, nobody=dead)
 bus_file.write_text(remote + "\n")                 # the shape a bus before 2026-09-22 wrote
 err = io.StringIO()
 with contextlib.redirect_stderr(err):
@@ -1490,7 +1556,7 @@ out["controlOldPathOnly"] = ask(dead)
 print(json.dumps(out))
 """, HERE, BIN, REMOTE, REMOTE2, DEAD, HOST, HOST2, CARRIED, OTHER, ALIAS, DECLARED, FARSID, HUB, GOSSIPED, LATER, COLLIDED,
                               ENDED, DECL_NAMED, SPOKE_KEPT, SPOKE_GONE, HUB_DECLARED, SPOKE, SPOKE_DECLARED, HUB2, SPOKE_NEW, BLINKED,
-                              HUB_NAMED, BLINK_BEAT, LEGACY_NAMED, VIA_NAMED],
+                              HUB_NAMED, BLINK_BEAT, LEGACY_NAMED, VIA_NAMED, FAR_LOST, REMEMBERED],
                              capture_output=True, text=True, env=full,
                              cwd=str(home), timeout=120)
         assert out.returncode == 0, "%s child failed: %s" % (shape, out.stderr[-2000:])
@@ -2624,6 +2690,77 @@ print(json.dumps(out))
                 said = [ln for ln in cleared["busLog"] if "lost-carry mark" in ln]
                 self.assertEqual(len(said), 1, "the clearing said once: %r" % cleared["busLog"])
                 self.assertIn(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(mark["at"])), said[0], "naming the mark's second")
+                self.assertIn("far host that no heard hub names now", said[0], "and naming what the clearing does not reach")
+                remembered = got["lostRemembered"] or {}
+                self.assertEqual((remembered.get("originOnly"), remembered.get("port")), (True, None),
+                                 "the seed applied the kernel's remembered unattached host as an origin-only row, no port, "
+                                 "never heard: the clearing above holds only because such a row is no link (the reviewer's "
+                                 "verifier at the twenty-second commit: counted as a link, the mark never clears): %r"
+                                 % (got["lostRemembered"],))
+
+    def test_a_cleared_mark_does_not_reach_a_far_hosts_session_a_restarted_hub_no_longer_names(self):
+        """Round 3 of fork PR #897, the reviewer's verifier at the twenty-second commit, by execution: THE CLEARING'S DISCLOSED
+        BOUND (postal_service.py _remote_sids_lost_cleared, road (a)), pinned as it stands through this writer and this reader,
+        so a clearing rule that closes the road, or one that widens it, turns this red. B, a linked hub, names a session on
+        the spoke, a far host never linked here (rule 4 by B's word). The file intact: a twentieth restart, seeded; A heard; B
+        heard after its own restart, gossiping nothing about the spoke: the carried via row names the session,
+        named-by-unreachable-host. B names it again (rule 4); the file made not JSON; a twenty-first restart, seeded, whose own
+        writes mark the mirror; A heard; B heard after another restart of its own, gossiping nothing about the spoke: every
+        linked host heard since the mark, so it clears, and the session, in no row, answers rule 5 while B vouches for
+        absence. That commit stated as fact that a hub re-gossips its via rows on its next exchange, which is false for a hub
+        that has restarted; no event the bus receives names a far host whose row was lost, so the reviewer rules on the
+        bound. On both root shapes."""
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                self.assertEqual(self._v(got["boundGossiped"], "farLost"), RULE_4, "B, heard and linked, names the spoke's session")
+                self.assertEqual((got["restartMemory20"], got["boundIntactSeeded"]),
+                                 ({"heartbeats": 0, "peers": 0, "links": 0, "freshObject": True}, True),
+                                 "the twentieth restart is a fresh module object, and its seed read the kernel's list")
+                intact = got["boundIntact"]
+                self.assertEqual((intact["mark"], self._v(intact, "farLost"), self._v(intact, "carried"), self._v(intact, "other")),
+                                 (None, LOST(VIA_B_SPOKE + " (not heard)"), RULE_4, RULE_4),
+                                 "the file intact, B heard after its own restart and naming nothing on the spoke: the carried "
+                                 "via row names the session, cannot-determine")
+                self.assertEqual(self._v(got["boundRegossiped"], "farLost"), RULE_4, "B names the session again")
+                self.assertEqual((got["restartMemory21"], got["boundLostSeeded"]),
+                                 ({"heartbeats": 0, "peers": 0, "links": 0, "freshObject": True}, True),
+                                 "the twenty-first restart is a fresh module object, and its seed read the kernel's list")
+                mark = got["boundLostMark"]
+                self.assertIsInstance(mark, dict, "the seed's own writes read the file made not JSON and marked the mirror")
+                lost = got["boundLost"]
+                self.assertEqual((lost["mark"], self._v(lost, "carried"), self._v(lost, "other")), (None, RULE_4, RULE_4),
+                                 "A and B heard since the mark: cleared")
+                self.assertEqual(self._v(lost, "farLost"), RULE_5,
+                                 "THE DISCLOSED BOUND: once the mark clears, the spoke's session, whose via row the lost file "
+                                 "held, is in no row and answers rule 5 while B vouches for absence, where the intact file "
+                                 "answers named-by-unreachable-host (a clearing rule that reaches this road turns this red, "
+                                 "and the disclosure moves with it)")
+                said = [ln for ln in lost["busLog"] if "lost-carry mark" in ln]
+                self.assertEqual(len(said), 1, "the clearing said once: %r" % lost["busLog"])
+                self.assertIn("rule 5 can presume it closed", said[0], "the clearing line names what it does not reach")
+
+    def test_a_mark_at_second_0_clears_only_once_every_linked_host_is_heard(self):
+        """Round 3 of fork PR #897, the reviewer's verifier at the twenty-second commit, by execution through this writer and
+        this reader: a mark whose second is 0, which the carry and this reader accept, cleared with no host heard, because the
+        clearing read a host with no seenAt as second 0 (a hand-written file, or a clock in the epoch's first second; no bus
+        stamps 0). The writer's own document with A's row removed, as a lost carry leaves it, under a mark at second 0; a
+        twenty-second restart, seeded; a drift note filed for A, no exchange landed, and B heard: the mark stands, and A's live
+        session, in no row, is carry-lost (at the twenty-second commit, (True, 5)); A heard: cleared, rule 4 for it. On both
+        root shapes."""
+        zero = {"cause": "hand-written", "at": 0}
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                self.assertEqual((got["restartMemory22"], got["zeroSeeded"]),
+                                 ({"heartbeats": 0, "peers": 0, "links": 0, "freshObject": True}, True),
+                                 "the twenty-second restart is a fresh module object, and its seed read the kernel's list")
+                b_heard = got["zeroBHeard"]
+                self.assertEqual((b_heard["mark"], self._v(b_heard, "carried"), self._v(b_heard, "other")),
+                                 (zero, CARRY_LOST(zero), RULE_4),
+                                 "B heard, A linked with a drift note and no seenAt: the mark at second 0 stands and A's "
+                                 "session is carry-lost (read as second 0, A counted as heard and the mark cleared: (True, 5))")
+                a_heard = got["zeroAHeard"]
+                self.assertEqual((a_heard["mark"], self._v(a_heard, "carried")), (None, RULE_4),
+                                 "A heard: every linked host heard since the mark, cleared, and A names its session")
 
     def test_a_mirror_of_the_legacy_shape_is_cannot_determine_and_said_once(self):
         for shape, got in self.got.items():

@@ -114,7 +114,10 @@ whole carrying no row and MARKING the document with the cause and the second, sa
 one among them), nothing said or marked for no file or a readable one, the mark carried by every write and across a
 restart until the bus process that read the kernel's list of links at its start has heard every dialable PEERS host since
 it, kept while a linked host stays down, kept in a bus whose seed failed or whose link table is empty, kept when it is read
-in another shape or a stray byte hits a top-level key, and cleared, said once, on the ruled event.
+in another shape or a stray byte hits a top-level key, and cleared, said once, on the ruled event, a host counting toward
+it only once heard (a mark at second 0 among them) and an origin-only row never counting; and the clearing's disclosed
+bound, a far host's session a restarted hub no longer names, in no row once the mark clears (the reviewer's verifier at the
+twenty-second commit).
 tests/test_dead_session_staleness.py ReaderFollowsTheWriter
 runs this writer and the judge's reader together over one root; tests/test_postal_bus_lifetime.py
 MonitorTick pins the poll's write. SYNTHETIC fixtures only: private synthetic sids, hostname TESTHOST."""
@@ -1185,12 +1188,14 @@ class Mirror(unittest.TestCase):
             pm._write_remote_sids()
         return err.getvalue().splitlines()
 
-    def _seed(self, links):
+    def _seed(self, links, known=()):
         """The kernel's tunnel list read at the bus's start, through the REAL seed (_seed_peers_from_kernel) with its transport
-        stubbed: `links` is [(host, status)]. The seed applies each row through peer_update, which writes the mirror, and
-        then sets _PEERS_SEEDED, which this returns for the caller to assert after its own verdicts; the transport is put back
-        as found."""
-        body = json.dumps({"tunnels": [{"host": h, "busPort": 50002, "status": st} for h, st in links], "known": []}).encode()
+        stubbed: `links` is [(host, status)], and `known` the kernel's remembered unattached hosts, each of which the seed
+        applies as an ORIGIN-ONLY row (a tier, no port: no link). The seed applies each row through peer_update, which writes
+        the mirror for a link, and then sets _PEERS_SEEDED, which this returns for the caller to assert after its own
+        verdicts; the transport is put back as found."""
+        body = json.dumps({"tunnels": [{"host": h, "busPort": 50002, "status": st} for h, st in links],
+                           "known": [{"host": h, "trust": "trusted"} for h in known]}).encode()
 
         class Answer:
             def read(self):
@@ -1491,6 +1496,79 @@ class Mirror(unittest.TestCase):
             self._notify(HOST, up=True)
             self._heard_now(HOST, [B])
             self.assertIsNone(self._mark(), "the one link heard since the mark: cleared")
+
+    def test_a_host_counts_toward_the_clearing_only_when_it_has_been_heard(self):
+        """Round 3 of fork PR #897, the reviewer's verifier at the twenty-second commit, by execution: a mark whose second is 0
+        (the carry accepts it as written, and so does the judge's reader) cleared with no host heard, because the clearing
+        read a host with no seenAt as second 0 and 0 >= 0 counted every unheard linked host as heard. No bus writes such a
+        mark (its stamp is the write's second), so this is a hand-written file or a clock in the epoch's first second. The
+        rule (_remote_sids_lost_cleared): a host counts only when its PEER_STATE row carries a seenAt at or after the mark's
+        second, so a row with no seenAt (a refusal or drift note) is not heard either. HOST's row lost under a mark at 0;
+        HOST and HUB seeded up; a drift note filed for HOST and HUB heard: the mark stands; HOST heard: cleared."""
+        mark = {"cause": "hand-written", "at": 0}
+        self.path.write_text(json.dumps({"v": 2, "busStarted": 1, "writtenAt": 1, "carryLost": mark, "hosts": {}}) + "\n")
+        self.assertTrue(self._seed([(HOST, "up"), (HUB, "up")]), "the seed read the kernel's list")
+        self.assertEqual(self._mark(), mark, "the mark at second 0 is carried as written")
+        pm.PEER_STATE[HOST] = {"drift": "proto"}      # _peer_exchange_once's note of a 409, no exchange landed: no seenAt
+        self._heard_now(HUB, [C])
+        self.assertEqual(self._mark(), mark,
+                         "HUB heard, HOST linked with no seenAt: the mark stands (read as second 0, HOST counted as heard "
+                         "and the mark cleared with HOST unheard)")
+        self._heard_now(HOST, [B])
+        self.assertIsNone(self._mark(), "HOST heard: every linked host heard since the mark, cleared")
+
+    def test_an_origin_only_row_is_no_link_and_does_not_hold_the_mark(self):
+        """Round 3 of fork PR #897, the reviewer's verifier at the twenty-second commit (its mutant X9, which counted
+        origin-only PEERS rows as links, reddened no pin): an origin-only row is the kernel's remembered tier for a host this
+        machine has no tunnel to, no port and no link, so it is never heard and never counts toward the clearing
+        (_remote_sids_lost_cleared). The seed applies the kernel's `known` list as such rows beside the links; HOST linked
+        and heard since the mark clears it, whatever origin-only rows PEERS holds (counted as links, the mark never clears on
+        a machine whose kernel remembers an unattached host with a tier)."""
+        self.path.write_text("{not json\n")
+        self.assertTrue(self._seed([(HOST, "up")], known=[FAR]), "the seed read the kernel's list")
+        self.assertEqual((pm.PEERS[FAR].get("originOnly"), pm.PEERS[FAR].get("port")), (True, None),
+                         "the seed applied the remembered host as an origin-only row, no port")
+        self.assertIsNotNone(self._mark(), "the seed's write read the unreadable file and marked the document")
+        self._heard_now(HOST, [B])
+        self.assertIsNone(self._mark(), "the one link heard since the mark: cleared, the origin-only row no link")
+
+    def test_a_cleared_mark_does_not_reach_a_far_host_a_restarted_hub_no_longer_names(self):
+        """Round 3 of fork PR #897, the reviewer's verifier at the twenty-second commit, by execution: the DISCLOSED bound of
+        the clearing (_remote_sids_lost_cleared, road (a)), pinned as it stands so a rule that closes it or widens it turns
+        this red. HUB, the one link, gossips FAR's session D; FAR is never linked here. With the file intact, a restart and
+        HUB heard again after its own restart, gossiping nothing about FAR: the carried via row names D, unreachable (the
+        carry keeps a hub's word while the hub says nothing about its far host). With the file made not JSON, the same road:
+        the mark clears once HUB is heard, and D is in no row while HUB vouches for absence, so the judge presumes D closed
+        by rule 5 (tests/test_dead_session_staleness.py ReaderFollowsTheWriter has the verdicts)."""
+        gossip = lambda far_sids, bus_id: pm.peer_exchange_apply(HUB, {}, {
+            "epoch": 1, "holds": [], "busId": bus_id, "presenceAnswered": True,
+            "presence": [{"id": C, "name": "api"}] + [{"id": s, "name": "api", "via": FAR, "viaBus": "bus-far", "viaAnswered": True}
+                                                      for s in far_sids]})
+        for road in ("intact", "lost"):
+            with self.subTest(road=road):
+                self.path.unlink(missing_ok=True)
+                self._restart()
+                pm.PEERS.clear()
+                self.assertTrue(self._seed([(HUB, "up")]), "the seed read the kernel's list")
+                gossip([D], "bus-hub-1")
+                self.assertEqual(self._vouch().get(VIA_FAR), (True, True, True), "HUB heard, its word about FAR names D")
+                if road == "lost":
+                    self.path.write_text(self.path.read_text().replace('"sids"', '"sids"}', 1))
+                self._restart()
+                pm.PEERS.clear()
+                self.assertTrue(self._seed([(HUB, "up")]), "the restarted bus's seed read the list")
+                if road == "lost":
+                    self.assertIsNotNone(self._mark(), "the seed's write read the file made not JSON and marked the document")
+                gossip([], "bus-hub-2")               # HUB restarted since: heard, gossiping nothing about FAR
+                vouch = self._vouch()
+                if road == "intact":
+                    self.assertEqual((self._mark(), self._rows().get(VIA_FAR), vouch.get(HUB)),
+                                     (None, (False, False, [D]), (True, True, True)),
+                                     "the intact file: the via row carried, naming D, unreachable, beside HUB vouching")
+                else:
+                    self.assertEqual((self._mark(), VIA_FAR in self._rows(), vouch.get(HUB)), (None, False, (True, True, True)),
+                                     "THE DISCLOSED BOUND: the mark cleared once HUB was heard, and D is in no row while HUB "
+                                     "vouches for absence (where the intact file carries the via row naming D)")
 
     def test_a_standing_mark_survives_a_mark_of_another_shape_and_a_stray_byte_inside_a_top_level_key(self):
         """Round 3 of fork PR #897, the twenty-second commit: a mark read back as written is carried as written; a mark in a
