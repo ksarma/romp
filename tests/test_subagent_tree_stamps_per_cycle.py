@@ -91,7 +91,11 @@ any root's eviction: every held tree paid its D lstats again, every held stamp i
 through is the served read's (mtime, size) per directory, so a file landing after the hold under a directory the served
 listing lacked leaves the recorded key behind the next signature's re-stat and the tab is rebuilt, whether the landing moved
 the root's stamp or a listed child's; a fresh stat taken after the served listing recorded the post-landing key, equal to
-every later re-stat, and the tab that showed the file missing was never rebuilt. (7) The sum over roots: three alive
+every later re-stat, and the tab that showed the file missing was never rebuilt; a build whose lookup the agent-file memo
+answers in a later cycle, or the held launch fold answers after a reader with no record open walked, records the same keys,
+replayed from the walk's notes (round 2 of #882, group B: before it such a build recorded nothing for the sibling's tree),
+and a sibling session directory appearing after a build moves no key it recorded on any of the three roads, the residual,
+witnessed. (7) The sum over roots: three alive
 sessions with trees of unequal size and unequal agent counts, read in one pusher cycle and in one jobs pass with the reads
 interleaved, cost the sum over their roots of D_r lstats (each root its own D_r), 0 stats and one fold per agent (the sum
 over the sessions of A_s), so the total directories decide the cycle's cost and not their split over roots (the derived
@@ -602,7 +606,7 @@ class _World(unittest.TestCase):
                          "walk's candidate stats, the flat place and one per served directory" % (t["file_stat"], A + G * (D + 1)))
         self.assertEqual((d["hit"], d["miss"], d["evict"]), (1, 0, 0), "one validated hit, no walk of the tree, nothing evicted: %r" % (d,))
         for ghost in ghosts:
-            self.assertIsNone(km._SUBAGENT_FILE_CACHE.get((self.path, ghost), ("unset",))[-1], "the miss is memoized: the file is nowhere")
+            self.assertIsNone(km._SUBAGENT_FILE_CACHE.get((self.path, ghost), (None, "unset"))[1], "the miss is memoized: the file is nowhere")
         return t, d, rec, ghosts
 
 
@@ -1759,7 +1763,7 @@ class ScopedInvalidation(_World):
         population that has no root to key on."""
         sc = self._open()
         aid = self.aids[0]
-        stamps0, p0 = km._SUBAGENT_FILE_CACHE[(self.path, aid)]
+        stamps0, p0 = km._SUBAGENT_FILE_CACHE[(self.path, aid)][:2]   # (stamps, resolution, the walk's noted keys)
         dirs_read = [sd for sd, _m in stamps0 if sd in self.dirset]
         self.assertTrue(dirs_read, "premise: the agent's walk read directories of the tree")
         with self._spy() as sp:
@@ -2091,8 +2095,11 @@ class DependencyKey(_World):
     stale until something else moved; and it recorded the root alone, which a landing under a listed child never moves. Now
     every directory of the tree is recorded under the (mtime, size) of the stat the served read was taken with (the shape
     _subagent_meta_map records: _subagent_tree_dep_note), so the key is behind the re-stat and the tab is rebuilt, whether
-    the landing moved the root's stamp or a listed child's. Driven through the real _pusher_cycle, with the build's record
-    shape (build_session's literal) open around the real _session_awaiting."""
+    the landing moved the root's stamp or a listed child's. The same keys reach a build whose lookup the walk did not run
+    (round 2 of #882, group B): the agent-file memo's hit and _awaiting_nest's held launch fold replay the pairs the walk
+    noted (_subagent_file_notes_replay), where before they recorded nothing for the sibling's tree; the project directory
+    stays out of every record, the residual the last case here witnesses. Driven through the real _pusher_cycle, with the
+    build's record shape (build_session's literal) open around the real _session_awaiting."""
 
     def _sibling(self, workflows):
         """A second session's transcript beside this one's in the project directory and its subagents tree: the root alone,
@@ -2131,7 +2138,7 @@ class DependencyKey(_World):
             finally:
                 km._chat_dep_scope.deps = None
             rec["count"] = (aw or {}).get("count")
-            rec["found"] = km._SUBAGENT_FILE_CACHE.get((self.path, aid), ("unset",))[-1]
+            rec["found"] = km._SUBAGENT_FILE_CACHE.get((self.path, aid), (None, "unset"))[1]
             rec["file"] = wf / ("agent-%s.jsonl" % aid)
         km._turn_notify_tick = job
         km._pusher_cycle()
@@ -2188,6 +2195,213 @@ class DependencyKey(_World):
         r_root, s_root, rs_root = self._keys(rec, root)
         self.assertEqual((r_root, rs_root), (s_root, s_root),
                          "the root is recorded too, under its served key, and its re-stat holds: nothing landed in it")
+
+    def _chat_build(self):
+        """A chat build's share of a cycle: build_session's record open around the real _session_awaiting, then the record
+        _chat_build_deps takes from it. Returns (what _session_awaiting answered, the record)."""
+        km._chat_dep_scope.deps = {"task_outs": [], "postal_any": False}   # build_session's literal for this build
+        try:
+            aw = km._session_awaiting(SID, self.path, True)
+            return aw, km._chat_build_deps(SID, {"events": []})
+        finally:
+            km._chat_dep_scope.deps = None
+
+    @staticmethod
+    def _counting(name, aid, calls):
+        """`name` (a kernel function taking (path, agent id, ...)) behind a wrapper that records each call for `aid` and
+        what it answered; the real function still runs."""
+        real = getattr(km, name)
+
+        def counting(p, a, *args, **kw):
+            out = real(p, a, *args, **kw)
+            if a == aid:
+                calls.append(out)
+            return out
+        return mock.patch.object(km, name, counting)
+
+    def test_a_lookup_the_agent_file_memo_answers_in_a_later_cycle_replays_the_walks_keys_so_a_landing_under_the_sibling_re_arms_the_tab(self):
+        """Round 2 of #882, group B (fresh-1), the memo-hit road. Cycle 1: a chat build's lookup of an agent whose file is
+        nowhere walks, records every directory of the sibling's tree under the served read's key (round 1's F) and the memo
+        keeps the miss. Cycle 2: a build reads the sibling's tree (held), the agent's file lands under workflows/ after the
+        hold, and a second chat build's lookup is answered by the agent-file memo (its stamps re-checked against the scope's
+        held ones, equal), so that build shows the file missing too. Keys on that second build's record: every pair the walk
+        noted under the sibling's tree, and the absent beside-path, is recorded under the walk's own key, replayed from the
+        memo entry, so the next signature's re-stat of workflows/ differs and the tab is rebuilt. Before the replay the hit
+        recorded nothing for the sibling's tree ("unrecorded" below) and the tab stayed stale until an unrelated change; a
+        replay that re-stats records the post-landing key, equal to every later re-stat (round 1's post-dating defect)."""
+        other = self._sibling(workflows=True)                      # the sibling's tree: the root and workflows/
+        root, wfdir = str(other), str(other / "workflows")
+        aid = "a%016x" % 0x7cf2
+        beside = str(self.sub / ("agent-%s.jsonl" % aid))          # the agent's own place, absent
+        self.live_aids.append(aid)
+        rec = {}
+
+        def walk_job(now, live_map, **kw):
+            walks = []
+            with self._counting("_subagent_file_walk", aid, walks):
+                rec["aw1"], rec["deps1"] = self._chat_build()
+            rec["walks1"] = walks
+            rec["found1"] = km._SUBAGENT_FILE_CACHE.get((self.path, aid), (None, "unset"))[1]
+        km._turn_notify_tick = walk_job
+        km._pusher_cycle()
+        self.assertIn("deps1", rec, "cycle 1's job ran to its end: %r" % (rec,))
+        self.assertEqual(((rec["aw1"] or {}).get("count"), rec["walks1"][:1], rec["found1"]), (A + 1, [None], None),
+                         "premise: build 1 saw the A agents and the new row, its lookup walked and missed, and the memo keeps the miss")
+        walked = dict(rec["deps1"]["task_outs"])
+        paths = {"root": root, "workflows/": wfdir, "beside-path": beside}   # labels in the messages, not the temp paths
+        noted = {n: walked.get(p, "unrecorded") for n, p in paths.items()}
+        self.assertNotIn("unrecorded", noted.values(),
+                         "premise: build 1's walk recorded the sibling's root, workflows/ and the absent beside-path: %r" % (noted,))
+
+        def hit_job(now, live_map, **kw):
+            dirs, stats = km._subagent_tree(root)                  # a build earlier in cycle 2: the sibling's tree, held
+            rec["served"] = {sd: (st.st_mtime, st.st_size) for sd, st in zip(dirs, stats)}
+            wf = other / "workflows" / ("wf_%016x" % 0x7cf2)
+            wf.mkdir()                                              # the landing, after the hold: workflows/'s stamp moves
+            self._add_agent(wf, 241, aid)
+            rec["file"] = wf / ("agent-%s.jsonl" % aid)
+            rec["fresh"] = km._chat_stat_key(wfdir)
+            walks, asked = [], []
+            with self._counting("_subagent_file_walk", aid, walks), self._counting("_subagent_file", aid, asked):
+                rec["aw2"], rec["deps2"] = self._chat_build()
+            rec["walks2"], rec["asked2"] = walks, asked
+        km._turn_notify_tick = hit_job
+        km._pusher_cycle()
+        self.assertIn("deps2", rec, "cycle 2's job ran to its end: %r" % (rec,))
+        self.assertEqual(rec["served"].get(wfdir), noted["workflows/"], "premise: nothing moved between the cycles, so cycle 2's held "
+                                                                        "read of workflows/ carries the key the walk recorded")
+        self.assertNotEqual(rec["fresh"], noted["workflows/"], "premise: the landing moved workflows/'s (mtime, size)")
+        self.assertEqual((rec["walks2"], bool(rec["asked2"]), set(rec["asked2"])), ([], True, {None}),
+                         "premise: build 2's lookups were answered by the agent-file memo (no walk) with the memoized miss, so the tab "
+                         "shows the file missing: walks %r, answers %r" % (rec["walks2"], rec["asked2"]))
+        recorded = dict(rec["deps2"]["task_outs"])
+        got = {n: recorded.get(p, "unrecorded") for n, p in paths.items()}
+        self.assertEqual(got, noted,
+                         "the keys build 2 recorded for the sibling's root, workflows/ and the absent beside-path: %r; keyed on equality "
+                         "with the pairs the walk noted, %r, replayed from the memo entry by the hit; \"unrecorded\" is a hit that records "
+                         "nothing for the trees its walk read (the tab never re-arms on the landing), and workflows/ at %r, the "
+                         "post-landing key, is a replay that re-stat'd" % (got, noted, rec["fresh"]))
+        restat = dict(km._chat_sig_deps(SID, rec["deps2"])[0]).get(wfdir, "unrecorded")
+        self.assertNotEqual(restat, recorded.get(wfdir, "unrecorded"),
+                            "the next signature's re-stat of workflows/, %r, against build 2's recorded key: keyed on a difference, the "
+                            "taskout component moves and the tab is rebuilt" % (restat,))
+        nxt = {}
+        km._turn_notify_tick = lambda now, live_map, **kw: nxt.setdefault("found", km._subagent_file(self.path, aid))
+        km._pusher_cycle()
+        self.assertEqual(nxt.get("found"), rec["file"], "the rebuilt tab's lookup: the memo's stamps moved, the walk finds the file")
+
+    def test_a_lookup_the_held_launch_fold_answers_after_a_non_chat_readers_walk_replays_the_walks_keys_so_a_landing_under_the_sibling_re_arms_the_tab(self):
+        """Round 2 of #882, group B (fresh-1), the held-fold road, in one cycle. A reader with no chat record open (the feed's
+        build) resolves an agent whose file is nowhere: its lookup walks, reads the sibling's tree (held), and _awaiting_nest
+        holds the agent's launch fold for the cycle. The agent's file then lands under the sibling's root in workflows/, a
+        directory the held listing lacks, and the chat build's _session_awaiting consults the agent's launches, which the held
+        fold answers without calling _subagent_file (the only lookup a chat build makes for a Workflow agent with no Agent
+        tool event). Keys on the chat build's record: the sibling's root under the key the walk noted, the served read's,
+        replayed from the fold entry, so the next signature's re-stat differs and the tab is rebuilt. Before the replay the
+        held fold recorded nothing for the sibling's tree ("unrecorded" below); a replay that re-stats records the
+        post-landing key."""
+        other = self._sibling(workflows=False)                     # the held listing will be the root alone
+        root = str(other)
+        aid = "a%016x" % 0x7cf3
+        self.live_aids.append(aid)
+        rec = {}
+
+        def job(now, live_map, **kw):
+            walks = []
+            with self._counting("_subagent_file_walk", aid, walks):
+                rec["aw0"] = km._session_awaiting(SID, self.path, True)   # a non-chat reader: no record open on this thread
+            rec["walks0"] = walks
+            sc = _scope()
+            rec["held"] = sc is not None and (self.path, aid) in sc["launches"]
+            dirs, stats = km._subagent_tree(root)                  # the pair the walk was answered, held: its keys
+            rec["dirs"] = list(dirs)
+            rec["served"] = {sd: (st.st_mtime, st.st_size) for sd, st in zip(dirs, stats)}
+            wf = other / "workflows" / ("wf_%016x" % 0x7cf3)
+            wf.mkdir(parents=True)                                  # the landing: workflows/ created, the root's stamp moves
+            self._add_agent(wf, 242, aid)
+            rec["fresh"] = km._chat_stat_key(root)
+            asked = []
+            with self._counting("_subagent_file", aid, asked):
+                rec["aw"], rec["deps"] = self._chat_build()
+            rec["asked"] = asked
+        km._turn_notify_tick = job
+        km._pusher_cycle()
+        self.assertIn("deps", rec, "the job ran to its end: %r" % (rec,))
+        self.assertEqual(((rec["aw0"] or {}).get("count"), rec["walks0"][:1], rec["held"]), (A + 1, [None], True),
+                         "premise: the non-chat reader saw the A agents and the new row, its lookup walked and missed, and the agent's "
+                         "launch fold is held for the cycle")
+        self.assertEqual(rec["dirs"], [root], "premise: the held listing is the sibling's root alone")
+        self.assertNotEqual(rec["fresh"], rec["served"][root], "premise: the landing moved the root's (mtime, size)")
+        self.assertEqual(((rec["aw"] or {}).get("count"), rec["asked"]), (A + 1, []),
+                         "premise: the chat build saw the A agents and the new row and never called _subagent_file for the agent: its "
+                         "launches were answered by the held fold: %r" % (rec["asked"],))
+        recorded = dict(rec["deps"]["task_outs"]).get(root, "unrecorded")
+        self.assertEqual(recorded, rec["served"][root],
+                         "the key the chat build recorded for the sibling's root: %r; keyed on the served read's %r, the key the walk "
+                         "noted, replayed from the held fold's entry; \"unrecorded\" is a held fold that records nothing for the trees "
+                         "its walk read, and %r, the post-landing key, is a replay that re-stat'd" % (recorded, rec["served"][root], rec["fresh"]))
+        restat = dict(km._chat_sig_deps(SID, rec["deps"])[0]).get(root, "unrecorded")
+        self.assertNotEqual(restat, recorded,
+                            "the next signature's re-stat of the root, %r, against the recorded key %r: keyed on a difference, the tab "
+                            "is rebuilt" % (restat, recorded))
+
+    def test_a_sibling_directory_appearing_after_a_build_moves_no_key_that_build_recorded_on_any_road(self):
+        """The residual group B leaves (round 2 of #882), witnessed. The project directory the walk lists is stamped for the
+        agent-file memo alone and is no build's dependency, whether the build's lookup walked or was answered by the memo or
+        by the held launch fold, so a sibling session directory that appears in it after a build moves no key that build
+        recorded: an agent whose file was nowhere when the build looked, landing under the NEW sibling's tree, leaves the
+        tab showing it missing until another recorded key moves. Three chat builds in three cycles, one per road (the first
+        walks; the second is answered by the agent-file memo; in the third a reader with no record open looks first, a memo
+        hit that holds the launch fold, and the chat build is answered by that fold), then a sibling session's directory
+        appears with the agent's file under its tree. Keys on each record's taskout component re-evaluated now equalling
+        what the build recorded (the tab is not rebuilt), the project directory in no record, and the lookup itself finding
+        the file (the memo's project-directory stamp moved). Green by design: a change that records the project directory,
+        or a new sibling's tree, turns it red, and the residual's text in _subagent_file's docstring goes with it."""
+        aid = "a%016x" % 0x7cf4
+        self.live_aids.append(aid)
+        rec = {}
+
+        def build(road):
+            def job(now, live_map, **kw):
+                walks, asked = [], []
+                if road == "fold":
+                    km._session_awaiting(SID, self.path, True)   # a reader with no record open: its lookup holds the fold
+                with self._counting("_subagent_file_walk", aid, walks), self._counting("_subagent_file", aid, asked):
+                    rec[road] = self._chat_build()
+                rec[road + "-calls"] = (len(walks), len(asked))
+            return job
+        for road in ("walk", "memo", "fold"):
+            km._turn_notify_tick = build(road)
+            km._pusher_cycle()
+        got = tuple((road, rec.get(road + "-calls", ("unset",))[0], rec.get(road + "-calls", ("unset",))[-1] > 0)
+                    for road in ("walk", "memo", "fold"))
+        self.assertEqual(got, (("walk", 1, True), ("memo", 0, True), ("fold", 0, False)),
+                         "premise, (road, walks, _subagent_file called) per chat build: the first walked, the second was answered by "
+                         "the agent-file memo, the third never called _subagent_file (the held fold answered): %r" % (got,))
+        self.assertIsNone(km._SUBAGENT_FILE_CACHE.get((self.path, aid), (None, "unset"))[1], "premise: the memo keeps the miss")
+        other_t = Path(self.path).parent / (OTHER_SID + ".jsonl")
+        other_t.write_text("")                                      # a sibling session appears after the three builds
+        other = km._subagents_dir(other_t)
+        self.addCleanup(km._SUBAGENT_TREES.pop, str(other), None)
+        self.addCleanup(km._SUBAGENT_META_CACHE.pop, str(other), None)
+        wf = other / "workflows" / ("wf_%016x" % 0x7cf4)
+        wf.mkdir(parents=True)
+        self._add_agent(wf, 243, aid)
+        proj = str(Path(self.path).parent)
+        beside = str(self.sub / ("agent-%s.jsonl" % aid))
+        for road in ("walk", "memo", "fold"):
+            deps = rec[road][1]
+            recorded = dict(deps["task_outs"])
+            self.assertIn(beside, recorded, "premise: the %s build recorded the walk's keys (the absent beside-path among them)" % road)
+            self.assertNotIn(proj, recorded, "the project directory is no build's dependency (the %s build)" % road)
+            now_keys = dict(km._chat_sig_deps(SID, deps)[0])
+            moved = sorted(os.path.relpath(p, proj) for p in recorded if now_keys.get(p) != recorded[p])
+            self.assertEqual(moved, [],
+                             "keys the %s build recorded that the new sibling's appearance moved: %r; keyed on none, the residual: a "
+                             "sibling session directory appearing after a build is outside its record, so the tab that shows the file "
+                             "missing is not rebuilt for it (stated in _subagent_file's docstring)" % (road, moved))
+        self.assertEqual(km._subagent_file(self.path, aid), wf / ("agent-%s.jsonl" % aid),
+                         "the lookup itself recovers: the memo's stamp of the project directory moved, so it walks and finds the file")
 
 
 class SumOverRoots(_World):

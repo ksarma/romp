@@ -3677,11 +3677,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   first read of it in its own cycle or a handler thread's, finds it missing
   or replaced first, after which the holder's next lookup drops the pair),
   and the key a chat build records for a subagents tree the
-  agent-file miss walk looked through (a record the walk makes for the
-  build whose lookup walked; a lookup the agent-file memo answers on an
-  earlier walk's stamps records nothing for its build, and the project
-  directory the walk lists is stamped for that memo alone and is no
-  build's dependency: the scope is stated once in `_subagent_file`'s
+  agent-file miss walk looked through (recorded by every build that
+  looks the agent up: the walk's own, and a lookup the agent-file memo
+  or the cycle's held launch fold answers replays the walk's noted keys;
+  the project directory the walk lists is no build's dependency: the
+  scope and that residual are stated once in `_subagent_file`'s
   docstring in `kernel/kernel.py`) is the served read's stamp per
   directory, never a stat taken after it, so a file landing after the
   hold under a directory the served listing lacked leaves the recorded
