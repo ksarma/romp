@@ -3751,7 +3751,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   root whose lstat fails for a reason other than absence (EACCES from a
   parent, EIO) is not read as absent either: its readers answer their
   standing entries unheld or key the frame on an unreadable marker, and
-  the chat build is told to read again, the shape stated once in
+  the chat build is told to read again, and the agent-file walk excludes
+  that tree from its search and nothing else, answering a file found
+  under any other tree (`FaultExcludesItsOwnTree` in
+  `tests/test_subagent_tree_memo.py`), the shape stated once in
   `_subagent_tree`'s docstring in `kernel/kernel.py`; the
   scope also holds each awaiting agent's launch fold, and a fold that did
   not read the file, the reader's fail path, is held for the one read

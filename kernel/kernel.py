@@ -33990,7 +33990,8 @@ def _awaiting_nest(agents, commands, cmd_owner, path):
     # per cycle share one resolution and fold per agent (each re-folded every agent's file, a stat and a checkpoint realpath
     # per agent per call). The attribution then sees an agent's file as it stood at the cycle's first fold; a launch appended
     # mid-cycle nests on the next cycle. A fold that did not read the file (the reader's fail path, or a raise), or whose
-    # resolution could not be made (a subagents tree whose root cannot be read: _subagent_file's faults, since 2026-09-21), answers set()
+    # resolution could not be made (the file found under no tree the walk could read while one could not be: _subagent_file's
+    # faults, since 2026-09-21; a file found past such a tree is resolved, and faults nothing), answers set()
     # and has TWO lifetimes, both shorter than the cycle's: it is held in `faulted`, this call's own map, so the call's other
     # owner lookups are served it (each of the A agents' lookups consults every other agent's launches, so a fault re-folded
     # per lookup cost A x (A - 1) folds per call where the parent's call-local memo cost A: round 1 of #882's extra9-2), and it is not
@@ -34018,7 +34019,7 @@ def _awaiting_nest(agents, commands, cmd_owner, path):
         g0 = _SUBAGENT_TREES_GEN[0]                       # before the resolution reads the tree
         faults = []
         ap = _subagent_file(path, aid, faults) if path else None   # a resolution that could not be made faults too (an unreadable
-        ids = _agent_launch_ids(ap, faults) if ap else set()      #  tree): held for this call alone, resolved again by the next
+        ids = _agent_launch_ids(ap, faults) if ap else set()      #  tree, the file under no other): held for this call alone
         if faults:
             faulted[k] = ids
         else:
@@ -35453,7 +35454,8 @@ class _SubagentTreeUnreadable(Exception):
     shape): `root`, `error` (the OSError) and `entry`, the memo's standing (directories, identities) for the root, or None.
     Not an OSError, so no reader's `except OSError` (the sibling loop of _subagent_file_walk) can take it for a missing
     tree; every kernel reader of the tree catches it by name and answers its standing entry or an unreadable marker, and a
-    reader that does not is loud (a raise), never an empty tree."""
+    reader that does not is loud (a raise), never an empty tree. The agent-file walk excludes the tree that raised it and
+    nothing else: it looks through every other tree and answers a file found under one (_subagent_walk_unreadable)."""
 
     def __init__(self, root, error, entry):
         super().__init__("%s: %s" % (root, error))
@@ -35472,12 +35474,18 @@ def _subagent_tree(d):
     nothing is held and the next call reads the disk again, and each reader answers its own standing entry unheld
     (_subagent_dirs_ident the entry's (directories, identities), _subagent_meta_map its cached map, _subagent_file its
     cached resolution) or, with none standing, an answer no readable and no absent tree produces (_subagent_dirs_ident
-    (d,), (_TREE_UNREADABLE,); _subagent_file None with a fault its caller gives the call's lifetime; _subagent_meta_map {},
-    the one absent-shaped answer left, for a map never built) and tells a running chat build the tree is unreadable
-    (_chat_dep_note_taskout under _TREE_UNREADABLE, a key no stat equals, so the tab is rebuilt next cycle and reads again),
-    never an empty tree (2026-09-21; until then the branch took every OSError for absence, and an EIO popped the entry,
-    recorded an eviction, answered (), () and noted the tree absent, which the tab showed as no subagents until the fault
-    cleared; tests/test_subagent_tree_memo.py UnreadableRoot executes an EIO by mock and a real EACCES at both edges).
+    (d,), (_TREE_UNREADABLE,); _subagent_file None with a fault its caller gives the call's lifetime, only when the file
+    is under no other tree the walk could read, since a fault excludes its own tree from the agent-file walk and nothing
+    else (_subagent_walk_unreadable); _subagent_meta_map {}, the one absent-shaped answer left, for a map never built) and
+    tells a running chat build the tree is unreadable (_chat_dep_note_taskout under _TREE_UNREADABLE, a key no stat
+    equals, so the tab is rebuilt next cycle and reads again), never an empty tree (2026-09-21; until then the branch took
+    every OSError for absence, and an EIO popped the entry, recorded an eviction, answered (), () and noted the tree
+    absent, which the tab showed as no subagents until the fault cleared; tests/test_subagent_tree_memo.py UnreadableRoot
+    executes an EIO by mock and a real EACCES at both edges). The rule's cost: while a tree stays unreadable, an agent-file
+    lookup whose file is under no tree the walk can read (the no-holder road) memoizes nothing and walks again on every
+    call, and its chat build is told the tree is unreadable, so the tab is rebuilt every cycle until the fault clears; the
+    four cases named test_control_no_holder_... in tests/test_subagent_tree_memo.py FaultExcludesItsOwnTree are its
+    witness, and the same class executes a file found past the fault (round 2 of #882, group A).
 
     Memoized per root in _SUBAGENT_TREES on the identities (_stat_ident: ino, mtime_ns, size, ctime_ns) of every directory
     it listed, the root included. Exact because the directory list changes only by the creation, removal or renaming of a
@@ -35870,10 +35878,12 @@ def _subagent_file(path, agent_id, faults=None):
     jobs pass on another thread too; until that pass this docstring read "recorded for the running build" and "a
     directory appearing for it to land in", neither scoped).
     `faults`, a list when given, receives the reason when the answer stands for a lookup that
-    could not be made (a subagents tree whose root cannot be read, the project directory unlistable:
-    _subagent_file_walk's faults), so a caller can give it the shorter lifetime (_awaiting_nest, as it does
-    _agent_launch_ids' faults); such a lookup answers the memo's standing resolution for the agent when one stands,
-    else None, and memoizes nothing, so the next call walks again (a read that did not happen is not a miss)."""
+    could not be made: the file found nowhere while a tree, a project-directory entry or the listing the walk needed
+    could not be read (_subagent_file_walk's faults), so a caller can give it the shorter lifetime (_awaiting_nest, as
+    it does _agent_launch_ids' faults); such a lookup answers the memo's standing resolution for the agent when one
+    stands, else None, and memoizes nothing, so the next call walks again (a read that did not happen is not a miss).
+    A fault excludes its own tree from the walk and nothing else, so a file found past one is a lookup made: answered,
+    memoized, and nothing passed to `faults` (round 2 of #882, group A; until then a fault anywhere answered None)."""
     if not path or not _AGENT_ID_RE.match(str(agent_id or "")):
         return None
     ckey = (str(path), str(agent_id))
@@ -35882,10 +35892,13 @@ def _subagent_file(path, agent_id, faults=None):
         return hit[1]                                 #  a hit re-stats the directories the walk read, own tree and siblings, never lists
     read, failed = [], []                             # each directory's stamp taken AS IT IS READ (a file landing between the
     found = _subagent_file_walk(path, agent_id, read, failed)   # listing and a later stat would memoize a miss against the newer mtime)
-    if failed:                                        # a tree or listing the walk needed could not be read: not a miss, nothing memoized
-        if faults is not None:
+    if failed and found is None:                      # found nowhere, and a tree, entry or listing the walk needed could not be read:
+        if faults is not None:                        #  not a miss, nothing memoized, the caller told
             faults.extend(failed)
         return hit[1] if hit is not None else None    # the standing resolution, unheld (its stamps stay as they were), else nothing known
+    # A file found past a fault is a lookup made: memoized, and no fault passed on (round 2 of #882, group A). Its stamps
+    # hold each skipped tree's root stamp as the walk took it, (dir, None) when that stat failed too (EACCES from a parent),
+    # so the memo walks again once that tree reads; an entry whose type could not be read leaves no stamp of its own.
     if len(_SUBAGENT_FILE_CACHE) > 1024:
         _SUBAGENT_FILE_CACHE.clear()
     stamps = tuple(dict.fromkeys(read))            # (dir, mtime_ns) pairs, once each
@@ -35893,14 +35906,16 @@ def _subagent_file(path, agent_id, faults=None):
     return found                                   #  sibling's tree moves that directory and re-walks
 
 
-def _subagent_walk_unreadable(where, error, faults):
-    """_subagent_file_walk's answer when a tree or listing it needed could not be read: the running chat build is told under
-    _TREE_UNREADABLE for `where` (rebuilt next cycle, when it looks again), the caller's `faults` receives the error's type
-    name, and the lookup answers None for this call, which _subagent_file declines to memoize (a read that did not happen is
-    not a miss); the shape is _subagent_tree's docstring's."""
+def _subagent_walk_unreadable(where):
+    """_subagent_file_walk's answer when it found the file nowhere and a tree, a project-directory entry or the listing it
+    needed could not be read, `where` being the path of the first such read: the running chat build is told under
+    _TREE_UNREADABLE for it (rebuilt next cycle, when it looks again) and the lookup answers None for this call, which
+    _subagent_file declines to memoize (a read that did not happen is not a miss); the shape is _subagent_tree's
+    docstring's. A fault excludes its own tree from the walk and nothing else (round 2 of #882, group A; until then the walk
+    answered here at the first tree it could not read, so a file under a later, readable sibling was reported missing for
+    as long as the unrelated tree stayed unreadable): the walk records the fault and looks through every other tree first,
+    and a file found anywhere is the answer, memoized, with nothing noted here."""
     _chat_dep_note_taskout(where, _TREE_UNREADABLE)
-    if faults is not None:
-        faults.append(type(error).__name__)
     return None
 
 
@@ -35913,25 +35928,40 @@ def _subagent_file_walk(path, agent_id, read=None, faults=None):
     of each sibling root, taken after the served listing, so a file landing after the hold under a directory the listing
     lacked was recorded under its own post-landing key, equal to every later re-stat, and the tab that showed the agent's
     file missing was never rebuilt; and the root alone was recorded, which a landing under a listed child never moves.
-    `faults`, a list when given, receives the reason when a tree the walk needed (its own or a sibling's) or the project
-    directory's listing could not be read (_subagent_walk_unreadable): the None answered then stands for a lookup that
-    could not be made, not a miss, and the tree's raise (_SubagentTreeUnreadable, not an OSError) is caught by name, so the
-    listing's own `except OSError` never takes it for a missing tree; that clause itself takes ENOENT and ENOTDIR alone for
-    no project directory to list, and any other errno for a listing that could not be made."""
+    A fault excludes its own tree from the walk and nothing else: a tree the walk needed (its own or a sibling's) whose
+    root could not be read, a project-directory entry whose type could not be read (through 3.12 pathlib's is_dir
+    re-raises any errno but ENOENT, ENOTDIR, EBADF and ELOOP: EACCES through a symlink into an unsearchable directory, EIO;
+    from 3.13 it answers False) and the project directory's listing are each
+    recorded, the first one's error type name going to `faults` (a list when given) at once, and the walk goes on
+    through the rest; a file found anywhere is answered, `faults` notwithstanding (_subagent_file's gate reads a fault
+    beside a found file as a lookup made, and memoizes it); only when the file is found nowhere does the walk answer
+    through _subagent_walk_unreadable, with the first fault's path: the None answered then stands for a lookup that could
+    not be made, not a miss. The tree's raise (_SubagentTreeUnreadable, not an OSError) is caught by name, so the
+    listing's own `except OSError` never takes it for a missing tree; that clause itself takes ENOENT and ENOTDIR alone
+    for no project directory to list, and any other errno for a listing that could not be made."""
     read = read if read is not None else []
     name = "agent-%s.jsonl" % agent_id
+    first = []                                            # the path of the first tree, entry or listing the walk could not read
+
+    def exclude(where, error):                            # a fault excludes what raised it and nothing else: recorded, the walk goes on
+        if not first:
+            first.append(where)
+            if faults is not None:                        # at once, found elsewhere or not: _subagent_file's gate tells the two apart
+                faults.append(type(error).__name__)
     own = _subagents_dir(path)
     read.append(_dir_stamp(str(own)))
     ap = own / name
     if not os.path.islink(own) and os.path.isfile(ap) and not os.path.islink(ap):   # this tree's own file (a symlinked
         return ap                                                                   #  subagents/ or file is not taken)
+    own_tree = None                                       # stays None when the own tree could not be read: the loop skips its note
     try:
         own_tree = _subagent_tree(str(own))
-    except _SubagentTreeUnreadable as e:                  # the own tree could not be read: the lookup was not made
-        return _subagent_walk_unreadable(e.root, e.error, faults)
-    nested = _find_agent_file(own, name, read, tree=own_tree)
-    if nested is not None:
-        return nested
+    except _SubagentTreeUnreadable as e:                  # the own tree could not be read: excluded, the siblings still looked through
+        exclude(e.root, e.error)
+    if own_tree is not None:
+        nested = _find_agent_file(own, name, read, tree=own_tree)
+        if nested is not None:
+            return nested
     # A miss is a dependency of the chat payload that asked (the taskout idiom, _chat_dep_note_taskout): the
     # file appearing at its own place, or a sibling fsid's directory gaining one, changes the Agent card.
     _chat_dep_note_taskout(str(ap), None)
@@ -35939,16 +35969,23 @@ def _subagent_file_walk(path, agent_id, read=None, faults=None):
     try:
         read.append(_dir_stamp(str(parent)))          # the project directory: a sibling fsid's directory appearing moves it
         for d in sorted(parent.iterdir()):
-            if d.is_dir():                                # the directory the walk below reads: a file landing in
+            try:
+                is_dir = d.is_dir()
+            except OSError as e:                          # its type could not be read: that entry alone is excluded
+                exclude(str(d), e)
+                continue
+            if is_dir:                                    # the directory the walk below reads: a file landing in
                 sd = d / "subagents"                      # <sib>/subagents/ moves ITS mtime, not the sibling's
                 if sd == own:
-                    _subagent_tree_dep_note(str(sd), *own_tree)   # the own tree: the read above, looked through already
+                    if own_tree is not None:
+                        _subagent_tree_dep_note(str(sd), *own_tree)   # the own tree: the read above, looked through already
                     continue
                 read.append(_dir_stamp(str(sd)))
                 try:
                     tree = _subagent_tree(str(sd))        # the sibling's tree, once: the note and the lookup below share it
-                except _SubagentTreeUnreadable as e:      # a sibling's tree could not be read: the file may be under it
-                    return _subagent_walk_unreadable(e.root, e.error, faults)
+                except _SubagentTreeUnreadable as e:      # a sibling's tree could not be read: excluded, the rest looked through
+                    exclude(e.root, e.error)
+                    continue
                 _subagent_tree_dep_note(str(sd), *tree)
                 cand = _find_agent_file(sd, name, read, tree=tree)
                 if cand is not None:
@@ -35956,8 +35993,8 @@ def _subagent_file_walk(path, agent_id, read=None, faults=None):
     except (FileNotFoundError, NotADirectoryError):
         pass                                              # no project directory to list: no sibling tree to look through
     except OSError as e:                                  # the listing could not be made (EACCES): not "no siblings"
-        return _subagent_walk_unreadable(str(parent), e, faults)
-    return None
+        exclude(str(parent), e)
+    return _subagent_walk_unreadable(first[0]) if first else None
 
 
 def _agent_id_of_output(output_file):

@@ -23,12 +23,17 @@ has been quiet; (9) a listing that failed (EMFILE) or a child whose lstat failed
 re-lists and recovers the whole tree; (10) a root whose own lstat fails for a reason other than absence (an EIO by mock, a
 real EACCES from its parent) is a read that did not happen, not an absent tree: nothing is popped, no eviction is
 recorded, nothing is noted absent, no counter moves, each reader answers its standing entry unheld or an unreadable
-marker, and the next call after the fault clears validates the standing entry. Red-first on (1), the jobs-pass half of
-(6), (9) and (10). Synthetic fixtures only: placeholder ids, invented text, a temp directory."""
+marker, and the next call after the fault clears validates the standing entry; (11) such a fault excludes its own tree
+from the agent-file walk and nothing else: a file under a readable sibling's tree is found, memoized and answered with no
+fault passed to the caller while the own tree, a sibling sorted before it or an entry whose type cannot be read faults,
+and with the file nowhere the lookup answers None with the fault and memoizes nothing. Red-first on (1), the jobs-pass
+half of (6), (9), (10) and (11). Synthetic fixtures only: placeholder ids, invented text, a temp directory."""
+import contextlib
 import errno
 import json
 import os
 import shutil
+import sys
 import tempfile
 import time
 import unittest
@@ -58,6 +63,10 @@ SID_B = "11111111-2222-3333-4444-666666666666"     # a second, for ownership
 AID = "a1111111111111111"                          # a top-level agent
 AID_WF = "a2222222222222222"                       # a workflow agent, one level down
 TU, TU_WF = "toolu_tree_0001", "toolu_tree_0002"
+AID_FORK = "a3333333333333333"                     # an agent whose file sits under a sibling session's tree (a /clear fork's)
+SID_BEFORE = "11111111-2222-3333-4444-000000000001"   # a sibling session sorted before the holder in the project directory
+SID_HOLD = "11111111-2222-3333-4444-000000000002"     # the sibling session whose subagents tree holds AID_FORK's file
+SID_AFTER = "11111111-2222-3333-4444-000000000003"    # a sibling session sorted after the holder
 AGED_NS = 10_000_000_000                           # ten seconds: past the racy window, as tests/test_token_usage.py ages
 RACY_NS = km._SUBAGENT_DIR_RACY_NS                 # the real window, reopened by the two tests that pin it
 
@@ -430,9 +439,12 @@ class UnreadableRoot(_Tree):
     drove only ENOENT there. Two faults: an EIO by mock on os.lstat of the root alone (every other path reads) and a REAL
     EACCES from the parent directory without search permission (nothing under it reads either; skipped as root, whom
     permission bits do not bind). The scope is open under the fault, so "nothing held" is executed, not implied, and it is
-    the WHOLE scope that is compared, its three maps (trees, stamps, launches) each empty: a pin over one map is narrower
-    than "no scope entry", and a stamps entry recorded on the raise left the trees-only pin green (the owner's pass before
-    round 2 of #882, its fixes-by-execution lens)."""
+    the WHOLE scope that is compared, its three maps (trees, stamps, launches) each empty after the tree reads: a pin over
+    one map is narrower than "no scope entry", and a stamps entry recorded on the raise left the trees-only pin green (the
+    owner's pass before round 2 of #882, its fixes-by-execution lens). After the agent-file lookup under the real EACCES
+    the whole scope is compared again, by equality, to the one entry the walk holds: the project directory's stamp, since
+    a fault excludes its own tree from the walk and nothing else, so the walk goes on to list the project directory (round
+    2 of #882, group A; FaultExcludesItsOwnTree below executes the exclusion)."""
 
     EMPTY = {"trees": {}, "stamps": {}, "launches": {}}   # the scope as _subagent_scope_open mints it: nothing held in any of its three maps
 
@@ -550,18 +562,276 @@ class UnreadableRoot(_Tree):
                 os.lstat(root)
             self.assertEqual(cm.exception.errno, errno.EACCES, "the real fault this case drives")
             self._fault_holds(root, entry, m, errno.EACCES)
+            g, proj = km._SUBAGENT_TREES_GEN[0], str(self.proj)
             faults = []
             self.assertEqual(km._subagent_file(str(self.tpath), AID_WF, faults), wf_file,
                              "the standing resolution is answered, unheld")
             self.assertEqual(faults, ["PermissionError"], "and the caller is told the lookup could not be made")
             self.assertIs(km._SUBAGENT_FILE_CACHE[(str(self.tpath), AID_WF)], standing, "its memo entry is untouched")
             row, cmd = self._fold_has_the_calls_lifetime()
-            self.assertEqual(km._subagent_scope(), self.EMPTY,
-                             "at the fault's end nothing is held in any of the scope's three maps (trees, stamps, launches): under the "
-                             "parent at mode 000 every stat of the lookup's re-check fails too, and a stat that raises is never held")
+            self.assertEqual(km._subagent_scope(),
+                             {"trees": {}, "stamps": {proj: ((proj, os.stat(proj).st_mtime_ns), None, g)}, "launches": {}},
+                             "at the fault's end the scope holds the project directory's stamp and nothing else, compared whole: the "
+                             "agent-file walk excludes the own tree it could not read and goes on to list the project directory, "
+                             "whose stamp it takes as an own stat (round 2 of #882, group A); under the parent at mode 000 every "
+                             "stat of the lookup's re-check fails, and a stat that raises is never held")
         finally:
             os.chmod(parent, 0o755)
         self._the_next_call_reads_again(root, m, row, cmd)
+
+
+class FaultExcludesItsOwnTree(_Tree):
+    """A fault excludes the tree that raised it and nothing else (round 2 of #882, group A: correctness-1, regression-1,
+    extra5-1). An agent's file under a readable sibling session's tree (a /clear fork's fsid) is found, memoized and answered
+    with no fault passed to the caller while another tree the walk looks through cannot be read: the own subagents tree, a
+    sibling's sorted before the holder, or a project-directory entry sorted before the holder whose type cannot be read
+    (pathlib's is_dir raising). RED FIRST: from the fail-closed change of 2026-09-21 until this one the agent-file walk
+    answered through _subagent_walk_unreadable at the first such tree, before it looked through the trees sorted after it,
+    so the lookup answered None with the fault and memoized nothing (the viewer said the transcript was missing, the
+    awaiting box attributed no launches, the Agent card showed no steps) for as long as the unrelated tree stayed
+    unreadable, where the walk before the fail-closed change found and memoized the file; and _subagent_file's gate
+    discarded a found file whenever any fault occurred, so a fix to the walk alone did not reach the caller. Each road is
+    driven under a real EACCES (a directory at mode 000; skipped as root, whom permission bits do not bind) and under an EIO
+    by mock. The is_dir road exists where pathlib's is_dir re-raises an errno other than ENOENT, ENOTDIR, EBADF and ELOOP,
+    which is through 3.12, the kernel's interpreter; from 3.13 is_dir is os.path.isdir, which answers False on any OSError,
+    and on 3.10 pathlib stats through the os.stat it bound at import, so the EIO mock is not seen there: each is_dir case
+    asserts its interpreter's behaviour first, and where is_dir does not raise the entry is skipped at both heads. Two
+    controls hold at both heads: an unreadable sibling sorted after the holder is never reached, and with the file nowhere
+    (no holder) the lookup answers None with the fault, memoizes nothing and tells the running chat build the tree is
+    unreadable, on every call while the fault lasts: the fail-closed rule's cost, which _subagent_tree's docstring states
+    with the no-holder cases as its witness."""
+
+    def setUp(self):
+        super().setUp()
+        self.fork_key = (str(self.tpath), AID_FORK)
+        km._SUBAGENT_FILE_CACHE.pop(self.fork_key, None)
+        self.addCleanup(km._SUBAGENT_FILE_CACHE.pop, self.fork_key, None)
+
+    def _sibling(self, sid, holder=False):
+        """A sibling session's subagents tree in the project directory, aged, with AID_FORK's file at its top when `holder`:
+        (the root, the agent file or None)."""
+        sub = self.proj / sid / "subagents"
+        (sub / "workflows").mkdir(parents=True)
+        f = None
+        if holder:
+            f = sub / ("agent-%s.jsonl" % AID_FORK)
+            f.write_text("")
+        _age(str(self.proj / sid))
+        self.roots.append(str(sub))
+        return str(sub), f
+
+    def _premise_order(self, first, second):
+        names = [p.name for p in sorted(self.proj.iterdir())]      # the walk's own order (sorted(parent.iterdir()))
+        self.assertLess(names.index(first), names.index(second), "premise: the walk lists %s before %s" % (first, second))
+
+    @contextlib.contextmanager
+    def _unreadable(self, root, how):
+        """The subagents root `root` cannot be read inside the block. "eacces": its session directory at mode 000, a real
+        fault, so every stat under that directory fails too (restored before the block exits, so tearDown can remove it);
+        "eio": os.lstat of the root alone raising EIO by mock, every other call reading."""
+        if how == "eacces":
+            if os.geteuid() == 0:
+                self.skipTest("permission bits do not bind root: no EACCES to drive")
+            parent = os.path.dirname(root)
+            os.chmod(parent, 0o000)
+            try:
+                with self.assertRaises(PermissionError, msg="premise: the real fault this case drives"):
+                    os.lstat(root)
+                yield
+            finally:
+                os.chmod(parent, 0o755)
+            return
+        real = os.lstat
+
+        def eio(p, *a, **k):
+            if str(p) == root:
+                raise OSError(errno.EIO, "input/output error")
+            return real(p, *a, **k)
+        with mock.patch.object(os, "lstat", eio):
+            yield
+
+    @contextlib.contextmanager
+    def _untyped_entry(self, how):
+        """A project-directory entry sorted before the holder whose type cannot be read, yielded. "eacces": a symlink into a
+        directory at mode 000 (a real fault: the stat through the link fails with EACCES); "eio": a sibling session's
+        directory whose os.stat raises EIO by mock, every other call reading."""
+        entry = self.proj / SID_BEFORE
+        if how == "eacces":
+            if os.geteuid() == 0:
+                self.skipTest("permission bits do not bind root: no EACCES to drive")
+            locked = Path(self.td) / "locked"
+            (locked / "tree" / "subagents").mkdir(parents=True)
+            entry.symlink_to(locked / "tree")
+            os.chmod(locked, 0o000)
+            try:
+                yield entry
+            finally:
+                os.chmod(locked, 0o755)
+            return
+        self._sibling(SID_BEFORE)
+        real = os.stat
+
+        def eio(p, *a, **k):
+            if str(p) == str(entry):
+                raise OSError(errno.EIO, "input/output error")
+            return real(p, *a, **k)
+        with mock.patch.object(os, "stat", eio):
+            yield entry
+
+    def _is_dir_premise(self, entry, how):
+        """This interpreter's is_dir on the entry under the fault: it raises through 3.12 (from 3.13 it is os.path.isdir,
+        which answers False on any OSError), except that on 3.10 the EIO mock is not seen (pathlib bound os.stat at import,
+        and the entry is a readable directory)."""
+        try:
+            entry.is_dir()
+            raised = False
+        except OSError:
+            raised = True
+        expect = sys.version_info < (3, 13) and (how == "eacces" or sys.version_info >= (3, 11))
+        self.assertEqual(raised, expect, "premise: Path.is_dir %s on this interpreter under the %s fault"
+                         % ("raises" if expect else "does not raise", how))
+
+    def _lookup(self):
+        """AID_FORK's lookup under a running chat build's dependency scope: (answer, the caller's faults, the build's notes)."""
+        faults, deps = [], {"task_outs": [], "postal_any": False}
+        km._chat_dep_scope.deps = deps
+        try:
+            got = km._subagent_file(str(self.tpath), AID_FORK, faults)
+        finally:
+            km._chat_dep_scope.deps = None
+        return got, faults, deps["task_outs"]
+
+    def _found(self, got, faults, notes, holder_file, why):
+        self.assertEqual(got, holder_file, why)
+        self.assertEqual(faults, [], "the lookup was made: the caller (_awaiting_nest) is told of no fault when a file was found")
+        self.assertEqual(km._SUBAGENT_FILE_CACHE[self.fork_key][1], holder_file, "and the found file is memoized")
+        self.assertNotIn(km._TREE_UNREADABLE, [k for _p, k in notes],
+                         "the running chat build is told of no unreadable tree when the file was found: the answer is the file, "
+                         "recorded when it is read, and the tab is not rebuilt every cycle for a tree the answer did not need")
+
+    def _skipped_then_walked_again(self, root, holder_file):
+        """Under a real EACCES the found file's memo stamps carry the skipped tree's (root, None), so the first lookup after
+        the fault clears walks again (the root's stamp reads now) and still finds the file. Call after the fault's block."""
+        self.assertEqual(km._subagent_file(str(self.tpath), AID_FORK), holder_file, "found again once the tree reads")
+        self.assertIn((root, os.stat(root).st_mtime_ns), km._SUBAGENT_FILE_CACHE[self.fork_key][0],
+                      "the lookup after the fault cleared walked again: the memo now carries the skipped root's stamp as read")
+
+    FOUND_PAST = ("a fault excludes its own tree and nothing else: the file under the readable sibling is found past the tree "
+                  "that could not be read (the walk used to answer None at the first tree it could not read)")
+
+    # ── the unreadable own tree, the file under a readable sibling ─────────────────────────────────────────────────────
+    def _own_tree_unreadable(self, how):
+        root = str(self.subdir)
+        _hold, holder_file = self._sibling(SID_HOLD, holder=True)
+        with self._unreadable(root, how):
+            got, faults, notes = self._lookup()
+            self._found(got, faults, notes, holder_file, self.FOUND_PAST)
+            if how == "eacces":
+                self.assertIn((root, None), km._SUBAGENT_FILE_CACHE[self.fork_key][0],
+                              "the memo's stamps carry the skipped own tree's root unread, so the memo walks again once it reads")
+        if how == "eacces":
+            self._skipped_then_walked_again(root, holder_file)
+
+    def test_an_unreadable_own_tree_eio_leaves_the_file_under_a_readable_sibling_found_and_memoized(self):
+        self._own_tree_unreadable("eio")
+
+    def test_an_unreadable_own_tree_eacces_leaves_the_file_under_a_readable_sibling_found_and_memoized(self):
+        self._own_tree_unreadable("eacces")
+
+    # ── an unreadable sibling sorted before the holder ───────────────────────────────────────────────────────────────
+    def _sibling_before_holder_unreadable(self, how):
+        before, _ = self._sibling(SID_BEFORE)
+        _hold, holder_file = self._sibling(SID_HOLD, holder=True)
+        self._premise_order(SID_BEFORE, SID_HOLD)
+        with self._unreadable(before, how):
+            got, faults, notes = self._lookup()
+            self._found(got, faults, notes, holder_file, self.FOUND_PAST)
+            if how == "eacces":
+                self.assertIn((before, None), km._SUBAGENT_FILE_CACHE[self.fork_key][0],
+                              "the memo's stamps carry the skipped sibling's root unread, so the memo walks again once it reads")
+            # The caller: _awaiting_nest's fold, whose own lookup walks under the fault, is held for the cycle, since
+            # _subagent_file passes it no fault when a file was found (a fault holds the fold for the one call).
+            km._SUBAGENT_FILE_CACHE.pop(self.fork_key, None)
+            km._subagent_scope_open()
+            try:
+                row = km._awaiting_item("agents", "toolu_tree_0003", "Workflow", None, agent_id=AID_FORK)
+                cmd = km._awaiting_item("commands", "toolu_tree_cmd2", "run the api tests", None)
+                km._awaiting_nest([row], [cmd], {}, str(self.tpath))
+                self.assertIn(self.fork_key, km._subagent_scope()["launches"],
+                              "the fold over the found file is held for the cycle: no fault reached _awaiting_nest")
+            finally:
+                km._subagent_scope_close()
+        if how == "eacces":
+            self._skipped_then_walked_again(before, holder_file)
+
+    def test_an_unreadable_sibling_sorted_before_the_holder_eio_leaves_its_file_found_memoized_and_the_fold_held(self):
+        self._sibling_before_holder_unreadable("eio")
+
+    def test_an_unreadable_sibling_sorted_before_the_holder_eacces_leaves_its_file_found_memoized_and_the_fold_held(self):
+        self._sibling_before_holder_unreadable("eacces")
+
+    # ── a project-directory entry sorted before the holder whose type cannot be read ──────────────────────────────────
+    def _untyped_entry_before_holder(self, how):
+        _hold, holder_file = self._sibling(SID_HOLD, holder=True)
+        with self._untyped_entry(how) as entry:
+            self._premise_order(SID_BEFORE, SID_HOLD)
+            self._is_dir_premise(entry, how)
+            got, faults, notes = self._lookup()
+            self._found(got, faults, notes, holder_file,
+                        "a fault excludes its own entry and nothing else: an entry whose type could not be read is skipped and "
+                        "the file under the readable sibling after it is found (the walk used to take the raise for the "
+                        "listing's fault and answer None)")
+
+    def test_an_entry_whose_type_cannot_be_read_sorted_before_the_holder_eio_leaves_its_file_found_and_memoized(self):
+        self._untyped_entry_before_holder("eio")
+
+    def test_an_entry_whose_type_cannot_be_read_sorted_before_the_holder_eacces_leaves_its_file_found_and_memoized(self):
+        self._untyped_entry_before_holder("eacces")
+
+    # ── controls, green at both heads ────────────────────────────────────────────────────────────────────────────────
+    def _sibling_after_holder_unreadable(self, how):
+        after, _ = self._sibling(SID_AFTER)
+        _hold, holder_file = self._sibling(SID_HOLD, holder=True)
+        self._premise_order(SID_HOLD, SID_AFTER)
+        with self._unreadable(after, how):
+            got, faults, notes = self._lookup()
+            self._found(got, faults, notes, holder_file, "the holder, sorted first, answers the walk")
+            self.assertNotIn(after, [d for d, _m in km._SUBAGENT_FILE_CACHE[self.fork_key][0]],
+                             "the unreadable sibling sorted after the holder is never reached")
+
+    def test_control_an_unreadable_sibling_sorted_after_the_holder_is_never_reached_eio(self):
+        self._sibling_after_holder_unreadable("eio")
+
+    def test_control_an_unreadable_sibling_sorted_after_the_holder_is_never_reached_eacces(self):
+        self._sibling_after_holder_unreadable("eacces")
+
+    def _no_holder(self, layout, how):
+        before, _ = self._sibling(SID_BEFORE)
+        self._sibling(SID_HOLD)                                     # a readable sibling without the file
+        root = str(self.subdir) if layout == "own" else before
+        with self._unreadable(root, how):
+            for call in ("first", "second"):
+                got, faults, notes = self._lookup()
+                self.assertIsNone(got, "%s call: the file is nowhere the walk could read" % call)
+                self.assertEqual(faults, ["PermissionError" if how == "eacces" else "OSError"],
+                                 "%s call: with the fault, since the file may be under the tree that could not be read" % call)
+                self.assertNotIn(self.fork_key, km._SUBAGENT_FILE_CACHE,
+                                 "%s call: nothing memoized, so the next call walks again (the fail-closed rule's cost)" % call)
+                self.assertIn((root, km._TREE_UNREADABLE), notes,
+                              "%s call: the running chat build is told the tree is unreadable, under a key no stat equals, so "
+                              "its tab is rebuilt next cycle" % call)
+
+    def test_control_no_holder_with_the_own_tree_unreadable_answers_none_with_the_fault_and_memoizes_nothing_eio(self):
+        self._no_holder("own", "eio")
+
+    def test_control_no_holder_with_the_own_tree_unreadable_answers_none_with_the_fault_and_memoizes_nothing_eacces(self):
+        self._no_holder("own", "eacces")
+
+    def test_control_no_holder_with_a_sibling_unreadable_answers_none_with_the_fault_and_memoizes_nothing_eio(self):
+        self._no_holder("sibling", "eio")
+
+    def test_control_no_holder_with_a_sibling_unreadable_answers_none_with_the_fault_and_memoizes_nothing_eacces(self):
+        self._no_holder("sibling", "eacces")
 
 
 if __name__ == "__main__":
