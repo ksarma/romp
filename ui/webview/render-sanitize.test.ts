@@ -24,7 +24,7 @@ test("md() sanitizes marked output with DOMPurify before returning HTML", () => 
   assert.match(SANITIZE, /import DOMPurify from "dompurify";/);
   // the call goes through purifier(): the module-global DOMPurify, or the stand-in a node suite installed through setMdSanitizer
   // (Slice 7 of plans/markdown-viewer.md, item 1's seam for the node suites); the browser runs the real instance
-  assert.match(SANITIZE, /export function sanitizeMd\(dirty: string, own\?: \(body: HTMLElement\) => void\): HTMLElement \{[\s\S]*?purifier\(\)\.sanitize\(dirty, /);   // the optional second parameter is the viewer's own pass (heading ids); the chat passes none
+  assert.match(SANITIZE, /export function sanitizeMd\(dirty: string, own\?: \(body: HTMLElement\) => void, opts\?: \{ remoteRefs\?: "drop" \| "keep" \}\): HTMLElement \{[\s\S]*?purifier\(\)\.sanitize\(dirty, /);   // the optional second parameter is the viewer's own pass (heading ids) and the third its paint-pass opt-out; the chat passes neither
   assert.match(SANITIZE, /const purifier = \(\): MdSanitizer => installedSanitizer \?\? DOMPurify;/, "purifier() answers the installed stand-in, else DOMPurify");
   // (the signature grew an optional repo parameter for PR links — pr-links.ts — so match it loosely)
   const mdFn = RENDER.match(/function md\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
@@ -45,7 +45,7 @@ test("the file viewer's mdBlock adopts the same sanitizer's output, and spells n
   assert.match(VIEW, /export function viewerHtml\([^\n]*\{\n\s*const opts = \{ \.\.\.marked\.defaults \};\n\s*const tokens = marked\.lexer\(text, opts\);\n\s*literalizeUnclosedTags\(tokens\);\n[\s\S]*?return marked\.parser\(tokens, opts\);/, "marked's lexer and parser, the literal-tags rule between them (md-literal-tags.ts): the parse's own steps, no other renderer");
   // the sanitized <body>'s children are adopted as they are (no re-parse of a serialized string); these two are presence pins, and
   // where the figure chain sits relative to the adoption is file-view-seam.test.ts's to check, on comment-stripped code
-  assert.match(mdBlock, /const clean = sanitizeMd\(dirty, mintHeadingIds\);/);   // the second argument is the viewer's own pass (the heading ids), run inside the call
+  assert.match(mdBlock, /const clean = sanitizeMd\(dirty, mintHeadingIds, \{ remoteRefs: "keep" \}\);/);   // the second argument is the viewer's own pass (the heading ids), run inside the call; the third turns the paint pass off (the viewer gates those references)
   assert.match(mdBlock, /box\.replaceChildren\(\.\.\.Array\.from\(clean\.childNodes\)\);/);
   assert.doesNotMatch(mdBlock, /box\.innerHTML = /, "nothing reaches the viewer's innerHTML unsanitized");
 });

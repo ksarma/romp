@@ -116,13 +116,17 @@ test("remoteLoad reads a value the way the browser does: every spelling of anoth
   for (const v of localSets) assert.equal(remoteLoad(v, ORIGIN, BASE, true), false, JSON.stringify(v));
 });
 
-/** A minimal inert element tree: what stripRemoteLoads reads (localName, getAttribute) and does (replaceWith, remove). */
+/** A minimal inert element tree: what stripRemoteLoads reads (localName, getAttribute) and does (replaceWith, remove, and the
+ *  paint arm's removeAttribute and setAttribute: paint-refs.ts dropRemoteRefs). */
 type FakeEl = { localName: string; attrs: Record<string, string>; parent: FakeEl | null; children: (FakeEl | string)[];
-                getAttribute(n: string): string | null; replaceWith(n: unknown): void; remove(): void; ownerDocument: { createTextNode(s: string): string } };
+                getAttribute(n: string): string | null; setAttribute(n: string, v: string): void; removeAttribute(n: string): void;
+                replaceWith(n: unknown): void; remove(): void; ownerDocument: { createTextNode(s: string): string } };
 function fakeEl(localName: string, attrs: Record<string, string> = {}, children: FakeEl[] = []): FakeEl {
   const e: FakeEl = {
     localName, attrs, parent: null, children: [...children],
     getAttribute(n) { return Object.prototype.hasOwnProperty.call(attrs, n) ? attrs[n] : null; },
+    setAttribute(n, v) { attrs[n] = v; },
+    removeAttribute(n) { delete attrs[n]; },
     replaceWith(n) { if (!e.parent) return; const i = e.parent.children.indexOf(e); e.parent.children.splice(i, 1, n as string); e.parent = null; },
     remove() { if (!e.parent) return; const i = e.parent.children.indexOf(e); e.parent.children.splice(i, 1); e.parent = null; },
     ownerDocument: { createTextNode: (s) => s },
@@ -166,6 +170,27 @@ test("stripRemoteLoads on the inert tree: an img becomes its alt text, every oth
     + '<a href="https://remote.invalid/page"><span></span></a>'
     + '<p></p>',
     "the remote img is its alt text (empty alt: nothing), the poster'd video and its source are gone, the remote track is gone from the local video, the svg keeps its local image, a link is not a load");
+});
+
+
+test("stripRemoteLoads's paint arm on the inert tree: a url() to another origin in an svg paint attribute or in a style declaration is removed from the element, which stays; a same-document url(#g), this origin's own and a relative reference stay; the count adds the removals", () => {
+  // guards the strip's contract for the class its element walk never read (the hover card fetched a remote fill during a hover):
+  // before the arm the walk returned 0 here and every reference below stayed
+  const rect = fakeEl("rect", { width: "12", height: "12", fill: "url(https://remote.invalid/p.svg#p)", stroke: "url(#g)" });
+  const masked = fakeEl("rect", { mask: 'image-set("https://remote.invalid/m.png" 1x)', "clip-path": "url(/file?path=p.svg#c)" });
+  const own = fakeEl("rect", { fill: "url(" + ORIGIN + "/file?path=p.svg#p)", "marker-end": "url(//remote.invalid/m.svg#m)" });
+  const styled = fakeEl("rect", { style: "color: red; mask-image: url(https://remote.invalid/mi.png)" });
+  const span = fakeEl("span", { fill: "url(https://remote.invalid/h.svg#p)" });
+  const root = fakeEl("body", {}, [fakeEl("svg", { filter: "url(https://remote.invalid/f.svg#f)" }, [rect, masked, own, styled]), span]);
+  const n = stripRemoteLoads(asRoot(root), ORIGIN, BASE);
+  assert.equal(n, 6, "six removals: the svg's filter, the rect's fill, the mask, the protocol-relative marker-end, the style's mask-image declaration, the span's fill; no element went");
+  assert.equal(serialize(root),
+    '<svg><rect width="12" height="12" stroke="url(#g)"></rect>'
+    + '<rect clip-path="url(/file?path=p.svg#c)"></rect>'
+    + '<rect fill="url(' + ORIGIN + '/file?path=p.svg#p)"></rect>'
+    + '<rect style="color: red"></rect></svg>'
+    + '<span></span>',
+    "the remote fill, mask, marker-end and filter are gone and the elements stay; url(#g), the relative clip-path and this origin's fill stay; the style keeps its colour declaration; an HTML span's fill goes too (the names are read on every element)");
 });
 
 

@@ -175,7 +175,7 @@ test('mdBlock runs the chain and the fence pass on the sanitized body, `clean`, 
   // off comment-stripped code by the compiler's comment ranges; this module runs in CI's shell job, which installs nothing, so the
   // compiler is out of reach here, and an index compare over raw text is satisfied by a comment quoting the lines (the first-round
   // ruling of the fork PR's review, defect E, said not to take that form; the round-2 review found it here, 2026-09-20).
-  const SANITIZE = 'const clean = sanitizeMd(dirty, mintHeadingIds);';
+  const SANITIZE = 'const clean = sanitizeMd(dirty, mintHeadingIds, { remoteRefs: "keep" });';
   const ADOPT = '\n  box.replaceChildren(...Array.from(clean.childNodes));\n';
   assert.ok(mdFn.includes(SANITIZE), 'the sanitizer\'s body is bound to `clean`');
   assert.ok(mdFn.includes(ADOPT), 'and adopted into `box` at the function\'s own level (a presence pin; its place after the chain is file-view-seam.test.ts\'s to check)');
@@ -371,7 +371,7 @@ test('the scope facts stand in the code they cite: the panes\' CSP names no remo
 
 test('plain prose: no em dash in the section, the pointers or the chain block\'s comments', () => {
   const mdFn = view.split('function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {')[1].split('\n}\n')[0];
-  const cleanAt = mdFn.indexOf('const clean = sanitizeMd(dirty, mintHeadingIds);');
+  const cleanAt = mdFn.indexOf('const clean = sanitizeMd(dirty, mintHeadingIds, { remoteRefs: "keep" });');
   const adoptAt = mdFn.indexOf('\n  box.replaceChildren(...Array.from(clean.childNodes));\n');
   assert.ok(cleanAt >= 0 && adoptAt >= 0, 'the sanitize and the adoption lines are present (the text between them is the chain block read below; their order is the seam test\'s)');
   for (const [name, text] of [['section', section()],
