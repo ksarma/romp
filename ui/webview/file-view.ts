@@ -5234,9 +5234,10 @@ export function figureFoldOf(from: Element): Element | null {
  *  take the anchor's help cursor while the control keeps the button family's pointer, and the control inherited the anchor's
  *  opacity, kept by the owner with that ruling, until the painted-contrast ask of 2026-09-23: at 0.8 x 0.7 the web control at rest
  *  read 2.47:1 dark and 2.40:1 light by pixels over the leg's #333 picture, so a dead link holding the outbound dress now dims by
- *  colour and not by opacity, styles.css's figure rules, and the control inside it paints at the token's own ratio; a local control
- *  inside a dead link that holds no web dress keeps the anchor's opacity). A link holding the figure alone IS the anchor
- *  (figureAnchor climbed it) and is not read. */
+ *  colour and not by opacity, styles.css's figure rules, and the web control inside it paints its line at the token's own ratio
+ *  at rest, under a focus and under a Space press, and the family's accent border under the pointer and in a pointer press at its
+ *  own; a local control inside a dead link that holds no web dress keeps the anchor's opacity). A link holding the figure alone IS
+ *  the anchor (figureAnchor climbed it) and is not read. */
 function linkAbove(anchor: Element): Element | null {
   const p = anchor.parentElement;
   return p ? figureLinkOf(p) : null;
