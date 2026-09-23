@@ -35792,11 +35792,13 @@ def _subagent_tree_memo_report():
         fault held for the one call that observed it (_awaiting_nest). Guards
         test_a_faulted_launch_fold_is_folded_once_per_call_and_not_held_across_calls;
       - the dependency-note signature (every build that looks the agent up records the walk's noted keys, by walking or
-        replayed by the memo or a held fold, as round 2 of #882's group B left it): per pusher cycle, per cached chat
-        tab whose latest build recorded them, one os.stat per recorded path, 1 for the absent beside-path, D_s for the
-        own tree, S_d per sibling tree the walk read and 1 per absent sibling place, re-stat'd by the signature every
-        cycle (_chat_sig_deps) and counted in memos.chatSig stats, in none of this memo's counters; a change in any of
-        those directories moves its key and rebuilds the tab, the half round 1's ruling asked for. DependencyKey
+        replayed by the memo or a held fold, as round 2 of #882's group B left it, one entry per path whatever the
+        number of reports, a path reported under two keys recorded as their disagreement, _chat_build_deps): per pusher
+        cycle, per cached chat tab whose latest build recorded them, one os.stat per recorded path, 1 for the absent
+        beside-path, D_s for the own tree, S_d per sibling tree the walk read and 1 per absent sibling place,
+        re-stat'd by the signature every cycle (_chat_sig_deps) and counted in memos.chatSig stats, in none of this
+        memo's counters; a change in any of those directories moves its key and rebuilds the tab, the half round 1's
+        ruling asked for. DependencyKey
         test_the_chat_signature_re_stats_every_directory_the_walk_recorded_so_a_change_in_any_sibling_directory_rebuilds_the_tab
         (D + 1 + S x D + K; one key per sibling root, the base's form, is D + 1 + S + K).
     Outside a scope (a handler thread's build, the act-now nudge pass) nothing is held and every read pays per call what
@@ -35984,7 +35986,10 @@ def _subagent_file_notes_replay(noted):
     it vouches for: a file landing under a held listing before this build would be recorded under its post-landing key,
     equal to every later re-stat, and the tab that shows the file missing would never be rebuilt (round 1 of #882's
     defect, which _subagent_tree_dep_note's docstring states). On a memo hit the replay is exact, since the hit has just
-    found the memo's stamps equal to the walk's. Nothing to report outside a chat build."""
+    found the memo's stamps equal to the walk's. A replayed pair may be older than a key the same build already holds
+    for that path (a held fold replaying a walk made before a landing, behind a fresh walk made after it): the build
+    then records the disagreement, a key no re-stat equals, and never the fresher key alone (_chat_build_deps).
+    Nothing to report outside a chat build."""
     if getattr(_chat_dep_scope, "deps", None) is None:
         return
     for of, key in noted:
@@ -36006,7 +36011,9 @@ def _subagent_file(path, agent_id, faults=None, notes=None):
     lookup this memo answers, on the stamps the walk took (on this thread or another, in this cycle or an earlier one),
     the pairs being the memo entry's third element; and a build whose lookup _awaiting_nest's held launch fold answers
     without calling here, the pairs being the fold entry's fourth element (`notes`, a list when given, receives the
-    pairs this lookup reported, which is how the fold stores them). Until round 2 of #882 (group B, fresh-1) the walk
+    pairs this lookup reported, which is how the fold stores them). Where a fresher read in the same build reported
+    another key for one of those paths, the build records the disagreement, a key no re-stat equals, so the tab is
+    rebuilt next cycle (_chat_build_deps). Until round 2 of #882 (group B, fresh-1) the walk
     recorded for its own build alone, so a build answered by the memo or by the held fold, in the walk's cycle or a
     later one, held no key for the trees the walk read and a landing under a sibling's tree moved nothing it recorded;
     DependencyKey's memo-hit and held-fold cases in tests/test_subagent_tree_stamps_per_cycle.py execute the replay.
@@ -39152,13 +39159,16 @@ def _chat_dep_note_taskout(of, key):
     landing after the stat pairs the old key with new content, and the next signature check misses,
     never a stale hit); None when the path was absent, so its appearance is a change too; _TREE_UNREADABLE
     when a subagents tree could not be read (_subagent_tree's docstring), a key no stat equals, so the
-    build is redone next cycle and reads again. Nothing to report outside a chat build."""
+    build is redone next cycle and reads again. A path reported twice under two different keys is recorded
+    under _CHAT_DEP_KEYS_DIFFER (_chat_build_deps). Nothing to report outside a chat build."""
     d = getattr(_chat_dep_scope, "deps", None)
     if d is not None:
         d["task_outs"].append((of, key))
 
 
 _DEPS_UNSET = object()
+_CHAT_DEP_KEYS_DIFFER = "keys differ"   # the key _chat_build_deps records for a path one build reported under two different keys:
+#                                         a value no stat produces, so the next signature misses and the tab is rebuilt
 
 
 def _chat_build_deps(sid, payload):
@@ -39172,11 +39182,24 @@ def _chat_build_deps(sid, payload):
     build hydrated against, never from a fresh read (postal). `at_build` is the three components as this
     build embedded them, the tail of the signature stored with the entry; the next cycle's
     _chat_sig_deps evaluates the same record against the world then. A cold tab records its dependencies
-    on its first build and is cached from then on."""
+    on its first build and is cached from then on.
+
+    A path the build reported once, or more than once under one key, is recorded under that key. A path it
+    reported under two different keys is recorded under _CHAT_DEP_KEYS_DIFFER, which no re-stat equals, so
+    the next cycle's signature misses and the tab is rebuilt: two keys mean the payload embeds reads of the
+    path in two states, and a record of either key can equal the next re-stat while the payload shows the
+    other state. Keeping the first key was enough while every report came from a read made when it was
+    reported, since the first was then the oldest and any later change left it behind the re-stat. A report
+    replayed from a held read breaks that order: in one build a fresh walk reported a sibling directory's
+    key after an agent's file landed in it, and a launch fold held from before the landing then replayed
+    the older key, which the first key hid, so the tab that showed that agent's file missing was never
+    rebuilt (the pass applying round 2 of #882's rulings; tests/test_subagent_tree_stamps_per_cycle.py
+    DependencyKey executes both orders and a path reported twice under one key)."""
     sc = getattr(_chat_dep_scope, "deps", None) or {}
     touts = {}
     for of, key in sc.get("task_outs") or ():
-        touts.setdefault(of, key)                        # the first identity a build read a file under
+        if touts.setdefault(of, key) != key:             # the same path under a second key: the two reads disagree, and
+            touts[of] = _CHAT_DEP_KEYS_DIFFER            #  no one key the build holds stands for what the payload shows
     events = payload.get("events") or []
     pl = []
     for ev in events:

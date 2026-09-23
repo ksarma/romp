@@ -96,9 +96,11 @@ listing lacked leaves the recorded key behind the next signature's re-stat and t
 the root's stamp or a listed child's; a fresh stat taken after the served listing recorded the post-landing key, equal to
 every later re-stat, and the tab that showed the file missing was never rebuilt; a build whose lookup the agent-file memo
 answers in a later cycle, or the held launch fold answers after a reader with no record open walked, records the same keys,
-replayed from the walk's notes (round 2 of #882, group B: before it such a build recorded nothing for the sibling's tree),
-and a sibling session directory appearing after a build moves no key it recorded on any of the three roads, the residual,
-witnessed. (7) The sum over roots: three alive
+replayed from the walk's notes (round 2 of #882, group B: before it such a build recorded nothing for the sibling's tree);
+a path one build reported under two keys, a held fold's replayed key behind a fresh walk's among them, is recorded under a
+key no re-stat equals, so that tab is rebuilt too, where a record keeping the first key kept the walk's and never rebuilt
+it; and a sibling session directory appearing after a build moves no key it recorded on any of the three roads, the
+residual, witnessed. (7) The sum over roots: three alive
 sessions with trees of unequal size and unequal agent counts, read in one pusher cycle and in one jobs pass with the reads
 interleaved, cost the sum over their roots of D_r lstats (each root its own D_r), 0 stats and one fold per agent (the sum
 over the sessions of A_s), so the total directories decide the cycle's cost and not their split over roots (the derived
@@ -2745,8 +2747,10 @@ class DependencyKey(_World):
     _subagent_meta_map records: _subagent_tree_dep_note), so the key is behind the re-stat and the tab is rebuilt, whether
     the landing moved the root's stamp or a listed child's. The same keys reach a build whose lookup the walk did not run
     (round 2 of #882, group B): the agent-file memo's hit and _awaiting_nest's held launch fold replay the pairs the walk
-    noted (_subagent_file_notes_replay), where before they recorded nothing for the sibling's tree; the project directory
-    stays out of every record, the residual the last case here witnesses. Driven through the real _pusher_cycle, with the
+    noted (_subagent_file_notes_replay), where before they recorded nothing for the sibling's tree; a replayed key that
+    disagrees with a fresher key the same build reported for the path is recorded as the disagreement (_chat_build_deps),
+    which no re-stat equals; the project directory stays out of every record, the residual a case here witnesses. Driven
+    through the real _pusher_cycle, with the
     build's record shape (build_session's literal) open around the real _session_awaiting."""
 
     def _sibling(self, workflows):
@@ -2992,6 +2996,109 @@ class DependencyKey(_World):
         self.assertNotEqual(restat, recorded,
                             "the next signature's re-stat of the root, %r, against the recorded key %r: keyed on a difference, the tab "
                             "is rebuilt" % (restat, recorded))
+
+    def test_a_held_folds_replayed_key_behind_a_fresh_walks_key_for_the_same_directory_re_arms_the_tab(self):
+        """The held-fold road when a fresh walk in the same build reports the directory first (the pass applying round 2
+        of #882's rulings found it; the case above has the fold report first). One cycle: a reader with no chat record open
+        holds the launch fold of a Workflow agent K2 whose file is nowhere, its walk having read the sibling's tree, and
+        looks up an agent K1 whose file lies at the sibling's root; the sibling's root is then evicted (owned by no alive
+        session: the jobs pass's forget or the feed build's belt), and K2's file lands under the sibling's workflows/. The
+        chat build then looks K1 up first (the Agent head: _stamp_agents runs before _session_awaiting in build_session):
+        K1's memo re-check sees workflows/ moved, its walk reads the tree again and reports workflows/ under the key after
+        the landing. The awaiting box's owner lookups then consult K2's launches, which the held fold answers from before
+        the landing, replaying the walk's older key for workflows/. Keyed on the property: the build answered K2 with no
+        file while K2's file exists, so its record for workflows/ must differ from the next signature's re-stat (the tab
+        is rebuilt). RED before _chat_build_deps recorded a disagreement, when it kept the first key, the walk's, equal
+        to every later re-stat, and dropped the fold's; red before group B too, when the held fold replayed nothing. Now
+        the path reported under two keys is recorded under a key no re-stat equals."""
+        other = self._sibling(workflows=True)                      # the sibling's tree: the root and workflows/
+        root, wfdir = str(other), str(other / "workflows")
+        k1, k2 = "a%016x" % 0x7cf6, "a%016x" % 0x7cf7
+        k1_file = other / ("agent-%s.jsonl" % k1)                  # K1: its file at the sibling's root, the Agent head's lookup
+        k1_file.write_text("")
+        _age(other)
+        self.live_aids.append(k2)                                  # K2: in the live row, its file nowhere yet
+        for aid in (k1, k2):
+            self.addCleanup(km._SUBAGENT_FILE_CACHE.pop, (self.path, aid), None)
+        rec = {}
+
+        def job(now, live_map, **kw):
+            rec["aw0"] = km._session_awaiting(SID, self.path, True)   # a reader with no record open: K2's fold held
+            rec["held"] = (self.path, k2) in _scope()["launches"]
+            rec["k1_0"] = km._subagent_file(self.path, k1)
+            km._subagent_trees_forget([{"path": self.path}])        # the sibling's root, owned by no alive session, evicted
+            rec["evicted"] = root in km._SUBAGENT_ROOT_EVICTED
+            wf = other / "workflows" / ("wf_%016x" % 0x7cf7)
+            wf.mkdir()                                              # K2's file lands: workflows/'s stamp moves
+            self._add_agent(wf, 244, k2)
+            rec["file"] = wf / ("agent-%s.jsonl" % k2)
+            rec["fresh"] = km._chat_stat_key(wfdir)
+            km._chat_dep_scope.deps = {"task_outs": [], "postal_any": False}   # build_session's record for the chat build
+            try:
+                asked = []
+                rec["k1"] = km._subagent_file(self.path, k1)           # the Agent head's lookup first
+                with self._counting("_subagent_file", k2, asked):
+                    rec["aw"] = km._session_awaiting(SID, self.path, True)
+                rec["asked"] = asked
+                rec["reports"] = [k for p, k in km._chat_dep_scope.deps["task_outs"] if p == wfdir]
+                rec["deps"] = km._chat_build_deps(SID, {"events": []})
+            finally:
+                km._chat_dep_scope.deps = None
+        km._turn_notify_tick = job
+        km._pusher_cycle()
+        self.assertIn("deps", rec, "the job ran to its end: %r" % (rec,))
+        self.assertEqual(((rec["aw0"] or {}).get("count"), rec["held"], rec["k1_0"], rec["evicted"]),
+                         (A + 1, True, k1_file, True),
+                         "premise: the first reader saw the A agents and K2, held K2's fold, found K1 at the sibling's root, and the "
+                         "sibling's eviction is recorded")
+        self.assertEqual((rec["k1"], (rec["aw"] or {}).get("count"), rec["asked"]), (k1_file, A + 1, []),
+                         "premise: the chat build found K1 and saw K2, whose launches the held fold answered without calling "
+                         "_subagent_file: %r" % (rec["asked"],))
+        self.assertTrue(rec["file"].exists(), "premise: K2's file exists under the sibling's workflows/")
+        self.assertEqual(rec["reports"][:1], [rec["fresh"]],
+                         "premise: the build's first report of workflows/ is K1's walk, under the key after the landing: %r" % (rec["reports"],))
+        recorded = dict(rec["deps"]["task_outs"]).get(wfdir, "unrecorded")
+        restat = dict(km._chat_sig_deps(SID, rec["deps"])[0]).get(wfdir, "unrecorded")
+        self.assertNotEqual(recorded, restat,
+                            "the chat build answered K2 from the fold held before the landing (no file) while K2's file exists, so its "
+                            "record for workflows/ must differ from the next signature's re-stat and the tab be rebuilt; recorded %r, "
+                            "re-stat %r: equal, the tab keeps showing K2's file missing (the build's reports of workflows/: %r; a "
+                            "record that keeps the first key drops the fold's older one)" % (recorded, restat, rec["reports"]))
+        self.assertEqual(len(set(rec["reports"])), 2,
+                         "and the fold replayed the walk's older key for workflows/ behind K1's: %r" % (rec["reports"],))
+        nxt = {}
+        km._turn_notify_tick = lambda now, live_map, **kw: nxt.setdefault("found", km._subagent_file(self.path, k2))
+        km._pusher_cycle()
+        self.assertEqual(nxt.get("found"), rec["file"], "the rebuilt tab's lookup of K2: the memo's stamps moved, the walk finds the file")
+
+    def test_a_path_one_build_reported_under_two_keys_is_recorded_under_a_key_no_re_stat_equals_in_either_order(self):
+        """_chat_build_deps' rule for a path reported more than once (the case above drives it through the real readers):
+        under two different keys, in either order, the record's one entry for the path is a key the next signature's
+        re-stat never equals, so the tab is rebuilt; reported twice under one key, the entry is that key and equals the
+        re-stat, so a consistent build is not rebuilt for it. RED, in the order current key first and older key second,
+        before the rule, when the record kept the first key; the other order and the one-key control were green then."""
+        p = str(self.sub)
+        now_key = km._chat_stat_key(p)
+        older = (now_key[0] - 1.0, now_key[1])                     # the path's key before a change: an older read's
+        for what, reports in (("the current key first", [(p, now_key), (p, older)]),
+                              ("the older key first", [(p, older), (p, now_key)])):
+            km._chat_dep_scope.deps = {"task_outs": list(reports), "postal_any": False}
+            try:
+                rec = km._chat_build_deps(SID, {"events": []})
+            finally:
+                km._chat_dep_scope.deps = None
+            restat = km._chat_sig_deps(SID, rec)[0]
+            self.assertEqual([q for q, _k in rec["task_outs"]], [p], "one entry for the path (%s)" % what)
+            self.assertNotEqual(tuple(rec["task_outs"]), restat,
+                                "a path reported under two keys, %s: the record %r equals the next re-stat %r, so the tab is not "
+                                "rebuilt while the payload embeds a read under the other key" % (what, rec["task_outs"], restat))
+        km._chat_dep_scope.deps = {"task_outs": [(p, now_key), (p, now_key)], "postal_any": False}
+        try:
+            rec = km._chat_build_deps(SID, {"events": []})
+        finally:
+            km._chat_dep_scope.deps = None
+        self.assertEqual((rec["task_outs"], km._chat_sig_deps(SID, rec)[0]), ([(p, now_key)], ((p, now_key),)),
+                         "control: a path reported twice under one key is recorded under it, equal to the re-stat (no rebuild)")
 
     def test_a_sibling_directory_appearing_after_a_build_moves_no_key_that_build_recorded_on_any_road(self):
         """The residual group B leaves (round 2 of #882), witnessed. The project directory the walk lists is stamped for the
