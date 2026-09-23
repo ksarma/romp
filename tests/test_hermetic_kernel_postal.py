@@ -48,17 +48,19 @@ file, the side that requires the trio; a subscript whose slice the scan cannot r
 element of its container, the same side. A name bound twice in the scope the call reads by declarations that do not
 read it, once to the path and once to something else, is refused loudly (UnreadableSpawn, naming the call's line and
 both declarations), never read either way; a declaration with no readable value beside one bound to the path leaves the
-path standing. A declaration whose value reads the name itself (`cmd += [...]`, `cmd = cmd + [...]`, `KERNEL =
-os.path.realpath(KERNEL)`; found by the binding, a name or target in the value that resolves to declarations among
-which it is) is read with the name standing for the verdict of the declarations that do not read it: holding the path,
-the name is the path whatever those say, so an extension that adds the path to a base without it is caught; lacking the
-path while they hold it (`KERNEL = os.path.dirname(KERNEL)`), a rebinding away from the path, refused loudly the same
-way; neither, no path. A string that MENTIONS the path inside a word (a -c program that load_sources the kernel,
-`load_source('k', %r)`), a comment or a docstring is not a kernel process: that is the in-process shape in a child, met
-by the bus belt below like the in-process shape itself (the ruling point below). A Python -c child's program (the
-interpreter before the flag names no shell) is read as Python as well, its text assembled from the templates, joins and
-names that build it, a %r placeholder a string literal ending in the path the scan reads its value as; a spawn site in
-that program is a site of the call that starts the child.
+path standing. The refusal comes before the trio is read, so a module that carries the trio is refused as well, and
+unittest idioms reach it (rows R4 and R5): a subclass's setUp writing self.X before super().setUp() spawns it, and its
+setUpClass writing cls.X, where the base's class body binds X to another script. A declaration whose value reads the
+name itself (`cmd += [...]`, `cmd = cmd + [...]`, `KERNEL = os.path.realpath(KERNEL)`; found by the binding, a name or
+target in the value that resolves to declarations among which it is) is read with the name standing for the verdict of
+the declarations that do not read it: holding the path, the name is the path whatever those say, so an extension that
+adds the path to a base without it is caught; lacking the path while they hold it (`KERNEL = os.path.dirname(KERNEL)`),
+a rebinding away from the path, refused loudly the same way; neither, no path. A string that MENTIONS the path inside a
+word (a -c program that load_sources the kernel, `load_source('k', %r)`), a comment or a docstring is not a kernel
+process: that is the in-process shape in a child, met by the bus belt below like the in-process shape itself (the
+ruling point below). A Python -c child's program (the interpreter before the flag names no shell) is read as Python as
+well, its text assembled from the templates, joins and names that build it, a %r placeholder a string literal ending in
+the path the scan reads its value as; a spawn site in that program is a site of the call that starts the child.
 The scan replaced a regex pair on 2026-09-21, in the author's pass applying the ruling of PR #850's eighth review
 round: the old KERNEL_NAME pattern took any name bound on ONE line that spelled romp-kernel as a name bound to the
 kernel's path and looked for it as a whole WORD in every subprocess call span, so a local `p` bound to TEXT that
@@ -2162,6 +2164,14 @@ PLANT_TABLE = (
      'K = os.path.join(BIN, "romp-kernel")\nK = os.path.join(BIN, "romp-judge")\nsubprocess.run([K])'),
     ('R3 the path rebound to its own dirname, away from the path', 'refused-loud', (3, 1, 2),
      'KERNEL = os.path.join(BIN, "romp-kernel")\nKERNEL = os.path.dirname(KERNEL)\nsubprocess.run([KERNEL])'),
+    ("R4 a subclass's setUp writing self.SCRIPT, the kernel, before super().setUp() spawns it, the base's class body binding "
+     "another script (one class's reading holds both)", 'refused-loud', (4, 7, 2),
+     'class Base:\n    SCRIPT = os.path.join(BIN, "romp-judge")\n    def setUp(self):\n        subprocess.Popen([sys.executable, self.SCRIPT])\n'
+     'class T(Base):\n    def setUp(self):\n        self.SCRIPT = os.path.join(BIN, "romp-kernel")\n        super().setUp()'),
+    ("R5 a subclass's setUpClass writing cls.SCRIPT, the kernel, the base's setUp spawning self.SCRIPT and its class body "
+     "binding another script (one class's reading holds both)", 'refused-loud', (4, 8, 2),
+     'class Base:\n    SCRIPT = os.path.join(BIN, "romp-judge")\n    def setUp(self):\n        subprocess.Popen([sys.executable, self.SCRIPT])\n'
+     'class T(Base):\n    @classmethod\n    def setUpClass(cls):\n        cls.SCRIPT = os.path.join(BIN, "romp-kernel")'),
 )
 
 
