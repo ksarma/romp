@@ -368,7 +368,8 @@ request's MERGE with main, so a docstring pinned to the count read went red the 
 every time; the oracle's own figure beside it stays pinned to the derivation; the ninth pass's pin read this docstring
 alone, the tenth's reads the three, the reviewer's ruling of 2026-09-22; since round 4 of PR 891's review, romp-manager's
 ruling of 2026-09-22, the `of N` shape counts only with the word modules in its own sentence, and a count whose sentence
-names its head, a commit's sha, is a measurement record and exempt); tests/conftest.py,
+names its head, a commit's sha, is a measurement record and exempt; since round 5, the ruling of 2026-09-23, the stop of
+i.e., e.g., etc., cf. or vs. ends no sentence, so a count after one stays in the sentence of the word before it); tests/conftest.py,
 tests/__init__.py, the helper modules under tests/ and tests/fixtures/ are read only for a returned Thread
 (helper_modules). The listing is
 what pytest collects under tests/ only while two things hold, both PINNED by a tree test
@@ -4959,7 +4960,9 @@ def module_paths(root=HERE):
 
 _MODULE_COUNT = re.compile(r"\b\d{3,}\s+(?:test\s+)?modules\b|(?P<of>\bof\s+(?:the\s+)?\d{3,}(?![.,]\d)(?=\s*[,;.)]|\s+(?:test\s+)?modules\b|\s*$))"
                            r"|\bmodules\s*\(\d{3,}\b")
-_SENTENCE_END = re.compile(r"""[.!?][)\]'"`]*(?=\s|$)|\n[ \t]*\n""")   # a stop (brackets or quotes after it) then whitespace or the end; a blank line
+_ABBREVIATIONS = ("i.e", "e.g", "etc", "cf", "vs")   # CLOSED: the abbreviations whose stop ends no sentence (_sentences); to add one, add its spelling without the stop
+_SENTENCE_END = re.compile("".join(r"(?<!\b%s)" % re.escape(a) for a in _ABBREVIATIONS)   # not the stop of a listed abbreviation: one fixed-width lookbehind each
+                           + r"""[.!?][)\]'"`]*(?=\s|$)|\n[ \t]*\n""")   # a stop (brackets or quotes after it) then whitespace or the end; a blank line
 _MODULES_WORD = re.compile(r"\bmodules\b")
 _NAMED_HEAD = re.compile(r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")   # a commit's sha, abbreviated or whole: a digit and a letter among its hex digits;
 # an abbreviated sha whose digits are all decimal is not recognised either, the safe side (the count then counts): name such a head with more of its digits
@@ -4970,7 +4973,15 @@ def _sentences(text):
     exclamation mark (closing brackets or quotes after it) followed by whitespace or the text's end, or at a blank line. A
     period inside a version, a decimal, a time or a file name (3.12, 0.57 s, 12:30, tests/x.py) ends none, and neither does a
     semicolon, a colon or a wrapped line, so a sentence of the ledger or of a docstring is one span however many lines or
-    clauses it runs (the ledger's run to a thousand characters). The last span is the text after its last sentence end."""
+    clauses it runs (the ledger's run to a thousand characters). NOR DOES THE STOP OF AN ABBREVIATION IN _ABBREVIATIONS, a
+    CLOSED list, in the lower case it has inside a sentence: i.e., e.g., etc., cf. and vs. (round 5 of PR 891's review,
+    romp-manager's ruling of 2026-09-23: `the modules, i.e. 5 of the N` had split at `i.e.`, so the count lost the sentence
+    that named modules and passed; the pin plants one such shape per abbreviation). Each is one fixed-width lookbehind before
+    the stop, built from the tuple (Python's re takes no alternation of widths inside one lookbehind), with a word boundary
+    before it (`devs.` is no `vs.`). THE RESIDUAL: the stop of an abbreviation NOT in the list (viz., approx., an initial)
+    still ends a sentence here, and a count after it loses the word before it and passes, the quiet side; to close one, add
+    its spelling without the stop to _ABBREVIATIONS. The other side is loud: a sentence that truly ends at `etc.` runs into
+    the next, so a count there is named, not missed. The last span is the text after its last sentence end."""
     spans, start = [], 0
     for m in _SENTENCE_END.finditer(text):
         spans.append((start, m.end()))
@@ -5243,7 +5254,14 @@ class ThreadStopCensus(unittest.TestCase):
         list beside the word, so the exclusion and not the sentence rule is what passes them); and a count whose sentence
         names its head, a commit's sha, is a measurement record of that head, not a claim about the tree's count, and is
         EXEMPT, planted as a pair: the bare count named, the same count beside a sha not (the ledger's measurement
-        paragraphs name their heads and stand as prose). The liveness module's docstring is read from its PARSED FILE
+        paragraphs name their heads and stand as prose). AN ABBREVIATION'S STOP ENDS NO SENTENCE (round 5 of PR 891's
+        review, romp-manager's ruling of 2026-09-23): the sentence rule had split `the modules, i.e. 5 of the N` at the
+        abbreviation, so the count lost the sentence that named modules and passed, the false-negative class the rule
+        introduced; _sentences now holds a CLOSED list, i.e., e.g., etc., cf. and vs. (_ABBREVIATIONS; another
+        abbreviation's stop still splits, the documented residual), planted below one shape per abbreviation, the word
+        before it and the count after it, each named now and none under the splitter before (the red); the fine list gains
+        a true stop after an abbreviation and a word that ends in vs before a stop, so the sentence boundary and the word
+        boundary hold. The liveness module's docstring is read from its PARSED FILE
         (parse_cache.source_and_tree, the parse the tree derivation already holds, so this test parses nothing, held on the
         counter; ast.get_docstring of the module, uncleaned, which is the module's __doc__ verbatim: asserted on this
         module, where both roads are in hand) and NOT by importing it: its import sets XDG_STATE_HOME to a fresh directory
@@ -5283,6 +5301,8 @@ class ThreadStopCensus(unittest.TestCase):
         bare = ("the census read %d modules at that head, the count the table prints" % n,                    # the count bare: named
                 "the modules read at that head, the runtime oracle called by 5 of the %d; the table prints the count" % n)
         at_head = tuple(p.replace("at that head", "at 2a354ab46") for p in bare)                                # the same count beside its head: exempt
+        after_abbreviation = tuple("the census reads the modules%s the runtime oracle called by 5 of the %d" % (a, n)   # the word, a listed abbreviation's stop, the count: ONE sentence
+                                   for a in (", i.e.", ", e.g.", ", the fixtures etc. and", ", cf.", " vs."))
         for planted in ("the listing of tests/test_*.py (module_paths; %d modules at this head, a figure the table prints" % n,
                         "call it: 5 test modules at this head (of %d, 2026-09-22: test_codex_backend" % n,
                         "the census reads the modules; the runtime oracle called by 5 of the %d" % n,
@@ -5290,7 +5310,7 @@ class ThreadStopCensus(unittest.TestCase):
                         "the tree table identical under both: the modules read (the count the table prints), the start rows by kind, the "
                         "tail-only stops, the unreadable listed, the stale allow entries, the bounded tail-only excused, ALLOW empty, the "
                         "informational product-start rows, the runtime oracle called by 5 of the %d;" % n,      # the historical ledger shape
-                        "a population of %d test modules" % (n + 63), "the modules (%d at this head)" % n) + bare:
+                        "a population of %d test modules" % (n + 63), "the modules (%d at this head)" % n) + bare + after_abbreviation:
             named = _literal_module_counts(planted)
             self.assertTrue(named, planted)
             for name, text in homes:                              # the red in each home: the plant, and only the plant, is named
@@ -5300,7 +5320,9 @@ class ThreadStopCensus(unittest.TestCase):
                      "on 20000 random payloads", "round 2 of PR 891's review", "a sleep of 3600 s, or of a name", "a bound of 107 bytes",
                      "bats 859 of 859; npm 8531 of 8531.", "17332 passed of 17797,",                      # counts of something else, no modules in the sentence
                      "the census reads the modules. The sweep: bats 859 of 859; npm 8531 of 8531.",       # the word in the sentence BEFORE: a boundary
-                     "the modules' derivation of 3995.9 s", "a budget of 250,000 objects for the modules"  # a decimal, a thousands comma, beside the word
+                     "the modules' derivation of 3995.9 s", "a budget of 250,000 objects for the modules",  # a decimal, a thousands comma, beside the word
+                     "the census reads the modules, i.e. the files. The sweep: bats 859 of 859; npm 8531 of 8531.",  # a true stop after an abbreviation: the boundary
+                     "the modules' devs. The sweep: bats 859 of 859; npm 8531 of 8531."                     # a word that ends in vs: its stop ends the sentence
                      ) + at_head:
             self.assertEqual(_literal_module_counts(fine), [], "not a module count, yet named: %r" % fine)
 
