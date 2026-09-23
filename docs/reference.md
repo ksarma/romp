@@ -3668,8 +3668,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   parent is in the list, and validated at most once per pusher cycle and
   once per jobs pass (since 2026-09-19: the thread's cycle scope holds the
   validated pair and each directory's stamp for the rest of the cycle, so
-  every later reader of the tree on that thread, the agent-file lookup's
-  stamp re-check included, pays no stat; a change on disk after the
+  every later reader of the tree on that thread is served it, the
+  agent-file lookup's re-check of its directories included; a change on
+  disk after the
   validation is seen by the next cycle's first reader, one cycle later at
   most (the tree's own removal or replacement included: the served read
   precedes the root's lstat, so a root held earlier in the cycle is served
@@ -3688,23 +3689,19 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   key behind the next signature's re-stat and the tab is rebuilt (since
   2026-09-21; round 1 of #882 found a fresh stat there recording the
   post-landing key of the root alone, so the tab that showed the file
-  missing was never rebuilt); a
+  missing was never rebuilt; what the signature pays for those keys every
+  cycle: the cost home named under `dirStats` below); a
   root that leaves the memo mid-cycle (an ownership eviction, most
   often of an unowned sibling root an agent-file miss scan inserted; a tree
   found missing or replaced; a session departing is one such root) drops
   from every open scope that root's pair, the stamps indexed from it, the
-  launch folds keyed on it (a fold is keyed on the agent's transcript's own
-  subagents root whatever tree the file resolved under, so an unowned
-  sibling's eviction drops no fold; the rule, its bound for a file found
-  under a sibling's tree and the test that executes both,
-  `ScopedInvalidation.test_a_fold_resolved_under_a_siblings_tree_is_keyed_on_the_own_root_and_served_past_the_siblings_removal_until_the_cycle_ends`
-  in `tests/test_subagent_tree_stamps_per_cycle.py`, are stated once in
+  launch folds keyed on it (the fold's root and its bound:
   `_subagent_scope`'s docstring in `kernel/kernel.py`) and, since no root
   vouches for them, the stamps the scope took itself (an agent-file
   lookup's re-check before the tree was read that cycle, the project
   directory on a miss), and nothing else (since 2026-09-21; before it one
   process-wide generation emptied every scope on any eviction; what an
-  eviction costs is a term of the cost expression under `dirStats` below); a
+  eviction costs is a term of the cost home named under `dirStats` below); a
   thread outside a cycle, a WS or HTTP handler's build or the act-now nudge
   pass, reads per call as before), with `hit` and `miss`
   (trees vouched for by one stat per known directory against trees walked:
@@ -3725,19 +3722,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the agent-file lookup's stat per directory its stamp re-check takes;
   before 2026-09-19 it counted the lstat half alone, so a figure from
   before that change and one from after are not one series; the cost the
-  two loops' own reads pay in it per cycle or pass is one derived
-  expression in the reads, the sessions, the agents and the directories,
-  stated once, with the lab cells that are its evidence, in
-  `_subagent_tree_memo_report`'s docstring in `kernel/kernel.py` (each
-  root's one validation whatever the readers, agents and reads consult it;
-  the miss path's stats once per cycle, shared by every agent whose file is
-  nowhere or under a sibling's tree; an eviction's cost confined to the
-  evicted root) and executed through the real cycles by
-  `BoundPerCycleAndPerPass`, `SumOverRoots` and `ScopedInvalidation` in
-  `tests/test_subagent_tree_stamps_per_cycle.py`; a handler thread's
-  per-call reads and the re-read of a root that left the memo mid-cycle
-  land in the same counter, so the figure is bounded per scoped reader set,
-  not per interval), `walkMs`
+  memo's reads pay, road by road with the case that pins each term:
+  `_subagent_tree_memo_report`'s docstring in `kernel/kernel.py`), `walkMs`
   and `validateMs` (the time in each, every thread), and the gauges `roots`
   (entries) and `dirs` (directories held); a directory stamped within the
   last two seconds, or one whose listing failed, is stored unvouched and

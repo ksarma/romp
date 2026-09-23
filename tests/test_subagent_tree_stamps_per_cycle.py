@@ -15,11 +15,13 @@ percent of the samples by that profile's reading, and another's memo counters sh
 The fix keys the validation on the event a time window would have stood in for: the cycle and the pass. Each opens a
 thread-confined scope (_subagent_scope_open in _pusher_cycle and _jobs_cycle, closed in their finally blocks); the
 first reader of a tree in the cycle validates or walks it and holds the (directories, stats) pair and each directory's
-stamp; every later reader on that thread in the cycle, the agent-file lookup's stamp re-check included, pays no stat;
-and the agents' launch folds are held for the cycle too (_awaiting_nest). A change on disk after the validation is
-seen by the NEXT cycle's first reader, one cycle later at most. Nothing failed is held for the cycle; a launch fold that
-did not read the file is held for the CALL that observed the fault alone (two lifetimes; round 1 of #882 found that returned without
-any hold it was folded once per owner lookup, A x (A - 1) times per read where the parent's call-local memo folded A).
+stamp; every later reader of the tree on that thread in the cycle is served it with no stat, the agent-file lookup's
+re-check of its directories included (what the re-check's other stamps cost: the cost home, _subagent_tree_memo_report's
+docstring); and the agents' launch folds are held for the cycle too (_awaiting_nest). A change on disk after the
+validation is seen by the NEXT cycle's first reader, one cycle later at most. Nothing failed is held for the cycle; a
+launch fold that did not read the file is held for the CALL that observed the fault alone (two lifetimes; round 1 of #882
+found that returned without any hold it was folded once per owner lookup, A x (A - 1) times per read where the parent's
+call-local memo folded A).
 
 Pinned here, through the REAL cycle functions so the clearing point tested is the wired one: (1) the bound: one pusher
 cycle and one jobs pass with three _session_awaiting calls each cost D os.lstat on the tree's directories (the one
@@ -765,10 +767,10 @@ class BoundPerCycleAndPerPass(_World):
                          "the walk's, held for the cycle under no root" % (d["dirStats"], D))
 
     def test_two_agents_whose_files_are_nowhere_share_the_project_directorys_one_stamp_stat(self):
-        """The miss path's term of the cost expression is once per cycle, SHARED by every agent whose file is nowhere or
-        under a sibling's tree, not once per such agent (the owner's pass before round 2 of #882: the term's homes read per
-        agent, G such rows paying G project-directory stats where the code pays 1; the expression's one home is
-        _subagent_tree_memo_report's docstring). Two such rows: each walks once and pays its own candidate stats and symlink
+        """The project directory's stamp stat, one term of the miss walk in the cost home, is once per cycle, SHARED by
+        every agent whose file is nowhere or under a sibling's tree, not once per such agent (the owner's pass before round
+        2 of #882: the term's homes read per agent, G such rows paying G project-directory stats where the code pays 1; the
+        home is _subagent_tree_memo_report's docstring). Two such rows: each walks once and pays its own candidate stats and symlink
         checks (G x, _miss_walk_cycle), but the project directory's stamp stat is an own stat _dir_stamp holds in the scope
         keyed by directory under root None, so the first walk pays it and the second walk, and every re-check of either row
         in the cycle, is served it: dirStats moves by (D - 1) + 1, not (D - 1) + G, and the scope's stamps map holds the

@@ -33996,12 +33996,13 @@ def _awaiting_nest(agents, commands, cmd_owner, path):
     # owner lookups are served it (each of the A agents' lookups consults every other agent's launches, so a fault re-folded
     # per lookup cost A x (A - 1) folds per call where the parent's call-local memo cost A: round 1 of #882's extra9-2), and it is not
     # held beyond the call, so the next call in the cycle reads again and a file that became readable is seen then (a fault
-    # held for the cycle would attribute nothing to that agent all cycle). A file that resolved to nothing (ap None) is a
+    # held for the cycle would attribute nothing to that agent all cycle; what a faulting fold and an unreadable tree cost
+    # per read: their entries in _subagent_tree_memo_report's docstring). A file that resolved to nothing (ap None) is a
     # state, held. The cycle map's entry is (ids, the transcript's own subagents root, the generation read before the file
     # was resolved) and is served while _subagent_vouched says that root has not left the walk memo since (2026-09-21, round 1 of #882's ruling;
     # before it every eviction emptied the map and re-folded every awaiting agent's file on both threads for the rest of the
     # cycle). The root is the transcript's own whatever tree the file was found under: the rule, its bound for a file found
-    # under a sibling's tree and the test that executes both are stated once, in _subagent_scope's docstring. The entry's
+    # under a sibling's tree and the test that executes both: _subagent_scope's docstring. The entry's
     # fourth element is the (path, key) pairs the resolution reported to its build (_subagent_file's `notes`: the walk's
     # dependency notes), replayed to the build a held fold answers, once per call (round 2 of #882, group B: a held fold
     # answers without calling _subagent_file, and for a Workflow agent with no Agent tool event it is the only lookup a chat
@@ -35370,8 +35371,8 @@ def _subagent_tree_charge(kind, t0):
 # is one such root). An eviction of root r drops, from every open scope that held r, r's pair (read again at its next lookup
 # in the cycle: a walk, or a validation when a read on another thread has re-inserted it since, which re-indexes the stamps
 # of r's directories with no extra stat), the stamps indexed from r and the launch folds of the awaiting agents of the
-# transcripts whose OWN subagents root is r (none for an unowned sibling root whatever files were found under it: the fold's
-# root, its bound and the test that executes both are stated once, in _subagent_scope's docstring), and nothing else; every
+# transcripts whose OWN subagents root is r (none for an unowned sibling root whatever files were found under it; the
+# fold's root and its bound: _subagent_scope's docstring), and nothing else; every
 # other root's pair, stamps and launch folds are served on (until 2026-09-21, round 1 of #882's ruling, one process-wide
 # generation emptied every scope on any eviction). A stamp the
 # scope took itself for a directory of no held tree (the project directory on an agent-file miss) is vouched by no root and is
@@ -35382,13 +35383,8 @@ def _subagent_tree_charge(kind, t0):
 # lstats plus D stats per agent whose launches() is consulted, which is every agent when there are two or more (each is
 # excluded from its own owner lookup, so a single agent with no command row paid D alone and folded nothing) or when a
 # command row's owner is read from the agents' transcripts; and it runs up to five times per session per pusher cycle (the
-# chat, feed and timeline builds and the chips) and once per jobs pass (the nudge look). THE COST: one derived expression in
-# the reads, the sessions, the agents and the directories, before the scope and with it, the eviction, fault and miss-path
-# terms included, with the lab cells that are its evidence and the tests that execute it in the tree, is stated once in
-# _subagent_tree_memo_report's docstring; this block, docs/reference.md's memos paragraph and the ledger entry point there
-# (round 1 of #882's extra9-3 asked for the derived form in place of a per-call figure; the owner's pass before round 2 found
-# the miss-path term stated per agent, in the tree and in the PR body, where the code pays it once per cycle, shared, and
-# made the docstring its one home). Motivation, a
+# chat, feed and timeline builds and the chips) and once per jobs pass (the nudge look). The cost with the scope, road by
+# road with the case that pins each term: _subagent_tree_memo_report's docstring. Motivation, a
 # dated reading and not the law's evidence: on two deployed kernels (2026-09-19), on one _dir_stamp's one os.stat was the top
 # self frame of a 20 s py-spy profile, 28% of the samples by that profile's reading, and on the other the memo's own counters
 # showed 24.5 million validation lstats in 6.8 hours over 1,294 directories (the user 2026-09-05, who wanted the one-core
@@ -35545,7 +35541,8 @@ def _subagent_tree(d):
     (the no-holder road) memoizes nothing and walks again on every call, and its chat build is told the tree is
     unreadable, so the tab is rebuilt every cycle until the fault clears; the four cases named
     test_control_no_holder_... in tests/test_subagent_tree_memo.py FaultExcludesItsOwnTree are its witness, and the same
-    class executes a file found past the fault (round 2 of #882, group A).
+    class executes a file found past the fault (round 2 of #882, group A). What every read pays under the fault: the
+    unreadable-tree entry of _subagent_tree_memo_report's docstring.
 
     Memoized per root in _SUBAGENT_TREES on the identities (_stat_ident: ino, mtime_ns, size, ctime_ns) of every directory
     it listed, the root included. Exact because the directory list changes only by the creation, removal or renaming of a
@@ -35704,61 +35701,117 @@ def _subagent_tree_memo_report():
     validateMs (the time in each, every thread), and the gauges roots (entries) and dirs (directories held). A validation
     happens at most once per pusher cycle and once per jobs pass since 2026-09-19 (_subagent_scope).
 
-    THE COST, one derived expression, stated here once: the comment block at _subagent_scope_open, docs/reference.md's
-    memos paragraph and the ledger entry name its terms in a clause each and point here for the expression, its figures
-    and its evidence (round 1 of #882's extra9-3: it was stated per
-    call and per tree, with two production kernels' totals as its evidence, and two kernels cannot separate the
-    directories from the sessions, the agents and the reads; the lab below can). Per pusher cycle or jobs pass, for the two
-    loops' own reads, with N the _session_awaiting reads per session in the cycle, A_s the agents of session s whose
-    launches are consulted, D_s the directories of its tree and D_r those of each of the R roots read:
-      - before the scope, N x sum_s D_s lstats, N x sum_s A_s x D_s stamp stats and N x sum_s A_s folds, linear in the
-        reads, the sessions, the agents and the directories at once (each read validated the tree, re-checked every
-        directory its walk read per agent and folded every agent's file);
-      - with it, sum_r D_r lstats (each root's one validation, whatever the readers, agents and reads consult it; in
-        dirStats sum_r (D_r - 1), `dirs` less `roots` when every held root is read), 0 stamp stats, plus D_r for a root
-        whose command row's owner lookup re-checked stamps before the tree was read, and sum_s A_s folds (a stat each);
-      - the miss path, ONCE PER CYCLE and shared by every agent whose file is nowhere or under a sibling's tree, however
-        many such agents and sessions: one stat of the project directory and one per directory of each sibling subagents
-        tree no read of the cycle holds (own stats, keyed by directory under root None in the scope's stamps map, so the
-        first such lookup's re-check pays them and every later one in the cycle is served: _dir_stamp), in dirStats 1 plus
-        those sibling trees' directories; plus, per such agent whose walk runs (once per cycle, when the agent-file memo
-        has no entry for the agent or a stamp it read moved: the cold walk, which lists the project directory and reads
-        each sibling's tree once for every such agent), that walk's own cost outside dirStats: one stat per candidate
-        place (the flat place and one per directory of each tree it looked through); W lstats of the own root, its two
-        symlink checks (os.path.islink in _subagent_file_walk and _find_agent_file's realpath of the own root), W counted
-        by running the two calls rather than written out, since how many lstats realpath takes is the interpreter's
-        (tests/test_subagent_tree_stamps_per_cycle.py _miss_walk_cycle, which asserts D + G x W lstats on the tree's
-        directories over the cycle); and, for each sibling tree it reaches, one lstat of the sibling root by the same
-        realpath (the symlink guard). Until the owner's pass before round 2 of #882 this term read per such agent, G of
-        them predicting G project-directory stats where the code pays 1, and omitted the own root's W;
-      - per root that left the memo in the cycle (an ownership eviction, a missing or replaced root), one read of that root
-        at its next lookup (a walk, or D_r lstats when a read on another thread re-inserted it since) and one fold per
-        awaiting agent of the transcripts whose own root it is, A_r (the fold's root, its bound and the test that executes
-        both: _subagent_scope's docstring; A_r is 0 for an unowned sibling root whatever files were found under it), plus
-        one stat per stamp the scope took itself (vouched by no root: re-taken after any eviction), with every other root's
-        pair, stamps and folds untouched: D_r + A_r, not the sum over every held root (which it was until 2026-09-21, round
-        1 of #882's ruling);
-      - while a fold faults, A_s folds per read, the fault held for the one call that observed it (_awaiting_nest).
-    Evidence, a lab lifted from tests/test_subagent_tree_stamps_per_cycle.py's world (R sessions of D directories, A agents
-    and N reads, through the real _pusher_cycle and _jobs_cycle) and run outside the repo, its records kept outside it
-    too. The bound: in each of the cells run, (R, D, A, N) in {(1, 8, 3, 1), (1, 8, 3, 3), (1, 8, 3, 5), (9, 156, 3, 1),
-    (9, 156, 3, 3), (9, 156, 3, 5), (9, 156, 8, 3), (1, 156, 3, 3), (9, 8, 3, 3), (3, 96, 3, 3), (9, 32, 3, 3),
-    (3, 32, 3, 3)}, the cost before was N x R x A x D stats and N x R x D lstats (72 stats at (1, 8, 3, 3); 2,592 at
-    (9, 32, 3, 3); 12,636 at (9, 156, 3, 3); 21,060 at (9, 156, 3, 5); 33,696 at (9, 156, 8, 3)) and with the scope R x D
-    lstats and 0 stats, nine roots of 32 directories costing what three of 96 cost (288 lstats; before, 864 lstats and 2,592
-    stats both): the total directories decide, not their split over roots. The eviction term: at (R, D, A, N) = (1, 8, 3, 3)
-    and (3, 8, 3, 3) with one or three unrelated roots evicted between each pair of the N reads, the one-generation design
-    paid R x D x N lstats and R x A x N folds per cycle, the scoped invalidation R x D and R x A, the figure with no
-    eviction. The miss path: one session of D = 8 with A = 3 and N = 3, G agents whose file is nowhere and SIB dead sibling
-    trees of DSIB directories in its project directory, (G, SIB, DSIB) in {1, 2, 3} x {(0, 0), (1, 4), (2, 6)}, every
-    pusher cycle and jobs pass paid 1 project-directory stat and SIB x DSIB sibling-directory stats whatever G, dirStats
-    (D - 1) + 1 + SIB x DSIB (8, 12, 20), where the per-agent reading predicted (D - 1) + G x (1 + SIB x DSIB); and the
-    cycle of the cold walks paid SIB x DSIB lstats for the sibling trees' one read plus G x SIB for the realpath of each
-    sibling root per walk. Executed in the tree by tests/test_subagent_tree_stamps_per_cycle.py through the real cycles:
-    the bound and the shared miss-path term by BoundPerCycleAndPerPass (the one-row case and
-    test_two_agents_whose_files_are_nowhere_share_the_project_directorys_one_stamp_stat, dirStats D at one row and at
-    two, the cold walk's own terms, W included, by _miss_walk_cycle under both), the sum over roots by SumOverRoots, the
-    eviction term by ScopedInvalidation, the fault term by Guards.
+    THE COST, derived road by road from the code, stated here once: docs/reference.md's memos paragraph, the ledger
+    entry and the other kernel texts that speak of it name this docstring (a test's docstring states what its own case
+    asserts). One entry per road the memo code takes, each with its population, its unit, whether the scope holds it,
+    the counter that counts it or that none does, and the executed case that pins its figure; each case derives its
+    figure from its world's sizes and asserts it, so running the case derives the figure at the head it runs on.
+    Symbols: N the _session_awaiting reads per session in the cycle; A_s the agents of session s whose launches are
+    consulted; D_r the directories of subagents root r, D_s a session's own; G the agents whose file is nowhere, or lies
+    under a sibling's tree sorted past the place in question; M such an agent's lookups in the cycle beyond the one
+    _awaiting_nest makes (the chat build's Agent head, _stamp_agents; an open viewer's frame, _subagent_frame_cached and
+    _subagent_meta, and build_subagent when it rebuilds); E the project directory's entries, files included; S_d the
+    directories of a sibling tree the agent-file walk reads; K the project directory's session directories with no
+    subagents/; W the lstats of the own root by os.path.islink and os.path.realpath together, and W' the lstats
+    os.path.realpath takes on a sibling's subagents place itself, both the interpreter's and counted in the cases by
+    running the calls. The cases are in tests/test_subagent_tree_stamps_per_cycle.py. Per pusher cycle or jobs pass, for
+    the two loops' own reads:
+      - the validated hit (_subagent_tree, the entry's identities standing): D_r lstats, the root's and one per known
+        directory below it; once per root per cycle, the pair then held; hit 1, dirStats D_r - 1, validateMs.
+        BoundPerCycleAndPerPass test_one_pusher_cycle_validates_the_tree_once_however_many_readers and its jobs-pass
+        twin (D lstats, dirStats D - 1, hit 1); SumOverRoots
+        test_one_pusher_cycle_over_three_sessions_costs_the_sum_over_their_roots and its jobs-pass twin (sum_r D_r over
+        three roots of unequal size);
+      - the walk (no entry, an identity moved, or an entry holding an unvouched directory): D_r lstats and D_r listings,
+        an entry's type coming from the listing; once per root per change, held for the cycle when every listing and
+        child lstat succeeded and paid again at the next read when one failed; miss 1 and walkMs, not dirStats. Guards
+        test_a_stale_hold_dropped_at_the_lookup_lands_in_miss_and_moves_served_by_nothing ({lstat: D, scandir: D});
+      - the served read (the held pair, or a held stamp at _dir_stamp): no call; every read of a held root after its
+        first on that thread in the cycle; served 1 for a tree (_subagent_tree's early return alone), no counter for a
+        stamp. BoundPerCycleAndPerPass
+        test_the_served_tree_read_the_served_stamp_and_the_agent_file_hit_make_no_filesystem_call_of_any_class_the_census_wraps_under_the_tree
+        (no call on each served path) and the asks every bound case asserts (_assert_asks);
+      - the launch fold (_awaiting_nest): one os.stat of the agent's file per agent per cycle, the fold held for the
+        cycle, sum_s A_s; no counter. The two BoundPerCycleAndPerPass cases above (A file stats);
+      - the agent-file memo's re-check (_subagent_file's hit, _dir_stamps over the directories its walk read), per
+        lookup: a directory of a tree held this cycle is served; any other (the project directory, a sibling tree's
+        directories in a cycle that did not read that tree, the own tree's when a command row's owner lookup runs before
+        the read that validates it) costs one os.stat per cycle, an own stat the scope holds under root None for every
+        later lookup; dirStats 1 each. BoundPerCycleAndPerPass
+        test_two_agents_whose_files_are_nowhere_share_the_project_directorys_one_stamp_stat (the project directory, 1 at
+        one row and at two); MissPathRoads
+        test_a_command_rows_owner_lookup_before_the_tree_is_read_re_stats_its_directories_once_per_cycle (D stats,
+        dirStats (D - 1) + D); the sibling-tree case below (S_d per sibling in the steady cycle);
+      - the miss walk over the own tree (_subagent_file_walk, per agent whose walk runs: no memo entry, or a stamp it
+        read moved; once per cycle for that agent, the held fold answering its later lookups): the own root's stamp
+        (_dir_stamp, served when the tree is held), W lstats of the own root, one os.stat of the flat place and one per
+        directory of the own tree (the candidates, 1 + D_s), and the tree read once for the lookup and the dependency
+        note both (a validated hit or a served read); then the project directory: its stamp (an own stat, once per
+        cycle, shared), one listing and one os.stat per entry (Path.is_dir), E per walk, held nowhere and counted
+        nowhere. _miss_walk_cycle under BoundPerCycleAndPerPass
+        test_one_pusher_cycle_with_an_agent_whose_file_is_nowhere_walks_once_and_its_notes_cost_no_stat and the two-row
+        case above (D + G x W lstats on the tree, A + G x (D + 1) file stats, G x E entry stats);
+      - the miss walk over a sibling's tree (per sibling session directory with a subagents tree, per walk): the sibling
+        root's stamp (an own stat before the tree is read on the cycle's first walk, dirStats 1, then served from the
+        tree's index), the tree read once per cycle for every walk (a walk, miss 1, or a validated hit), W' lstats of
+        the root by _find_agent_file's realpath and one os.stat per candidate place, S_d, per walk; in the cycles after,
+        the memo hits re-check the tree's directories as own stats (S_d per cycle, shared, dirStats S_d) and read no
+        tree. MissPathRoads
+        test_a_sibling_tree_the_walk_reads_is_read_once_per_cycle_and_costs_a_candidate_stat_per_directory_per_walk;
+      - an absent sibling root (a session directory with no subagents/): one os.stat of its subagents place per lookup
+        of each agent whose file is nowhere or lies past it, the walk's own and every memo hit's re-check (the stamp is
+        (place, None)), G x K x (1 + M) per cycle; the stat raises, so it is never held (_dir_stamp) and no counter
+        counts it; each cold walk adds _subagent_tree's lstat of the place (answered ((), ()), not held) and realpath's,
+        G x K x (1 + W') lstats. MissPathRoads
+        test_each_absent_sibling_root_costs_one_failed_stat_per_lookup_of_each_agent_whose_file_is_nowhere_and_moves_no_counter;
+      - an unreadable tree (a root whose lstat fails for a reason other than absence; a fault excludes its own tree from
+        the walk and nothing else, as round 2 of #882's group A left it): nothing is held, so every read resolves every
+        agent of that session again, all under the tree and every call failing, with the resolutions standing: per read
+        _subagent_meta_map's root lstat, and per agent the re-check of the stamps its walk read (D_s for a file under a
+        workflow directory), the walk's own-root stamp, flat place, islink and root lstat, and the fold of the standing
+        resolution's file, so 1 + 2 A_s lstats and A_s x (D_s + 3) stats per read, N times per cycle; plus each walk's
+        project-directory part above (its stamp once per cycle, dirStats 1); the failed calls move no counter; and the
+        chat build is told the tree is unreadable (_TREE_UNREADABLE, which no re-stat equals), so its tab is rebuilt
+        every cycle while the fault lasts (tests/test_subagent_tree_memo.py FailClosedRoads, and
+        FaultExcludesItsOwnTree's no-holder cases). Guards
+        test_an_unreadable_session_directory_resolves_every_agent_again_on_every_read_and_its_failed_calls_move_no_counter
+        ({lstat: N x (2A + 1), stat: N x A x (D + 3)} under the tree; hit, miss, served and evict 0, dirStats 1);
+      - a root that left the memo in the cycle (an ownership eviction, a missing or replaced root): one read of that
+        root at its next lookup (a walk, or D_r lstats when a read on another thread re-inserted it since), one fold per
+        awaiting agent of the transcripts whose own root it is, A_r (0 for an unowned sibling root; the fold's root and
+        its bound: _subagent_scope's docstring), and one stat per own stat the scope held, which no root vouches for and
+        every eviction drops; every other root's pair, stamps and folds untouched. Guards
+        test_a_forget_that_evicts_the_root_makes_the_next_read_walk_again_while_one_that_evicts_nothing_leaves_it_served
+        (the walk, D lstats); ScopedInvalidation
+        test_held_launch_folds_survive_the_eviction_of_a_root_their_files_are_not_under (0 folds and 0 stats),
+        test_an_own_stat_stamp_is_re_taken_after_an_unrelated_roots_eviction_where_a_tree_indexed_stamp_is_served (1
+        stat) and
+        test_a_fold_resolved_under_a_siblings_tree_is_keyed_on_the_own_root_and_served_past_the_siblings_removal_until_the_cycle_ends
+        (0 folds after the sibling's eviction, A + 1 after the own root's);
+      - a fold that faults (the reader's fail path, or a resolution that could not be made): A_s folds per read, the
+        fault held for the one call that observed it (_awaiting_nest). Guards
+        test_a_faulted_launch_fold_is_folded_once_per_call_and_not_held_across_calls;
+      - the dependency-note signature (every build that looks the agent up records the walk's noted keys, by walking or
+        replayed by the memo or a held fold, as round 2 of #882's group B left it): per pusher cycle, per cached chat
+        tab whose latest build recorded them, one os.stat per recorded path, 1 for the absent beside-path, D_s for the
+        own tree, S_d per sibling tree the walk read and 1 per absent sibling place, re-stat'd by the signature every
+        cycle (_chat_sig_deps) and counted in memos.chatSig stats, in none of this memo's counters; a change in any of
+        those directories moves its key and rebuilds the tab, the half round 1's ruling asked for. DependencyKey
+        test_the_chat_signature_re_stats_every_directory_the_walk_recorded_so_a_change_in_any_sibling_directory_rebuilds_the_tab
+        (D + 1 + S x D + K; one key per sibling root, the base's form, is D + 1 + S + K).
+    Outside a scope (a handler thread's build, the act-now nudge pass) nothing is held and every read pays per call what
+    every read paid before the scope: D_s lstats, A_s x D_s re-check stats and A_s folds. BoundPerCycleAndPerPass
+    test_outside_a_cycle_every_reader_validates_for_itself_and_dirstats_counts_both_validators (D lstats, A x D stats,
+    dirStats (D - 1) + A x D). Before the scope the two loops' own reads paid that per read too: per cycle, N x sum_s
+    D_s lstats, N x sum_s A_s x D_s stamp stats and N x sum_s A_s folds, linear in the reads, the sessions, the agents
+    and the directories at once; with it the validation costs sum_r D_r whatever the readers, agents and reads, so the
+    total directories decide, not their split over roots. A lab lifted from the module's world measured these terms at
+    more sizes in round 1 of #882, outside the repo with its records kept there; the tree carries none of its figures,
+    the cases above being the executed evidence. Round 1 of #882's extra9-3 asked for the cost derived, in place of a
+    per-call figure and two production totals; round 2 found the home written as a list of the terms noticed, omitting
+    four the code paid (the absent sibling root, the walk's per-entry stats of the project directory, the unreadable
+    tree's per-read resolution and the signature's per-directory stats), and ruled it derived road by road, a case per
+    term.
 
     The reads a handler thread makes (per call, as before) and the re-read of a root that left the memo mid-cycle land in
     the same counter, so dirStats over an interval is bounded per scoped reader set, not per interval. Written from several
@@ -35791,7 +35844,8 @@ def _subagent_tree_dep_note(d, dirs, stats, notes=None):
     never be rebuilt (round 1 of #882's correctness-1 and extra5-1, at _subagent_file_walk). Nothing is recorded outside a chat build.
     `notes`, a list when given, receives the (path, key) pairs instead, and nothing is reported here: the agent-file walk
     collects its pairs so that every lookup it answers, its own and the later ones the memo or a held launch fold answers,
-    reports the same pairs (_subagent_file_notes_replay)."""
+    reports the same pairs (_subagent_file_notes_replay). What the chat signature pays for these pairs every cycle: the
+    dependency-note signature entry of _subagent_tree_memo_report's docstring."""
     if not dirs:
         pairs = [(d, None)] if not stats or _chat_stat_key(d) is None else []
     else:
@@ -35860,9 +35914,8 @@ def _dir_stamp(sd):
     tree's root, or taken by an earlier call on this thread, vouched by no root and so only while no root has left the memo
     since: _subagent_vouched), else taken once and held under the generation read before the stat, keyed by directory, so
     a second agent's lookup that re-checks the same directory in the cycle (the project directory, on every miss) is served
-    it: the miss path's term is once per cycle and shared, the cost expression's one home being _subagent_tree_memo_report's
-    docstring; a stat that raises is
-    answered (sd, None) and never held, so the next call stats again. Each os.stat that succeeds counts under
+    it (what the re-check costs: _subagent_tree_memo_report's docstring); a stat that raises is answered (sd, None) and
+    never held, so the next call stats again. Each os.stat that succeeds counts under
     memos.subagentTree dirStats beside _subagent_tree's validation lstats (a stat that raises is answered and not counted)."""
     sc = _subagent_scope()
     if sc is not None:
