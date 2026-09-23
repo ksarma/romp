@@ -678,8 +678,10 @@ the Docs case reads the module's own alone; a Bounds sentence made false and a D
 passed each); two roster rows, _door_regions and _grammar_positions, carried neither label, two test classes,
 OneSharedLoadPerAliveSessionPerPass and TheCountersOneSite, carried no docstring, and which docstrings carried the pair was a
 hand-kept population on an axis the module computes (review round 7, extra4-3, extra7-2 and extra5-2: the universal is withdrawn
-here; the reviewer's changed standard asks for the pair's existence pinned mechanically over the roster rows that key on a
-hand-written roster, and for a Bounds sentence only where the bound would surprise a reader). The hand-off keys
+here; the reviewer's changed standard asked for a Bounds sentence only where the bound would surprise a reader, and for the pair's
+existence pinned mechanically over every roster row, which the axis pin narrows to a Bounds sentence on the rows that key on a
+hand-written roster because the literal form conflicted with the instruction against new Derives sentences, a narrowing the
+reviewer accepted). The hand-off keys
 (the plan's hunt for a seventh hand-written axis, the class of extra7-1 and tests-2): SHARED_HANDOFF_KEYS was pinned by nothing
 while its three siblings are pinned against the door's AST; the roster pin derives the keys from the door's statement lists, the
 direct bump keys of every list whose last statement returns a call of load_goals, and holds them equal to the tuple both ways, and
@@ -754,9 +756,10 @@ sentence names the outer tracer's blind window. The clean module at the head of 
 
 Review round 8 (2026-09-21; the reviewer's verdict on round 7: three code defects, an ordering bug in the cleanup, a pin lost in a
 rewrite and two assertions that could not fail, and a body of sentence findings, all low, under a changed standard: a figure in prose
-beside its derivation is a copy and is deleted, not pinned; where an instrument and its sentence must exist as a pair, the pair's
-existence is pinned mechanically from the module's own AST and roster; a Bounds sentence is owed only where an instrument bounds
-something a reader would not expect, and no new Derives sentence is written). Nine fixes landed, one commit each but the finder
+beside its derivation is a copy and is deleted, not pinned; the pair's existence is pinned mechanically on every roster row from the
+module's own AST, which the axis pin below narrows because that form conflicted with the instruction against new Derives sentences,
+a narrowing the reviewer accepted; a Bounds sentence is owed only where an instrument bounds something a reader would not expect,
+and no new Derives sentence is written). Nine fixes landed, one commit each but the finder
 case's two; the states of the seven fixes before the axis pin were each taken at the tree of their own commit, the module over its
 39 cases there, so a state's failed and passed figures sum to the count of that head; the axis pin, the eighth, adds a case, and its
 states, the bypass plants, the alias control and the clean line at the end of this paragraph were taken at this head, the head of
