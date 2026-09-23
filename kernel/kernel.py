@@ -35280,9 +35280,9 @@ _SUBAGENT_TREE_STATS = {"hit": 0, "miss": 0, "served": 0, "evict": 0, "dirStats"
 #                          the replaced-root pop on a thread with no hold, then the holder's drop: served 0 at each, and the
 #                          case's (hit, miss, served) the held reads alone) and the stale-hold case ((hit, miss, served, evict)
 #                          == (0, 1, 0, 1)); in tests/test_subagent_tree_memo.py UnreadableRoot (no counter moves on the
-#                          raise). The symlink shape shares the file shape's branch (not S_ISDIR) and is executed by no test
-#                          in the tree; the owner's pass before round 2 of #882 read it in a lab outside the repo (none of the
-#                          three moved), and until that pass this clause read "a root that is a directory", the report
+#                          raise) and MovedTrees' symlinked-root case (the symlink shape, which shares the file shape's branch,
+#                          not S_ISDIR: (hit, miss, served) unmoved over the live and the dangling link's reads). Until the
+#                          owner's pass before round 2 of #882 this clause read "a root that is a directory", the report
 #                          docstring's "a standing root" and the reference's "a root that is there", the last two counting a
 #                          served read of a removed root out and a file in the root's place in. dirStats counts the
 #                          directory stats BOTH validators pay (2026-09-19): _subagent_tree's lstat per known directory below

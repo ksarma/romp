@@ -15,7 +15,8 @@ _subagent_meta_map; (2) a directory added two levels down is seen on the next ca
 and a sidecar landing in a nested directory reaches the map; (3) a nested directory removed is seen and the hit path
 does not raise over its missing stat; (4) a removed root returns [] and forgets its entry, and its absence is noted to a
 running chat build as None; (5) a symlinked root is [] and lists nothing, and is noted under the key the chat signature
-re-evaluates (None for a missing or dangling root, nothing for a live link, as before the memo); (6) eviction drops a
+re-evaluates (None for a missing or dangling root, nothing for a live link, as before the memo), and its reads move none
+of hit, miss and served; (6) eviction drops a
 root no alive session owns and keeps the owned ones: from the jobs pass (_interrupt_block_tick, its home, with no feed
 frame built at all), from the helper, and from the tracking-off frame, where a failed alive read evicts nothing; (7)
 /perf's memos.subagentTree reports the hits and misses; (8) a tree written within the racy window is re-listed until it
@@ -238,7 +239,9 @@ class MovedTrees(_Tree):
         outside = Path(self.td) / "elsewhere" / "subagents"
         outside.mkdir(parents=True)
         (outside / ("agent-%s.meta.json" % AID)).write_text(json.dumps({"toolUseId": TU, "agentType": "x"}))
-        km._subagent_dirs(str(self.subdir))                         # the real tree, memoized
+        km._subagent_dirs(str(self.subdir))                         # the real tree, memoized (a miss, before the snapshot)
+        counters = ("hit", "miss", "served")
+        before = {k: km._SUBAGENT_TREE_STATS[k] for k in counters}
         shutil.rmtree(self.subdir)
         os.symlink(str(outside), str(self.subdir))                  # a live link in its place: not this session's tree
         self.assertEqual(km._subagent_dirs(str(self.subdir)), [])
@@ -272,6 +275,12 @@ class MovedTrees(_Tree):
         finally:
             km._chat_dep_scope.deps = None
         self.assertEqual(deps["task_outs"], [(str(self.subdir), None)])
+        # The counter rule (kernel/kernel.py, the comment at _SUBAGENT_TREE_STATS): a read answered no tree moves none of hit, miss
+        # and served, and a symlink in the root's place, live or dangling, is such a read (round 2 of #882, extra6-3).
+        moved = tuple(km._SUBAGENT_TREE_STATS[k] - before[k] for k in counters)
+        self.assertEqual(moved, (0, 0, 0),
+                         "memos.subagentTree (hit, miss, served) over every read of the root while a live and then a dangling link "
+                         "stood in its place: %r; keyed on (0, 0, 0), since a read answered no tree lands in none of the three" % (moved,))
 
 
 class TransientFailures(_Tree):
