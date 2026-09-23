@@ -32,7 +32,12 @@ beside the own root's (FailClosedRoads): a sibling's tree that cannot be read an
 listed each reach the caller as a fault, memoize nothing and tell a running chat build the read is unreadable, whose
 recorded key the next signature's re-stat differs from once the fault clears, when the lookup recovers; the feed key's
 component for an unreadable root with no entry standing is the unreadable marker; and ENOTDIR at a root is absence (a
-boundary guard). Red-first on (1), the jobs-pass half of (6), (9), (10) and (11); (12) is red under a mutant per road.
+boundary guard); (13) what a reader that passes no faults list shows while the tree the agent's file lies under cannot
+be read, with no resolution standing (ViewerUnderAnUnreadableTree): the viewer's missing-transcript frame, equal to a
+removed tree's and keyed as it is, and an Agent head with no steps, both gone once the fault clears (a characterization,
+the witness of the texts that state it). Red-first on (1), the jobs-pass half of (6), (9), (10) and (11); (12) is red
+under a mutant per road; (13) is green before its change by design and red under the follow-up that has the viewer
+state the fault.
 Synthetic fixtures only: placeholder ids, invented text, a temp directory."""
 import contextlib
 import errno
@@ -1018,6 +1023,86 @@ class FailClosedRoads(_Walk):
         self.assertNotIn(root, km._SUBAGENT_TREES, "and the entry is popped, as for a missing root")
         self.assertEqual((km._SUBAGENT_TREES_GEN[0] - g0, km._SUBAGENT_ROOT_EVICTED.get(root)), (1, km._SUBAGENT_TREES_GEN[0]),
                          "and its eviction is recorded (the generation moved by one, the table naming the root at that value)")
+
+
+class ViewerUnderAnUnreadableTree(_Walk):
+    """What a reader that passes no faults list shows while the tree the agent's file lies under cannot be read (round 2
+    of #882, group F: kernel-2, extra5-3, decided as option (b)). _subagent_file answers such a caller a bare None when
+    the file is found under no tree the walk could read while one could not be read, and the caller reads it as absence:
+    the viewer (build_subagent) says the agent's transcript is missing, the frame equal to the one a removed tree gives
+    and _subagent_frame_cached keyed as it is, and the chat's Agent head (_stamp_agents) carries no steps. A caller that
+    passes a faults list (_awaiting_nest) is told the reason; these are not. Transient: nothing is memoized under the
+    fault, so the first lookup after it clears resolves the file and the head carries its steps again. This case is the
+    named witness of the texts that state it (_subagent_tree's and _SubagentTreeUnreadable's docstrings and
+    docs/reference.md's memos paragraph), which until this change said no reader answers an absent-shaped tree under a
+    fault. Green before the change too, by design: it characterizes what the code does (the base kernel showed the same
+    frame, and memoized the miss as well). The follow-up fix that has the viewer state the fault (option (a)) turns it red
+    and replaces it. Driven in the notes-dir probe's shape, the workflow agent's file one level down with no standing
+    resolution, under a real EACCES (the session directory at mode 000; skipped as root, whom permission bits do not
+    bind) and under an EIO by mock on the root's own lstat."""
+
+    ERR = {"eio": "OSError", "eacces": "PermissionError"}   # the type name the walk passes to a caller's faults
+    MISSING = "The transcript file for agent %s is missing"   # the opening of build_subagent's absent sentence
+
+    def setUp(self):
+        super().setUp()
+        self.wf_key = (str(self.tpath), AID_WF)
+        km._SUBAGENT_FILE_CACHE.pop(self.wf_key, None)       # no standing resolution: the probe's shape
+        self.addCleanup(km._SUBAGENT_FILE_CACHE.pop, self.wf_key, None)
+        self.addCleanup(km._SUBAGENT_FRAMES.pop, (SID, AID_WF), None)
+        path = str(self.tpath)
+        p = mock.patch.object(km, "_path_of", lambda sid, now=None: path if sid == SID else None)
+        p.start()
+        self.addCleanup(p.stop)
+        self.agent_file = self.wf / ("agent-%s.jsonl" % AID_WF)   # one tool call, so a readable file gives the head a step
+        self.agent_file.write_text(json.dumps({
+            "type": "assistant", "timestamp": "2026-09-10T10:00:00.000Z", "uuid": "u-viewer-1",
+            "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_viewer_0001", "name": "Read", "input": {"file_path": "README.md"}}]}}) + "\n")
+        _age(str(self.subdir))
+
+    def _head_steps(self):
+        """Whether the chat's Agent head for AID_WF carries steps (_stamp_agents, a foreground launch)."""
+        ev = {"name": "Agent", "agentId": AID_WF}
+        km._stamp_agents({"toolu_viewer_head": ev}, str(self.tpath), None, None)
+        return bool(ev.get("agentSteps"))
+
+    def _views(self):
+        """What the person sees for AID_WF now: the viewer frame build_subagent answers, the key and serialized frame
+        _subagent_frame_cached holds for it, and whether the Agent head carries steps."""
+        km._SUBAGENT_FRAMES.pop((SID, AID_WF), None)
+        fr = km.build_subagent(SID, AID_WF, 0, live_map={})
+        _fr, pre = km._subagent_frame_cached(SID, AID_WF, 0, live_map={})
+        return fr, km._SUBAGENT_FRAMES[(SID, AID_WF)][0], pre, self._head_steps()
+
+    def _viewer(self, how):
+        root, path = str(self.subdir), str(self.tpath)
+        with self._unreadable(root, how):
+            faults = []
+            self.assertIsNone(km._subagent_file(path, AID_WF, faults), "premise: the file is under the one tree the walk could not read")
+            self.assertEqual(faults, [self.ERR[how]], "premise: a caller that passes a faults list is told the lookup could not be made")
+            self.assertIsNone(km._subagent_file(path, AID_WF),
+                              "a caller that passes no faults list is answered a bare None, the answer an absent file gets")
+            fr, key, pre, steps = self._views()
+            self.assertNotIn(self.wf_key, km._SUBAGENT_FILE_CACHE, "nothing is memoized under the fault, so the answer is transient")
+        self.assertEqual(km._subagent_file(path, AID_WF), self.agent_file, "the fault cleared: the next lookup resolves the file")
+        self.assertTrue(self._head_steps(), "and the Agent head carries the file's step again")
+        shutil.rmtree(str(self.subdir))                        # the tree removed: the absent answer the fault's views equal
+        fr0, key0, pre0, steps0 = self._views()
+        self.assertTrue(str(fr0.get("error", "")).startswith(self.MISSING % AID_WF),
+                        "premise: the removed tree's viewer frame is the missing-transcript sentence: %r" % (fr0,))
+        self.assertEqual(pre, pre0,
+                         "the viewer frame under the unreadable tree, serialized, equals the removed tree's: it says the transcript "
+                         "is missing (%r); the follow-up that has the viewer state the fault makes these differ" % (fr.get("error"),))
+        self.assertEqual(json.dumps(fr), json.dumps(fr0), "build_subagent's frame, byte for byte")
+        self.assertEqual(key, key0, "and _subagent_frame_cached keys it as it keys the removed tree's")
+        self.assertEqual((steps, steps0), (False, False), "the Agent head carries no steps under the fault, as for the removed tree")
+
+    def test_the_viewer_says_the_transcript_is_missing_and_the_agent_head_has_no_steps_while_the_tree_cannot_be_read_eio(self):
+        self._viewer("eio")
+
+    def test_the_viewer_says_the_transcript_is_missing_and_the_agent_head_has_no_steps_while_the_tree_cannot_be_read_eacces(self):
+        self._viewer("eacces")
 
 
 if __name__ == "__main__":

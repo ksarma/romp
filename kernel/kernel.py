@@ -35500,11 +35500,15 @@ def _subagent_scope_hold(sc, d, dirs, stats, g0):
 
 class _SubagentTreeUnreadable(Exception):
     """_subagent_tree's answer for a root whose own lstat failed for a reason other than absence (its docstring states the
-    shape): `root`, `error` (the OSError) and `entry`, the memo's standing (directories, identities) for the root, or None.
-    Not an OSError, so no reader's `except OSError` (the sibling loop of _subagent_file_walk) can take it for a missing
-    tree; every kernel reader of the tree catches it by name and answers its standing entry or an unreadable marker, and a
-    reader that does not is loud (a raise), never an empty tree. The agent-file walk excludes the tree that raised it and
-    nothing else: it looks through every other tree and answers a file found under one (_subagent_walk_unreadable)."""
+    shape): `root`, `error` (the OSError) and `entry`, the memo's standing (directories, identities) for the root, or
+    None. Not an OSError, so no reader's `except OSError` (the sibling loop of _subagent_file_walk) can take it for a
+    missing tree; every kernel reader of the tree catches it by name, and a reader that does not is loud (a raise). A
+    reader that catches it answers its standing entry or an unreadable marker, except for the two absent-shaped answers
+    _subagent_tree's docstring names: _subagent_meta_map's {} for a map never built, and _subagent_file's bare None to a
+    caller that passes no faults list, which the viewer shows as a missing transcript and the Agent head as no steps
+    while the fault lasts (tests/test_subagent_tree_memo.py ViewerUnderAnUnreadableTree). The agent-file walk excludes
+    the tree that raised it and nothing else: it looks through every other tree and answers a file found under one
+    (_subagent_walk_unreadable)."""
 
     def __init__(self, root, error, entry):
         super().__init__("%s: %s" % (root, error))
@@ -35522,19 +35526,26 @@ def _subagent_tree(d):
     are not): a read that did not happen says nothing about what is there, so nothing is popped, no eviction is recorded,
     nothing is held and the next call reads the disk again, and each reader answers its own standing entry unheld
     (_subagent_dirs_ident the entry's (directories, identities), _subagent_meta_map its cached map, _subagent_file its
-    cached resolution) or, with none standing, an answer no readable and no absent tree produces (_subagent_dirs_ident
-    (d,), (_TREE_UNREADABLE,); _subagent_file None with a fault its caller gives the call's lifetime, only when the file
-    is under no other tree the walk could read, since a fault excludes its own tree from the agent-file walk and nothing
-    else (_subagent_walk_unreadable); _subagent_meta_map {}, the one absent-shaped answer left, for a map never built) and
-    tells a running chat build the tree is unreadable (_chat_dep_note_taskout under _TREE_UNREADABLE, a key no stat
-    equals, so the tab is rebuilt next cycle and reads again), never an empty tree (2026-09-21; until then the branch took
-    every OSError for absence, and an EIO popped the entry, recorded an eviction, answered (), () and noted the tree
-    absent, which the tab showed as no subagents until the fault cleared; tests/test_subagent_tree_memo.py UnreadableRoot
-    executes an EIO by mock and a real EACCES at both edges). The rule's cost: while a tree stays unreadable, an agent-file
-    lookup whose file is under no tree the walk can read (the no-holder road) memoizes nothing and walks again on every
-    call, and its chat build is told the tree is unreadable, so the tab is rebuilt every cycle until the fault clears; the
-    four cases named test_control_no_holder_... in tests/test_subagent_tree_memo.py FaultExcludesItsOwnTree are its
-    witness, and the same class executes a file found past the fault (round 2 of #882, group A).
+    cached resolution) or, with none standing, an answer no readable and no absent tree produces where the reader can
+    carry one (_subagent_dirs_ident (d,), (_TREE_UNREADABLE,); _subagent_file None with a fault, to a caller that passes
+    a faults list, which gives it the call's lifetime (_awaiting_nest)), and tells a running chat build the tree is
+    unreadable (_chat_dep_note_taskout under _TREE_UNREADABLE, a key no stat equals, so the tab is rebuilt next cycle and
+    reads again) (2026-09-21; until then the branch took every OSError for absence, and an EIO popped the entry, recorded
+    an eviction, answered (), () and noted the tree absent, which the tab showed as no subagents until the fault cleared;
+    tests/test_subagent_tree_memo.py UnreadableRoot executes an EIO by mock and a real EACCES at both edges). Either
+    None _subagent_file answers stands only for a file under no tree the walk could read, since a fault excludes its own
+    tree from the agent-file walk and nothing else (_subagent_walk_unreadable). Two answers with none standing are
+    absent-shaped: _subagent_meta_map's {} for a map never built, and _subagent_file's bare None to a caller that passes
+    no faults list (_subagent_meta, _stamp_agents for the chat's Agent heads, build_subagent and _subagent_frame_cached
+    for the viewer), which that caller reads as absence: the viewer says the agent's transcript is missing, its frame
+    and its cached key equal to a removed tree's, and the Agent head shows no steps. Both last only while the fault
+    does, since nothing is memoized under it (tests/test_subagent_tree_memo.py ViewerUnderAnUnreadableTree, the witness,
+    under an EIO by mock and a real EACCES); a follow-up fix after #882 is to have the viewer state the fault instead.
+    The rule's cost: while a tree stays unreadable, an agent-file lookup whose file is under no tree the walk can read
+    (the no-holder road) memoizes nothing and walks again on every call, and its chat build is told the tree is
+    unreadable, so the tab is rebuilt every cycle until the fault clears; the four cases named
+    test_control_no_holder_... in tests/test_subagent_tree_memo.py FaultExcludesItsOwnTree are its witness, and the same
+    class executes a file found past the fault (round 2 of #882, group A).
 
     Memoized per root in _SUBAGENT_TREES on the identities (_stat_ident: ino, mtime_ns, size, ctime_ns) of every directory
     it listed, the root included. Exact because the directory list changes only by the creation, removal or renaming of a
