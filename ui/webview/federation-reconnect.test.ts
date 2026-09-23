@@ -838,11 +838,12 @@ function pyNormalise(src: string, firstLine: number): { text: string; inStr: boo
 // on the shape of its read, never on its spelling (review round 6, 2026-09-21): a subscript or a .get whose key is a
 // bare name (`c[APP_KEY]`, `c.get(key)`) is the ninth named form, NAME_KEY_FORM, listed with its statement and asserted
 // absent whatever the name (every key _push reads at the head is written as a literal, so the form has nothing to fire
-// on until a key is held in a name); and every "app" literal in the body that no detector read (bound to a name in any
-// shape, a default, a keyword argument, a passed value) is listed under UNREAD_LITERAL and asserted absent, so the road
-// from inside the body to a key held in a name is red at both ends, the literal and the read. What stays disclosed, not
-// detected: a key held in a dict or a list, reached through an attribute or returned by a call (`c[KEYS[0]]`,
-// `c[self.key]`, `c[pick()]`), whose value the body never spells as a literal.
+// on until a key is held in a name; the bracket arm needs a receiver before the bracket, so a one-element list display
+// is not listed and a generic annotation such as `list[str]` is, review round 7); and every "app" literal in the body
+// that no detector read (bound to a name in any shape, a default, a keyword argument, a passed value) is listed under
+// UNREAD_LITERAL and asserted absent, so the road from inside the body to a key held in a name is red at both ends, the
+// literal and the read. What stays disclosed, not detected: a key held in a dict or a list, reached through an attribute
+// or returned by a call (`c[KEYS[0]]`, `c[self.key]`, `c[pick()]`), whose value the body never spells as a literal.
 const READ_TUPLE = "a tuple of string literals (the audience, read)";
 const READ_SINGLE = "a singleton, == a string literal (the audience, read)";
 const READ_TEXT = "a value formatted into text (a % format's operand, a .format argument, a field inside a string literal): no audience";
@@ -858,7 +859,15 @@ const OTHER_FORMS = [
 ] as const;
 // The ninth named form, keyed on the SHAPE of the read rather than on the key: a subscript or a .get whose key is a bare
 // name. Listed whatever the name (the census cannot tell it from a read of the app key) and asserted absent.
-const NAME_KEY_FORM = "a subscript or a .get whose key is a bare name (a constant, a variable, a parameter): which key it reads is not known here";
+const NAME_KEY_FORM = "a subscript or a .get whose key is a bare name (a constant, a variable, a parameter; a generic annotation such as list[str] shares the bracket): which key it reads is not known here";
+// Python's keywords (3.12's keyword.kwlist) and its soft keywords (keyword.softkwlist): a bracket directly behind one of
+// these is a list display or a pattern, never a subscript (review round 7, 2026-09-23).
+const PY_KEYWORDS = new Set([
+  "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif",
+  "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or",
+  "pass", "raise", "return", "try", "while", "with", "yield",
+  "_", "case", "match", "type",
+]);
 // The one label for every "app" literal in the body that none of the detectors read, whatever holds it.
 const UNREAD_LITERAL = "the app literal in a position the census does not read (bound to a name in any shape, a default, a keyword argument, a passed value)";
 type Audiences = { tuples: string[][]; singles: string[]; text: string[]; other: Map<string, string[]>; reads: number; unread: string[]; byName: string[] };
@@ -934,9 +943,20 @@ function pushAudiences(kernel: string): Audiences {
   // string, whatever the name (a constant, a variable, a parameter). Which key it reads is not known here, so it is
   // listed and asserted absent (every key _push reads at the head is written as a literal, so the form has nothing to
   // fire on until a key is held in a name) rather than disclosed. Tolerates the whitespace the literal read tolerates.
+  // The bracket arm is a subscript only behind a receiver primary directly before the bracket (a name outside Python's
+  // keyword set, PY_KEYWORDS, a closing parenthesis or a closing bracket, joined by spaces or tabs only: the statement's
+  // text before the bracket is read from its line start, and pyNormalise folds a newline inside brackets to one space,
+  // so a newline never lets one statement's tail become the next bare bracket's receiver). So a one-element list
+  // display (`xs = [c]`, `return [c]`, `f([c], 1)`) is not listed, and a generic annotation such as `list[str]` is: a
+  // subscript with a bare-name key, whose remedy is not the literal (review round 7, 2026-09-23: the arm listed every
+  // one-name bracket, so a list display in the body turned the census red with a cause and a remedy that did not apply).
   for (const m of text.matchAll(/\[\s*[A-Za-z_]\w*\s*\]|\.\s*get\s*\(\s*[A-Za-z_]\w*\s*[,)]/g)) {
     const p = m.index!;
     if (inStr[p]) continue;
+    if (m[0].endsWith("]")) {   // the bracket arm: the receiver, if any, ends the statement's text before the bracket
+      const rcv = /([A-Za-z_]\w*|[)\]])[ \t]*$/.exec(text.slice(text.lastIndexOf("\n", p) + 1, p));
+      if (!rcv || PY_KEYWORDS.has(rcv[1])) continue;   // no receiver (a list display) or a keyword before the bracket
+    }
     a.byName.push(whereAt(p));
   }
   return a;
@@ -1027,9 +1047,10 @@ test("every app the kernel's _push addresses is a pushed-channel pane here, on t
   }
 });
 
-test("the census's premise, shown to hold for a reason: on a planted _push every named form the census cannot read fires exactly where planted, the roster reads the wrapped, unspaced, hyphenated, digit-carrying and continued spellings, a tuple with no space after its in, and the key spaced inside its subscript or its .get call, around the call's dot, name and paren, or wrapped over a line, a formatted value and a docstring's prose read as text, a subscript by a bare name is listed where planted, no app literal is listed as unread, and every read of the key lands in exactly one form (review rounds 3, 5 and 6, 2026-09-21)", () => {
+test("the census's premise, shown to hold for a reason: on a planted _push every named form the census cannot read fires exactly where planted, the roster reads the wrapped, unspaced, hyphenated, digit-carrying and continued spellings, a tuple with no space after its in, and the key spaced inside its subscript or its .get call, around the call's dot, name and paren, or wrapped over a line, a formatted value and a docstring's prose read as text, a subscript by a bare name and a generic annotation are listed where planted and a one-element list display is not, no app literal is listed as unread, and every read of the key lands in exactly one form (review rounds 3, 5 and 6, 2026-09-21; round 7, 2026-09-23)", () => {
   // the synthetic body, one read per tagged line: T a tuple the roster reads, S a singleton, X text, a number the
-  // OTHER_FORMS index that must fire there, null a line with no read of its own (a wrapped tuple's continuation lines)
+  // OTHER_FORMS index that must fire there, null a line with no read of its own (a wrapped tuple's continuation lines, a
+  // one-element list display)
   const T = READ_TUPLE, S = READ_SINGLE, X = READ_TEXT, N = NAME_KEY_FORM;
   const plant: [string, string | number | null][] = [
     ["def _push(targets, connect=False, live_map=None):", null],
@@ -1076,8 +1097,11 @@ test("the census's premise, shown to hold for a reason: on a planted _push every
     ['    b = c . get("app")', 6],                                 // the read bound to a name, through a .get spaced around its dot (review round 6)
     ['    if c[APP_KEY] in ("feed", "outline"):', N],              // the key held in a name: the ninth form, keyed on the shape (review round 6)
     ["        pass", null],
+    ["    seen: list[str] = []", N],                               // a generic annotation shares the bracket: a subscript with a bare-name key, listed (review round 7)
+    ["    xs = [c]", null],                                        // a one-element list display: no receiver before its bracket, not listed (review round 7)
     ['    _serve(c["app"])', 7],
     ['    return c["app"]', 7],
+    ["    return [c]", null],                                      // a one-element list display behind a keyword: not listed (review round 7)
   ];
   const src = "\n" + plant.map(([l]) => l).join("\n") + "\n\ndef _next():\n    pass\n";
   const a = pushAudiences(src);
@@ -1086,6 +1110,9 @@ test("the census's premise, shown to hold for a reason: on a planted _push every
   assert.deepEqual(a.tuples, [["feed", "outline", "waiting-2", "x9"], ["timeline", "notes"], ["chat", "tight"], ["chat", "spaced"], ["timeline", "wrapped"]], T);
   assert.deepEqual(a.singles, ["chat", "timeline", "feed", "chat"], S);
   assert.deepEqual(a.unread, [], "the plant leaves no app literal unread: OTHER_FORMS[6]'s `app = c[\"app\"]` binds a name to the READ, not to the key, and every tuple member and every compared value is a read");
+  const listDisplays = plant.flatMap(([l, t], i) => (t === null && /\[c\]/.test(l) ? [i + 2] : []));
+  assert.equal(listDisplays.length, 2, "the two one-element list displays are planted (xs = [c], return [c])");
+  assert.deepEqual(a.byName.map(lineOf).filter((l) => listDisplays.includes(l)), [], "a one-element list display has no receiver before its bracket and is no subscript: not listed as the ninth form (review round 7)");
   assert.deepEqual(a.byName.map(lineOf), linesTagged(N), N);
   assert.deepEqual(a.text.map(lineOf), linesTagged(X), X);
   OTHER_FORMS.forEach((form, k) => {

@@ -1016,12 +1016,13 @@ const UNKNOWN_SLOT_CUT = 32;
 // frames leaving it pending. So a pane the kernel adds to any of _push's audiences, in any spelling of the key as a
 // literal, reads red there (in the roster, or as a named form the census cannot read), a key held in a name reads red at
 // both ends (a subscript or a .get whose key is a bare name, `c[APP_KEY]` or `c.get(key)`, is listed whatever the name,
-// and every key _push reads today is written as a literal; the "app" literal a name would be bound to is listed in any
-// binding's spelling), a member here the kernel never pushes to reads red, and a non-feed member that pendingFor's
-// selector below would fall to the per-host feed reads red. What stays outside that census and disclosed rather than
-// detected: a key held in a dict or a list, reached through an attribute or returned by a call (`c[KEYS[0]]`,
-// `c[self.key]`), whose value the body never spells as a literal, and a pane pushed only by a sender outside _push's
-// body. Exported for that census. Kept an ALLOWLIST on purpose: a denylist of settings and files
+// the subscript behind a receiver, so a one-element list display is not listed and a generic annotation such as
+// `list[str]` is; and every key _push reads today is written as a literal; the "app" literal a name would be bound to is
+// listed in any binding's spelling), a member here the kernel never pushes to reads red, and a non-feed member that
+// pendingFor's selector below would fall to the per-host feed reads red. What stays outside that census and disclosed
+// rather than detected: a key held in a dict or a list, reached through an attribute or returned by a call
+// (`c[KEYS[0]]`, `c[self.key]`), whose value the body never spells as a literal, and a pane pushed only by a sender
+// outside _push's body. Exported for that census. Kept an ALLOWLIST on purpose: a denylist of settings and files
 // would pend every host forever again for the next app added to the fan-out with no pushed view (the class the project's
 // change closed).
 export const PANE_CHANNELS = new Set(["chat", "feed", "fleet", "timeline", "waiting"]);
