@@ -25,6 +25,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from collections import Counter
 from http.server import ThreadingHTTPServer
 from romp_load import load_source
 from pathlib import Path
@@ -475,13 +476,14 @@ def _door_names(test):
     return out
 
 
-def _doors_reaching(fn, qual, targets):
-    """{door: [line of each call]} for every call in `fn` to a name in `targets`, keyed by the innermost `if` arm whose
-    test selects a door (_door_names), as a frozenset of its (kind, name) pairs; a call under no such arm is keyed
-    {("no door", qual)}, which no expected population holds, so it reds loudly."""
-    found = {}
+def _door_walk(fn, qual):
+    """[(door, node)] for every node in `fn`, the door being the innermost `if` arm whose test selects one (_door_names),
+    as a frozenset of its (kind, name) pairs; a node under no such arm is keyed {("no door", qual)}, which no expected
+    population holds, so a setter call there reds loudly. An arm's test and its else branch belong to the enclosing door."""
+    out = []
 
     def visit(node, door):
+        out.append((door, node))
         if isinstance(node, ast.If):
             names = _door_names(node.test)
             visit(node.test, door)
@@ -490,50 +492,207 @@ def _doors_reaching(fn, qual, targets):
             for st in node.orelse:
                 visit(st, door)
             return
-        if isinstance(node, ast.Call) and _callee(node) in targets:
-            found.setdefault(door, []).append(node.lineno)
         for child in ast.iter_child_nodes(node):
             visit(child, door)
     for st in fn.body:
         visit(st, frozenset({("no door", qual)}))
+    return out
+
+
+def _doors_reaching(fn, qual, targets):
+    """{door: [line of each call]} for every call in `fn` to a name in `targets`, keyed as _door_walk keys it."""
+    found = {}
+    for door, node in _door_walk(fn, qual):
+        if isinstance(node, ast.Call) and _callee(node) in targets:
+            found.setdefault(door, []).append(node.lineno)
     return found
+
+
+_STORE_NEEDLE = "session-flags"   # how the kernel's source names the flags store: STATE / "session-flags.json"
+
+
+def _store_seeds(node):
+    """The string constants under `node` that name the flags store in CODE: any constant containing "session-flags" (a
+    whole file name, a piece of an f-string, an implicitly joined literal). A docstring, or any string standing as a
+    statement of its own, is text about the code and is left out."""
+    text = {id(n.value) for n in ast.walk(node)
+            if isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant) and isinstance(n.value.value, str)}
+    return [n for n in ast.walk(node)
+            if isinstance(n, ast.Constant) and isinstance(n.value, str) and _STORE_NEEDLE in n.value and id(n) not in text]
+
+
+def _carries(node, seeds, tainted):
+    """Whether `node` can hand on the store's path: a seed or a tainted name under it. A comparison is skipped, since its
+    value is a bool: `p.name == "session-flags.json"` hands nothing on."""
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if isinstance(n, ast.Compare):
+            continue
+        if id(n) in seeds or (isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in tainted):
+            return True
+        stack.extend(ast.iter_child_nodes(n))
+    return False
+
+
+def _root_name(node):
+    """The name at the root of a subscript or attribute chain (`msg` for msg["flag"], `cache` for cache[k].x), else None."""
+    while isinstance(node, (ast.Subscript, ast.Attribute)):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _call_spelling(call, modules):
+    """A call's name in the census below: the name for a bare call (`open`, `_read_state_json`); the dotted chain when the
+    receiver is rooted at a module the kernel imports (`os.replace`, `os.path.join`); `.attr` for a method of any other
+    value (`.stat`, `.write_text`), so os.replace and a value's .replace stay apart; `<Subscript>` and the like for a
+    callee this cannot name, which no expected set holds."""
+    f = call.func
+    if isinstance(f, ast.Name):
+        return f.id
+    if isinstance(f, ast.Attribute):
+        chain, v = [f.attr], f.value
+        while isinstance(v, ast.Attribute):
+            chain.append(v.attr)
+            v = v.value
+        if isinstance(v, ast.Name) and v.id in modules:
+            return ".".join([v.id] + chain[::-1])
+        return "." + f.attr
+    return "<%s>" % type(f).__name__
+
+
+def _store_flow(fn, modules):
+    """{call spelling: [line, ...]} for the calls in `fn` handed the flags store's path, or anything computed from it.
+    Seeded at the constants naming the store (_store_seeds). A name bound from an expression that carries it (=, :=, an
+    augmented or annotated assignment, a for, with or comprehension target) carries it on, to a fixpoint, and so does
+    the root of a subscript or attribute assigned such a value (`cache[k] = p` taints `cache`). A call is handed it when
+    an argument, a keyword's value or its receiver carries it. Over-approximate on purpose: a value computed from the
+    path (its stat, a cache entry keyed by it) carries too, so the reads a reader is pinned to list a few calls that only
+    ever see such a value. It judges no WRITE by its spelling: FlagWriterPopulation.READS lists what a reader may hand the
+    path to, and any other call is a write until someone classes it."""
+    seeds = {id(n) for n in _store_seeds(fn)}
+    tainted = set()
+    while True:
+        grown = set(tainted)
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Assign):
+                pairs = [(t, n.value) for t in n.targets]
+            elif isinstance(n, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+                pairs = [(n.target, n.value)] if n.value is not None else []
+            elif isinstance(n, (ast.For, ast.AsyncFor, ast.comprehension)):
+                pairs = [(n.target, n.iter)]
+            elif isinstance(n, (ast.With, ast.AsyncWith)):
+                pairs = [(i.optional_vars, i.context_expr) for i in n.items if i.optional_vars is not None]
+            else:
+                pairs = []
+            for target, value in pairs:
+                if _carries(value, seeds, tainted):
+                    grown |= {m.id for m in ast.walk(target) if isinstance(m, ast.Name) and isinstance(m.ctx, ast.Store)}
+                    grown |= {r for m in ast.walk(target) if isinstance(m, (ast.Subscript, ast.Attribute))
+                              and isinstance(m.ctx, ast.Store) for r in [_root_name(m)] if r}
+        if grown == tainted:
+            break
+        tainted = grown
+    handed = {}
+    for n in ast.walk(fn):
+        if isinstance(n, ast.Call):
+            parts = list(n.args) + [k.value for k in n.keywords] + ([n.func.value] if isinstance(n.func, ast.Attribute) else [])
+            if any(_carries(x, seeds, tainted) for x in parts):
+                handed.setdefault(_call_spelling(n, modules), []).append(n.lineno)
+    return handed
+
+
+def _unwrap_str(node):
+    """`x` for str(x), str(str(x)), and `node` itself otherwise: str() of the name a door was asked about is that name."""
+    while (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "str"
+           and len(node.args) == 1 and not node.keywords):
+        node = node.args[0]
+    return node
 
 
 class FlagWriterPopulation(unittest.TestCase):
     """The doors that write a session flag, derived from the kernel's source and pinned as a set (the reviewer's
     ruling in the round-3 review of fork PR #897): the setSessionFlag socket op and POST /flag, nothing else, and
-    each asks the one predicate, _lane_flag_refusal, before its setter. A new door (a socket op arm, a route, or a
-    helper that calls a setter of session-flags.json) reds here until it is added on purpose. These read WHERE the
-    code lives, so they guard the population and the predicate's place, not the behaviour; the behaviour is executed
-    in SocketFlagWhitelist (the socket op, in process and over a real socket) and in
+    each asks the one predicate, _lane_flag_refusal, before its setter, and hands each setter the name it asked about.
+    A new door (a socket op arm, a route, or a helper that calls a setter of session-flags.json) reds here until it is
+    added on purpose. The setters are found without trusting how a function writes: every function that names the
+    store in code is pinned by role (NAMERS), and one that hands the store's path to anything but a read (READS) is a
+    writer, so a writer spelled with open(), os.replace or a helper of its own reds as surely as one that calls
+    _write_state_json. The census keys on the store's name in the kernel's source: a function that reached the file
+    through a name it did not spell (a file name a client sent) would be outside it. These read WHERE the code lives,
+    so they guard the population and the predicate's place, not the behaviour; the behaviour is executed in
+    SocketFlagWhitelist (the socket op, in process and over a real socket) and in
     FlagRoute.test_an_unknown_flag_key_or_a_missing_id_is_a_400_naming_it (the route)."""
 
     WRITERS = {"_set_session_flag", "_set_notify_session"}
     DOORS = {("socket op", "setSessionFlag"), ("route", "/flag")}
+    # every function that names the store in code (_store_seeds), by role. _state_quarantine compares a torn file's name
+    # with the store's to word its notice, and hands the path on to nothing
+    NAMERS = {"_set_session_flag": "writer", "_set_notify_session": "writer",
+              "_session_flags_proved": "reader", "_session_flags": "reader", "_flags_unknown_cold": "reader",
+              "_thread_rows_key": "reader", "_chat_sig_shared": "reader", "_dead_lane_key": "reader",
+              "_fleet_view_sig": "reader", "_state_quarantine": "reader"}
+    # what a reader hands the store's path, or a value computed from it, to (_store_flow): a stat, the strict reader
+    # _read_state_json (which may move torn bytes aside, never write a flag), the quarantine bookkeeping (a mark
+    # retired, a fault noted or cleared, the refusal's text), a cache lookup, and plain value handling
+    READS = {".get", ".stat", "os.stat", "_read_state_json", "_flags_quarantined", "_flags_exit_text", "_StateUnreadable",
+             "_note_state_fault", "_clear_state_fault", "_retire_flags_quarantine", "_stat_key", "_chat_ident",
+             "_files_stat_observe_sig", ".append", ".items", "dict", "isinstance", "str", "sorted", "tuple"}
+    SETTER_CALLS = {"_set_session_flag": 1, "_set_notify_session": 1}   # per door: each setter called once
 
     def setUp(self):
         self.fns, self.rest = _kernel_functions()
+        self.modules = {n for n, v in vars(km).items() if isinstance(v, type(os))}
+
+    def _namers(self):
+        return {q for q, fn in self.fns.items() if _store_seeds(fn)}
 
     def _writers(self):
-        """The setters of session-flags.json, two ways: the functions that name the file and call a store write
-        (the one door _write_state_json, its _atomic_write, a Path write), and the functions that call the clean-write
-        hook every landed write of that store runs (_flags_written)."""
+        """The setters of session-flags.json, three ways: the functions that name the file and call a store write
+        (the one door _write_state_json, its _atomic_write, a Path write); the functions that call the clean-write hook
+        every landed write of that store runs (_flags_written); and the functions that hand the store's path to
+        anything outside READS (_store_flow), whatever the call is spelled."""
         writes = {"_write_state_json", "_atomic_write", "write_text", "write_bytes"}
-        named = {q for q, fn in self.fns.items()
-                 if any(isinstance(n, ast.Constant) and n.value == "session-flags.json" for n in ast.walk(fn))}
+        named = self._namers()
         by_write = {q for q in named if {_callee(n) for n in ast.walk(self.fns[q]) if isinstance(n, ast.Call)} & writes}
         by_hook = {q for q, fn in self.fns.items()
                    if "_flags_written" in {_callee(n) for n in ast.walk(fn) if isinstance(n, ast.Call)}}
-        return by_write, by_hook
+        by_flow = {q for q in named if set(_store_flow(self.fns[q], self.modules)) - self.READS}
+        return by_write, by_hook, by_flow
+
+    def _setters(self):
+        """Every setter any derivation finds, so a new one is also a name the doors below are derived against."""
+        return self.WRITERS.union(*self._writers())
 
     def _callers(self):
-        return {q for q, fn in self.fns.items() if q not in self.WRITERS and _refs(fn) & self.WRITERS}
+        setters = self._setters()
+        return {q for q, fn in self.fns.items() if q not in setters and _refs(fn) & setters}
+
+    def test_the_functions_that_name_the_flags_store_are_pinned_by_role(self):
+        self.assertEqual(self._namers(), set(self.NAMERS),
+                         "the functions that name session-flags.json in code. A new one reds here whatever it does with "
+                         "the file: class it in NAMERS, a reader handing the path only to READS, or a writer, a setter "
+                         "whose doors must ask _lane_flag_refusal and refuse threadMail by execution (SocketFlagWhitelist)")
+        self.assertEqual([getattr(st, "lineno", 0) for st in self.rest if _store_seeds(st)], [],
+                         "no module-level statement names the store: a constant there would let a function reach the file "
+                         "without naming it, out of this census's sight")
+        for q, role in sorted(self.NAMERS.items()):
+            outside = {c: ln for c, ln in _store_flow(self.fns[q], self.modules).items() if c not in self.READS}
+            if role == "reader":
+                self.assertEqual(outside, {}, "%s is pinned a reader but hands the store's path to calls outside READS "
+                                 "(a write, until classed); a new way to write the store is a new setter" % q)
+            else:
+                self.assertEqual(set(outside), {"_write_state_json", "_flags_written"},
+                                 "%s writes the store through the one write door and runs its clean-write hook" % q)
 
     def test_the_setters_of_the_flags_store_are_the_two_the_doors_call(self):
-        by_write, by_hook = self._writers()
+        by_write, by_hook, by_flow = self._writers()
         self.assertEqual(by_write, self.WRITERS, "the functions that write session-flags.json; a new one is a new "
                          "setter every door below must be re-derived against")
         self.assertEqual(by_hook, self.WRITERS, "the functions that run the store's clean-write hook agree")
+        self.assertEqual(by_flow, self.WRITERS, "the functions that hand the store's path to anything but a read agree, "
+                         "however the write is spelled (open(), os.replace, a helper); the executed refusal is "
+                         "SocketFlagWhitelist")
 
     def test_the_doors_that_write_a_session_flag_are_the_socket_op_and_the_route(self):
         callers = self._callers()
@@ -541,11 +700,12 @@ class FlagWriterPopulation(unittest.TestCase):
                          "the functions that call a setter of session-flags.json. A new one is a new way for a client to "
                          "write a flag: route it through _lane_flag_refusal, prove it refuses threadMail by execution "
                          "(SocketFlagWhitelist is the model), and add it here")
-        self.assertEqual([getattr(st, "lineno", 0) for st in self.rest if _refs(st) & self.WRITERS], [],
+        setters = self._setters()
+        self.assertEqual([getattr(st, "lineno", 0) for st in self.rest if _refs(st) & setters], [],
                          "no module-level table hands a setter on")
         doors = {}
         for q in callers:
-            doors.update(_doors_reaching(self.fns[q], q, self.WRITERS))
+            doors.update(_doors_reaching(self.fns[q], q, setters))
         population = set().union(*doors)
         self.assertEqual(population, self.DOORS,
                          "the doors whose arm calls a setter of session-flags.json: the setSessionFlag socket op and "
@@ -555,8 +715,9 @@ class FlagWriterPopulation(unittest.TestCase):
         self.assertIn(("route", "/flag"), route, "POST /flag reaches _state_write_route, whose /flag arm is the door")
 
     def test_every_door_asks_the_one_predicate_before_its_setter(self):
+        setters = self._setters()
         for q in self._callers():
-            writes = _doors_reaching(self.fns[q], q, self.WRITERS)
+            writes = _doors_reaching(self.fns[q], q, setters)
             asks = _doors_reaching(self.fns[q], q, {"_lane_flag_refusal"})
             for door, lines in writes.items():
                 self.assertIn(door, asks, "%s: the %s arm calls a setter without asking _lane_flag_refusal; the executed "
@@ -565,6 +726,84 @@ class FlagWriterPopulation(unittest.TestCase):
                               % (q, sorted(door)))
                 self.assertLess(min(asks[door]), min(lines), "%s %s: the predicate is asked before the first setter call"
                                 % (q, sorted(door)))
+
+    def test_every_setter_writes_the_name_its_door_asked_about(self):
+        """Asking the predicate proves nothing unless the setter writes the name it was asked about. In each door: one
+        ask, of one expression; each setter called once (SETTER_CALLS); _set_session_flag handed that same expression as
+        its flag (str() of it counts as it); _set_notify_session, which writes the `notify` key, only under an `if` that
+        compares that expression with "notify", a listed name; and nothing between the ask and a setter rebinds the
+        expression or changes the container it is read from. Read from the source, so it guards the arm's shape; the
+        executed refusal is SocketFlagWhitelist (socket op) and
+        FlagRoute.test_an_unknown_flag_key_or_a_missing_id_is_a_400_naming_it (route)."""
+        setters = self._setters()
+        self.assertEqual(set(self.SETTER_CALLS), setters, "every setter has a rule below")
+        self.assertIn("notify", km._LANE_FLAGS)
+        flag_at = list(inspect.signature(km._set_session_flag).parameters).index("flag")
+        mutators = {"update", "setdefault", "pop", "popitem", "clear", "__setitem__", "__delitem__"}
+        checked = set()
+        for q in sorted(self._callers()):
+            fn = self.fns[q]
+            parents = {c: p for p in ast.walk(fn) for c in ast.iter_child_nodes(p)}
+            by_door = {}
+            for door, node in _door_walk(fn, q):
+                by_door.setdefault(door, []).append(node)
+            for door, nodes in by_door.items():
+                calls = [n for n in nodes if isinstance(n, ast.Call)]
+                sets = [c for c in calls if _callee(c) in setters]
+                if not sets:
+                    continue
+                where = "%s %s" % (q, sorted(door))
+                asks = [c for c in calls if _callee(c) == "_lane_flag_refusal"]
+                self.assertEqual(len(asks), 1, "%s: one ask of the predicate, so there is one name the setters must write" % where)
+                ask = asks[0]
+                self.assertEqual((len(ask.args), ask.keywords), (1, []), "%s: the predicate is asked about one name" % where)
+                asked = _unwrap_str(ask.args[0])
+                self.assertEqual(Counter(_callee(c) for c in sets), Counter(self.SETTER_CALLS),
+                                 "%s: each setter called once; a second call is a second write the ask may not cover" % where)
+                for c in sets:
+                    self.assertLess((ask.lineno, ask.col_offset), (c.lineno, c.col_offset), "%s: asked before it writes" % where)
+                    if _callee(c) == "_set_session_flag":
+                        self.assertFalse(any(isinstance(a, ast.Starred) for a in c.args) or any(k.arg is None for k in c.keywords),
+                                         "%s line %d: a setter call whose flag this cannot read" % (where, c.lineno))
+                        given = c.args[flag_at] if len(c.args) > flag_at else next(
+                            (k.value for k in c.keywords if k.arg == "flag"), None)
+                        self.assertIsNotNone(given, "%s line %d: the setter's flag argument" % (where, c.lineno))
+                        self.assertEqual(ast.dump(_unwrap_str(given)), ast.dump(asked),
+                                         "%s line %d: _set_session_flag writes %s, but the predicate was asked about %s"
+                                         % (where, c.lineno, ast.unparse(given), ast.unparse(asked)))
+                    else:
+                        node, guard = c, None
+                        while node in parents and guard is None:
+                            up = parents[node]
+                            if isinstance(up, ast.If) and node in up.body:
+                                guard = up
+                            node = up
+                        test = guard.test if guard is not None else None
+                        self.assertTrue(
+                            isinstance(test, ast.Compare) and len(test.ops) == 1 and isinstance(test.ops[0], ast.Eq)
+                            and {ast.dump(_unwrap_str(test.left)), ast.dump(_unwrap_str(test.comparators[0]))}
+                            == {ast.dump(asked), ast.dump(ast.Constant("notify"))},
+                            "%s line %d: _set_notify_session writes the notify key, so it sits under `if %s == \"notify\"`, "
+                            "got %s" % (where, c.lineno, ast.unparse(asked), ast.unparse(test) if test is not None else None))
+                last = max((c.lineno, c.col_offset) for c in sets)
+                root = _root_name(asked)
+                bare = isinstance(asked, ast.Name)
+                for n in nodes:
+                    pos = (getattr(n, "lineno", 0), getattr(n, "col_offset", 0))
+                    if not ((ask.lineno, ask.col_offset) < pos <= last):
+                        continue
+                    rebinds = (isinstance(n, ast.Name) and n.id == root and isinstance(n.ctx, (ast.Store, ast.Del))) or (
+                        isinstance(n, (ast.Subscript, ast.Attribute)) and isinstance(n.ctx, (ast.Store, ast.Del))
+                        and _root_name(n) == root)
+                    if not bare and isinstance(n, ast.Call):
+                        rebinds = rebinds or (isinstance(n.func, ast.Attribute) and n.func.attr in mutators
+                                              and _root_name(n.func.value) == root) or any(
+                            isinstance(a, ast.Name) and a.id == root for a in list(n.args) + [k.value for k in n.keywords])
+                    self.assertFalse(rebinds, "%s line %d: `%s` rebinds %s, or hands it to a call that may change it, between "
+                                     "the ask and the setter, so the setter may write a name the predicate never saw"
+                                     % (where, pos[0], ast.unparse(n), root))
+                checked.add(door)
+        self.assertEqual(checked, {frozenset({d}) for d in self.DOORS}, "both doors were read")
 
     def test_the_list_is_a_whitelist_in_one_place(self):
         # a membership test against _LANE_FLAGS outside the predicate is a second whitelist that can drift from it
