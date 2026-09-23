@@ -309,6 +309,7 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   const WEB_COLOR = '.fileview-md .fv-figopen-web:not(:hover) { border-color: var(--outbound-line); }';   // its rest colour, the outbound dress's own token, off :hover so the family's accent hover border wins (the file review's round 13, ui-1 with extra6-1)
   const WEB_REST = '@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen-web { opacity: 1; } }';   // the web control at rest at full, so its dashed line paints at the token's ratio over any picture (the painted-contrast ask of 2026-09-23)
   const FOCUS_OFF = '@media screen { .fileview-md .fv-figopen-web:focus-visible { outline-offset: 2px; } }';   // the web control's focus ring off its border, so its dashed line shows under a keyboard focus (the same ask)
+  const PRESS_OFF = '@media screen { .fileview-md .fv-figopen-web:active { transform: none; } }';   // the button family's press cue off on the web control alone, whose release opens the tab while it is held (the same ask, the maintainer's ruling)
   const DEAD_DRESS = '@media screen { .fileview-md a.fv-dead:has(.fv-figopen-web), .fileview-md a.fv-dead:has(img[data-fv-figweb]) { opacity: 1; color: color-mix(in srgb, currentColor 70%, transparent); } }';   // a dead link holding the dress dims by colour, not by opacity (the same ask); its selector names the class inside :has()
   /** The sheet's rules naming the control, each rendered on one line with whether a screen-only at-rule encloses it. */
   const controlRules = (css) => cssRules(css).filter((r) => /fv-figopen/.test(r.selector)).map((r) => ({ text: renderRule(r), screen: underScreen(r.chain) }));
@@ -330,7 +331,7 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
     assert.ok(css.includes('\n' + LEFT + '\n' + RIGHT + '\n' + WEB + '\n' + WEB_COLOR + '\n'), name + ': the float twins, the web dress and its rest colour (the spelling; the closed set below holds the property)');
     assert.ok(css.includes('\n' + REVEAL + '\n'), name + ': the reveal under screen');
     assert.ok(css.includes('\n' + NOHOVER), name + ': no hover, or a coarse pointer beside a hovering one, keeps it visible, under screen (the spelling; the closed set below holds the property)');
-    assert.ok(css.includes('\n' + WEB_REST) && css.includes('\n' + FOCUS_OFF) && css.includes('\n' + DEAD_DRESS), name + ': the web control at rest at full opacity, its focus ring off its border, and the dead link holding the dress dimming by colour, under screen (the spelling; the closed set below holds the property)');
+    assert.ok(css.includes('\n' + WEB_REST) && css.includes('\n' + FOCUS_OFF) && css.includes('\n' + PRESS_OFF) && css.includes('\n' + DEAD_DRESS), name + ': the web control at rest at full opacity, its focus ring off its border, its press cue off, and the dead link holding the dress dimming by colour, under screen (the spelling; the closed set below holds the property)');
     // the closed set over the parsed rules: outside a screen-only at-rule exactly the rest, the hover background and the float
     // twins, none a reveal, and every other rule naming the control under one, however the sheet writes it (the file review's
     // round 9, correctness-1 with tests-1 and ui-1: the set had been keyed on lines at column zero carrying the class and a
@@ -338,7 +339,7 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
     // green; the file review's round 8, fresh-4: the guard before the set matched two opacity spellings, so a reveal spelled any
     // other way outside screen passed it)
     assert.deepEqual(rules[name].filter((r) => !r.screen).map((r) => r.text), [REST, HOVER_BG, LEFT, RIGHT, WEB, WEB_COLOR], name + ': the rules naming the control outside a screen-only at-rule, however the sheet writes them, are exactly the rest, the hover background, the float twins and the web dress; any other rule naming the class there is one a print would apply' + BOUND);
-    assert.deepEqual(rules[name].filter((r) => r.screen).map((r) => r.text), [REVEAL, NOHOVER, WEB_REST, FOCUS_OFF, DEAD_DRESS], name + ': the rules under a screen-only at-rule are the reveal, the at-rest rule (no hover, or any coarse pointer), the web control\'s full opacity at rest, its focus ring off its border and the dead link holding the dress');
+    assert.deepEqual(rules[name].filter((r) => r.screen).map((r) => r.text), [REVEAL, NOHOVER, WEB_REST, FOCUS_OFF, PRESS_OFF, DEAD_DRESS], name + ': the rules under a screen-only at-rule are the reveal, the at-rest rule (no hover, or any coarse pointer), the web control\'s full opacity at rest, its focus ring off its border, its press cue off and the dead link holding the dress');
     const printAt = css.indexOf('\n@media print {');
     assert.ok(printAt >= 0, name + ': the print block');
     assert.ok(!css.slice(printAt, css.indexOf('\n}', printAt)).includes('fv-figopen'), name + ': the print block names the control nowhere');

@@ -8498,13 +8498,15 @@ itself, an outline the sheets key on the mark the decision sets right after the 
 hover on a fine pointer and at rest where hover is none or any pointer is coarse, in the outbound dress's own token, `--outbound-line`,
 the one the control's dashed border wears at rest (the file review's round 13, ui-1 with extra6-1), so a tap's open is shown before it
 happens where the title is no surface; the file review's round 12, fresh-1; the web control rests at full opacity where the at-rest rule
-stands, a local one at 0.8, its focus ring stands 2px off its border so the dashed line shows under a keyboard focus, and a dead link
-holding either dress dims by colour and not by opacity, its words that take the link's colour dimmed and a child the sheet colours itself
-keeping its own ink, since an href-less dead link owns no click and a tap, a click or Enter opens the tab from inside it, so every state a
-gesture opens the tab from paints the dress at the token's own ratio in both themes, read by pixels and composed from the declared
-opacities, and the token's states clear 3:1 in VS Code on a neutral editor ground up to #404040 and on a light one from #efefef, the
-family's accent hover border held on each theme's own ground; while the button is held the family's press cue resamples the line, a
-residual the sheets' comment states; the painted-contrast ask of 2026-09-23, where at 0.8 the control read 2.46:1 by pixels on a
+stands, a local one at 0.8, its focus ring stands 2px off its border so the dashed line shows under a keyboard focus, the button
+family's press cue is off on it since the release that opens the tab comes while it is held (under the cue the line spread over two
+pixel rows, a modal 1.59:1 dark and 1.39:1 light), and a dead link holding either dress dims by colour and not by opacity, its words
+that take the link's colour dimmed and a child the sheet colours itself keeping its own ink, since an href-less dead link owns no click
+and a tap, a click or Enter opens the tab from inside it, so every state a gesture opens the tab from, the press held included, paints
+the dress at the token's own ratio in both themes, read by pixels and, but for the press, composed from the declared opacities, and the
+token's states clear 3:1 in VS Code on a neutral editor ground up to #404040 and on a light one from #efefef, the family's accent hover
+border held on each theme's own ground; the painted-contrast ask of 2026-09-23, the press cue on the maintainer's ruling within it,
+where at 0.8 the control read 2.46:1 by pixels on a
 VS Code editor ground of #404040 and, at 0.8 x 0.7 inside a captioned dead link, 2.47:1 dark and 2.40:1 light), measured from the loaded picture's laid-out box while it is in
 the document, else its own size (`figureBox`, `figureTooSmall`; a loaded figure alone has a box to measure, `figureState`), read wherever the
 decision runs: in a browser a picture the browser is still fetching at the paint (mdBlock, `addFigureControls`) gets none

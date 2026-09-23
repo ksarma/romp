@@ -37,11 +37,15 @@
 // for the mark, the page in its offset ring. Over a picture the line's outer side is the author's pixels, which no colour of the dress
 // clears for every picture, so the read is not against them, and the touch case asserts that pixel is the picture's own fill. On a
 // fine pointer the control under a keyboard focus inside a dead link is read by pixels too, its focus ring standing 2px off the
-// border (the sheets' focus rule: drawn where the browser draws it, the ring covered the border row and the row inside it), and the
-// press on it is held, where the family's press cue scales the control and resamples its line, the witness of the residual the
-// sheets' comment states; the touch case reads the captioned dead link's words taking the link's dimmed colour and its bold words
-// and inline code keeping their own ink, the witness of the other. Those reads red at 61d69cba1, where a dead link's opacity 0.7
-// dimmed the dress inside it and the web control rested at 0.8 (the painted-contrast ask of 2026-09-23). Red over
+// border (the sheets' focus rule: drawn where the browser draws it, the ring covered the border row and the row inside it). The
+// control inside the captioned dead link is read HELD PRESSED too, in each of the three cases and both themes, by pixels while the
+// press is held and before its release opens the tab (pressedLegible), by a mouse press and, on the fine pointer, by the Space key
+// from that keyboard focus: the release that opens the tab comes while it is held, and the sheets' press rule takes the family's
+// press cue off the web control (under the cue the line spread over two pixel rows, its modal colour at 1.592:1 dark and 1.386:1
+// light, red here over the sheets without that rule). The touch case reads the captioned dead link's words taking the link's dimmed
+// colour and its bold words and inline code keeping their own ink, the witness of the residual the sheets' comment states. Those
+// reads red at 61d69cba1, where a dead link's opacity 0.7 dimmed the dress inside it and the web control rested at 0.8 (the
+// painted-contrast ask of 2026-09-23). Red over
 // the unchanged viewer at the first control assertion (no control exists), the outbound
 // case red at the head before it, where the two controls presented one surface, and the link-shapes case red at the round-12
 // head, where the title and the control read any anchor while the click did not, and the two under-the-floor cases red at that head too, the hover read and the at-rest read, where no rule dressed the picture. Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid and example.test addresses,
@@ -662,8 +666,8 @@ const TINY_TEXT = "# Report\n\n![local](figs/plot.svg)\n\n" + PARA(1) + "\n\n![b
   // a remote picture inside a dead host:port link (fv-dead, the href removed), bare (its control after the anchor), captioned (its
   // control inside the anchor, after the picture, its caption carrying bold words and inline code) and under the floor (the mark on
   // the picture, inside the anchor); a dead link owns no click, so a tap or a click opens the tab from inside it (the link-shapes
-  // case's click, the fine-pointer case's press on the control and the touch case's tap), and Enter on its control too, and the
-  // dress there must paint at 3:1 too (the painted-contrast ask of 2026-09-23)
+  // case's click, the press on the control the three painted cases hold and the touch case's tap), and Enter and Space on its
+  // control too, and the dress there must paint at 3:1 too (the painted-contrast ask of 2026-09-23)
   + "[![deadbare](" + WEB + "/deadbare.svg)](localhost:8080)\n\n" + PARA(4) + "\n\n"
   + "[![deadcap](" + WEB + "/deadcap.svg) a caption beside the **dead** link and its `code`](localhost:8080)\n\n" + PARA(5) + "\n\n[![deadbuild](" + WEB + "/deadtiny.svg)](localhost:8080)\n\n" + PARA(6) + "\n";
 const TINY_DOCS: Record<string, string> = { [REPORT]: TINY_TEXT, [PLOT]: svg("#456") };
@@ -804,9 +808,10 @@ async function paintedRatio(page: any, alt: string, kind: "control" | "mark", mo
   const g = rgb(ground);
   let dash = "", most = 0;
   for (const [c, n] of counts) if (c !== g && n > most) { dash = c; most = n; }
-  const seen = Array.from(counts).map(([c, n]) => c + " x" + n).join(", ");
-  assert.ok((counts.get(g) || 0) > 0, alt + ": the " + kind + "'s ground " + g + " appears among its line's pixels, the gaps between the dashes (the line read " + seen + ")");
-  assert.ok(most * 4 >= line.length, alt + ": the " + kind + "'s dash covers at least a quarter of its line's " + line.length + " pixels, so a stray pixel cannot carry the read (the line read " + seen + ")");
+  // the two guards' messages open on the modal colour's ratio, so a read they refuse still states its figure, then list the line's pixels
+  const seen = (dash ? "its modal colour " + dash + " against " + g + " at " + contrastOver(dash, g).toFixed(3) + ":1; " : "") + "the line read " + Array.from(counts).map(([c, n]) => c + " x" + n).join(", ");
+  assert.ok((counts.get(g) || 0) > 0, alt + ": the " + kind + "'s ground " + g + " appears among its line's pixels, the gaps between the dashes (" + seen + ")");
+  assert.ok(most * 4 >= line.length, alt + ": the " + kind + "'s dash covers at least a quarter of its line's " + line.length + " pixels, so a stray pixel cannot carry the read (" + seen + ")");
   return { ratio: contrastOver(dash, g), dash, ground: g, outer: outer && rgb(outer), opacities: r.opacities };
 }
 /** The dresses at rest the touch and laptop cases read: the web control and the mark, each alone and inside a dead link (the tiny
@@ -837,6 +842,72 @@ async function paintedLegible(page: any, where: string, fails: string[], note: (
  *  editor's injected variable stands, or taken off with null; the controls' 0.12 s background ease awaited on the big picture's (bounded). */
 async function editorGround(page: any, grey: string | null): Promise<void> {
   await page.evaluate((g: string | null) => new Promise<void>((done) => { const c = document.querySelectorAll(".fileview-md img")[2].nextElementSibling as HTMLElement; c.addEventListener("transitionend", () => done(), { once: true }); setTimeout(done, 1500); if (g) document.documentElement.style.setProperty("--vscode-editor-background", g); else document.documentElement.style.removeProperty("--vscode-editor-background"); }), grey);
+  await frames(page, 2);
+}
+/** The web control HELD PRESSED, read as painted (the painted-contrast ask of 2026-09-23, the maintainer's ruling on the press): the
+ *  release that opens the tab happens while the button is held, so the pressed state is one a gesture opens the tab from, and its line
+ *  clears 3:1 like every other. The picture `alt` names is scrolled to the centre; `by` "mouse" moves the pointer onto its control (the
+ *  one paintedRatio finds), eases its hover in and holds a mouse press there, and `by` "Space" holds the Space key on the control, which
+ *  the caller has given a keyboard focus, the pointer off it (a button is pressed while Space is down and clicks on its release); held
+ *  until the control matches :active and no transition runs on it (bounded), the line is read by pixels (paintedRatio's mode that
+ *  neither scrolls nor asserts the pointer away), and only then the release, whose tab is awaited, its address read against the
+ *  picture's and closed, so the read is of the pressed paint and the press is shown to open the tab with the viewer unmoved. A read
+ *  under 3:1, or a line paintedRatio refuses (a line resampled over two pixel rows can show no ground among its pixels; its guards'
+ *  messages open on the modal colour's figure), is pushed onto `fails` with the pressed control's computed transform and border colour;
+ *  `note` carries every figure. The body's scroll is restored after, as paintedLegible restores it, and the control's focus taken off. */
+async function pressedLegible(page: any, alt: string, where: string, fails: string[], note: (m: string) => void, by: "mouse" | "Space" = "mouse"): Promise<void> {
+  const state = (scroll: boolean) => page.evaluate(([alt, scroll]: [string, boolean]) => {
+    const img = Array.from(document.querySelectorAll(".fileview-md img")).find((i) => i.getAttribute("alt") === alt) as HTMLImageElement;
+    let a: Element = img;
+    if (!(img.nextElementSibling && img.nextElementSibling.hasAttribute("data-fv-figopen"))) for (let p = a.parentElement; p && (p.localName === "a" || p.classList.contains("fc-imgwrap") || p.localName === "picture"); p = a.parentElement) a = p;
+    const c = a.nextElementSibling as HTMLElement | null;
+    if (!c || !c.hasAttribute("data-fv-figopen")) return null;
+    if (scroll) img.scrollIntoView({ block: "center" });
+    const r = c.getBoundingClientRect(), cs = getComputedStyle(c);
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2, src: img.currentSrc, active: c.matches(":active"), hover: c.matches(":hover"), focusVisible: c.matches(":focus-visible"), transform: cs.transform, border: cs.borderTopColor };
+  }, [alt, scroll]);
+  /** Until the control's :active is `pressed` with no transition running on it, polled on frames and bounded at 3 s. */
+  const settled = (pressed: boolean) => page.waitForFunction(([alt, pressed]: [string, boolean]) => {
+    const img = Array.from(document.querySelectorAll(".fileview-md img")).find((i) => i.getAttribute("alt") === alt) as HTMLElement;
+    let a: Element = img;
+    if (!(img.nextElementSibling && img.nextElementSibling.hasAttribute("data-fv-figopen"))) for (let p = a.parentElement; p && (p.localName === "a" || p.classList.contains("fc-imgwrap") || p.localName === "picture"); p = a.parentElement) a = p;
+    const c = a.nextElementSibling as HTMLElement;
+    return c.matches(":active") === pressed && c.getAnimations().every((x) => x.playState !== "running");
+  }, [alt, pressed], { timeout: 3000 });
+  await page.mouse.move(5, 5);
+  const top = await page.evaluate(() => (document.querySelector(".fileview-body") as HTMLElement).scrollTop);
+  const at = await state(true);
+  assert.ok(at, where + ": " + alt + ": the web control is on the page");
+  await frames(page, 2);
+  if (by === "mouse") { const on = await state(false); await page.mouse.move(on.x, on.y); }
+  else assert.equal((await state(false)).focusVisible, true, where + ": the web control holds a keyboard focus before the Space press");
+  await settled(false);
+  await frames(page, 2);
+  const opened = page.context().waitForEvent("page", { timeout: 10000 }).catch(() => null);
+  if (by === "mouse") await page.mouse.down(); else await page.keyboard.down("Space");
+  const held = await settled(true).then(() => true, () => false);
+  await frames(page, 2);
+  const s = await state(false);
+  const p: Painted | Error = await paintedRatio(page, alt, "control", "hover").catch((e: Error) => e);
+  const after = await state(false);
+  if (by === "mouse") await page.mouse.up(); else await page.keyboard.up("Space");
+  const tab = await opened;
+  assert.ok(held && s.active && after.active, where + ": the press holds the web control pressed (:active, no transition running) from before the read to after it (settled " + held + ", before " + s.active + ", after " + after.active + ")");
+  const pressed = " (pressed: transform " + s.transform + ", border " + s.border + (s.hover ? ", the pointer over it" : ", the pointer off it") + (s.focusVisible ? ", a keyboard focus" : "") + ")";
+  if (p instanceof Error) fails.push(where + ": the web control held pressed: its line as painted is refused, " + p.message.split("\n")[0] + pressed);
+  else {
+    const opac = " (opacities on the way: " + (p.opacities.join(", ") || "none") + ")";
+    note("painted, " + where + ": the web control held pressed " + p.dash + " over " + p.ground + ", " + p.ratio.toFixed(3) + ":1" + pressed + opac);
+    if (p.ratio < 3) fails.push(where + ": the web control held pressed paints " + p.dash + " over " + p.ground + ", " + p.ratio.toFixed(3) + ":1, under the 3:1 floor for the outbound dress's line" + pressed + opac);
+  }
+  assert.ok(tab, where + ": the release on the pressed web control opens a tab (none opened in 10 s)");
+  await tab.waitForLoadState().catch(() => null);
+  assert.equal(tab.url(), at.src, where + ": the tab the release opens is the picture's address (the popup's URL)");
+  await tab.close();
+  assert.equal(await base(page), "report.md", where + ": the viewer stays on the report after the press");
+  await page.evaluate(() => { const f = document.activeElement as HTMLElement | null; if (f && f !== document.body) f.blur(); });   // a mouse press focuses the control: the reads after it start unfocused
+  await page.mouse.move(5, 5);
+  await page.evaluate((y: number) => { (document.querySelector(".fileview-body") as HTMLElement).scrollTop = y; }, top);
   await frames(page, 2);
 }
 /** The tiny report open in the chat modal at 900 by 600: the report's remote pictures relayed to the second server (`second`), the
@@ -907,8 +978,9 @@ test("in a browser: a remote picture under the floor (20 by 20, from the second 
       // the family's accent over the hover wash, each inside the anchor; a click opens the tab from each (the link-shapes case), so
       // each paints at 3:1 in both themes, every failing read collected and asserted once at the end (FAILS BEFORE, 61d69cba1: the
       // anchor's opacity 0.7 over the whole dress, 2.82:1 light for the reveal and the mark, 2.58:1 light by pixels for the accent
-      // border, 2.55:1 composed); and the control under a keyboard focus inside the dead link, whose Enter opens the tab too, read by
-      // pixels with the focus ring 2px off its border (FAILS BEFORE the sheets' focus rule: the ring covers the border row)
+      // border, 2.55:1 composed); the control held pressed there, whose release opens the tab (FAILS BEFORE the sheets' press rule);
+      // and the control under a keyboard focus inside the dead link, whose Enter opens the tab too, read by pixels with the focus ring
+      // 2px off its border (FAILS BEFORE the sheets' focus rule: the ring covers the border row)
       const fails: string[] = [];
       const imgAt = (alt: string) => page.evaluate((alt: string) => { const i = Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt) as HTMLElement; i.scrollIntoView({ block: "center" }); const r = i.getBoundingClientRect(); return { x: r.left + r.width * 0.3, y: r.top + r.height * 0.7 }; }, alt);
       const deadCtl = "deadcap";   // the captioned dead link's picture, whose control stands right after it inside the anchor
@@ -933,24 +1005,10 @@ test("in a browser: a remote picture under the floor (20 by 20, from the second 
         await frames(page, 2);
         assert.equal(await page.evaluate((alt: string) => getComputedStyle((Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt)!.nextElementSibling as HTMLElement)).borderTopColor, deadCtl), await tokenColour(page, "--accent"), theme + " theme: the pointer on the control inside the dead link: its border is the family's accent (the state read next)");
         push(theme, "the accent border with the pointer on the control inside a dead link, against the hover wash", await paintedRatio(page, "deadcap", "control", "hover"));
-        if (theme === "dark") {
-          // the press, a residual the sheets' comment states and this its witness: while the button is held the family's press cue
-          // scales it to 0.96, which resamples the 1px line over two pixel rows (under 3:1 at its best pixel over a clear picture), and
-          // the release opens the tab from inside the dead link; the state before the press, the accent border read above, is the
-          // one that shows where the open goes. A change that takes the cue off the control reds here, and the disclosure moves with it
-          const opened = page.context().waitForEvent("page", { timeout: 10000 }).catch(() => null);
-          await page.mouse.down();
-          const cue = "matrix(0.96, 0, 0, 0.96, 0, 0)";
-          const held = await page.waitForFunction(([alt, want]: [string, string]) => { const t = getComputedStyle((Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt)!.nextElementSibling as HTMLElement)).transform; return t === want ? t : false; }, [deadCtl, cue], { timeout: 3000 }).then((h: any) => h.jsonValue()).catch(() => page.evaluate((alt: string) => getComputedStyle((Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt)!.nextElementSibling as HTMLElement)).transform, deadCtl));
-          await page.mouse.up();
-          const pressedTab = await opened;
-          assert.equal(held, cue, "the press on the control inside the dead link: the family's press cue scales it (" + held + "), the residual's premise");
-          assert.ok(pressedTab, "the release on the control inside the dead link opens a tab (none opened in 10 s)");
-          await pressedTab.waitForLoadState().catch(() => null);
-          assert.equal(pressedTab.url(), WEB + "/deadcap.svg", "the tab the press opens is the picture's address (the popup's URL)");
-          assert.equal(await base(page), "report.md", "the viewer stays on the report");
-          await pressedTab.close();
-        }
+        // the press: the control held pressed inside the dead link, read by pixels while held, then the release, which opens the tab
+        // (pressedLegible; FAILS BEFORE the sheets' press rule: the family's press cue scaled the control to 0.96 and its 1px line
+        // spread over two pixel rows)
+        await pressedLegible(page, deadCtl, theme + " theme, the pointer on the control inside a dead link", fails, (m) => t.diagnostic(m));
         // the mark on hover
         await page.mouse.move(5, 5);
         const m = await imgAt("deadbuild");
@@ -969,17 +1027,20 @@ test("in a browser: a remote picture under the floor (20 by 20, from the second 
         const focusRead = await paintedRatio(page, "deadcap", "control").catch((e: Error) => e);
         if (focusRead instanceof Error) fails.push(theme + " theme: the control under a keyboard focus inside a dead link: no dress on its line as painted (" + focusRead.message.split("\n")[0] + ")");
         else push(theme, "the control under a keyboard focus inside a dead link", focusRead);
+        // and pressed from that focus by the Space key, the pointer off it, so the pressed control shows the token's border and not
+        // the accent: read while Space is held, then released, which opens the tab (pressedLegible; FAILS BEFORE the sheets' press rule)
+        await pressedLegible(page, deadCtl, theme + " theme, the Space key on the control under a keyboard focus inside a dead link", fails, (m) => t.diagnostic(m), "Space");
         await page.evaluate(() => (document.activeElement as HTMLElement).blur());
       }
       await page.mouse.move(5, 5);
       await page.evaluate(() => document.body.classList.remove("theme-light"));
-      assert.deepEqual(fails, [], "every state a click or a key opens the tab from inside a dead link, on a fine pointer, paints the dress at 3:1:\n" + fails.join("\n"));
+      assert.deepEqual(fails, [], "every state a click or a key opens the tab from inside a dead link, the press held included, on a fine pointer, paints the dress at 3:1:\n" + fails.join("\n"));
       assert.deepEqual(errors, [], "no page errors");
       await page.close();
     });
   } finally { await second.close(); }
 });
-test("in a browser, under CDP touch emulation (hover none, a coarse pointer) enabled after the load and before any read, the pointer never over the picture: the remote picture under the floor wears the outbound mark AT REST, so the tap's open is visible before it happens, the mark's colour the control's border colour in the dark theme and in the light one, and the loaded picture beside it keeps its control visible at rest with no mark of its own; the tap opens the tab at the address (the popup and the second server's log, never a window.open stub) and the viewer stays (the file review's round 12, fresh-1: the at-rest read in a case of its own, so the leg's red over the undressed picture reaches it, where the case above, the hover read first, stops at the hover)", { timeout: 240000 }, async (t) => {
+test("in a browser, under CDP touch emulation (hover none, a coarse pointer) enabled after the load and before any read, the pointer over no picture until the case's closing press: the remote picture under the floor wears the outbound mark AT REST, so the tap's open is visible before it happens, the mark's colour the control's border colour in the dark theme and in the light one, and the loaded picture beside it keeps its control visible at rest with no mark of its own; the tap opens the tab at the address (the popup and the second server's log, never a window.open stub) and the viewer stays (the file review's round 12, fresh-1: the at-rest read in a case of its own, so the leg's red over the undressed picture reaches it, where the case above, the hover read first, stops at the hover); last, a mouse press held on the web control inside the captioned dead link paints its line at 3:1 in both themes and its release opens the tab (the painted-contrast ask of 2026-09-23)", { timeout: 240000 }, async (t) => {
   const served: string[] = [];
   const second = await secondServer(served, { "/tiny.svg": [20, 20], "/deadtiny.svg": [20, 20] });
   try {
@@ -1062,7 +1123,17 @@ test("in a browser, under CDP touch emulation (hover none, a coarse pointer) ena
       assert.ok(served.filter((s) => s.endsWith("/tiny.svg")).length > before2, "the second server answered the tab's own request: " + JSON.stringify(served));
       assert.equal(await base(page), "report.md", "the viewer stays on the report");
       await popup.close();
-      assert.deepEqual(fails, [], "every state a tap opens the tab from paints the dress at 3:1, and the VS Code bound is exact:\n" + fails.join("\n"));
+      // the press, last, so no pointer hovered any picture before the reads above: the web control inside the captioned dead link held
+      // pressed by a mouse press, read by pixels while held, then released, which opens the tab (pressedLegible), in the dark theme and
+      // then the light one (FAILS BEFORE the sheets' press rule: the family's press cue scaled the control to 0.96 and its 1px line
+      // spread over two pixel rows); the theme back to dark after, each flip awaited on the big control's transitionend (bounded)
+      await pressedLegible(page, "deadcap", "dark theme, a mouse press under touch emulation", fails, (m) => t.diagnostic(m));
+      await page.evaluate(() => new Promise<void>((done) => { const c = document.querySelectorAll(".fileview-md img")[2].nextElementSibling as HTMLElement; c.addEventListener("transitionend", () => done(), { once: true }); setTimeout(done, 1500); document.body.classList.add("theme-light"); }));
+      await frames(page, 2);
+      await pressedLegible(page, "deadcap", "light theme, a mouse press under touch emulation", fails, (m) => t.diagnostic(m));
+      await page.evaluate(() => new Promise<void>((done) => { const c = document.querySelectorAll(".fileview-md img")[2].nextElementSibling as HTMLElement; c.addEventListener("transitionend", () => done(), { once: true }); setTimeout(done, 1500); document.body.classList.remove("theme-light"); }));
+      await frames(page, 2);
+      assert.deepEqual(fails, [], "every state a tap or a press opens the tab from paints the dress at 3:1, and the VS Code bound is exact:\n" + fails.join("\n"));
       // the web control at rest at full opacity (a local one keeps 0.8), read after the painted reads so their red comes first
       assert.equal(touch.imgs[2].controlOpacity, "1", "the web control visible at rest at full opacity");
       // the dead link's words, a residual the sheets' comment states and this its witness: the rule dims the anchor's colour, so the
@@ -1093,7 +1164,7 @@ test("in a browser, under CDP touch emulation (hover none, a coarse pointer) ena
 // primary hover (2). The context is asserted before the dress, so a Chromium that stopped honouring the flag fails on the context.
 const LAPTOP = "--blink-settings=availablePointerTypes=6,primaryPointerType=4,availableHoverTypes=3,primaryHoverType=2";
 const pointing = (page: any): Promise<{ hoverNone: boolean; hoverHover: boolean; pointerFine: boolean; anyCoarse: boolean }> => page.evaluate(() => { const m = (q: string) => matchMedia(q).matches; return { hoverNone: m("(hover: none)"), hoverHover: m("(hover: hover)"), pointerFine: m("(pointer: fine)"), anyCoarse: m("(any-pointer: coarse)") }; });
-test("in Chromium launched as a trackpad-plus-touchscreen laptop (hover: hover, pointer: fine, any-pointer: coarse), the pointer never over the picture: the remote picture under the floor wears the outbound mark AT REST and the loaded picture's control stands visible at rest, one legible colour in both themes, where a rule keyed on (hover: none) alone dressed neither; a finger's tap opens the tab at the address and the viewer stays (the file review's round 13, extra7-2: the hybrid twin of the touch case above)", { timeout: 240000 }, async (t) => {
+test("in Chromium launched as a trackpad-plus-touchscreen laptop (hover: hover, pointer: fine, any-pointer: coarse), the pointer over no picture until the case's closing press: the remote picture under the floor wears the outbound mark AT REST and the loaded picture's control stands visible at rest, one legible colour in both themes, where a rule keyed on (hover: none) alone dressed neither; a finger's tap opens the tab at the address and the viewer stays (the file review's round 13, extra7-2: the hybrid twin of the touch case above); last, the trackpad's press held on the web control inside the captioned dead link paints its line at 3:1 in both themes and its release opens the tab (the painted-contrast ask of 2026-09-23)", { timeout: 240000 }, async (t) => {
   const served: string[] = [];
   const second = await secondServer(served, { "/tiny.svg": [20, 20], "/deadtiny.svg": [20, 20] });
   try {
@@ -1131,7 +1202,15 @@ test("in Chromium launched as a trackpad-plus-touchscreen laptop (hover: hover, 
       assert.ok(served.filter((s) => s.endsWith("/tiny.svg")).length > before2, "the second server answered the tab's own request: " + JSON.stringify(served));
       assert.equal(await base(page), "report.md", "the viewer stays on the report");
       await popup.close();
-      assert.deepEqual(fails, [], "every state a finger's tap opens the tab from paints the dress at 3:1:\n" + fails.join("\n"));
+      // the press, last, as in the touch case: the web control inside the captioned dead link held pressed by the trackpad's press, read
+      // by pixels while held, then released, which opens the tab (pressedLegible), in both themes (FAILS BEFORE the sheets' press rule)
+      await pressedLegible(page, "deadcap", "dark theme, the trackpad's press", fails, (m) => t.diagnostic(m));
+      await page.evaluate(() => new Promise<void>((done) => { const c = document.querySelectorAll(".fileview-md img")[2].nextElementSibling as HTMLElement; c.addEventListener("transitionend", () => done(), { once: true }); setTimeout(done, 1500); document.body.classList.add("theme-light"); }));
+      await frames(page, 2);
+      await pressedLegible(page, "deadcap", "light theme, the trackpad's press", fails, (m) => t.diagnostic(m));
+      await page.evaluate(() => new Promise<void>((done) => { const c = document.querySelectorAll(".fileview-md img")[2].nextElementSibling as HTMLElement; c.addEventListener("transitionend", () => done(), { once: true }); setTimeout(done, 1500); document.body.classList.remove("theme-light"); }));
+      await frames(page, 2);
+      assert.deepEqual(fails, [], "every state a finger's tap or a press opens the tab from paints the dress at 3:1:\n" + fails.join("\n"));
       assert.deepEqual([rest.imgs[2].controlOpacity, light.imgs[2].controlOpacity], ["1", "1"], "the web control visible at rest at full opacity in both themes (a local one keeps 0.8), read after the painted reads so their red comes first");
       assert.deepEqual(errors, [], "no page errors");
       await page.close();

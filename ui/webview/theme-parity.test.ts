@@ -256,17 +256,22 @@ test("the ring hues stay apart in BOTH themes, every pair: rings against rings f
 // 1 the picture beneath the control shows through its line and its ground alike. Each state from which a gesture opens the outbound
 // tab (a tap, a click, Enter on the control; an href-less dead link owns no click, file-view.ts FIGURE_LINK_SET, so the states inside
 // one open the tab too) is composed here from the opacities the sheet DECLARES for the rules that reach the dress, and its line must
-// clear 3:1 over the ground it paints on: the control's own background, composed the same way, for the worst picture beneath it (every
-// grey and the eight corners of the colour cube), or the page for the mark, whose 1px offset shows the page between its dashes. The
-// states: the web control at rest, alone and inside a dead link; the control revealed by the pointer over its picture or by a keyboard
-// focus inside a dead link (a focus as its opacities compose it: where the ring stands is the sheets' focus rule, 2px off the border,
-// which this model does not read, its spelling held by file-figure-open.test.ts's closed set and its paint read in the leg); the accent
-// border with the pointer on the control inside a dead link, against the hover wash; the mark, alone and inside a dead link. Every
-// failing state is collected and asserted once, so a red names them all. Red at 61d69cba1, where the web control rested at 0.8 and a
-// dead link's 0.7 dimmed the dress inside it. The read is a model with a stated bound: a rule reaches the dress here when its selector
-// list carries one of the spellings named below (split at top-level commas), under the at-rules named; a rule reaching the dress under
-// another spelling is outside this read, and the executed read is file-figure-open-browser.test.ts's paintedRatio, pixels off the real
-// paint under touch emulation, on a touchscreen laptop and on a fine pointer.
+// clear 3:1 over the ground it paints on: the control's own background, composed the same way, for the worst picture beneath it
+// (every grey and the eight corners of the colour cube), or the page for the mark, whose 1px offset shows the page between its
+// dashes. The states: the web control at rest, alone and inside a dead link; the control revealed by the pointer over its picture or
+// by a keyboard focus inside a dead link (a focus as its opacities compose it: where the ring stands is the sheets' focus rule, 2px
+// off the border, which this model does not read, its spelling held by file-figure-open.test.ts's closed set and its paint read in
+// the leg); the accent border with the pointer on the control inside a dead link, against the hover wash; the mark, alone and inside
+// a dead link. The control HELD PRESSED is not composed here and cannot be: what a press changes is a transform, the button family's
+// press cue (a scale to 0.96), and a scale is not an opacity (under it the 1px line was resampled over two pixel rows, a paint no
+// composition of colours computes). This model does not read the sheets' press rule, which takes that cue off the web control; its
+// spelling is held by file-figure-open.test.ts's closed set, and the pressed paint is read by pixels in the leg (pressedLegible), in
+// each of its three painted cases. Every failing state is collected and asserted once, so a red names them all. Red at 61d69cba1,
+// where the web control rested at 0.8 and a dead link's 0.7 dimmed the dress inside it. The read is a model with a stated bound: a
+// rule reaches the dress here when its selector list carries one of the spellings named below (split at top-level commas), under the
+// at-rules named; a rule reaching the dress under another spelling is outside this read, and the executed read is
+// file-figure-open-browser.test.ts's paintedRatio, pixels off the real paint under touch emulation, on a touchscreen laptop and on a
+// fine pointer.
 function selectorList(sel: string): string[] {
   const out: string[] = []; let depth = 0, from = 0;
   for (let i = 0; i < sel.length; i++) { const c = sel[i]; if (c === "(") depth++; else if (c === ")") depth--; else if (c === "," && depth === 0) { out.push(sel.slice(from, i).trim()); from = i + 1; } }
