@@ -19386,20 +19386,36 @@ def _remote_sids_mirror():
     round 3 of fork PR #897); this reader follows both. The seven booleans are required per row: a row
     without them is not the shape the bus writes since round 3 of fork PR #897 (a bus still running a
     previous shape under this judge answers cannot-determine, the conservative side, until it restarts; the
-    six-flag shape of round 2 among them, whose rows vouched for absence over a cached roster). Returns
+    six-flag shape of round 2 among them, whose rows vouched for absence over a cached roster). The document's
+    VERSION gates the read (round 3 of fork PR #897, the reviewer's ruling, the twentieth commit): `v` must equal
+    2, the version the writer stamps, or the file is unparsable whatever its rows carry, so a document of another
+    version, or of none, whose rows spell the seven booleans is never read as the bus's shape (until that commit
+    the number was decorative, and such a document answered rule 5 as a v 2 one does). The file is read as BYTES
+    and decoded as UTF-8 inside the parse's try, never with errors="replace": a UnicodeDecodeError is a
+    ValueError and lands in the unparsable arm below, said once and naming the file (until that commit the
+    decode sat outside the try, under the OSError catch alone, and raised out of _presumed_closed_verdict for
+    every sid; a replacing decode would read a document with one stray byte inside a sid as naming another sid,
+    and a host vouching for absence would let rule 5 presume the sid it named closed). A document nested past the
+    JSON parser's depth raises RecursionError, which is not a ValueError, and raised out of the ladder the same way
+    until that commit; it lands in the same arm (found by that commit's builder, the same class as the bytes). Returns
     (hosts, None) with the table as the bus wrote it; (None,
     "no-mirror") when there is no file (the bus has not written under this root); (None, "mirror-unparsable")
-    when the file is not a document of that shape, a whitespace list written by a bus from before 2026-09-22
-    among them, said once per distinct text in this process's log, so a shape drift between the two modules
-    is seen and never read as an empty roster."""
+    when the file is not a document of that shape, a whitespace list written by a bus from before 2026-09-22,
+    a document whose `v` is not 2 and a file whose bytes are not UTF-8 among them, said once per distinct text
+    in this process's log, so a shape drift between the two modules is seen and never read as an empty
+    roster."""
     path = STATE / "postal" / "remote-sids"
     try:
-        text = path.read_text()
+        raw = path.read_bytes()
     except OSError:
         return None, "no-mirror"
     try:
-        doc = json.loads(text)
-        hosts = doc["hosts"] if isinstance(doc, dict) else None
+        doc = json.loads(raw.decode("utf-8"))           # strict, inside this try: a UnicodeDecodeError is a ValueError
+        if not isinstance(doc, dict):
+            raise ValueError("not a JSON object")
+        if doc.get("v") != 2:                           # the version gate: the writer stamps 2
+            raise ValueError("the document's version is %r, not 2" % (doc.get("v"),))
+        hosts = doc["hosts"]
         if not isinstance(hosts, dict):
             raise ValueError("no hosts table")
         for key, row in hosts.items():
@@ -19408,7 +19424,7 @@ def _remote_sids_mirror():
                     and all(isinstance(row.get(k), bool) for k in ("heard", "expired", "linkDown", "linkUp",
                                                                        "answered", "reachable", "vouchesAbsence"))):
                 raise ValueError("host %r is not a roster row" % (key,))
-    except (ValueError, KeyError, TypeError) as e:
+    except (ValueError, KeyError, TypeError, RecursionError) as e:   # RecursionError: nesting past json's depth
         _say_once_judge("romp-judge: the postal bus's presence mirror %s is not the shape the bus writes (%s: %s); "
                         "rules 4 and 5 of the dead-session ladder answer cannot-determine until the bus rewrites it"
                         % (path, type(e).__name__, str(e)[:120]))
@@ -19502,7 +19518,8 @@ def _presumed_closed_verdict(sid, now):
          ruling); a far host gossiped through a hub vouches by the
          hub's link and by its own bit, which the hub stamps on the gossip.
     Cannot determine, False, in four arms: no mirror file (the bus has not written under this root); a
-    mirror not in the bus's shape (said once in this process's log; never read as an empty roster); the
+    mirror not in the bus's shape (a document whose `v` is not 2, a row without the seven booleans, bytes that
+    are not UTF-8: _remote_sids_mirror; said once in this process's log; never read as an empty roster); the
     sid named only by an UNREACHABLE host, whose last roster stands until the host is heard again; no host
     vouches for absence (a bus that has heard nobody since it started, a mirror carried from before, every
     heard host expired or held down, every heard host with NO LINK STATE, or every heard host whose last

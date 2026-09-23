@@ -101,8 +101,12 @@ releases nothing; a read without thread rows owns no thread's sid, and the recor
 the release reaching heartbeat rows alone, a carried legacy list, peer row and via row naming an owned sid beside another
 carried whole (the reviewer's verifier at the seventeenth commit: a carry with its kind test deleted passed every pin),
 and a heard peer row and via row doing so written whole (its verifier at the eighteenth: an in-memory drop of the via
-row passed every pin); and the release's order across a write that fails, at the temporary file or at the replace, the
-entry kept and the row re-emitted heard until a write succeeds.
+row passed every pin); the release's order across a write that fails, at the temporary file or at the replace, the
+entry kept and the row re-emitted heard until a write succeeds; and the previous-read's strictness (round 3 of fork PR
+#897, the reviewer's ruling, the twentieth commit): a file whose bytes are not UTF-8 carries nothing and the write
+replaces it (a replacing decode would carry the garbage's safe-id-shaped runs as legacy sids), so does a document nested
+past the JSON parser's depth (RecursionError, found by the commit's builder), and a carried row's values
+are coerced, never dropped: its flags bool(), its sids str(), a busId that is not a str ignored.
 tests/test_dead_session_staleness.py ReaderFollowsTheWriter
 runs this writer and the judge's reader together over one root; tests/test_postal_bus_lifetime.py
 MonitorTick pins the poll's write. SYNTHETIC fixtures only: private synthetic sids, hostname TESTHOST."""
@@ -1156,6 +1160,108 @@ class Mirror(unittest.TestCase):
                 pm.HEARTBEATS[A] = ("web", self.now)
                 pm._write_remote_sids()
                 self.assertEqual(self._rows(), {HB + A: (True, False, [A])}, "rewritten as a document from memory alone")
+
+    def test_a_file_whose_bytes_are_not_utf8_carries_nothing_and_the_write_replaces_it(self):
+        """Round 3 of fork PR #897, the reviewer's ruling on its refuters' corrections, the twentieth commit: bytes that are
+        not UTF-8 are no bus's word (both shapes a bus writes are ASCII), so the previous-read returns {} and the write
+        replaces the file from memory. Until the commit the decode's UnicodeDecodeError passed the read's OSError catch and
+        failed every write, the file never replaced. A replacing decode (errors="replace") hands the whitespace parser the
+        garbage's safe-id-shaped runs (IHDR and tEXt here) to carry as legacy sids; the strict decode refuses them."""
+        garbage = b"\x89PNG\r\n\x1a\n\xff\xd8 IHDR tEXt\n"
+        self.path.write_bytes(garbage)
+        pm.HEARTBEATS[A] = ("web", self.now)
+        pm._REMOTE_SIDS_SAID.clear()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            pm._write_remote_sids()
+        self.assertNotEqual(self.path.read_bytes(), garbage,
+                            "the write replaced the file (a read whose decode error passes its catch fails every write: %r)"
+                            % err.getvalue())
+        self.assertEqual(self._rows(), {HB + A: (True, False, [A])},
+                         "rewritten from memory alone: the garbage carries nothing (a replacing decode carries its "
+                         "safe-id-shaped runs as a legacy row)")
+        self.assertEqual(err.getvalue(), "", "no write failure said")
+
+    def test_a_file_nested_past_the_parsers_depth_carries_nothing_and_the_write_replaces_it(self):
+        """Round 3 of fork PR #897, the twentieth commit, found by its builder in the class of the bytes: a document nested past
+        the JSON parser's depth raises RecursionError, which is not a ValueError, so the previous-read's parse let it pass and
+        every write failed, the file never replaced. The parse catches it, and the write rewrites the file from memory."""
+        deep = "[" * 100000 + "\n"
+        self.path.write_text(deep)
+        pm.HEARTBEATS[A] = ("web", self.now)
+        pm._REMOTE_SIDS_SAID.clear()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            pm._write_remote_sids()
+        self.assertNotEqual(self.path.read_text(), deep,
+                            "the write replaced the file (a parse catching ValueError alone fails every write: %r)" % err.getvalue())
+        self.assertEqual(self._rows(), {HB + A: (True, False, [A])}, "rewritten from memory alone: the nesting carries nothing")
+
+    def test_a_carried_rows_non_bool_flags_are_coerced_never_dropped(self):
+        """Round 3 of fork PR #897, the reviewer's ruling on its refuters' corrections, the twentieth commit: a row carried
+        from the file whose flags are not booleans is COERCED (bool() of each), never dropped. Until the commit the carry
+        copied the values verbatim, and the reader, which requires seven booleans per row, answered cannot-determine for
+        every sid until that source was heard again; a drop of the row would leave the sid it named in no row, and a host
+        vouching for absence would let rule 5 presume it closed (tests/test_dead_session_staleness.py ReaderFollowsTheWriter
+        drives that composition through the reader)."""
+        self.path.write_text(json.dumps({"v": 2, "busStarted": 1, "writtenAt": 1, "hosts": {
+            HOST: {"kind": "peer", "sids": [B], "heard": "yes", "expired": "yes", "linkDown": 0, "linkUp": 1,
+                   "answered": 1, "reachable": "yes", "vouchesAbsence": "yes", "seenAt": 1}}}) + "\n")
+        pm._write_remote_sids()
+        self.assertEqual(self._reach().get(HOST), (False, True, False, False, [B]),
+                         "carried, its roster kept, `expired` bool('yes'), True: unreachable (a writer that drops a row with a "
+                         "non-bool flag leaves None here and B in no row; one that copies the value leaves 'yes')")
+        self.assertEqual({k: type(v).__name__ for k, v in self._doc()["hosts"][HOST].items() if k in pm._REMOTE_SIDS_FLAGS},
+                         {k: "bool" for k in pm._REMOTE_SIDS_FLAGS}, "every one of the seven flags a bool, as the reader requires")
+        self.assertEqual((self._answered()[HOST], self._vouch()[HOST]), (True, (False, False, False)),
+                         "`answered` bool(1), True, inert on a carried row: heard False gates both vouching flags")
+
+    def test_a_carried_rows_bus_id_that_is_not_a_str_is_ignored_never_compared(self):
+        """Round 3 of fork PR #897, the reviewer's ruling on its refuters' corrections, the twentieth commit: a busId in the
+        file that is not a str is IGNORED. Until the commit the carry tested it for membership in the set of the heard rows'
+        ids, so an unhashable one raised TypeError and failed every write, the file never replaced; and the identity drop
+        compared str() of it, so an int matching a heard id's text dropped the carried hub's word as a hub heard under
+        another name, leaving the far host's session in no row."""
+        with self.subTest(busId="a list"):
+            self.path.write_text(json.dumps({"v": 2, "busStarted": 1, "writtenAt": 1, "hosts": {
+                HOST: {"kind": "peer", "sids": [B], "heard": True, "expired": False, "answered": True, "seenAt": 1,
+                       "busId": ["bus-1"]}}}) + "\n")
+            pm.HEARTBEATS[A] = ("web", self.now)
+            pm._REMOTE_SIDS_SAID.clear()
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                pm._write_remote_sids()
+            self.assertEqual(self._rows(), {HB + A: (True, False, [A]), HOST: (False, False, [B])},
+                             "the write lands and carries the row (an unhashable busId compared by set membership fails every "
+                             "write: %r)" % err.getvalue())
+            self.assertNotIn("busId", self._doc()["hosts"][HOST], "the busId that is not a str is not written back")
+        pm.HEARTBEATS.clear()
+        with self.subTest(busId="an int matching a heard id's text"):
+            self.path.write_text(json.dumps({"v": 2, "busStarted": 1, "writtenAt": 1, "hosts": {
+                HUB: {"kind": "peer", "sids": [], "heard": True, "expired": False, "answered": True, "seenAt": 1, "busId": 7},
+                VIA_FAR: {"kind": "via", "sids": [C], "heard": True, "expired": False, "answered": True, "seenAt": 1,
+                          "via": HUB, "host": FAR, "viaBus": "far-bus"}}}) + "\n")
+            self._peer(HOST, [{"id": B, "name": "api"}], bus_id="7")   # a heard row whose id's text is the int's
+            pm._write_remote_sids()
+            self.assertEqual(self._rows(), {HOST: (True, False, [B]), HUB: (False, False, []), VIA_FAR: (False, False, [C])},
+                             "the hub's carried word about the far host stands: an int busId is no identity (a carry comparing "
+                             "str() of it reads the hub as heard under another name and drops the via row, C in no row)")
+
+    def test_a_carried_rows_sids_are_coerced_to_str_never_dropped(self):
+        """Round 3 of fork PR #897, the twentieth commit, the class of the busId guard: a carried row's sids are str() of
+        their values, as the document's final pass writes every sid. Until the commit the legacy list's filter tested each
+        carried sid for membership in a set, so an unhashable one raised TypeError and failed every write."""
+        self.path.write_text(json.dumps({"v": 2, "busStarted": 1, "writtenAt": 1, "hosts": {
+            LEGACY: {"kind": "legacy", "sids": [["x"], B], "heard": False, "expired": False, "answered": False,
+                     "seenAt": 0}}}) + "\n")
+        pm.HEARTBEATS[A] = ("web", self.now)
+        pm._REMOTE_SIDS_SAID.clear()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            pm._write_remote_sids()
+        self.assertEqual(self._rows(), {HB + A: (True, False, [A]), LEGACY: (False, False, sorted([str(["x"]), B]))},
+                         "the write lands and the list is carried with B, the other value as its text (a filter testing an "
+                         "unhashable sid for set membership fails every write: %r)" % err.getvalue())
 
     def test_the_kernels_down_notify_makes_a_heard_host_unreachable_at_once_and_its_next_exchange_with_the_link_up_reachable(self):
         """Round 2 of fork PR #897, the reviewer's ruling: a host that is down cannot vouch for absence, and neither

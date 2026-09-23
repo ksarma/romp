@@ -52,6 +52,10 @@ Since the fifteenth commit a heard row over a cache is the third state, beside c
 row speaks for nothing about a session started on its host since, so a hub's word about that host stands as a via row
 beside the cached row (the reviewer's verifier at the eleventh commit, by execution: the gate folded the hub's answered
 word into the cached row, and rule 5 presumed a session the hub named closed while the hub vouched).
+Since the twentieth commit the reader gates on the document's version (`v` 2, the version the writer stamps; any other
+version, or none, is unparsable whatever its rows carry) and decodes the file's bytes as UTF-8 inside its parse try, so
+bytes that are not UTF-8 answer unparsable, said once, rather than raising out of the ladder; the writer's previous-read
+is as strict, and a carried row's values are coerced, never dropped (the reviewer's ruling on its refuters' corrections).
 The fixtures here write the bus's document shape (_bus_wrote) and every test that writes one
 asserts the ladder's verdict, the rule that answered and its reason, so a fixture at a path nothing
 reads turns its test red. SYNTHETIC fixtures only; private synthetic sids; hostname TESTHOST."""
@@ -349,6 +353,12 @@ class PresumedClosed(World):
         self.assertEqual(self._verdict(DEAD), LOST(HOST + " (not heard)"),
                          "a host the bus cannot reach protects the roster it last reported; the reason names it")
         self.assertEqual(self._verdict(REMOTE), RULE_5, "...and the reachable host settles a sid neither names")
+        # named by a REACHABLE row and by a CARRIED row (round 3 of fork PR #897, the reviewer's ruling, the twentieth
+        # commit): rule 4, the reader asking whether ANY row naming the sid is reachable
+        _bus_wrote({HOST: _row([DEAD], link_up=True), HOST2: _row([DEAD], heard=False)})
+        self.assertEqual(self._verdict(DEAD), RULE_4, "a reachable host names it: rule 4, whatever a carried row's last word "
+                         "says (a reader asking whether EVERY row naming it is reachable answers named-by-unreachable-host "
+                         "here)")
         # the host that names it is heard but its beat expired (the legacy TTL): unreachable the same way
         _bus_wrote({"heartbeat:" + DEAD: _row([DEAD], heard=True, expired=True, kind="heartbeat"), HOST2: _row([], link_up=True)})
         self.assertEqual(self._verdict(DEAD), LOST("heartbeat:" + DEAD + " (expired)"), "an expired beat is unreachable, not absent")
@@ -448,22 +458,53 @@ class PresumedClosed(World):
         self.assertEqual(self._verdict(DEAD), UNPARSABLE)
         _mirror().write_text(DEAD + "\n")
         self.assertEqual(self._verdict(DEAD), UNPARSABLE, "a legacy list naming the sid is not read as rule 4 either")
-        _mirror().write_text(json.dumps({"hosts": {HOST: {"sids": [DEAD]}}}))
+        # the row-shape documents below carry v 2, so each is unparsable by its rows and not by the version gate
+        _mirror().write_text(json.dumps({"v": 2, "hosts": {HOST: {"sids": [DEAD]}}}))
         self.assertEqual(self._verdict(DEAD), UNPARSABLE, "a row without heard and expired is not a roster row")
-        _mirror().write_text(json.dumps({"hosts": {HOST: {"sids": [], "heard": True, "expired": False}}}))
+        _mirror().write_text(json.dumps({"v": 2, "hosts": {HOST: {"sids": [], "heard": True, "expired": False}}}))
         self.assertEqual(self._verdict(DEAD), UNPARSABLE, "a row without the link flags is not the shape the bus "
                          "writes since round 2's third commit: never read as reachable by heard alone")
-        _mirror().write_text(json.dumps({"hosts": {HOST: {"sids": [], "heard": True, "expired": False, "linkDown": False,
-                                                          "reachable": True}}}))
+        _mirror().write_text(json.dumps({"v": 2, "hosts": {HOST: {"sids": [], "heard": True, "expired": False,
+                                                                  "linkDown": False, "reachable": True}}}))
         self.assertEqual(self._verdict(DEAD), UNPARSABLE, "a row without linkUp and vouchesAbsence is not the shape the "
                          "bus writes since round 2's fifth commit: never read as vouching for absence by reachable alone")
-        _mirror().write_text(json.dumps({"hosts": {HOST: {"sids": [], "heard": True, "expired": False, "linkDown": False,
-                                                          "linkUp": True, "reachable": True, "vouchesAbsence": True}}}))
+        _mirror().write_text(json.dumps({"v": 2, "hosts": {HOST: {"sids": [], "heard": True, "expired": False,
+                                                                  "linkDown": False, "linkUp": True, "reachable": True,
+                                                                  "vouchesAbsence": True}}}))
         self.assertEqual(self._verdict(DEAD), UNPARSABLE, "a row without `answered` (round 2's six-flag shape) is not the "
                          "shape the bus writes since round 3's eleventh commit: never read as vouching for absence over a "
                          "roster that may be a cache (a reader accepting six flags answers rule 5 here)")
-        _mirror().write_text(json.dumps({"hosts": [DEAD]}))
+        _mirror().write_text(json.dumps({"v": 2, "hosts": [DEAD]}))
         self.assertEqual(self._verdict(DEAD), UNPARSABLE)
+        # bytes that are not UTF-8 (round 3 of fork PR #897, the reviewer's ruling, the twentieth commit): unparsable, the
+        # decode inside the parse's try, never a raise out of the ladder
+        _mirror().write_bytes(b"\xff\xfe\n")
+        self.assertEqual(self._verdict_caught(DEAD), UNPARSABLE, "two bytes that are not UTF-8: the unparsable arm (a reader "
+                         "decoding outside its parse try raises UnicodeDecodeError out of the ladder here)")
+        # ...and a document the bus's shape spells with ONE stray byte inside the sid a vouching host names: unparsable, never
+        # repaired into another sid
+        _bus_wrote({HOST: _row([DEAD], link_up=True)})
+        _mirror().write_bytes(_mirror().read_bytes().replace(DEAD.encode(), DEAD[:-1].encode() + b"\xff"))
+        self.assertEqual(self._verdict_caught(DEAD), UNPARSABLE, "one stray byte inside the sid HOST names: the unparsable arm "
+                         "(a decode with errors='replace' reads HOST as naming another sid, and HOST, vouching for absence, "
+                         "answers rule 5 for the sid it named)")
+        # ...and a document nested past the JSON parser's depth (found by the twentieth commit's builder, the class of the
+        # bytes): RecursionError is not a ValueError, and it lands in the same arm
+        _mirror().write_text("[" * 100000 + "\n")
+        self.assertEqual(self._verdict_caught(DEAD), UNPARSABLE, "nesting past the parser's depth: the unparsable arm (a reader "
+                         "catching ValueError alone raises RecursionError out of the ladder here)")
+        # the document's VERSION (the reviewer's ruling, the twentieth commit): v 2 alone, whatever the rows carry; the row
+        # would vouch for absence, so a reader without the gate answers rule 5 for a sid it does not name
+        for label, v in (("v1", 1), ("no v", None), ("v3", 3), ("the string 2", "2")):
+            doc = {"busStarted": NOW - 100, "writtenAt": NOW, "hosts": {HOST: _row([], link_up=True)}}
+            if v is not None:
+                doc["v"] = v
+            _mirror().write_text(json.dumps(doc) + "\n")
+            with self.subTest(version=label):
+                self.assertEqual(self._verdict(DEAD), UNPARSABLE, "a document at %s whose row spells the seven booleans and "
+                                 "vouches: unparsable (a reader that never reads `v` answers rule 5 here)" % label)
+        _bus_wrote({HOST: _row([], link_up=True)})
+        self.assertEqual(self._verdict(DEAD), RULE_5, "the same row at v 2: rule 5, so the verdicts above are the version's")
         # no mirror file at all: cannot determine, conservative
         _mirror().unlink()
         self.assertEqual(self._verdict(DEAD), NO_MIRROR)
@@ -484,12 +525,35 @@ class PresumedClosed(World):
         self.assertIn(str(_mirror()), lines[0], "the line names the file")
         self.assertIn("not the shape the bus writes", lines[0])
         self.assertIn("cannot-determine", lines[0])
-        _mirror().write_text(json.dumps({"hosts": {HOST: {"sids": [DEAD]}}}))
+        _mirror().write_text(json.dumps({"v": 2, "hosts": {HOST: {"sids": [DEAD]}}}))
         err2 = io.StringIO()
         with contextlib.redirect_stderr(err2):
             self.assertEqual(self._verdict(DEAD), UNPARSABLE)
         self.assertEqual(len([ln for ln in err2.getvalue().splitlines() if ln.startswith("romp-judge:")]), 1,
                          "a different failure is a different text: said once too")
+        # bytes that are not UTF-8 and a document of another version (round 3 of fork PR #897, the reviewer's ruling, the
+        # twentieth commit): each lands in the same arm, said once, naming the file and what failed
+        for label, write, said in (("bytes", lambda: _mirror().write_bytes(b"\xff\xfe\n"), "UnicodeDecodeError"),
+                                   ("version", lambda: _mirror().write_text(json.dumps({"v": 1, "hosts": {}})),
+                                    "version is 1, not 2")):
+            with self.subTest(failure=label):
+                write()
+                err3 = io.StringIO()
+                with contextlib.redirect_stderr(err3):
+                    got = (self._verdict_caught(DEAD), self._verdict_caught(REMOTE))
+                self.assertEqual(got, (UNPARSABLE, UNPARSABLE))
+                lines = [ln for ln in err3.getvalue().splitlines() if ln.startswith("romp-judge:")]
+                self.assertEqual(len(lines), 1, "said once per distinct text: %r" % lines)
+                self.assertIn(str(_mirror()), lines[0], "the line names the file")
+                self.assertIn(said, lines[0], "the line says what failed")
+
+    def _verdict_caught(self, sid):
+        """The verdict, or ("raised", <type>, <text>) when the ladder raises: a reader that raises out of the ladder fails
+        the assertion asking for its verdict, by that assertion's message, rather than erroring the test before it."""
+        try:
+            return self._verdict(sid)
+        except Exception as e:
+            return ("raised", type(e).__name__, str(e)[:120])
 
 
 class OriginMidJoin(World):
@@ -738,6 +802,25 @@ class ReaderFollowsTheWriter(unittest.TestCase):
                     spoke, the local session beside a session live there, the listing still owning the local session: the
                     via row is written whole, so the spoke's session is rule 4's by it while B vouches (a writer dropping
                     the via row leaves it in no row, and the reader presumes it closed on B's word);
+      the mirror's bytes and version  round 3 of fork PR #897, the reviewer's ruling, the twentieth commit. Bytes that are
+                    not UTF-8 at the bus's path: the reader answers cannot-determine for every sid, said once naming the file
+                    (until the commit its decode sat outside the parse's try and raised out of the ladder); a fourteenth
+                    restart's first writes replace them from memory, carrying nothing (until the commit the writer's
+                    previous-read raised there too, so every write failed and the file was never replaced), and B vouches
+                    again: rule 5 and rule 4. One stray byte inside the sid B names in the writer's own document: unparsable,
+                    never repaired into another sid (a replacing decode reads B as naming another sid, and B's vouch answers
+                    rule 5 for the sid B named). A document nested past the JSON parser's depth: unparsable, and B's next
+                    exchange replaces it (RecursionError is not a ValueError: until the commit the reader raised it out of
+                    the ladder and the writer's previous-read failed every write; found by the commit's builder, the class
+                    of the bytes). A hand-written document whose rows carry a non-bool flag, an unhashable busId
+                    and an unhashable sid beside a live session's: the reader refuses it, and B's next exchange writes the
+                    three rows carried and coerced, so each sid they name is cannot-determine by its row while B vouches
+                    (until the commit the unhashable values failed every write and the non-bool flag left every later
+                    mirror unparsable; a writer DROPPING the row with the non-bool flag answers rule 5 for the sid it named).
+                    A document at v 1 and one with no v, whose row names a sid and vouches: the reader refuses both (until the
+                    commit `v` was decorative, and they answered rule 4 and rule 5); B's next exchange writes over the one
+                    with no v, carrying its roster (the carry reads any version, a carried row vouching for nothing) and
+                    stamping v 2;
       legacy shape  the whitespace list a bus before 2026-09-22 wrote, at the bus's path: the reader
                     answers cannot-determine for the sid it does not name AND for the one it does, and
                     says once in the judge's log that the file is not the shape the bus writes; it is
@@ -1172,6 +1255,66 @@ req = {"host": host_b, "epoch": 1, "proto": pm14.PEER_PROTO, "busId": "bus-b2", 
 resp, out["reachMemoryDialStatus"] = pm14.peer_exchange_handle(req)
 out["reachMemoryOwned"] = sorted(pm14._local_listing_owned())
 out["releaseReachMemory"] = link_phase({"viaNamed": verdict(via_named), "owned": verdict(blink_beat)})
+# THE MIRROR'S BYTES AND VERSION (round 3 of fork PR #897, the reviewer's ruling, the twentieth commit): bytes that are not
+# UTF-8 at the bus's path, read by the reader and then replaced by a restarted writer; one stray byte inside a sid the vouching
+# host names; a hand-written document whose rows carry values of the wrong types, carried by the writer; documents of another
+# version, read by the reader and carried by the writer
+def caught(sid):                                   # the verdict, or what the ladder raised: a raise fails a pin by its message
+    try:
+        return verdict(sid)
+    except Exception as e:
+        return ["raised", type(e).__name__, str(e)[:80]]
+def mirror_rows():                                 # link_phase's rows, read from the BYTES: a file that is not UTF-8 is reported
+    if not bus_file.exists():                      # by its first bytes rather than crashing the child
+        return None
+    data = bus_file.read_bytes()
+    try:
+        doc = json.loads(data.decode("utf-8"))
+        return {k: [r["heard"], r["expired"], r["linkDown"], r.get("linkUp"), r["reachable"], r.get("vouchesAbsence"), r["sids"]]
+                for k, r in doc["hosts"].items()}
+    except (ValueError, KeyError, TypeError, AttributeError, RecursionError):
+        return repr(data[:60])
+def mirror_phase(**sids):                          # the verdicts for the named sids, the rows, and the judge's log lines they said
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        got = {name: caught(sid) for name, sid in sids.items()}
+    got["hosts"] = mirror_rows()
+    got["log"] = [ln for ln in err.getvalue().splitlines() if ln.startswith("romp-judge:")]
+    return got
+garbage = b"\x89PNG\r\n\x1a\n\xff\xd8 IHDR tEXt\n"   # bytes no bus wrote, with two safe-id-shaped runs a replacing decode would carry
+bus_file.write_bytes(garbage)
+out["bytesRead"] = mirror_phase(nobody=dead, other=other)   # the reader first: no write in this state yet
+pm15, out["restartMemory14"] = restarted("romp_postal_oneroot_restarted_fourteenth", pm14)
+pm15.KERNEL_BASE = "http://127.0.0.1:9"           # no listing fetch reaches anything
+notify(pm15, host_b, True)                         # B's link up (the notify writes too), then B heard: the write replaces the garbage
+exchange(pm15, host_b, [other], bus_id="bus-b2")
+out["bytesWritten"] = mirror_phase(nobody=dead, other=other)
+data = bus_file.read_bytes()                       # the writer's own document, one byte inside the sid B names made a stray byte
+bus_file.write_bytes(data.replace(other.encode(), other[:-1].encode() + b"\xff"))
+out["strayByte"] = mirror_phase(nobody=dead, other=other)
+bus_file.write_text("[" * 100000 + "\n")           # nested past the JSON parser's depth: RecursionError, which is not a ValueError
+out["deepRead"] = mirror_phase(nobody=dead, other=other)
+exchange(pm15, host_b, [other], bus_id="bus-b2")   # B's next exchange: the write replaces it, carrying nothing
+out["deepWritten"] = mirror_phase(nobody=dead, other=other)
+bus_file.write_text(json.dumps({"v": 2, "busStarted": 1, "writtenAt": 1, "hosts": {
+    host_a: {"kind": "peer", "sids": [carried], "heard": True, "expired": "yes", "linkDown": False, "linkUp": True,
+             "answered": 1, "reachable": True, "vouchesAbsence": True, "seenAt": 1},     # non-bool flags
+    alias: {"kind": "peer", "sids": [far_sid], "heard": True, "expired": False, "linkDown": False, "linkUp": True,
+            "answered": True, "reachable": True, "vouchesAbsence": True, "seenAt": 1, "busId": ["bus-far"]},   # an unhashable busId
+    "legacy:list": {"kind": "legacy", "sids": [["x"], later], "heard": False, "expired": False, "answered": False,
+                    "seenAt": 0}}}) + "\n")        # an unhashable sid beside a live session's
+out["foreignRowsRead"] = mirror_phase(carried=carried, farSid=far_sid, later=later, nobody=dead)
+exchange(pm15, host_b, [other], bus_id="bus-b2")   # B's next exchange: the write carries the three rows
+out["foreignRowsWritten"] = mirror_phase(carried=carried, farSid=far_sid, later=later, nobody=dead, other=other)
+vouching = {"kind": "peer", "sids": [carried], "heard": True, "expired": False, "linkDown": False, "linkUp": True,
+            "answered": True, "reachable": True, "vouchesAbsence": True, "seenAt": 1}   # a row that names `carried` and vouches
+bus_file.write_text(json.dumps({"v": 1, "busStarted": 1, "writtenAt": 1, "hosts": {host_a: vouching}}) + "\n")
+out["v1Read"] = mirror_phase(carried=carried, nobody=dead)
+bus_file.write_text(json.dumps({"busStarted": 1, "writtenAt": 1, "hosts": {host_a: vouching}}) + "\n")
+out["noVRead"] = mirror_phase(carried=carried, nobody=dead)
+exchange(pm15, host_b, [other], bus_id="bus-b2")   # the writer over the document with no version: its roster carried, v 2 stamped
+out["versionWritten"] = mirror_phase(carried=carried, nobody=dead)
+out["versionWritten"]["v"] = json.loads(bus_file.read_text()).get("v")
 bus_file.write_text(remote + "\n")                 # the shape a bus before 2026-09-22 wrote
 err = io.StringIO()
 with contextlib.redirect_stderr(err):
@@ -2077,6 +2220,110 @@ print(json.dumps(out))
                                                   LEGACY: L(False, False, False, False, False, False, [LEGACY_NAMED])},
                                  "B heard, its link up, vouching; its word about the spoke a heard via row with both sids; the carried "
                                  "list keeps the sid no heard row names")
+
+    def test_bytes_that_are_not_utf8_at_the_bus_path_are_unparsable_and_the_next_write_replaces_them(self):
+        """Round 3 of fork PR #897, the reviewer's ruling, the twentieth commit (the bytes half of the mirror's bytes and
+        version phase of the class docstring): the reader answers cannot-determine for a file that is not UTF-8, said once
+        naming the file, and the restarted writer's next write replaces it from memory, carrying nothing; one stray byte
+        inside the sid a vouching host names is unparsable, never read as naming another sid. On both root shapes."""
+        L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                read = got["bytesRead"]
+                self.assertEqual((self._v(read, "nobody"), self._v(read, "other")), (UNPARSABLE, UNPARSABLE),
+                                 "bytes that are not UTF-8 at the bus's path: the unparsable arm for every sid (a reader decoding "
+                                 "outside its parse try raises UnicodeDecodeError out of the ladder, recorded as 'raised')")
+                self.assertEqual(len(read["log"]), 1, "said once in the judge's log: %r" % read["log"])
+                self.assertIn(got["busFile"], read["log"][0], "the line names the file")
+                self.assertIn("UnicodeDecodeError", read["log"][0], "the line says what failed")
+                self.assertEqual(got["restartMemory14"], {"heartbeats": 0, "peers": 0, "links": 0, "freshObject": True},
+                                 "the fourteenth restart is a fresh module object, its memory and its link table empty")
+                wrote = got["bytesWritten"]
+                self.assertEqual((self._v(wrote, "nobody"), self._v(wrote, "other")), (RULE_5, RULE_4),
+                                 "the restarted writer replaced the garbage: B vouches for absence and names its sid (a previous-read "
+                                 "whose decode error passes its catch fails every write, and the reader still meets the garbage)")
+                self.assertEqual(wrote["hosts"], {HOST2: L(True, False, False, True, True, True, [OTHER])},
+                                 "the garbage carried nothing: B's row alone (a replacing decode carries IHDR and tEXt as a "
+                                 "legacy row)")
+                stray = got["strayByte"]
+                self.assertEqual((self._v(stray, "other"), self._v(stray, "nobody")), (UNPARSABLE, UNPARSABLE),
+                                 "one stray byte inside the sid B names: the unparsable arm (a decode with errors='replace' reads "
+                                 "B as naming another sid, and B, vouching, answers (True, 5, no-reachable-host-names-it) for the "
+                                 "sid it named)")
+
+    def test_a_document_nested_past_the_parsers_depth_is_unparsable_and_the_next_write_replaces_it(self):
+        """Round 3 of fork PR #897, the twentieth commit, found by its builder in the class of the bytes: a document nested past
+        the JSON parser's depth raises RecursionError, which is not a ValueError, so the reader raised it out of the ladder and
+        the writer's previous-read failed every write. Both parses catch it: the reader answers unparsable, said once, and the
+        writer's next write replaces the file, carrying nothing. On both root shapes."""
+        L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                read = got["deepRead"]
+                self.assertEqual((self._v(read, "nobody"), self._v(read, "other")), (UNPARSABLE, UNPARSABLE),
+                                 "nesting past the parser's depth: the unparsable arm for every sid (a reader catching ValueError "
+                                 "alone raises RecursionError out of the ladder, recorded as 'raised')")
+                self.assertEqual(len(read["log"]), 1, "said once: %r" % read["log"])
+                self.assertIn("RecursionError", read["log"][0], "the line says what failed")
+                wrote = got["deepWritten"]
+                self.assertEqual((self._v(wrote, "nobody"), self._v(wrote, "other")), (RULE_5, RULE_4),
+                                 "the writer replaced the file (a previous-read catching ValueError alone fails every write)")
+                self.assertEqual(wrote["hosts"], {HOST2: L(True, False, False, True, True, True, [OTHER])},
+                                 "the nested document carried nothing: B's row alone")
+
+    def test_a_carried_rows_values_of_the_wrong_types_are_coerced_never_dropped(self):
+        """Round 3 of fork PR #897, the reviewer's ruling on its refuters' corrections, the twentieth commit (the foreign rows
+        of the mirror's bytes and version phase): a hand-written document whose rows carry a non-bool flag, an unhashable busId
+        and an unhashable sid is refused by the reader, and the writer's next write carries the three rows with their values
+        coerced (bool() of each flag, str() of each sid, the busId ignored), so each sid they name is cannot-determine by its
+        row while B vouches, never rule 5. The verdicts first, then the rows, on both root shapes."""
+        L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                self.assertEqual(self._v(got["foreignRowsRead"], "nobody"), UNPARSABLE,
+                                 "the hand-written document is not the bus's shape (a row whose flags are not booleans): refused")
+                wrote = got["foreignRowsWritten"]
+                self.assertEqual(self._v(wrote, "carried"), LOST(HOST + " (not heard, expired)"),
+                                 "the row with the non-bool flags is carried, coerced ('yes' reads expired), and holds its sid (a "
+                                 "writer that drops it answers (True, 5, no-reachable-host-names-it) here: a live session presumed "
+                                 "closed on B's word; one that copies the values leaves the mirror unparsable)")
+                self.assertEqual(self._v(wrote, "farSid"), LOST(ALIAS + " (not heard)"),
+                                 "the row with the unhashable busId is carried and holds its sid (a carry testing that busId for set "
+                                 "membership fails every write, and the reader meets the hand-written document: unparsable)")
+                self.assertEqual(self._v(wrote, "later"), LOST(LEGACY + " (not heard)"),
+                                 "the list with the unhashable sid is carried and holds the live session's sid (a filter testing "
+                                 "that sid for set membership fails every write)")
+                self.assertEqual((self._v(wrote, "nobody"), self._v(wrote, "other")), (RULE_5, RULE_4),
+                                 "B vouches for absence, so the verdicts above are the carried rows' protection")
+                self.assertEqual(wrote["hosts"], {HOST2: L(True, False, False, True, True, True, [OTHER]),
+                                                  HOST: L(False, True, False, False, False, False, [CARRIED]),
+                                                  ALIAS: L(False, False, False, False, False, False, [FARSID]),
+                                                  LEGACY: L(False, False, False, False, False, False, sorted([str(["x"]), LATER]))},
+                                 "B heard and vouching; the three rows carried heard=false, their values coerced")
+
+    def test_a_document_of_another_version_is_unparsable_and_the_writer_carries_its_roster(self):
+        """Round 3 of fork PR #897, the reviewer's ruling, the twentieth commit (the version half of the mirror's bytes and
+        version phase): a document at v 1, and one with no v, whose row names a sid and vouches for absence, is refused by the
+        reader, said once each; the writer's next write over the one with no v carries its roster, heard=false, and stamps
+        v 2, so that sid is cannot-determine by its row while B vouches. On both root shapes."""
+        L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                for key, v in (("v1Read", 1), ("noVRead", None)):
+                    read = got[key]
+                    self.assertEqual((self._v(read, "carried"), self._v(read, "nobody")), (UNPARSABLE, UNPARSABLE),
+                                     "a document at v %r whose row names the sid and vouches: the unparsable arm (a reader that "
+                                     "never reads `v` answers rule 4 and rule 5 here)" % (v,))
+                    self.assertEqual(len(read["log"]), 1, "said once: %r" % read["log"])
+                    self.assertIn("version is %r, not 2" % (v,), read["log"][0], "the line says the version")
+                wrote = got["versionWritten"]
+                self.assertEqual(wrote["v"], 2, "the writer stamps v 2")
+                self.assertEqual((self._v(wrote, "carried"), self._v(wrote, "nobody")), (LOST(HOST + " (not heard)"), RULE_5),
+                                 "the document's roster carried whatever its version: the sid it named is held by the carried "
+                                 "row while B vouches (a carry that dropped another version's rows answers rule 5 for it)")
+                self.assertEqual(wrote["hosts"], {HOST2: L(True, False, False, True, True, True, [OTHER]),
+                                                  HOST: L(False, False, False, False, False, False, [CARRIED])},
+                                 "B heard and vouching; the row from the document with no v carried heard=false")
 
     def test_a_mirror_of_the_legacy_shape_is_cannot_determine_and_said_once(self):
         for shape, got in self.got.items():

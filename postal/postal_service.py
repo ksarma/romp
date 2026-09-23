@@ -3880,6 +3880,8 @@ REMOTE_SIDS_HEARTBEAT = "heartbeat:"   # a legacy heartbeat's source key, heartb
 REMOTE_SIDS_VIA = "via:"               # a hub's word about a far host, via:<hub>/<far>: one source per hub and far host
 # All three keys carry a colon, which _SAFE_ID_RE refuses, so no peer host name can collide with them (and a host name
 # carries no slash, so the via key reads back as its two names).
+_REMOTE_SIDS_FLAGS = ("heard", "expired", "linkDown", "linkUp", "answered", "reachable", "vouchesAbsence")   # a row's
+#                                        seven booleans, the ones the reader requires (kernel/judge.py _remote_sids_mirror)
 
 
 def _remote_sids_previous(path):
@@ -3887,19 +3889,47 @@ def _remote_sids_previous(path):
     module wrote; the whitespace list of the shape until 2026-09-22 as one row under REMOTE_SIDS_LEGACY
     (those sids were live remote sessions when the last bus wrote them, and this bus cannot vouch for them
     until it hears them: never heard, and `answered` False, since no listing this process can speak for
-    answered for that list); {} for no file or a file of neither shape, which carries nothing."""
+    answered for that list); {} for no file, a file whose bytes are not UTF-8, or a file of neither shape, which
+    carries nothing.
+
+    The read is strict and raises nothing (round 3 of fork PR #897, the reviewer's ruling on its refuters'
+    corrections, the twentieth commit). The bytes are decoded as UTF-8 inside the try, never with errors="replace":
+    both shapes a bus writes are ASCII, so bytes that are not UTF-8 are no bus's word, and a replacing decode would
+    hand the whitespace parser below the safe-id-shaped runs of the garbage to carry as legacy sids. Until this
+    commit the decode's UnicodeDecodeError passed the OSError catch, so every later write failed at this read and the
+    file was never replaced; a document nested past the JSON parser's depth raises RecursionError, which is not a
+    ValueError either and failed every write the same way, so the parse catches both (found by this commit's
+    builder, the same class as the bytes). A document's rows are CARRIED WHATEVER ITS `v` (the version gate is the reader's,
+    kernel/judge.py _remote_sids_mirror, which reads a document at v 2 alone): a carried row vouches for nothing,
+    heard being the first condition of both flags, so carrying an older document's roster is the restricted side,
+    and dropping it would leave its sids in no row. A row's values are COERCED to the types the carry and the reader
+    need, never dropped: each of the seven flags present is bool() of its value (a non-bool flag was carried
+    verbatim, and the reader, which requires seven booleans per row, answered cannot-determine for every sid until
+    that source was heard again; a drop of the row would instead leave the sids it named in no row, and a host
+    vouching for absence would let rule 5 presume them closed); each sid is str() of its value, as the document's
+    final pass writes every sid (the legacy list's filter tests carried sids for membership in a set, and an
+    unhashable one failed every write); and a busId that is not a str is IGNORED, never compared (the carry tests it
+    for membership in the set of the heard rows' ids, where an unhashable one failed every write, and one of another
+    type could match a heard id through str()). On a carried row the coerced flags feed its reason alone ("expired"
+    among the causes): both of its vouching flags are recomputed from `heard`, False on every carried row."""
     try:
-        text = path.read_text()
-    except OSError:
+        text = path.read_bytes().decode("utf-8")   # strict, inside the try: a UnicodeDecodeError is a ValueError
+    except (OSError, ValueError):
         return {}
     try:
         doc = json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):          # RecursionError: nesting past the parser's depth, not a ValueError
         doc = None
     if isinstance(doc, dict) and isinstance(doc.get("hosts"), dict):
         out = {}
         for key, row in doc["hosts"].items():
             if isinstance(row, dict) and isinstance(row.get("sids"), list):
+                row = dict(row, sids=[str(s) for s in row["sids"]])
+                for flag in _REMOTE_SIDS_FLAGS:
+                    if flag in row:
+                        row[flag] = bool(row[flag])  # coerced, never dropped: a dropped row un-names its sids
+                if not isinstance(row.get("busId", ""), str):
+                    del row["busId"]                 # ignored, never compared (the carry's set membership test)
                 out[str(key)] = row
         return out
     if doc is None:
@@ -4075,7 +4105,11 @@ def _local_listing_owned():
 
 def _remote_sids_document(now, previous, owned=frozenset()):
     """The mirror's content, {"v": 2, "busStarted", "writtenAt", "hosts": {key: row}}: one row per PRESENCE
-    SOURCE, the roster it last reported and whether THIS bus process can vouch for it.
+    SOURCE, the roster it last reported and whether THIS bus process can vouch for it. `v` is the shape's version,
+    and the reader GATES on it (round 3 of fork PR #897, the reviewer's ruling, the twentieth commit): kernel/judge.py
+    _remote_sids_mirror reads a document at v 2 alone and answers cannot-determine for any other version, or none,
+    whatever its rows carry, so the number this writer stamps is part of the shape and not decorative; the carry
+    reads any version's rows (_remote_sids_previous: a carried row vouches for nothing).
       key      a peer host by name (its own sessions); a hub's word about a far host as via:<hub>/<far> (kind
                `via`, the hub in `via`, the far host in `host`, its bus id in `viaBus` when the hub stamped one;
                _remote_sids_via_key); a legacy heartbeat as heartbeat:<sid>; REMOTE_SIDS_LEGACY
@@ -4402,7 +4436,8 @@ def _write_remote_sids():
     <state root>/postal/remote-sids; the bus owns that home and the shape, and its reader
     (kernel/judge.py _presumed_closed_verdict, rules 4 and 5) reads it there,
     as its own STATE / "postal" / "remote-sids", answering cannot-determine, once and loudly in its log,
-    for a file of any other shape (a whitespace list from a bus before 2026-09-22 among them). Until
+    for a file of any other shape (a whitespace list from a bus before 2026-09-22, a document whose `v` is not
+    2 and a file whose bytes are not UTF-8 among them; the twentieth commit of round 3 of fork PR #897). Until
     2026-09-22 the judge read <state root>/remote-sids, a path nothing wrote, so its rule 5 never fired
     (tests/test_dead_session_staleness.py ReaderFollowsTheWriter runs this writer and that reader over one
     root: the first write, the restart, the expiry, the legacy shape).
