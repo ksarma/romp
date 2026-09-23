@@ -44,6 +44,11 @@ PDF_BYTES = b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n
 PY_BYTES = b"print('hello from the remote box')\n"
 SVG_BYTES = (b'<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1">'
              b'<script>document.title = "ran at the local origin"</script></svg>')   # synthetic
+# The policy the relay must put on every image/svg+xml success, written out and never read from the kernel (the
+# local route's, tests/test_kernel_preview.py SVG_DOCUMENT_POLICY; kernel.py _media_policy_headers), and the
+# weaker one the fake remote sends for its .svg, which a relay that mirrored the remote's header would pass on.
+SVG_DOCUMENT_POLICY = "sandbox; default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:"
+REMOTE_WEAK_POLICY = "sandbox allow-scripts; default-src *"
 # the download fixture: NUL-ridden, off every view allowlist, and BIGGER than one relay stream chunk,
 # so the pass-through provably crosses a chunk boundary intact
 BIN_BYTES = bytes(range(256)) * ((km._DOWNLOAD_CHUNK // 256) + 60)
@@ -78,12 +83,14 @@ class _FakeRemoteFileHandler(BaseHTTPRequestHandler):
             return
         if "chart.svg" in self.path:
             # the remote's own .svg: whole, or the tail a suffix Range asks for (its _file_preview's 206 shape).
-            # The remote CLAIMS image/svg+xml here; the relay derives its own type and policy regardless.
+            # The remote CLAIMS image/svg+xml here, and sends a weaker policy of its own (scripts and every
+            # host allowed); the relay derives its own type and policy regardless and must not mirror this one.
             rng = self.headers.get("Range") or ""
             start = int(rng[len("bytes="):-1]) if rng.startswith("bytes=") and rng.endswith("-") else 0
             body = SVG_BYTES[start:]
             self.send_response(206 if start else 200)
             self.send_header("Content-Type", "image/svg+xml")
+            self.send_header("Content-Security-Policy", REMOTE_WEAK_POLICY)
             self.send_header("Content-Length", str(len(body)))
             if start:
                 self.send_header("Content-Range", "bytes %d-%d/%d" % (start, len(SVG_BYTES) - 1, len(SVG_BYTES)))
@@ -525,20 +532,26 @@ class RemoteFileRelay(unittest.TestCase):
         # The relay derives every header that tells THIS browser how to interpret the bytes (the type, the
         # disposition) from the requested extension and discards the remote's, so the local route's SVG
         # defence (tests/test_kernel_preview.py SvgSandboxPolicy: a tab navigated to an SVG runs its inline
-        # script at the serving origin) has to be restated here, from OUR mime — a remote session's .svg
-        # opened in its own tab is a document at this kernel's origin, cookie and all (the 1204 review,
-        # 2026-09-10). All three success shapes; a remote PNG carries none.
+        # script at the serving origin, and loads every host its markup names) has to be restated here, from
+        # OUR mime: a remote session's .svg opened in its own tab is a document at this kernel's origin,
+        # cookie and all (the 1204 review, 2026-09-10; the fetch directives, 2026-09-23). The remote sends a
+        # weaker policy of its own (REMOTE_WEAK_POLICY), so the whole list of policies is compared: a relay that
+        # mirrored the remote's header, or restated a weakened one, fails. All three success shapes; a remote
+        # PNG carries none. tests/test_svg_tab_policy_browser.py opens a tab on this arm in Chromium.
         self._register("gpu1", self.fake.server_address[1])
         csp = lambda msg: "; ".join(msg.get_all("Content-Security-Policy") or [])
-        for method, headers, want in (("GET", None, 200), ("HEAD", None, 200), ("GET", {"Range": "bytes=1-"}, 206)):
+        for method, headers, want, policies in (("GET", None, 200, [SVG_DOCUMENT_POLICY, "frame-ancestors 'self'"]),
+                                                ("HEAD", None, 200, [SVG_DOCUMENT_POLICY]),
+                                                ("GET", {"Range": "bytes=1-"}, 206, [SVG_DOCUMENT_POLICY])):
             status, body, msg = self._get_msg("/remote/gpu1/file?path=%2Ftmp%2Fchart.svg", method=method, headers=headers)
             self.assertEqual(status, want, (method, headers))
             self.assertEqual(msg.get("Content-Type"), "image/svg+xml", (method, headers))
-            self.assertIn("sandbox", msg.get_all("Content-Security-Policy") or [], (method, headers, csp(msg)))   # exact value: a weakened `sandbox allow-scripts` must fail
+            self.assertEqual(sorted(msg.get_all("Content-Security-Policy") or []), sorted(policies), (method, headers, csp(msg)))
             self.assertEqual(body, b"" if method == "HEAD" else SVG_BYTES[1 if headers else 0:], (method, headers))
         status, _, msg = self._get_msg("/remote/gpu1/file?path=%2Ftmp%2Fplot.png")
         self.assertEqual(status, 200)
         self.assertNotIn("sandbox", csp(msg), csp(msg))
+        self.assertNotIn("default-src", csp(msg), csp(msg))
 
 
 if __name__ == "__main__":

@@ -578,6 +578,11 @@ class AttachmentDisposition(unittest.TestCase):
     def test_an_empty_name_still_yields_a_usable_filename(self):
         self.assertIn('filename="download"', km._attachment_disposition(""))
 
+# The policy every image/svg+xml success carries, written out here and never read from the kernel: a pin that
+# compared the response with the kernel's own value would move with it (the 2026-09-23 policy, kernel.py
+# _media_policy_headers).
+SVG_DOCUMENT_POLICY = "sandbox; default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:"
+
 # a synthetic SVG that carries the payload the hole is about: markup on disk, a page when a tab navigates
 # to it, and its <script> would run wherever the document lands
 SVG_WITH_SCRIPT = (b'<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1">'
@@ -590,10 +595,16 @@ class SvgSandboxPolicy(unittest.TestCase):
     session cookie attached. The own-tab opener (ui/webview/preview.ts openFileTab) hands the route ANY
     path on a modified click since the PDF-only gate came off, so an agent-written .svg gets there in one
     gesture (the 1204 review, 2026-09-10). nosniff cannot help: the type is declared, and image/svg+xml is
-    the scriptable one. Every image/svg+xml response therefore carries `Content-Security-Policy: sandbox`,
-    on all three success shapes (200, HEAD, 206): a sandboxed document runs no script and has an opaque
-    origin. An <img> load creates no document and reads no policy, so the chat's thumbnails, the viewer's
-    inline preview and the lightbox keep rendering. Ordinary media and text carry no sandbox."""
+    the scriptable one. Every image/svg+xml response therefore carries SVG_DOCUMENT_POLICY, on all three
+    success shapes (200, HEAD, 206): `sandbox` (a sandboxed document runs no script and has an opaque
+    origin) and, since 2026-09-23, four fetch directives in the same value, because `sandbox` stops scripts
+    and not loads: the tab fetched every host its markup named. default-src 'none' refuses those fetches,
+    and img-src data: blob:, style-src 'unsafe-inline' and font-src data: keep an exported figure's inline
+    raster, styles and fonts. The pins compare the whole list of policies the response carries, so a weakened
+    value (`sandbox allow-scripts`, a dropped directive, a host added) fails; tests/test_svg_tab_policy_browser.py
+    holds what the value does in Chromium. An <img> load creates no document and reads no policy, so the
+    chat's thumbnails, the viewer's inline preview and the lightbox keep rendering. Ordinary media and text
+    carry no sandbox and no fetch directive."""
 
     @classmethod
     def setUpClass(cls):
@@ -637,15 +648,16 @@ class SvgSandboxPolicy(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(msg.get("Content-Type"), "image/svg+xml")
         self.assertEqual(body, SVG_WITH_SCRIPT, "the bytes are untouched: the policy, not a rewrite, disarms them")
-        self.assertIn("sandbox", msg.get_all("Content-Security-Policy") or [], self._csp(msg))   # the bare policy, exactly: a weakened `sandbox allow-scripts` must fail
-        self.assertIn("frame-ancestors 'self'", self._csp(msg), "_send's framing policy still rides the 200")
+        # the whole list, exactly: the document policy beside _send's framing policy, which still rides the 200
+        self.assertEqual(sorted(msg.get_all("Content-Security-Policy") or []),
+                         sorted([SVG_DOCUMENT_POLICY, "frame-ancestors 'self'"]), self._csp(msg))
         self.assertEqual(msg.get("X-Content-Type-Options"), "nosniff")
 
     def test_the_head_probe_carries_the_same_policy(self):
         code, msg, body = self._req(self.svg, method="HEAD")
         self.assertEqual((code, body), (200, b""))
         self.assertEqual(msg.get("Content-Type"), "image/svg+xml")
-        self.assertIn("sandbox", msg.get_all("Content-Security-Policy") or [], self._csp(msg))   # the bare policy, exactly: a weakened `sandbox allow-scripts` must fail
+        self.assertEqual(msg.get_all("Content-Security-Policy") or [], [SVG_DOCUMENT_POLICY], self._csp(msg))   # the one policy, exactly
 
     def test_a_resumed_range_carries_the_same_policy(self):
         # the resumable retry's 206 is a response a tab can be handed too: the tail of the document
@@ -654,19 +666,21 @@ class SvgSandboxPolicy(unittest.TestCase):
         self.assertEqual(body, SVG_WITH_SCRIPT[1:])
         self.assertEqual(msg.get("Content-Range"), "bytes 1-%d/%d" % (len(SVG_WITH_SCRIPT) - 1, len(SVG_WITH_SCRIPT)))
         self.assertEqual(msg.get("Content-Type"), "image/svg+xml")
-        self.assertIn("sandbox", msg.get_all("Content-Security-Policy") or [], self._csp(msg))   # the bare policy, exactly: a weakened `sandbox allow-scripts` must fail
+        self.assertEqual(msg.get_all("Content-Security-Policy") or [], [SVG_DOCUMENT_POLICY], self._csp(msg))   # the one policy, exactly
 
     def test_ordinary_media_and_text_carry_no_sandbox(self):
         # a PNG is never a document; text is served as text/plain, which never executes — neither is sandboxed,
-        # so a policy meant for SVG cannot leak onto the viewer's other branches
+        # so a policy meant for SVG cannot leak onto the viewer's other branches (its fetch directives included)
         for method, headers in (("GET", None), ("HEAD", None), ("GET", {"Range": "bytes=1-"})):
             code, msg, _ = self._req(self.png, method=method, headers=headers)
             self.assertIn(code, (200, 206), (method, headers))
             self.assertNotIn("sandbox", self._csp(msg), (method, headers, self._csp(msg)))
+            self.assertNotIn("default-src", self._csp(msg), (method, headers, self._csp(msg)))
         code, msg, _ = self._req(self.md)
         self.assertEqual(code, 200)
         self.assertTrue(msg.get("Content-Type", "").startswith("text/plain"), msg.get("Content-Type"))
         self.assertNotIn("sandbox", self._csp(msg), self._csp(msg))
+        self.assertNotIn("default-src", self._csp(msg), self._csp(msg))
 
 
 if __name__ == "__main__":

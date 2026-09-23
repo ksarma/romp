@@ -58248,14 +58248,14 @@ _img_cache = {}                                  # "path:mtime:size" → dataURL
 #      trip — the browser lazy-loads, caches, and renders a PDF natively in the lightbox iframe. The
 #      allowlist is RENDERABLE media only; anything else 404s and the client shows a plain link. SVG is
 #      served as an image (an <img> never runs its scripts; a tab NAVIGATED to one is a document, which
-#      _media_policy_headers below sandboxes); the files are the user's own, written by their own agents,
-#      on their own machine.
+#      _media_policy_headers below sandboxes and holds to its own inline content); the files are the
+#      user's own, written by their own agents, on their own machine.
 _PREVIEW_MIME = dict(_IMG_MIME, **{".pdf": "application/pdf"})
 
 
 def _media_policy_headers(mime):
-    """The extra headers a /file SUCCESS carries for its media type: `Content-Security-Policy: sandbox`
-    on image/svg+xml, nothing on anything else.
+    """The extra headers a /file SUCCESS carries for its media type: on image/svg+xml one
+    Content-Security-Policy, `sandbox` and four fetch directives in one value; nothing on anything else.
 
     An SVG is the one type on the allowlist that is ALSO a document. Served to an <img> it is a picture
     and its scripts never run; but the own-tab opener (ui/webview/preview.ts openFileTab) hands this route
@@ -58263,15 +58263,45 @@ def _media_policy_headers(mime):
     parses it as a page and runs its inline <script> at the kernel's origin, with the dashboard's session
     cookie attached (the 1204 review, 2026-09-10). nosniff is no help there: the type is declared, and
     image/svg+xml is the scriptable one. `sandbox` closes it: a sandboxed document runs no script and
-    gets an opaque origin, so it can reach nothing of the dashboard's. The <img> path is unaffected (no
-    document is created, so no policy is read), and the chat's thumbnails, the viewer's inline preview
-    and the lightbox keep rendering. Sent on EVERY svg success, all three shapes (HEAD, 206, 200), never
-    gated on _is_navigation: harmless on a fetch or an <img>, and closing the hole must not hinge on
-    Sec-Fetch headers a plain-http dashboard never sends (see _is_navigation). On the 200 it rides
-    BESIDE _send's frame-ancestors policy as a second header of the same name, which a browser enforces
-    in addition; the framing policy itself is untouched. The /remote/<host>/file relay rebuilds every
-    interpretation header from OUR mime (it never mirrors the remote's), so it restates this too."""
-    return {"Content-Security-Policy": "sandbox"} if mime == _IMG_MIME[".svg"] else {}
+    gets an opaque origin, so it can reach nothing of the dashboard's.
+
+    `sandbox` stops scripts, not loads. Under it alone the opened tab fetched every host its markup named
+    (PR 878's round 5, executed in Chromium, 2026-09-23): an <image> href and xlink:href, a CSS @import and a
+    foreignObject <img>, each with that browser's SameSite=None cookies for the host, and a fill, a mask
+    and a CSS fill paint reference, none of it behind the gear's list of hosts a viewed file's pictures may
+    load from; this change's own probe added an <feImage>, a CSS cursor, a background image, an @font-face
+    source, a stylesheet <link>, a preload, a prefetch, an <iframe> and a <video>. The fetch directives
+    stop those loads. default-src 'none' is the fallback of every fetch directive, so it refuses each load
+    the document would make, to any host and to this kernel too, which serves nothing at a relative path
+    (/file needs its query). Three directives then allow back what an exported figure carries inline:
+    img-src data: blob: (an embedded raster, the <image xlink:href="data:image/png;base64,..."> a plotting
+    library writes), style-src 'unsafe-inline' (a <style> element and style attributes; a stylesheet URL
+    still fails) and font-src data: (an embedded font). default-src 'none' alone is wrong: it refuses the
+    data: raster and the inline styles too, so an exported figure opens blank or unstyled. A reference
+    inside the document (url(#g), href="#id") is no fetch, and no directive touches it. Nothing here
+    governs a link the reader clicks inside the tab: that navigates, under _send's Referrer-Policy.
+    tests/test_svg_tab_policy_browser.py opens such a tab through a lab kernel, on this route and on the
+    relay, with the sixteen loads above in its markup: no request reaches another server, and the data:
+    raster and the inline style draw (each goes red under default-src 'none' without its directive).
+
+    One header value, not a second header beside a bare `sandbox`: a browser enforces every policy it
+    receives, each on its own, so a load must pass all of them, and the two shapes block the same loads in
+    any browser that implements CSP. The one value keeps `sandbox` and the fetch directives in one policy,
+    which a layer that keeps only one value of a repeated header (a proxy, or a client's header dict, as
+    this kernel's tests note) cannot split, and it keeps this function's one value per name.
+
+    The <img> path is unaffected (no document is created, so no policy is read), and the chat's
+    thumbnails, the viewer's inline preview and the lightbox keep rendering. Sent on EVERY svg success,
+    all three shapes (HEAD, 206, 200), never gated on _is_navigation: harmless on a fetch or an <img>,
+    and closing the hole must not hinge on Sec-Fetch headers a plain-http dashboard never sends (see
+    _is_navigation). On the 200 it rides BESIDE _send's frame-ancestors policy as a second header of the
+    same name, which a browser enforces in addition; the framing policy itself is untouched. The
+    /remote/<host>/file relay rebuilds every interpretation header from OUR mime (it never mirrors the
+    remote's), so it restates this on its three success shapes too."""
+    if mime != _IMG_MIME[".svg"]:
+        return {}
+    return {"Content-Security-Policy": "sandbox; default-src 'none'; img-src data: blob:; "
+                                       "style-src 'unsafe-inline'; font-src data:"}
 
 
 _MEDIA_MAX_BYTES = 50 * 1024 * 1024              # a plot/report, not a dataset — bigger 413s (fail loudly). A power
@@ -73366,7 +73396,7 @@ class Handler(BaseHTTPRequestHandler):
             if mime == "application/pdf":                     # the probe agrees with the GET (below) on the tab's name
                 self.send_header("Content-Disposition", _attachment_disposition(os.path.basename(fp), kind="inline"))
             self.send_header("X-Content-Type-Options", "nosniff")   # _send's guarantee, restated on the HEAD path
-            for k, v in _media_policy_headers(mime).items():        # sandbox on an SVG (see _media_policy_headers)
+            for k, v in _media_policy_headers(mime).items():        # the SVG document policy (see _media_policy_headers)
                 self.send_header(k, v)
             self.send_header("Cache-Control", "no-cache")
             if getattr(self, "_cors_origin", None):         # the chat's fetch-HEAD probe rides CORS too
@@ -73396,7 +73426,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(raw)))
             self.send_header("Content-Range", "bytes %d-%d/%d" % (rng, size - 1, size))
             self.send_header("X-Content-Type-Options", "nosniff")
-            for k, v in _media_policy_headers(mime).items():        # sandbox on an SVG (see _media_policy_headers)
+            for k, v in _media_policy_headers(mime).items():        # the SVG document policy (see _media_policy_headers)
                 self.send_header(k, v)
             self.send_header("Cache-Control", "no-cache")
             if getattr(self, "_cors_origin", None):
@@ -73425,7 +73455,7 @@ class Handler(BaseHTTPRequestHandler):
                               headers={"Last-Modified": lastmod, "X-Romp-Mtime-Ns": mtime_ns,
                                        "X-Romp-Text-Utf8": u8})
         extra = {"Last-Modified": lastmod, "X-Romp-Mtime-Ns": mtime_ns}
-        extra.update(_media_policy_headers(mime))            # sandbox on an SVG (see _media_policy_headers)
+        extra.update(_media_policy_headers(mime))            # the SVG document policy (see _media_policy_headers)
         if mime == "application/pdf":
             # INLINE, with the file's name (2026-09-06): a PDF opens in its own browser tab now (preview.ts
             # openPdfTab), and the browser titles that tab and names a Save from this header — without it
@@ -78164,7 +78194,7 @@ class Handler(BaseHTTPRequestHandler):
             if status == 200 and mime == "application/pdf":   # the tab's name — OURS, from the requested path
                 self.send_header("Content-Disposition", _attachment_disposition(os.path.basename(rp), kind="inline"))
             self.send_header("X-Content-Type-Options", "nosniff")   # _send's guarantee, restated on the HEAD path
-            for k, v in _media_policy_headers(mime).items():        # the SVG sandbox, from OUR mime like the type
+            for k, v in _media_policy_headers(mime).items():        # the SVG document policy, from OUR mime like the type
                 self.send_header(k, v)
             self.send_header("Cache-Control", "no-cache")
             if getattr(self, "_cors_origin", None):
@@ -78182,7 +78212,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Content-Range", crange)
             self.send_header("X-Content-Type-Options", "nosniff")
-            for k, v in _media_policy_headers(mime).items():        # the SVG sandbox, from OUR mime like the type
+            for k, v in _media_policy_headers(mime).items():        # the SVG document policy, from OUR mime like the type
                 self.send_header(k, v)
             self.send_header("Cache-Control", "no-cache")
             if getattr(self, "_cors_origin", None):
@@ -78196,7 +78226,7 @@ class Handler(BaseHTTPRequestHandler):
         # and the Edit gate ride on them, and deriving them locally would lie about a remote disk.
         mirrored = {k: v for k, v in (("Last-Modified", lastmod), ("X-Romp-Mtime-Ns", r_ns),
                                       ("X-Romp-Text-Utf8", r_u8)) if v}
-        # …and the SVG sandbox is NOT mirrored but derived here from our mime, like the type and the
+        # …and the SVG document policy is NOT mirrored but derived here from our mime, like the type and the
         # disposition: the relay rebuilds every header that tells this browser how to interpret the bytes
         # (_media_policy_headers has the hole), so the local route's policy has to be restated on this arm.
         mirrored.update(_media_policy_headers(mime))
