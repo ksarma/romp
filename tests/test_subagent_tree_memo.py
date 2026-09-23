@@ -1265,6 +1265,25 @@ class FaultBelowTheRoot(_Walk):
         self.assertEqual((got, faults), (self.target, ["PermissionError"]),
                          "the standing resolution lies under the place the walk could not read: answered, with the fault")
 
+    def test_a_child_gone_since_its_parent_was_listed_is_absence_and_its_miss_is_memoized_a_boundary_guard(self):
+        """A boundary guard on the absence side, green before this change by design (the walk then memoized every miss
+        below the root): a child whose lstat raises ENOENT is a place gone since its parent was listed, whose removal
+        moved the parent's stamp, so it is absence, not a place the walk could not read: no fault reaches the caller and
+        the miss is memoized, as for a root that is not there. Driven by an ENOENT by mock on the workflow directory's
+        lstat, every other call reading; red if a change moves ENOENT to the fault side."""
+        km._SUBAGENT_TREES.pop(str(self.subdir), None)
+        real, gone = os.lstat, str(self.wf)
+
+        def enoent(p, *a, **k):
+            if not isinstance(p, int) and os.fsdecode(p) == gone:
+                raise FileNotFoundError(errno.ENOENT, "no such file or directory")
+            return real(p, *a, **k)
+        with mock.patch.object(os, "lstat", enoent):
+            got, faults, notes = self._lookup_wf()
+        self.assertEqual((got, faults), (None, []), "a child gone since its parent was listed is absence: a miss, with no fault")
+        self.assertIsNone(km._SUBAGENT_FILE_CACHE.get(self.wf_key, (None, "unset"))[1], "and the miss is memoized")
+        self.assertNotIn(km._TREE_UNREADABLE, [k for _p, k in notes], "and no place is noted unreadable to the chat build")
+
 
 class ViewerUnderAnUnreadableTree(_Walk):
     """What a reader that passes no faults list shows while the tree the agent's file lies under cannot be read (round 2
