@@ -1701,8 +1701,8 @@ class ChildPytestLaunchers(unittest.TestCase):
     entry whose key names no launcher, or names one that passes the flag, is stale and red. The modules known to spawn
     pytest are asserted present so an empty read is red; there is no count to keep. Red before the eight launchers
     gained the flag: the flag case named them (2026-09-20)."""
-    KNOWN_MODULES = {"test_ci_sdk_pin.py", "test_claude_config_floor.py", "test_env_value_redaction.py",
-                     "test_key_source_floor.py", "test_served_tests_require.py", "test_session_host.py",
+    KNOWN_MODULES = {"test_bats_bare_negation.py", "test_ci_sdk_pin.py", "test_claude_config_floor.py",
+                     "test_env_value_redaction.py", "test_key_source_floor.py","test_served_tests_require.py", "test_session_host.py",
                      "test_supervised_floor.py", "test_tempdir_hygiene.py"}
     _found = None
 

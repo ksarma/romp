@@ -4372,7 +4372,7 @@ class BatsCorpus(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             env = _bats_env(d)
             env["TMPDIR"] = os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR") or tempfile.gettempdir()
-            out, err, ended, status, secs = _run_bats([sys.executable, "-B", "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "-k",
+            out, err, ended, status, secs = _run_bats([sys.executable, "-B", "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "-p", "no:anyio", "-k",
                                                         "test_every_candidate_of_every_suite_is_read_by_bats", polluter, "tests/test_bats_bare_negation.py"],
                                                        ROOT, env, CHILD_TIMEOUT)
         tail = "\n".join((out + "\n" + err).splitlines()[-120:])
