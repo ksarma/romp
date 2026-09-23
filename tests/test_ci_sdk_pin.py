@@ -708,11 +708,12 @@ SWITCH_LISTED = {
     ("vscode-extension", "Browser-backed served-page tests (pytest)"): (
         "the switch declares that the interpreter running pytest has the SDK the Python job's install step put there, "
         "and this job installs none (its pip line names pip, pytest, pytest-timeout and cryptography; run 35535192879's "
-        "served step installed nine packages, no SDK), so setting it would declare something untrue; and its two globs "
-        "collect no module that spells the switch's name, nor does any helper module under tests/ they could import, so "
-        "the switch would change nothing there today. Premises checked: no SDK install in the job's run blocks; no "
-        "collected or helper file under tests/ spells the switch's name (keyed on the spelling in the file's text, not on "
-        "an environment read)."),
+        "served step installed nine packages, no SDK), so setting it would declare something untrue; and no module its "
+        "two globs collect spells the switch's name, nor does any non-test module under tests/ or any module those "
+        "import (their import statements followed transitively, test_ modules included), so the switch would change "
+        "nothing there today. Premises checked: no SDK install in the job's run blocks; no collected, non-test or "
+        "imported file under tests/ spells the switch's name (served_load_set; keyed on the spelling in the file's text, "
+        "not on an environment read; a module loaded by path or by a computed name is outside the import walk)."),
 }
 # names an SDK install would carry in a run block
 SDK_INSTALL_TOKENS = ("claude-agent-sdk", "claude_agent_sdk", "romp-sdk-setup")
@@ -1188,6 +1189,64 @@ def switch_spellers(directory):
     return out
 
 
+def _imported_names(tree, package):
+    """The module names a parsed file imports that could name a file directly under its directory: every `import` and
+    `from ... import` statement anywhere in the tree (a function body included), with `package` (the directory's own
+    name, `tests`) taken off the front, so `import name`, `import tests.name`, `from name import x`, `from tests.name
+    import x`, `from tests import name`, `from . import name` and `from .name import x` each give `name`."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                parts = alias.name.split(".")
+                yield parts[1] if parts[0] == package and len(parts) > 1 else parts[0]
+        elif isinstance(node, ast.ImportFrom):
+            parts = node.module.split(".") if node.module else []
+            if node.level == 0 and parts and parts[0] == package:
+                parts = parts[1:]
+            if parts:
+                yield parts[0]
+            elif node.level or node.module:          # `from . import name`, `from tests import name`
+                for alias in node.names:
+                    yield alias.name
+
+
+def imported_modules(directory, roots):
+    """The files directly under `directory` that the files in `roots` import, followed transitively, as realpaths (the
+    import walk, review round 4, 2026-09-23): each file is parsed with ast and every name _imported_names gives is
+    resolved to `<directory>/<name>.py` when that file exists; the files found are walked in turn. A test_ module
+    counts like any other (a served module imports test_spend_detail as a helper). Outside this read: a module loaded
+    by path (load_source over a file) or under a name assembled at run time (importlib.import_module over a computed
+    string). A file that does not parse raises, and the check reds on it."""
+    package = os.path.basename(os.path.realpath(directory))
+    seen, todo = set(), [os.path.realpath(p) for p in roots]
+    found = set()
+    while todo:
+        path = todo.pop()
+        if path in seen:
+            continue
+        seen.add(path)
+        with open(path, encoding="utf-8") as f:
+            tree = ast.parse(f.read(), path)
+        for name in _imported_names(tree, package):
+            target = os.path.realpath(os.path.join(directory, name + ".py"))
+            if os.path.isfile(target):
+                found.add(target)
+                todo.append(target)
+    return found
+
+
+def served_load_set(directory, collected):
+    """The files directly under `directory` a pytest run over `collected` may load: the collected files; every module
+    there not named test_* (conftest.py and __init__.py, which pytest loads, and the helpers); and every module those
+    import, test_ modules included, followed transitively (imported_modules). Until 2026-09-23 the set was the first
+    two alone, so a test_ module a served module imports (tests/test_spend_modal_headless_served.py imports
+    test_spend_detail) was never read for the switch."""
+    non_test = {os.path.realpath(p) for p in glob.glob(os.path.join(directory, "*.py"))
+                if not os.path.basename(p).startswith("test_")}
+    roots = {os.path.realpath(p) for p in collected} | non_test
+    return roots | imported_modules(directory, roots)
+
+
 def _positional_paths(inv):
     """The path arguments of the invocation (tokens that are not an option or an option's value), resolved against its
     working directory, `${{ github.workspace }}` and no directory both reading as the repo root."""
@@ -1318,24 +1377,58 @@ class ListedInvocations(unittest.TestCase):
             self.assertNotIn(SWITCH, inv["env"], "the served step's pytest line %d sets %s: it declares an SDK it does not install" % (inv["line"], SWITCH))
 
     def test_the_served_steps_globs_collect_no_module_that_spells_the_switch(self):
-        # keyed on the switch's name spelled in the file's text (switch_spellers), not on an environment read: the
-        # modules the step's globs collect, plus every non-test module under tests/ (conftest, __init__, the helpers a
-        # collected module may import); a reader that spells the name indirectly is outside this read, and the
+        # keyed on the switch's name spelled in the file's text (switch_spellers), not on an environment read, over
+        # served_load_set: the modules the step's globs collect, every non-test module under tests/ (conftest, __init__,
+        # the helpers), and every module those import, followed through their import statements (the import walk,
+        # review round 4, 2026-09-23: a test_ module a served module imports was outside the set until then, and a
+        # switch-spelling comment appended to tests/test_spend_detail.py left this case green). A reader that spells
+        # the name indirectly, and a module loaded by path or by a computed name, are outside this read, and the
         # message says what the check keys on (until 2026-09-21 it said the module "reads" the switch, which a
         # docstring that spells the name does not)
         readers = switch_spellers(HERE)
         self.assertIn(os.path.realpath(__file__), readers, "the census missed this file, which spells (and reads) the switch")
-        helpers = {os.path.realpath(p) for p in glob.glob(os.path.join(HERE, "*.py")) if not os.path.basename(p).startswith("test_")}
-        self.assertIn(os.path.realpath(os.path.join(HERE, "conftest.py")), helpers, "the helper census missed conftest.py")
         collected = set()
         for inv in self.served:
             for pattern in _positional_paths(inv):
                 collected.update(os.path.realpath(p) for p in glob.glob(pattern))
         self.assertTrue(collected, "the served step's globs resolve to no file at the repo root: %r" % [i["args"] for i in self.served])
-        hit = sorted(os.path.relpath(p, ROOT) for p in readers & (collected | helpers))
+        loaded = served_load_set(HERE, collected)
+        self.assertIn(os.path.realpath(os.path.join(HERE, "conftest.py")), loaded, "the load set missed conftest.py")
+        # the walk's non-vacuity: a test_ module outside the globs reaches the set only through a served module's import
+        spend_detail = os.path.realpath(os.path.join(HERE, "test_spend_detail.py"))
+        self.assertNotIn(spend_detail, collected, "test_spend_detail.py is collected by the globs now: pick another witness")
+        self.assertIn(spend_detail, loaded, "the import walk did not reach test_spend_detail.py, which "
+                      "tests/test_spend_modal_headless_served.py imports: the walk reads nothing")
+        hit = sorted(os.path.relpath(p, ROOT) for p in readers & loaded)
         self.assertEqual(hit, [], "the served step collects or could load a module that spells %s in its text (keyed on the "
                          "spelling, docstrings and comments included, not on an environment read; a reader that spells the "
-                         "name indirectly is outside this read), and it runs without the switch: %s" % (SWITCH, hit))
+                         "name indirectly, or a module loaded by path or by a computed name, is outside this read), and it "
+                         "runs without the switch: %s" % (SWITCH, hit))
+
+    def test_a_test_module_a_served_module_imports_is_read_for_the_switch(self):
+        # the import walk against what it refuses, over a scratch directory: a served-named module imports a test_
+        # helper inside a function, that helper imports a second one by a from-import, and the second spells the
+        # switch. served_load_set reaches both through the imports, and the speller is named; the non-test set alone,
+        # the helper set before 2026-09-23, misses it. A module loaded by path is outside the walk, and stays out.
+        d = tempfile.mkdtemp(prefix="switch-walk-")
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        files = {
+            "test_zz_synthetic_served.py": "def test_page():\n    import test_zz_imported_helper\n",
+            "test_zz_imported_helper.py": "from test_zz_deeper import VALUE\n",
+            "test_zz_deeper.py": "VALUE = 1   # a synthetic helper that spells %s\n" % SWITCH,
+            "test_zz_loaded_by_path.py": "# loaded by path, and spells %s too\n" % SWITCH,
+            "conftest.py": "import os\nLOADER = os.path.join(os.path.dirname(__file__), 'test_zz_loaded_by_path.py')\n",
+        }
+        for name, body in files.items():
+            with open(os.path.join(d, name), "w") as f:
+                f.write(body)
+        served = {os.path.realpath(os.path.join(d, "test_zz_synthetic_served.py"))}
+        loaded = served_load_set(d, served)
+        names = lambda paths: sorted(os.path.basename(p) for p in paths)
+        self.assertEqual(names(loaded), ["conftest.py", "test_zz_deeper.py", "test_zz_imported_helper.py", "test_zz_synthetic_served.py"])
+        self.assertEqual(names(switch_spellers(d) & loaded), ["test_zz_deeper.py"], "the walk must name the imported speller")
+        non_test = {os.path.realpath(p) for p in glob.glob(os.path.join(d, "*.py")) if not os.path.basename(p).startswith("test_")}
+        self.assertEqual(names(switch_spellers(d) & (served | non_test)), [], "the set before the walk missed the speller")
 
     def test_the_spelling_check_names_a_docstring_that_spells_the_switch_and_misses_an_indirect_reader(self):
         # the check against what it refuses, and its stated limit, over a scratch directory: a served-named module whose
