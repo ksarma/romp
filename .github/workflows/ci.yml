@@ -153,7 +153,8 @@ jobs:
       - name: Install gitleaks (Linux)
         # tests/gitleaks-config.bats skips itself when gitleaks is absent, so without this step the
         # repo's scanning rules (.gitleaks.toml: the value-anchored allowlist, the merge-commit scan)
-        # would be checked nowhere and a rule regression would ship green. The same pinned,
+        # would be checked nowhere; ROMP_GITLEAKS_REQUIRE=1 on the Run bats step below turns that
+        # skip into a red job, so a broken install cannot ship as green skips. The same pinned,
         # checksummed release the secrets job installs; bump the two version/sha pairs together.
         # Linux only: the macOS cell is manual (see the header), and one arbiter is enough.
         if: runner.os == 'Linux'
@@ -177,6 +178,12 @@ jobs:
         # slowest legitimate test on macOS (the romp-serve probe tests hold 60 s by design).
         env:
           BATS_TEST_TIMEOUT: "180"
+          # ROMP_GITLEAKS_REQUIRE=1 on Linux only: the Linux cell installs the pinned gitleaks in the
+          # step above, so tests/gitleaks-config.bats skipping there would hide a broken install
+          # behind ten green skips; with the switch its setup() fails and names the reason. macOS
+          # has no install step and may keep skipping. Off-Linux the expression yields an empty
+          # value, which the file reads as the switch unset (the PYTHON_GIL idiom above).
+          ROMP_GITLEAKS_REQUIRE: ${{ runner.os == 'Linux' && '1' || '' }}
         run: bats --print-output-on-failure tests/*.bats
       # T224: the manager<->kernel handshake proof (tests/manager-*.test.js: restart coalescing, the
       # quiet-window chain, the drain-lease refusal notices) ran only by hand until now. It runs HERE,
@@ -239,8 +246,19 @@ jobs:
         # ref. --diff-merges=first-parent: `gitleaks git` runs `git log -p`, which omits
         # merge-commit diffs, so a secret introduced only in a merge (a conflict resolution) is
         # invisible to --all alone; the tree scan below catches it only while it is still at HEAD;
-        # this surfaces it in history for good. A finding exits nonzero and fails the step.
-        run: gitleaks git . --no-banner --redact -v --config .gitleaks.toml --log-opts="--all --diff-merges=first-parent"
+        # this surfaces it in history for good. --text: that same `git log -p` reads the checkout's
+        # .gitattributes, and a path marked -diff prints a `Binary files ... differ` line with no
+        # hunk, so a secret committed in such a path and removed in a later commit is text this scan
+        # never sees while the tree scan below reads HEAD, where it is gone; --text prints the diff
+        # regardless of the attribute. Latent here today: the one committed .gitattributes
+        # (ui/webview/anchor-map-fixtures/.gitattributes) marks a fixture -text, for its line
+        # endings, not -diff. Other plain-stream options (--no-color, --no-textconv, --no-ext-diff)
+        # guard against a developer's git config; no step of this workflow configures color, textconv
+        # or a diff driver (actions/checkout's config writes touch nothing about diff output), so here
+        # they would be defence in depth, not load-bearing.
+        # The committed attribute is the input this repository carries itself, and --text is its
+        # option. A finding exits nonzero and fails the step.
+        run: gitleaks git . --no-banner --redact -v --config .gitleaks.toml --log-opts="--all --diff-merges=first-parent --text"
       - name: Scan the tree as it stands
         # The history scan reads commit diffs, so a secret in a file that is present but untouched
         # by any scanned commit (a submodule tip, a file added before a rewrite) is only caught by

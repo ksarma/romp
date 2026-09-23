@@ -15,12 +15,21 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 WF = os.path.join(os.path.dirname(HERE), ".github", "workflows", "ci.yml")
 
 
+def run_bats_step(path=WF):
+    """(the step's lines between its name and its run line, its run command) of the shell job's Run bats step, read off the
+    workflow text at path: what BatsStepBound pins, and the reading tests/test_bats_bare_negation.py derives its population of
+    suites from (the command's glob), imported from here so the two read one text one way. Raises LookupError when the step moved
+    or was renamed."""
+    src = open(path).read()
+    m = re.search(r"^      - name: Run bats\n((?:        .*\n)*?)        run: (bats .*)\n", src, re.M)   # zero lines between: the step without an env
+    if not m:
+        raise LookupError("the Run bats step moved or was renamed (%s): re-anchor this pin" % path)
+    return m.group(1), m.group(2)
+
+
 class BatsStepBound(unittest.TestCase):
     def setUp(self):
-        src = open(WF).read()
-        m = re.search(r"^      - name: Run bats\n((?:        .*\n)*?)        run: (bats .*)\n", src, re.M)   # zero lines between: the step without an env
-        self.assertTrue(m, "the Run bats step moved or was renamed: re-anchor this pin")
-        self.head, self.cmd = m.group(1), m.group(2)
+        self.head, self.cmd = run_bats_step()
 
     def test_the_step_sets_bats_own_per_test_timeout(self):
         m = re.search(r'^          BATS_TEST_TIMEOUT: "?(\d+)"?$', self.head, re.M)
