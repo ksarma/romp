@@ -51,13 +51,21 @@ module-level port (the run's own, with conftest's marker beside it, which is wha
 its module-level client-only (inert with peers on), and the sessions-file seam a third module wrote at module level,
 whose one row kept the bus from ever autostopping; it wrote into a shared state root every 30 s and turned another
 module's snapshot test red in the 3.10 CI cell. The port and client-only join peers in _PostalTrio.setUp (the kernel's
-BUS_PORT, read at import, patched beside them and restored by the same cleanups), the guard test stubs the revive road
-and waits for it, conftest pops the bus port before every test, the seam moves per test in the ten postal modules that
-wrote it at import, and the repo-wide pin holds the set of names the test modules write at module level EQUAL to a
-licensed set (LICENSED_MODULE_LEVEL_WRITES: each name with a checked condition, a temporary licence dated and pointed
-at the item it waits on), never a floor. `python -m tests.test_hermetic_kernel_postal --census` prints the counts by
-name and shape (fork PR #871's by-product figures, derived by ast). Beside it, tests/conftest.py's run-end process
-check makes a run red that leaves any process holding its temp root (tests/test_run_end_leaked_processes.py).
+BUS_PORT, read at import, patched beside them and restored by the same cleanups), conftest pops the bus port before
+every test, the seam moves per test in the ten postal modules that wrote it at import, and the repo-wide pin holds the
+set of names the test modules write at module level EQUAL to a licensed set (LICENSED_MODULE_LEVEL_WRITES: each name
+with a checked condition, a temporary licence dated and pointed at the item it waits on), never a floor. The guard test
+itself keeps its trio around the call and nothing more (the reviewer's ruling of round 1 on fork PR #894): its race
+with the restore is closed by upstream's fix, their PR 1848 (the revive skips under client-only, conftest floors
+client-only for the run, and their guard test waits the revive out before the restore and asserts no ensure ran),
+which fork PR #875 folds, its skip gated on the kernel having ensured no bus of its own. Until that lands, a revive
+that outruns the restore runs with the restored environment, which names no port of the run's own, so the bus's
+fixed-port refusal (tests/test_postal_fixed_port_belt.py) refuses the bind; where a bus already answers on the
+machine's fixed port, the ensure's ping reaches it and starts nothing.
+The census pin reads a floor module's write as the runner's own, so upstream's floor line passes it, and the tunnels
+probe compares client-only with the floor's value. `python -m tests.test_hermetic_kernel_postal --census` prints the
+counts by name and shape (fork PR #871's by-product figures, derived by ast). Beside it, tests/conftest.py's run-end
+process check makes a run red that leaves any process holding its temp root (tests/test_run_end_leaked_processes.py).
 The fixup of the same day (the verifier's findings on this PR) made "module level" mean everything that EXECUTES AT
 IMPORT: the class bodies (a write planted in one had left the pin green), the header parts of a def, class or block
 statement (decorators, default argument values, bases, an if test, the with items) and the writes reached through a
@@ -1071,6 +1079,16 @@ def _licence_faults(records, reasserted_names=None):
     return faults
 
 
+def _test_module_writers(records, name):
+    """The modules in `records` ({name: [_Record]}) that write `name` at module level, the floor modules (FLOOR_MODULES)
+    skipped, as the census pin's equality and _licence_faults skip them: a floor module is the runner's one home for a
+    run-wide value. The census pin's per-name check reads this, so a floor line passes and a test module's write still
+    faults, naming the module. Before round 2 of fork PR #894's review the check read every record, so upstream's floor
+    line (os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1" in tests/conftest.py, their PR 1848, which fork PR #875 folds) red
+    it (the reviewer's ruling of round 1)."""
+    return [r.module for r in records.get(name, []) if r.module not in FLOOR_MODULES]
+
+
 def _attribute_assigns(node):
     """The attribute names the code under `node` assigns as `<something>.<attr> = ...` (km.BUS_PORT = port)."""
     out = set()
@@ -1177,6 +1195,19 @@ def _plant(src, lines):
     return src.replace(_PLANT_ANCHOR, lines + _PLANT_ANCHOR)
 
 
+_CLIENT_ONLY_FLOOR = 'os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1"\n'    # upstream's floor line (their PR 1848, folded by fork PR #875)
+_HERMETIC_MARKER = 'os.environ["ROMP_POSTAL_HERMETIC"] = "1"\n'
+
+
+def _conftest_with_the_client_only_floor():
+    """tests/conftest.py's text with upstream's client-only floor line right after the hermetic marker, where their PR
+    1848 puts it (fork PR #875 folds it). Loud when the marker is not there once."""
+    src = open(os.path.join(HERE, "conftest.py"), encoding="utf-8", errors="replace").read()
+    if src.count(_HERMETIC_MARKER) != 1:
+        raise AssertionError("the hermetic marker %r is in tests/conftest.py %d times, not once" % (_HERMETIC_MARKER, src.count(_HERMETIC_MARKER)))
+    return src.replace(_HERMETIC_MARKER, _HERMETIC_MARKER + _CLIENT_ONLY_FLOOR)
+
+
 def _teardown_only_restore(src):
     """`src` (the tunnels module) with _PostalTrio's restore moved back into a tearDown and no cleanup registered: the
     shape the round-1 review found leaking on a subclass setUp that raises."""
@@ -1199,9 +1230,22 @@ _PROBE = textwrap.dedent("""
     TRIO = ("ROMP_POSTAL_PORT", "ROMP_POSTAL_CLIENT_ONLY", "ROMP_POSTAL_PEERS")
     for k in TRIO:
         os.environ.pop(k, None)
-    here, planted = sys.argv[1], sys.argv[2]
+    here, planted, planted_conftest = sys.argv[1], sys.argv[2], sys.argv[3]
     sys.path.insert(0, here)
     sys.path.insert(0, os.path.dirname(here))    # the checkout: the module imports tests.conftest for restore_env
+    env = lambda: {k: os.environ.get(k) for k in TRIO}
+    # the floor modules the module imports first (the package's twin, then conftest), imported here so what they set is
+    # read before the module's own import; a synthetic conftest is compiled under the real file's name and registered
+    # as tests.conftest, so the module's own import of it finds that one
+    import tests
+    if planted_conftest:
+        c = type(sys)("tests.conftest")
+        c.__file__, c.__package__ = os.path.join(here, "conftest.py"), "tests"
+        sys.modules["tests.conftest"] = tests.conftest = c
+        exec(compile(open(planted_conftest, encoding="utf-8").read(), c.__file__, "exec"), c.__dict__)
+    else:
+        import tests.conftest
+    before = env()
     if planted:
         # a synthetic copy of the module, compiled under the real file's name so its HERE and BIN resolve
         real = os.path.join(here, "test_kernel_tunnels.py")
@@ -1210,8 +1254,7 @@ _PROBE = textwrap.dedent("""
         exec(compile(open(planted, encoding="utf-8").read(), real, "exec"), t.__dict__)
     else:
         import test_kernel_tunnels as t
-    env = lambda: {k: os.environ.get(k) for k in TRIO}
-    out = {"after_import": env(), "bus_port_at_import": t.km.BUS_PORT}
+    out = {"before_import": before, "after_import": env(), "bus_port_at_import": t.km.BUS_PORT}
     os.environ["ROMP_POSTAL_PEERS"] = "1"
     case = t.TunnelConcierge("test_attach_requires_host")
     case.setUp()
@@ -1448,7 +1491,34 @@ class HermeticKernelPostal(unittest.TestCase):
                          "the names the test modules write at module level are exactly the licensed ones (equality, not a floor)")
         for name in ("ROMP_POSTAL_PEERS", "ROMP_POSTAL_PORT", "ROMP_POSTAL_CLIENT_ONLY", "ROMP_SESSIONS_FILE", "ROMP_POSTAL_HOST"):
             self.assertNotIn(name, LICENSED_MODULE_LEVEL_WRITES, "%s is a leak this rule exists to catch, never a licence" % name)
-            self.assertNotIn(name, records, "%s is written at module level by %r" % (name, [r.module for r in records.get(name, [])]))
+            writers = _test_module_writers(records, name)
+            self.assertEqual(writers, [], "%s is written at module level by the test modules %r (a floor module's write is "
+                                          "the runner's own, skipped here as the equality above skips it)" % (name, writers))
+
+    def test_the_per_name_check_skips_a_floor_modules_write_and_faults_a_test_modules(self):
+        """The census pin's per-name check reads the records outside FLOOR_MODULES, as the equality above it does (the
+        reviewer's ruling of round 1 on fork PR #894). Run over the walker's own records: upstream's floor line
+        (os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1", their PR 1848, which fork PR #875 folds) spliced into the real
+        tests/conftest.py beside the hermetic marker, and the same line as the unittest twin's (tests/__init__.py),
+        leave no writer; the same write planted at module level in a test module (the tunnels module, where client-only
+        stood until 2026-09-22) is a writer, named, beside the floor's. Before round 2 the check read every record and
+        the floor line alone red it."""
+        def records_of(src, rel):
+            out = collections.defaultdict(list)
+            for name, rec in _module_level_records(ast.parse(src), rel):
+                out[name].append(rec)
+            return out
+        leg, line = "ROMP_POSTAL_CLIENT_ONLY", _CLIENT_ONLY_FLOOR
+        floor = records_of(open(os.path.join(HERE, "conftest.py"), encoding="utf-8", errors="replace").read(), "conftest.py")
+        if not floor[leg]:                  # a conftest that floors client-only already (fork PR #875's) is read as it stands
+            floor = records_of(_conftest_with_the_client_only_floor(), "conftest.py")
+        self.assertEqual([r.module for r in floor[leg]], ["conftest.py"], "the walker reads the spliced floor line as conftest's write")
+        twin = records_of("import os\n" + line, "__init__.py")
+        self.assertEqual([r.module for r in twin[leg]], ["__init__.py"])
+        self.assertEqual(_test_module_writers({leg: floor[leg] + twin[leg]}, leg), [], "a floor module's write is the runner's own")
+        planted = records_of(_plant(_tunnels_source(), line), "test_kernel_tunnels.py")
+        self.assertEqual(_test_module_writers({leg: floor[leg] + twin[leg] + planted[leg]}, leg), ["test_kernel_tunnels.py"],
+                         "a test module's write still faults, named, beside the floor's")
 
     def test_the_licence_check_reds_on_a_new_name_on_each_fixed_leak_put_back_and_on_a_value_outside_its_licence(self):
         """The fault list is run over synthetic records so it is known to be able to fail: a name outside the licensed set
@@ -1755,45 +1825,67 @@ class HermeticKernelPostal(unittest.TestCase):
             self.assertIn("cannot read the key", str(loud.exception), shape)
             self.assertIn("at line %d of planted.py" % (shape.count("\n") + 2), str(loud.exception), shape)
 
-    def _tunnels_probe(self, planted_text=None):
+    def _tunnels_probe(self, planted_text=None, conftest_text=None):
         """_PROBE in a fresh interpreter over the real module (imported) or over `planted_text`, a synthetic copy compiled
-        under the real file's name; returns the child's report."""
-        path = ""
-        if planted_text is not None:
-            d = tempfile.mkdtemp()
-            self.addCleanup(shutil.rmtree, d, True)
-            path = os.path.join(d, "planted_tunnels_module.py")
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(planted_text)
+        under the real file's name, with the real tests/conftest.py or `conftest_text` in its place; returns the child's
+        report."""
+        paths = []
+        for text, name in ((planted_text, "planted_tunnels_module.py"), (conftest_text, "planted_conftest.py")):
+            paths.append("")
+            if text is not None:
+                d = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, d, True)
+                paths[-1] = os.path.join(d, name)
+                with open(paths[-1], "w", encoding="utf-8") as f:
+                    f.write(text)
         env = dict(os.environ)
         env.pop("ROMP_POSTAL_PEERS", None)
-        res = subprocess.run([sys.executable, "-c", _PROBE, HERE, path], capture_output=True, text=True, timeout=180, env=env, cwd=HERE)
+        res = subprocess.run([sys.executable, "-c", _PROBE, HERE] + paths, capture_output=True, text=True, timeout=180, env=env, cwd=HERE)
         self.assertEqual(res.returncode, 0, res.stderr[-2000:])
         return json.loads(res.stdout.strip().splitlines()[-1])
 
     def test_importing_the_attaching_module_writes_no_leg_of_the_trio_and_its_setup_pins_all_three_for_the_test(self):
-        """Executed, not read: a fresh interpreter pops the three names, imports tests/test_kernel_tunnels.py (which loads
-        the kernel in-process against its own temp state and starts no bus) and reports them after the import (none
-        set, and the kernel's BUS_PORT is its default, read from an environment with no port), inside an attaching
-        class's setUp (peers off, client-only, a port of the test's own with BUS_PORT patched to match), after its
-        tearDown, after its cleanups with a peers value a shell might have left (the three names and BUS_PORT put back),
-        and after a subclass setUp that raises past the writes. Before 2026-09-18 the import alone wrote peers "0";
-        before 2026-09-22 it wrote the port and client-only, the two names the real bus of fork PR #813's CI inherited;
-        before review round 1 the raising setUp left the 0 behind (the restore was a tearDown)."""
-        out = self._tunnels_probe()
-        self.assertEqual(out["after_import"], {"ROMP_POSTAL_PORT": None, "ROMP_POSTAL_CLIENT_ONLY": None, "ROMP_POSTAL_PEERS": None},
-                         "importing the module writes no leg of the trio (a write at import holds for every child of every test in the process)")
+        """Executed, not read: a fresh interpreter pops the three names, imports the floor modules the tunnels module
+        imports first (tests/__init__.py and tests/conftest.py) and reads the three names, imports
+        tests/test_kernel_tunnels.py (which loads the kernel in-process against its own temp state and starts no bus)
+        and reports them after the import (no port, no peers value, client-only at the value the floor modules left, and
+        the kernel's BUS_PORT is its default, read from an environment with no port), inside an attaching class's setUp
+        (peers off, client-only, a port of the test's own with BUS_PORT patched to match), after its tearDown, after its
+        cleanups with a peers value a shell might have left (the three names and BUS_PORT put back), and after a
+        subclass setUp that raises past the writes. Client-only is compared with the floor's value, not with unset: this
+        conftest floors none, and a conftest carrying upstream's floor line (their PR 1848, which fork PR #875 folds)
+        sets "1" for the run, which the module must neither change nor leave changed (the reviewer's ruling of round 1
+        on fork PR #894). Before 2026-09-18 the import alone wrote peers "0"; before 2026-09-22 it wrote the port and
+        client-only, the two names the real bus of fork PR #813's CI inherited; before review round 1 the raising setUp
+        left the 0 behind (the restore was a tearDown)."""
+        self._assert_the_module_leaves_the_trio_as_the_floor_left_it(self._tunnels_probe())
+
+    def test_the_import_probe_holds_under_a_conftest_that_floors_client_only(self):
+        """The probe above with tests/conftest.py replaced, in the child, by a copy carrying upstream's floor line right
+        after the hermetic marker (their PR 1848, which fork PR #875 folds): the floor modules leave client-only "1",
+        and the import, the setUp's cleanups and a raising setUp leave it "1" too. Held by execution so the probe is
+        known to hold under that conftest before fork PR #875 lands (the reviewer's ruling of round 1 on fork PR #894);
+        before round 2 the probe expected client-only unset after the import and red under it."""
+        out = self._tunnels_probe(conftest_text=_conftest_with_the_client_only_floor())
+        self.assertEqual(out["before_import"]["ROMP_POSTAL_CLIENT_ONLY"], "1", "the copy of conftest floors client-only for the run")
+        self._assert_the_module_leaves_the_trio_as_the_floor_left_it(out)
+
+    def _assert_the_module_leaves_the_trio_as_the_floor_left_it(self, out):
+        floor = out["before_import"]["ROMP_POSTAL_CLIENT_ONLY"]
+        self.assertEqual(out["after_import"], {"ROMP_POSTAL_PORT": None, "ROMP_POSTAL_CLIENT_ONLY": floor, "ROMP_POSTAL_PEERS": None},
+                         "importing the module writes no leg of the trio, client-only left at the floor's value %r (a write at import "
+                         "holds for every child of every test in the process)" % (floor,))
         self.assertEqual(out["in_setup"]["ROMP_POSTAL_PEERS"], "0", "an attaching class's setUp turns peers off for its test")
         self.assertEqual(out["in_setup"]["ROMP_POSTAL_CLIENT_ONLY"], "1", "...and client-only on")
         self.assertTrue((out["in_setup"]["ROMP_POSTAL_PORT"] or "").isdigit(), "...and a port of the test's own: %r" % out["in_setup"])
         self.assertNotEqual(out["in_setup"]["ROMP_POSTAL_PORT"], str(out["bus_port_at_import"]), "...not the kernel's import-time default")
         self.assertTrue(out["bus_port_in_setup_matches"], "the kernel's BUS_PORT, read at import, is patched to the test's port")
         self.assertEqual(out["after_teardown"]["ROMP_POSTAL_PEERS"], "0", "the value is still set when tearDown returns: the subclass's detach there reads it, and the restore is a cleanup, which runs after tearDown")
-        self.assertEqual(out["after_cleanups"], {"ROMP_POSTAL_PORT": None, "ROMP_POSTAL_CLIENT_ONLY": None, "ROMP_POSTAL_PEERS": "1"},
-                         "...and the cleanup restores what it found: the shell's peers value, no port, no client-only")
+        self.assertEqual(out["after_cleanups"], {"ROMP_POSTAL_PORT": None, "ROMP_POSTAL_CLIENT_ONLY": floor, "ROMP_POSTAL_PEERS": "1"},
+                         "...and the cleanup restores what it found: the shell's peers value, no port, client-only at the floor's value")
         self.assertEqual(out["bus_port_after_cleanups"], out["bus_port_at_import"], "...and BUS_PORT")
         self.assertEqual(out["setup_raise_errors"], 1, "the planted subclass setUp raised, as an error on the case")
-        self.assertEqual(out["after_setup_raise"], {"ROMP_POSTAL_PORT": None, "ROMP_POSTAL_CLIENT_ONLY": None, "ROMP_POSTAL_PEERS": "1"},
+        self.assertEqual(out["after_setup_raise"], {"ROMP_POSTAL_PORT": None, "ROMP_POSTAL_CLIENT_ONLY": floor, "ROMP_POSTAL_PEERS": "1"},
                          "a subclass setUp that raises after the writes still restores them: a tearDown restore is skipped on that path (review round 1, 2026-09-18)")
         self.assertEqual(out["bus_port_after_setup_raise"], out["bus_port_at_import"])
 
@@ -1803,51 +1895,30 @@ class HermeticKernelPostal(unittest.TestCase):
         (the shape review round 2 found the static scan blind to), and a copy with the port written back before the
         load reports the port after the import AND a kernel whose BUS_PORT is that port (the import-time read, which is
         why the leak's child could bind it), so the probe is known to see the leaks it guards against (review rounds 1
-        and 2, 2026-09-18; the port 2026-09-22)."""
+        and 2, 2026-09-18; the port 2026-09-22). Client-only is planted as "on", a value no floor module sets, since the
+        probe compares it with the floor's value: planted as "1" it would be invisible under a conftest that floors "1"
+        (upstream's PR 1848, which fork PR #875 folds). A module-level write of the floor's own value changes nothing
+        the probe can read; the census pin reads that write statically."""
         for label, lines in (("assignment", 'os.environ["ROMP_POSTAL_PEERS"] = "0"\n'),
                              ("update", 'os.environ.update(ROMP_POSTAL_PEERS="0")\n'),
                              ("class body", 'class _Planted:\n    os.environ["ROMP_POSTAL_PEERS"] = "0"\n')):    # runs at import (the fixup of 2026-09-22)
             out = self._tunnels_probe(_plant(_tunnels_source(), lines))
             self.assertEqual(out["after_import"]["ROMP_POSTAL_PEERS"], "0", "%s: the probe sees a module-level write at import" % label)
             self.assertEqual(out["after_cleanups"]["ROMP_POSTAL_PEERS"], "1", "%s: the planted copy's own cleanup still restores the shell's value" % label)
-        out = self._tunnels_probe(_plant(_tunnels_source(), 'os.environ["ROMP_POSTAL_PORT"] = "45678"\nos.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1"\n'))
+        out = self._tunnels_probe(_plant(_tunnels_source(), 'os.environ["ROMP_POSTAL_PORT"] = "45678"\nos.environ["ROMP_POSTAL_CLIENT_ONLY"] = "on"\n'))
         self.assertEqual(out["after_import"]["ROMP_POSTAL_PORT"], "45678", "the probe sees the port written at import")
-        self.assertEqual(out["after_import"]["ROMP_POSTAL_CLIENT_ONLY"], "1")
+        self.assertNotEqual(out["before_import"]["ROMP_POSTAL_CLIENT_ONLY"], "on", "the planted client-only value is not the floor's, so the write is visible")
+        self.assertEqual(out["after_import"]["ROMP_POSTAL_CLIENT_ONLY"], "on", "the probe sees client-only written at import")
         self.assertEqual(out["bus_port_at_import"], 45678, "...and the kernel read it at import: the bus a stray revive would start binds it")
         self.assertEqual(out["after_cleanups"]["ROMP_POSTAL_PORT"], "45678", "the planted copy's cleanup puts the import-time value back, which is the leak")
 
-    def test_the_peer_notify_guard_test_stubs_the_revive_road_before_the_call_and_waits_for_it(self):
-        """Read from the source of tests/test_kernel.py's PostalPeerTunnels.test_notify_bus_peer_is_guarded, by ast: before
-        the _notify_bus_peer call the test binds a stub over the revive road (km.subprocess.run, the call ensure makes)
-        and sets the trio (client-only, peers off, a port nothing can bind); after the call it waits on the revive (an
-        Event the stub sets) and asserts the recorded argv names the postal service's ensure, and the restore of the
-        trio follows. What this pin GUARANTEES is the placement of those statements, the weaker thing; that no child
-        starts and that the argv is the ensure's is the guarded test's own execution (it fails when the stub is not
-        reached). Before 2026-09-22 the test set the trio and nothing else, the revive thread raced the restore, and
-        the restore won: the child inherited another module's module-level port and client-only and started a real bus
-        (fork PR #813's CI)."""
+    def test_the_peer_notify_guard_test_carries_the_trio_around_the_call_it_forces_to_fail(self):
         src = open(os.path.join(HERE, "test_kernel.py"), encoding="utf-8", errors="replace").read()
-        tree = ast.parse(src)
-        cls = next(c for c in tree.body if isinstance(c, ast.ClassDef) and c.name == "PostalPeerTunnels")
-        fn = next(f for f in cls.body if isinstance(f, ast.FunctionDef) and f.name == "test_notify_bus_peer_is_guarded")
-        calls = {}
-        for n in ast.walk(fn):
-            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
-                calls.setdefault(n.func.attr, []).append(n.lineno)
-        notify = min(calls.get("_notify_bus_peer") or [0])
-        self.assertTrue(notify, "the guarded test calls _notify_bus_peer")
-        stubs = [n.lineno for n in ast.walk(fn) if isinstance(n, ast.Assign)
-                 for t in n.targets if isinstance(t, ast.Attribute) and t.attr == "run"
-                 and isinstance(t.value, ast.Attribute) and t.value.attr == "subprocess"]
-        self.assertTrue(stubs and min(stubs) < notify, "km.subprocess.run is stubbed before the call whose refusal revives the bus: %r" % stubs)
-        names = _EnvNames(tree)
-        trio_writes = [w for w in _env_write_records(fn, names, "test_kernel.py") if w.key in TRIO]
-        self.assertEqual({w.key for w in trio_writes}, set(TRIO), "the trio is set in the test")
-        first = {leg: min(w.line for w in trio_writes if w.key == leg) for leg in TRIO}
-        self.assertTrue(all(line < notify for line in first.values()), "...each leg before the call (the restore after it is a write too): %r" % first)
-        self.assertTrue(any(l > notify for l in calls.get("wait", [])), "the test waits on the revive after the call (the Event the stub sets)")
-        self.assertTrue(any(isinstance(n, ast.Constant) and n.value == "ensure" for n in ast.walk(fn)), "...and asserts the argv names ensure")
-        self.assertTrue(any(l > notify for l in calls.get("pop", [])), "...and restores the trio after it")
+        body = src[src.index("def test_notify_bus_peer_is_guarded"):src.index("class CheckinMechanics")]
+        self.assertIn('os.environ.update(ROMP_POSTAL_CLIENT_ONLY="1", ROMP_POSTAL_PEERS="0", ROMP_POSTAL_PORT="1")', body,
+                      "client-only with peers off and a port nothing can bind, for the call the refusal revives the bus from")
+        self.assertLess(body.index("os.environ.update("), body.index("km._notify_bus_peer("), "…set before the call")
+        self.assertIn("os.environ.pop(k, None)", body, "…and restored after it")
 
     def test_the_scan_completes_and_derives_the_same_records_under_a_tag_another_census_left_on_the_parsers_shared_singletons(self):
         """THE PLANT for the contract _fresh states (the reviewer's ruling of 2026-09-22, from a CI red on fork PR #891):
