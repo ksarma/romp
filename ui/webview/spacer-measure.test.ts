@@ -1032,8 +1032,8 @@ function bundledModules(): Promise<string[]> {
     // blaming modules that stopped being loaded, with the figure 0 loaded in a parenthesis (the maintainer's round 7 ruling, extra7-2). The
     // entry list is taken in each of the three forms esbuild documents, an array of paths, an array of in-and-out objects (the shipped list
     // mixes the two: the pdf worker's entry is an object among strings) and a record of output names to paths, which builds the same inputs
-    // as the array; it is refused when empty in any form or of another type, the message naming the form found (the maintainer's round 8
-    // ruling, correctness-2)
+    // as the array; it is refused when empty in any form or of another type, the message naming the form found
+    // (the maintainer's round 8 ruling, correctness-2)
     const ep: unknown = webview && typeof webview === "object" ? webview.entryPoints : undefined;
     const form = Array.isArray(ep) ? "an array of " + ep.length + " entries" : ep !== null && typeof ep === "object" ? "a record of " + Object.keys(ep).length + " names" : ep === undefined ? "undefined" : "a " + typeof ep + ", " + JSON.stringify(ep);
     const filled = Array.isArray(ep) ? ep.length > 0 : ep !== null && typeof ep === "object" && Object.keys(ep).length > 0;
