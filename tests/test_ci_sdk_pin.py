@@ -2705,7 +2705,12 @@ class PopulationCheckReds(unittest.TestCase):
                  ((8, "an anchor (&zeroenv)"), (12, "an alias (*zeroenv)"))),
                 ("a merge key bringing a run into a step", "first",
                  "      - &base\n        name: Base\n        run: echo base\n      - <<: *base\n        name: Merged\n",
-                 ((1, "an anchor (&base)"), (4, "a merge key (<<)"), (4, "an alias (*base)")))):
+                 ((1, "an anchor (&base)"), (4, "a merge key (<<)"), (4, "an alias (*base)"))),
+                # a block scalar's text runs only to the lines indented past the key that opened it, never the dash's
+                # column: the alias on the step's next key is read
+                ("an alias on the key after a `- run: |` block", "first",
+                 "      - name: Anchor\n        env: &e\n          A: b\n        run: echo a\n      - run: |\n          echo b\n"
+                 "        env: *e\n", ((2, "an anchor (&e)"), (7, "an alias (*e)")))):
             with self.subTest(form=label):
                 src, first = (self._with_job_before_shell if where == "job" else self._with_first_step_in_shell_job)(text)
                 want = [(first + k - 1, src.splitlines()[first + k - 2].strip(), what) for k, what in named]
@@ -2734,11 +2739,20 @@ class PopulationCheckReds(unittest.TestCase):
                 ("a one-line flow step", "      - {name: Flow step, run: python -m pytest tests/test_a.py -q}\n", 1, "a flow mapping holding the key 'run'"),
                 ("a flow env on a flow step", '      - {name: Flow env, env: {%s: "0"}, uses: ./a}\n' % SWITCH, 1, "a flow mapping holding the key 'env'"),
                 ("a shell key in a flow sequence's mapping", "      - uses: ./a\n        with: [{shell: bash}]\n", 2, "a flow mapping holding the key 'shell'"),
-                ("a name beside another key", "      - {name: Flow action, uses: ./.github/actions/a}\n", 1, "a flow mapping holding a name key beside another key")):
+                ("a name beside another key", "      - {name: Flow action, uses: ./.github/actions/a}\n", 1, "a flow mapping holding a name key beside another key"),
+                # an entry of a flow mapping is a key whatever follows it, read up to its first colon
+                ("a plain run key with no space after its colon", "      - {name: Tight, run:python -m pytest tests/test_a.py -q}\n", 1,
+                 "a flow mapping holding the key 'run'")):
             with self.subTest(form=label):
                 src, first = self._with_first_step_in_shell_job(text)
                 line = first + named - 1
                 self.assertEqual([(n, w) for n, _t, w in unread_yaml_forms(src)], [(line, what)], label)
+        # a flow collection or a quoted scalar left open at the end of the file is refused at the line that opened it
+        for label, tail, what in (("a flow sequence", "zz-open: [a, b\n", "a flow collection ([) left open at the end of the file"),
+                                  ("a quoted scalar", 'zz-open: "text\n', "a quoted scalar left open at the end of the file")):
+            with self.subTest(open=label):
+                src = self.src.rstrip("\n") + "\n" + tail
+                self.assertEqual(unread_yaml_forms(src), [(len(src.splitlines()), tail.strip(), what)], label)
         # the N04 line is named by the census as well: a `:` right after a quoted scalar is a key, so the line is not a
         # lone name key (_name_key_alone)
         src, first = self._with_first_step_in_shell_job('      - {\n          name: FlowAdj, "run":python -m pytest tests/test_a.py -q\n        }\n')
