@@ -14,9 +14,9 @@
 # with a reason; every browser leg of the extension's test build is in exactly one of the two files, never neither. What a browser
 # leg is, the census scripts/browser-legs-census.mjs reads from each test module's tree with the TypeScript
 # compiler (a call of the shared launcher through its import under any binding, a playwright package named by any
-# specifier, or a driver string that loads one; a form it cannot classify is refused with file and line, and so is
-# a module that reaches inBrowser or playwright only through another module of the tree it loads, which the census
-# reads for what it binds or calls and follows nothing through);
+# specifier other than a type-only import or export, or a driver string that loads one; a form it cannot classify is
+# refused with file and line, and so is a module that reaches inBrowser or playwright only through another module of
+# the tree it loads, which the census reads for what it binds or calls and follows nothing through);
 # ui/webview/ci-browser-legs-census.test.ts (the vscode-extension job) holds the two files to it and
 # scripts/ci-browser-legs.sh checks the same before it runs a leg, while tools/ci-browser-legs.test.mjs (the Shell
 # job, no compiler) holds the files' shape; a line whose source moved or was deleted turns all three red. A leg listed

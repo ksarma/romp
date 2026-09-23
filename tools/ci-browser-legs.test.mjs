@@ -60,7 +60,11 @@
 //     PHRASE between the helper and the script, so a reword on either side is red here rather than a remedy dropped in
 //     silence. That pin reads text and guards the phrase alone: that inBrowser FAILS with it under the switch and skips
 //     without is executed by ui/webview/real-viewer-leg-switch.test.ts (a child node --test with PLAYWRIGHT_BROWSERS_PATH
-//     emptied), which the vscode-extension job runs under npm test and, rostered, in the step itself.
+//     emptied), which the vscode-extension job runs under npm test and, rostered, in the step itself;
+//   - the definition of a browser leg carries its type-only exception ("other than a type-only import or export") in each of
+//     its four homes, the roster header, the exclusions header, the script's header and CONTRIBUTING.md, read over each file's
+//     text with its wraps and comment markers joined, and no other text of the tree states the definition without it (the
+//     review's round 6 found the roster header missing it, wrapped between two lines).
 // Synthetic values only in the script's trees. Run: node --test tools/ci-browser-legs.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -336,6 +340,32 @@ test('the completeness sentence is scoped to the extension\'s test build on ever
   assert.ok(gapArms.length > 0 && gapArms.every((c) => c === gapArms[0]), path.relative(REPO, CENSUS) + '\'s rosterGap returns the driver-string gap as "drives <clause> (line N), which the switch never reaches", the same clause in every arm (the clause the roster header is held to is read from here, so an empty read means the sentence moved, not that the clause is free). Holds the sentence frame in the module, "drives <clause> (line N), which the switch never reaches": a reword of the frame moves this pin too; the clause inside it is free here and held to the roster by the next assertion: ' + JSON.stringify(gapArms));
   const rosterHeader = headerJoined(read(path.join(EXT, ROSTER)));
   assert.ok(rosterHeader.includes('does not drive ' + gapArms[0] + ', which the switch never reaches (the gate reads the string, not a spawn)'), ROSTER + '\'s header states the gate\'s own clause for a driver string in the census\'s words: a leg does not drive ' + gapArms[0] + ', which the switch never reaches (the gate reads the string, not a spawn). One phrase, two homes (' + path.relative(REPO, CENSUS) + '\'s gap sentence and this header), held equal here, so a reword in either is red rather than the two drifting apart; the gloss in parentheses is the roster\'s own words, read as text. Holds the property for the clause (a reword of the clause in both homes stays green) and the sentence for the roster\'s frame and gloss, "does not drive <clause>, which the switch never reaches (the gate reads the string, not a spawn)": a reword of those moves this pin too');
+});
+
+test('the definition of a browser leg carries the type-only exception in every home that states it (the roster header, the exclusions header, the script\'s header, CONTRIBUTING.md), and no other text of the tree states the definition without it', () => {
+  const EXCEPTION = 'other than a type-only import or export';
+  // the definition's stem in its two spellings, a playwright package NAMED by any specifier (the roster, CONTRIBUTING) and one a
+  // module NAMES by any specifier (the exclusions, the script), read over a file's text with its line breaks and comment markers
+  // joined, so a wrap between "any" and "specifier" (the roster's lines 16 to 17, which a one-line grep missed at round 4) reads
+  // as one phrase. The stem is spelled in this file only inside the regex, whose (?:named )? group breaks it, so the walk below
+  // does not find this test
+  const STEM = /playwright package (?:named )?by any specifier/g;
+  const flat = (text) => text.split('\n').map((l) => l.replace(/^\s*(?:#|\/\/|\/?\*+)\s?/, '').trim()).join(' ').replace(/\s+/g, ' ');
+  const stems = (text) => { const t = flat(text); return [...t.matchAll(STEM)].map((m) => t.startsWith(' ' + EXCEPTION, m.index + m[0].length)); };
+  const HOMES = [path.join(EXT, ROSTER), path.join(EXT, EXCLUDED), SCRIPT, path.join(REPO, 'CONTRIBUTING.md')];
+  for (const f of HOMES) {
+    const found = stems(read(f));
+    assert.ok(found.length > 0, path.relative(REPO, f) + ' states the definition of a browser leg by its stem (a playwright package named, or named by a module, by any specifier): a home whose stem is reworded is no longer read by the check below, so the reword is red here rather than the check passing over nothing. Holds the sentence for the stem');
+    assert.ok(found.every(Boolean), path.relative(REPO, f) + ' states the definition without "' + EXCEPTION + '" directly after its stem: the census reads a type-only import or export of a playwright package as binding nothing (the plants p121 to p126 hold it), so every home of the definition carries the exception, verbatim with CONTRIBUTING.md. Holds the property (the stem and the exception, in every home, whatever the wrap)');
+  }
+  // a fifth home: every other text file of the tree that states the definition carries the exception too (the build outputs, the
+  // packages and the git store are not the tree's text)
+  const SKIP = new Set(['.git', 'node_modules', 'out-tests', 'dist']);
+  const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => SKIP.has(e.name) ? [] : e.isDirectory() ? walk(path.join(d, e.name)) : e.isFile() ? [path.join(d, e.name)] : []);
+  const texts = walk(REPO).filter((f) => /\.(md|txt|sh|bash|mjs|cjs|js|ts|json|yml|yaml|py|bats|toml|css|html)$/.test(f));
+  assert.ok(HOMES.every((h) => texts.includes(h)), 'the walk reads the four homes (a walk that misses them reads a different population)');
+  const offenders = texts.filter((f) => !HOMES.includes(f) && stems(read(f)).some((ok) => !ok)).map((f) => path.relative(REPO, f));
+  assert.deepEqual(offenders, [], 'a text of the tree states the definition of a browser leg without "' + EXCEPTION + '" after its stem: a fifth home carries the exception as the four do, verbatim with CONTRIBUTING.md. Holds the property');
 });
 
 test('the grep the exclusions header spells for the pending lines lists exactly the pending rows when run as written from the repo root, and with no pending row left exits 1 with empty stdout (the negative form of the same property, so the day the last row is promoted is green, not a false red); run as written from a synthetic root whose exclusions spell the form in their header, it lists the one pending row alone (a positive control); and CONTRIBUTING.md spells the same command (residual 1 of the landing condition: a pending line whose PR closes without the leg is found by this command and removed by hand)', (t) => {

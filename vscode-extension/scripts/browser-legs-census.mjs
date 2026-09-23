@@ -114,10 +114,13 @@
 //              and still reads as a swallow), or its promise handed to .catch, to .then with a second argument, or to
 //              Promise.allSettled, directly or as an element of its array literal, through a chain of .then and .finally
 //              (.finally and a bare .then hand the rejection on and are not swallows; Promise.all, race and any reject through).
-//              Three under-reads, stated, each swallowing at run time all the same: a call returned by a wrapper and awaited inside
-//              a try is the wrapper's, the second residual's kin, and is not read; and the chain is followed on the call itself, so
-//              a .catch on a name the call's promise was bound to, or on the result of Promise.all, race or any over an array
-//              holding the call, is not read either (the closing pass after the review's round 6 stated the last two).
+//              Under-reads, stated as a rule, each swallowing at run time all the same. A call returned by a wrapper and awaited
+//              inside a try is the wrapper's, the second residual's kin, and is not read (p304). And the read takes the spellings
+//              above alone, on the call itself: the chain is followed only on the call, so a promise or an array holding the call
+//              reached through a name, a spread or another expression, or a swallowing form spelled otherwise (a bracketed member,
+//              a destructured or .call-applied allSettled), is not read. Its witnesses: a .catch on a name the call's promise was
+//              bound to (p309), a .catch on the result of Promise.all, race or any over an array holding the call (p310), and
+//              Promise.allSettled over a name an array holding the call was bound to (p345) or over a spread of that name (p346).
 //              REPORTED, not refused (such a leg is admitted to the roster; the count over the tree is printed by the census test;
 //              rosterGap never reads it). Before the review's round 6 the read was a try statement of the same function alone.
 //   embedded:  a string or template literal whose TEXT loads a playwright package (a child-process driver's source): counted
@@ -1069,10 +1072,14 @@ export function classify(ts, file, src, opts = {}) {
    *  round 5 found the same-function read missed a callback inside a try); or its promise, through any chain of .then and .finally,
    *  handed to .catch, to .then with a second argument, or to Promise.allSettled (as its argument or an element of its array literal).
    *  .finally and a bare .then hand the rejection on; Promise.all, race and any reject through. Over-approximates on the safe side
-   *  (a callback may run after its try ends; a try around a call never awaited reads as a swallow and fails at run time). Under-reads
-   *  three forms, stated in the header: a call returned by a wrapper and awaited inside a try is the wrapper's, not this call's
-   *  (p304); and the chain is followed on the call itself, so a .catch on a name the call's promise was bound to (p309) or on the
-   *  result of Promise.all, race or any over an array holding the call (p310) is not read (the closing pass after round 6). */
+   *  (a callback may run after its try ends; a try around a call never awaited reads as a swallow and fails at run time). Under-reads,
+   *  stated as a rule in the header with the same witnesses: a call returned by a wrapper and awaited inside a try is the wrapper's,
+   *  not this call's, and is not read (p304). And the read takes the spellings above alone, on the call itself: the chain is followed
+   *  only on the call, so a promise or an array holding the call reached through a name, a spread or another expression, or a
+   *  swallowing form spelled otherwise (a bracketed member, a destructured or .call-applied allSettled), is not read. Its witnesses: a
+   *  .catch on a name the call's promise was bound to (p309), a .catch on the result of Promise.all, race or any over an array holding
+   *  the call (p310), and Promise.allSettled over a name an array holding the call was bound to (p345) or over a spread of that name
+   *  (p346). The closing pass after round 6 stated p309 and p310, the review's round 7 the rule and the last two. */
   const swallowed = (n) => {
     for (let p = n.parent; p; p = p.parent) if (ts.isTryStatement(p) && p.catchClause && p.tryBlock.pos <= n.pos && n.end <= p.tryBlock.end) return true;
     let q = up(n);

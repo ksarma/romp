@@ -92,7 +92,9 @@
 // and by its own content since; and a playwright package's or the launcher's name bound to a name, returned from a function, held
 // in an object literal that is a call's argument or standing in a conditional's branch or a logical's operand as one, handed to a
 // callee the walker knows no loader for, class none with no refusal before round 7 and refused by THE SAFETY NET since, beside the
-// literal control, the controls of the clause's own reading and the boundaries the census header states), every one is red under
+// literal control, the controls of the clause's own reading and the boundaries the census header states; and Promise.allSettled
+// over a name an array holding a shared inBrowser call was bound to, or over a spread of that name, swallow [] before and after,
+// the two witnesses the review's round 7 added to the rule the census header's swallow clause states), every one is red under
 // the census before round 6 (the module at the round-5 head) unless the table names it held with its reason, and the same test holds
 // the table to that statement. A module
 // whose classification throws for any other reason is refused by name and the census goes on, executed over a synthetic root by a
@@ -1010,6 +1012,13 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p342-r7c-q38-array-bound-to-a-name-boundary.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, holds: "a stated residual boundary: the bound-name clause's boundary, a package name held in an array literal bound to a name, const specs = [\"playwright\"], read through specs[0] into a callee the walker knows no loader for, class none with no refusal before and after round 7, for the reason p341 gives, as the census header states" }, // q38
   { dir: W, file: "p343-r7c-q36-returned-from-a-function.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p343-r7c-q36-returned-from-a-function.test.ts:3: " + NET_HEAD + NET_RETURNED + NET_NO_REACH }, // q36: function pkg() { return PW; } then load(pkg()), the return arm's return statement (before round 7: class none, no refusal)
   { dir: W, file: "p344-r7c-q44-conditional-call-argument.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p344-r7c-q44-conditional-call-argument.test.ts:3: " + NET_HEAD + NET_PW_CORE + MORE(1) + NET_NO_REACH }, // q44: load(cond ? "playwright-core" : PW), the climb through a conditional's two branches, each a mention, so the refusal names the first and counts the second (before round 7: class none, no refusal)
+  // D (extra5-3, with correctness-2, extra6-2 and extra7-1): the swallow read's under-reads stated as a rule. The read takes its
+  // spellings on the call itself, so Promise.allSettled over a name an array holding the call was bound to (p345), or over a spread
+  // of that name (p346), is not read: swallow [] under the census before round 6, at the round-6 head and since, while the
+  // rejection is swallowed at run time. Both are held, the rule's witnesses beside p309 and p310, and the census header's swallow
+  // clause and swallowed()'s docstring name them, which the third header pin in the plants-row test holds.
+  { dir: W, file: "p345-r7d-s19-allsettled-bound-array-residual.test.ts", leg: true, cls: "shared", gap: null, swallow: [], holds: "a stated residual boundary: the swallow read follows the chain on the call itself and takes Promise.allSettled's own array literal only, so Promise.allSettled over a name an array holding the call was bound to, const ps = [inBrowser(t, body)]; await Promise.allSettled(ps), is not read, swallow [] under the census before round 6, at the round-6 head and since, while the rejection is swallowed at run time, a witness of the rule the census header's swallow clause states (the review's round 7)" }, // s19: the array bound, then settled
+  { dir: W, file: "p346-r7d-s20-allsettled-spread-bound-array-residual.test.ts", leg: true, cls: "shared", gap: null, swallow: [], holds: "a stated residual boundary: Promise.allSettled over a spread of a name an array holding the call was bound to, await Promise.allSettled([...ps]), is not read either (the spread stands between the array literal the read takes and the call), swallow [] under the census before round 6, at the round-6 head and since, while the rejection is swallowed at run time, a witness of the rule the census header's swallow clause states (the review's round 7)" }, // s20: the bound array spread into the literal
   // Appended past D's rows (p345, p346), in the order the round's plan fixed. B, as ruled by the maintainer's answers: p347, the
   // round-6 regression, a placeholder splitting the launcher's name in a chain crossing no path call, which round 6's concatenation
   // landed on the launcher's file as a local module, class none with no refusal over the stub launcher (the census before round 6
@@ -1297,12 +1306,35 @@ test("every planted form under tests/fixtures/browser-legs-plants is classified 
   // the header-pin line FIRST (fresh-3, round 6): the census header's swallow clause states the widened read, a shared call whose
   // rejection is swallowed where it stands by a try with a catch through callbacks, or by .catch, .then's second argument or
   // Promise.allSettled, with .finally and a bare .then stated as not swallows. Two sentence pins over the module's leading comment
-  // block (its // lines joined, since the clause wraps), before the rows: the round-6 swallow rows below (p292 to p305, and p309 and p310, the closing pass's stated residuals) hold the
+  // block (its // lines joined, since the clause wraps), before the rows: the round-6 swallow rows below (p292 to p305, p309 and p310, the closing pass's stated residuals, and p345 and p346, the review's round 7's) hold the
   // read's OUTCOME as a property, and this holds that the header SAYS what it reads, so a clause reworded back to the same-function
   // try reds here first. Holds the sentence: a reword of either phrase moves this pin too.
   const swallowHeader = moduleHeader();
   assert.ok(swallowHeader.includes("whose rejection is swallowed where it stands"), "the census header's swallow clause reads the rejection's fate, not a try statement's position: the leading comment block says a shared inBrowser call whose rejection is swallowed where it stands (before round 6 it said inside a try statement that has a catch clause, the same-function read the round-5 review found under-reads .catch, .then's second argument, Promise.allSettled and a callback inside a try). Holds the sentence: a reword moves this pin too");
   assert.ok(swallowHeader.includes(".finally and a bare .then hand the rejection on and are not swallows"), "the census header's swallow clause states the read's boundary on the promise chain, .finally and a bare .then hand the rejection on and are not swallows (the p297 and p298 controls hold the outcome). Holds the sentence: a reword moves this pin too");
+  // the third header pin (the review's round 7, extra7-1, the owner's call 3 held mechanically): the clause NAMES its witnesses. The
+  // expected set is DERIVED from the table, every row with a swallow field of [] and holds beginning "a stated residual boundary: "
+  // (the swallow under-reads the table holds), and each of the two homes the call named, the census header's swallow clause (the
+  // leading block's text from its one swallow: field to its embedded: field) and swallowed()'s docstring (the doc block directly
+  // above its declaration), names exactly that set as (pN). A witness dropped from either home, an under-read row added without
+  // its name there, or a home naming a row that is no under-read reds here, the message naming the id and the home. The derivation
+  // cannot pass empty: it must be non-empty and hold the three witnesses the call named. Holds the PROPERTY (a reword that keeps
+  // every (pN) stays green; the two pins above hold the sentences).
+  const pidOf = (p: Plant): string => (/^p\d+/.exec(p.file) || [""])[0];
+  const pidNum = (a: string, b: string): number => Number(a.slice(1)) - Number(b.slice(1));
+  const namedIn = (text: string): string[] => [...new Set([...text.matchAll(/\(p(\d+)\)/g)].map((m) => "p" + m[1]))].sort(pidNum);
+  const underReads = PLANT_TABLE.filter((p) => Array.isArray(p.swallow) && p.swallow.length === 0 && typeof p.holds === "string" && p.holds.startsWith("a stated residual boundary: ")).map(pidOf).sort(pidNum);
+  assert.ok(underReads.length > 0, "the plant table's swallow under-reads (rows with swallow [] and holds beginning \"a stated residual boundary: \") are not empty: an empty derivation would hold both homes to naming nothing and pass, so it reds here. Holds the property");
+  for (const w of ["p304", "p309", "p310"]) assert.ok(underReads.includes(w), "the plant table's swallow under-reads include " + w + ", a witness the owner's call 3 named, so the derivation reads the rows it is about; got " + JSON.stringify(underReads) + ". Holds the property");
+  const clauseAt = swallowHeader.indexOf("swallow:"), clauseEnd = swallowHeader.indexOf("embedded:");
+  assert.ok(clauseAt >= 0 && clauseEnd > clauseAt && swallowHeader.indexOf("swallow:", clauseAt + 1) < 0, "the census header carries one swallow: field, before its embedded: field: the witness read slices the clause between them");
+  const moduleSrc = read(MODULE), declAt = moduleSrc.indexOf("const swallowed = "), docAt = moduleSrc.lastIndexOf("/**", declAt), docEnd = moduleSrc.indexOf("*/", docAt);
+  assert.ok(declAt > 0 && docAt > 0 && docEnd < declAt && moduleSrc.slice(docEnd + 2, declAt).trim() === "", "swallowed()'s docstring stands directly above its declaration: the witness read takes the doc block there");
+  for (const [home, text] of [["the census header's swallow clause", swallowHeader.slice(clauseAt, clauseEnd)], ["swallowed()'s docstring", moduleSrc.slice(docAt, docEnd)]]) {
+    const named = namedIn(text);
+    for (const w of underReads) assert.ok(named.includes(w), w + " is missing from " + home + ": every swallow under-read the plant table holds (" + JSON.stringify(underReads) + ") is named there as (" + w + "), so a disclosed residual keeps its named witness in both homes the owner's call 3 named. Holds the property");
+    for (const w of named) assert.ok(underReads.includes(w), home + " names (" + w + "), which is no swallow under-read of the plant table (" + JSON.stringify(underReads) + "): a witness named in prose is a row with swallow [] and holds a stated residual boundary. Holds the property");
+  }
   // the table and the fixture tree name the same files
   const onDisk = [W, "vscode-extension/src"].flatMap((d) => fs.readdirSync(path.join(PLANTS, d)).filter((f) => f.endsWith(".test.ts")).map((f) => d + "/" + f)).sort();
   assert.deepEqual(onDisk, PLANT_TABLE.map((p) => p.dir + "/" + p.file).sort(), "the plant table names every fixture and no other (a fixture added without a row is a plant with no expected outcome)");
@@ -1474,7 +1506,7 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // by the census before round 6, red under the census before round 5), so a moved R5_LAST alone cannot slide them into the round-6
   // population, whose statement (red under the census before round 6) would be false for them and which this test cannot re-run
   const R6_FIRST = 249, R6_LAST = 369;
-  const R6_HELD = ["p252", "p260", "p261", "p266", "p275", "p276", "p277", "p278", "p279", "p290", "p291", "p297", "p298", "p303", "p304", "p305", "p308", "p309", "p310", "p311", "p326", "p334", "p341", "p342", "p353", "p363", "p365", "p366", "p367", "p368"];
+  const R6_HELD = ["p252", "p260", "p261", "p266", "p275", "p276", "p277", "p278", "p279", "p290", "p291", "p297", "p298", "p303", "p304", "p305", "p308", "p309", "p310", "p311", "p326", "p334", "p341", "p342", "p345", "p346", "p353", "p363", "p365", "p366", "p367", "p368"];
   const R6_CARRIED: string[] = [];
   const inRound6 = (p: Plant) => num(p) >= R6_FIRST && num(p) <= R6_LAST;
   const r5 = PLANT_TABLE.filter(inRound5);
@@ -1534,7 +1566,8 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // swallow spellings stated as residuals, p309 and
   // p310, and the chain nested inside a path call's argument stated as a boundary, p311; and, from the review's round 7, the real
   // launcher through a path call, p326, the literal handed to a foreign callee, p334, the bound-name clause's boundaries, p341, p342
-  // and p353, its controls, p363, p366, p367 and p368, and the climb's boundary, p365); a round-6 builder who adds a row moves R6_LAST to
+  // and p353, its controls, p363, p366, p367 and p368, the climb's boundary, p365, and the swallow rule's two further witnesses,
+  // Promise.allSettled over a bound array and over its spread, p345 and p346); a round-6 builder who adds a row moves R6_LAST to
   // it and, when the row stays green under that census, adds it to
   // R6_HELD with holds set (the round-5 population above is closed)
   const NOT_RERUN6 = " (the discrimination was established by running the census before round 6, the module at the round-5 head, over the plants, recorded in the PR's notes, and is not re-run here, since that census is not in the tree at test time: this assertion holds the table's statement, not the fact)";
