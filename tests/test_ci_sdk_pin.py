@@ -25,8 +25,8 @@ This module holds five things, and it never skips: a pin that skips reports gree
    two steps, and GitHub Actions does not require unique names). The population is derived from
    the file's text by pytest_invocations (its docstring is the rule: `python -m pytest`, `python -mpytest`, a bare
    `pytest` or `py.test` at command position, in a named or unnamed step in the file's own layout, in a single-line,
-   quoted, continued, `run: |` or `run: >` scalar, backslash continuations joined, comment lines and pip installs
-   excluded), and the two invocations the file is known to
+   quoted, continued, `run: |` or `run: >` scalar, a tag before it read through, backslash continuations joined as
+   the shell joins them, comment lines and pip installs excluded), and the two invocations the file is known to
    hold, the Python matrix step's Run pytest (the switch and the flag) and the vscode-extension job's served-page
    step (the flag; listed for the switch, since its job installs no SDK), are asserted present, so an empty read is
    red. The flag has no list: the constant pins the SDK alone, its dependency closure resolves fresh on every run (26
@@ -44,11 +44,12 @@ This module holds five things, and it never skips: a pin that skips reports gree
    layout the parser does not read (steps at indent 4 or 8, `-   name:`, a flow mapping, a quoted or spaced `run` key)
    is red at its pytest line; a mention the parser reads but not as a command (a wrapper such as `uvx pytest`, a
    `$PYTEST` variable, an option cluster such as `python -Impytest`, an indentation indicator on a block, a
-   more-indented line in a folded block) is red as `unparsed` until the parser reads it; and a line where a job key
-   goes that the parser does not read as one (a quoted key) is red, so no step is read under the job above it. Outside
-   the check: a run line that never spells pytest (a `$RUNNER` set elsewhere, `make test`, a YAML alias such as
-   `run: *cmd` whose anchor another line carries), a pytest run by a script or action a step calls, and every other
-   workflow file under .github/workflows/. The flag half
+   more-indented line in a folded block, an anchor on the run) is red as `unparsed` until the parser reads it; and a
+   line where a job key goes that the parser does not read as one (a quoted key) is red, so no step is read under the
+   job above it. Outside the check: a run line that never spells pytest (a `$RUNNER` set elsewhere, `make test`, a
+   YAML alias such as `run: *cmd`, whose anchor is red where the text it names spells pytest: on a run, as unparsed,
+   and on any other line, by the census), a pytest run by a script or action a step calls, and every other workflow
+   file under .github/workflows/. The flag half
    keys on the spelling `-p no:anyio` with one space, the switch half on the merged value reading exactly 1 (a quoted
    value read verbatim, so `"1 "` is not 1), and their messages say so. The switch half reads what the run text does
    to the variable only by its spelling (round 4's ruling, 2026-09-23): a step whose run text spells ROMP_SDK_REQUIRE
@@ -700,6 +701,12 @@ STEP_START_RE = re.compile(r"^      - ", re.M)                                # 
 STEP_KEY_PAD = "        "                                                     # step keys sit at indent 8 once `- ` is spaced
 RUN_RE = re.compile(r"^        run:(.*)$", re.M)
 BLOCK_INDICATOR_RE = re.compile(r"^[ \t]*([|>])([+-]?)([0-9]?)[ \t]*(#.*)?$")
+# YAML node properties before a scalar: an anchor (`&cmd`) and a tag (`!!str`, `!local`, `!<...>`), in either order. A
+# plain scalar cannot begin with `&` or `!`, so a leading one is a property; neither changes the scalar's text, and until
+# 2026-09-23 one before a block indicator (`run: &cmd |`) kept the block from being read as a block (review round 4's
+# verify: it was folded into one command). _step_run sets them aside to split the scalar, reads through a tag, and
+# reports a run that carries an anchor as unparsed
+NODE_PROPERTIES_RE = re.compile(r"^[ \t]*(?:(?:&[^ \t]+|![^ \t]*)(?:[ \t]+|$))+")
 UNNAMED = "(unnamed step)"
 # a command that runs pytest: `python -m pytest`, `python3.12 -m pytest`, `python -mpytest` (one token), a bare `pytest`
 # or `py.test`, at the START of a command (the run line is split into its commands first, _shell_commands: at `&&`,
@@ -899,6 +906,26 @@ def _shell_commands(text):
     return [c for c in (c.strip() for c in out) if c]
 
 
+def _continues(text):
+    """True when the shell joins the next line onto this one: the line's last character is a backslash that is not
+    itself escaped (an odd run of backslashes at its end). A backslash followed by a space escapes the space and joins
+    nothing, and an even run is escaped backslashes (until 2026-09-23 the parser stripped trailing whitespace first and
+    joined both). Quotes are not tracked across the line: inside a quote left open, where the shell keeps the backslash
+    and the newline as the argument's text, the next line is the same command's either way."""
+    return (len(text) - len(text.rstrip("\\"))) % 2 == 1
+
+
+def _join_continuation(head, tail):
+    """The shell's join of a backslash-newline: the backslash and the newline removed and nothing inserted, so
+    `no:anyio\\` then `--durations=10` is the one word `no:anyio--durations=10`, and `py\\` then `test` is pytest.
+    Where either side has whitespace at the join the words stay apart, and that boundary is written as one space (the
+    command's arguments are read as words). Until 2026-09-23 every join inserted a space (review round 4's verify)."""
+    head = head[:-1]
+    if head[-1:].isspace() or tail[:1].isspace():
+        return head.rstrip() + " " + tail.lstrip()
+    return head + tail
+
+
 def _paragraphs(raw):
     """Fold [(offset, line)] the way YAML folds a plain or `>` scalar: consecutive non-blank lines join with one
     space, a blank line ends the paragraph. Returns [(offset of the first line, joined text, offset of the last line)]:
@@ -923,14 +950,32 @@ def _step_run(stext):
     reason (None when the form is one this parser reads); the last line differs from the first for a folded paragraph
     or a plain scalar continued on later lines. Read: a single-line plain or quoted scalar, with continuation lines
     indented past the key folded onto it; a `run: |` literal (with a `-` or `+` chomping indicator: the indicator
-    changes trailing newlines only); a `run: >` folded block, each paragraph one command. Not read, and reported so an
-    invocation in the block is `unparsed`: an indentation indicator on the block (`|2`), or a line indented deeper than
-    the block's first line inside a folded block (YAML keeps its line breaks, which this fold would not). No `run:`:
-    (None, None)."""
+    changes trailing newlines only); a `run: >` folded block, each paragraph one command. Node properties before any of
+    these (NODE_PROPERTIES_RE) are set aside, since they change no text of the scalar, so the scalar is split into its
+    lines as the same scalar without them is: a tag (`!!str`) is read through. Not read, and reported so an invocation
+    in the block is `unparsed`: an anchor on the run (`&cmd`: an alias of it, `run: *cmd`, runs the same text in
+    another step under that step's env and name, and the alias line never spells pytest, so this parser would read the
+    text once, under the wrong step; with the anchor refused, an alias of a run that spells pytest cannot stand
+    without a red at its anchor); an indentation indicator on the block (`|2`); or a line indented deeper than the
+    block's first line inside a folded block (YAML keeps its line breaks, which this fold would not). Until 2026-09-23
+    a property before a block indicator kept the block from being read as a block, and it was folded into one command
+    (review round 4's verify). No `run:`: (None, None)."""
     m = RUN_RE.search(stext)
     if not m:
         return None, None
-    rest = m.group(1)
+    props = NODE_PROPERTIES_RE.match(m.group(1))
+    lines, unreadable = _run_scalar(stext, m, props.end() if props else 0)
+    anchors = re.findall(r"&([^ \t]+)", props.group(0)) if props else []
+    if anchors and lines and unreadable is None:
+        unreadable = ("an anchor (&%s) on the run: an alias of it elsewhere (*%s) runs this text in another step, under "
+                      "that step's env, which the parser does not follow" % (anchors[0], anchors[0]))
+    return lines, unreadable
+
+
+def _run_scalar(stext, m, skip):
+    """_step_run's split of the run scalar that RUN_RE matched at `m` into its lines, `skip` characters of node
+    properties set aside: (lines, unreadable), as _step_run returns them."""
+    rest = m.group(1)[skip:]
     after_off = m.end() + 1
     raw, pos = [], 0
     for line in stext[after_off:].splitlines(keepends=True):
@@ -956,7 +1001,7 @@ def _step_run(stext):
             return [(o, l.strip(), o) for o, l in content], "a line indented deeper than the block's first line in a folded block"
         return _paragraphs(raw), None
     first = rest.strip()
-    first_off = m.start(1) + (len(rest) - len(rest.lstrip()))
+    first_off = m.start(1) + skip + (len(rest) - len(rest.lstrip()))
     paras = _paragraphs([(first_off, first)] + raw) if first else _paragraphs(raw)
     if paras and len(paras[0][1]) >= 2 and paras[0][1][0] in "\"'" and paras[0][1][-1] == paras[0][1][0]:
         paras[0] = (paras[0][0], paras[0][1][1:-1], paras[0][2])
@@ -987,7 +1032,8 @@ def pytest_invocations(src, read=None):
     read it: no YAML library in the test deps. A step in any other layout (steps at indent 4 or 8, `-   name:`, a flow
     mapping, a quoted or spaced `run` key) gives no row here; pytest_line_census reds its pytest line, and
     unread_job_keys a job key this parser does not read. The run forms read are _step_run's; comment lines are skipped;
-    a line ending in a backslash is joined with the next. Outside this parser by construction: a pytest run by a script
+    a line ending in an unescaped backslash is joined with the next the way the shell joins it (_continues,
+    _join_continuation: nothing inserted). Outside this parser by construction: a pytest run by a script
     or action the workflow calls, and a run line that never spells pytest (a `$RUNNER` variable set elsewhere, or
     `make test`)."""
     sections = _top_sections(src)
@@ -1032,9 +1078,9 @@ def pytest_invocations(src, read=None):
             j = 0
             while j < len(lines):
                 off, cmd, last = lines[j]
-                while cmd.rstrip().endswith("\\") and j + 1 < len(lines):
+                while _continues(cmd) and j + 1 < len(lines):
                     j += 1
-                    cmd = cmd.rstrip()[:-1].rstrip() + " " + lines[j][1].strip()
+                    cmd = _join_continuation(cmd, lines[j][1])
                     last = lines[j][2]
                 j += 1
                 at = _line_of(src, sbase + off)
@@ -2094,6 +2140,77 @@ class PopulationCheckReds(unittest.TestCase):
         # the control: an unquoted ` #` is a comment, and a pytest word after it is cut with it
         src, first = self._with_first_step_in_shell_job("      - name: Commented\n        run : make test  # pytest later\n")
         self.assertEqual(pytest_line_census(src)[1], [])
+
+    def test_a_tagged_run_block_is_read_through_and_an_anchored_run_is_unparsed(self):
+        # review round 4's verify (attacks, M1, 2026-09-23): a node property before the block indicator (`run: &cmd |`,
+        # `run: !!str |`) kept BLOCK_INDICATOR_RE from matching, so the literal block was folded into one command: the
+        # second command's -p no:anyio was credited to the first, and a bare ROMP_SDK_REQUIRE=1 line, a shell variable
+        # that is not exported, read as a prefix on the pytest command after it; both read ok. The properties are set
+        # aside to split the scalar into its lines, as the same block without them is. A tag is read through; a run that
+        # carries an anchor is unparsed at each pytest line, since an alias of it (`run: *cmd`, a line that never spells
+        # pytest) runs the same text under another step's env, which the parser does not follow
+        env = '        env:\n          %s: "1"\n' % SWITCH
+        two = "          python -m pytest -q tests/test_a.py\n          python -m pytest -q -p no:anyio tests/test_b.py\n"
+        bare = "          %s=1\n          python -m pytest -q -p no:anyio tests/test_a.py\n" % SWITCH
+        for label, head in (("a tag", "        run: !!str |\n"), ("a tag, strip chomping", "        run: !!str |-\n")):
+            with self.subTest(form=label, block="two commands, the first unflagged"):
+                src, first = self._with_first_step_in_shell_job("      - name: Tagged (pytest)\n" + env + head + two)
+                new = self._new(src)
+                self.assertEqual([(i["line"], verdict(i), i["args"].strip()) for i in new],
+                                 [(first + 4, "unlisted", "-q tests/test_a.py"), (first + 5, "ok", "-q -p no:anyio tests/test_b.py")],
+                                 "%s: %r" % (label, [_describe(i) for i in new]))
+                self.assertIn("lacks -p no:anyio", _describe(new[0]))
+                self.assertEqual(pytest_line_census(src)[1], [], label)
+            with self.subTest(form=label, block="a bare assignment of the switch, then a flagged pytest"):
+                src, first = self._with_first_step_in_shell_job("      - name: Tagged (pytest)\n" + head + bare)
+                new = self._new(src)
+                self.assertEqual([(i["line"], verdict(i)) for i in new], [(first + 3, "unparsed")], "%s: %r" % (label, [_describe(i) for i in new]))
+                self.assertIn("spells ROMP_SDK_REQUIRE other than as a VAR=value prefix", _describe(new[0]))
+        for label, head in (("an anchor on a block", "        run: &cmd |\n"), ("an anchor and a tag", "        run: &cmd !!str |\n"),
+                            ("a tag and an anchor", "        run: !!str &cmd |\n")):
+            for block, text, lines in (("two commands", env + head + two, (4, 5)), ("a bare assignment", head + bare, (3,))):
+                with self.subTest(form=label, block=block):
+                    src, first = self._with_first_step_in_shell_job("      - name: Anchored (pytest)\n" + text)
+                    new = self._new(src)
+                    self.assertEqual([(i["line"], verdict(i)) for i in new], [(first + n, "unparsed") for n in lines],
+                                     "%s, %s: %r" % (label, block, [_describe(i) for i in new]))
+                    for i in new:
+                        self.assertIn("an anchor (&cmd) on the run: an alias of it elsewhere (*cmd)", _describe(i))
+                    self.assertEqual(pytest_line_census(src)[1], [], "%s, %s: the rows cover the block's lines" % (label, block))
+        # on a one-line plain scalar too, and on a run whose text never spells pytest the anchor gives no row
+        src, first = self._with_first_step_in_shell_job("      - name: Anchored line (pytest)\n" + env +
+                                                        "        run: &cmd python -m pytest -q -p no:anyio tests/test_a.py\n")
+        self.assertEqual([(i["line"], verdict(i)) for i in self._new(src)], [(first + 3, "unparsed")])
+        src, first = self._with_first_step_in_shell_job("      - name: Anchored make\n        run: &cmd make test\n")
+        self.assertEqual(self._new(src), [])
+
+    def test_a_backslash_continuation_is_joined_the_way_the_shell_joins_it(self):
+        # review round 4's verify (attacks, M3, 2026-09-23): the parser joined a backslash continuation with a space, and
+        # the shell removes the backslash and the newline and inserts nothing, so `-p no:anyio\` followed by an unindented
+        # `--durations=10` is the one word `no:anyio--durations=10` to pytest (anyio's plugin stays registered) and read
+        # as the flag; and `python -m py\` followed by `test ...` runs pytest while the parser read `py test` and gave no
+        # row. A backslash followed by a space escapes the space and joins nothing, and so does an escaped backslash
+        env = '        env:\n          %s: "1"\n' % SWITCH
+        for label, block, offset, args in (
+                ("the flag fused with the next word", "          python -m pytest -q -p no:anyio\\\n          --durations=10\n", 4, "-q -p no:anyio--durations=10"),
+                ("a backslash, then a space", "          python -m pytest -q tests/test_a.py \\ \n            -p no:anyio\n", 4, "-q tests/test_a.py \\"),
+                ("an escaped backslash", "          python -m pytest -q tests/test_a.py \\\\\n            -p no:anyio\n", 4, "-q tests/test_a.py \\\\")):
+            with self.subTest(form=label):
+                src, first = self._with_first_step_in_shell_job("      - name: Continued (pytest)\n" + env + "        run: |\n" + block)
+                new = self._new(src)
+                self.assertEqual([(i["line"], verdict(i), i["args"].strip()) for i in new], [(first + offset, "unlisted", args)],
+                                 "%s: %r" % (label, [_describe(i) for i in new]))
+                self.assertIn("lacks -p no:anyio", _describe(new[0]))
+        # the word split over two lines of a heredoc is one word to the shell that reads it: a row, named at its first line
+        src, first = self._with_first_step_in_shell_job("      - name: Split word\n        run: |\n          bash <<EOF\n"
+                                                        "          python -m py\\\n          test -q tests/test_a.py\n          EOF\n")
+        new = self._new(src)
+        self.assertEqual([(i["line"], i["last_line"], verdict(i), i["args"].strip()) for i in new],
+                         [(first + 3, first + 4, "unlisted", "-q tests/test_a.py")], [_describe(i) for i in new])
+        # the control: whitespace on either side of the join is one word boundary, as the READ_FORMS continuation reads
+        src, first = self._with_first_step_in_shell_job("      - name: Continued (pytest)\n" + env + "        run: |\n"
+                                                        "          python -m pytest -q \\\n            -p no:anyio\n")
+        self.assertEqual([(verdict(i), i["args"].strip()) for i in self._new(src)], [("ok", "-q -p no:anyio")])
 
     def test_an_unread_line_that_installs_pytest_and_then_runs_it_is_red(self):
         # the pip exclusion is judged per shell command, never per line: in a layout the parser does not read, a line
