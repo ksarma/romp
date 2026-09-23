@@ -1996,9 +1996,9 @@ def _plant_at(tree, key, positions):
     stranger statement first in its body, a stranger type ignore first in its type_ignores); for any other, a minimal instance of the
     class (_minimal) with the field holding the stranger ([stranger] for a list field), wrapped to a statement by its natural
     container (_as_statement) and inserted first in the module body, the stranger deriving from the field's base (_stranger). First,
-    so a census's breadth-first walk meets the plant once it has yielded every node above the plant's depth; appended last, the plant
-    waited for every node at its own depth as well (review round 8, regression-1 and extra9-1: the witness's cost). Answers
-    (container, stranger, unplant), unplant removing the plant by identity. Builds nodes and traverses nothing (ast.copy_location and
+    so a census's breadth-first walk meets the plant before the rest of the plant's level of the tree, which it walked whole first
+    when the plant was appended last (review round 8, regression-1 and extra9-1: the witness's cost). Answers (container, stranger,
+    unplant), unplant removing the plant by identity. Builds nodes and traverses nothing (ast.copy_location and
     ast.fix_missing_locations give the plant line numbers, as a parse would)."""
     cls_name, field = key
     stranger = _stranger(positions[key]["base"])()
@@ -4812,7 +4812,9 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
     patch of ast.parse that plants what the real parse returns, so the plant lands exactly where that entry point parses (the module
     reads ast.parse by attribute at call time; _walk calls ast.walk, which the patch does not touch; the patch is lifted on exit,
     and no thread parses during the case), one real parse per source serving both sides and each plant made in a fresh Module over
-    that parse's statements, so no parsed node is changed. A census that walks
+    that parse's statements, so no parsed node is changed. The plant goes first in the module body since the round-8 cut, so a
+    census whose walk stops before the body's last statement still meets it and is refused; the plant appended last caught such a
+    census, and the case no longer does. A census that walks
     around _walk in the position a plant sits in passes that plant over, answers a census and reds the first case naming it and the
     position, whatever name it walks under. The unit is the position and not a class of positions, and not a site (review round 6,
     lens one: the witness planted at three sites, the module body's end, the first def's body and the first class's body, three of
