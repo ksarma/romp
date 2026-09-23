@@ -55,28 +55,31 @@ the name is the path whatever those say, so an extension that adds the path to a
 path while they hold it (`KERNEL = os.path.dirname(KERNEL)`), a rebinding away from the path, refused loudly the same
 way; neither, no path. A string that MENTIONS the path inside a word (a -c program that load_sources the kernel,
 `load_source('k', %r)`), a comment or a docstring is not a kernel process: that is the in-process shape in a child, met
-by the bus belt below like the in-process shape itself (the ruling point below).
+by the bus belt below like the in-process shape itself (the ruling point below). A Python -c child's program (the
+interpreter before the flag names no shell) is read as Python as well, its text assembled from the templates, joins and
+names that build it, a %r placeholder a string literal ending in the path the scan reads its value as; a spawn site in
+that program is a site of the call that starts the child.
 The scan replaced a regex pair on 2026-09-21, in the author's pass applying the ruling of PR #850's eighth review
 round: the old KERNEL_NAME pattern took any name bound on ONE line that spelled romp-kernel as a name bound to the
 kernel's path and looked for it as a whole WORD in every subprocess call span, so a local `p` bound to TEXT that
-spelled the path collided with the "-p" of a nested pytest argv (a false offender at a commit of that PR's eighth
-round that was never pushed, fixed at its ruled head; the loud half), while a path bound across two lines, through
-a constant holding the script's name, to a tuple target or to self.kernel never entered the pattern and a spawn
-through it would have passed this rule vacuously (the silent half; a plant showed the miss, the tree had no such
-spawn); at that head most of the names the pattern bound were the `km` of an in-process load, a module object and
-no path (the author's pass measured it before the rewrite). PLANT_TABLE below runs both halves, every row labelled
-with what the scan must do; the guard test's report carries the row count. The rewrite then read less than the regex
-pair in places (a command string with the path after its first word, a placeholder template, an env-override default,
-Popen's executable=, a comprehension argv, a subclass's override of a base attribute, `romp up`) with every check
-green, since the tree held no instance of those shapes and the table was written from what the scan read (PR #850's
-ninth review round). So the comparison
-case runs the regex pair, copied verbatim (_round8_regex_census), beside the scan over every module the trio test
-reads and every row, and reds on a call the regex flags that the scan accounts for by none of a site, a listed entry
-containing the match, a refusal, or one of the exclusions derived from the call: a word collision (a word a
-one-line binding named, which resolves at the call to no path, and not to that one-line binding when the scan reads
-its value as no path, since the regex then read the declaration the call runs), a match inside a -c program (the
-ruling point below; tests/test_chat_pages.py in the tree), and the CLI with a verb outside KERNEL_VERBS, while every
-verb in it is one bin/romp dispatches.
+spelled the path collided with the "-p" of a nested pytest argv (a false offender at a commit of that PR's eighth round
+that was never pushed, fixed at its ruled head; the loud half), while a path bound across two lines, through a constant
+holding the script's name, to a tuple target or to self.kernel never entered the pattern and a spawn through it would
+have passed this rule vacuously (the silent half; a plant showed the miss, the tree had no such spawn); at that head
+most of the names the pattern bound were the `km` of an in-process load, a module object and no path (the author's pass
+measured it before the rewrite). PLANT_TABLE below runs both halves, every row labelled with what the scan must do; the
+guard test's report carries the row count. The rewrite then read less than the regex pair in places (a command string
+with the path after its first word, a placeholder template, an env-override default, Popen's executable=, a
+comprehension argv, a subclass's override of a base attribute, `romp up`) with every check green, since the tree held
+no instance of those shapes and the table was written from what the scan read (PR #850's ninth review round). So the
+comparison case runs the regex pair, copied verbatim (_round8_regex_census), beside the scan over every module the trio
+test reads and every row, and reds on a call the regex flags that the scan accounts for by none of a site, a listed
+entry containing the match, a refusal, or one of the exclusions derived from the call: a word collision (a word a
+one-line binding named, which resolves at the call to no path, and not to that one-line binding when the scan reads its
+value as no path, since the regex then read the declaration the call runs), a match inside the program of a Python -c
+child whose program parses, holds no placeholder Python reads as code and starts no process (the ruling point below;
+tests/test_chat_pages.py in the tree; a shell's -c program is no Python child), and the CLI with a verb outside
+KERNEL_VERBS, while every verb in it is one bin/romp dispatches.
 
 Roads and residual, derived by one command (`python tests/test_hermetic_kernel_postal.py --roads [directory]`, one
 line per module the trio test reads, then the unresolved names, then a summary line with every count): a module's
@@ -218,6 +221,16 @@ SHELL_PROGRAM = re.compile(r"(?:^|/)(?:ba|da|z|k|mk|a)?sh$")
 SHELL_C_FLAG = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
 SHELL_OPERATOR = set("();<>|&")    # a word of these alone is an operator: a redirection when it holds < or >, else control
 SHELL_EXPANSION = set("$`*?[{")    # a word holding one of these may reach the command as some other text
+# the calls that start a process, by the canonical name a callee resolves to: the spawn functions and the rest of the
+# subprocess module's, os's system, popen, exec, spawn, posix_spawn and fork families, pty.spawn, asyncio's subprocess
+# starters and multiprocessing's Process. Exclusion (b) reads a -c program for any of them (PROCESS_SPELLINGS: the bare
+# spelling of an unbound callee, and the method name of asyncio's loop-level starters, whose receiver no binding reaches)
+PROCESS_FUNCTIONS = (SPAWN_FUNCTIONS | {"subprocess.getoutput", "subprocess.getstatusoutput", "pty.spawn",
+                                        "asyncio.create_subprocess_exec", "asyncio.create_subprocess_shell", "multiprocessing.Process"}
+                     | {"os." + f for f in ("system", "popen", "posix_spawn", "posix_spawnp", "execl", "execle", "execlp", "execlpe", "execv",
+                                            "execve", "execvp", "execvpe", "spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve",
+                                            "spawnvp", "spawnvpe", "fork", "forkpty")})
+PROCESS_SPELLINGS = {f.rsplit(".", 1)[-1] for f in PROCESS_FUNCTIONS} | {"subprocess_exec", "subprocess_shell"}
 
 
 class UnreadableSpawn(AssertionError):
@@ -236,28 +249,28 @@ class UnreadableSpawn(AssertionError):
 class _SpawnScan:
     """One module's spawn calls and the reading of each argv. A spawn is a call whose callee resolves by binding
     (_callee_names) to Popen, run, check_output, check_call or call of the subprocess module: through the name the
-    module imports the library under, a from-import of the function under any name, or an assignment that binds a
-    name to either (`run = subprocess.run`); an unbound `subprocess` or `Popen`, a snippet's, is the library by its
-    spelling. Its argv (the first positional or `args=`) holds the kernel's path when an ELEMENT evaluates to it, and
-    so does its `executable=` when that is the path: a string, an f-string, a % or a .format template with a whole
-    word whose text ends in romp-kernel or that ends in a placeholder the path fills (_template_is_path; the tail and
-    first-word reads beside it; in a string the shell reads, the words the shell splits it into as well); a path
-    joined onto it (os.path.join, Path, /, either operand of +, any element of a
-    str.join over a literal list, the callee of a path-building call resolved by binding too); a path-preserving
-    wrapper (str, os.fspath, .resolve(), joinpath); any value of an `or` or a conditional, a walrus's value, the
-    default of `.get(key, default)` or `os.getenv(key, default)`; the element a subscript takes from a literal dict
-    by key or from a literal list or tuple by index (_element); or a name or a self.X target bound to one of those,
-    resolved by ast_bindings in the scope the call reads. A splat element, an argv held in a name, one built by + or
-    by `or`, a walrus and a comprehension or generator (its element expression or an iterable; its own targets never
-    resolved) are followed. The CLI's path counts only with a kernel verb (KERNEL_VERBS) as the next element, the
-    next word of a command string, or a first argument the shell may hand it (_shell_first_arguments). A constant
-    that MENTIONS the path inside a word (a -c program's
-    `load_source('k', %r)`, a comment) is not the path; a value derived by a consumer (open(...).read(),
-    load_source(...), Popen(...), a function imported from any module) is not the path. Whatever the scan does not
-    read is no path. It LISTS under `unresolved` a name or target with no readable declaration (a parameter, an
-    import, a loop target, an attribute of an imported module), a call of a function defined in the module or of a
-    name no scope binds (a helper's return, a star import's), the argv of a passthrough (`run(*a)`) and a keywords
-    splat a spawn is handed alone; what it does not list is the module docstring's residual."""
+    module imports the library under, a from-import of the function under any name, or an assignment that binds a name
+    to either (`run = subprocess.run`); an unbound `subprocess` or `Popen`, a snippet's, is the library by its spelling.
+    Its argv (the first positional or `args=`) holds the kernel's path when an ELEMENT evaluates to it, and so does its
+    `executable=` when that is the path: a string, an f-string, a % or a .format template with a whole word whose text
+    ends in romp-kernel or that ends in a placeholder the path fills (_template_is_path; the tail and first-word reads
+    beside it; in a string the shell reads, the words the shell splits it into as well); a path joined onto it
+    (os.path.join, Path, /, either operand of +, any element of a str.join over a literal list, the callee of a
+    path-building call resolved by binding too); a path-preserving wrapper (str, os.fspath, .resolve(), joinpath); any
+    value of an `or` or a conditional, a walrus's value, the default of `.get(key, default)` or `os.getenv(key,
+    default)`; the element a subscript takes from a literal dict by key or from a literal list or tuple by index
+    (_element); or a name or a self.X target bound to one of those, resolved by ast_bindings in the scope the call
+    reads. A splat element, an argv held in a name, one built by + or by `or`, a walrus and a comprehension or generator
+    (its element expression or an iterable; its own targets never resolved) are followed. The CLI's path counts only
+    with a kernel verb (KERNEL_VERBS) as the next element, the next word of a command string, or a first argument the
+    shell may hand it (_shell_first_arguments). A constant that MENTIONS the path inside a word (a -c program's
+    `load_source('k', %r)`, a comment) is not the path, and a Python -c child's program is read as Python, its own
+    spawns scanned (_program_spawns_kernel); a value derived by a consumer (open(...).read(), load_source(...),
+    Popen(...), a function imported from any module) is not the path. Whatever the scan does not read is no path. It
+    LISTS under `unresolved` a name or target with no readable declaration (a parameter, an import, a loop target, an
+    attribute of an imported module), a call of a function defined in the module or of a name no scope binds (a helper's
+    return, a star import's), the argv of a passthrough (`run(*a)`) and a keywords splat a spawn is handed alone; what
+    it does not list is the module docstring's residual."""
 
     def __init__(self, tree, filename="<src>"):
         self.filename = filename
@@ -636,6 +649,8 @@ class _SpawnScan:
                 elif (self.is_kernel_path(e, scope, seen, cli=True) and i + 1 < len(elts)
                       and isinstance(elts[i + 1], ast.Constant) and elts[i + 1].value in KERNEL_VERBS):
                     return True   # `romp kernel ...`: the CLI with the kernel verb next
+                elif self._python_program_at(elts, i, scope) and self._program_spawns_kernel(e, scope, seen):
+                    return True   # a -c child that starts the kernel as a process itself
             return False
         if isinstance(node, ast.Dict):
             return any(v is not None and self.is_kernel_path(v, scope, seen) for v in node.values)
@@ -665,6 +680,124 @@ class _SpawnScan:
         (_names_a_shell: `["bash", "-c", <program>]`, `["env", "sh", "-c", <program>]`)?"""
         return (i >= 2 and isinstance(elts[i - 1], ast.Constant) and isinstance(elts[i - 1].value, str)
                 and bool(SHELL_C_FLAG.fullmatch(elts[i - 1].value)) and self._names_a_shell(elts[i - 2], scope))
+
+    def _python_program_at(self, elts, i, scope):
+        """Is elts[i] the program after a "-c" whose interpreter (the element before the flag) names no shell: a Python
+        child's program, read by _program_spawns_kernel and by exclusion (b)?"""
+        return (i >= 1 and isinstance(elts[i - 1], ast.Constant) and elts[i - 1].value == "-c"
+                and not (i >= 2 and self._names_a_shell(elts[i - 2], scope)))
+
+    def _program_texts(self, node, scope, seen=frozenset()):
+        """A -c program's Python source, as far as the scan can assemble it: ([(text, opaque names)], read through a
+        name), a text per value the program can hold, or (None, ...) for a program that is no string the scan can
+        assemble (a call's value, a parameter). Assembled from a string, an f-string, a % or a .format template; a name,
+        through the declarations it resolves to; a str.join over a literal list or tuple of those; either operand of +
+        of those (at most eight texts). A placeholder converted by repr (%r, !r) is a string literal in the text, its
+        text ending in /romp-kernel or /bin/romp when the scan reads the value filling it as that path; any other
+        placeholder is a name of its own in the text, among the opaque names, since the text filling it is unread."""
+        pieces = _template_pieces(node)
+        if pieces is not None:
+            reprs, text, opaque = iter(_template_reprs(node)), [], set()
+            for piece in pieces:
+                if isinstance(piece, str):
+                    text.append(piece)
+                    continue
+                mark = "_romp_placeholder_%d" % (len(text))
+                if next(reprs, False):
+                    values = piece[0]
+                    tail = ("/romp-kernel" if any(self.is_kernel_path(v, scope, seen) for v in values)
+                            else "/bin/romp" if any(self.is_kernel_path(v, scope, seen, cli=True) for v in values) else "")
+                    text.append(repr(mark + tail))
+                else:
+                    text.append(mark)
+                    opaque.add(mark)
+            return [("".join(text), frozenset(opaque))], False
+        if isinstance(node, ast.Name):
+            decls, where = scope.resolve(node.id)
+            key = (id(where), node.id)
+            if not decls or key in seen or any(d.value is None for d in decls):
+                return None, True
+            texts = []
+            for d in decls:
+                found, _ = self._program_texts(d.value, self.bindings.scope_of(d.value), seen | {key})
+                if found is None:
+                    return None, True
+                texts += found
+            return (texts, True) if len(texts) <= 8 else (None, True)
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "join" and not node.keywords
+                and isinstance(node.func.value, ast.Constant) and isinstance(node.func.value.value, str)
+                and len(node.args) == 1 and isinstance(node.args[0], (ast.List, ast.Tuple))):
+            combos, named = [("", frozenset())], False
+            for i, e in enumerate(node.args[0].elts):
+                found, by_name = self._program_texts(e, scope, seen)
+                named = named or by_name
+                if found is None:
+                    return None, named
+                combos = [(a + (node.func.value.value if i else "") + b, x | y) for a, x in combos for b, y in found]
+                if len(combos) > 8:
+                    return None, named
+            return combos, named
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            left, by_left = self._program_texts(node.left, scope, seen)
+            right, by_right = self._program_texts(node.right, scope, seen)
+            if left is None or right is None or len(left) * len(right) > 8:
+                return None, by_left or by_right
+            return [(a + b, x | y) for a, x in left for b, y in right], by_left or by_right
+        return None, False
+
+    def _program_spawns_kernel(self, node, scope, seen):
+        """Does `node`, a Python child's -c program (_python_program_at), start the kernel as a process: does a text of
+        it (_program_texts) that parses hold a spawn site (a _SpawnScan of its own, its bindings released after)? The
+        road is binding when the program, or a placeholder's value, was read through a name; a program that starts no
+        kernel leaves the road as it found it."""
+        before = self._bound_paths
+        texts, by_name = self._program_texts(node, scope, seen)
+        for text, _ in texts or ():
+            try:
+                tree = ast.parse(text)
+            except (SyntaxError, ValueError):
+                continue
+            nested = _SpawnScan(tree, "%s (the -c program at line %d)" % (self.filename, self._line))
+            try:
+                sites = nested.sites()
+            finally:
+                nested.bindings.release()
+            if sites:
+                if by_name or any(road == "binding" for _, _, road in sites):
+                    self._bound_paths += 1
+                return True
+        self._bound_paths = before
+        return False
+
+    def program_starts_no_process(self, elts, j, scope):
+        """Exclusion (b)'s reading of elts[j], the program after a "-c": true only for a Python child's program
+        (_python_program_at) whose every text (_program_texts) parses, holds no opaque placeholder where Python reads a
+        name, and calls nothing that starts a process (PROCESS_FUNCTIONS by the callee's binding, PROCESS_SPELLINGS by
+        its spelling): the ruling point's in-process load one process down, and nothing else."""
+        if not self._python_program_at(elts, j, scope):
+            return False
+        texts, _ = self._program_texts(elts[j], scope)
+        if not texts:
+            return False
+        for text, opaque in texts:
+            try:
+                tree = ast.parse(text)
+            except (SyntaxError, ValueError):
+                return False
+            if any(isinstance(n, ast.Name) and n.id in opaque for n in ast.walk(tree)):
+                return False
+            nested = _SpawnScan(tree, self.filename)
+            try:
+                for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call)):
+                    names = nested._callee_names(call.func, nested.bindings.scope_of(call))
+                    spelled = {n for n in names if "." not in n}   # an unbound callee, by its own spelling
+                    if isinstance(call.func, ast.Attribute) and call.func.attr in ("subprocess_exec", "subprocess_shell"):
+                        spelled.add(call.func.attr)   # a loop's starter: loop.subprocess_exec(...), its receiver unread
+                    if names & PROCESS_FUNCTIONS or spelled & PROCESS_SPELLINGS:
+                        return False
+            finally:
+                nested.bindings.release()
+        return True
 
     def _names_a_shell(self, node, scope, seen=frozenset()):
         """Does `node` name a shell (SHELL_PROGRAM, by name or path): a string, a name bound to one (resolved by binding),
@@ -818,6 +951,22 @@ def _template_words(pieces):
     if word:
         words.append(word)
     return words
+
+
+def _template_reprs(node):
+    """For each placeholder of _template_pieces(node), in its order: is the value filling it converted by repr (a %r
+    field, a !r conversion)? Empty for a node that is no template."""
+    if isinstance(node, ast.JoinedStr):
+        return [v.conversion == ord("r") for v in node.values if isinstance(v, ast.FormattedValue)]
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod) and isinstance(node.left, ast.Constant) and isinstance(node.left.value, str):
+        return [m.group("conv") == "r" for m in PERCENT_FIELD.finditer(node.left.value) if m.group("conv") != "%"]
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "format"
+            and isinstance(node.func.value, ast.Constant) and isinstance(node.func.value.value, str)):
+        try:
+            return [conversion == "r" for _, field, _, conversion in string.Formatter().parse(node.func.value.value) if field is not None]
+        except ValueError:
+            return []
+    return []
 
 
 def _shell_words(pieces):
@@ -1132,20 +1281,21 @@ def _regex_scan_comparison(src, name, verbs_hold=True, scan_all=False, scanned=N
     every match the scan accounts for in none of these ways: a site at the call's line (the module then owes the trio);
     an entry listed under `unresolved` whose expression contains the match (a listing requires no trio, so an unrelated
     one at the same call, sys.executable most often, explains nothing); the module refused (UnreadableSpawn, loud); or
-    one of the exclusions, each derived from the call: (a) a match of a word a one-line binding named, where no name
-    or attribute of that spelling in the call resolves to the path and none resolves to that one-line binding when the
-    scan reads its value as no path (the word collisions; a name that reaches the binding the regex read, a value the
-    scan cannot read, is no collision); (b) a match inside the program element after a "-c" (the ruling point below);
-    (c) the CLI followed by a verb outside KERNEL_VERBS: a string constant as the next argv element, or, inside a
-    string, the first argument the shell hands each CLI word of it (_shell_first_arguments over _shell_words), each
-    known as text with no expansion in it (SHELL_EXPANSION), and only while every verb in KERNEL_VERBS is one bin/romp
-    dispatches (`verbs_hold`: an exclusion keyed on a list that names a verb the CLI has not excuses nothing).
-    `regex_missed` the lines of the sites the regex census did not flag, reported and asserting nothing; `not_calls` the
-    lines of regex matches at no call of the module's ast (a comment, a docstring, a string holding a snippet);
-    `flagged` the number of calls of the ast the regex flags. A source the regex flags nowhere is not scanned unless
-    `scan_all`, so its `regex_missed` is empty. `scanned` is (tree, scan, sites, refused) from a scan of `src` its
-    caller already ran (_roads_build, so the tree is scanned once), else the source is parsed and scanned here (a
-    planted row's text)."""
+    one of the exclusions, each derived from the call: (a) a match of a word a one-line binding named, where no name or
+    attribute of that spelling in the call resolves to the path and none resolves to that one-line binding when the scan
+    reads its value as no path (the word collisions; a name that reaches the binding the regex read, a value the scan
+    cannot read, is no collision); (b) a match inside the program after a "-c" of a Python child whose program parses,
+    holds no placeholder Python reads as code and starts no process (program_starts_no_process: the ruling point below;
+    a shell's -c program is no Python child); (c) the CLI followed by a verb outside KERNEL_VERBS: a string constant as
+    the next argv element, or, inside a string, the first argument the shell hands each CLI word of it
+    (_shell_first_arguments over _shell_words), each known as text with no expansion in it (SHELL_EXPANSION), and only
+    while every verb in KERNEL_VERBS is one bin/romp dispatches (`verbs_hold`: an exclusion keyed on a list that names a
+    verb the CLI has not excuses nothing). `regex_missed` the lines of the sites the regex census did not flag, reported
+    and asserting nothing; `not_calls` the lines of regex matches at no call of the module's ast (a comment, a
+    docstring, a string holding a snippet); `flagged` the number of calls of the ast the regex flags. A source the regex
+    flags nowhere is not scanned unless `scan_all`, so its `regex_missed` is empty. `scanned` is (tree, scan, sites,
+    refused) from a scan of `src` its caller already ran (_roads_build, so the tree is scanned once), else the source is
+    parsed and scanned here (a planted row's text)."""
     hits = _round8_regex_census(src)
     if not hits and not scan_all:
         return [], [], [], 0
@@ -1218,11 +1368,11 @@ def _regex_match_excluded(scan, call, offset, text, word, bound, extent, verbs_h
             pass
     argv = _spawn_argv(call)
     lists = [n for n in ast.walk(argv) if isinstance(n, (ast.List, ast.Tuple))] if argv is not None else []
-    for elts in (n.elts for n in lists):   # (b): inside the element after "-c"
+    for elts in (n.elts for n in lists):   # (b): inside the program after "-c" of a Python child that starts no process
         for i, e in enumerate(elts[:-1]):
             if isinstance(e, ast.Constant) and e.value == "-c":
                 start, end = extent(elts[i + 1])
-                if start <= offset < end:
+                if start <= offset < end and scan.program_starts_no_process(elts, i + 1, scan.bindings.scope_of(elts[i + 1])):
                     return True
     if word is None and verbs_hold and "romp-kernel" not in text:   # (c): the CLI with another verb
         for elts in (n.elts for n in lists):
@@ -1792,6 +1942,10 @@ PLANT_TABLE = (
      'KERNEL = os.path.join(BIN, "romp-kernel")\nsubprocess.Popen("exec %s %s" % (*[KERNEL], "--serve"), shell=True)'),
     ('B70 a quoted placeholder in an sh -c program, the path bound on one line (the shell removes the quotes)', 'caught-by-binding', 2,
      'KERNEL = os.path.join(BIN, "romp-kernel")\nsubprocess.Popen(["sh", "-c", f"\'{KERNEL}\' --serve"])'),
+    ('B71 a Python -c child that starts the kernel as a process, its program held in a name', 'caught-by-binding', 2,
+     'CODE = "import subprocess\\nsubprocess.run([\'bin/romp-kernel\', \'--serve\'])\\n"\nsubprocess.run([sys.executable, "-c", CODE])'),
+    ('B72 a Python -c child that starts, as a process, the path a %r placeholder carries from a name', 'caught-by-binding', 2,
+     'KERNEL = os.path.join(BIN, "romp-kernel")\nsubprocess.run([sys.executable, "-c", "import subprocess; subprocess.run([%r])" % KERNEL])'),
     ('A1 the library under an alias', 'caught-by-argv', 2,
      'import subprocess as sp\nsp.Popen([os.path.join(BIN, "romp-kernel")])'),
     ('A2 a from-import of run', 'caught-by-argv', 2,
@@ -1860,6 +2014,11 @@ PLANT_TABLE = (
      'subprocess.Popen([shutil.which("bash"), "-c", "exec \'bin/romp-kernel\' --serve"])'),
     ("A34 the path quoted in a login shell's -lc program (the flag in a cluster)", 'caught-by-argv', 1,
      'subprocess.Popen(["bash", "-lc", "exec \'bin/romp-kernel\' --serve"])'),
+    ('A35 a Python -c child that starts the kernel as a process', 'caught-by-argv', 1,
+     'subprocess.run([sys.executable, "-c", "import subprocess; subprocess.run([\'bin/romp-kernel\', \'--serve\'])"])'),
+    ('A36 the path as an element beside a -c child that load_sources it through a %r placeholder a name fills (the road the '
+     'element gives)', 'caught-by-argv', 2,
+     'KERNEL = os.path.join(BIN, "romp-kernel")\nsubprocess.run([sys.executable, "-c", "km = load_source(\'k\', %r)" % KERNEL, "bin/romp-kernel"])'),
     ('N1 a same-named local in another function', 'no-spawn', None,
      'def a():\n    k = os.path.join(BIN, "romp-kernel")\ndef b():\n    k = [sys.executable, "-m", "pytest"]\n    subprocess.run(k)'),
     ('N2 p beside -p', 'no-spawn', None,
@@ -1954,6 +2113,9 @@ PLANT_TABLE = (
      '        subprocess.Popen([sys.executable, self.kernel])'),
     ('N43 the CLI with --help in a shell string, a ; right after the verb (the shell hands it --help)', 'no-spawn', None,
      'subprocess.run("bin/romp --help; true", shell=True)'),
+    ('N44 a -c child that load_sources the kernel, its program a str.join of lines and %r templates', 'no-spawn', None,
+     'subprocess.run([sys.executable, "-c", "\\n".join(["import sys", "sys.path.insert(0, %r)" % HERE,\n'
+     '                                                 "km = load_source(\'k\', %r)" % os.path.join(BIN, "romp-kernel")])])'),
     ('R1 a rebinding in one function', 'refused-loud', (4, 2, 3),
      'def t():\n    k = os.path.join(BIN, "romp-kernel")\n    k = [sys.executable, "-m", "pytest", "-k", "boot"]\n    subprocess.run(k)'),
     ('R2 two module-level bindings that disagree', 'refused-loud', (3, 1, 2),
@@ -2168,25 +2330,28 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual([road for road, _, _ in spawn_roads(loud_dir).values()], ["refused"], "the roads table labels the module refused")
 
     def test_the_scan_covers_every_call_the_regex_census_it_replaced_flagged(self):
-        """The old-versus-new comparison (review round 9: a replacement instrument covers at least what it replaced,
-        and the proof is the old and the new run over one population). The census the scan replaced
-        (_round8_regex_census, round 8's regex pair copied verbatim) and the scan run over every module the trio test
-        reads and every PLANT_TABLE row: for each call the regex flags, the scan gives a site at the call's line, lists
-        an unresolved entry whose expression contains the match, or refuses the module, or the match is one of the
-        exclusions derived from the call (_regex_scan_comparison: a word a one-line binding named that resolves to no
-        path at the call and not to that binding when the scan cannot read its value, a match inside a -c program, the
-        CLI with a verb outside KERNEL_VERBS). A match in none of
-        these reds the case, naming the module or row, the line and the match. The tree has no instance of a shape the
-        scan once dropped, so the rows are where such a shape reds. The rows whose label says the regex missed them
-        too are held to carrying no call it flags. Reported and asserting nothing: the rows and the modules whose sites
-        the regex missed (B1 and the rest of round 8's silent half) and the rows whose regex match lies at no call of
-        the ast (N11, N12). The tree half is read from the roads table (_roads_table), whose one derivation compared
-        each module with the scan it ran for the roads, so this case scans no module of the tree again. Then the
-        comparison is run against plants it must red: consumer calls the regex flags (os.path.relpath of a name bound
-        to the path, beside a listed sys.executable that does not cover it, and of the path spelled inline); names bound
-        on one line that reach the binding the regex read (through .replace, which the scan does not read, and through
-        os.path.relpath, whose arguments it does); the CLI in a shell string handed a verb the shell expands ($VERB);
-        and the refresh row with KERNEL_VERBS taken to name a verb bin/romp lacks."""
+        """The old-versus-new comparison (review round 9: a replacement instrument covers at least what it replaced, and
+        the proof is the old and the new run over one population). The census the scan replaced (_round8_regex_census,
+        round 8's regex pair copied verbatim) and the scan run over every module the trio test reads and every
+        PLANT_TABLE row: for each call the regex flags, the scan gives a site at the call's line, lists an unresolved
+        entry whose expression contains the match, or refuses the module, or the match is one of the exclusions derived
+        from the call (_regex_scan_comparison: a word a one-line binding named that resolves to no path at the call and
+        not to that binding when the scan cannot read its value, a match inside the program of a Python -c child that
+        parses, holds no placeholder read as code and starts no process, the CLI with a verb outside KERNEL_VERBS). A
+        match in none of these reds the case, naming the module or row, the line and the match. The tree has no instance
+        of a shape the scan once dropped, so the rows are where such a shape reds. The rows whose label says the regex
+        missed them too are held to carrying no call it flags. Reported and asserting nothing: the rows and the modules
+        whose sites the regex missed (B1 and the rest of round 8's silent half) and the rows whose regex match lies at
+        no call of the ast (N11, N12). The tree half is read from the roads table (_roads_table), whose one derivation
+        compared each module with the scan it ran for the roads, so this case scans no module of the tree again. Then
+        the comparison is run against plants it must red: consumer calls the regex flags (os.path.relpath of a name
+        bound to the path, beside a listed sys.executable that does not cover it, and of the path spelled inline); names
+        bound on one line that reach the binding the regex read (through .replace, which the scan does not read, and
+        through os.path.relpath, whose arguments it does); the CLI in a shell string handed a verb the shell expands
+        ($VERB); -c programs exclusion (b) must not excuse (a Python child that loads the kernel and starts another
+        process, one that starts a process through os.system, a %s placeholder read as code, a program that does not
+        parse as Python, a shell's program that Python would parse); and the refresh row with KERNEL_VERBS taken to
+        name a verb bin/romp lacks."""
         text = _bin_romp_text()
         verbs_hold = not _verbs_bin_romp_lacks(KERNEL_VERBS, text)
         table = _roads_table(HERE, TREE_SKIP)
@@ -2237,6 +2402,21 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual([(line, m) for line, m, _ in _regex_scan_comparison(verb, "planted.py", verbs_hold)[0]], [(1, "bin/romp")],
                          "the CLI handed a verb the shell expands ($VERB) is named: exclusion (c) excuses only a verb the "
                          "shell hands over as known text outside KERNEL_VERBS")
+        for plant, what in (
+                ('subprocess.run([sys.executable, "-c", "km = load_source(\'k\', \'bin/romp-kernel\'); import subprocess; '
+                 'subprocess.run([\'git\', \'status\'])"])', "a Python -c child that loads the kernel and starts another process"),
+                ('subprocess.run([sys.executable, "-c", "import os; os.system(\\"exec \'bin/romp-kernel\' --serve\\")"])',
+                 "a Python -c child that starts a process outside the subprocess module (os.system), the path quoted in its command"),
+                ('subprocess.run([sys.executable, "-c", "x = %s" % "__import__(\'os\').system(\'bin/romp-kernel\')"])',
+                 "a -c program with a %s placeholder where Python reads a name, the text filling it unread"),
+                ('subprocess.run([INTERP, "-c", "exec \'bin/romp-kernel\' --serve"])',
+                 "a -c program that does not parse as Python, under an interpreter the scan cannot name"),
+                ('subprocess.run(["sh", "-c", "bin/romp-kernel.real"])',
+                 "a shell's -c program that Python would parse (a shell's program is no Python child)")):
+            self.assertEqual(_kernel_spawn_sites(plant, "planted.py"), [], "%s: the scan reads no site: %s" % (what, plant))
+            self.assertEqual([(line, m) for line, m, _ in _regex_scan_comparison(plant, "planted.py", verbs_hold)[0]], [(1, "romp-kernel")],
+                             "%s: named, since exclusion (b) excuses only a Python child's program that parses, holds no "
+                             "placeholder read as code, and starts no process: %s" % (what, plant))
         refresh = next(src for label, _, _, src in PLANT_TABLE if label.startswith("N26 "))
         self.assertEqual(_regex_scan_comparison(refresh, "planted.py", verbs_hold)[0], [], "the refresh row: the CLI with a verb "
                          "outside KERNEL_VERBS, excluded while every verb in it is one bin/romp dispatches")
