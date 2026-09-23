@@ -20,9 +20,12 @@ of the subprocess module: through the name the module imports the library under,
 any name, or an assignment that binds a name to either) whose argv HOLDS the kernel's path as an element, or whose
 `executable=` is the path: a string, an f-string, a % or a .format template that is the path or has it as ANY whole
 word (a shell command: a word bounded by whitespace or the string's edge whose text ends in the kernel's name, or that
-ends in a placeholder whose value is the path; a string the shell reads, the argv when it is a string and the program
-after a shell's -c, is read at the words the shell splits it into as well, its quotes removed and its operators apart,
-so `exec 'bin/romp-kernel'` and `bin/romp-kernel& wait` hold the path), a path joined onto it (os.path.join, Path, /,
+ends in a placeholder whose value is the path; a string the shell reads, the argv when it is a string, the program
+after a shell's -c (the shell found as the argv's first element past the option words before the flag, `bash -e -c`,
+`bash -o pipefail -c`, or right before it) and an element holding whitespace that is no Python child's program (a
+command string handed to `su -c` or `script -qc`), is read at the words the shell splits it into as well, its quotes
+removed and its operators apart, so `exec 'bin/romp-kernel'` and `bin/romp-kernel& wait` hold the path), a path joined
+onto it (os.path.join, Path, /,
 either operand of +, any element of a str.join over a literal list, the callee of the join resolved by binding as well,
 so `from os.path import join`, `import os.path as osp` and `j = os.path.join` reach it), a path-preserving wrapper of
 one (str, os.fspath, .resolve(), joinpath), any value of an `or` or a conditional, a walrus's value, the default of an
@@ -58,7 +61,7 @@ adds the path to a base without it is caught; lacking the path while they hold i
 a rebinding away from the path, refused loudly the same way; neither, no path. A string that MENTIONS the path inside a
 word (a -c program that load_sources the kernel, `load_source('k', %r)`), a comment or a docstring is not a kernel
 process: that is the in-process shape in a child, met by the bus belt below like the in-process shape itself (the
-ruling point below). A Python -c child's program (the interpreter before the flag names no shell) is read as Python as
+ruling point below). A Python -c child's program (the interpreter found for the flag names no shell) is read as Python as
 well, its text assembled from the templates, joins and names that build it, a %r placeholder a string literal ending in
 the path the scan reads its value as; a spawn site in that program is a site of the call that starts the child.
 The scan replaced a regex pair on 2026-09-21, in the author's pass applying the ruling of PR #850's eighth review
@@ -229,6 +232,11 @@ PERCENT_FIELD = re.compile(r"%(?:\((?P<key>[^)]*)\))?[#0 +-]*(?P<width>\*|\d+)?(
 # element before the flag; SHELL_C_FLAG the flag, -c alone or in a cluster (-lc, -ec)
 SHELL_PROGRAM = re.compile(r"(?:^|/)(?:ba|da|z|k|mk|a)?sh$")
 SHELL_C_FLAG = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
+# the options of a shell or of Python that take the next word as their argument, skipped with it when the interpreter of a
+# -c program is found past the option words before the flag (_interpreter_at); PYTHON_PROGRAM a Python interpreter by its
+# name or path (python3, /usr/bin/python3.12, python3.14t), the one other than sys.executable the scan names
+OPTION_ARGUMENTS = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file", "-W", "-X", "--check-hash-based-pycs"}
+PYTHON_PROGRAM = re.compile(r"(?:^|/)python[0-9.]*t?$")
 SHELL_OPERATOR = set("();<>|&")    # a word of these alone is an operator: a redirection when it holds < or >, else control
 SHELL_EXPANSION = set("$`*?[{")    # a word holding one of these may reach the command as some other text
 # the calls that start a process, by the canonical name a callee resolves to: the spawn functions and the rest of the
@@ -293,6 +301,7 @@ class _SpawnScan:
         self._bound_paths = 0         # resolutions that yielded the path while reading one argv (the road label)
         self._line = 0
         self._self_reads = {}         # id(declaration) -> does its value read its own name (_reads_itself)
+        self._visited = None          # a list while exclusion (a) records the declarations a reading visits (_visit)
 
     def _is_spawn(self, call):
         """Keyed on the callee's binding: any of the canonical names it resolves to is a spawn function (SPAWN_FUNCTIONS;
@@ -387,6 +396,7 @@ class _SpawnScan:
         path (a parameter extended in place): no path, listed as unresolved with its bases' kinds."""
         verdicts, path, silent = {}, False, []
         for decls in readings:
+            self._visit(decls)
             bases = [d for d in decls if not self._reads_itself(d)]
             extensions = [d for d in decls if self._reads_itself(d)]
             said = []
@@ -426,6 +436,12 @@ class _SpawnScan:
             kinds = {d.kind for decls in silent for d in decls}
             self._note_unresolved(node, "+".join(sorted(kinds)) if kinds else self._receiver_kind(node, scope))
         return False
+
+    def _visit(self, decls):
+        """Record `decls`, declarations a reading of an argv resolved a name or target to, while exclusion (a) collects
+        them (_visited a list: _regex_match_excluded)."""
+        if self._visited is not None:
+            self._visited.extend(decls)
 
     def _reads_itself(self, d):
         """Does declaration `d`'s value read the name or target `d` binds? Keyed on the binding, never the spelling: a
@@ -639,9 +655,10 @@ class _SpawnScan:
     def holds_kernel_path(self, node, scope, seen=frozenset()):
         """Does `node`, an argv expression (or a container a subscript reads), hold the kernel's path as an element, or
         as the whole (a command string, a path handed as the program)? An argv that is a splat (`run(*a)`) is read
-        through what is splatted, so a passthrough's parameter is listed under the residual. A string argv, and the
-        element after a shell's -c flag (_shell_program_at), are read as the shell reads a command as well (`shell`);
-        any other element is one argument, handed over as written."""
+        through what is splatted, so a passthrough's parameter is listed under the residual. A string argv, the element
+        after a shell's -c flag (_shell_program_at) and an element holding whitespace that is no Python child's program
+        (_command_string_at) are read as the shell reads a command as well (`shell`); any other element is one argument,
+        handed over as written."""
         if isinstance(node, (ast.Name, ast.Attribute)):
             return self._resolve(node, scope, seen, self.holds_kernel_path)
         if isinstance(node, ast.Subscript):   # CMDS["kernel"]: the target's own binding, else the element taken from the container
@@ -655,7 +672,7 @@ class _SpawnScan:
                 if isinstance(e, ast.Starred):
                     if self.holds_kernel_path(e.value, scope, seen):
                         return True
-                elif self.is_kernel_path(e, scope, seen, shell=self._shell_program_at(elts, i, scope)):
+                elif self.is_kernel_path(e, scope, seen, shell=self._shell_program_at(elts, i, scope) or self._command_string_at(elts, i, scope)):
                     return True
                 elif (self.is_kernel_path(e, scope, seen, cli=True) and i + 1 < len(elts)
                       and isinstance(elts[i + 1], ast.Constant) and elts[i + 1].value in KERNEL_VERBS):
@@ -687,25 +704,69 @@ class _SpawnScan:
         return False
 
     def _shell_program_at(self, elts, i, scope):
-        """Is elts[i] a shell's program: the element after a -c flag (SHELL_C_FLAG) whose own predecessor names a shell
-        (_names_a_shell: `["bash", "-c", <program>]`, `["env", "sh", "-c", <program>]`)?"""
-        return (i >= 2 and isinstance(elts[i - 1], ast.Constant) and isinstance(elts[i - 1].value, str)
-                and bool(SHELL_C_FLAG.fullmatch(elts[i - 1].value)) and self._names_a_shell(elts[i - 2], scope))
+        """Is elts[i] a shell's program: the element after a -c flag (SHELL_C_FLAG) whose interpreter names a shell
+        (_names_a_shell), the interpreter being the argv's first element past the option words before the flag
+        (_interpreter_at: `["bash", "-e", "-c", <program>]`, `["bash", "-o", "pipefail", "-c", <program>]`) or the
+        element right before the flag (`["env", "sh", "-c", <program>]`)?"""
+        if not (i >= 2 and isinstance(elts[i - 1], ast.Constant) and isinstance(elts[i - 1].value, str)
+                and SHELL_C_FLAG.fullmatch(elts[i - 1].value)):
+            return False
+        first = _interpreter_at(elts, i)
+        return (first is not None and self._names_a_shell(first, scope)) or self._names_a_shell(elts[i - 2], scope)
 
     def _python_program_at(self, elts, i, scope):
-        """Is elts[i] the program after a "-c" whose interpreter (the element before the flag) names no shell: a Python
-        child's program, read by _program_spawns_kernel and by exclusion (b)?"""
+        """Is elts[i] the program after a "-c" whose interpreter names no shell (_shell_program_at): a Python child's
+        program as the scan reads it for spawns (_program_spawns_kernel), an interpreter it cannot name included, the side
+        that finds more sites. Exclusion (b) and the listing of a program the scan cannot prove ask more
+        (_python_child_at)."""
         return (i >= 1 and isinstance(elts[i - 1], ast.Constant) and elts[i - 1].value == "-c"
-                and not (i >= 2 and self._names_a_shell(elts[i - 2], scope)))
+                and not self._shell_program_at(elts, i, scope))
+
+    def _python_child_at(self, elts, i, scope, loose=False):
+        """Is elts[i] the program of a Python child the scan can name: the element after a "-c" whose interpreter, the
+        argv's first element past the option words before the flag (_interpreter_at), names a Python interpreter
+        (_names_python)? With `loose`, the element right before the flag may name it instead (`["env", "python3", "-c",
+        ...]`), the reading that keeps a Python program from being read at shell words (_command_string_at); exclusion
+        (b) and the program listing take the strict reading."""
+        if not (i >= 1 and isinstance(elts[i - 1], ast.Constant) and elts[i - 1].value == "-c"):
+            return False
+        first = _interpreter_at(elts, i)
+        return ((first is not None and self._names_python(first, scope))
+                or (loose and i >= 2 and self._names_python(elts[i - 2], scope)))
+
+    def _command_string_at(self, elts, i, scope):
+        """Is elts[i] a command string a program may hand a shell (`["su", "-c", "bin/romp up; true", user]`, `["script",
+        "-qc", ..., "/dev/null"]`): a string, f-string or template whose text holds whitespace that is no Python child's
+        program (_python_child_at, loose)? Read at its shell words as well, the side that finds more sites."""
+        pieces = _template_pieces(elts[i])
+        return (pieces is not None and any(isinstance(p, str) and any(c.isspace() for c in p) for p in pieces)
+                and not self._python_child_at(elts, i, scope, loose=True))
+
+    def _names_python(self, node, scope, seen=frozenset()):
+        """Does `node` name a Python interpreter: sys.executable by its binding (_callee_names), or a string whose last
+        path component is python with a version (PYTHON_PROGRAM: python3, /usr/bin/python3.12), directly or through a
+        name every declaration of which names one? Anything else is no Python interpreter the scan can name."""
+        if isinstance(node, (ast.Name, ast.Attribute)) and "sys.executable" in self._callee_names(node, scope):
+            return True
+        if isinstance(node, ast.Constant):
+            return isinstance(node.value, str) and bool(PYTHON_PROGRAM.search(node.value))
+        if isinstance(node, ast.Name):
+            decls, where = scope.resolve(node.id)
+            key = (id(where), node.id)
+            self._visit(decls)
+            return bool(decls) and key not in seen and all(
+                d.value is not None and self._names_python(d.value, self.bindings.scope_of(d.value), seen | {key}) for d in decls)
+        return False
 
     def _program_texts(self, node, scope, seen=frozenset()):
         """A -c program's Python source, as far as the scan can assemble it: ([(text, opaque names)], read through a
         name), a text per value the program can hold, or (None, ...) for a program that is no string the scan can
         assemble (a call's value, a parameter). Assembled from a string, an f-string, a % or a .format template; a name,
-        through the declarations it resolves to; a str.join over a literal list or tuple of those; either operand of +
-        of those (at most PROGRAM_TEXTS_LIMIT texts). A placeholder converted by repr (%r, !r) is a string literal in the text, its
-        text ending in /romp-kernel or /bin/romp when the scan reads the value filling it as that path; any other
-        placeholder is a name of its own in the text, among the opaque names, since the text filling it is unread."""
+        through the declarations it resolves to; a str.join over a literal list or tuple of those or over a name bound
+        to one (_literal_sequences); either operand of + of those (at most PROGRAM_TEXTS_LIMIT texts). A placeholder
+        converted by repr (%r, !r) is a string literal in the text, its text ending in /romp-kernel or /bin/romp when the
+        scan reads the value filling it as that path; any other placeholder is a name of its own in the text, among the
+        opaque names, since the text filling it is unread."""
         pieces = _template_pieces(node)
         if pieces is not None:
             reprs, text, opaque = iter(_template_reprs(node)), [], set()
@@ -726,6 +787,7 @@ class _SpawnScan:
         if isinstance(node, ast.Name):
             decls, where = scope.resolve(node.id)
             key = (id(where), node.id)
+            self._visit(decls)
             if not decls or key in seen or any(d.value is None for d in decls):
                 return None, True
             texts = []
@@ -736,18 +798,21 @@ class _SpawnScan:
                 texts += found
             return (texts, True) if len(texts) <= PROGRAM_TEXTS_LIMIT else (None, True)
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "join" and not node.keywords
-                and isinstance(node.func.value, ast.Constant) and isinstance(node.func.value.value, str)
-                and len(node.args) == 1 and isinstance(node.args[0], (ast.List, ast.Tuple))):
-            combos, named = [("", frozenset())], False
-            for i, e in enumerate(node.args[0].elts):
-                found, by_name = self._program_texts(e, scope, seen)
-                named = named or by_name
-                if found is None:
-                    return None, named
-                combos = [(a + (node.func.value.value if i else "") + b, x | y) for a, x in combos for b, y in found]
-                if len(combos) > PROGRAM_TEXTS_LIMIT:
-                    return None, named
-            return combos, named
+                and isinstance(node.func.value, ast.Constant) and isinstance(node.func.value.value, str) and len(node.args) == 1):
+            sequences, named = self._literal_sequences(node.args[0], scope, seen)
+            texts = []
+            for elts, where in sequences or ():
+                combos = [("", frozenset())]
+                for i, e in enumerate(elts):
+                    found, by_name = self._program_texts(e, where, seen)
+                    named = named or by_name
+                    if found is None:
+                        return None, named
+                    combos = [(a + (node.func.value.value if i else "") + b, x | y) for a, x in combos for b, y in found]
+                    if len(combos) > PROGRAM_TEXTS_LIMIT:
+                        return None, named
+                texts += combos
+            return (texts, named) if sequences and len(texts) <= PROGRAM_TEXTS_LIMIT else (None, named)
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
             left, by_left = self._program_texts(node.left, scope, seen)
             right, by_right = self._program_texts(node.right, scope, seen)
@@ -755,6 +820,27 @@ class _SpawnScan:
                 return None, by_left or by_right
             return [(a + b, x | y) for a, x in left for b, y in right], by_left or by_right
         return None, False
+
+    def _literal_sequences(self, node, scope, seen):
+        """The literal lists or tuples a join's argument holds, as ([(elements, the scope they are read in)], read
+        through a name): a list or tuple with no splat, or a name every declaration of which binds one (`"\\n".join(LINES)`);
+        (None, ...) for anything else."""
+        if isinstance(node, (ast.List, ast.Tuple)):
+            return (None if any(isinstance(e, ast.Starred) for e in node.elts) else [(node.elts, scope)]), False
+        if not isinstance(node, ast.Name):
+            return None, False
+        decls, where = scope.resolve(node.id)
+        key = (id(where), node.id)
+        self._visit(decls)
+        if not decls or key in seen:
+            return None, True
+        out = []
+        for d in decls:
+            found, _ = self._literal_sequences(d.value, self.bindings.scope_of(d.value), seen | {key}) if d.value is not None else (None, True)
+            if found is None:
+                return None, True
+            out += found
+        return out, True
 
     def _program_spawns_kernel(self, node, scope, seen):
         """Does `node`, a Python child's -c program (_python_program_at), start the kernel as a process: does a text of
@@ -818,6 +904,7 @@ class _SpawnScan:
         if isinstance(node, ast.Name):
             decls, where = scope.resolve(node.id)
             key = (id(where), node.id)
+            self._visit(decls)
             return key not in seen and any(d.value is not None and self._names_a_shell(d.value, self.bindings.scope_of(d.value), seen | {key})
                                            for d in decls)
         if isinstance(node, ast.Call):
@@ -854,6 +941,20 @@ class _SpawnScan:
         if isinstance(container, ast.Dict):
             return any(v is not None and read(v, scope, seen) for v in container.values)
         return read(container, scope, seen)
+
+
+def _interpreter_at(elts, i):
+    """The interpreter of the program at elts[i], the element after a -c flag: the argv's first element when every
+    element between it and the flag is an option word (a string beginning with - or +) or the argument of an option that
+    takes one (OPTION_ARGUMENTS: `bash -o pipefail -c`, `python3 -W error -c`); None when any other word stands between
+    (`sudo -u lab sh -c`, `su -c` read from the flag's side), the reading that names no interpreter."""
+    j = 1
+    while j < i - 1:
+        e = elts[j]
+        if not (isinstance(e, ast.Constant) and isinstance(e.value, str) and len(e.value) > 1 and e.value[0] in "-+"):
+            return None
+        j += 2 if e.value in OPTION_ARGUMENTS else 1
+    return elts[0] if i >= 2 and j == i - 1 else None
 
 
 def _constant_slice(node):
@@ -1957,6 +2058,26 @@ PLANT_TABLE = (
      'CODE = "import subprocess\\nsubprocess.run([\'bin/romp-kernel\', \'--serve\'])\\n"\nsubprocess.run([sys.executable, "-c", CODE])'),
     ('B72 a Python -c child that starts, as a process, the path a %r placeholder carries from a name', 'caught-by-binding', 2,
      'KERNEL = os.path.join(BIN, "romp-kernel")\nsubprocess.run([sys.executable, "-c", "import subprocess; subprocess.run([%r])" % KERNEL])'),
+    ('B73 a bash -c program behind an option that takes an argument (-o pipefail), a quoted placeholder (the interpreter '
+     'found past the option words)', 'caught-by-binding', 2,
+     'KERNEL = os.path.join(BIN, "romp-kernel")\nsubprocess.run(["bash", "-o", "pipefail", "-c", "\'%s\' --serve | cat" % KERNEL])'),
+    ('B74 a Python -c child that starts the kernel as a process, its program a str.join of a list held in a name bound across '
+     'two lines', 'caught-by-binding', 3,
+     'LINES = ["import subprocess",\n         "subprocess.run([\'bin/romp-kernel\'])"]\nsubprocess.run([sys.executable, "-c", "\\n".join(LINES)])'),
+    ('B75 a conditional element, the path in one arm', 'caught-by-binding', 3,
+     'KERNEL = os.path.join(BIN, "romp-kernel")\nJUDGE = os.path.join(BIN, "romp-judge")\nsubprocess.run([KERNEL if FLAG else JUDGE])'),
+    ('B76 an argv taken by key from a literal dict of argvs', 'caught-by-binding', 4,
+     'KERNEL = os.path.join(BIN, "romp-kernel")\nJUDGE = os.path.join(BIN, "romp-judge")\nCMDS = {"k": [KERNEL], "j": [JUDGE]}\n'
+     'subprocess.run(CMDS["k"])'),
+    ('B77 a conditional argv, the path in one arm', 'caught-by-binding', 2,
+     'KERNEL = os.path.join(BIN, "romp-kernel")\nsubprocess.run([KERNEL] if FLAG else ["true"])'),
+    ('B78 a % command whose width is a star (a placeholder the scan cannot place: every argument read)', 'caught-by-binding', 2,
+     'KERNEL = os.path.join(BIN, "romp-kernel")\nsubprocess.Popen("%*s --serve" % (40, KERNEL), shell=True)'),
+    ('B79 a .format keyword placeholder in a bash -c program element', 'caught-by-binding', 2,
+     'KERNEL = os.path.join(BIN, "romp-kernel")\nsubprocess.Popen(["bash", "-c", "{k} --serve".format(k=KERNEL)])'),
+    ("B80 the CLI with up, a command string held in a name and handed to su -c (the command's next word, read without the "
+     "shell's words)", 'caught-by-binding', 2,
+     'CMD = "bin/romp up --foreground"\nsubprocess.run(["su", "-c", CMD])'),
     ('A1 the library under an alias', 'caught-by-argv', 2,
      'import subprocess as sp\nsp.Popen([os.path.join(BIN, "romp-kernel")])'),
     ('A2 a from-import of run', 'caught-by-argv', 2,
@@ -2030,6 +2151,29 @@ PLANT_TABLE = (
     ('A36 the path as an element beside a -c child that load_sources it through a %r placeholder a name fills (the road the '
      'element gives)', 'caught-by-argv', 2,
      'KERNEL = os.path.join(BIN, "romp-kernel")\nsubprocess.run([sys.executable, "-c", "km = load_source(\'k\', %r)" % KERNEL, "bin/romp-kernel"])'),
+    ('A37 the path quoted in a bash -c program with an option word before the flag (the interpreter found past the option '
+     'words)', 'caught-by-argv', 1,
+     'subprocess.run(["bash", "-e", "-c", "\'bin/romp-kernel\' --serve"])'),
+    ('A38 the path in a subshell of a sh -c program behind -x', 'caught-by-argv', 1,
+     'subprocess.run(["sh", "-x", "-c", "(bin/romp-kernel)"])'),
+    ("A39 the CLI and up quoted in a bash -c program with an option word before the flag", 'caught-by-argv', 1,
+     'subprocess.run(["bash", "-e", "-c", "\'bin/romp\' \'up\'"])'),
+    ("A40 the CLI with up quoted in a command string handed to script -qc, the typescript file after it (a command-string "
+     "element read at the shell's words)", 'caught-by-argv', 1,
+     'subprocess.run(["script", "-qc", "bin/romp \'up\'", "/dev/null"])'),
+    ("A41 the CLI with up and a ; in a command string handed to su -c, the user after it", 'caught-by-argv', 1,
+     'subprocess.run(["su", "-c", "bin/romp up; true", "labuser"])'),
+    ("A42 the CLI with up backgrounded by & after an assignment, in a command string handed to script -qc", 'caught-by-argv', 1,
+     'subprocess.run(["script", "-qc", "ROMP_X=1 bin/romp up& wait", "/dev/null"])'),
+    ('A43 os.path.join with its arguments splatted', 'caught-by-argv', 1,
+     'subprocess.run([os.path.join(*[BIN, "romp-kernel"])])'),
+    ('A44 a Path joined by joinpath, through str', 'caught-by-argv', 1,
+     'subprocess.run([str(Path(BIN).joinpath("romp-kernel"))])'),
+    ('A45 a Python -c child that starts the kernel as a process, its program assembled by +', 'caught-by-argv', 1,
+     'subprocess.run([sys.executable, "-c", "import subprocess; " + "subprocess.run([\'bin/romp-kernel\'])"])'),
+    ("A46 a -c program under an interpreter the scan cannot name, the path quoted (a command-string element, read at the "
+     "shell's words)", 'caught-by-argv', 1,
+     'subprocess.run([INTERP, "-c", "exec \'bin/romp-kernel\' --serve"])'),
     ('N1 a same-named local in another function', 'no-spawn', None,
      'def a():\n    k = os.path.join(BIN, "romp-kernel")\ndef b():\n    k = [sys.executable, "-m", "pytest"]\n    subprocess.run(k)'),
     ('N2 p beside -p', 'no-spawn', None,
@@ -2460,8 +2604,8 @@ class HermeticKernelPostal(unittest.TestCase):
                  "a Python -c child that starts a process outside the subprocess module (os.system), the path quoted in its command"),
                 ('subprocess.run([sys.executable, "-c", "x = %s" % "__import__(\'os\').system(\'bin/romp-kernel\')"])',
                  "a -c program with a %s placeholder where Python reads a name, the text filling it unread"),
-                ('subprocess.run([INTERP, "-c", "exec \'bin/romp-kernel\' --serve"])',
-                 "a -c program that does not parse as Python, under an interpreter the scan cannot name"),
+                ('subprocess.run([sys.executable, "-c", "exec \'bin/romp-kernel\' --serve"])',
+                 "a Python child's -c program that does not parse as Python"),
                 ('subprocess.run(["sh", "-c", "bin/romp-kernel.real"])',
                  "a shell's -c program that Python would parse (a shell's program is no Python child)")):
             self.assertEqual(_kernel_spawn_sites(plant, "planted.py"), [], "%s: the scan reads no site: %s" % (what, plant))
