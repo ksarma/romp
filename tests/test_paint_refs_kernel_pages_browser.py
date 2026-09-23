@@ -112,7 +112,9 @@ def _svgs(r):
 
 def _notice_body(remote, origin):
     """The notice's markdown: the eight paint attributes and an inline style's mask-image aimed at the logger, and the
-    absolute same-origin control."""
+    absolute same-origin control. The style's mask-image never reaches the paint pass: the sanitizer's colour-only style
+    rule removes that declaration first, at 6cf6839ba too, so it sends nothing before or after the fix, and the pass's
+    style arm is held by ui/webview/paint-refs.test.ts, not by this scene."""
     r = remote + "/N-"
     return "\n\n".join(
         ["A new version of the accuracy figure is ready."] + _svgs(r) +
