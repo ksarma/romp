@@ -2620,6 +2620,17 @@ function foldSegments(segs) {
     if (wholeExpansion(acc[acc.length - 1])) return { emptiable: true };
     if (!acc.some(isExpansion)) {
       const prefix = joinSegments(acc);
+      // extra6-3 (round 7 of fork PR #780 review, twenty-seventh commit, 2026-09-23): a `..` here is resolved against the
+      // REAL path of the prefix, and when the prefix leads through the hook's OWN process (/proc/self, /proc/thread-self,
+      // /proc/<pid>, a numbered descriptor) realPathOf below would fold it to the hook's own cwd/root/fd, not the shell's,
+      // and the folded path escapes /proc so unreadableProcTarget in add no longer sees it (`cp x /proc/self/cwd/../docs/
+      // report.md` folded to <hook's cwd's parent>/docs/report.md and was allowed while every shell wrote the tracked
+      // notes-api/docs/report.md). The ruling is that such a target is NEVER resolved through the hook's own process, so
+      // report it here as one the guard cannot read rather than realPathOf it; add turns it into the same procTarget refusal
+      // as the direct /proc target (its account and its cwd-project reading), and the numeric/candidate readers that only
+      // check `unresolvable` refuse it on the safe side.
+      const proc = unreadableProcTarget(prefix);
+      if (proc) return { unresolvable: prefix, proc };
       // class G (round 4, 2026-09-19) and the walk-around lens second pass: a directory the hook cannot stat or search before a `..` (mode 000
       // at check time, a link that loops, a file where a directory is needed) is an UnknownPath, thrown from
       // lstatOrNull or realPathOf and refused by evaluate with the error named, never folded lexically. Round 4 caught
@@ -2644,12 +2655,13 @@ function foldSegments(segs) {
 let activeLinks = null;
 
 // A literal target's path as the kernel would open it (foldSegments), resolved against `dir` when relative:
-// { path }, { unresolvable }, or null when the target is relative and no directory is known.
+// { path }, { unresolvable } (with `proc` set when a `..` sat after a /proc-magic or descriptor prefix the guard
+// cannot read through its own process, extra6-3), or null when the target is relative and no directory is known.
 function resolveLiteral(text, dir) {
   const abs = path.isAbsolute(text) ? text : (dir ? dir + '/' + text : null);
   if (abs == null) return null;
   const folded = foldSegments(segmentsOf(abs, null));
-  if (folded.unresolvable) return { unresolvable: folded.unresolvable };
+  if (folded.unresolvable) return { unresolvable: folded.unresolvable, proc: folded.proc };
   return { path: joinSegments(folded.segs) };
 }
 // The same as one string, or null (unresolvable or unplaceable): for a stat the caller makes.
@@ -6382,6 +6394,11 @@ function extractIn(command, ctx) {
     // (the walk-around lens second pass, 2026-09-19; before, a single-hop prefix match on the unfolded spelling missed `./mydocs`, `base/../mydocs`).
     const p = resolveLiteral(w.text, dir);
     if (!p) return;
+    // THE PROC TARGET with a `..` (extra6-3, twenty-seventh commit): resolveLiteral reported a `..` that sat after a
+    // /proc-magic or descriptor prefix it must not resolve through the hook's own process. Refuse it as the same procTarget
+    // class as a direct one (recorded with no marks so inPlayFor asks the cwd's project), before the plain unresolvable
+    // branch, since resolveLiteral set both fields for the readers that only check `unresolvable`.
+    if (p.proc) { cannotRead(word(w.raw, false, w.raw), how, { kind: 'procTarget', text: p.proc }); return; }
     if (p.unresolvable) { cannotRead(w, how, { kind: 'unresolvable', text: p.unresolvable }); return; }
     // THE PROC TARGET (the reviewer's extra6-3): a literal target under /proc or /dev/fd that the hook can only resolve
     // through its OWN process, not the shell's, is refused as a target it cannot read rather than resolved to the wrong file.

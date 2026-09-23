@@ -12566,3 +12566,114 @@ test("round 7, twenty-sixth commit, the rows: a modeled writer's `--` option not
     assert.ok(hookHelper && !/cwd:/.test(hookHelper), 'extra6-3: the test world hook spawn passes no cwd option (both refuters ruled that spawning with the row\'s cwd would hide the class)');
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
+
+// ── round 7 of fork PR #780 review, twenty-seventh commit (2026-09-23): extra6-3, the `..`-after-/proc-magic escape ──
+//
+// The twenty-sixth commit refused a literal target under /proc-magic by checking unreadableProcTarget on the FOLDED path,
+// but foldSegments folds a `..` after a /proc-magic component (/proc/self/cwd, /proc/thread-self/cwd, /proc/<pid>/cwd,
+// /proc/self/root) by resolving that component through realPathOf, i.e. THROUGH THE HOOK'S OWN PROCESS: `/proc/self/cwd/..`
+// became the hook's own cwd's parent, not the shell's, so the folded target escaped /proc and unreadableProcTarget no longer
+// saw it. `cp ../base/report.md /proc/self/cwd/../docs/report.md` from notes-api/docs was ALLOWED at the twenty-sixth commit
+// while bash, zsh and dash each wrote the tracked notes-api/docs/report.md. The ruling (rulings-r6.md D) is that such a target
+// is one the guard cannot read, NEVER resolved through the hook's own process; the fix makes foldSegments report a `..` whose
+// prefix leads through the hook's own process instead of realPathOf'ing it, and add turns that into the same procTarget
+// refusal (its account, and its cwd-project reading) as a direct /proc target. Population: the `..`-escape per /proc-magic
+// prefix (self/cwd, thread-self/cwd, <pid>/cwd, self/root) x every writer the extra6-3 rows model (cp, mv, install, dd of=,
+// redirect, tee, sort -o) x both cwds (the row's cwd, refused while a project is in play; and a cwd in no project, allowed as
+// nothing is protected there); with a two-`..` escape, a notes-folder target, the disclosed untracked-name cost, and the
+// in-command `ln -s /proc/self/cwd L && cp .. L/../..` road the same fix closes (the link fold reaches /proc/self/cwd, then the
+// `..` is the same escape). Each row runs through the hook as a process from its cwd (hook process cwd in no project, as the
+// real tests spawn it), then unguarded in bash, zsh and dash over a fresh world, the writers pinned (r7-d27-*.log in the notes).
+// A pre-existing ON-DISK symlink whose target is under /proc (`pc -> /proc/self/cwd`, `cp x pc/../docs/report.md`) is a SEPARATE
+// class this fix does not close and does not claim to: its literal text is not under /proc, realPathOf follows the on-disk link
+// natively, and it is a live allow-with-writer at 8b9f63872 (the round-5 base) and at the twenty-sixth commit alike, so it is
+// pre-existing, not a regression, and outside both fix shapes the ruling names (which act on the LITERAL prefix). It is
+// disclosed with a measured witness in the commit message and r7-d27-residual.log, not pinned here.
+test("round 7, twenty-seventh commit, the rows: a `..` after a /proc-magic component (/proc/self/cwd, /proc/thread-self/cwd, /proc/<pid>/cwd, /proc/self/root) is never resolved through the hook's own process, so the folded target no longer escapes /proc and the write onto the tracked file is refused as a target the guard cannot read; per writer (cp, mv, install, dd of=, redirect, tee, sort -o), both cwds, with the in-command-link `..` road the same fix closes; each with the shells that write", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const N = [];
+    const OWN_PROCESS = ['text', 'my own process'];   // extra6-3: a /proc-magic prefix resolved through the hook's own process
+    const toolPresent = (p) => _spawnSync('sh', ['-c', `command -v ${p}`], { encoding: 'utf8' }).status === 0;
+    // [id, cwd, command, the shells that write (measured), the verdict (['text', a substring]), the verdict from a cwd in no
+    // project ('allow': nothing is protected there), the program the row needs besides the shells]
+    const rows = [
+      // self/cwd and thread-self/cwd: from notes-api/docs, `/proc/<self|thread-self>/cwd/..` is notes-api, so `../docs/report.md`
+      // is the tracked file; every writer overwrites it in all three shells at the old hook. Refused here as the class.
+      ["E63d-self-cp", "nad", "cp ../base/report.md /proc/self/cwd/../docs/report.md", A, OWN_PROCESS, 'allow'],
+      ["E63d-self-mv", "nad", "mv ../base/report.md /proc/self/cwd/../docs/report.md", A, OWN_PROCESS, 'allow'],
+      ["E63d-self-install", "nad", "install ../base/report.md /proc/self/cwd/../docs/report.md", A, OWN_PROCESS, 'allow', 'install'],
+      ["E63d-self-dd", "nad", "dd if=../base/report.md of=/proc/self/cwd/../docs/report.md", A, OWN_PROCESS, 'allow', 'dd'],
+      ["E63d-self-redir", "nad", "echo x > /proc/self/cwd/../docs/report.md", A, OWN_PROCESS, 'allow'],
+      ["E63d-self-tee", "nad", "echo x | tee /proc/self/cwd/../docs/report.md", A, OWN_PROCESS, 'allow', 'tee'],
+      ["E63d-self-sort", "nad", "sort -o /proc/self/cwd/../docs/report.md ../base/report.md", A, OWN_PROCESS, 'allow', 'sort'],
+      ["E63d-threadself-cp", "nad", "cp ../base/report.md /proc/thread-self/cwd/../docs/report.md", A, OWN_PROCESS, 'allow'],
+      ["E63d-threadself-mv", "nad", "mv ../base/report.md /proc/thread-self/cwd/../docs/report.md", A, OWN_PROCESS, 'allow'],
+      ["E63d-threadself-install", "nad", "install ../base/report.md /proc/thread-self/cwd/../docs/report.md", A, OWN_PROCESS, 'allow', 'install'],
+      ["E63d-threadself-dd", "nad", "dd if=../base/report.md of=/proc/thread-self/cwd/../docs/report.md", A, OWN_PROCESS, 'allow', 'dd'],
+      ["E63d-threadself-redir", "nad", "echo x > /proc/thread-self/cwd/../docs/report.md", A, OWN_PROCESS, 'allow'],
+      ["E63d-threadself-tee", "nad", "echo x | tee /proc/thread-self/cwd/../docs/report.md", A, OWN_PROCESS, 'allow', 'tee'],
+      ["E63d-threadself-sort", "nad", "sort -o /proc/thread-self/cwd/../docs/report.md ../base/report.md", A, OWN_PROCESS, 'allow', 'sort'],
+      // <pid>/cwd: only root reads another process's cwd, so the shell cannot write it (writers []); refused here as the class
+      // (before this commit it refused too, but with a stat-error reason, not as one the guard cannot read: the reason is corrected).
+      ["E63d-digits-cp", "nad", "cp ../base/report.md /proc/1/cwd/../docs/report.md", N, OWN_PROCESS, 'allow'],
+      ["E63d-digits-mv", "nad", "mv ../base/report.md /proc/1/cwd/../docs/report.md", N, OWN_PROCESS, 'allow'],
+      ["E63d-digits-install", "nad", "install ../base/report.md /proc/1/cwd/../docs/report.md", N, OWN_PROCESS, 'allow', 'install'],
+      ["E63d-digits-dd", "nad", "dd if=../base/report.md of=/proc/1/cwd/../docs/report.md", N, OWN_PROCESS, 'allow', 'dd'],
+      ["E63d-digits-redir", "nad", "echo x > /proc/1/cwd/../docs/report.md", N, OWN_PROCESS, 'allow'],
+      ["E63d-digits-tee", "nad", "echo x | tee /proc/1/cwd/../docs/report.md", N, OWN_PROCESS, 'allow', 'tee'],
+      ["E63d-digits-sort", "nad", "sort -o /proc/1/cwd/../docs/report.md ../base/report.md", N, OWN_PROCESS, 'allow', 'sort'],
+      // self/root: the process's root is `/` for the shell, so the write lands on /docs/report.md, which it cannot create
+      // (writers []); allowed at the old hook, refused here as the class (a refuse-with-no-writer improvement).
+      ["E63d-selfroot-cp", "nad", "cp ../base/report.md /proc/self/root/../docs/report.md", N, OWN_PROCESS, 'allow'],
+      ["E63d-selfroot-mv", "nad", "mv ../base/report.md /proc/self/root/../docs/report.md", N, OWN_PROCESS, 'allow'],
+      ["E63d-selfroot-install", "nad", "install ../base/report.md /proc/self/root/../docs/report.md", N, OWN_PROCESS, 'allow', 'install'],
+      ["E63d-selfroot-dd", "nad", "dd if=../base/report.md of=/proc/self/root/../docs/report.md", N, OWN_PROCESS, 'allow', 'dd'],
+      ["E63d-selfroot-redir", "nad", "echo x > /proc/self/root/../docs/report.md", N, OWN_PROCESS, 'allow'],
+      ["E63d-selfroot-tee", "nad", "echo x | tee /proc/self/root/../docs/report.md", N, OWN_PROCESS, 'allow', 'tee'],
+      ["E63d-selfroot-sort", "nad", "sort -o /proc/self/root/../docs/report.md ../base/report.md", N, OWN_PROCESS, 'allow', 'sort'],
+      // a two-`..` escape (the check fires at the FIRST `..`, before the second), a notes-folder target, and the disclosed
+      // untracked-name cost (the guard cannot read the path, so it refuses even an untracked name; the remedy is the real path).
+      ["E63d-self-two-dotdot", "nad", "cp ../base/report.md /proc/self/cwd/../../notes-api/docs/report.md", A, OWN_PROCESS, 'allow'],
+      ["E63d-self-notes", "nan", "cp ../base/report.md /proc/self/cwd/../notes/n1.md", A, OWN_PROCESS, 'allow'],
+      ["E63d-self-untracked-cost", "nad", "cp ../base/report.md /proc/self/cwd/../docs/other.md", N, OWN_PROCESS, 'allow'],
+      // the in-command link road: `ln -s /proc/self/cwd L` records L, foldSegments follows it to /proc/self/cwd, then the `..`
+      // is the same escape; the same fix (the check runs on the followed prefix) closes it.
+      ["E63d-incmd-ln-self-dotdot", "nas", "ln -s /proc/self/cwd L && cp ../base/report.md L/../docs/report.md", A, OWN_PROCESS, 'allow'],
+      ["E63d-incmd-ln-threadself-dotdot", "nas", "ln -s /proc/thread-self/cwd L && cp ../base/report.md L/../docs/report.md", A, OWN_PROCESS, 'allow'],
+    ];
+    const judge = (id, cwd, raw, writers, expect, outside = 'allow', program = null) => {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      w.build();
+      const h = w.hook(cmd, at);
+      assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error: ${h.reason.split('\n')[0]}`);
+      assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+      assert.ok(!h.reason.includes(String.fromCharCode(0x2014)) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+      assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      if (outside != null) {
+        w.build();
+        const o = w.hook(cmd, w.cwds.out);
+        assert.equal(o.status, 0, `${id}: from a cwd in no project nothing is protected: ${cmd}: ${o.reason}`);
+      }
+      if (program && !toolPresent(program)) { console.error(`NOT RUN: real ${program} is not on this runner, so its evidence leg did not run: ${id}`); return; }
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    };
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect, outside, program] of rows) { judge(id, cwd, raw, writers, expect, outside, program); n++; }
+    assert.equal(n, rows.length);
+    assert.equal(rows.length, 33, 'the population: 4 prefixes x 7 writers (28) + two-`..`, notes, untracked cost, and 2 in-command-link rows');
+    assert.equal(rows.filter((r) => r[3].length === 3).length, 18, 'the live overwrites the fix closes: self/cwd x7, thread-self/cwd x7, two-`..`, notes, 2 in-command-link, all writers=[bash,zsh,dash]');
+    // where the code lives (the rows above prove what it does; each pin names the rows that red without it)
+    const hook = fs.readFileSync(HOOK, 'utf8');
+    assert.ok(hook.includes('const proc = unreadableProcTarget(prefix);') && hook.includes('if (proc) return { unresolvable: prefix, proc };'), 'extra6-3: foldSegments reports a `..` whose prefix leads through the hook\'s own process instead of realPathOf\'ing it (behaviour: E63d-self-cp, E63d-threadself-redir, E63d-self-two-dotdot)');
+    assert.ok(hook.includes('if (folded.unresolvable) return { unresolvable: folded.unresolvable, proc: folded.proc };'), 'extra6-3: resolveLiteral carries the proc mark, so the readers that only check `unresolvable` refuse it on the safe side (behaviour: E63d-digits-cp, E63d-selfroot-cp)');
+    assert.ok(hook.includes("if (p.proc) { cannotRead(word(w.raw, false, w.raw), how, { kind: 'procTarget', text: p.proc }); return; }"), 'extra6-3: add refuses the proc-`..` target as the same procTarget class (no marks, so inPlayFor asks the cwd\'s project) before the plain unresolvable branch (behaviour: every E63d row, the reason naming the process)');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
