@@ -726,9 +726,53 @@ PYTEST_WORD_RE = re.compile(r"pytest\b|\bpy\.test\b|\$\{?pytest", re.I)
 # pytest -k "pip and install"`) read as a pip install and gave no row, and the census excused its line (probed).
 PIP_INSTALL_RE = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S*[ \t]+)*(?:\S*/)?(?:python[0-9.]*t?[ \t]+-m[ \t]*|uv[ \t]+)?"
                             r"pipx?[0-9.]*(?:[ \t]+-\S+)*[ \t]+install(?=\s|$)")
-# a line whose key is `name` (`name:` or `- name:`, the value after a space or nothing): the census's first exclusion. A
-# line that merely contains "name:" (a flow mapping `- {name: ..., run: ...}`) is not one.
+# a line whose key is `name` (`name:` or `- name:`, the value after a space or nothing): the census's first exclusion,
+# applied only when no other key follows on the line (_name_key_alone). A line that merely contains "name:" (a flow
+# mapping `- {name: ..., run: ...}`) is not one, and neither is a line of a flow mapping over several lines that opens
+# with `name:` and carries `run:` after it (until 2026-09-23 this regex alone excused that line; review round 4's verify)
 NAME_KEY_RE = re.compile(r"^[ \t]*(?:-[ \t]+)?name:(?:[ \t]|$)")
+
+
+def _name_key_alone(line):
+    """True when the line's key is `name` (NAME_KEY_RE) and no other key follows on it: after the name, no `:` followed
+    by whitespace or the end of the line, outside a YAML-quoted scalar and a trailing comment. In a block mapping a
+    plain scalar cannot hold `: ` (a `${{ }}` expression is plain text to YAML, so not there either), so one after the
+    name is the next key of a flow mapping (`name: x, run: y` on one line of a `{ }` written over several), or YAML the
+    runner refuses. A quote opens a quoted scalar only where a scalar starts (the value's first character, or the first
+    after `,`, `{` or `[`); elsewhere it is the plain scalar's own character (`Don't`), and a `#` after whitespace
+    outside a quoted scalar starts a comment. Keyed on that text, not on YAML structure: a name whose quoted value is
+    unterminated on its line reads as alone, since YAML carries the value on to the next line."""
+    m = NAME_KEY_RE.match(line)
+    if not m:
+        return False
+    rest = line[m.end():]
+    i, n, at_start = 0, len(rest), True
+    while i < n:
+        ch = rest[i]
+        if ch in " \t":
+            i += 1
+            continue
+        if ch == "#" and (i == 0 or rest[i - 1] in " \t"):
+            break
+        if at_start and ch in "'\"":
+            j = i + 1
+            while j < n:
+                if ch == '"' and rest[j] == "\\":
+                    j += 2
+                    continue
+                if rest[j] == ch:
+                    if ch == "'" and rest.startswith("''", j):
+                        j += 2
+                        continue
+                    break
+                j += 1
+            i, at_start = j + 1, False
+            continue
+        if ch == ":" and (i + 1 == n or rest[i + 1] in " \t"):
+            return False
+        at_start = ch in ",{["
+        i += 1
+    return True
 # the census's split of a line the parser did not read, for the pip exclusion: at every operator character whatever the
 # quoting, so the commands of a YAML-quoted scalar are judged one by one (a split finer than the shell's never hides a
 # mention: it can only stand a piece of a pip command alone)
@@ -1075,8 +1119,10 @@ def pytest_line_census(src):
     """The line census (round 4's ruling A, 2026-09-23): (the lines that spell pytest and count, [(line, text) of the
     counted lines no row covers]), file lines 1-based. A line counts when PYTEST_WORD_RE matches it with a trailing
     comment cut as _shell_commands cuts one (_comment_cut; a comment line is then empty and never counts), unless one
-    of two exclusions, and no others, applies: its key is `name` (NAME_KEY_RE: `name:` or `- name:`; never a line that
-    merely contains "name:", so a flow mapping carrying a run counts); or it is a pip install, judged per shell
+    of two exclusions, and no others, applies: its key is `name` and no other key follows on it (_name_key_alone:
+    `name:` or `- name:`; never a line that merely contains "name:", nor one that opens with `name:` and carries
+    `run:` after it, so a flow mapping carrying a run counts on whichever line it spells pytest); or it is a pip
+    install, judged per shell
     command and never per line: the line is excused only when every command it belongs to that spells pytest is a pip
     install, so a line that installs pytest and then runs it counts. The commands a line belongs to are the text the
     parser read for it when the parser read it (pytest_invocations' `read`: a pip install continued over two lines is
@@ -1101,7 +1147,7 @@ def pytest_line_census(src):
     cut = [_comment_cut(line) for line in lines]
     counted, uncovered = [], []
     for idx, line in enumerate(lines):
-        if not PYTEST_WORD_RE.search(cut[idx]) or NAME_KEY_RE.match(line):
+        if not PYTEST_WORD_RE.search(cut[idx]) or _name_key_alone(line):
             continue
         if idx + 1 in read_text:
             commands = _shell_commands(read_text[idx + 1])
@@ -1350,8 +1396,8 @@ class PytestPopulation(unittest.TestCase):
                         "among the lines it counts %r: an empty or partial census is red, not green" % (known, counted))
         self.assertEqual(uncovered, [], "lines of ci.yml that spell pytest (keyed on the spelling, PYTEST_WORD_RE, with a "
                          "trailing comment cut) outside every span of lines the parser read for a row, parsed or "
-                         "unparsed; only a name: key and a line whose every pytest-spelling command is a pip install are "
-                         "excused. Such a line is in a layout the parser does not read (steps at another indent, a flow "
+                         "unparsed; only a name: key with no other key after it on its line and a line whose every "
+                         "pytest-spelling command is a pip install are excused. Such a line is in a layout the parser does not read (steps at another indent, a flow "
                          "mapping, a quoted or spaced run key) or outside any run (an artifact path, an action input): "
                          "red until the parser reads it or the line is reworded:\n  "
                          + "\n  ".join("line %d: %s" % u for u in uncovered))
@@ -2003,6 +2049,50 @@ class PopulationCheckReds(unittest.TestCase):
         self.assertEqual(pytest_line_census(src)[1], [(first, "- {name: Flow (pytest), run: make test}")])
         # a true name key in a layout the parser does not read is excused, its run line judged on its own
         src, first = self._with_first_step_in_shell_job("      -   name: Wide name only (pytest)\n          run: make test\n")
+        self.assertEqual(pytest_line_census(src)[1], [])
+        # a flow mapping over several lines whose line OPENS with name: and carries the run after it (review round 4's
+        # verify, 2026-09-23): the line's key is name, and until then NAME_KEY_RE excused it whole while the parser gave
+        # the step no row, so a pytest with neither the switch nor the flag was silent. A name key is excused only when
+        # no other key follows on its line (NAME_KEY_RE); here `run:` does, so the census names the line
+        for label, text in (("the run after a comma", "      - {\n          name: FlowMulti, run: python -m pytest tests/test_k.py\n        }\n"),
+                            ("the run after the name's quoted value", '      - {\n          name: "Flow, quoted", run: python -m pytest tests/test_k.py\n        }\n'),
+                            ("the run after a comma with no space", "      - {\n          name: FlowMulti,run: python -m pytest tests/test_k.py\n        }\n"),
+                            # an apostrophe inside a plain name opens no quoted scalar, so the run after it is still seen
+                            ("the run after a plain name holding an apostrophe", "      - {\n          name: Don't skip, run: python -m pytest tests/test_k.py\n        }\n")):
+            with self.subTest(form=label):
+                src, first = self._with_first_step_in_shell_job(text)
+                want = [(n, src.splitlines()[n - 1].strip()) for n in range(first, first + text.count("\n"))
+                        if "python -m pytest" in src.splitlines()[n - 1]]
+                self.assertEqual(len(want), 1, label)
+                self.assertEqual(pytest_line_census(src)[1], want, label)
+        # the controls: a name key that spells pytest with no key after it is still excused, whether its value holds a
+        # comma, brackets and an expression, a `: ` inside its quoted scalar, or a `: ` in a trailing comment (in block
+        # context a plain scalar cannot hold `: `, so an unquoted one outside a comment is the test)
+        for label, name in (("a comma, brackets and an expression", "Run pytest (3.12, linux) [fast] ${{ matrix.os }}"),
+                            ("a colon inside the quoted value", '"Run pytest: the suite"'),
+                            ("a colon in a trailing comment", "Run pytest  # note: later")):
+            with self.subTest(control=label):
+                src, first = self._with_first_step_in_shell_job("      - name: %s\n        run: make test\n" % name)
+                self.assertEqual(pytest_line_census(src)[1], [], label)
+
+    def test_a_quoted_hash_before_the_pytest_word_does_not_cut_the_line(self):
+        # the census cuts a trailing comment the way _shell_commands does (_comment_cut): a `#` inside quotes is no
+        # comment. A cut blind to quotes (review round 4's verify, mutant M5, 2026-09-23) cut each of these lines
+        # before its pytest word, so an unread line escaped the census while every test stayed green. Each is a road
+        # PyYAML reads as a step that runs pytest: the `#` sits inside a YAML-quoted scalar, where YAML sees no comment
+        # (in a plain scalar ` #` does start a YAML comment, whatever shell quotes surround it; the census keeps that
+        # text too, a count on the safe side)
+        for label, text in (("a flow mapping whose quoted name holds a #", '      - {name: "Build #1", run: python -m pytest tests/test_m3.py}\n'),
+                            ("a double-quoted run scalar, a single-quoted # before && pytest",
+                             "      - name: Hash then pytest\n        run : \"echo 'a #b' && pytest tests/test_m.py\"\n"),
+                            ("a single-quoted run scalar, a double-quoted # before ; python -m pytest",
+                             "      - name: Hash then pytest\n        run : 'echo \"x #y\" ; python -m pytest tests/test_m2.py'\n")):
+            with self.subTest(form=label):
+                src, first = self._with_first_step_in_shell_job(text)
+                line = first + text.count("\n") - 1
+                self.assertEqual(pytest_line_census(src)[1], [(line, src.splitlines()[line - 1].strip())], label)
+        # the control: an unquoted ` #` is a comment, and a pytest word after it is cut with it
+        src, first = self._with_first_step_in_shell_job("      - name: Commented\n        run : make test  # pytest later\n")
         self.assertEqual(pytest_line_census(src)[1], [])
 
     def test_an_unread_line_that_installs_pytest_and_then_runs_it_is_red(self):
