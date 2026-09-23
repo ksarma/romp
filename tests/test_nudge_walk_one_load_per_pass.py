@@ -52,7 +52,7 @@ with no attribute store named jd and no constant reading as jd; a name completed
 door whole and either carry the name in one piece to none of those receivers or reach one in a text those three transforms do not
 restore (a bytes literal in another codec, a strip of other characters, another case fold) is outside every static pin here, a limit the
 enumeration holds on its side, and so is jd completed at run time from constants none of which reads as jd (`'j' + 'd'`, a join); the
-consolidation pass, the whole-spelling rule since the round-4 fixes, and the jd rule since the round-8 fixes), and the census's own forms,
+consolidation pass, and the whole-spelling rule since the round-4 fixes), and the census's own forms,
 counted and missed, are enumerated in
 TheCensusOverEveryForm; setUp checks that it rebinds
 exactly the listed names, so the census reads the fixture's list and not a hand-kept copy of it, and the check spans the
@@ -1025,7 +1025,8 @@ _UNSET = object()
 # node it does not classify must fail naming the class, since a reader that cannot parse must not report absent. So every concrete
 # node class of Python's ast grammar on 3.10 through 3.14 is listed here by name with the version that adds it (None: all five),
 # _walk refuses a node of any other class, and TheGrammarIsTheOneTheWalkersClassify checks at test time that the running
-# interpreter defines no node class outside the three rosters, so a grammar that gains a node form reds naming the new class
+# interpreter defines no node class outside _AST_CONCRETE, _AST_ABSTRACT and _AST_COMPAT, so a grammar that gains a node form reds
+# naming the new class
 # instead of scanning less. The classification itself is the walkers': _loader_sites reads Name, Attribute and alias as sites and
 # every other class here as no site; _bump_sites reads AugAssign and its target, and with a load's line the statement lists of the
 # nodes it yielded; _pass_through_lines reads Call; _loader_births
@@ -1110,7 +1111,7 @@ def _walk(tree):
     now, and the witness files any such read as an exception that is not the refusal). Derives: nothing of its own; the class set it
     refuses against, _AST_KNOWN, is the table's classes by identity, and the interpreter check
     (TheGrammarIsTheOneTheWalkersClassify.test_the_interpreter_defines_no_node_class_outside_the_table) reads every node class of the
-    running interpreter from vars(ast) and pins the three tables against it both ways: no class outside them, the concrete classes
+    running interpreter from vars(ast) and pins the tables against it both ways: no class outside them, the concrete classes
     present exactly the table's at or below the version, _AST_KNOWN that set by identity, every concrete class a leaf but for the
     compatibility classes and derived from a sum type or from AST, every sum type at or below its version defined with subclasses
     and one above it absent. Bounds: the tables themselves, _AST_CONCRETE with its version gates, _AST_ABSTRACT and _AST_COMPAT, and
@@ -1934,7 +1935,7 @@ def _minimal(cls_name, positions):
 
 
 def _as_statement(node, positions):
-    """A statement carrying `node` in its natural container, for appending to a module body, by the base of `node`'s class: a
+    """A statement carrying `node` in its natural container, by the base of `node`'s class: a
     statement as itself; an expression under an Expr; a pattern under a match_case of a Match; an except handler under a Try; a type
     parameter on a FunctionDef; and each product type that holds a node under the one class that holds it (a comprehension under a
     ListComp, arguments and an arg on a FunctionDef, a keyword under a Call, a withitem under a With, a match_case under a Match; an
@@ -2827,7 +2828,7 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                     now += 5
                     last = (err.getvalue().strip().splitlines() or [""])[-1]
                     self.assertIn("auto-nudge (session %s)" % SID_A, err.getvalue(),
-                                  "%s, pass %d: the look of ..%s raised out of the tick's per-session handler, which wrote it to stderr "
+                                  "%s, pass %d: the look of ..%s raised into the tick's per-session handler, which wrote it to stderr "
                                   "(last line: %r)" % (road, n, SID_A[-4:], last))
                     self.assertTrue(last.startswith(exc + ":"), "%s, pass %d: the read raised %s, not an OSError the boundary turns into "
                                                                 "a fault: %r" % (road, n, exc, last))
@@ -4874,7 +4875,7 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
     patch of ast.parse that plants what the real parse returns, so the plant lands exactly where that entry point parses (the module
     reads ast.parse by attribute at call time; _walk calls ast.walk, which the patch does not touch; the patch is lifted on exit,
     and no thread parses during the case), one real parse per source serving both sides and each plant made in a fresh Module over
-    that parse's statements, so no parsed node is changed. The plant goes first in the module body since the round-8 cut, so a
+    that parse's statements, so no parsed node is changed. The plant goes first in the module body, so a
     census whose walk stops before the body's last statement still meets it and is refused; the plant appended last caught such a
     census, and the case no longer does. A census that walks
     around _walk in the position a plant sits in passes that plant over, answers a census and reds the first case naming it and the
