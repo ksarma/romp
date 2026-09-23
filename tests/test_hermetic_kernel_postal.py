@@ -570,7 +570,10 @@ def _import_time_nodes(body, nested=False):
 # `saved.update(os.environ)`, a read). None of these is in the tree at module level. And what runs after the import: a
 # write in setUpModule, setUpClass or a module- or class-scoped fixture is outside the scan, and conftest's
 # _module_env_restored checks it for the names it watches (the seams and the postal trio), naming the module that leaves
-# one changed after its teardown (the reviewer's ruling of round 1 on fork PR #894). The census at this head found two
+# one changed after its teardown (the reviewer's ruling of round 1 on fork PR #894). A write by a session- or
+# package-scoped fixture is read by neither: pytest sets such a fixture up before the module's first setup, so the
+# module's snapshot, and each test's, already carries the write; the tree has none (_fixtures_scoped_above_module, held
+# at none by a pin). The census at this head found two
 # calls at import that reach a write, both licensed: tests/test_intr_marks_memo.py and tests/test_merge_tx_sets_light.py
 # call test_asm_checkpoint.kernel_module() at module level (`import test_asm_checkpoint as TA; km = TA.kernel_module()`)
 # and its body setdefaults ROMP_KERNEL_NO_OPEN to "1"; the verifier's own walker had counted the shape empty, so the
@@ -1071,6 +1074,55 @@ def _conftest_reasserted_names(src=None):
     for fn in tree.body:
         if isinstance(fn, ast.FunctionDef) and _is_autouse_fixture(fn):
             out |= _env_writes(fn, names, "conftest.py") | _env_removals(fn, names)
+    return out
+
+
+def _conftest_import_pops(src=None):
+    """The environment names tests/conftest.py pops at its import: a module-level statement os.environ.pop(<name>, ...)
+    whose name is a string literal, the form the floor lines take. What it does not read: a pop inside a def the file
+    calls at import (_scrub_key_source_env's credential names) and a pop through a name bound to os.environ; a watched name
+    popped only that way reads here as not popped, which reds the pin that uses this rather than passing it."""
+    tree = ast.parse(open(os.path.join(HERE, "conftest.py"), encoding="utf-8", errors="replace").read() if src is None else src)
+    out = set()
+    for st in tree.body:
+        c = st.value if isinstance(st, ast.Expr) else None
+        if (isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "pop"
+                and ast.unparse(c.func.value) == "os.environ" and c.args
+                and isinstance(c.args[0], ast.Constant) and isinstance(c.args[0].value, str)):
+            out.add(c.args[0].value)
+    return out
+
+
+_SCOPE_WORD = re.compile(r"\bscope\s*=")
+
+
+def _fixtures_scoped_above_module(root=None):
+    """Every fixture defined under tests/ (or `root`) whose scope is above module, as (path relative to the root, line,
+    function name, the scope as written): "session", "package", or a scope that is not a string literal (either at run
+    time). Neither of conftest's environment checks can read a watched name such a fixture writes: pytest sets it up
+    before the module's first setup, so _module_env_restored's snapshot and every per-test snapshot already carry the
+    write. It reads every def decorated with a call to a name or attribute spelled fixture that passes scope= (the
+    installed pytest takes the scope by keyword only; a positional first argument is the fixture function), in each file
+    under the root whose text has both fixture and scope=. What it does not read: a scope passed through **kwargs, and a
+    decorator built from pytest.fixture by a partial or a wrapper (none in the tree; either would pass here unread), and a
+    fixture a plugin outside the root defines."""
+    root = HERE if root is None else root
+    out = []
+    for path in sorted(glob.glob(os.path.join(root, "**", "*.py"), recursive=True)):
+        text = open(path, encoding="utf-8", errors="replace").read()
+        if "fixture" not in text or not _SCOPE_WORD.search(text):
+            continue
+        for fn in ast.walk(ast.parse(text, filename=path)):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for d in fn.decorator_list:
+                f = d.func if isinstance(d, ast.Call) else None
+                if (f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else None) != "fixture":
+                    continue
+                for kw in d.keywords:
+                    literal = kw.value.value if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str) else None
+                    if kw.arg == "scope" and literal not in ("function", "class", "module"):
+                        out.append((os.path.relpath(path, root), fn.lineno, fn.name, ast.unparse(kw.value)))
     return out
 
 
@@ -2963,7 +3015,14 @@ class HermeticKernelPostal(unittest.TestCase):
         process that is not Python, or is started with -S or -I or an environment without this PYTHONPATH (none loads
         the sitecustomize), a connect below socket.socket, and a spawn outside subprocess.Popen whose child is not a
         Python process that loads the spy (os.system, os.exec*, os.posix_spawn called directly). At the round-1 head
-        (951479a14) five tests of these modules dialled the fixed port and three started the postal service."""
+        (951479a14), with this module's text overlaid, the pin is red, and each order records dials to the fixed port from
+        seven tests: the three set_working tests of tests/test_postal_relay_honesty.py and four of the five kernel tests
+        the refuters named (KnownHostMemory's detach and set-trust tests and PersistedIntent's detach test in both
+        orders, and one of the two tests behind the GET /peers routes: the forget-route test in the order that runs
+        tests/test_kernel_known_hosts.py before tests/test_kernel_remote_update.py, the listing test in the other); and
+        postal-service starts from two of the three detach tests the refuters named, KnownHostMemory's
+        test_detach_remembers_the_host_and_its_trust and PersistedIntent's test_detach_is_the_one_end_of_intent (a revive
+        still in flight absorbs a later one: the kernel's revive is single-flight)."""
         self.maxDiff = None
         fixed = _fixed_bus_port()
         phase = lambda r: r["test"] or "(no test phase, thread %s)" % r["thread"]     # noqa: E731
@@ -3012,26 +3071,60 @@ class HermeticKernelPostal(unittest.TestCase):
     def test_the_dead_bus_port_holds_for_each_test_and_comes_back_after_it(self):
         """conftest's _dead_bus_port, run: a child pytest (a copy of tests/conftest.py) over a module that registers two
         synthetic modules, the shapes loaded in-process at import, romp_kernel_restore_probe with BUS_PORT 45678 and
-        romp_postal_restore_probe with HOST 127.0.0.1 and BASE http://127.0.0.1:45678; its test reads DEAD_BUS_PORT in
-        both, and teardown_module, which runs after the test's fixtures are torn down, reads 45678 in both again: the port
-        and the URL are put back by the fixture's own cleanup, as the ruling of round 1 on fork PR #894 asks, and neither is
-        left dead outside a test."""
+        romp_postal_restore_probe with HOST 127.0.0.1 and BASE http://127.0.0.1:45678, and reads both from every phase
+        around its one test. The test reads DEAD_BUS_PORT in both: the fixture holds the dead port for the test. Every
+        read outside the test's own window reads 45678 in both: setUpModule, a module-scoped fixture's setup and teardown,
+        setUpClass, tearDownClass, tearDownModule, and a thread the test starts that reads after the test's teardown. So
+        the port and the URL are put back by the fixture's own cleanup, as the ruling of round 1 on fork PR #894 asks, and
+        neither is left dead outside a test; and the windows conftest's paragraph "What this does not reach" names (the
+        verifier's finding on round 2 of fork PR #894) are the ones a bus call there dials the import-time port from."""
+        self.maxDiff = None
         probe = textwrap.dedent("""\
-            import json, os, sys, types
+            import json, os, sys, threading, types, unittest
+            import pytest
             _km = types.ModuleType("romp_kernel_restore_probe")
             _km.BUS_PORT = 45678
             _pm = types.ModuleType("romp_postal_restore_probe")
             _pm.HOST, _pm.BASE = "127.0.0.1", "http://127.0.0.1:45678"
             sys.modules["romp_kernel_restore_probe"], sys.modules["romp_postal_restore_probe"] = _km, _pm
-            _seen = []
+            _seen = {}
+            _after = threading.Event()
+            _threads = []
 
-            def test_during():
-                _seen.append(["during", _km.BUS_PORT, _pm.BASE])
-
-            def teardown_module():
-                _seen.append(["after", _km.BUS_PORT, _pm.BASE])
+            def _read(where):
+                _seen[where] = [_km.BUS_PORT, _pm.BASE]
                 with open(os.environ["ROMP_TEST_BUS_PORT_PROBE"], "w") as f:
                     json.dump(_seen, f)
+
+            def setUpModule():
+                _read("setUpModule")
+
+            def tearDownModule():
+                _read("tearDownModule")
+
+            @pytest.fixture(scope="module", autouse=True)
+            def _module_fixture():
+                _read("module fixture")
+                yield
+                _read("module fixture teardown")
+
+            class Window(unittest.TestCase):
+                @classmethod
+                def setUpClass(cls):
+                    _read("setUpClass")
+
+                @classmethod
+                def tearDownClass(cls):
+                    _after.set()
+                    for t in _threads:
+                        t.join(30)
+                    _read("tearDownClass")
+
+                def test_during(self):
+                    _read("test")
+                    t = threading.Thread(target=lambda: (_after.wait(30), _read("a thread after the test")))
+                    t.start()
+                    _threads.append(t)
         """)
         marker = os.path.join(tempfile.mkdtemp(), "seen.json")
         self.addCleanup(shutil.rmtree, os.path.dirname(marker), True)
@@ -3041,9 +3134,12 @@ class HermeticKernelPostal(unittest.TestCase):
             seen = json.load(f)
         from tests import conftest
         dead = getattr(conftest, "DEAD_BUS_PORT", "conftest.DEAD_BUS_PORT")
-        self.assertEqual(seen, [["during", dead, "http://127.0.0.1:%s" % dead], ["after", 45678, "http://127.0.0.1:45678"]],
+        live = [45678, "http://127.0.0.1:45678"]
+        self.assertEqual(seen, {"test": [dead, "http://127.0.0.1:%s" % dead], "setUpModule": live, "module fixture": live,
+                                "setUpClass": live, "a thread after the test": live, "tearDownClass": live,
+                                "module fixture teardown": live, "tearDownModule": live},
                          "the kernel's BUS_PORT and the postal client's BASE name the dead port during the test and their "
-                         "import-time values after it")
+                         "import-time values in every phase outside it")
 
     def test_the_module_env_fixture_watches_the_seams_and_the_trio_and_no_name_conftest_re_asserts_but_the_port(self):
         """The list conftest's _module_env_restored watches (the reviewer's ruling of round 1 on fork PR #894): at least the
@@ -3149,6 +3245,116 @@ class HermeticKernelPostal(unittest.TestCase):
                       "unset and is now set", out, "the setUpModule plant: the snapshot precedes setUpModule")
         self.assertIn("module test_d1_port_left.py left the environment changed after its teardown: ROMP_POSTAL_PORT was unset "
                       "and is now set", out, "the port a module leaves set is named against its floor")
+
+    def test_every_watched_name_is_popped_at_import_so_a_shell_carrying_each_leaves_both_checks_green(self):
+        """The verifier's finding on round 2 of fork PR #894: conftest popped ROMP_POSTAL_PORT at import and no other name
+        _module_env_restored watches, and the postal modules put peers and client-only back with a pop in their tearDowns,
+        so from a shell carrying ROMP_POSTAL_PEERS or ROMP_POSTAL_CLIENT_ONLY a run ended those modules with the name unset
+        and was red where a clean shell's run was green. conftest now pops every watched name at import: the names its
+        module-level os.environ.pop lines name (_conftest_import_pops) include all of MODULE_WATCHED_ENV_NAMES. Executed:
+        a child pytest (a copy of tests/conftest.py) from a shell carrying none of the six records the floor each has at
+        setUpModule; then a module whose setUpModule records what it found and whose test sets every name the floor leaves
+        unset (the port aside) in setUp and pops it in tearDown (the postal modules' shape) runs from that clean shell and
+        from a shell carrying all six. Both runs find the floor and are green, neither check naming anything: the shell
+        changes nothing the checks read. The floor is read rather than assumed unset, so a conftest that floors
+        client-only "1" (upstream's PR 1848, which fork PR #875 folds) holds too. Before round 2's seventh commit on fork
+        PR #894 the run from the carrying shell was red: the module named for the five names and the test for the three
+        seams the per-test check watches."""
+        from tests import conftest
+        watched = tuple(conftest.MODULE_WATCHED_ENV_NAMES)
+        self.assertEqual(sorted(set(watched) - _conftest_import_pops()), [], "every watched name is popped at conftest's import")
+        record = textwrap.dedent("""\
+            import json, os
+            NAMES = %r
+
+            def setUpModule():
+                with open(os.environ["ROMP_TEST_SHELL_MARKER"], "w") as f:
+                    json.dump({k: os.environ.get(k) for k in NAMES}, f)
+        """) % (watched,)
+        clean = {name: None for name in watched}
+
+        def run(body, env):
+            marker = os.path.join(tempfile.mkdtemp(), "found.json")
+            self.addCleanup(shutil.rmtree, os.path.dirname(marker), True)
+            rc, out, _d = self._scratch_conftest_run({"test_postal_shape.py": body}, env=dict(env, ROMP_TEST_SHELL_MARKER=marker))
+            with open(marker, encoding="utf-8") as f:
+                return rc, out, json.load(f)
+        rc, out, floor = run(record + "\n\ndef test_one():\n    pass\n", clean)
+        self.assertEqual((rc, sorted(floor)), (0, sorted(watched)), out[-3000:])
+        shape = record + textwrap.dedent("""\
+
+
+            import unittest
+            SET = %r
+
+            class PostalShape(unittest.TestCase):
+                def setUp(self):
+                    for k in SET:
+                        os.environ[k] = "set-in-setup"
+
+                def tearDown(self):
+                    for k in SET:
+                        os.environ.pop(k, None)
+
+                def test_one(self):
+                    pass
+        """) % (tuple(k for k in watched if floor[k] is None and k != "ROMP_POSTAL_PORT"),)
+        shell = {name: "-".join(("shell", name.lower(), "value")) for name in watched}
+        shell["ROMP_POSTAL_PORT"] = "45681"
+        for label, env in (("a clean shell", clean), ("a shell carrying all six", shell)):
+            rc, out, found = run(shape, env)
+            self.assertEqual(found, floor, "%s: setUpModule finds the floor: %s" % (label, out[-6000:]))
+            self.assertEqual(re.findall(r"left (?:the environment|shared state) changed", out), [], "%s: %s" % (label, out[-6000:]))
+            self.assertEqual(rc, 0, "%s: %s" % (label, out[-6000:]))
+            self.assertIn("1 passed", out, label)
+
+    def test_no_fixture_in_the_tree_is_scoped_above_module(self):
+        """The class neither of conftest's environment checks can read (the verifier's finding on round 2 of fork PR #894):
+        a watched name a session- or package-scoped fixture writes is already in the module's snapshot, and in each
+        test's, since pytest sets such a fixture up before the module's first setup. conftest's comment above
+        _module_env_restored and tests/README.md name the class; the tree has no such fixture, and the list
+        _fixtures_scoped_above_module derives is held EQUAL to empty. Over a planted tree it lists a session fixture, a
+        package fixture, a fixture imported by its bare name and one whose scope is a name, and not a module or a class
+        fixture, so the list is known to fill when one appears."""
+        self.assertEqual(_fixtures_scoped_above_module(), [], "no fixture under tests/ is scoped above module")
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        os.makedirs(os.path.join(d, "sub"))
+        with open(os.path.join(d, "sub", "test_planted.py"), "w", encoding="utf-8") as f:
+            f.write(textwrap.dedent("""\
+                import pytest
+                from pytest import fixture
+                SCOPE = "session"
+
+                @pytest.fixture(scope="session")
+                def a():
+                    yield
+
+                @pytest.fixture(autouse=True, scope="package")
+                def b():
+                    yield
+
+                @fixture(scope="session")
+                def c():
+                    yield
+
+                @pytest.fixture(scope=SCOPE)
+                def d():
+                    yield
+
+                @pytest.fixture(scope="module")
+                def e():
+                    yield
+
+                @pytest.fixture(scope="class")
+                def f():
+                    yield
+            """))
+        self.assertEqual([(p, n, sc) for p, _line, n, sc in _fixtures_scoped_above_module(d)],
+                         [(os.path.join("sub", "test_planted.py"), "a", "'session'"),
+                          (os.path.join("sub", "test_planted.py"), "b", "'package'"),
+                          (os.path.join("sub", "test_planted.py"), "c", "'session'"),
+                          (os.path.join("sub", "test_planted.py"), "d", "SCOPE")])
 
     def test_the_scan_completes_and_derives_the_same_records_under_a_tag_another_census_left_on_the_parsers_shared_singletons(self):
         """THE PLANT for the contract _fresh states (the reviewer's ruling of 2026-09-22, from a CI red on fork PR #891):

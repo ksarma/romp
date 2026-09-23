@@ -158,7 +158,12 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   (`MODULE_WATCHED_ENV_NAMES`: the seams below and the postal trio): it takes its
   snapshot before the module's first setup and fails naming the module when a watched
   name differs after the module's teardown (the port against its floor, unset, since
-  conftest pops it before every test); every other name is outside it.
+  conftest pops it before every test); every other name is outside it. conftest pops
+  every watched name at import, so the developer's shell does not change what the
+  check reads. Neither this check nor the per-test one reads a write by a session- or
+  package-scoped fixture: pytest sets such a fixture up before the module's first
+  setup, so both snapshots already carry its write. The tree has none, and the
+  hermetic module holds that count at zero.
   `python -m tests.test_hermetic_kernel_postal --census` prints the counts by name
   and shape. The per-test half, set in setUp and put back by a cleanup registered
   right after the write (`restore_env` from `tests/conftest.py`, or a method of the
@@ -174,8 +179,9 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   pin that runs the case). conftest's `_shared_state_restored` names such a leftover
   in any run, since no module writes the seam at import, and it watches the bus-name
   seam `ROMP_POSTAL_HOST` too; each fires only in a run where nothing set the name
-  beforehand (a leftover equal to what the shell or an earlier test left is no
-  change). The port the kernel reads at import used to be the
+  beforehand (a leftover equal to what an earlier test left is no change; the
+  developer's shell never sets one, since conftest pops every name the two checks
+  watch at import). The port the kernel reads at import used to be the
   one leg allowed before the load; since 2026-09-22 it is set per test beside
   `km.BUS_PORT`, and conftest pops `ROMP_POSTAL_PORT` before every test (the
   dead-port fixture), so a stray value never reaches a child; and since a kernel

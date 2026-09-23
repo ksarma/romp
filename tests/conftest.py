@@ -298,6 +298,23 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel exports this to its sess
 # session's shell, and a test run from one would carry the machine's name into every lab and in-process kernel; the
 # bus refuses its fixed port under a test unless the port is the run's own, which the marker beside a port says
 os.environ.pop("ROMP_POSTAL_PORT", None)
+# the rest of the postal trio and the three call-time seams likewise (2026-09-23, the verifier's finding on round 2 of
+# fork PR #894): a session's shell can carry any of them, and _module_env_restored and _shared_state_restored (below)
+# compare each watched name with the value the module or the test found. The postal modules put peers and client-only
+# back with a pop in their tearDowns rather than a restore, so from a shell carrying ROMP_POSTAL_PEERS or
+# ROMP_POSTAL_CLIENT_ONLY a run ended those modules with the name unset and went red where a clean shell's run was
+# green.
+# Popped here with the seams, every run starts every watched name unset, as CI's does, and both checks read the same run
+# whatever the shell carries (every name of MODULE_WATCHED_ENV_NAMES is popped by these lines or the port's above; the
+# hermetic module holds each watched name among this file's import-time pops and runs both checks from a shell carrying
+# every one). They come before the hermetic marker below, so upstream's floor of client-only "1" (their PR 1848, which
+# fork PR #875 folds), placed right after the marker, still sets it for the run (the hermetic module's import probe
+# under that floor reds when a pop follows the marker).
+os.environ.pop("ROMP_POSTAL_PEERS", None)
+os.environ.pop("ROMP_POSTAL_CLIENT_ONLY", None)
+os.environ.pop("ROMP_POSTAL_HOST", None)
+os.environ.pop("ROMP_SESSIONS_FILE", None)
+os.environ.pop("ROMP_SERVE_TOKEN", None)
 os.environ["ROMP_POSTAL_HERMETIC"] = "1"
 os.environ["ROMP_CKPT_FIRST_DOC_KB"] = "0"   # the young-session floor is off for the suite's small fixtures (a document under 1 MB of
 #                                                pre-cut bytes is never written live); the floor's own test sets it. A plain assignment: an
@@ -500,10 +517,18 @@ def _dead_manager_port():
 # import: tests/test_postal_relay_honesty.py's three set_working tests, whose tool call beats the bus first. So every
 # loaded postal module's BASE points at DEAD_BUS_PORT for each test as well, put back after it; a postal module that
 # serves binds PORT, which this leaves alone.
-# What this does not reach: a kernel or postal module loaded under another module name, and one a test loads or re-loads
-# during the test (setUp or the body run after this fixture, and a load_source re-executes the module and reads the port
-# again); the pin (tests/test_hermetic_kernel_postal.py, the affected modules run with a connect and spawn spy in both
-# orders) and the spy's full run are what show none of those dials the fixed port today.
+# What this does not reach, each for its reason: a kernel or postal module loaded under another module name (the fixture
+# finds the modules by name); one a test loads or re-loads during the test (setUp or the body run after this fixture, and
+# a load_source re-executes the module and reads the port again); and a bus call made outside the window this fixture
+# holds the dead port for, which opens at its setup, inside the test's own setup, and closes at its teardown. Outside
+# that window a loaded module has its import-time port, 25302, back: setUpModule, setUpClass, a module- or class-scoped
+# fixture, tearDownClass and tearDownModule run before this per-test fixture is set up or after it is torn down, and a
+# thread that outlives its test reads the port put back at the teardown (the verifier's finding on round 2 of fork PR
+# #894; tests/test_hermetic_kernel_postal.py's test_the_dead_bus_port_holds_for_each_test_and_comes_back_after_it reads
+# the port in a probe module's setUpModule, module-scoped fixture, setUpClass, tearDownClass and tearDownModule and in a
+# thread after its test, and each reads the import-time port). The pin (the same module, the affected modules run with
+# a connect and spawn spy in both orders) and the spy's full serial run, which records a connect from any phase and from
+# any thread, are what show that none of those dials the fixed port today.
 DEAD_BUS_PORT = 1
 
 
@@ -640,10 +665,10 @@ def _stub_place_llm(monkeypatch):
 # test's TESTHOST reached a later test's probe subprocess (the reviewer's finding on fork PR #894,
 # round 1). No module writes either at import (the census in tests/test_hermetic_kernel_postal.py
 # forbids it), so this fixture names such a leftover in any run, whenever the value a test leaves
-# differs from the one it found (a leftover equal to what the shell or an earlier test had already set
-# is no change here); the postal modules set both per test and put them back by cleanups, and
-# tests/test_postal_self_host.py's _HostnameSeams pops and restores the bus name, so each is quiet
-# here. Neither shows when the victim runs
+# differs from the one it found (a leftover equal to what an earlier test had already set is no change
+# here, and the developer's shell never sets one: this file pops each at import); the postal modules
+# set both per test and put them back by cleanups, and tests/test_postal_self_host.py's
+# _HostnameSeams pops and restores the bus name, so each is quiet here. Neither shows when the victim runs
 # alone, and the serial order of the whole suite passes only because a test that loads a kernel
 # between the cause and the victim re-executes judge.py and rebinds the roots; any other order (a
 # subset, another scheduler) fails a module that did nothing wrong. This fixture names the cause
@@ -731,23 +756,34 @@ def restore_env(name, prior):
 # snapshot before any of those run (an autouse module-scoped fixture of this file is set up before the module's own
 # setUpModule, which pytest runs as a module-scoped autouse fixture registered on the module, after the ones registered
 # here, and before every class-scoped setup) and fails, naming the module, when a watched name differs after the
-# module's teardown (its tearDownModule, tearDownClass and fixtures have run by then). A write that reaches later
-# modules is what it names; one made and put back inside the module is quiet.
-# The watched names, MODULE_WATCHED_ENV_NAMES: the seams _shared_state_restored watches per test (_SEAM_ENV_NAMES) and
-# the postal trio. PYTEST_CURRENT_TEST is not among them (pytest writes it for every phase), nor is any name this file
-# re-asserts before every test (the dead ports, the service-env, claude-config, catalog, scope and CLI-binary floors,
-# ROMP_SUPERVISED and the credential names): conftest's own write would read as a change on the module whose first test
-# it ran in. The one trio leg this file re-asserts, ROMP_POSTAL_PORT (popped before every test), is watched
-# against the value that re-assert gives it, unset, rather than against the snapshot (MODULE_ENV_FLOORS): a port a
-# module leaves set after its teardown reaches the next module's setUpModule, setUpClass and module fixtures, and every
-# child they spawn, before that module's first test pops it. Every other name is outside this check: a diff of the
-# whole environment reds on the runner's own writes.
+# module's teardown (its tearDownModule, tearDownClass and fixtures have run by then). What it names is a write made in
+# the module's own setup, tests or teardown that the module leaves behind for later modules; one made and put back inside
+# the module is quiet. What it does not read, each for its reason: a write made at import, during collection (the
+# census reads that); a write by a session- or package-scoped fixture, which reaches later modules too, but pytest sets
+# such a fixture up before any module-scoped fixture of the module whose test first requests it, so this snapshot, and
+# every per-test snapshot of _shared_state_restored, already carries the write, and its teardown runs at the end of the
+# session or package, after every module's check (the verifier's plant on round 2 of fork PR #894; the tree has no such
+# fixture, which tests/test_hermetic_kernel_postal.py holds at none); a write by a plugin's own hook or
+# fixture outside the module's setup; and any name the list in the docstring leaves out. Every watched name is popped at
+# this file's import, before collection (the lines above), so nothing the developer's shell carries reaches the check,
+# and it reads the same run on every box.
 MODULE_WATCHED_ENV_NAMES = _SEAM_ENV_NAMES + ("ROMP_POSTAL_PEERS", "ROMP_POSTAL_CLIENT_ONLY", "ROMP_POSTAL_PORT")
 MODULE_ENV_FLOORS = {"ROMP_POSTAL_PORT": None}
 
 
 @pytest.fixture(scope="module", autouse=True)
 def _module_env_restored(request):
+    """Fail naming the module when a watched name differs after the module's teardown from its value before the module's
+    first setup. The watched names, MODULE_WATCHED_ENV_NAMES: the seams _shared_state_restored watches per test
+    (_SEAM_ENV_NAMES: the sessions file, the serve token and the bus name) and the postal trio (peers, client-only and
+    the port). Not watched: PYTEST_CURRENT_TEST, which pytest writes for every phase, and every name this file
+    re-asserts before every test (the dead ports, the service-env, claude-config, catalog, scope and CLI-binary floors,
+    ROMP_SUPERVISED and the credential names), whose write here would read as a change on the module whose first test
+    it ran in. The one trio leg this file re-asserts, ROMP_POSTAL_PORT (popped before every test), is watched against
+    the value that re-assert gives it, unset (MODULE_ENV_FLOORS), rather than against the snapshot: a port a module
+    leaves set after its teardown reaches the next module's setUpModule, setUpClass and module fixtures, and every
+    child they spawn, before that module's first test pops it. Every name outside the list is outside this check: a
+    diff of the whole environment reds on the runner's own writes."""
     before = {name: os.environ.get(name) for name in MODULE_WATCHED_ENV_NAMES}
     yield
     left = []
