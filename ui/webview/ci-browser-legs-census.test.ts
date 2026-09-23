@@ -38,7 +38,9 @@
 // SAFETY NET's refusal as its outcome until a fold reads the form, the fold's sentence or class once one does, with one net-only row
 // per kind of mention the net names so every arm of the net keeps a plant, and the controls and pin rows the folds bring; then the
 // string-typed parameter passed back to its own function, under which the census before round 5 died whole with a bare RangeError, so
-// those rows red as census(PLANTS) throwing rather than as a row mismatch, beside its non-cyclic control), every one
+// those rows red as census(PLANTS) throwing rather than as a row mismatch, beside its non-cyclic control; then a helper's own engine,
+// skip or swallow, dropped before round 5 from the record of a test that calls inBrowser itself and folded into it since, beside the
+// direct, helper-only and non-launcher controls), every one
 // is red under the census before round 5 (the module at
 // the round-4 head) unless the table names it held with its reason, and the same test holds the table to that statement. A module
 // whose classification throws for any other reason is refused by name and the census goes on, executed over a synthetic root by a
@@ -614,6 +616,22 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p205-qc1c-mutual-recursion.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], playwright: ["playwright"], refused: "p205-qc1c-mutual-recursion.test.ts:4: " + COMPUTED_REFUSAL }, // qc1c: a(e) calls b(e), b(e) calls a(e) and reads pw[e]: the fold of b's e reaches a's e, which reaches b's e again, the re-entry keyed on b's declaration, refused at the computed member (before: the census whole threw)
   { dir: W, file: "p206-qc1d-p28-plus-self-call.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], playwright: ["playwright"], refused: "p206-qc1d-p28-plus-self-call.test.ts:3: " + COMPUTED_REFUSAL }, // qc1d: p28's inEngine(t, name, retry = 1) with a retry call inEngine(t, name, retry - 1) inside it: the two literal call sites no longer fold, since the third passes name back (before: the census whole threw; p28 itself, with no self call, still folds to chromium and webkit)
   { dir: W, file: "p207-qc1e-two-level-chain-control.test.ts", leg: true, cls: "shared", gap: null, engines: ["firefox"], holds: "the no-refusal half of a pair whose partner reds: p203 to p206 (a string-typed parameter passed back to its own function, which ended the census before round 5 whole and unnamed, so those rows red as census(PLANTS) throwing, not as a row mismatch) beside this non-cyclic chain, outer(t, e) to go(t, e) to inBrowser(t, body, e), which the census before round 5 folded to firefox in a root of its own as the census does now: class shared, gap null, engines [firefox], no refusal (the guard is keyed on the parameter's declaration, not a flag, so a fold through another function's parameter is no re-entry)" }, // qc1e: the control
+  // fresh-1 (round 5): a test that calls inBrowser itself AND loads a helper that binds or calls the launcher was class shared, gap null,
+  // with the helper's own record dropped (engines [], swallow [], skipTodo []), rosterable as Chromium-only while the helper reached
+  // Firefox, skipped or swallowed; the helper-only twin of the same import was refused. census() now folds each record the walk over
+  // an import passed without a refusal into the test's (foldLoaded), gated per record on the module binding or calling the launcher:
+  // the engines as the sorted union, a swallow at the test's import line, a skip or todo at the import line naming the helper and its
+  // line. The rows below red under the census before round 5 on the folded field (the round's records: the same fixtures over a root
+  // of their own under that census, engines [], skipTodo [], swallow [], no refusal), the three controls hold: the engine passed by the
+  // module itself, the helper-only twin still refused, and a UI helper whose { todo: } object literal the gate keeps out of the test's
+  // record (ungated, the fold put a production module's todo property on two importers of the tree, a record change the --tsv hides)
+  { dir: W, file: "p208-qf1a-helper-engine.test.ts", leg: true, cls: "shared", gap: null, engines: ["firefox"] }, // qf1a: inBrowser(t, body) beside inFirefox(t, body) from ff-helper.ts, whose inBrowser call passes "firefox": the helper's engine folded into the test's record (before round 5: class shared, gap null, engines [], no refusal)
+  { dir: W, file: "p209-qf1b-helper-skip.test.ts", leg: true, cls: "shared", gap: "holds a skip or todo of its own (line 3: .skip( in ui/webview/skip-helper.ts:3, which this module loads)", skipTodo: [".skip( in ui/webview/skip-helper.ts:3, which this module loads"] }, // qf1b: the helper calls t.skip("...") before its shared call: the skip folded at the test's import line, naming the helper and its line, so the roster gate's sentence points at it (before: gap null, skipTodo [])
+  { dir: W, file: "p210-qf1c-helper-swallow.test.ts", leg: true, cls: "shared", gap: null, swallow: [3] }, // qf1c: the helper's shared call sits inside try/catch: a swallow at the test's import line, reported as the module's own would be (before: swallow [])
+  { dir: W, file: "p211-qf1f-chain-helper-engine.test.ts", leg: true, cls: "shared", gap: null, engines: ["firefox"] }, // qf1f: inFirefox reached through chain-helper.ts, a barrel that re-exports it and binds nothing of the launcher itself: the gate is per visited record, so the chain folds through the carrier and ff-helper's engine lands (before: engines [])
+  { dir: W, file: "p212-qf1d-direct-engine-control.test.ts", leg: true, cls: "shared", gap: null, engines: ["firefox"], holds: "a shape another plant carries: p77 (an engine literal passed to inBrowser by the module itself), the direct half of p208's pair, green before and after round 5 with engines [firefox] read from the module's own call, which the fold does not touch" }, // qf1d: the direct-engine control
+  { dir: W, file: "p213-qf1e-helper-only-control.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p213-qf1e-helper-only-control.test.ts:2: loads ui/webview/ff-helper.ts, which binds or calls the shared launcher's inBrowser", holds: "a shape another plant carries: p33 (a helper that calls the launcher, loaded by a test that never calls inBrowser itself), the helper-only twin of p208's import, refused before and after round 5: the fold is asked only of a walk that refused nothing, so this row pins that the refusal stands beside p208's fold of the same helper" }, // qf1e: the helper-only control
+  { dir: W, file: "p214-qf1h-non-launcher-todo-prop-control.test.ts", leg: true, cls: "shared", gap: null, engines: [], skipTodo: [], holds: "a stated residual boundary: the fold's gate, a loaded module that neither binds nor calls the launcher carries nothing into the test's record; this row loads a UI helper whose { todo: t } object literal the walker's skip/todo read takes as a todo in the helper's own record, and stays class shared, gap null, skipTodo [] before and after round 5 (green before because nothing was folded, green after because the gate keeps the helper out; ungated, the fold put such a property on two importers of the tree, a record change the --tsv hides and the roster gate reds for a shared leg)" }, // qf1h: inBrowser(t, body) beside rows() from todo-prop-helper.ts, a UI helper that never touches the launcher and pushes { todo: t }: the walker's skip/todo read takes that property as a todo in the helper's own record, and the gate keeps it out of the test's (before: the same, nothing folded)
 ];
 const bundleOf = (p: Plant): string => "out-tests/" + p.dir + "/" + p.file.replace(/\.test\.ts$/, ".test.js");
 
@@ -933,12 +951,13 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // the round-5 rows, the same statement against the census before round 5 (the module at the round-4 head): THE SAFETY NET's plants
   // and the rows the round's folds add after them, p156 to R5_LAST, one row each, every one red under that census (class none with no
   // refusal, or a reach with engines [] and launches [] and no refusal, where the row expects a refusal; for p203 to p206, the census
-  // over the plants throwing whole before it judges a row, the shape correctness-1 named) unless R5_HELD names it with
+  // over the plants throwing whole before it judges a row, the shape correctness-1 named; for p208 to p211, a loaded helper's engine,
+  // skip or swallow missing from the test's record, the field fresh-1's fold reads) unless R5_HELD names it with
   // holds set (a control, a pin of an arm no plant carried, a stated boundary); a round-5 builder who adds a row moves R5_LAST to it
   // and, when the row stays green under that census, adds it to R5_HELD with holds set (the round-4 population above is closed)
   const NOT_RERUN5 = " (the discrimination was established by running the census before round 5, the module at the round-4 head, over the plants, recorded in the PR's notes, and is not re-run here, since that census is not in the tree at test time: this assertion holds the table's statement, not the fact)";
-  const R5_FIRST = R4_LAST + 1, R5_LAST = 207;
-  const R5_HELD = ["p197", "p198", "p200", "p201", "p202", "p207"];
+  const R5_FIRST = R4_LAST + 1, R5_LAST = 214;
+  const R5_HELD = ["p197", "p198", "p200", "p201", "p202", "p207", "p212", "p213", "p214"];
   const R5_CARRIED: string[] = [];
   const inRound5 = (p: Plant) => num(p) >= R5_FIRST && num(p) <= R5_LAST;
   const r5 = PLANT_TABLE.filter(inRound5);

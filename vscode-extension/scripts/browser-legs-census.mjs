@@ -48,7 +48,17 @@
 //              the test makes through the barrel's export resolves to no loader the walker knows), REFUSES the test at its import
 //              line with the chain. The
 //              walker follows nothing THROUGH such a module (it does not read what the test calls on it), so the verdict is a
-//              refusal with the remedy, never a silent non-leg. A file under node_modules is a package and binds nothing of
+//              refusal with the remedy, never a silent non-leg. A module the walk passes WITHOUT a refusal that binds or calls
+//              the launcher (the test calling inBrowser itself) has its own record FOLDED into the test's (foldLoaded): the
+//              engines its shared calls pass join the test's, a shared call of its inside try/catch is a swallow at the test's
+//              import line, and each skip or todo of its is one at the import line naming the module and its line, so what the
+//              test reaches through the module is read, not dropped (before, a test calling inBrowser itself and reaching Firefox
+//              through such a helper was class shared, gap null, engines [], rosterable). An over-approximation on the safe side: a
+//              test that never calls the module's engine-passing export still carries the engine. The fold is gated per visited
+//              record on the module binding or calling the launcher, so a chain folds through a carrier that binds nothing, and a
+//              module that neither binds nor calls the launcher carries nothing into the test's record (the skip/todo read takes any
+//              call's object-literal skip or todo property, a test option in a test module and a UI object in a production one).
+//              A file under node_modules is a package and binds nothing of
 //              the tree (a playwright package named by such a path is read by resolveSpec before the file is looked up); a json or
 //              css file is not a script.
 //   playwright: the module names a playwright package (playwright, playwright-core, @playwright/test, or a subpath; a relative
@@ -1310,7 +1320,10 @@ const thrown = (rel, e) => ({ rel, refusals: [rel + ": the census threw while cl
  *  a walk over the import graph per test import, so a cycle is visited once): a test whose import reaches a module that binds
  *  or calls the launcher's inBrowser (and the test itself never calls inBrowser), names a playwright package, holds a driver string, or
  *  a form the walker refuses, is refused at its import line with the chain. The walker follows nothing THROUGH such a module
- *  (it does not read what the test calls on it), so the remedy is to import the launcher directly, or to teach the census. */
+ *  (it does not read what the test calls on it), so the remedy is to import the launcher directly, or to teach the census.
+ *  Returns { refusals, carried }: `refusals` the sentences above, `carried` the records the walk over an import PASSED when nothing
+ *  on that walk refused, each as { li, rec, rel } (the test's import line, the loaded module's own record, its path), for census()
+ *  to fold into the test's record through foldLoaded (fresh-1, round 5). This function writes nothing into `r`. */
 export function localRefusals(ts, r, file, root, opts, ownCache) {
   const own = (abs) => {
     if (!ownCache.has(abs)) {
@@ -1323,7 +1336,7 @@ export function localRefusals(ts, r, file, root, opts, ownCache) {
     }
     return ownCache.get(abs);
   };
-  const out = [];
+  const out = [], carried = [];
   const at = (li, why) => { const msg = r.rel + ":" + li.line + ": " + why + ": the walker reads a module of the tree for the launcher and playwright bindings it holds and follows nothing through it; import ui/webview/real-viewer-leg.ts directly in this module, or teach scripts/browser-legs-census.mjs the module: " + li.text; if (!out.includes(msg)) out.push(msg); };
   const unresolved = (li, to, where) => (to === null ? "loads " + li.spec + ", which names no file in the tree (tried beside " + where + ", under the repo root and under vscode-extension/)" : "loads " + li.spec + ", which names two files (" + to.ambiguous.map((a) => path.relative(root, a)).join(" and ") + "), so the walker cannot tell which one it reads");
   for (const li of r.localImports) {
@@ -1332,6 +1345,7 @@ export function localRefusals(ts, r, file, root, opts, ownCache) {
     if (!MODULE_EXT.test(start.abs) || isPackagePath(start.abs)) continue;   // json, css: not a script; a package under node_modules binds nothing of the tree
     const seen = new Set([start.abs]), queue = [{ abs: start.abs, chain: [] }];
     let refused = false;
+    const passed = [];   // the records this import's walk passed without a refusal, carried out once the whole walk refused nothing
     while (queue.length && !refused) {
       const { abs, chain } = queue.shift();
       const rel = path.relative(root, abs), via = [...chain, rel];
@@ -1346,14 +1360,33 @@ export function localRefusals(ts, r, file, root, opts, ownCache) {
       // unread, which is the silent form the round-4 review found)
       if (rec.loaderReexport) { at(li, link + ", which hands on the shared launcher's requireCjs loader (a re-export of it, or of the launcher whole), so a playwright load or a launch this module makes through it is unread"); refused = true; break; }
       if (rec.launcherBinds && r.sharedCalls === 0) { at(li, link + ", which binds or calls the shared launcher's inBrowser, so this module may launch through it without the census seeing a call"); refused = true; break; }
+      passed.push({ li, rec, rel });
       for (const n of next) {
         if (n.to === null || n.to.ambiguous) { at(li, link + ", which " + unresolved(n.li, n.to, rel) + " (" + rel + ":" + n.li.line + ")"); refused = true; break; }
         if (!MODULE_EXT.test(n.to.abs) || isPackagePath(n.to.abs) || seen.has(n.to.abs)) continue;
         seen.add(n.to.abs); queue.push({ abs: n.to.abs, chain: via });
       }
     }
+    if (!refused) carried.push(...passed);
   }
-  return out;
+  return { refusals: out, carried };
+}
+/** A loaded module's own record folded into the test's (fresh-1, round 5), asked by census() of each record localRefusals carried (a
+ *  walk over an import that refused nothing): a module that binds or calls the launcher (launcherBinds) hands the test what its own
+ *  record reads, where before the record was dropped and a test calling inBrowser itself and reaching Firefox through such a helper
+ *  was class shared, gap null, engines [], rosterable. The engines its shared calls pass join the test's (the sorted union), a shared
+ *  call of its inside try/catch is a swallow at the test's IMPORT line, once, and each skip or todo of its is one at the import line
+ *  naming the module and its line, so rosterGap's sentence points at the module. An over-approximation on the safe side: a test that
+ *  never calls the module's engine-passing export still carries the engine. The gate is per record: a chain folds through a carrier
+ *  that binds nothing (a barrel re-exporting the helper), and a module that neither binds nor calls the launcher carries nothing into
+ *  the test's record, since the walker's skip/todo read takes any call's object-literal skip or todo property, a test option in a test
+ *  module and a UI object literal in a production one (an ungated fold put a production module's { todo: } on two importers of the
+ *  tree, a record change the --tsv hides and the roster gate reds for a shared leg). */
+export function foldLoaded(r, li, rec, rel) {
+  if (!rec.launcherBinds) return;
+  if (rec.engines.length) r.engines = [...new Set([...r.engines, ...rec.engines])].sort();
+  if (rec.swallow.length && !r.swallow.includes(li.line)) r.swallow.push(li.line);
+  for (const s of rec.skipTodo) { const what = s.what + " in " + rel + ":" + s.line + ", which this module loads"; if (!r.skipTodo.some((x) => x.line === li.line && x.what === what)) r.skipTodo.push({ line: li.line, what }); }
 }
 
 const bundleOf = (dir, f) => "out-tests/" + dir + "/" + f.replace(/\.test\.ts$/, ".test.js");
@@ -1375,7 +1408,11 @@ export function census(root = REPO, opts = {}) {
       // (correctness-1, round 5), refused by name with the exception, and the census goes on to the next: it never dies unnamed
       try {
         ({ net, ...r } = classify(ts, file, fs.readFileSync(file, "utf8"), { ...opts, root, testModule: true }));
-        if (r.localImports) r.refusals.push(...localRefusals(ts, r, file, root, opts, ownCache));
+        if (r.localImports) {
+          const lr = localRefusals(ts, r, file, root, opts, ownCache);
+          r.refusals.push(...lr.refusals);
+          for (const c of lr.carried) foldLoaded(r, c.li, c.rec, c.rel);   // the loaded modules' own engines, swallows and skips, read into the test's record
+        }
       } catch (e) { r = thrown(path.relative(root, file), e); net = undefined; }
       // THE SAFETY NET's verdict on a test module, applied after the modules it loads have had their say: the net stands down when
       // any refusal already names the module (its own fold's, or a loaded module's carried by localRefusals), so a module carries
