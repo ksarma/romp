@@ -1034,8 +1034,8 @@ function bundledModules(): Promise<string[]> {
     // mixes the two: the pdf worker's entry is an object among strings) and a record of output names to paths, which builds the same inputs
     // as the array; it is refused when empty in any form or of another type, the message naming the form found
     // (the maintainer's round 8 ruling, correctness-2); a value of another type is named by its type and its String form, a string in
-    // quotes and null as null, because JSON.stringify names null an object and a function undefined, and throws on a BigInt, which would
-    // red the census with its error in place of this message
+    // quotes and null as null, because typeof names null an object, and JSON.stringify names a function undefined and throws on a
+    // BigInt, which would red the census with its error in place of this message
     const ep: unknown = webview && typeof webview === "object" ? webview.entryPoints : undefined;
     const form = Array.isArray(ep) ? "an array of " + ep.length + " entries" : ep !== null && typeof ep === "object" ? "a record of " + Object.keys(ep).length + " names" : ep === undefined ? "undefined" : ep === null ? "null" : "a " + typeof ep + ", " + (typeof ep === "string" ? JSON.stringify(ep) : String(ep));
     const filled = Array.isArray(ep) ? ep.length > 0 : ep !== null && typeof ep === "object" && Object.keys(ep).length > 0;
