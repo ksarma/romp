@@ -112,16 +112,23 @@ This module holds five things, and it never skips: a pin that skips reports gree
    collector: pytest's UnitTestCase.collect calls the loader and then drops the class, or the method, whose __test__
    is False, which the loader never reads, so the loader case alone read green with the test out of every run
    (2026-09-21: `__test__ = False` on the class or on the method, the collector listed one item fewer and no
-   InstalledVersion item, the loader case 1 passed, exit 0), and the collect-only case is red on both. What neither case can see is a road that
-   drops this module from a RUN without touching the file, the residual stated here and above tests/conftest.py's
-   tuple: a module-level __test__ = False empties the module's collection, this census with it (the child would list
-   nothing, and never runs); the child hands pytest the file as an argument, and pytest asks pytest_ignore_collect
-   only about paths it did not receive as arguments, so a collect_ignore, a collect_ignore_glob or a
-   pytest_ignore_collect hook in a conftest is not asked in the child; a -k, -m or --deselect and an --ignore or
-   --ignore-glob live on the run's own command line, not the child's; the module renamed or deleted takes the census
-   with it (the rename reds the membership case below, the deletion the existence half in
-   tests/test_served_tests_require.py). None of these is on ci.yml's Run pytest line (no path, no -k, no --ignore) and
-   no conftest in the tree sets collect_ignore or the hook, as read on 2026-09-21; nothing pins that. The belt's
+   InstalledVersion item, the loader case 1 passed, exit 0), and the collect-only case is red on both. What neither
+   case can be relied on to see is a road that changes what a RUN collects without touching the file, the residual
+   stated here and above tests/conftest.py's tuple. The road is a class, and no list closes it: anything that changes
+   what the run collects, among them a collect_ignore or collect_ignore_glob, a collection hook in a conftest or plugin
+   (pytest_ignore_collect, pytest_collection_modifyitems), an ini file's python_files, testpaths or addopts,
+   PYTEST_ADDOPTS, --ignore or --ignore-glob, -k, -m or --deselect, and a module-level __test__ = False. A road that
+   drops the whole module takes this census with it (a module-level __test__ = False empties the module's
+   collection; the child would list nothing, and never runs); one that drops InstalledVersion and keeps this census
+   acts on the run, and the child sees only what reaches it: handed the file as an argument, it collects the file
+   whatever python_files says and asks neither collect_ignore nor pytest_ignore_collect about it (2026-09-23, pytest
+   9.1.1), and a selection on the run's command line never reaches it. The module renamed or deleted takes the
+   census with it (the rename reds the membership case below, the deletion the existence half in
+   tests/test_served_tests_require.py). As read on 2026-09-23: none of these is on ci.yml's Run pytest line (no path,
+   no -k, no --ignore) or in its env (no PYTEST_ADDOPTS); no conftest in the tree sets collect_ignore or
+   collect_ignore_glob or defines a collection hook (tests/conftest.py, the only one, implements two reporting hooks,
+   pytest_make_collect_report and pytest_collectreport, which drop nothing); and the repo has no pytest.ini,
+   .pytest.ini, pytest.toml, .pytest.toml, pyproject.toml, setup.cfg or tox.ini. Nothing pins that. The belt's
    subject is checked against the tree as well
    (2026-09-21): NeverSkips asserts this file's own basename is in _NEVER_SKIP_FILES as written in tests/conftest.py
    (never_skip_files_as_written there: ast.literal_eval over the text, so a tuple spelled any other way is reported

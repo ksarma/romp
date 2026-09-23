@@ -925,17 +925,24 @@ def _require_served_test_ran(item, rep) -> None:
 # pytest.mark.skipif and a module-level pytest.importorskip passed, and which a module-level skip removed from the run
 # entirely (the guard never ran). Proved by execution in tests/test_ci_sdk_pin.py's NeverSkips. What a report cannot
 # show is a test that was never collected: a method renamed off the test_ prefix, deleted or fenced behind an if files
-# nothing to flip, so NeverSkips' census case also pins by name, in process, that the ONE test the belt exists for,
-# InstalledVersion's, is collected; that census covers that one test, not the module. The literal below is checked
+# nothing to flip, so NeverSkips pins, in a child pytest --collect-only -q, that pytest's collector lists the ONE test
+# the belt exists for, InstalledVersion's, by node id; its in-process case pins only the method's name against
+# unittest's loader, which is not the collector (UnitTestCase.collect drops a class or method whose __test__ is False,
+# which the loader never reads); those census cases cover that one test, not the module. The literal below is checked
 # against the tree (2026-09-21; before this a copy renamed test_ci_sdk_pin_v2.py ran with the belt inert, a skip in it
 # a plain skip and every test green): NeverSkips asserts its own module's basename is in the tuple as written, and
 # tests/test_served_tests_require.py, outside the guarded module, asserts every entry names a file under tests/, so
 # a rename reds in both and a deletion reds there; both read it through never_skip_files_as_written below. The
-# residual, stated for what it is: the census lives in the module it guards, so a road that drops the whole module
-# from a run without touching the file files no report, takes the census with it, and the run stays green: a
-# collect_ignore or collect_ignore_glob in a conftest, --ignore or --ignore-glob, a -k, -m or --deselect deselection,
-# a module-level __test__ = False. Today none of these is on ci.yml's Run pytest line (no path, no -k, no --ignore)
-# and no conftest in the tree sets collect_ignore, so that step collects the module in every cell.
+# residual, stated for what it is: the census lives in the module it guards, so a road that changes what a run
+# collects without touching the file files no report, takes the census with it or acts on the run where the
+# census's child may not see it, and the run stays green. The road is a class, and no list closes it: anything that changes what the run collects,
+# among them a collect_ignore or collect_ignore_glob, a collection hook in a conftest or plugin (pytest_ignore_collect,
+# pytest_collection_modifyitems), an ini file's python_files, testpaths or addopts, PYTEST_ADDOPTS, --ignore or
+# --ignore-glob, -k, -m or --deselect, and a module-level __test__ = False. As read on 2026-09-23: none of these is on
+# ci.yml's Run pytest line (no path, no -k, no --ignore) or in its env (no PYTEST_ADDOPTS); no conftest in the tree
+# sets collect_ignore or collect_ignore_glob or defines a collection hook (this file, the only one, implements two
+# reporting hooks, pytest_make_collect_report and pytest_collectreport, which drop nothing); and the repo has no
+# pytest.ini, .pytest.ini, pytest.toml, .pytest.toml, pyproject.toml, setup.cfg or tox.ini. Nothing pins that.
 _NEVER_SKIP_FILES = ("test_ci_sdk_pin.py",)
 
 
