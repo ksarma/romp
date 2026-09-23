@@ -457,7 +457,8 @@ STUB
 # ── the suite-environment resolver (the v0.13.0 lesson) ───────────────
 # release.sh died mid-release on a bare ModuleNotFoundError on a box with only a repo venv.
 # It now resolves its own suite runner: a WORKING ambient `python3 -m pytest` first, else uv's
-# throwaway env with CI's exact dep set, else a LOUD failure naming both remedies — before any
+# throwaway env with pytest and cryptography (CI's Python set less pytest-timeout and the pinned
+# SDK, so the SDK-gated tests may skip there), else a LOUD failure naming both remedies, before any
 # release state is at stake. PATH is narrowed per test so the resolver sees exactly the world
 # each case describes; the stubbed runners record their argv so the invocation shape is pinned.
 
