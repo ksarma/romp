@@ -3964,23 +3964,32 @@ hidden_file_in_middle_commit_after_base() {   # a base on the remote (BASE), the
 }
 
 
-# ── the chosen-addresses read: its failure is the strict side ─────────────
+# ── the chosen-addresses read: its failure is refused, naming the read ───────
 # The address rule (each new commit's author and committer address is checked
 # unless the clone CHOSE it: user.email in any scope, or the environment's
 # GIT_AUTHOR_EMAIL, GIT_COMMITTER_EMAIL or EMAIL) has its own file,
 # pre-push-identity.bats; the two cases here are about the READ behind it.
 # chosen_emails reads user.email once per push (git config --get-all
-# user.email) and swallows a failure of that read: unlike the reads above it is
-# neither reported nor refused as unscanned; it contributes no address, the way
-# an unset key does, and every stamped address is then checked against the
-# environment's addresses alone. That is the strict side (a failed read can
-# refuse an address the clone did configure; it can never excuse one), so the
-# cases record that shape as the hook's, not a refusal as unscanned. Both push
-# for REAL through the hook so the remote's state is asserted too, which takes
-# a wrapper: git prepends its own exec path to the PATH a hook sees, so a shim
+# user.email) through judged_read (own=: an unset key is git's own exit 1 with
+# no value, and no address is chosen; the set is 0 and 1), called in the shell
+# so the refusal's counter is kept. A failure of that read is refused as
+# unscanned naming the read, and the two address lines then lead with it:
+# until round 7b the failure was swallowed as no chosen address (the strict
+# side, since a failed read can refuse an address the clone did configure but
+# never excuse one), and a commit stamped under the very address the clone IS
+# configured to use was refused as "an address this clone is not configured to
+# use", a false cause with an inapplicable remedy, with no line naming the
+# read that failed (the round 6 refuters, by a real push, 2026-09-22). The
+# strict side is kept (every stamped address is still judged against the
+# environment's addresses alone); what changed is that the failure is named
+# and the cause printed is the one the reads established. Both cases push for
+# REAL through the hook so the remote's state is asserted too, which takes a
+# wrapper: git prepends its own exec path to the PATH a hook sees, so a shim
 # first on the test's PATH reaches a hook run by hand (run_hook) but not one a
 # real push runs (verified by execution, git 2.43.0: through
-# push_main_through_hook the hook's git resolved to git's exec path).
+# push_main_through_hook the hook's git resolved to git's exec path). The
+# tag's address line under the same failed read is the last case of the round
+# 7b section at the end of this file.
 
 # The hook installed for one real push of main, behind a wrapper that puts the
 # test's shim directory first on the hook's own PATH (the shim a git_refusing
@@ -4006,7 +4015,7 @@ commit_stamped_as() {   # <address> <path> <message>: one clean file, author and
     GIT_AUTHOR_EMAIL="$1" GIT_COMMITTER_EMAIL="$1" git -C "$REPO" commit -qm "$3"
 }
 
-@test "a chosen-addresses read that FAILS (git config --get-all user.email exiting 128) is swallowed as no chosen address, the strict side: a commit stamped under a banned domain is refused with the address line through a real push and the remote holds nothing, and configuring the clone to use that address changes nothing while the read fails" {
+@test "a chosen-addresses read that FAILS (git config --get-all user.email exiting 128) is refused as unscanned naming the read, through a real push, and a commit stamped under a banned domain is refused beside it with the address line leading with the failed read, not with a cause the read could not establish: the remote holds nothing, and configuring the clone to use that address changes nothing while the read fails, the line saying why" {
     add_remote
     commit_stamped_as dev@zzsynthuser.example web.txt "stamped under a banned domain the clone did not choose"
     sha="$(git -C "$REPO" rev-parse HEAD)"
@@ -4019,34 +4028,42 @@ commit_stamped_as() {   # <address> <path> <message>: one clean file, author and
     [ "$output" = "status 1" ]                          # the key unset: git's own status, no shim line
     push_main_through_hook_with_shim
     [ "$status" -ne 0 ]
-    [[ "$output" == *"romp pre-push: commit ${sha:0:10} is authored as <dev@zzsynthuser.example>, an address this clone is not configured to use, whose domain carries a personal identifier"* ]]
-    [[ "$output" == *"commit ${sha:0:10} is committed as <dev@zzsynthuser.example>"* ]]
+    [[ "$output" == *"romp pre-push: the ADDRESSES this clone is configured to use could not be read (git config --get-all user.email exited 128), so whether a stamped address is one it chose is unknown; the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} is authored as <dev@zzsynthuser.example>: whether this clone is configured to use that address could not be read (git config --get-all user.email exited 128, refused above), and its domain carries a personal identifier"* ]]
+    [[ "$output" == *"commit ${sha:0:10} is committed as <dev@zzsynthuser.example>: whether this clone is configured to use that address could not be read"* ]]
+    [[ "$output" != *"not configured to use, whose domain"* ]]   # the round 7 text's cause, which the failed read cannot establish (the remedy paragraph's general sentence stays)
     [[ "$output" == *"if it is yours, say so (git config --global user.email <address>)"* ]]
     [[ "$output" == *"BLOCKED"* ]]
-    [[ "$output" != *"the scan is incomplete"* ]]       # the failed read is swallowed, not reported: the refusal is the address's alone
-    [[ "$output" != *"shim:"* ]]                        # the shim's own line went to the redirection chosen_emails puts on the read
+    [[ "$output" != *"shim:"* ]]                        # the shim's own line went to the -q the helper puts on the read
     run remote_holds_main                             # the checked form (tests/test_bats_bare_negation.py): a bare ! mid-test checks nothing under bats
     [ "$status" -ne 0 ]
     # the clone now chooses the address: with the read intact that excuses it, whatever its domain says
     # (pre-push-identity.bats, the configured-address case); behind the failed read the choice is not
-    # seen, the push stays refused and the line still calls the address unconfigured. Stricter, not looser.
+    # seen, the push stays refused, and the line says the read failed rather than calling the address
+    # one the clone is not configured to use. Stricter, not looser, and the cause is the true one.
     git -C "$REPO" config user.email dev@zzsynthuser.example
     push_main_through_hook_with_shim
     [ "$status" -ne 0 ]
-    [[ "$output" == *"commit ${sha:0:10} is authored as <dev@zzsynthuser.example>, an address this clone is not configured to use"* ]]
+    [[ "$output" == *"the ADDRESSES this clone is configured to use could not be read (git config --get-all user.email exited 128)"* ]]
+    [[ "$output" == *"commit ${sha:0:10} is authored as <dev@zzsynthuser.example>: whether this clone is configured to use that address could not be read"* ]]
+    [[ "$output" != *"not configured to use, whose domain"* ]]
     ! remote_holds_main
 }
 
-@test "the same failed read beside a commit stamped under a clean domain the clone did not choose passes through a real push and the remote holds main: the failure itself refuses nothing" {
+@test "the same failed read beside a commit stamped under a clean domain the clone did not choose is refused as unscanned naming the read alone, through a real push: no address line, since the domain is clean, and the remote holds nothing (the round 7 text passed it, the failure swallowed as no chosen address)" {
     add_remote
     commit_stamped_as dev@example.invalid web.txt "stamped under a clean domain the clone did not choose"
     fail_config_user_email
     run _hook_in "$REPO" -c 'git config --get-all user.email'
     [ "$status" -eq 128 ]
     push_main_through_hook_with_shim
-    [ "$status" -eq 0 ]
-    [[ "$output" != *"romp pre-push"* ]]
-    remote_holds_main
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the ADDRESSES this clone is configured to use could not be read (git config --get-all user.email exited 128), so whether a stamped address is one it chose is unknown; the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"is authored as"* ]]
+    [[ "$output" != *"is committed as"* ]]
+    [[ "$output" != *"BLOCKED"* ]]
+    run remote_holds_main
+    [ "$status" -ne 0 ]
 }
 
 
@@ -4854,4 +4871,285 @@ PROBE
     [[ "$output" == *"o-status rc=1 failed_scan=1"* ]]
     [[ "$output" != *"exited 1)"* ]]                      # the failed open is never reported as the command's status 1
     [[ "$output" == *"fds="*" 9 "* ]]                     # the command writes to descriptor 9, the one open
+}
+
+# ── round 7b: the population half of the guarantee, the chosen-addresses read, the -d splice, the odd tag, the count grep ──
+# Round 6's refuters (2026-09-22) left four things beside the class group A
+# closed: (1) case 174 pins the header's two LISTS against the tags at the
+# helper's call sites, but nothing pinned the POPULATION: a read added outside
+# judged_read with neither a tag nor a marker was invisible to every case (a
+# planted `tipname=$(git rev-parse ...)` left 174 and the whole file green).
+# The census case below reads the hook's text: every line running a reading
+# tool (the vocabulary stated at CENSUS_TOOLS, the census's bound) must be a
+# judged_read call, a line inside a function the helper is handed WHOLE (the
+# functions derived from the call sites: the first word after the call's --),
+# an array-literal assignment (the scanner's argument list) or a line under an
+# `outside judged_read:` marker (a trailing comment, the comment block above
+# the statement or its backslash-continued first line, or the block above the
+# header of the function holding it). Quoted text is masked quote-aware: the
+# bytes inside single quotes, $'' quotes, double quotes and comments are hidden,
+# and code inside a $( ) within double quotes stays visible, since stripping
+# every double-quoted string whole would hide `x="$(git ...)"`, a spelling the
+# hook itself uses (the second refuter's bypass). The case also runs the census
+# over planted copies, so its own sensitivity is executed here, not assumed.
+# (2) The chosen-addresses read (git config --get-all user.email) was the one
+# read of the clone's configuration outside the helper whose failure the hook
+# swallowed as no chosen address: a commit stamped under the very address the
+# clone IS configured to use was then refused as "an address this clone is not
+# configured to use", a false cause with an inapplicable remedy, through a real
+# push. The read goes through judged_read now (own=, set 0 and 1), called in
+# the shell, and the two address lines lead with the failed read where it
+# failed (cases 171, 172 and the tag case below). (3) The -d rider's answer
+# was spliced into the clause by an UNQUOTED pattern substitution, which bash
+# 5.2's patsub_replacement rewrites (& to the matched text, \& to &), and
+# {detail} was spliced before {rc}, so a path holding an ampersand or the
+# text {rc} misprinted in the join's fourth-arm line. (4) Two reads had no
+# case: the fallback commit listing over an object git cannot peel (the round
+# 5 text died mid-report at 128 on its bare substitution) and the ENTRY COUNT
+# grep -c under the shape that is truly silent, the full count printed and
+# status 2 (an empty exit-2 answer is refused already, with the wrong cause).
+CENSUS_TOOLS='git|grep|egrep|fgrep|awk|gawk|mawk|sed|tr|wc|od|cat|cut|sort|uniq|head|tail|tac|nl|paste|join|comm|diff|cmp|xxd|hexdump|base64|file|stat|find|xargs|ls|readlink|realpath|basename|dirname|sha1sum|sha256sum|md5sum|cksum|strings|tee|gzip|gunzip|zcat|tar|perl|python|python3|ruby|jq|curl|wget|dd|split|csplit|fold|expand|column|seq|expr|bc|date|gitleaks'
+# ^ the census's BOUND: a command line is a read only when its command word is one of these (the tools the hook reads
+# with today, git, grep, awk, sed, tr, wc, od, cat, sort and head, and the reading tools it might start running); a read
+# made with a tool outside the list is not counted, and this line is where the list is widened. Outside on purpose:
+# mktemp (make_scratch, a writer whose failure its callers refuse) and the scanner binary (run through a variable, its
+# exit judged under a marker); command -v resolves the scanner's path and runs nothing.
+CENSUS_PREFIX='^(if|then|else|elif|fi|while|until|do|done|case|esac|in|for|select|function|!|time|exec|env|nice|local|export|readonly|declare|typeset|command|builtin)$'
+CENSUS_BUILTIN='^(read|printf|echo|eval|trap|wait|true|false|:|return|exit|break|continue|shift|set|unset|test|\[|\[\[)$'
+masked_text() {   # <bash file>: the text with quoted bytes and comments masked quote-aware (the section comment), one output line per input line
+    if [ ! -f "$TEST_DIR/mask.awk" ]; then
+        cat > "$TEST_DIR/mask.awk" <<'AWK'
+BEGIN { depth = 0; st[0] = "code"; par[0] = 0 }
+{
+    line = $0; out = ""; n = length(line); i = 1; prev = " "
+    while (i <= n) {
+        c = substr(line, i, 1); c2 = substr(line, i, 2); s = st[depth]
+        if (s == "code") {
+            if (c == "\\") { out = out c substr(line, i + 1, 1); i += 2; prev = "x"; continue }
+            if (c == "#" && (i == 1 || prev ~ /[ \t;]/)) { out = out sprintf("%" (n - i + 1) "s", ""); break }
+            if (c2 == "$'") { depth++; st[depth] = "ansi"; out = out c2; i += 2; prev = "'"; continue }
+            if (c == "'") { depth++; st[depth] = "sq"; out = out c; i++; prev = c; continue }
+            if (c == "\"") { depth++; st[depth] = "dq"; out = out c; i++; prev = c; continue }
+            if (c2 == "$(") { depth++; st[depth] = "code"; par[depth] = 0; out = out c2; i += 2; prev = "("; continue }
+            if (c == "(") { par[depth]++; out = out c; i++; prev = c; continue }
+            if (c == ")") { if (par[depth] > 0) par[depth]--; else if (depth > 0) depth--; out = out c; i++; prev = c; continue }
+            out = out c; prev = c; i++; continue
+        }
+        if (s == "sq") { if (c == "'") { depth--; out = out c } else out = out "."; i++; prev = c; continue }
+        if (s == "ansi") {
+            if (c == "\\") { out = out ".."; i += 2; continue }
+            if (c == "'") { depth--; out = out c } else out = out "."
+            i++; prev = c; continue
+        }
+        if (s == "dq") {
+            if (c == "\\") { out = out ".."; i += 2; continue }
+            if (c == "\"") { depth--; out = out c; i++; prev = c; continue }
+            if (c2 == "$(") { depth++; st[depth] = "code"; par[depth] = 0; out = out c2; i += 2; prev = "("; continue }
+            out = out "."; i++; prev = c; continue
+        }
+    }
+    print out
+}
+AWK
+    fi
+    awk -f "$TEST_DIR/mask.awk" "$1"
+}
+undeclared_reads() {   # <hook text>: prints "undeclared: <line>:<text>" per command line the census finds declared by nothing, "swallowed: ..." per `|| true` or `|| :` inside a body passed whole, and one "census: ..." line of counts; run under `run`
+    local -a orig masked
+    local -A fstart fend passed inpassed
+    local i j name m rest after w f s t seg sgm found text calls=0 total=0 body=0 array=0 marker=0 undeclared=0 swallowed=0
+    mapfile -t orig < "$1"
+    mapfile -t masked < <(masked_text "$1")
+    [ "${#orig[@]}" -eq "${#masked[@]}" ] || { echo "census: the masking changed the line count"; return 1; }
+    for ((i = 0; i < ${#orig[@]}; i++)); do                    # function bodies: the header line to the first line that is exactly }
+        if [[ "${orig[i]}" =~ ^([a-zA-Z_][a-zA-Z0-9_]*)\(\)\ \{ ]]; then
+            name=${BASH_REMATCH[1]}; fstart[$name]=$i; fend[$name]=$i
+            for ((j = i + 1; j < ${#orig[@]}; j++)); do if [ "${orig[j]}" = "}" ]; then fend[$name]=$j; break; fi; done
+        fi
+    done
+    for ((i = 0; i < ${#orig[@]}; i++)); do                    # the functions passed whole: the first word after the -- of a call, when a function defined here
+        m=${masked[i]}
+        [[ "$m" =~ (^|[[:space:]!\&\|\;\(])judged_read[[:space:]] ]] || continue
+        calls=$((calls + 1))
+        rest=${m#*judged_read}
+        [[ "$rest" == *" -- "* ]] || continue
+        after=${rest#* -- }; after=${after#"${after%%[![:space:]]*}"}
+        w=${after%%[[:space:]]*}
+        if [ -n "${fstart[$w]:-}" ]; then passed[$w]=1; fi
+    done
+    for f in "${!passed[@]}"; do
+        for ((i = fstart[$f]; i <= fend[$f]; i++)); do
+            inpassed[$i]=$f
+            if [[ "${masked[i]}" =~ \|\|[[:space:]]*(true|:)([[:space:]]|$) ]]; then echo "swallowed: $((i + 1)):${orig[i]}"; swallowed=$((swallowed + 1)); fi
+        done
+    done
+    for ((i = 0; i < ${#orig[@]}; i++)); do
+        m=${masked[i]}
+        [[ "$m" =~ (^|[^A-Za-z0-9_.-])($CENSUS_TOOLS)([^A-Za-z0-9_.-]|$) ]] || continue     # a tool word somewhere in the masked line: the cheap pre-check
+        text=$m
+        if [[ "$m" =~ (^|[[:space:]!\&\|\;\(])judged_read[[:space:]] ]]; then text=${m%% -- *}; fi   # a call: the read after the -- is the tagged one; what runs before it is censused
+        seg=$(printf '%s' "$text" | sed -E 's/\|\||&&|\||;|\$\(\(|\$\(|<\(|>\(|\(|\)/\n/g; s/(^|[^$])[{}]/\1\n/g')   # the simple commands
+        found=""
+        while IFS= read -r sgm; do
+            # shellcheck disable=SC2086  # the segment is split into its words on purpose
+            set -- $sgm
+            while [ $# -gt 0 ]; do                              # past the keywords, the command prefixes, the assignments and the redirections
+                t=$1
+                if [[ "$t" =~ $CENSUS_PREFIX ]] || [[ "$t" =~ ^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?= ]] || [[ "$t" =~ ^[0-9]*[\<\>] ]] || [[ "$t" =~ ^\&\> ]]; then shift; continue; fi
+                break
+            done
+            [ $# -gt 0 ] || continue
+            [[ "$1" =~ $CENSUS_BUILTIN ]] && continue           # a builtin's arguments are not commands
+            [[ "$1" =~ ^($CENSUS_TOOLS)$ ]] && found="$found $1"
+        done <<< "$seg"
+        [ -n "$found" ] || continue
+        total=$((total + 1))
+        if [ -n "${inpassed[$i]:-}" ]; then body=$((body + 1)); continue; fi
+        if [[ "$m" =~ ^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*\+?=\( ]]; then array=$((array + 1)); continue; fi
+        if [[ "${orig[i]}" == *"#"*"outside judged_read"* ]]; then marker=$((marker + 1)); continue; fi
+        s=$i; while [ "$s" -gt 0 ] && [[ "${orig[s - 1]}" == *\\ ]]; do s=$((s - 1)); done          # the statement's first line
+        if census_block_above_has_marker "$s"; then marker=$((marker + 1)); continue; fi
+        f=""; for name in "${!fstart[@]}"; do if [ "$i" -ge "${fstart[$name]}" ] && [ "$i" -le "${fend[$name]}" ]; then f=$name; break; fi; done
+        if [ -n "$f" ] && { census_block_above_has_marker "${fstart[$f]}" || [[ "${orig[fstart[$f]]}" == *"#"*"outside judged_read"* ]]; }; then marker=$((marker + 1)); continue; fi
+        undeclared=$((undeclared + 1))
+        echo "undeclared: $((i + 1)):${orig[i]}"
+    done
+    echo "census: calls=$calls passed=$(printf '%s\n' "${!passed[@]}" | sort | tr '\n' ',') lines=$total body=$body array=$array marker=$marker swallowed=$swallowed undeclared=$undeclared"
+    return 0
+}
+census_block_above_has_marker() {   # <index>: the contiguous comment lines directly above that line carry the marker; reads orig, the caller's
+    local i=$1
+    while [ "$i" -gt 0 ]; do
+        i=$((i - 1))
+        [[ "${orig[i]}" =~ ^[[:space:]]*# ]] || return 1
+        [[ "${orig[i]}" == *"outside judged_read"* ]] && return 0
+    done
+    return 1
+}
+
+@test "every read of the hook is DECLARED (the population half of case 174's guarantee): a census over the hook's text finds no command line running a reading tool that is not a judged_read call, inside a function the helper is handed whole, an array literal or under an outside-judged_read marker; the census flags a planted read in a copy, the double-quoted substitution spelling and a grep over captured content included, and passes a planted marker, an array literal and tool words inside a string" {
+    run undeclared_reads "$HOOK"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"undeclared: "* ]]
+    # the census read the hook: the call sites are many, and the functions the helper is handed whole are derived from them
+    # (the joins, the diff and the byte judge among them), so a regex matching nothing cannot pass the line above for the wrong reason
+    census="${output##*$'\n'}"
+    [[ "$census" == "census: calls="* ]]
+    [ "${census#*calls=}" != "$census" ] && [ "$(sed -E 's/.*calls=([0-9]+).*/\1/' <<< "$census")" -gt 40 ]
+    [[ "$census" == *"passed="*"added_lines,"* ]]
+    [[ "$census" == *"passed="*"byte_counts,"* ]]
+    [[ "$census" == *"passed="*"join_candidates,"* ]]
+    [[ "$census" == *"passed="*"tip_candidates,"* ]]
+    [ "$(sed -E 's/.*lines=([0-9]+).*/\1/' <<< "$census")" -ge 20 ]          # command lines the census judged (each declared by one of the four ways)
+    [ "$(sed -E 's/.*body=([0-9]+).*/\1/' <<< "$census")" -ge 10 ]
+    [ "$(sed -E 's/.*marker=([0-9]+).*/\1/' <<< "$census")" -ge 8 ]
+    [ "$(sed -E 's/.*array=([0-9]+).*/\1/' <<< "$census")" -ge 1 ]
+    # the bound the passed-whole rule rests on: a body handed to the helper reaches it through pipefail, so a `|| true` or
+    # `|| :` inside one would hide a stage's status from the set; none is there, and the census names any that appears
+    [[ "$output" != *"swallowed: "* ]]
+    [[ "$census" == *"swallowed=0 "* ]]
+    # the census's own sensitivity, executed over planted copies (the first line is the shebang; the plant is line 2)
+    sed '1a x=$(git rev-parse HEAD 2>/dev/null || true)' "$HOOK" > "$TEST_DIR/plant-a.sh"                    # the plain substitution
+    run undeclared_reads "$TEST_DIR/plant-a.sh"
+    [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 1 ]
+    [[ "$output" == *'undeclared: 2:x=$(git rev-parse HEAD 2>/dev/null || true)'* ]]
+    sed '1a tipname="$(git rev-parse --short HEAD 2>/dev/null || true)"' "$HOOK" > "$TEST_DIR/plant-b.sh"    # the spelling the hook uses: the substitution inside double quotes stays visible
+    run undeclared_reads "$TEST_DIR/plant-b.sh"
+    [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 1 ]
+    [[ "$output" == *'undeclared: 2:tipname="$(git rev-parse --short HEAD 2>/dev/null || true)"'* ]]
+    sed '1a hits=$(printf "%s\\n" "$read_out" | grep -c x || true)' "$HOOK" > "$TEST_DIR/plant-c.sh"          # a grep over captured content, the class round 5 reopened
+    run undeclared_reads "$TEST_DIR/plant-c.sh"
+    [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 1 ]
+    [[ "$output" == *'undeclared: 2:hits=$(printf "%s\n" "$read_out" | grep -c x || true)'* ]]
+    { sed -n '1p' "$HOOK"; echo '# outside judged_read: a probe of the census'; echo 'tipname="$(git rev-parse --short HEAD 2>/dev/null || true)"'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-d.sh"   # the marker above the statement is honoured
+    run undeclared_reads "$TEST_DIR/plant-d.sh"
+    [[ "$output" != *"undeclared: "* ]]
+    { sed -n '1p' "$HOOK"; echo 'msg="run git fsck and grep the log"'; echo 'PROBE_ARGS=(git log -1)'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-e.sh"   # tool words inside a string, and an array-literal assignment line (the exempt form: the assignment starts the line, as the scanner's argument list does), are not commands
+    run undeclared_reads "$TEST_DIR/plant-e.sh"
+    [[ "$output" != *"undeclared: "* ]]
+}
+
+@test "the join's fourth arm prints a recorded path holding an ampersand, a backslash-ampersand and the text {rc} byte for byte: {rc} is substituted first and the -d rider's answer is spliced by a QUOTED replacement, so patsub_replacement rewrites no & and the answer is not re-scanned for the status (the round 7 text printed a{detail}b&1.txt)" {
+    commit_file 'a&b\&{rc}.txt' "nothing to see" "clean"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file 'a&b\&{rc}.txt' "remove it"                     # gone at the tip: the blob is the commit's to judge
+    run _hook_in "$REPO" -c 'git diff-tree -r --numstat -z --no-commit-id --root "$1" | tr "\0" "|"' _ "$sha"
+    [[ "$output" == *$'\t''a&b\&{rc}.txt|'* ]]                   # git prints the path raw under -z (after the two counts and a tab): the join records these bytes
+    empty_diff_tree_numstat                                      # every numstat answers nothing: the join meets the path with no verdict and writes the short file before its tr runs
+    tr_refusing join 2                                           # the tip's candidates join is the first tr of the joins' shape, the commit's the second
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: the JOIN of commit ${sha:0:10}'s verdicts could not be made for the BINARY VERDICT check (its pipeline exited 1; the tool's own error line, where it printed one, is above; the join had recorded a&b\&{rc}.txt as a post-image met no verdict for before the pipeline failed)"* ]]
+    [[ "$output" != *"{detail}"* ]]                              # the & rewritten to the matched text
+    [[ "$output" != *"a&b&"* ]]                                  # the \& rewritten to &
+    [[ "$output" != *"1.txt"* ]]                                 # the {rc} in the path rewritten to the status
+    [ "$(cat "$TEST_DIR/tr-calls")" -eq 2 ]
+}
+
+@test "a hand-made tag object with NO object line (one git cannot peel: rev-list exits 128 on the range and on the fallback listing alike), fed on stdin, is refused at status 1 with the report WHOLE: the COMMITS line names git rev-list's status 128, the OBJECT line names the absent field, and the bypass line follows (the round 5 text died at 128 on the fallback's bare substitution, the report cut short after two lines)" {
+    commit_file f.txt "plain" "base"
+    obj="$(printf 'type commit\ntag odd\ntagger Tester <t@example.invalid> 1700000000 +0000\n\nno object line\n' | git -C "$REPO" hash-object -t tag -w --stdin --literally)"
+    run _hook_in "$REPO" -c 'git cat-file -t "$1"' _ "$obj"
+    [ "$output" = tag ]
+    run _hook_in "$REPO" -c 'git rev-list "$1" --not --remotes; echo "status $?"' _ "$obj"
+    [[ "$output" == *"status 128"* ]]                            # the range listing: the fallback runs
+    run _hook_in "$REPO" -c 'git rev-list "$1"; echo "status $?"' _ "$obj"
+    [[ "$output" == *"status 128"* ]]                            # the fallback listing fails the same way: refused by its set, not the hook's end
+    # fed by hand: update-ref refuses a ref to such an object, so no real push can carry it
+    run _hook_in "$REPO" "$HOOK" origin git@example.invalid:x/y.git <<< "refs/tags/odd $obj refs/tags/odd $ZERO"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: the COMMITS of refs/tags/odd (${obj:0:10}) could not be listed for the identifier scan (git rev-list exited 128); the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"romp pre-push: the OBJECT field of tag refs/tags/odd (${obj:0:10}) is absent (git cat-file -p exited 0 and printed a tag object with no object line) while its type read as tag, which ends the peel here"* ]]
+    [[ "$output" == *"could not be listed for the identifier scan"*"the OBJECT field of tag refs/tags/odd"*"git push --no-verify"* ]]   # the report ran on past the listing to the tag's fields and the bypass line
+}
+
+grep_answering_then_failing() {   # <bash test over the shim's "$@">: for that shape the real grep runs and prints its answer, then the shim exits 2 in its place; the real grep for every other shape
+    local real_grep
+    real_grep="$(command -v grep)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if %s; then %q "$@"; echo "shim: grep answered, then refused" >&2; exit 2; fi\n' "$1" "$real_grep"
+        printf 'exec %q "$@"\n' "$real_grep"
+    } > "$TEST_DIR/shim/grep"
+    chmod 755 "$TEST_DIR/shim/grep"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+
+@test "the ENTRY COUNT grep -c over the tip's rewritten listing answering the FULL count and exiting 2 is refused as unscanned naming the read and its status, through a real push of a clean tip: the count agrees with the symlink pass, so the expected set alone refuses it (the eighth grep read, the fifth shim shape, -c; a set widened to 2 publishes with nothing printed), and the remote stays at the base" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file clean.txt "nothing to see" "clean"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    grep_answering_then_failing '[ "${1:-}" = -c ] && [ "${2:-}" = . ] && [[ "${3:-}" == *"/listing.nl" ]]'   # the ENTRY COUNT's shape alone (grep -c . <scratch>/listing.nl): the FILE COUNT carries -E, the LINE COUNT reads read.nl
+    printf 'a\nb\n' > "$TEST_DIR/listing.nl"
+    run _hook_in "$REPO" -c 'grep -c . "$1/listing.nl"; echo "status $?"' _ "$TEST_DIR"
+    [[ "$output" == "2"$'\n'*"status 2"* ]]                     # the answer in full, then the status 2
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the TREE of the tip of refs/heads/main (${sha:0:10}) could not be counted for the BINARY VERDICT check (grep -c exited 2); the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"not two counts"* ]]                        # the digit check's cause: the answer was a count
+    [[ "$output" != *"listed short or long"* ]]                  # the comparison's cause: the count agreed
+    [[ "$output" != *"grep -c over"* ]]                          # the candidates gate's two count reads are not met by the shim
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
+@test "an annotated TAG stamped under a banned domain beside the failed chosen-addresses read is refused with the tag's address line leading with the failed read, through a real push: whether the clone chose the address could not be read, so the line says that and not that the clone is not configured to use it, and the remote never gets the tag" {
+    add_remote
+    commit_file f.txt "plain" "base"
+    GIT_COMMITTER_EMAIL=dev@zzsynthuser.example git -C "$REPO" tag -a v1 -m "a release"    # the tagger is the committer identity
+    sha="$(git -C "$REPO" rev-parse refs/tags/v1)"
+    run _hook_in "$REPO" -c 'git cat-file -p "$1" | grep "^tagger "' _ "$sha"
+    [[ "$output" == *"<dev@zzsynthuser.example>"* ]]
+    fail_config_user_email
+    push_ref_through_hook_with_shim refs/tags/v1
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the ADDRESSES this clone is configured to use could not be read (git config --get-all user.email exited 128), so whether a stamped address is one it chose is unknown; the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"romp pre-push: tag refs/tags/v1 (${sha:0:10}) is tagged as <dev@zzsynthuser.example>: whether this clone is configured to use that address could not be read (git config --get-all user.email exited 128, refused above), and its domain carries a personal identifier"* ]]
+    [[ "$output" != *"not configured to use, whose domain"* ]]  # the round 7 text's cause, which the failed read cannot establish
+    [[ "$output" == *"An annotated TAG's tagger and message are the tag object's own"* ]]
+    run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
 }

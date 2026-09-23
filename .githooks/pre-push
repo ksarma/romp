@@ -98,10 +98,13 @@
 # naming the read. A read left outside the helper is declared at its site
 # with the reason (`outside judged_read:`): the reads made for the report
 # alone, whose failure leaves a refused line with fewer facts and decides
-# nothing; two configuration reads whose swallowed failure is the strict side
-# and pinned as such; the ref list on stdin, read by the shell's own builtin
-# with no tool between git and the scans; the scanner's own exit, judged
-# from its log. The STATUS-KEYED class: a read whose failure returns a
+# nothing; one configuration read (the clone's log.showRoot, for an advice
+# line) whose swallowed failure costs that line alone and is pinned as such
+# (the chosen-addresses read joined the helper in round 7b: its failure had
+# been swallowed as the strict side, and the address line then named a
+# false cause); the ref list on stdin, read by the shell's own builtin with
+# no tool between git and the scans; the scanner's own exit, judged from its
+# log. The STATUS-KEYED class: a read whose failure returns a
 # non-zero status (or prints an error line), refused by the set. The EXIT-0
 # EMPTY-OR-SHORT-ANSWER class: a read that exits 0 with an empty or a short
 # answer the check would read as "nothing to judge" (a listing with no entry,
@@ -124,11 +127,15 @@
 # What stays own=, and why a tool silent there publishes nothing by itself:
 # three greps whose answer is their status alone (-q: exit 0 is the hit, so
 # no line is no answer withheld); the replace-ref listing, a git read alone
-# whose empty answer is a clone with no replace ref; three joins over the
-# scratch listings whose empty answer is the clean verdict of a gate on
-# ANOTHER read (the tip's listing against the read list; a commit's listing
-# against its verdicts) or the safe side (the tip's blob set: emptied, every
-# per-commit candidate is judged), so a tool silent there disarms that one
+# whose empty answer is a clone with no replace ref; the chosen-addresses
+# read (git config --get-all user.email), a git read alone whose empty
+# answer is a clone with no user.email, the strict side (every stamped
+# address is then judged; a git silent there excuses nothing); three joins
+# over the scratch listings whose empty answer is the clean verdict of a
+# gate on ANOTHER read (the tip's listing against the read list; a commit's
+# listing against its verdicts) or the safe side (the tip's blob set:
+# emptied, every per-commit candidate is judged), so a tool silent there
+# disarms that one
 # gate while the read it gates stands under its status and its other gates
 # (two tools silent at once, a listing and its gate, are outside this
 # guarantee); the scanner log's error line, whose empty answer is a log with
@@ -186,6 +193,7 @@
 # Reads whose empty answer is the object's own (own=):
 #   the ADDRESS DOMAIN grep
 #   the CHOSEN ADDRESS match
+#   the CHOSEN ADDRESSES of this clone
 #   the SYMLINK TARGET grep
 #   the REPLACE REFS listing
 #   the TIP LISTING join against the read list
@@ -541,17 +549,25 @@ added_lines() {   # <rev> <parent count> <count file: the count of lines printed
 
 # The addresses this clone publishes under BY CHOICE: user.email from any config
 # scope (an includeIf's included, as git resolves it for this repository) and the
-# environment's overrides, one per line. An unset user.email contributes nothing,
-# so on a clone that never set one every stamped address is checked. Blank lines
-# are harmless: a non-empty address never matches one whole.
-# outside judged_read: a read of the clone's configuration, not of a pushed
-# object, whose failure is the STRICT side (no address is then chosen, so
-# every stamped address is judged), the shape tests/pre-push-hook.bats pins
-# through a real push (a chosen-addresses read that fails); refusing it as
-# unscanned would refuse a clean push over a configuration read.
+# environment's overrides, one per line, in chosen (the caller's). An unset
+# user.email contributes nothing (git config exits 1 with no value: the object's
+# own answer, own=), so on a clone that never set one every stamped address is
+# checked. Blank lines are harmless: a non-empty address never matches one whole.
+# The config read goes through judged_read (expected 0 and 1; -q, since git's
+# own line for a broken configuration file names nothing a pusher can act on
+# here beyond the read the refusal names) and a failure is refused as unscanned
+# naming the read, with chosen_unread holding its status so the address lines
+# in scan_identifiers lead with that cause. Until round 7b the failure was
+# swallowed as the strict side (no address chosen, so every stamped address
+# judged), and a commit stamped under the very address the clone IS configured
+# to use was refused as "an address this clone is not configured to use", a
+# false cause with an inapplicable remedy (the round 6 refuters, by a real push,
+# 2026-09-22). Called in the shell, never in a substitution: the refusal's
+# counter and chosen_unread would be set in a subshell and lost.
 chosen_emails() {
-    git config --get-all user.email 2>/dev/null || true
-    printf '%s\n' "${GIT_AUTHOR_EMAIL:-}" "${GIT_COMMITTER_EMAIL:-}" "${EMAIL:-}"
+    chosen=""; chosen_unread=0
+    judged_read own="the CHOSEN ADDRESSES of this clone" 0,1 "the ADDRESSES this clone is configured to use could not be read (git config --get-all user.email exited {rc}), so whether a stamped address is one it chose is unknown" -q -- git config --get-all user.email || chosen_unread=$read_rc
+    chosen=$read_out$'\n'$(printf '%s\n' "${GIT_AUTHOR_EMAIL:-}" "${GIT_COMMITTER_EMAIL:-}" "${EMAIL:-}")
 }
 
 # Whether an address is one this clone chose: matched whole, case-insensitively.
@@ -636,11 +652,15 @@ type_unread() {   # <local_ref> <sha>: the clause
 # status 1, which a set holding 1 read as a grep's no-match, and a leaking
 # commit was published through a real push with the hits file made a
 # directory, the round 6 refuters, 2026-09-22; one open, so no second point
-# of failure sits between a check and the write); -d
-# <function> names a function run in this shell after a read the set refuses,
-# whose output replaces {detail} in the clause, for a fact known only once the
-# read has run (the join's short file, whether it was written before the
-# pipeline failed); it makes no judged_read call of its own. A
+# of failure sits between a check and the write); -d <function> names a
+# function run in a command substitution (a subshell) after a read the set
+# refuses, so it may only PRINT: its output replaces {detail} in the clause,
+# for a fact known only once the read has run (the join's short file, whether
+# it was written before the pipeline failed); it writes no caller variable (a
+# local of its own is fine; an assignment to the caller's is lost with the
+# subshell) and makes no read of its own, neither a judged_read (its refusal
+# would set failed_scan in the subshell and be lost) nor one outside the
+# helper. A
 # pipeline is passed as a function whose status is the pipeline's (pipefail),
 # so every stage's status reaches here; no command run here is a judged_read
 # of its own (in a substitution its refusal would set failed_scan in a
@@ -701,8 +721,16 @@ judged_read() {   # <gate="name"|own="name"> <expected statuses, comma-separated
         esac
     fi
     case ",$expect," in *",$read_rc,"*) return 0 ;; esac
-    [ -z "$detail" ] || clause=${clause//\{detail\}/$("$detail" || :)}
-    unscanned "${clause//\{rc\}/$read_rc}"
+    # {rc} first, then {detail} by a QUOTED replacement: an unquoted one is
+    # rewritten by patsub_replacement (bash 5.2, on by default), which turned
+    # every & of the -d function's answer into the matched text and a \& into
+    # &, and the answer, spliced first, was re-scanned for {rc}, so a path
+    # holding that text printed with the status in its place (the round 6
+    # refuters, 2026-09-22; tests/pre-push-hook.bats, the fourth-arm case
+    # over such a path).
+    clause=${clause//\{rc\}/"$read_rc"}
+    [ -z "$detail" ] || clause=${clause//\{detail\}/"$("$detail" || :)"}
+    unscanned "$clause"
     return 1
 }
 # Whether each scan WOULD run: the identifier scan when the denylist file exists
@@ -1166,7 +1194,11 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
                 tip_agreed=1            # cleared below when the listing lacks a file the grep read, or that comparison was refused: the candidate count is judged only on agreement, so a listing refused there is not refused again with a second cause
                 if [ "$listing_rc" -eq 0 ]; then
                     # grep -c exits 1 for a count of zero and prints it, so 0 and 1
-                    # are its expected set; the count is a run of digits below.
+                    # are its expected set; the count is a run of digits below. The
+                    # set is the whole gate against a grep -c that prints the count
+                    # and exits 2 (the count then agrees with the symlink pass, so
+                    # the digit check and the comparison refuse nothing):
+                    # tests/pre-push-hook.bats pins that shape through a real push.
                     if judged_read gate="the ENTRY COUNT of the -z listing" 0,1 "the TREE of the tip of $local_ref (${local_sha:0:10}) could not be counted for the BINARY VERDICT check (grep -c exited {rc})" -- grep -c . "$scratch/listing.nl"; then
                         count=$read_out
                         if [ -z "$count" ] || [ -n "${count//[0-9]/}" ] || [ -z "$tip_entries" ] || [ -n "${tip_entries//[0-9]/}" ]; then
@@ -1711,7 +1743,7 @@ message_hit_lines() {   # <subject: "the MESSAGE of commit <sha>" or "the MESSAG
     [ -n "$lines" ]
 }
 scan_identifiers() {
-    local strings_file line grep_args local_ref local_sha _remote_ref remote_sha lines role email obj tagger chosen
+    local strings_file line grep_args local_ref local_sha _remote_ref remote_sha lines role email obj tagger chosen chosen_unread
     local rc errs hits listing link blob link_path target size revs rev n msg addrs inner kind tip_listed tip_entries rev_counts
     local peeled peeled_read fell_back agreed paths count linecount tag_read hdr
     local -a words
@@ -1732,7 +1764,7 @@ scan_identifiers() {
         [ -n "$line" ] && grep_args+=(-e "$line")
     done < "$strings_file"
     [ ${#grep_args[@]} -gt 0 ] || return 0
-    chosen="$(chosen_emails)"      # the same for every commit in the push: read once
+    chosen_emails                  # the same for every commit in the push: read once, in the shell (it sets chosen and chosen_unread)
 
     while read -r local_ref local_sha _remote_ref remote_sha; do
         [ -n "${local_sha:-}" ] || continue
@@ -1908,8 +1940,8 @@ scan_identifiers() {
         # status published a middle commit's banned line through a real push, on
         # a new branch and on a ref update alike (the round 5 refuters,
         # 2026-09-22).
-        # shellcheck disable=SC2046  # the range is deliberately word-split
         fell_back=0
+        # shellcheck disable=SC2046  # the range is deliberately word-split
         judged_read gate="the COMMIT listing of a pushed ref" 0,128 "the COMMITS of $local_ref (${local_sha:0:10}) could not be listed for the identifier scan (git rev-list exited {rc})" -q -- git rev-list $(rev_range "$local_sha" "$remote_sha") || :
         if [ "$read_rc" -eq 128 ]; then
             fell_back=1
@@ -2053,7 +2085,16 @@ scan_identifiers() {
                 [ -n "$email" ] || continue
                 is_chosen "$email" "$chosen" "the ADDRESS <$email> of commit ${rev:0:10} could not be compared with the addresses this clone is configured to use (grep exited {rc})" && continue
                 if judged_read own="the ADDRESS DOMAIN grep" 0,1 "the ADDRESS <$email> of commit ${rev:0:10} could not be grepped (grep exited {rc})" -- grep -qi -F "${grep_args[@]}" <<< "${email##*@}" && [ "$read_rc" -eq 0 ]; then
-                    echo "romp pre-push: commit ${rev:0:10} is $role as <$email>, an address this clone is not configured to use, whose domain carries a personal identifier" >&2
+                    # The cause that leads is the one the reads established: with
+                    # the chosen-addresses read failed (chosen_unread, refused
+                    # above), whether the clone chose the address is unknown, and
+                    # "not configured to use" would be a false cause with an
+                    # inapplicable remedy (round 7b; the same for the tag below).
+                    if [ "$chosen_unread" -ne 0 ]; then
+                        echo "romp pre-push: commit ${rev:0:10} is $role as <$email>: whether this clone is configured to use that address could not be read (git config --get-all user.email exited $chosen_unread, refused above), and its domain carries a personal identifier" >&2
+                    else
+                        echo "romp pre-push: commit ${rev:0:10} is $role as <$email>, an address this clone is not configured to use, whose domain carries a personal identifier" >&2
+                    fi
                     blocked_ids=1
                     blocked_addresses=1
                 fi
@@ -2158,7 +2199,11 @@ scan_identifiers() {
             case "$tagger" in *"<"*">"*) email="${tagger#*<}"; email="${email%%>*}";; esac
             if [ -n "$email" ] && ! is_chosen "$email" "$chosen" "the TAGGER ADDRESS <$email> of tag $local_ref (${obj:0:10}) could not be compared with the addresses this clone is configured to use (grep exited {rc})" \
                 && judged_read own="the ADDRESS DOMAIN grep" 0,1 "the TAGGER ADDRESS <$email> of tag $local_ref (${obj:0:10}) could not be grepped (grep exited {rc})" -- grep -qi -F "${grep_args[@]}" <<< "${email##*@}" && [ "$read_rc" -eq 0 ]; then
-                echo "romp pre-push: tag $local_ref (${obj:0:10}) is tagged as <$email>, an address this clone is not configured to use, whose domain carries a personal identifier" >&2
+                if [ "$chosen_unread" -ne 0 ]; then
+                    echo "romp pre-push: tag $local_ref (${obj:0:10}) is tagged as <$email>: whether this clone is configured to use that address could not be read (git config --get-all user.email exited $chosen_unread, refused above), and its domain carries a personal identifier" >&2
+                else
+                    echo "romp pre-push: tag $local_ref (${obj:0:10}) is tagged as <$email>, an address this clone is not configured to use, whose domain carries a personal identifier" >&2
+                fi
                 blocked_ids=1
                 blocked_addresses=1
                 blocked_tags=1
@@ -2394,8 +2439,8 @@ scan_credentials() {
         # so a range this git cannot read is refused on a line of its own; the
         # count is a run of digits, so an exit-0 answer of any other shape is
         # refused too (an empty count would have skipped the comparison below).
-        # shellcheck disable=SC2086  # the range is deliberately word-split
         expected=""
+        # shellcheck disable=SC2086  # the range is deliberately word-split
         if judged_read gate="the COUNT of commits with content to scan" 0 "the COMMITS of $local_ref (${local_sha:0:10}) could not be counted for the credential scan (a git read exited {rc})" -- scannable_commits $range; then
             expected=$read_out
             if [ -z "$expected" ] || [ -n "${expected//[0-9]/}" ]; then
