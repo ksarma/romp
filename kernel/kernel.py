@@ -3534,7 +3534,8 @@ CLIENT_DIAG_KEYS = {
                        "writer", "before", "after", "delta", "stick", "gesture", "sh", "ch",
                        "anchor", "proto", "events", "regions", "headKnown", "headFrom", "older", "noframe", "trail",
                        "dh", "last", "cls", "fromTail", "atBottom", "where", "removed", "added", "reAdded", "shBefore", "shAfter", "st",
-                       "top", "bot", "dTop", "dBot", "lo", "hi", "edge", "why", "notice", "nav", "kind", "keep", "reland")),
+                       "top", "bot", "dTop", "dBot", "lo", "hi", "edge", "why", "notice", "nav", "kind", "keep", "reland",
+                       "view")),                                    # a spacer row of a view that was not the element the scroller measured in its frame (switched away before it, or hidden by the section-at-a-glance view): one fixed word, no host name; the table admits the key and CLIENT_DIAG_VALUES below bounds its value to that word, the page's builder's (ui/webview/scroll-write.ts spacerRow), so any other value is refused, not stored (PR E; the owner 2026-09-21, who approved the field; the maintainer's round 5 ruling, tests-1)
     "strip": frozenset(("ok", "tunnels", "err", "open", "base")),
     "feed": frozenset(("id", "from", "to", "ev", "buildId", "predicted", "appeared", "gone", "total")),
     "outline": frozenset(("buildId", "slot", "rev")),
@@ -3542,6 +3543,16 @@ CLIENT_DIAG_KEYS = {
     "kernel": frozenset(("app", "kind", "reconnect", "iid", "cid", "host", "sid", "type", "span", "events", "bytes", "head", "missing",
                          "refused", "reason", "sent", "frames", "ageS",
                          "frame", "withheld", "proto")),                                                   # implicitHandshake (_implicit_handshake)
+}
+# The VALUE an admitted key is bounded to where the key carries one FIXED WORD and not a figure: (surface, key) -> the closed set of values
+# the kernel stores under it. A posted value outside the set is refused at the admit step, the way an unknown key is: the row is stored
+# without the key and one stderr line names the key and the reason, never the value. One entry today, chat's `view`, the spacer row's
+# marker of a view that was not the element the scroller measured in its frame: the one word the owner approved and no host name (the
+# owner 2026-09-21, who approved the field). The set is stated HERE once and read by tests/test_client_diag_allowlist.py, which spells the
+# word nowhere but its fixture row, the page's own spelling (the maintainer's round 5 ruling on PR E, tests-1: a key-only allowlist on a
+# page-to-kernel field admitted any text under the approved key).
+CLIENT_DIAG_VALUES = {
+    ("chat", "view"): frozenset(("inactive",)),
 }
 _client_diag_said = set()      # (surface, key) pairs already said on stderr; one line each per kernel, CLIENT_DIAG_SAID_MAX of them
 _CLIENT_DIAG_SAID_FULL = (None, None)   # the latch's own entry once it is full: the one line past the bound
@@ -3579,9 +3590,19 @@ def _client_diag_scrub(v, depth=0):
     return None
 
 
+def _client_diag_value_admitted(admitted, v):
+    """Whether a posted value is one of a key's closed set (CLIENT_DIAG_VALUES): equality with a member, the value as posted (a
+    long string is compared whole, before the scrub cuts it); a value no set can hold (an object, a list) is outside every set."""
+    try:
+        return v in admitted
+    except TypeError:
+        return False
+
+
 def _client_diag_admit(surface, data):
-    """The row's data with the surface's admitted top-level keys alone (CLIENT_DIAG_KEYS), each value scrubbed;
-    null for a data that is not an object. Every foreign key is dropped; of one row's, at most CLIENT_DIAG_ROW_SAY_MAX
+    """The row's data with the surface's admitted top-level keys alone (CLIENT_DIAG_KEYS), each value scrubbed, less any
+    admitted key whose value is outside the closed set CLIENT_DIAG_VALUES states for it; null for a data that is not an
+    object. Every foreign key is dropped; of one row's, at most CLIENT_DIAG_ROW_SAY_MAX
     are said by name (once each on stderr) and one more line counts the rest, so a single row carrying hundreds of
     foreign keys spends a handful of the kernel-wide latch's entries, not all of them, and the other surfaces are
     still said afterwards (review find, 2026-09-18: one 600-key row used to silence the latch for the kernel's life)."""
@@ -3590,12 +3611,20 @@ def _client_diag_admit(surface, data):
             _client_diag_say(surface, "data", "a row's data is not an object and is stored as null")
         return None
     allowed = CLIENT_DIAG_KEYS.get(surface)
-    out, dropped = {}, []
+    out, dropped, refused = {}, [], []
     for k, v in data.items():
-        if allowed is not None and k in allowed:
-            out[k] = _client_diag_scrub(v)
-        else:
+        if allowed is None or k not in allowed:
             dropped.append(k)
+        elif (surface, k) in CLIENT_DIAG_VALUES and not _client_diag_value_admitted(CLIENT_DIAG_VALUES[(surface, k)], v):
+            refused.append(k)   # an admitted key whose value is outside its closed set, compared as posted, before the scrub
+        else:
+            out[k] = _client_diag_scrub(v)
+    # an admitted key whose value is outside the closed set CLIENT_DIAG_VALUES states for it takes the unknown key's shape: not stored, one
+    # line naming the key and the reason and never the value (the latch is per surface and key, and the value could be any text); at most
+    # one such key per entry of that table, so the per-row bound the dropped keys take below is not needed here (the maintainer's round 5
+    # ruling, tests-1)
+    for k in refused:
+        _client_diag_say(surface, "key %r" % str(k)[:CLIENT_DIAG_STR_MAX], "dropping a key whose value is outside the set the kernel admits for it")
     if dropped:
         why = ("dropping a key the surface's allowlist does not admit" if allowed is not None
                else "dropping a key of a surface no allowlist names")

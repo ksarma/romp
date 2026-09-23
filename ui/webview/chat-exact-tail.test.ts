@@ -17,8 +17,8 @@ test("the tail path starts at the exact first changed event; the trailing re-che
   assert.doesNotMatch(RENDER, /const TAIL_RECHECK = \d+;/);
   assert.doesNotMatch(RENDER, /len - TAIL_RECHECK/);
   const sync = RENDER.slice(RENDER.indexOf("function syncViewInner("), RENDER.indexOf("function patchWorkedFooters("));
-  assert.match(sync, /const from = Math\.max\(v\.rendered, v\.winStart \?\? 0\);/);
-  assert.match(sync, /patchWorkedFooters\(v, s, from, working\);\s*\n\s*v\.winEnd = total;/, "the footers are reconciled after the exact re-render, before the bookkeeping");
+  assert.match(sync, /const from = Math\.max\(u0, winStart\);/, "the tail starts at the first changed event's UNIT, bounded below by the window's start (the maintainer's round 5 ruling, regression-1: the list's unit, not the event index)");
+  assert.match(sync, /patchWorkedFooters\(v, s, v\.rendered, working, items\);\s*\n\s*v\.winEnd = total;/, "the footers are reconciled after the exact re-render, before the bookkeeping, from the first changed event (v.rendered, handed directly: this mode's units are single events, so compact mode's earlier-of expression is always v.rendered here, the maintainer's round 6 ruling, extra6-3) with the unit list");
 });
 
 test("reconcileRewind delegates to the pure pass and marks the view stale on its signal, on every path", () => {
@@ -58,8 +58,8 @@ test("a status-only tail reaches the footer: the view remembers the working stat
   assert.match(RENDER, /^interface View \{[^\n]*working\?: boolean;/m);
   const sync = RENDER.slice(RENDER.indexOf("function syncViewInner("), RENDER.indexOf("function patchWorkedFooters("));
   assert.match(sync, /const workFlip = v\.working != null && v\.working !== working;\s*\n\s*v\.working = working;/);
-  assert.match(sync, /if \(workFlip && v\.rendered === len && !v\.stale && v\.el\.childNodes\.length > 0\) \{\s*\n\s*patchWorkedFooters\(v, s, len, working, settings\.compact \? items : null\);\s*\n\s*\}\s*\n\s*if \(v\.rendered === len && !v\.stale && v\.el\.childNodes\.length > 0\) return v;/,
-    "the flip patches just ahead of the fast path under its predicate, and the fast path (its line pinned by other tests) still returns; a patch that could not address the unit marks stale, so the window path re-renders");
+  assert.match(sync, /if \(workFlip && v\.rendered === len && !v\.stale && v\.el\.childNodes\.length > 0\) \{\s*\n\s*patchWorkedFooters\(v, s, len, working, items\);\s*\n\s*\}\s*\n\s*if \(v\.rendered === len && !v\.stale && v\.el\.childNodes\.length > 0\) return v;/,
+    "the flip patches just ahead of the fast path under its predicate, with the unit list in both modes (the maintainer's round 5 ruling, regression-1), and the fast path (its line pinned by other tests) still returns; a patch that could not address the unit marks stale, so the window path re-renders");
 });
 
 test("a plain human-prompt append does not set stale: the signature reads the prefix below the tail's re-render start", () => {
@@ -69,4 +69,113 @@ test("a plain human-prompt append does not set stale: the signature reads the pr
   assert.match(RENDER, /function reconcileRewind\(s: Session, bound\?: number\): void \{/);
   // (that chatTail hands its `from` over as the bound, lowers v.rendered to it, and still rebuilds the window on a
   // shrunken tail or a change inside a scrolled-away window, runs in chat-exact-tail-exec.test.ts)
+});
+
+// ── the desktop's tail path under PR E (2026-09-19) ────────────────────────────────────────────────
+// Compact mode's tail path by unit (chat-compact-tail.test.ts) was inserted ABOVE normal mode's block and the two fixes to the
+// spacers' measurement live in functions of their own; the normal-mode block (from "Normal mode, pure append." to syncViewInner's
+// closing brace) is recorded here line by line and pinned byte for byte, so a change to the desktop's path is a deliberate edit
+// of this record, never a side effect. On a failure the diff says what moved. Six deliberate edits so far. Two applied the
+// maintainer's round 2 ruling: the block's own copy of the tail walk, which stopped at a foreign child (a hover's rail band) and
+// re-appended the tail on top of a stale copy of itself, gave way to trimUnitsFrom, the walk compact mode's seam uses, and the hover's
+// marks came off with the band, as in the seam (compact-seam-exec.test.ts executes both calls; chat-compact-tail.test.ts drives the
+// walk over a band; compact-tail-differential.test.ts the marks). The third applied the maintainer's round 3 ruling B: the browse branch
+// patches the window's worked footers before it grows the bottom spacer, as compact mode's spacer branch has since the author's pass 1b
+// (compact-seam-exec.test.ts's normal-mode browsed world and the differential's normal-mode leg execute it, red before at the head the
+// round ruled on). The fourth applied that round's ruling D: the marks taken off narrow to the band's rings, through the band module's
+// own remover (clearRailRings, host-scoped); the glow on the turns is applyGlow's cross-surface state and stays. The fifth applied the
+// maintainer's round 5 ruling, regression-1: the block's units are the LIST's (displayItems runs withGapItems in this mode too, so a head
+// gap is unit 0 and every event's unit its index plus one), where it tagged rows by event index, trimmed from one and handed the footer
+// patch no list (the patch then mapped the event index onto data-unit: the footer on the row above the reply, or on none); now the first
+// changed event's unit is looked up in the list, the trim and the tags are by unit, a gap at or past it is re-drawn, and both this block's
+// patch calls hand the list (compact-tail-differential.test.ts drives a head gap through the fast path, the browse branch and the tail).
+// The sixth is prose alone: the browse branch's comment re-flowed so the label of the maintainer's round 1 addendum stands on one line
+// instead of wrapping after its possessive (the author's fixer pass over the pass after the maintainer's round 5, its verifier (b): that
+// pass's added lines were to carry every numbered mention qualified on its line, and two, this comment's and this record's copy of it,
+// carried the label's tail alone).
+const NORMAL_MODE_BLOCK = [
+  "  // Normal mode, pure append. While BROWSING history (window not at the tail), the new events land below the",
+  "  // rendered window → just grow the bottom spacer (no DOM churn); the user sees them on scroll-down.",
+  "  // …after the one render inside the window that reads LATER events, the \"worked …\" footer on a turn's last reply, is patched from",
+  "  // the first changed event (v.rendered, still the pre-append value), as compact mode's spacer branch and this mode's tail do: a",
+  "  // prompt completing the turn below the window put no footer on the window's last reply, and a later reply joining the turn took none",
+  "  // off, until the maintainer's round 3 ruling B (the compact branch was fixed for this in the author's pass 1b, applying",
+  "  // the maintainer's round 1 addendum, and this branch was not: the same defect on the other side of the compact switch). The patch is",
+  "  // handed the unit list here as at every site (the maintainer's round 5 ruling, regression-1): this mode's list carries the regions'",
+  "  // gaps too (displayItems runs withGapItems in both modes), so an event's unit is its index in the list, not its event index.",
+  "  if (!wasAtTail) {",
+  "    patchWorkedFooters(v, s, v.rendered, working, items);",
+  "    v.spacerCountBot = total - (v.winEnd ?? total); v.unitTotal = total; v.rendered = len; sizeSpacers(v); return v;",
+  "  }",
+  "  // Normal mode, append AT the tail (a unit is one event, or a gap the regions hold; top spacer only): the cheap incremental hot",
+  "  // path: re-render EXACTLY from the first changed event's unit, tagging data-unit so the scroll↔unit map stays valid.",
+  "  // v.rendered is exact: the kernel's chatTail names the first changed index (its _chat_diff compares by",
+  "  // identity first, then equality, and the fold never writes an event in place), and every client pass that",
+  "  // touches a prefix event marks the view stale instead — reconcileRewind (the editable set, the rewind dim),",
+  "  // reconcileOptimistic (the echo set), a full session frame (upsert) — which takes the window rebuild above.",
+  "  // A trailing window of 25 events re-rendered on every tail used to stand in for those signals, and was",
+  "  // most of a tail's render. The one render that depends on LATER events, the \"worked …\" footer of a turn's",
+  "  // last reply, is patched by unit after the loop (patchWorkedFooters).",
+  "  // The units are the LIST's (the maintainer's round 5 ruling, regression-1): under a head gap the list's unit 0 is the gap and every",
+  "  // event's unit is its index plus one, and this block tagged its rows by EVENT index and trimmed from one, so the window's rows (built",
+  "  // by appendItem, tagged by unit) and the tail's disagreed, the trim dropped one row too many, and the footer patch, told no list, put",
+  "  // the footer on the row above the reply or on none. Now the first changed event's unit is looked up in the list, the trim and the tags",
+  "  // are by that unit, a gap item at or past it is re-drawn as appendItem draws it, and the patch is told the list.",
+  "  const winStart = v.winStart ?? 0;",
+  "  let u0 = total;   // the first changed event's unit: the first event item at or past v.rendered (the list's end when none is)",
+  "  for (let u = 0; u < total; u++) { const it = items[u]; if (it.kind !== \"gap\" && itemFirstEvent(it) >= v.rendered) { u0 = u; break; } }",
+  "  const from = Math.max(u0, winStart);",
+  "  // Drop every node from unit `from` onward, then re-render that span. Trim by DATA-UNIT, never by",
+  "  // child COUNT: a unit can put more than one node in the thread (a day divider precedes the turn",
+  "  // that opens a new day), so `keep = spacer + (from - winStart)` counted one node per unit and the",
+  "  // extra dividers made it delete that many live turns off the tail, which then never came back.",
+  "  // Reading the unit off the node is exact however many nodes a unit owns; the top spacer carries no",
+  "  // data-unit, so it ends the walk, and a foreign child met on the way (a hover's rail band) is dropped:",
+  "  // trimUnitsFrom, the one walk both tail paths share (the maintainer's round 2 ruling; this mode's own copy stopped at",
+  "  // the band and re-appended the tail on top of a stale copy of itself, one stranded duplicate per hover). The",
+  "  // band's rings come off with it through the band module's own remover, host-scoped (clearRailRings); the glow on",
+  "  // the turns is applyGlow's and stays, as in the seam (the maintainer's round 3 ruling D).",
+  "  clearRailRings(v.el);",
+  "  trimUnitsFrom(v.el, from);",
+  "  const walk = dayWalkBefore(s, items, from);   // the day walk's high-water mark up to here (T339): a gap leaves it where it was",
+  "  for (let u = from; u < total; u++) {",
+  "    const it = items[u];",
+  "    if (it.kind === \"gap\") { const g = gapElement(s, it, v); g.dataset.unit = String(u); v.el.appendChild(g); continue; }   // empty space: no divider, no epoch, as appendItem draws it",
+  "    const i = itemFirstEvent(it);   // this mode's other units are single events (displayItems)",
+  "    const prev = prevTimedEpoch(s.events, i);   // the rail's raw previous epoch (the same-minute rule)",
+  "    const ep = eventEpoch(s.events[i]);",
+  "    if (ep != null) {   // a day boundary opens with its divider here too, or the tail append would drop it",
+  "      const dv = dayDividerFor(ep, walk);",
+  "      if (dv) { dv.dataset.unit = String(u); v.el.appendChild(dv); }",
+  "    }",
+  "    const node = renderEvent(s.events[i], prev, turnWorkedSecs(s.events, i, working));",
+  "    node.dataset.unit = String(u);   // the event's UNIT, its index in the list (a head gap shifts it by one)",
+  "    v.el.appendChild(node);",
+  "    walk.pass(ep);",
+  "    stampWalkDay(node, walk);",
+  "  }",
+  "  // the footer patch names the last reply BEFORE the first changed event (v.rendered, still the pre-append value here), with the list.",
+  "  // Compact mode's append takes the earlier of that and its first re-rendered unit's first event, because a folded run's first event can",
+  "  // lie below v.rendered; this mode's units are single events and the list is monotone, so that earlier value is always v.rendered here",
+  "  // and the patch is handed it directly (the maintainer's round 6 ruling, extra6-3)",
+  "  patchWorkedFooters(v, s, v.rendered, working, items);",
+  "  v.winEnd = total; v.spacerCount = v.winStart ?? 0; v.spacerCountBot = 0; v.unitTotal = total; v.rendered = len;",
+  "  return v;",
+  "}"
+].join("\n") + "\n";
+
+test("normal mode's tail block is byte-identical to the recorded text, sits after compact mode's seam and the rebuild, and reads none of the compact seam's plan, eviction or measurement helpers (the trim is the one walk both paths share)", () => {
+  const sync = RENDER.slice(RENDER.indexOf("function syncViewInner("), RENDER.indexOf("function patchWorkedFooters("));
+  const at = sync.indexOf("  // Normal mode, pure append.");
+  assert.ok(at > 0, "the block's opening comment");
+  assert.equal(sync.slice(at, at + NORMAL_MODE_BLOCK.length), NORMAL_MODE_BLOCK, "normal mode's tail path changed; if that is deliberate, re-record the block here");
+  assert.ok(sync.slice(at + NORMAL_MODE_BLOCK.length).trimStart().startsWith("//"), "the block closes syncViewInner: only the next function's comment follows it");
+  const seamAt = sync.indexOf("if (settings.compact) {\n    const plan = compactTailPlan("), rebuildAt = sync.indexOf("if (settings.compact || v.stale) {");
+  assert.ok(seamAt > 0 && seamAt < rebuildAt && rebuildAt < at, "the compact seam, then the rebuild, then normal mode");
+  // trimUnitsFrom is not in this list since the author's pass 3 (the maintainer's round 2 ruling): the trim is unitOfNode's walk, the one predicate for what a view's child is,
+  // and normal mode's own copy of it stopped at a foreign child (the block's one deliberate edit)
+  assert.doesNotMatch(NORMAL_MODE_BLOCK, /compactTailPlan|evictCompactTop|reseedWindowHead|v\.units|measureDue|applyMeasure/, "no compact plan, eviction or measurement helper inside normal mode's block");
+  assert.match(NORMAL_MODE_BLOCK, /\n  clearRailRings\(v\.el\);\n  trimUnitsFrom\(v\.el, from\);\n/, "normal mode takes the band's rings off through the band module's own remover, host-scoped, and trims through the shared walk, from the first changed event");
+  assert.doesNotMatch(NORMAL_MODE_BLOCK, /clearHoverMarks|ext-glow|classList\.remove/, "…and removes no class itself: the glow on the turns is applyGlow's (the maintainer's round 3 ruling D)");
+  assert.ok(NORMAL_MODE_BLOCK.split("\n").length > 30, "the record holds the whole block, not a stub");
 });
