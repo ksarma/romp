@@ -1016,9 +1016,15 @@ const UNKNOWN_SLOT_CUT = 32;
 // frames leaving it pending. So a pane the kernel adds to any of _push's audiences, in any spelling of the key as a
 // literal, reads red there (in the roster, or as a named form the census cannot read), a key held in a name reads red at
 // both ends (a subscript or a .get whose key is a bare name, `c[APP_KEY]` or `c.get(key)`, is listed whatever the name,
-// the subscript behind a receiver, so a one-element list display is not listed and a generic annotation such as
-// `list[str]` is; and every key _push reads today is written as a literal; the "app" literal a name would be bound to is
-// listed in any binding's spelling), a member here the kernel never pushes to reads red, and a non-feed member that
+// the subscript behind a receiver, which is whatever can end a subscriptable primary in Python's grammar: a name that is
+// not a standalone keyword (a name after a dot is an identifier, so `self.match[k]` is listed), a closing parenthesis, a
+// closing bracket, a closing brace or a closing quote, double or single, so `pick(c)[k]`, `targets[0][k]`, `{**c}[k]`
+// and `"abc"[k]` are listed with a generic annotation such as `list[str]`, while a one-element list display and a
+// sequence pattern behind the soft keyword case (`case [k]:`) are not; deliberately unlisted and disclosed: a number, an
+// Ellipsis or a keyword constant (None, True, False) before a bracket, none of which can hold the client record, and a
+// bare variable named match or case, subscripted, which reads as the keyword; and every key _push reads today is written
+// as a literal; the "app" literal a name would be bound to is listed in any binding's spelling), a member here the kernel
+// never pushes to reads red, and a non-feed member that
 // pendingFor's selector below would fall to the per-host feed reads red. What stays outside that census and disclosed
 // rather than detected: a key held in a dict or a list, reached through an attribute or returned by a call
 // (`c[KEYS[0]]`, `c[self.key]`), whose value the body never spells as a literal, and a pane pushed only by a sender
