@@ -3857,7 +3857,8 @@ def _remote_sids_previous(path):
     """The hosts table of the mirror on disk, for the carry-forward: {key: row} from a document this
     module wrote; the whitespace list of the shape until 2026-09-22 as one row under REMOTE_SIDS_LEGACY
     (those sids were live remote sessions when the last bus wrote them, and this bus cannot vouch for them
-    until it hears them); {} for no file or a file of neither shape, which carries nothing."""
+    until it hears them: never heard, and `answered` False, since no listing this process can speak for
+    answered for that list); {} for no file or a file of neither shape, which carries nothing."""
     try:
         text = path.read_text()
     except OSError:
@@ -3875,7 +3876,8 @@ def _remote_sids_previous(path):
     if doc is None:
         sids = sorted({t for t in text.split() if _safe_id(t)})
         if sids:
-            return {REMOTE_SIDS_LEGACY: {"kind": "legacy", "sids": sids, "heard": False, "expired": False, "seenAt": 0}}
+            return {REMOTE_SIDS_LEGACY: {"kind": "legacy", "sids": sids, "heard": False, "expired": False, "answered": False,
+                                         "seenAt": 0}}
     return {}
 
 
@@ -3902,7 +3904,10 @@ def _link_down(host):
     precondition) only when its link is KNOWN UP, so a heard source with no link state answers
     cannot-determine for a sid it does not name, as a down host does. The events: the kernel's up notify
     plus the host heard since the link last dropped make a source vouch for absence; the down notify ends
-    it at once (_remote_sids_document has the flags).
+    it at once (_remote_sids_document has the flags). The link is one of two gates on absence: the roster must
+    also be an ANSWERED listing (`answered`, the exchange's `presenceAnswered`; round 3 of fork PR #897), since
+    a host serving its last answered rows through a kernel blink says nothing about a session started there
+    since, whatever its link.
 
     The gate reaches a peer's row under the NAME THE ROW IS FILED UNDER, and the kernel's notify names the
     ALIAS it dials. The dialer's fold (peer_exchange_apply) files under that alias; the dialed side's
@@ -3931,7 +3936,8 @@ def _link_up(host):
     notify alone never makes a source vouch for absence: its roster is the one from before the drop). The
     third state, neither down nor up, is a host with no link state: no PEERS row (never notified), an
     origin-only row (no port), or a name the kernel does not dial (a far bus under the hostname it declares
-    before the fold). Such a source vouches for presence alone (_remote_sids_document, `vouchesAbsence`)."""
+    before the fold). Such a source vouches for presence alone (_remote_sids_document, `vouchesAbsence`), as does
+    a source with its link known up whose last exchange served a cached roster (`answered` False there)."""
     p = PEERS.get(host) or {}
     return bool(p.get("port") and p.get("up")) and not _link_down(host)
 
@@ -3960,7 +3966,8 @@ def _source_link_up(key, row):
     dial, so False); for a far host gossiped through a hub (kind via) the HUB's, since a hub the kernel holds up
     and has heard since carries fresh word about everyone it gossips, and a hub with no link state does not;
     False for a legacy heartbeat or the legacy list, which have no link at all (the heartbeat vouches by its own
-    TTL instead: _remote_sids_document, `vouchesAbsence`)."""
+    TTL instead: _remote_sids_document, `vouchesAbsence`). The link is one of the two gates on absence there; the
+    other is the row's `answered` bit, an answered listing behind the roster."""
     kind = row.get("kind")
     if kind == "via":
         return _link_up(str(row.get("via") or ""))
@@ -4026,18 +4033,39 @@ def _remote_sids_document(now, previous):
                a host the kernel never notified, an origin-only row, a legacy key, or a far bus filed under
                the hostname it declares before this bus's own dial folds it under the alias the kernel
                notifies)
+      answered the roster is an ANSWERED listing (round 3 of fork PR #897, the reviewer's ruling): for a peer
+               host the `presenceAnswered` its last exchange carried (both recorders keep it on the PEER_STATE
+               row; the sender computes it in _local_presence_checked, False while its kernel listing does not
+               answer and it serves the last answered rows), for a hub's word about a far host the FAR host's
+               bit as the hub stamped it on every gossiped row (`viaAnswered`, presence_payload: the roster is
+               that host's word, so whether it was answered is that host's word too), True for a legacy
+               heartbeat (the session's own beat is its own answer), False for the legacy list (no listing this
+               process can speak for answered for it) and for a row carried from a file that predates the field
+               (the restricted side); a payload lacking the field is unanswered, so an older peer cannot reopen
+               the road the field closes. A row kept across processes keeps its bit; a carried row vouches for
+               nothing anyway, heard being the first condition of both flags
       reachable  heard and not expired and not linkDown: the source vouches for the PRESENCE of every sid it
-               names (rule 4); computed HERE, the one home of the gate
-      vouchesAbsence  heard and not expired and (linkUp, or a legacy heartbeat, which has no link and vouches by
-               its own TTL as before): the source vouches for the ABSENCE of a sid it does not name (rule 5's
-               precondition). A heard source with no link state is reachable and does not vouch for absence:
-               it answers cannot-determine for a sid it does not name, as a down host does (round 2 of fork PR
-               #897, the reviewer's ruling: a source vouches for absence only when its link is known up)
+               names (rule 4); computed HERE, the one home of the gate. A cached roster vouches for presence
+               too: the sessions it names were live at the last answered listing, and the roster is stale
+               only about a session started since, which is an absence claim
+      vouchesAbsence  heard and not expired and answered and (linkUp, or a legacy heartbeat, which has no link and
+               vouches by its own TTL as before): the source vouches for the ABSENCE of a sid it does not name
+               (rule 5's precondition). A heard source with no link state is reachable and does not vouch for
+               absence: it answers cannot-determine for a sid it does not name, as a down host does (round 2 of
+               fork PR #897, the reviewer's ruling: a source vouches for absence only when its link is known
+               up); so does a heard source whose last exchange served a cached roster, whatever its link: a
+               session started on that host after its kernel's last answered listing is in no roster while the
+               listing does not answer, and its mail rides the same exchange, so a host the kernel held up
+               vouching for absence over that cache let rule 5 presume the session closed (round 3 of fork PR
+               #897, the reviewer's refuters, by execution through the real handler and this writer). The event
+               that releases it is the host's next exchange that carries an answered listing, which replaces the
+               row and its bit (both recorders); no grace period anywhere
       seenAt   the last heartbeat or exchange time, kept across processes
     The reader (kernel/judge.py _presumed_closed_verdict) reads `reachable` and `vouchesAbsence` per row: a
     sid a reachable source names is live on another host (rule 4); a sid no source names is presumed closed
     only when a source vouches for absence (rule 5); a sid only an unreachable source names, or a mirror in
-    which no source vouches for absence, is cannot-determine. The kernel's link state decides both (round 2 of
+    which no source vouches for absence, is cannot-determine (its reason naming each source with why it cannot
+    vouch, the cached roster among the causes: "listing unanswered"). The kernel's link state decides both (round 2 of
     fork PR #897, the reviewer's ruling): a session started on a host after its last heard roster is in no
     roster, so a host counted as vouching for absence while its link is down, or while the kernel has never
     reported it up, would let rule 5 presume that session closed; a host that is down cannot vouch for
@@ -4120,11 +4148,12 @@ def _remote_sids_document(now, previous):
     hosts = {}
     for sid, (name, ts) in list(HEARTBEATS.items()):
         hosts[REMOTE_SIDS_HEARTBEAT + str(sid)] = {"kind": "heartbeat", "sids": [str(sid)], "heard": True,
-                                                   "expired": now - ts >= HEARTBEAT_TTL, "seenAt": int(ts),
-                                                   "name": name or "?"}
+                                                   "expired": now - ts >= HEARTBEAT_TTL, "answered": True,
+                                                   "seenAt": int(ts), "name": name or "?"}
     peers = {h: st for h, st in list(PEER_STATE.items()) if st.get("seenAt")}
     for host, st in peers.items():                    # every heard host's own rows first...
-        row = {"kind": "peer", "sids": [], "heard": True, "expired": False, "seenAt": int(st.get("seenAt") or 0)}
+        row = {"kind": "peer", "sids": [], "heard": True, "expired": False, "seenAt": int(st.get("seenAt") or 0),
+               "answered": st.get("presenceAnswered") is True}   # its last exchange carried an answered listing
         if st.get("busId"):
             row["busId"] = str(st["busId"])
         for pa in st.get("presence") or []:
@@ -4146,8 +4175,9 @@ def _remote_sids_document(now, previous):
                 continue                              # heard directly, its link not held down: its own row speaks
             row = hosts.setdefault(_remote_sids_via_key(host, far),
                                    {"kind": "via", "sids": [], "heard": True, "expired": False, "seenAt": 0,
-                                    "via": str(host), "host": far, "viaBus": far_bus})
+                                    "via": str(host), "host": far, "viaBus": far_bus, "answered": True})
             row["sids"].append(str(pa["id"]))
+            row["answered"] = row["answered"] and pa.get("viaAnswered") is True   # the FAR host's bit, as the hub stamped it
             row["viaBus"] = row["viaBus"] or far_bus
             row["seenAt"] = max(row["seenAt"], int(st.get("seenAt") or 0))
     heard_bus = {row["busId"] for row in hosts.values() if row.get("busId")}
@@ -4172,6 +4202,7 @@ def _remote_sids_document(now, previous):
         row = dict(prev, heard=False)
         row.setdefault("kind", "peer")
         row.setdefault("expired", False)
+        row.setdefault("answered", False)             # a file from before the field: the restricted side
         row.setdefault("seenAt", 0)
         if key == REMOTE_SIDS_LEGACY:
             row["sids"] = [s for s in row["sids"] if s not in named]
@@ -4183,8 +4214,9 @@ def _remote_sids_document(now, previous):
         row["linkDown"] = _source_link_down(key, row)         # the link state at THIS write, heard or carried
         row["linkUp"] = _source_link_up(key, row)             # ...known up, and the host heard since it last dropped
         row["reachable"] = bool(row["heard"] and not row["expired"] and not row["linkDown"])   # vouches for presence
-        row["vouchesAbsence"] = bool(row["heard"] and not row["expired"]                        # ...and for absence only
-                                     and (row["linkUp"] or row["kind"] == "heartbeat"))         # with the link known up
+        row["vouchesAbsence"] = bool(row["heard"] and not row["expired"] and row["answered"]    # ...and for absence only
+                                     and (row["linkUp"] or row["kind"] == "heartbeat"))         # with the link known up and
+        #                                                                                          an answered listing
     return {"v": 2, "busStarted": BUS_EPOCH, "writtenAt": int(now), "hosts": hosts}
 
 
@@ -4196,12 +4228,16 @@ def _write_remote_sids():
     session whose local mirror store must never be presumed closed; a sid no source names is presumed
     closed only when a source vouches for its absence. Two flags are computed here, per row, and the reader
     reads them: `reachable` (heard, not expired, its link not held down by the kernel: the source vouches
-    for the PRESENCE of the sids it names) and `vouchesAbsence` (heard, not expired, and its link KNOWN UP,
-    a dialable PEERS row up and the host heard since the link last dropped, or a legacy heartbeat within
-    its TTL: the source vouches for the ABSENCE of a sid it does not name). A heard source with no link
-    state, a host the kernel never notified or a far bus under the hostname it declares before this bus's
-    own dial has folded it under the alias the kernel notifies, vouches for presence alone (round 2 of fork
-    PR #897, the reviewer's ruling). The FILE alone no longer means the bus has spoken: a bus restarted from
+    for the PRESENCE of the sids it names) and `vouchesAbsence` (heard, not expired, its roster an ANSWERED
+    listing, and its link KNOWN UP, a dialable PEERS row up and the host heard since the link last dropped,
+    or a legacy heartbeat within its TTL: the source vouches for the ABSENCE of a sid it does not name). A
+    heard source with no link state, a host the kernel never notified or a far bus under the hostname it
+    declares before this bus's own dial has folded it under the alias the kernel notifies, vouches for
+    presence alone (round 2 of fork PR #897, the reviewer's ruling), and so does a heard source whose last
+    exchange served the last answered rows through a kernel blink (`answered` False, the bit the exchange
+    carries as `presenceAnswered`; round 3 of fork PR #897): its roster says nothing about a session started
+    there since, and its next exchange with an answered listing is the event that releases it. The FILE
+    alone no longer means the bus has spoken: a bus restarted from
     empty memory writes a first mirror whose hosts are all unreachable (carried from the previous file)
     until their heartbeats and exchanges arrive; a host whose link the kernel reports down is unreachable
     from that notify until its next heartbeat or exchange arrives with the link up, and vouches for absence
@@ -4283,7 +4319,7 @@ PEER_SEEN = STATE / "peer-seen.jsonl"      # append-only receipt log — the ide
 _SEEN_CAP = 4000
 _seen_ids = None                           # lazy in-memory mirror of PEER_SEEN's tail
 EXCHANGE_WAIT = int(os.environ.get("ROMP_POSTAL_EXCHANGE_WAIT", "20"))
-PEER_STATE = {}                            # host -> {"presence": [...], "epoch": int, "seenAt": t, "drift": str}
+PEER_STATE = {}                            # host -> {"presence": [...], "presenceAnswered": bool, "epoch": int, "seenAt": t, "drift": str}
 _peer_wakes = {}                           # host -> threading.Event (long-poll release + dialer poke)
 _peer_threads = {}                         # host -> Thread (one dialer loop per up peer)
 _peer_pending = {}                         # host -> {"acks": [mid], "bounces": [{mid, why}]} for the NEXT request
@@ -4806,48 +4842,81 @@ def _remember_presence(rows):
         pass
 
 
-def _local_presence():
-    """Local agent rows for an exchange payload, blink-honest: an UNANSWERED kernel listing (a
-    mid-restart blink) must never gossip as "nobody lives here" — the far boxes' PEER_STATE flaps
-    empty and their resolvers mint hard no-live refusals for sessions that never died (specimen
-    2026-08-31: three sends refused across a far restart while the target stayed live throughout).
-    Serve the last ANSWERED rows instead (the registry's serve-last-good idiom, 2026-08-31); an
-    ANSWERED-empty listing is the truth — it serves and caches as such. This protects every peer,
-    including ones running older code, because the honesty lands in the payload itself."""
+def _local_presence_checked():
+    """(rows, answered): local agent rows for an exchange payload, blink-honest, and whether THIS listing
+    answered. An UNANSWERED kernel listing (a mid-restart blink) must never gossip as "nobody lives here": the
+    far boxes' PEER_STATE flaps empty and their resolvers mint hard no-live refusals for sessions that never
+    died (specimen 2026-08-31: three sends refused across a far restart while the target stayed live
+    throughout). Serve the last ANSWERED rows instead (the registry's serve-last-good idiom, 2026-08-31); an
+    ANSWERED-empty listing is the truth: it serves and caches as such. This protects every peer, including
+    ones running older code, because the honesty lands in the payload itself.
+
+    `answered` is False when the rows are that cache, or when nothing has answered yet (round 3 of fork PR
+    #897, the reviewer's ruling): a cached roster names the sessions the last answered listing named and says
+    nothing about one started here since, so the two payload builders ride the bit beside the rows
+    (`presenceAnswered`, presence_payload), both recorders keep it on the PEER_STATE row, and the far side's
+    deadness mirror lets such a roster vouch for the PRESENCE of the sids it names and not for the ABSENCE of a
+    sid it does not (_remote_sids_document, `answered`), until this bus's next exchange that carries an
+    answered listing. Until this round the cache rode the exchange with no sign of it, and a heard host the
+    kernel held up vouched for absence over a roster that could predate a session started there, a false
+    rule 5 (the reviewer's refuters, by execution through the real handler and writer)."""
     rows, answered = local_agents_checked()
     if answered:
         _remember_presence(rows)
         if _PRESENCE_SERVE_WARNED[0]:
             _PRESENCE_SERVE_WARNED[0] = False
             sys.stderr.write("postal: the local listing answers again — presence serves live rows\n")
-        return rows
+        return rows, True
     _presence_good_load()                            # a fresh bus process primes from the disk twin
     if _LOCAL_PRESENCE_GOOD[1]:
         if not _PRESENCE_SERVE_WARNED[0]:
             _PRESENCE_SERVE_WARNED[0] = True
             sys.stderr.write("postal: the local listing didn't answer — presence serves the last "
                              "answered rows until it does\n")
-        return list(_LOCAL_PRESENCE_GOOD[0])
-    return rows                                     # never answered ANYWHERE yet → claim nothing either way
+        return list(_LOCAL_PRESENCE_GOOD[0]), False
+    return rows, False                              # never answered ANYWHERE yet → claim nothing either way
+
+
+def _local_presence():
+    """The rows of _local_presence_checked alone. The exchange payload builders take the pair through
+    presence_payload, so the answered bit rides beside the rows; this is for a reader of the rows only."""
+    return _local_presence_checked()[0]
 
 
 def fleet_presence(exclude_host):
-    """Presence for an exchange payload: local agents + ONE hop of gossip from our other peers, each
-    labeled `via` (plans/postal-peer-buses.md 3b) — so a spoke can address the far spoke through the
+    """The presence list of presence_payload alone (the builders take the pair, so the answered bit rides
+    beside the rows: presence_payload)."""
+    return presence_payload(exclude_host)[0]
+
+
+def presence_payload(exclude_host):
+    """(presence, answered) for an exchange payload: local agents + ONE hop of gossip from our other peers,
+    each labeled `via` (plans/postal-peer-buses.md 3b), so a spoke can address the far spoke through the
     hub. A via-entry is never re-gossiped (one-hop reach only; a topology needing two hops should
     check the second spoke in to the hub directly). Each via row also carries the far bus's own id
     (`viaBus`): the receiver folds gossip about a box it ALREADY peers with directly, and the id is
     the identity that survives nickname drift — the same machine wears different ssh aliases on
-    different hosts, so a name can't say "same box" (the user 2026-08-12; see _via_duplicate)."""
-    out = list(_local_presence())
+    different hosts, so a name can't say "same box" (the user 2026-08-12; see _via_duplicate).
+
+    `answered` is whether OUR listing answered for these local rows (_local_presence_checked: False when they
+    are the last answered rows served through a blink, or nothing has answered yet), and it rides the payload
+    as `presenceAnswered` beside `presence` in both builders (peer_exchange_handle's response,
+    build_exchange_request): a cached roster says nothing about a session started here since, and the
+    receiver's deadness mirror lets it vouch for presence alone (round 3 of fork PR #897, the reviewer's
+    ruling). Each via row carries the FAR host's bit, `viaAnswered`, the `presenceAnswered` its own exchange
+    with us recorded on its PEER_STATE row (both recorders): the gossip is that host's roster as it reported
+    it, so whether that roster was an answered listing is that host's word, not ours; a row from a peer that
+    never sent the field reads unanswered, the restricted side."""
+    rows, answered = _local_presence_checked()
+    out = list(rows)
     for h, st in PEER_STATE.items():
         if h == exclude_host:
             continue
         for pa in st.get("presence") or []:
             if pa.get("via"):
                 continue
-            out.append(dict(pa, via=h, viaBus=st.get("busId") or ""))
-    return out
+            out.append(dict(pa, via=h, viaBus=st.get("busId") or "", viaAnswered=st.get("presenceAnswered") is True))
+    return out, answered
 
 # ── quarantine (per-host trust model) ───────────────────────────────────────────
 # Mail from a DIRECTED peer is HELD here, one file per message, instead of injecting into the target
@@ -5299,7 +5368,9 @@ def peer_exchange_handle(data, flight=None):
     relays it hands out are IN FLIGHT from the listing (_relays_for, which appends the flight's id to
     `flight`, a list the route passes); the departure event is the response write, so the route ends
     the flight carried once _send returned (2026-09-08), and freed when it raised — nothing here
-    touches the record or the wire form."""
+    touches the record or the wire form. The dialer's `presenceAnswered` (whether its listing answered for
+    the roster it sent; round 3 of fork PR #897) is recorded on its PEER_STATE row for the deadness mirror,
+    JSON true alone counting, and our own bit rides the response beside our presence (presence_payload)."""
     host = str((data or {}).get("host") or "").strip()
     if not host:
         return {"error": "host required"}, 400
@@ -5320,7 +5391,11 @@ def peer_exchange_handle(data, flight=None):
         return {"error": "unsafe host name %r — this machine's hostname fails path-safety; fix its "
                          "hostname (or set ROMP_POSTAL_HOST) and redial" % host}, 400
     PEER_STATE[host] = {"presence": data.get("presence") or [], "epoch": data.get("epoch"),
-                        "holds": data.get("holds") or [], "seenAt": int(time.time())}
+                        "holds": data.get("holds") or [], "seenAt": int(time.time()),
+                        # whether the dialer's listing answered for this roster (round 3 of fork PR #897): JSON true
+                        # alone counts, so a payload lacking the field, an older peer's, reads unanswered, the
+                        # restricted side, and cannot reopen the road the field closes (_remote_sids_document)
+                        "presenceAnswered": data.get("presenceAnswered") is True}
     if bus_id:
         PEER_STATE[host]["busId"] = bus_id
         _drop_peer_name_dupes(host, bus_id)
@@ -5368,8 +5443,9 @@ def peer_exchange_handle(data, flight=None):
     # `reads` stay parked until the dialer's NEXT request readAcks them — a response can vanish
     # after we send it, so the dialed side never clears on send. Re-applying a duplicate is a no-op.
     try:
+        presence, answered = presence_payload(host)  # the answered bit rides beside the rows (round 3 of fork PR #897)
         return {"host": self_host(), "epoch": BUS_EPOCH, "proto": PEER_PROTO, "busId": BUS_ID,
-                "presence": fleet_presence(host), "holds": holds_payload(host),
+                "presence": presence, "presenceAnswered": answered, "holds": holds_payload(host),
                 "tier": my_tier_of(host),            # how WE hold the dialer's mail (display/mirror, never the gate)
                 "relays": rel, "acks": acks, "bounces": bounces, "reads": reads,
                 "readsKept": reads_kept}, 200        # see _read_arrived (2026-09-08)
@@ -5381,12 +5457,15 @@ def peer_exchange_handle(data, flight=None):
 def build_exchange_request(host, wait=True, flight=None):
     """The DIALER's request for one exchange. The relays are the outbox's oldest-first prefix under
     _RELAY_BUDGET_BYTES (_budget_relays); the rest ride the next round, so a backlog drains over a few
-    exchanges instead of being refused whole."""
+    exchanges instead of being refused whole. `presenceAnswered` rides beside `presence` (presence_payload):
+    whether our listing answered for the rows we send, the same bit the response builder rides (round 3 of
+    fork PR #897)."""
     p = _pending(host)
     with _peer_lock:
         acks, bounces, read_acks = list(p["acks"]), list(p["bounces"]), list(p.get("readAcks") or [])
+    presence, answered = presence_payload(host)      # the answered bit rides beside the rows (round 3 of fork PR #897)
     req = {"host": self_host(), "epoch": BUS_EPOCH, "proto": PEER_PROTO, "busId": BUS_ID,
-           "presence": fleet_presence(host), "holds": holds_payload(host),
+           "presence": presence, "presenceAnswered": answered, "holds": holds_payload(host),
            "tier": my_tier_of(host),                 # how WE hold the dialed host's mail
            "acks": acks, "bounces": bounces,
            "reads": readbox_list(host), "readAcks": read_acks, "wait": bool(wait)}
@@ -5406,7 +5485,9 @@ def peer_exchange_apply(host, req_sent, resp, flight=None):
     request before answering, so request-carried receipts need no explicit ack, except the ones the
     dialed side names in `readsKept` (review find, 2026-09-08): those it could not apply, and they
     stay parked for the next request. Likewise a response-carried read WE could not apply gets no
-    readAck, so the dialed side keeps it and re-sends it."""
+    readAck, so the dialed side keeps it and re-sends it. The response's `presenceAnswered` is recorded on the
+    PEER_STATE row as the handler records the request's (round 3 of fork PR #897): the two recorders are the
+    whole population of the bit's writers, and the mirror reads the row."""
     p = _pending(host)
     with _peer_lock:
         p["acks"] = [a for a in p["acks"] if a not in (req_sent.get("acks") or [])]
@@ -5419,7 +5500,9 @@ def peer_exchange_apply(host, req_sent, resp, flight=None):
             continue                                 # the dialed side could not take it: it rides again
         readbox_del(host, r)
     PEER_STATE[host] = {"presence": resp.get("presence") or [], "epoch": resp.get("epoch"),
-                        "holds": resp.get("holds") or [], "seenAt": int(time.time())}
+                        "holds": resp.get("holds") or [], "seenAt": int(time.time()),
+                        "presenceAnswered": resp.get("presenceAnswered") is True}   # the dialed side's bit: the same
+    #                                                                                  rule as the handler's recorder
     bus_id = str(resp.get("busId") or "")
     if bus_id:                                       # the dialed alias is canonical for this bus: fold any
         PEER_STATE[host]["busId"] = bus_id           # row it left under its self-declared hostname

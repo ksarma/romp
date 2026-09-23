@@ -10,6 +10,10 @@ which crosses the wire as silence so the sender's outbox re-relays); resolve_rec
 the remote-sids mirror for id-shaped forms before its 404; and the presence PRODUCER serves the
 last ANSWERED rows when the local listing doesn't answer, so a local blink never gossips as
 "nobody lives here". Fold-in: set_working without its text param refused loudly, never a clear.
+Since round 3 of fork PR #897 the producer also SAYS when the rows are that cache: the exchange
+payload carries `presenceAnswered` beside `presence` (_local_presence_checked, presence_payload), so
+the far side's deadness mirror lets a cached roster vouch for the presence of the sids it names and
+not for the absence of a session started here since.
 
 SYNTHETIC fixtures only: placeholder UUIDs, invented names.
 """
@@ -331,6 +335,32 @@ class PresenceBlinkHonesty(_RelayBase):
         pm._PRESENCE_GOOD_FILE.unlink(missing_ok=True)
         pm.KERNEL_BASE = "http://127.0.0.1:9"
         self.assertEqual(pm._local_presence(), [])
+
+    def test_the_exchange_payload_says_whether_this_listing_answered(self):
+        """Round 3 of fork PR #897 (the reviewer's ruling): the cache above rides the exchange with a sign of it.
+        The request builder carries `presenceAnswered` beside the rows, True for an answered listing, False for
+        the last answered rows served through a blink and for a bus nothing has answered yet, so the far side's
+        deadness mirror lets a cached roster vouch for the presence of the sids it names and not for the absence
+        of a session started here since (the composition: tests/test_postal_remote_sids_mirror.py, the cached
+        roster test, and tests/test_dead_session_staleness.py ReaderFollowsTheWriter, the cached roster phase).
+        Until this round the cache rode the exchange as the host's word about what runs here now."""
+        pm.KERNEL_BASE = "http://127.0.0.1:9"
+        req = pm.build_exchange_request("TESTHOST", wait=False)
+        self.assertEqual((req.get("presenceAnswered"), req["presence"]), (False, []),
+                         "nothing has answered yet: no rows, and the bit says unanswered")
+        _set_live([{"id": ALPHA, "name": "web"}])
+        req = pm.build_exchange_request("TESTHOST", wait=False)
+        self.assertEqual((req.get("presenceAnswered"), [a["id"] for a in req["presence"]]), (True, [ALPHA]),
+                         "an answered listing: the bit rides beside the rows")
+        os.environ.pop("ROMP_SESSIONS_FILE", None)
+        req = pm.build_exchange_request("TESTHOST", wait=False)
+        self.assertEqual((req.get("presenceAnswered"), [a["id"] for a in req["presence"]]), (False, [ALPHA]),
+                         "a blink serves the last answered rows AND says they are a cache (a builder riding the rows "
+                         "alone leaves the far side to read the cache as this host's word about what runs here now)")
+        rows, answered = pm._local_presence_checked()
+        self.assertEqual(([a["id"] for a in rows], answered), ([ALPHA], False), "the pair the builders ride")
+        _set_live([])
+        self.assertEqual(pm._local_presence_checked(), ([], True), "an ANSWERED empty listing is the truth, and answered")
 
 
 class QuarantineApproveHonesty(_RelayBase):

@@ -19378,10 +19378,14 @@ def _remote_sids_mirror():
     [...], "heard": bool, "expired": bool, "linkDown": bool, "linkUp": bool, "reachable": bool,
     "vouchesAbsence": bool, ...}: `reachable` says the source vouches for the PRESENCE of the sids it names,
     `vouchesAbsence` that it vouches for the ABSENCE of a sid it does not name, which a source does only
-    when its link is known up, or it is a legacy heartbeat within its TTL); this reader follows both. The six
-    booleans are required per row: a row without them is not the shape the bus writes since round 2 of fork
-    PR #897 (a bus still running the previous shape under this judge answers cannot-determine, the
-    conservative side, until it restarts). Returns (hosts, None) with the table as the bus wrote it; (None,
+    when its link is known up, or it is a legacy heartbeat within its TTL, and its roster is an ANSWERED
+    listing, `answered`, the seventh flag: False while the host's kernel listing did not answer and its
+    exchange served the last answered rows, whose silence about a session started there since is no word;
+    round 3 of fork PR #897); this reader follows both. The seven booleans are required per row: a row
+    without them is not the shape the bus writes since round 3 of fork PR #897 (a bus still running a
+    previous shape under this judge answers cannot-determine, the conservative side, until it restarts; the
+    six-flag shape of round 2 among them, whose rows vouched for absence over a cached roster). Returns
+    (hosts, None) with the table as the bus wrote it; (None,
     "no-mirror") when there is no file (the bus has not written under this root); (None, "mirror-unparsable")
     when the file is not a document of that shape, a whitespace list written by a bus from before 2026-09-22
     among them, said once per distinct text in this process's log, so a shape drift between the two modules
@@ -19400,7 +19404,7 @@ def _remote_sids_mirror():
             if not (isinstance(row, dict) and isinstance(row.get("sids"), list)
                     and all(isinstance(s, str) for s in row["sids"])
                     and all(isinstance(row.get(k), bool) for k in ("heard", "expired", "linkDown", "linkUp",
-                                                                       "reachable", "vouchesAbsence"))):
+                                                                       "answered", "reachable", "vouchesAbsence"))):
                 raise ValueError("host %r is not a roster row" % (key,))
     except (ValueError, KeyError, TypeError) as e:
         _say_once_judge("romp-judge: the postal bus's presence mirror %s is not the shape the bus writes (%s: %s); "
@@ -19420,12 +19424,15 @@ Deadness = collections.namedtuple("Deadness", "closed rule why")
 #           two-sided (round 2 of fork PR #897, the reviewer's ruling): a heard source that is not held
 #           down vouches for the PRESENCE of the sids it names (`reachable`), and a source vouches for the
 #           ABSENCE of a sid it does not name (`vouchesAbsence`) only when its link is known up (or it is a
-#           legacy heartbeat within its TTL). Unreachable is one arm whatever made the source so (not heard
+#           legacy heartbeat within its TTL) AND its roster is an answered listing (`answered`; round 3 of
+#           fork PR #897: a host serving its last answered rows through a kernel blink says nothing about a
+#           session started there since). Unreachable is one arm whatever made the source so (not heard
 #           since the bus started, expired, its link held down by the kernel), and the two arms that turn
 #           on a source's state NAME the sources after the token, each with why it cannot vouch
 #           (_source_causes: "named-by-unreachable-host: <key> (link down)"; "no-host-vouches-absence:
-#           <key> (not heard), <key> (expired), <key> (no link state)"; a mirror with no row at all,
-#           "no-host-vouches-absence: no source"), so the reason says which host cannot vouch and why.
+#           <key> (not heard), <key> (expired), <key> (no link state), <key> (listing unanswered)"; a mirror
+#           with no row at all, "no-host-vouches-absence: no source"), so the reason says which host cannot
+#           vouch and why.
 #           Rule 5's token stays "no-reachable-host-names-it", true whenever it fires (a vouching host is
 #           reachable, and no reachable host names the sid); the arm before it carries the vouching
 #           precondition, so a reachable host with no link state reaches that arm, never rule 5
@@ -19435,15 +19442,21 @@ def _source_causes(rows):
     """The sources of `rows` (key to row, as the bus wrote them) for a cannot-determine reason: each key with why it
     cannot vouch, in parentheses and in this fixed order (not heard since the bus's current process started;
     expired, a legacy heartbeat past its TTL; link down, the kernel's word; no link state, a source heard and not
-    held down whose link the kernel has never reported up, so it vouches for presence alone), sorted by key;
-    "no source" for an empty table."""
+    held down whose link the kernel has never reported up, so it vouches for presence alone; listing unanswered, a
+    source heard and not held down whose last exchange served a cached roster, its kernel listing not answering,
+    so it vouches for presence alone whatever its link, round 3 of fork PR #897), sorted by key; "no source" for
+    an empty table. The last two are causes only for a row that would otherwise vouch (heard, not expired, not
+    held down): a carried or a down row's bits are its last process's or predate the drop, and the first causes
+    say why it cannot vouch. Both can hold at once, in the fixed order. A legacy heartbeat, `answered` True and
+    vouching by its TTL, reaches neither."""
     parts = []
     for key in sorted(rows):
         row = rows[key]
+        would = row["heard"] and not row["expired"] and not row["linkDown"]   # ...vouch, but for the causes below
         causes = [w for w, on in (("not heard", not row["heard"]), ("expired", row["expired"]),
                                   ("link down", row["linkDown"]),
-                                  ("no link state", row["heard"] and not row["expired"] and not row["linkDown"]
-                                   and not row["vouchesAbsence"])) if on]
+                                  ("no link state", would and not row["linkUp"] and not row["vouchesAbsence"]),
+                                  ("listing unanswered", would and not row["answered"])) if on]
         parts.append(str(key) + (" (%s)" % ", ".join(causes) if causes else ""))
     return ", ".join(parts) or "no source"
 
@@ -19470,23 +19483,30 @@ def _presumed_closed_verdict(sid, now):
          state and still answers rule 4 for its own sids;
       5. at least one host VOUCHES FOR ABSENCE, none names it, and no unreachable host's last roster names
          it either → a dead determination, True. A host vouches for absence (`vouchesAbsence`, the writer's
-         second flag, read here and never recomputed) only when heard, not expired, and its link KNOWN UP:
-         a dialable PEERS row the kernel holds up and the host heard since the link last dropped (`linkUp`),
-         or a legacy heartbeat within its TTL, which has no link and vouches by the TTL as before; a far
-         host gossiped through a hub vouches by the hub's link.
+         second flag, read here and never recomputed) only when heard, not expired, its roster an ANSWERED
+         listing (`answered`, the writer's seventh flag: the `presenceAnswered` its exchange carried, False
+         while its kernel listing did not answer and the exchange served the last answered rows; round 3 of
+         fork PR #897, the reviewer's ruling), and its link KNOWN UP: a dialable PEERS row the kernel holds up
+         and the host heard since the link last dropped (`linkUp`), or a legacy heartbeat within its TTL,
+         which has no link and vouches by the TTL as before; a far host gossiped through a hub vouches by the
+         hub's link and by its own bit, which the hub stamps on the gossip.
     Cannot determine, False, in four arms: no mirror file (the bus has not written under this root); a
     mirror not in the bus's shape (said once in this process's log; never read as an empty roster); the
     sid named only by an UNREACHABLE host, whose last roster stands until the host is heard again; no host
     vouches for absence (a bus that has heard nobody since it started, a mirror carried from before, every
-    heard host expired or held down, or every heard host with NO LINK STATE). The rule is two-sided (round 2
-    of fork PR #897, the reviewer's ruling): a heard host vouches for presence; a host vouches for absence
-    only when its link is known up, so a heard host with no link state answers cannot-determine for a sid
-    it does not name, as a down host does, and rule 4 for the sids it names. Unreachable is one arm
+    heard host expired or held down, every heard host with NO LINK STATE, or every heard host whose last
+    exchange served a cached roster). The rule is two-sided (round 2 of fork PR #897, the reviewer's
+    ruling): a heard host vouches for presence; a host vouches for absence only when its link is known up,
+    so a heard host with no link state answers cannot-determine for a sid it does not name, as a down host
+    does, and rule 4 for the sids it names; and so does a heard host whose roster is a cache (round 3): the
+    sessions it names were live at its last answered listing, rule 4, and a session started there since is
+    in no roster while the listing does not answer, so its silence is no word, and the event that releases
+    it is its next exchange with an answered listing. Unreachable is one arm
     whatever made the host so: rule 4 is a positive determination, live on another host, that only a host
     the bus can vouch for makes, and the closed field is False either way; the reason of each of the two
     arms that turn on a source's state names the sources it turns on and why each cannot vouch
-    (_source_causes: not heard, expired, link down, no link state), so a reader of the verdict sees which
-    host cannot vouch, and why, without the mirror in hand. The link gate's reason: a session started on a
+    (_source_causes: not heard, expired, link down, no link state, listing unanswered), so a reader of the
+    verdict sees which host cannot vouch, and why, without the mirror in hand. The link gate's reason: a session started on a
     host after its last heard roster is in no roster, so a host counted as vouching for absence while the
     kernel holds its link down, or has never reported it up, would let rule 5 presume that session closed.
     Event-keyed at both ends: the down notify makes the host unreachable at once (the bus writes the mirror

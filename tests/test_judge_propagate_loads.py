@@ -124,14 +124,16 @@ def _bus_hears_nobody_remote():
     in the bus's current process, its presence not expired, and its link known up: a dialable PEERS row the
     kernel holds up and the host heard since the link last dropped; `reachable` and `vouchesAbsence` are the
     writer's flags the reader reads, the first for the presence of the sids a host names, the second for the
-    absence of one it does not), in the document shape the bus writes (its _remote_sids_document, six
+    absence of one it does not), in the document shape the bus writes (its _remote_sids_document, seven
     booleans per row; the restatement is held to the writer by ReaderFollowsTheWriter's frame pin). Until fork
     PR #897's round 2 this fixture was an empty file, which the reader now answers cannot-determine for (a
     whitespace list is the shape of a bus before 2026-09-22); since the round's fifth commit a heard host with
-    no link state vouches for presence alone, so rule 5 needs the link up."""
+    no link state vouches for presence alone, so rule 5 needs the link up; since round 3's eleventh commit it
+    needs an ANSWERED listing behind the roster too (`answered`: the host's exchange did not serve the last
+    answered rows through a kernel blink), so the row spells it."""
     _mirror().write_text(json.dumps({"v": 2, "busStarted": T - 100, "writtenAt": T, "hosts": {
         "TESTHOST": {"kind": "peer", "sids": [], "heard": True, "expired": False, "linkDown": False, "linkUp": True,
-                     "reachable": True, "vouchesAbsence": True, "seenAt": T}}}) + "\n")
+                     "answered": True, "reachable": True, "vouchesAbsence": True, "seenAt": T}}}) + "\n")
 
 
 def _verdict(sid, now):

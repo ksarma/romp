@@ -39,7 +39,13 @@ far bus restarted under a new id one side has not heard), so a session the hub n
 while the hub vouches and never rule 5's, and the via row is dropped once the host speaks again or the hub's
 current word about it folds (the hub's word phase; at round 2's head the fold applied whatever the direct row's
 state, and rule 5 settled that session; at the seventh commit a name match folded whatever the ids, and rule 5
-settled the session on the other machine, the reviewer's verifier's finding).
+settled the session on the other machine, the reviewer's verifier's finding). Since round 3's eleventh commit a heard
+host whose exchange served a CACHED roster, its kernel listing not answering while its presence producer served the last
+answered rows, vouches for presence alone (the reviewer's ruling, the road found by its refuters through the real handler
+and writer): the exchange carries `presenceAnswered` in both payload builders, both recorders keep it, the writer's rows
+carry `answered` (the seventh flag the reader requires) and rule 5 needs an answered listing behind the roster, released
+by the next exchange that answers; the reader's reason names the cause (listing unanswered). At the tenth commit such a
+host vouched for absence, and a session started there during the blink was presumed closed (the cached roster phase).
 The fixtures here write the bus's document shape (_bus_wrote) and every test that writes one
 asserts the ladder's verdict, the rule that answered and its reason, so a fixture at a path nothing
 reads turns its test red. SYNTHETIC fixtures only; private synthetic sids; hostname TESTHOST."""
@@ -100,6 +106,8 @@ HUB2 = "TESTHOST-hub2"                            # a second hub peered with the
 VIA_SPOKE2 = "via:" + HUB2 + "/" + SPOKE          # the second hub's word about the spoke, its own row under its own key
 SPOKE_NEW = "a11f0001-1111-4222-8333-000000000015"   # a session started on the spoke since the second hub's roster of it, named by the
 #                                                      hub alone; it ends across a bus restart, before the hub is heard again
+BLINKED = "a11f0001-1111-4222-8333-000000000016"     # a session started on HOST2 while HOST2's kernel listing did not answer: its
+#                                                      exchange served the last answered rows, which do not name it
 
 RULE_5 = (True, 5, "no-reachable-host-names-it")               # the ladder's verdicts, (closed, rule, why), as
 RULE_4 = (False, 4, "named-by-reachable-host")                 # _presumed_closed_verdict spells them; a fixture
@@ -110,17 +118,20 @@ UNPARSABLE = (False, None, "mirror-unparsable")
 def LOST(*sources):
     """The cannot-determine verdict for a sid named only by unreachable sources: the reason names each source
     that names it with what makes it unreachable, hand-spelled here as "<key> (<cause>[, <cause>])" with the
-    causes in the order not heard, expired, link down, no link state (round 2 of fork PR #897, the reviewer's
-    ruling: the reason names the down host). The expected text is this module's, not the reader's formatter."""
+    causes in the order not heard, expired, link down, no link state, listing unanswered (round 2 of fork PR #897,
+    the reviewer's ruling: the reason names the down host; round 3: the cached roster). The expected text is this
+    module's, not the reader's formatter."""
     return (False, None, "named-by-unreachable-host: " + ", ".join(sources))
 
 
 def NO_VOUCH(*sources):
     """The cannot-determine verdict when no source vouches for a sid's absence: the reason names every source in
-    the mirror, sorted by key, each with why it cannot vouch (not heard, expired, link down, or no link state: a
-    heard host the kernel never reported up, which vouches for presence alone), in the same hand-spelled form; a
-    mirror with no row at all reads "no source" (spelled at that site). Until the fifth commit of round 2 this
-    arm's token was no-reachable-host, which would lie when a reachable host exists whose link is unknown."""
+    the mirror, sorted by key, each with why it cannot vouch (not heard, expired, link down, no link state: a
+    heard host the kernel never reported up, which vouches for presence alone; or listing unanswered: a heard host
+    whose last exchange served a cached roster, which vouches for presence alone whatever its link, round 3), in
+    the same hand-spelled form; a mirror with no row at all reads "no source" (spelled at that site). Until the
+    fifth commit of round 2 this arm's token was no-reachable-host, which would lie when a reachable host exists
+    whose link is unknown."""
     return (False, None, "no-host-vouches-absence: " + ", ".join(sources))
 
 
@@ -139,22 +150,26 @@ def _mirror():
     return d / "remote-sids"
 
 
-def _row(sids, heard=True, expired=False, kind="peer", link_down=False, link_up=False):
+def _row(sids, heard=True, expired=False, kind="peer", link_down=False, link_up=False, answered=True):
     """One presence-source row as the bus writes it: the roster it last reported, whether the bus heard
     it in its current process, whether its presence expired, whether the kernel holds its link down (or
     has since it was heard), whether the kernel holds its link up and it was heard since the link last
-    dropped, and the writer's two flags the reader's verdict reads: `reachable`, heard and not expired and
-    not linkDown (it vouches for the presence of the sids it names), and `vouchesAbsence`, heard and not
-    expired and (linkUp, or a legacy heartbeat, which vouches by its TTL) (it vouches for the absence of a
-    sid it does not name). postal_service.py _remote_sids_document computes both; a fixture row restates
-    the rules so the reader is held to reading the flags, not recomputing them: a heard, unexpired,
-    link-down row is unreachable, and a heard, unexpired peer row with no link state (link_up False, the
-    default here: a host the kernel never reported up) is reachable and does not vouch for absence. A row
-    NOT heard can carry link_up True (the kernel's seed of a tunnel up at a restart, before any exchange):
-    it vouches for nothing, heard being the first condition of both flags."""
+    dropped, whether the roster is an ANSWERED listing (`answered`: the presenceAnswered the host's exchange
+    carried, False while its kernel listing did not answer and the exchange served the last answered rows;
+    True for a legacy heartbeat, its own answer; round 3 of fork PR #897), and the writer's two flags the
+    reader's verdict reads: `reachable`, heard and not expired and not linkDown (it vouches for the presence
+    of the sids it names), and `vouchesAbsence`, heard and not expired and answered and (linkUp, or a legacy
+    heartbeat, which vouches by its TTL) (it vouches for the absence of a sid it does not name).
+    postal_service.py _remote_sids_document computes both; a fixture row restates the rules so the reader is
+    held to reading the flags, not recomputing them: a heard, unexpired, link-down row is unreachable, a
+    heard, unexpired peer row with no link state (link_up False, the default here: a host the kernel never
+    reported up) is reachable and does not vouch for absence, and so is a heard, unexpired row with its link
+    up whose roster is a cache (answered False). A row NOT heard can carry link_up True (the kernel's seed of
+    a tunnel up at a restart, before any exchange): it vouches for nothing, heard being the first condition
+    of both flags."""
     return {"kind": kind, "sids": sorted(sids), "heard": heard, "expired": expired, "linkDown": link_down,
-            "linkUp": link_up, "reachable": heard and not expired and not link_down,
-            "vouchesAbsence": heard and not expired and (link_up or kind == "heartbeat"), "seenAt": NOW - 5}
+            "linkUp": link_up, "answered": answered, "reachable": heard and not expired and not link_down,
+            "vouchesAbsence": heard and not expired and answered and (link_up or kind == "heartbeat"), "seenAt": NOW - 5}
 
 
 def _bus_wrote(hosts):
@@ -356,6 +371,27 @@ class PresumedClosed(World):
                          "a carried host whose link the kernel seeded up: not heard, so it vouches for nothing and a sid it "
                          "does not name is cannot-determine (a reader gating rule 5 on linkUp answers rule 5 here)")
         self.assertEqual(self._verdict(DEAD), LOST(HOST + " (not heard)"), "...and the sid it names is held by its last word")
+        # a host heard with its link known up whose last exchange served a CACHED roster, its kernel listing not answering
+        # (round 3 of fork PR #897, the reviewer's ruling): the sids it names were live at its last answered listing, rule
+        # 4; a session started there since is in no roster, so it does not vouch for absence, and the reason says why
+        _bus_wrote({HOST: _row([DEAD], link_up=True, answered=False)})
+        self.assertEqual(self._verdict(DEAD), RULE_4, "the cached roster vouches for the presence of the sids it names")
+        self.assertEqual(self._verdict(REMOTE), NO_VOUCH(HOST + " (listing unanswered)"),
+                         "the only heard host served a cache: its link known up, it does not vouch for absence, and the "
+                         "reason says why (a reader gating rule 5 on linkUp, or on a writer that ignores the bit, answers "
+                         "rule 5 here: the false settle the reviewer's refuters found; 'no link state' would lie, the link "
+                         "is known up)")
+        _bus_wrote({HOST: _row([DEAD], link_up=False, answered=False)})
+        self.assertEqual(self._verdict(REMOTE), NO_VOUCH(HOST + " (no link state, listing unanswered)"),
+                         "both causes hold at once, in the fixed order")
+        _bus_wrote({HOST: _row([DEAD], link_up=True, answered=False), HOST2: _row([], link_up=True)})
+        self.assertEqual(self._verdict(REMOTE), RULE_5, "...beside a host with an answered listing and its link up: rule 5; "
+                         "the cached host is not a gate on the mirror")
+        self.assertEqual(self._verdict(DEAD), RULE_4, "...and the sid the cache names stays rule 4's")
+        _bus_wrote({HOST: _row([DEAD], heard=False, answered=False), HOST2: _row([], link_down=True, answered=False)})
+        self.assertEqual(self._verdict(REMOTE), NO_VOUCH(HOST + " (not heard)", HOST2 + " (link down)"),
+                         "a carried or a down row's bit is its last process's or predates the drop: not a cause beside not "
+                         "heard or link down, which say why the row cannot vouch")
         # no host vouches for absence at all (a bus that has heard nobody since it started): cannot determine
         _bus_wrote({HOST: _row([], heard=False), HOST2: _row([REMOTE], heard=False)})
         self.assertEqual(self._verdict(DEAD), NO_VOUCH(HOST + " (not heard)", HOST2 + " (not heard)"))
@@ -382,6 +418,11 @@ class PresumedClosed(World):
                                                           "reachable": True}}}))
         self.assertEqual(self._verdict(DEAD), UNPARSABLE, "a row without linkUp and vouchesAbsence is not the shape the "
                          "bus writes since round 2's fifth commit: never read as vouching for absence by reachable alone")
+        _mirror().write_text(json.dumps({"hosts": {HOST: {"sids": [], "heard": True, "expired": False, "linkDown": False,
+                                                          "linkUp": True, "reachable": True, "vouchesAbsence": True}}}))
+        self.assertEqual(self._verdict(DEAD), UNPARSABLE, "a row without `answered` (round 2's six-flag shape) is not the "
+                         "shape the bus writes since round 3's eleventh commit: never read as vouching for absence over a "
+                         "roster that may be a cache (a reader accepting six flags answers rule 5 here)")
         _mirror().write_text(json.dumps({"hosts": [DEAD]}))
         self.assertEqual(self._verdict(DEAD), UNPARSABLE)
         # no mirror file at all: cannot determine, conservative
@@ -453,7 +494,7 @@ class ReaderFollowsTheWriter(unittest.TestCase):
     reader (_presumed_closed) run in one fresh interpreter over one temp root, under each of the two
     root shapes the constants bind from (XDG_STATE_HOME, and ROMP_STATE_DIR, which outranks it), and the
     bus's document is read back and its rows asserted, so the fixtures' restatement of the shape
-    (_bus_wrote) is held to the writer here. Thirteen phases, in the order a bus lives them:
+    (_bus_wrote) is held to the writer here. Fourteen phases, in the order a bus lives them:
       first write   one live remote heartbeat; a sid nothing knows is presumed closed (rule 5), the
                     heartbeating one is not (rule 4);
       restart       a second bus process over the same root (a fresh module object: empty HEARTBEATS and
@@ -585,6 +626,24 @@ class ReaderFollowsTheWriter(unittest.TestCase):
                     carry drops it, and rule 5 presumes that session closed on the word of a hub that never heard of
                     it); the hub heard at last, naming the one that remains: the session that ended across the restart
                     is rule 5's by the hub's own current word, the event;
+      the cached roster  a heard host whose exchange served a CACHED roster vouches for presence alone (round 3 of fork
+                    PR #897, the reviewer's ruling; the road its refuters found by execution through the real handler and
+                    writer). While a host's kernel listing does not answer, its presence producer serves the last answered
+                    rows (the blink honesty of 2026-08-31), and until this round that cache rode the exchange with no sign
+                    of it. A tenth restart; the kernel seeds B's link up; B's request is built by the REAL builder
+                    (build_exchange_request) under this process's listing state and handed to the real handler as B's (one
+                    module plays both buses), so the sender's bit, the request builder, the handler's recorder and the
+                    writer are the product's: with B's listing answering, B vouches (rule 4 for its sid, rule 5 for a sid
+                    nothing names); with the listing not answering (the seam unset, the kernel route pointed at a loopback
+                    port nothing listens on), B's request serves the same rows marked unanswered (`presenceAnswered`
+                    False), and B's row is reachable, its link up, and does not vouch: its sid is rule 4's still, and a
+                    session started on B during the blink, in no roster, is cannot-determine, the reason naming B with its
+                    listing unanswered beside the carried rows (at the tenth commit B vouched for absence over the cache,
+                    and rule 5 presumed that session closed); B's next exchange with an answered listing, naming the
+                    session, is the event: rule 4 for it, rule 5 again for a sid nothing names. Then the dialer's half the
+                    same way: the real handler's response, built while this process's listing does not answer, folded by
+                    the real dialer's fold (peer_exchange_apply) as B's word carries the bit False and B vouches for
+                    presence alone; the response built once the listing answers releases it;
       legacy shape  the whitespace list a bus before 2026-09-22 wrote, at the bus's path: the reader
                     answers cannot-determine for the sid it does not name AND for the one it does, and
                     says once in the judge's log that the file is not the shape the bus writes; it is
@@ -640,7 +699,7 @@ class ReaderFollowsTheWriter(unittest.TestCase):
         out = subprocess.run([sys.executable, "-c", r"""
 import contextlib, io, json, os, sys, time
 (tests_dir, bin_dir, remote, remote2, dead, host_a, host_b, carried, other, alias, declared, far_sid, hub, gossiped, later,
- collided, ended, decl_named, spoke_kept, spoke_gone, hub_declared, spoke, spoke_declared, hub2, spoke_new) = sys.argv[1:26]
+ collided, ended, decl_named, spoke_kept, spoke_gone, hub_declared, spoke, spoke_declared, hub2, spoke_new, blinked) = sys.argv[1:27]
 sys.path.insert(0, tests_dir)
 from romp_load import load_source
 pm = load_source("romp_postal_oneroot", os.path.join(bin_dir, "romp-postal-service"))
@@ -688,7 +747,7 @@ def peer_phase():
     return {"hosts": hosts(), "carried": verdict(carried), "other": verdict(other), "nobody": verdict(dead)}
 def exchange(bus, host, sids, bus_id=""):          # one exchange landing: what peer_exchange_handle/apply record, then write
     bus.PEER_STATE[host] = {"presence": [{"id": s, "name": "api"} for s in sids], "epoch": 1, "holds": [],
-                            "seenAt": int(time.time())}
+                            "seenAt": int(time.time()), "presenceAnswered": True}   # the host's listing answered for the roster
     if bus_id:
         bus.PEER_STATE[host]["busId"] = bus_id
     bus._write_remote_sids()
@@ -709,7 +768,7 @@ exchange(pm3, host_a, [carried])
 out["carriedHeard"] = peer_phase()
 exchange(pm3, host_a, [])                          # A's next exchange no longer names the sid: it ended there
 out["carriedHostNamesNobody"] = peer_phase()
-def link_phase(extra=None):                        # the rows with their six flags, and the verdicts (the link held down phase and the alias road)
+def link_phase(extra=None):                        # the rows with the six flags the link phases pin (the seventh, answered, rides cache_phase), and the verdicts
     rows = None
     if bus_file.exists():
         text = bus_file.read_text()
@@ -744,7 +803,7 @@ with open(listing, "w") as f:                                  # response: answe
 os.environ["ROMP_SESSIONS_FILE"] = listing
 def far_dials_us(bus, sids):                       # the dialed side of one exchange, through the real handler
     req = {"host": declared, "epoch": 1, "proto": bus.PEER_PROTO, "busId": "bus-x", "holds": [], "relays": [],
-           "acks": [], "bounces": [], "wait": False, "presence": [{"id": s, "name": "api"} for s in sids]}
+           "acks": [], "bounces": [], "wait": False, "presence": [{"id": s, "name": "api"} for s in sids], "presenceAnswered": True}
     resp, status = bus.peer_exchange_handle(req)
     return status
 def alias_phase(bus):
@@ -755,7 +814,8 @@ out["aliasDeclared"] = alias_phase(pm5)            # filed under the declared na
 notify(pm5, alias, False)
 out["aliasDownBeforeFold"] = alias_phase(pm5)      # the alias down does not reach the declared row
 notify(pm5, alias, True)
-pm5.peer_exchange_apply(alias, {}, {"presence": [{"id": far_sid, "name": "api"}], "epoch": 1, "holds": [], "busId": "bus-x"})
+pm5.peer_exchange_apply(alias, {}, {"presence": [{"id": far_sid, "name": "api"}], "epoch": 1, "holds": [], "busId": "bus-x",
+                                    "presenceAnswered": True})
 out["aliasFolded"] = alias_phase(pm5)              # this bus's own dial landed under the alias: the fold
 notify(pm5, alias, False)
 out["aliasDownAfterFold"] = alias_phase(pm5)
@@ -765,10 +825,10 @@ out["aliasRedialStatus"] = far_dials_us(pm5, [far_sid])   # the far bus dials ag
 out["aliasUpHeard"] = alias_phase(pm5)
 # THE HUB'S WORD: a fifth restart; host B heard directly and held down, or carried, while a hub gossips a session started on B since
 pm6, out["restartMemory5"] = restarted("romp_postal_oneroot_restarted_fifth", pm5)
-def gossip(bus, sids, via_bus="bus-b", other=()):  # the hub's exchange landing: one hop of gossip about host B, stamped with B's bus id;
-    bus.PEER_STATE[hub] = {"presence": [{"id": s, "name": "api", "via": host_b, "viaBus": via_bus} for s in sids]   # `other`: sids on ANOTHER
-                           + [{"id": s, "name": "api", "via": host_b, "viaBus": "bus-other"} for s in other],       # machine the hub calls by B's name
-                           "epoch": 1, "holds": [], "seenAt": int(time.time())}
+def gossip(bus, sids, via_bus="bus-b", other=()):  # the hub's exchange landing: one hop of gossip about host B, stamped with B's bus id and
+    bus.PEER_STATE[hub] = {"presence": [{"id": s, "name": "api", "via": host_b, "viaBus": via_bus, "viaAnswered": True} for s in sids]   # B's answered
+                           + [{"id": s, "name": "api", "via": host_b, "viaBus": "bus-other", "viaAnswered": True} for s in other],       # bit; `other`: sids
+                           "epoch": 1, "holds": [], "seenAt": int(time.time()), "presenceAnswered": True}   # on ANOTHER machine the hub calls by B's name
     bus._write_remote_sids()
 def hub_phase():
     return link_phase({"gossiped": verdict(gossiped), "later": verdict(later), "collided": verdict(collided)})
@@ -833,16 +893,16 @@ out["gateHubHeard"] = names_phase(pm8)
 pm9, out["restartMemory8"] = restarted("romp_postal_oneroot_restarted_eighth", pm8)
 notify(pm9, host_b, True)
 notify(pm9, hub, True)
-def hub_gossip(b_sids, spoke_name, spoke_sids):
-    return ([{"id": s, "name": "api", "via": host_b, "viaBus": "bus-b2"} for s in b_sids]
-            + [{"id": s, "name": "api", "via": spoke_name, "viaBus": "bus-spoke"} for s in spoke_sids])
+def hub_gossip(b_sids, spoke_name, spoke_sids):     # the far hosts' answered bits, as the hub's builder stamps them
+    return ([{"id": s, "name": "api", "via": host_b, "viaBus": "bus-b2", "viaAnswered": True} for s in b_sids]
+            + [{"id": s, "name": "api", "via": spoke_name, "viaBus": "bus-spoke", "viaAnswered": True} for s in spoke_sids])
 def hub_dials_us(bus, b_sids, spoke_name, spoke_sids):     # the dialed side of one exchange, through the real handler
     req = {"host": hub_declared, "epoch": 1, "proto": bus.PEER_PROTO, "busId": "bus-hub", "holds": [], "relays": [],
-           "acks": [], "bounces": [], "wait": False, "presence": hub_gossip(b_sids, spoke_name, spoke_sids)}
+           "acks": [], "bounces": [], "wait": False, "presence": hub_gossip(b_sids, spoke_name, spoke_sids), "presenceAnswered": True}
     resp, status = bus.peer_exchange_handle(req)
     return status
 def our_dial_lands(bus, b_sids, spoke_name, spoke_sids):   # the dialer's half, through the real fold
-    bus.peer_exchange_apply(hub, {}, {"epoch": 1, "holds": [], "busId": "bus-hub",
+    bus.peer_exchange_apply(hub, {}, {"epoch": 1, "holds": [], "busId": "bus-hub", "presenceAnswered": True,
                                       "presence": hub_gossip(b_sids, spoke_name, spoke_sids)})
 out["namesDialStatus"] = hub_dials_us(pm9, [other, gossiped, decl_named], spoke_declared, [spoke_kept, spoke_gone])
 out["namesDeclared"] = names_phase(pm9)            # the hub under its declared name, no link state; B carried; the spoke under the hub's first name for it
@@ -865,8 +925,9 @@ def hubs_phase(bus):
     return link_phase({"spokeKept": verdict(spoke_kept), "spokeNew": verdict(spoke_new), "filed": sorted(bus.PEER_STATE),
                        "busIds": ids})
 def hub2_gossip(bus, spoke_sids):                  # the second hub's exchange landing through the real fold, its own bus id
-    bus.peer_exchange_apply(hub2, {}, {"epoch": 1, "holds": [], "busId": "bus-hub2",
-                                       "presence": [{"id": s, "name": "api", "via": spoke, "viaBus": "bus-spoke"} for s in spoke_sids]})
+    bus.peer_exchange_apply(hub2, {}, {"epoch": 1, "holds": [], "busId": "bus-hub2", "presenceAnswered": True,
+                                       "presence": [{"id": s, "name": "api", "via": spoke, "viaBus": "bus-spoke", "viaAnswered": True}
+                                                    for s in spoke_sids]})
 our_dial_lands(pm9, [other, gossiped], spoke, [spoke_kept, spoke_new])   # the hub's next exchange: a session started on the spoke since
 notify(pm9, hub2, True)
 hub2_gossip(pm9, [spoke_kept])                     # the second hub's roster of the spoke is older: it names the one it knows
@@ -882,6 +943,54 @@ hub2_gossip(pm10, [spoke_kept])                    # the second hub heard again,
 out["hubsSecondHeard"] = hubs_phase(pm10)
 our_dial_lands(pm10, [other, gossiped], spoke, [spoke_kept])   # the hub heard at last: spoke_new ended across the restart
 out["hubsFirstHeard"] = hubs_phase(pm10)
+# THE CACHED ROSTER: a tenth restart; B is heard with its link up, but its exchange served the last answered rows through a
+# kernel blink. One module plays both buses: B's request is built by the REAL builder under this process's listing state and
+# handed to the real handler as B's, so the sender's bit, the request builder, the handler's recorder and the writer are the
+# product's; then the real handler's response is folded by the real dialer's fold the same way
+pm11, out["restartMemory10"] = restarted("romp_postal_oneroot_restarted_tenth", pm10)
+pm11.KERNEL_BASE = "http://127.0.0.1:9"           # with the seam unset the listing fetch goes here, where nothing listens: unanswered
+def cache_phase(bus, payload):                     # the rows' answered bits, the payload's bit and rows, and the verdicts
+    answered = None
+    if bus_file.exists():
+        try:
+            answered = {k: r.get("answered") for k, r in json.loads(bus_file.read_text())["hosts"].items()}   # .get: a writer
+        except (ValueError, KeyError, TypeError):                                                              # without it fails a pin by None
+            answered = None
+    return link_phase({"blinked": verdict(blinked), "answered": answered, "filed": sorted(bus.PEER_STATE),
+                       "payloadAnswered": payload.get("presenceAnswered"),
+                       "payloadSids": sorted(a.get("id") for a in payload.get("presence") or [])})
+def listing_answers(sids):                         # B's kernel listing answers with these sessions (the seam)
+    with open(listing, "w") as f:
+        f.write(json.dumps([{"id": s, "name": "api"} for s in sids]))
+    os.environ["ROMP_SESSIONS_FILE"] = listing
+def listing_blinks():                              # B's kernel mid-restart: the listing does not answer
+    os.environ.pop("ROMP_SESSIONS_FILE", None)
+def b_dials_us(bus):                               # B's request, the real builder's under this process's listing, handed to the real handler as B's
+    req = bus.build_exchange_request(host_b, wait=False)
+    req["host"], req["busId"] = host_b, "bus-b2"
+    resp, status = bus.peer_exchange_handle(req)
+    return req, status
+notify(pm11, host_b, True)                         # the kernel's seed: B's link up, nothing heard yet
+listing_answers([other])
+req, out["cacheDialStatus"] = b_dials_us(pm11)
+out["cacheAnswered"] = cache_phase(pm11, req)      # B heard with its link up on an answered roster: it vouches
+listing_blinks()                                   # B's kernel restarts; a session (blinked) starts on B meanwhile, in no roster yet
+req, out["cacheBlinkDialStatus"] = b_dials_us(pm11)
+out["cacheBlink"] = cache_phase(pm11, req)         # B's exchange served the cache: presence alone
+listing_answers([other, blinked])                  # B's listing answers again, naming the session started during the blink
+req, status = b_dials_us(pm11)
+out["cacheAnswersAgain"] = cache_phase(pm11, req)  # the event
+def b_request(bus, sids):                          # a request of B's, answered, so the handler builds OUR response to it
+    return {"host": host_b, "epoch": 1, "proto": bus.PEER_PROTO, "busId": "bus-b2", "holds": [], "relays": [], "acks": [],
+            "bounces": [], "wait": False, "presence": [{"id": s, "name": "api"} for s in sids], "presenceAnswered": True}
+listing_blinks()                                   # this process's listing does not answer: the response it builds serves the cache
+resp, status = pm11.peer_exchange_handle(b_request(pm11, [other, blinked]))
+pm11.peer_exchange_apply(host_b, {}, resp)         # folded by the real dialer's fold as B's word (the same module plays B)
+out["cacheResponseBlink"] = cache_phase(pm11, resp)
+listing_answers([other, blinked])
+resp, status = pm11.peer_exchange_handle(b_request(pm11, [other, blinked]))
+pm11.peer_exchange_apply(host_b, {}, resp)
+out["cacheResponseAnswers"] = cache_phase(pm11, resp)
 bus_file.write_text(remote + "\n")                 # the shape a bus before 2026-09-22 wrote
 err = io.StringIO()
 with contextlib.redirect_stderr(err):
@@ -897,7 +1006,7 @@ out["oldPathText"] = old_path.read_text()
 out["controlOldPathOnly"] = ask(dead)
 print(json.dumps(out))
 """, HERE, BIN, REMOTE, REMOTE2, DEAD, HOST, HOST2, CARRIED, OTHER, ALIAS, DECLARED, FARSID, HUB, GOSSIPED, LATER, COLLIDED,
-                              ENDED, DECL_NAMED, SPOKE_KEPT, SPOKE_GONE, HUB_DECLARED, SPOKE, SPOKE_DECLARED, HUB2, SPOKE_NEW],
+                              ENDED, DECL_NAMED, SPOKE_KEPT, SPOKE_GONE, HUB_DECLARED, SPOKE, SPOKE_DECLARED, HUB2, SPOKE_NEW, BLINKED],
                              capture_output=True, text=True, env=full,
                              cwd=str(home), timeout=120)
         assert out.returncode == 0, "%s child failed: %s" % (shape, out.stderr[-2000:])
@@ -926,11 +1035,11 @@ print(json.dumps(out))
                 row = dict(got["firstRow"] or {})
                 self.assertIsInstance(row.pop("seenAt", None), int, "seenAt, the beat's time")
                 self.assertEqual(row, {"kind": "heartbeat", "sids": [REMOTE], "heard": True, "expired": False,
-                                       "linkDown": False, "linkUp": False, "reachable": True, "vouchesAbsence": True,
-                                       "name": "web"},
-                                 "the row's fields as the writer spells them, the six flags among them (a legacy heartbeat "
-                                 "has no link and vouches for absence by its TTL): the fixtures' _row restates every one, "
-                                 "and the reader requires the six")
+                                       "linkDown": False, "linkUp": False, "answered": True, "reachable": True,
+                                       "vouchesAbsence": True, "name": "web"},
+                                 "the row's fields as the writer spells them, the seven flags among them (a legacy heartbeat "
+                                 "has no link and vouches for absence by its TTL, and is its own answer): the fixtures' _row "
+                                 "restates every one, and the reader requires the seven")
 
     def test_rule_5_fires_for_a_sid_nothing_knows_once_the_bus_has_written(self):
         for shape, got in self.got.items():
@@ -1512,6 +1621,75 @@ print(json.dumps(out))
                 last = got["hubsFirstHeard"]
                 self.assertEqual(self._v(last, "spokeNew"), RULE_5, "the first hub's own current word is the event")
                 self.assertEqual(last["hosts"].get(VIA_SPOKE), L(True, False, False, True, True, True, [SPOKE_KEPT]))
+
+    def test_a_heard_link_up_host_whose_exchange_served_a_cache_vouches_for_presence_alone_until_an_exchange_answers(self):
+        """Round 3 of fork PR #897, the reviewer's ruling; the road its refuters found by execution through the real handler
+        and writer. B is heard with its link up, but its exchange served the last answered rows through a kernel blink: B
+        vouches for the presence of the sid it names (rule 4) and not for the absence of one it does not, so a session
+        started on B during the blink is cannot-determine, the reason naming B with its listing unanswered, never rule 5
+        (at the tenth commit B vouched for absence over the cache, and rule 5 presumed that session closed while its mail
+        rode the same exchange). B's next exchange with an answered listing is the event. Both halves: B's request built by
+        the real builder and recorded by the real handler, then the real handler's response folded by the real dialer's
+        fold. The verdicts are pinned first, then the payloads' bits and the rows."""
+        L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
+        # every row of the file on this road, sorted by key as the reason sorts them: the carried hosts and hubs, B, the two
+        # carried heartbeats, the hubs' carried words about the spoke (the hub's word about B folded at the ninth restart's end)
+        carried = (HOST + " (not heard)", ALIAS + " (not heard)", HUB + " (not heard)", HUB2 + " (not heard)")
+        beats = (self.HB + REMOTE + " (not heard, expired)", self.HB + REMOTE2 + " (not heard)")
+        vias = (VIA_SPOKE + " (not heard)", VIA_SPOKE2 + " (not heard)")
+        blink_reason = NO_VOUCH(*carried, HOST2 + " (listing unanswered)", *beats, *vias)
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                blink = got["cacheBlink"]
+                self.assertEqual(self._v(blink, "blinked"), blink_reason,
+                                 "THE RULE: a session started on B during the blink is in no roster while B's listing does not "
+                                 "answer, and B, its link known up, does not vouch for absence over a cache: cannot-determine, "
+                                 "the reason naming B with its listing unanswered beside the carried rows (at the tenth commit "
+                                 "this was rule 5, a live session presumed closed while its mail rode the same exchange)")
+                self.assertEqual(got["restartMemory10"], {"heartbeats": 0, "peers": 0, "links": 0, "freshObject": True},
+                                 "the tenth restart is a fresh module object, its memory and its link table empty")
+                self.assertEqual((got["cacheDialStatus"], got["cacheBlinkDialStatus"]), (200, 200), "both of B's dials were answered")
+                first = got["cacheAnswered"]
+                self.assertEqual((first["payloadAnswered"], first["payloadSids"]), (True, [OTHER]),
+                                 "the request builder rides the bit beside the rows: B's listing answered")
+                self.assertEqual((self._v(first, "other"), self._v(first, "nobody"), self._v(first, "blinked")), (RULE_4, RULE_5, RULE_5),
+                                 "B heard with its link up on an answered roster vouches: rule 4 for its sid, rule 5 for a sid nothing "
+                                 "names (the session that will start during the blink is not started yet)")
+                self.assertEqual((first["hosts"][HOST2], (first["answered"] or {}).get(HOST2)),
+                                 (L(True, False, False, True, True, True, [OTHER]), True))
+                self.assertEqual((blink["payloadAnswered"], blink["payloadSids"]), (False, [OTHER]),
+                                 "the blink: B's request serves the last answered rows AND marks them a cache (a builder riding "
+                                 "the rows alone leaves this side to read the cache as B's word about what runs there now)")
+                self.assertEqual(self._v(blink, "nobody"), blink_reason, "the same for a sid nothing names")
+                self.assertEqual(self._v(blink, "other"), RULE_4,
+                                 "the cached roster still vouches for the presence of the sid it names: live at the last answered listing")
+                self.assertEqual((blink["hosts"][HOST2], (blink["answered"] or {}).get(HOST2)),
+                                 (L(True, False, False, True, True, False, [OTHER]), False),
+                                 "heard, its link up, reachable, its roster unanswered: presence alone (a writer ignoring the bit "
+                                 "writes vouchesAbsence True here)")
+                self.assertEqual(blink["filed"], [HOST2], "B's row, under its name")
+                again = got["cacheAnswersAgain"]
+                self.assertEqual((again["payloadAnswered"], again["payloadSids"]), (True, sorted([OTHER, BLINKED])))
+                self.assertEqual((self._v(again, "blinked"), self._v(again, "other"), self._v(again, "nobody")), (RULE_4, RULE_4, RULE_5),
+                                 "the event: B's next exchange with an answered listing names the session, and a sid nothing names "
+                                 "is rule 5's again, on that write and nothing else")
+                self.assertEqual((again["hosts"][HOST2], (again["answered"] or {}).get(HOST2)),
+                                 (L(True, False, False, True, True, True, sorted([OTHER, BLINKED])), True))
+                # the dialer's half: the real handler's response, built while this process's listing does not answer, folded
+                # by the real dialer's fold as B's word
+                rblink = got["cacheResponseBlink"]
+                self.assertEqual((rblink["payloadAnswered"], rblink["payloadSids"]), (False, sorted([OTHER, BLINKED])),
+                                 "the response builder rides the bit too: the last answered rows, marked a cache")
+                self.assertEqual((self._v(rblink, "nobody"), self._v(rblink, "blinked"), self._v(rblink, "other")),
+                                 (blink_reason, RULE_4, RULE_4),
+                                 "recorded by the dialer's fold: B vouches for presence alone (a fold dropping the bit, or "
+                                 "defaulting it to answered, lets rule 5 fire here)")
+                self.assertEqual((rblink["hosts"][HOST2], (rblink["answered"] or {}).get(HOST2)),
+                                 (L(True, False, False, True, True, False, sorted([OTHER, BLINKED])), False))
+                ranswers = got["cacheResponseAnswers"]
+                self.assertEqual((ranswers["payloadAnswered"], self._v(ranswers, "nobody"), self._v(ranswers, "blinked")),
+                                 (True, RULE_5, RULE_4), "the response built once the listing answers releases it")
+                self.assertEqual((ranswers["answered"] or {}).get(HOST2), True)
 
     def test_a_mirror_of_the_legacy_shape_is_cannot_determine_and_said_once(self):
         for shape, got in self.got.items():
