@@ -1069,6 +1069,16 @@
 // file (mv, install, `ln -f`, `ln -sf`, the backtick spelling, a blank before the source, a text of blanks alone, the project root, a cwd in no
 // project and a script handed to a shell alike); the word under way ends at the blank only when it holds text or an explicit null, the fields every
 // shell makes. Every row is pinned with its writers in tools/romp-track-bash-guard.test.mjs (round 7, seventeenth commit).
+// ROUND 7 OF FORK PR #780 REVIEW, EIGHTEENTH COMMIT (2026-09-23; the reviewer's verifier on the seventeenth commit, extra6-2's class widened): THE
+// WORD'S OWN STATE (placeReading's text road). The seventeenth commit ended the word under way at a resolved substitution's leading blank when raw
+// differed from the substitution's spelling, and raw kept the spelling of an earlier substitution that had made no field (an empty text, a text of
+// blanks alone, a text ending in a blank), since the main loop's blank ends a word only when one is under way and nothing had cleared the word; so
+// `cp ../base/report.md $(echo '')$(echo ' report.md')`, `cp ../base/report.md $(echo ' ') $(echo ' report.md')` and `cp $(echo '../base/report.md ')
+// $(echo ' report.md')` from docs/ read as three-operand copies and were allowed while bash, zsh and dash copied onto the tracked file (mv, install,
+// `ln -f`, `ln -sf`, `$(printf '')`, `$(echo -n '')`, the backtick spelling, the source position, the project root and a cwd in no project alike, 60
+// rows). Whether the word holds something before the substitution is now read from the word itself (text, or a spelling before the substitution's
+// own: an explicit null's quotes, an expansion the resolver did not read), and a substitution that leaves nothing held clears the word whole, raw
+// included, so the next word starts clean. Every row is pinned with its writers in tools/romp-track-bash-guard.test.mjs (round 7, eighteenth commit).
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -1960,11 +1970,24 @@ export function lex(command, shell = null, opts = {}) {
     // ' a')` is `x` and `a`, two fields in every shell) or an explicit null before the substitution (`""$(echo ' a')` is the null and `a`, two fields
     // in every shell, measured; raw then carries the quotes before the spelling). A bare substitution, or one after an escaped newline, which
     // leaves nothing in raw, pushes no word for the leading part; a trailing blank was already dropped by the check after the loop.
+    // THE WORD'S OWN STATE (round 7 of fork PR #780 review, eighteenth commit; the reviewer's verifier on the seventeenth: `cp ../base/report.md
+    // $(echo '')$(echo ' report.md')`, `cp ../base/report.md $(echo ' ') $(echo ' report.md')` and `cp $(echo '../base/report.md ') $(echo ' report.md')`
+    // from docs/ were allowed while bash, zsh and dash copied onto the tracked file, with mv, install, `ln -f`, `ln -sf`, `$(printf '')`, `$(echo -n '')`,
+    // the backtick spelling, the source position, the project root and a cwd in no project alike, 60 rows; each is one field in every shell, measured):
+    // whether the word holds something before this substitution is read from the word itself, `heldBefore`: text in buf, or a spelling in raw BEFORE the
+    // substitution's own (an explicit null's quotes, an expansion the resolver did not read). The seventeenth commit compared raw with the spelling, and
+    // raw kept an earlier substitution's spelling when that substitution left no field (an empty text, a text of blanks alone, a text ending in a blank):
+    // the main loop's blank ends a word only when one is under way, and nothing had cleared the word, so the leading blank ended a word that held nothing,
+    // an empty word before the target's first field. A substitution that leaves nothing held now clears the word whole, raw included, so the next
+    // substitution and the next word start clean (`cp a $(echo ' ') b` gives b the raw `b`). A raw the spelling does not end (never seen) reads as held,
+    // the side that pushes a word for the guard to judge.
+    const before = raw.endsWith(spelling) ? raw.slice(0, raw.length - spelling.length) : null;
+    const heldBefore = buf !== '' || before !== '';
     parts.forEach((part, k) => {
-      if (k > 0) { if (buf || raw !== spelling) endWord(); raw = spelling; }
+      if (k > 0) { if (buf !== '' || heldBefore) endWord(); raw = spelling; }
       if (part) { inWord = true; buf += part; marks += 'e'.repeat(part.length); }
     });
-    if (!buf && raw === spelling) inWord = false;   // an empty result alone makes no word, as in the shells
+    if (buf === '' && (parts.length > 1 || !heldBefore)) { inWord = false; raw = ''; }   // nothing held: no word, as in the shells, and no spelling carried into the next word
     return true;
   };
   const resolvedSub = (spelling, inner) => {

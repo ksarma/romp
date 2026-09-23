@@ -10309,7 +10309,191 @@ test("round 7, seventeenth commit, the rows: a brace list beside a spliced print
     const hook = fs.readFileSync(HOOK, 'utf8');
     assert.ok(!hook.includes('const spliceRaw'), 'the head splice has no renderer of its own (behaviour: S17-hs-* above)');
     assert.ok(hook.includes('const before = renderWords(s.words.slice(0, headIdx));') && hook.includes('const before = renderWords(seg.words.slice(0, at));'), 'both splices build from the words through the one renderer (behaviour: S17-sp-*, S17-hs-* above)');
-    assert.ok(hook.includes('if (k > 0) { if (buf || raw !== spelling) endWord(); raw = spelling; }'), 'the text road ends the word under way only when it holds text or an explicit null (behaviour: S17-lb-* above)');
+    assert.ok(hook.includes("if (k > 0) { if (buf !== '' || heldBefore) endWord(); raw = spelling; }"), 'the text road ends the word under way only when the word holds something before the substitution, text or an explicit null, read from the word itself (the eighteenth commit\'s heldBefore; behaviour: S17-lb-* above and S18-lb-* in the next test)');
     assert.equal((hook.match(/\.raw\)\.join\(' '\)/g) || []).length, 0, 'no spelling is a join of raws (behaviour: S17-sp-rider-* above)');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+test("round 7, eighteenth commit, the rows: a resolved substitution that leaves no field (an empty text, blanks alone, a text ending in a blank) before one whose text opens with a blank leaves nothing held, so the leading blank makes no empty word and the copy has two operands (cp, mv, install, ln -f, ln -sf, both spellings, the source position, the project root, a cwd in no project, a script handed to a shell); the explicit null and the text before it stay the fields every shell makes; the literal newline and tab and the source position of the seventeenth commit's class for every copier and cwd; each with the shells that write", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const BZ = ['bash', 'zsh'];
+    const N = [];
+    const SRC = '../base/report.md';
+    // [id, cwd, command, the shells that write, the verdict ('name' or 'allow'), the verdict from a cwd in no project ('allow' unless given; null: the row's cwd is that cwd)]
+    const rows = [
+      // THE WORD'S OWN STATE: an empty text glued before the leading blank, the target position, every copier (allowed at the round-5 head and at the
+      // seventeenth commit while bash, zsh and dash copied onto the tracked file: the earlier substitution's spelling stayed in raw and the leading blank
+      // ended a word that held nothing)
+      ['S18-lb-empty-glue-cp', 'nad', `cp ${SRC} $(echo '')$(echo ' report.md')`, A, 'name'],
+      ['S18-lb-empty-glue-mv', 'nad', `mv ${SRC} $(echo '')$(echo ' report.md')`, A, 'name'],
+      ['S18-lb-empty-glue-install', 'nad', `install ${SRC} $(echo '')$(echo ' report.md')`, A, 'name'],
+      ['S18-lb-empty-glue-ln-f', 'nad', `ln -f ${SRC} $(echo '')$(echo ' report.md')`, A, 'name'],
+      ['S18-lb-empty-glue-ln-sf', 'nad', `ln -sf ${SRC} $(echo '')$(echo ' report.md')`, A, 'name'],
+      // an empty text as the operand before it
+      ['S18-lb-empty-sep-cp', 'nad', `cp ${SRC} $(echo '') $(echo ' report.md')`, A, 'name'],
+      ['S18-lb-empty-sep-mv', 'nad', `mv ${SRC} $(echo '') $(echo ' report.md')`, A, 'name'],
+      ['S18-lb-empty-sep-install', 'nad', `install ${SRC} $(echo '') $(echo ' report.md')`, A, 'name'],
+      ['S18-lb-empty-sep-ln-f', 'nad', `ln -f ${SRC} $(echo '') $(echo ' report.md')`, A, 'name'],
+      ['S18-lb-empty-sep-ln-sf', 'nad', `ln -sf ${SRC} $(echo '') $(echo ' report.md')`, A, 'name'],
+      // a text of blanks alone as the operand before it
+      ['S18-lb-blankonly-sep-cp', 'nad', `cp ${SRC} $(echo ' ') $(echo ' report.md')`, A, 'name'],
+      ['S18-lb-blankonly-sep-mv', 'nad', `mv ${SRC} $(echo ' ') $(echo ' report.md')`, A, 'name'],
+      ['S18-lb-blankonly-sep-install', 'nad', `install ${SRC} $(echo ' ') $(echo ' report.md')`, A, 'name'],
+      ['S18-lb-blankonly-sep-ln-f', 'nad', `ln -f ${SRC} $(echo ' ') $(echo ' report.md')`, A, 'name'],
+      ['S18-lb-blankonly-sep-ln-sf', 'nad', `ln -sf ${SRC} $(echo ' ') $(echo ' report.md')`, A, 'name'],
+      // a text of blanks alone glued
+      ['S18-lb-blankonly-glue-cp', 'nad', `cp ${SRC} $(echo ' ')$(echo ' report.md')`, A, 'name'],
+      ['S18-lb-blankonly-glue-mv', 'nad', `mv ${SRC} $(echo ' ')$(echo ' report.md')`, A, 'name'],
+      // a source whose text ends in a blank, then the target
+      ['S18-lb-trailing-src-sep-cp', 'nad', `cp $(echo '${SRC} ') $(echo ' report.md')`, A, 'name'],
+      ['S18-lb-trailing-src-sep-mv', 'nad', `mv $(echo '${SRC} ') $(echo ' report.md')`, A, 'name'],
+      ['S18-lb-trailing-src-sep-install', 'nad', `install $(echo '${SRC} ') $(echo ' report.md')`, A, 'name'],
+      ['S18-lb-trailing-src-sep-ln-f', 'nad', `ln -f $(echo '${SRC} ') $(echo ' report.md')`, A, 'name'],
+      // the producers of the empty text and of the blank
+      ['S18-lb-printf-empty-glue', 'nad', `cp ${SRC} $(printf '')$(echo ' report.md')`, A, 'name'],
+      ['S18-lb-printf-empty-sep', 'nad', `cp ${SRC} $(printf '') $(echo ' report.md')`, A, 'name'],
+      ['S18-lb-echo-n-empty-glue', 'nad', `cp ${SRC} $(echo -n '')$(echo ' report.md')`, A, 'name'],
+      ['S18-lb-echo-n-empty-sep', 'nad', `cp ${SRC} $(echo -n '') $(echo ' report.md')`, A, 'name'],
+      ['S18-lb-printf-blank-sep', 'nad', `cp ${SRC} $(printf ' ') $(echo ' report.md')`, A, 'name'],
+      ['S18-lb-printf-blank-glue', 'nad', `cp ${SRC} $(printf ' ')$(printf ' report.md')`, A, 'name'],
+      // the backtick spelling, and the two spellings mixed
+      ['S18-lb-backtick-empty-glue', 'nad', "cp ../base/report.md `echo ''``echo ' report.md'`", A, 'name'],
+      ['S18-lb-backtick-empty-sep', 'nad', "cp ../base/report.md `echo ''` `echo ' report.md'`", A, 'name'],
+      ['S18-lb-backtick-blankonly-sep', 'nad', "cp ../base/report.md `echo ' '` `echo ' report.md'`", A, 'name'],
+      ['S18-lb-backtick-blankonly-sep-mv', 'nad', "mv ../base/report.md `echo ' '` `echo ' report.md'`", A, 'name'],
+      ['S18-lb-backtick-then-dollar', 'nad', "cp ../base/report.md `echo ''`$(echo ' report.md')", A, 'name'],
+      ['S18-lb-dollar-then-backtick', 'nad', "cp ../base/report.md $(echo '')`echo ' report.md'`", A, 'name'],
+      // the project root and a cwd in no project (absolute paths)
+      ['S18-lb-empty-glue-root', 'na', `cp base/report.md $(echo '')$(echo ' docs/report.md')`, A, 'name'],
+      ['S18-lb-empty-sep-root-mv', 'na', `mv base/report.md $(echo '') $(echo ' docs/report.md')`, A, 'name'],
+      ['S18-lb-blankonly-sep-root', 'na', `cp base/report.md $(echo ' ') $(echo ' docs/report.md')`, A, 'name'],
+      ['S18-lb-trailing-src-sep-root-install', 'na', `install $(echo 'base/report.md ') $(echo ' docs/report.md')`, A, 'name'],
+      ['S18-lb-empty-glue-out', 'out', `cp {NA}/base/report.md $(echo '')$(echo ' {NA}/docs/report.md')`, A, 'name', null],
+      ['S18-lb-empty-sep-out-mv', 'out', `mv {NA}/base/report.md $(echo '') $(echo ' {NA}/docs/report.md')`, A, 'name', null],
+      ['S18-lb-blankonly-sep-out', 'out', `cp {NA}/base/report.md $(echo ' ') $(echo ' {NA}/docs/report.md')`, A, 'name', null],
+      ['S18-lb-trailing-src-sep-out-ln-f', 'out', `ln -f $(echo '{NA}/base/report.md ') $(echo ' {NA}/docs/report.md')`, A, 'name', null],
+      ['S18-lb-backtick-blankonly-sep-out', 'out', "cp {NA}/base/report.md `echo ' '` `echo ' {NA}/docs/report.md'`", A, 'name', null],
+      // the source position
+      ['S18-lb-src-empty-glue', 'nad', `cp $(echo '')$(echo ' ${SRC}') report.md`, A, 'name'],
+      ['S18-lb-src-empty-sep', 'nad', `cp $(echo '') $(echo ' ${SRC}') report.md`, A, 'name'],
+      ['S18-lb-src-blankonly-sep', 'nad', `cp $(echo ' ') $(echo ' ${SRC}') report.md`, A, 'name'],
+      ['S18-lb-src-empty-glue-mv', 'nad', `mv $(echo '')$(echo ' ${SRC}') report.md`, A, 'name'],
+      ['S18-lb-src-blankonly-sep-install', 'nad', `install $(echo ' ') $(echo ' ${SRC}') report.md`, A, 'name'],
+      ['S18-lb-src-empty-glue-backtick', 'nad', "cp `echo ''``echo ' ../base/report.md'` report.md", A, 'name'],
+      ['S18-lb-src-empty-glue-root', 'na', `cp $(echo '')$(echo ' base/report.md') docs/report.md`, A, 'name'],
+      ['S18-lb-src-empty-glue-out', 'out', `cp $(echo '')$(echo ' {NA}/base/report.md') {NA}/docs/report.md`, A, 'name', null],
+      // the line as a script handed to a shell
+      ['S18-lb-script-bash-empty-glue', 'nad', `bash -c "cp ${SRC} \\$(echo '')\\$(echo ' report.md')"`, A, 'name'],
+      ['S18-lb-script-sh-blankonly-sep', 'nad', `sh -c "cp ${SRC} \\$(echo ' ') \\$(echo ' report.md')"`, A, 'name'],
+      ['S18-lb-script-zsh-empty-sep', 'nad', `zsh -c "cp ${SRC} \\$(echo '') \\$(echo ' report.md')"`, A, 'name'],
+      // chains, both operands, a new file under the tracked notes/, another project, a literal newline after the empty text
+      ['S18-lb-two-empties-glue', 'nad', `cp ${SRC} $(echo '')$(echo '')$(echo ' report.md')`, A, 'name'],
+      ['S18-lb-blank-empty-blank-sep', 'nad', `cp ${SRC} $(echo ' ') $(echo '') $(echo ' report.md')`, A, 'name'],
+      ['S18-lb-empty-glue-two-blanks', 'nad', `cp ${SRC} $(echo '')$(echo '  report.md')`, A, 'name'],
+      ['S18-lb-empty-glue-both-operands', 'nad', `cp $(echo '')$(echo ' ${SRC}') $(echo '')$(echo ' report.md')`, A, 'name'],
+      ['S18-lb-empty-glue-notes-new', 'na', `cp base/report.md $(echo '')$(echo ' notes/n2.md')`, A, 'name'],
+      ['S18-lb-empty-glue-other-project', 'out', `cp {WEB}/base/report.md $(echo '')$(echo ' {WEB}/docs/report.md')`, A, 'name', null],
+      ['S18-lb-newline-empty-glue', 'nad', `cp ${SRC} $(echo '')$(echo '\nreport.md')`, A, 'name'],
+      // a held source glued to a text ending in a blank, then the target: the source's word ends at the trailing blank and nothing stays under way, so
+      // the spelling is not carried into the target's word (the reset's second clause; the rows a reset without it would allow)
+      ['S18-lb-held-trailing-glue-then-blank', 'nad', `cp ${SRC}$(echo ' ') $(echo ' report.md')`, A, 'name'],
+      ['S18-lb-held-trailing-glue-then-blank-mv', 'nad', `mv ${SRC}$(echo ' ') $(echo ' report.md')`, A, 'name'],
+      ['S18-lb-held-trailing-glue-then-blank-root', 'na', `cp base/report.md$(echo ' ') $(echo ' docs/report.md')`, A, 'name'],
+      // the twins that keep the field every shell makes: an explicit null (a quote pair, a double-quoted empty substitution) or text before the empty
+      // text is held, so the copy has three operands and lands in a directory named report.md, which no shell has; allowed, no shell writes
+      ['S18-lb-twin-null-empty-glue', 'nad', `cp ${SRC} ""$(echo '')$(echo ' report.md')`, N, 'allow'],
+      ['S18-lb-twin-dq-empty-glue', 'nad', `cp ${SRC} "$(echo '')"$(echo ' report.md')`, N, 'allow'],
+      ['S18-lb-twin-single-null-blankonly-glue', 'nad', `cp ${SRC} ''$(echo ' ')$(echo ' report.md')`, N, 'allow'],
+      ['S18-lb-twin-text-after-empty', 'nad', `cp ${SRC} $(echo '')x$(echo ' report.md')`, N, 'allow'],
+      ['S18-lb-twin-text-trailing-sep', 'nad', `cp ${SRC} $(echo 'x ') $(echo ' report.md')`, N, 'allow'],
+      // controls: a `$(true)` is no resolved text and is judged as the operand the shell drops (refused by name before and after); an empty text before a
+      // plain target was refused before and after; a plain text after the empty text is one field; an untracked target stays allowed; the redirection
+      // target takes THE SPLIT TARGET's road (dash splits no target); an empty text alone leaves cp one operand; a double-quoted target is one word
+      // naming an untracked file; one substitution whose text holds a blank between two fields is two words
+      ['S18-lb-ctl-true-sep', 'nad', `cp ${SRC} $(true) $(echo ' report.md')`, A, 'name'],
+      ['S18-lb-ctl-true-glue', 'nad', `cp ${SRC} $(true)$(echo ' report.md')`, A, 'name'],
+      ['S18-lb-ctl-empty-then-plain', 'nad', `cp ${SRC} $(echo '') report.md`, A, 'name'],
+      ['S18-lb-ctl-empty-glue-plain', 'nad', `cp ${SRC} $(echo '')$(echo 'report.md')`, A, 'name'],
+      ['S18-lb-ctl-empty-glue-untracked', 'nad', `cp ${SRC} $(echo '')$(echo ' ../scratch/other.md')`, N, 'allow'],
+      ['S18-lb-ctl-redirect-empty-glue', 'nad', `printf x > $(echo '')$(echo ' report.md')`, BZ, 'name'],
+      ['S18-lb-ctl-empty-alone', 'nad', `cp ${SRC} $(echo '')`, N, 'allow'],
+      ['S18-lb-ctl-empty-glue-dq-target', 'nad', `cp ${SRC} $(echo '')"$(echo ' report.md')"`, N, 'allow'],
+      ['S18-lb-ctl-one-sub-two-fields', 'nad', `cp $(echo '${SRC} report.md')`, A, 'name'],
+      ['S18-lb-ctl-held-then-trailing-blank', 'nad', `cp ${SRC}$(echo ' ') report.md`, A, 'name'],   // the held source ends at the trailing blank and nothing stays under way, so the next blank pushes no empty word (the reset's second clause)
+      // the seventeenth commit's class, widened as the reviewer asked: a literal newline or tab opening the text (the split is over blank, tab and
+      // newline), and the source position for every copier, the backtick spelling, the project root and a cwd in no project; refused since that commit
+      ['S18-lb-newline-cp', 'nad', `cp ${SRC} $(echo '\nreport.md')`, A, 'name'],
+      ['S18-lb-tab-cp', 'nad', `cp ${SRC} $(echo '\treport.md')`, A, 'name'],
+      ['S18-lb-newline-mv', 'nad', `mv ${SRC} $(echo '\nreport.md')`, A, 'name'],
+      ['S18-lb-tab-install', 'nad', `install ${SRC} $(echo '\treport.md')`, A, 'name'],
+      ['S18-lb-newline-ln-f', 'nad', `ln -f ${SRC} $(echo '\nreport.md')`, A, 'name'],
+      ['S18-lb-tab-ln-sf', 'nad', `ln -sf ${SRC} $(echo '\treport.md')`, A, 'name'],
+      ['S18-lb-newline-src-cp', 'nad', `cp $(echo '\n${SRC}') report.md`, A, 'name'],
+      ['S18-lb-tab-src-mv', 'nad', `mv $(echo '\t${SRC}') report.md`, A, 'name'],
+      ['S18-lb-tab-backtick-cp', 'nad', "cp ../base/report.md `echo '\treport.md'`", A, 'name'],
+      ['S18-lb-newline-root', 'na', `cp base/report.md $(echo '\ndocs/report.md')`, A, 'name'],
+      ['S18-lb-tab-out', 'out', `cp {NA}/base/report.md $(echo '\t{NA}/docs/report.md')`, A, 'name', null],
+      ['S18-lb-source-mv', 'nad', `mv $(echo ' ${SRC}') report.md`, A, 'name'],
+      ['S18-lb-source-install', 'nad', `install $(echo ' ${SRC}') report.md`, A, 'name'],
+      ['S18-lb-source-ln-f', 'nad', `ln -f $(echo ' ${SRC}') report.md`, A, 'name'],
+      ['S18-lb-source-ln-sf', 'nad', `ln -sf $(echo ' ${SRC}') report.md`, A, 'name'],
+      ['S18-lb-source-backtick', 'nad', "cp `echo ' ../base/report.md'` report.md", A, 'name'],
+      ['S18-lb-source-root', 'na', `cp $(echo ' base/report.md') docs/report.md`, A, 'name'],
+      ['S18-lb-source-out', 'out', `cp $(echo ' {NA}/base/report.md') {NA}/docs/report.md`, A, 'name', null],
+    ];
+    const judge = (id, cwd, raw, writers, expect, outside = 'allow') => {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      w.build();
+      const h = w.hook(cmd, at);
+      assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error: ${h.reason.split('\n')[0]}`);
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+      }
+      if (outside != null) {
+        w.build();
+        const o = w.hook(cmd, w.cwds.out);
+        assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
+      }
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    };
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect, outside] of rows) { judge(id, cwd, raw, writers, expect, outside); n++; }
+    assert.equal(n, 96);
+    // the mechanism in-process: the words the lexer makes, and the raw of the word after a substitution that left no field
+    const words = (s) => lex(s).segments[0].words;
+    const texts = (s) => words(s).map((x) => x.text);
+    assert.deepEqual(texts("cp a $(echo '')$(echo ' report.md')"), ['cp', 'a', 'report.md'], "THE WORD'S OWN STATE: an empty text glued before the leading blank leaves nothing held, so no empty word (behaviour: S18-lb-empty-glue-cp)");
+    assert.deepEqual(texts("cp a $(echo ' ') $(echo ' report.md')"), ['cp', 'a', 'report.md'], 'a text of blanks alone as the operand before it (behaviour: S18-lb-blankonly-sep-cp)');
+    assert.deepEqual(texts("cp a $(echo '') $(echo ' report.md')"), ['cp', 'a', 'report.md'], 'an empty text as the operand before it (behaviour: S18-lb-empty-sep-cp)');
+    assert.deepEqual(texts("cp $(echo 'a ') $(echo ' report.md')"), ['cp', 'a', 'report.md'], 'a text ending in a blank, then the leading blank (behaviour: S18-lb-trailing-src-sep-cp)');
+    assert.deepEqual(texts("cp a $(echo '')$(echo '')$(echo ' report.md')"), ['cp', 'a', 'report.md'], 'two empty texts (behaviour: S18-lb-two-empties-glue)');
+    assert.deepEqual(texts("cp a $(printf '')$(echo ' report.md')"), ['cp', 'a', 'report.md'], 'printf as the producer (behaviour: S18-lb-printf-empty-glue)');
+    assert.deepEqual(texts("cp a `echo ''``echo ' report.md'`"), ['cp', 'a', 'report.md'], 'the backtick spelling (behaviour: S18-lb-backtick-empty-glue)');
+    assert.equal(words("cp a $(echo ' ') b")[2].raw, 'b', "the next word starts clean, no spelling carried from a substitution that left no field (the seventeenth commit's observed stale raw)");
+    assert.equal(words("cp a $(echo '')$(echo ' report.md')")[2].raw, "$(echo ' report.md')", 'the word after an empty text carries its own spelling alone');
+    assert.deepEqual(texts("cp a \"\"$(echo '')$(echo ' report.md')"), ['cp', 'a', '', 'report.md'], 'an explicit null before the empty text is held: the field every shell makes (behaviour: S18-lb-twin-null-empty-glue)');
+    assert.deepEqual(texts("cp a \"$(echo '')\"$(echo ' report.md')"), ['cp', 'a', '', 'report.md'], 'a double-quoted empty substitution is an explicit null (behaviour: S18-lb-twin-dq-empty-glue)');
+    assert.deepEqual(texts("cp a $(echo 'x ') $(echo ' report.md')"), ['cp', 'a', 'x', 'report.md'], 'a real field before the trailing blank stays (behaviour: S18-lb-twin-text-trailing-sep)');
+    assert.deepEqual(texts("cp a $(echo '')x$(echo ' report.md')"), ['cp', 'a', 'x', 'report.md'], 'text after the empty text is held (behaviour: S18-lb-twin-text-after-empty)');
+    assert.deepEqual(texts("cp a $(echo '')"), ['cp', 'a'], 'an empty text alone makes no word (behaviour: S18-lb-ctl-empty-alone)');
+    assert.deepEqual(texts("cp a $(echo ' a b ') c"), ['cp', 'a', 'a', 'b', 'c'], 'the fields between blanks are words, the ends none (behaviour: S18-lb-ctl-one-sub-two-fields)');
+    assert.deepEqual(texts("cp ../base/report.md$(echo ' ') report.md"), ['cp', '../base/report.md', 'report.md'], 'a held word ending at a trailing blank leaves nothing under way, so the next blank pushes no empty word (behaviour: S18-lb-ctl-held-then-trailing-blank)');
+    assert.deepEqual(texts("cp ../base/report.md$(echo ' ') $(echo ' report.md')"), ['cp', '../base/report.md', 'report.md'], 'and carries no spelling into the next substitution, which then holds nothing before its leading blank (behaviour: S18-lb-held-trailing-glue-then-blank)');
+    assert.equal(words("cp x$(echo ' ') b")[2].raw, 'b', 'the word after a held word that ended at a trailing blank starts clean too');
+    // where the code lives (the rows above prove what it does)
+    const hook = fs.readFileSync(HOOK, 'utf8');
+    assert.ok(hook.includes("const heldBefore = buf !== '' || before !== '';") && hook.includes("if (k > 0) { if (buf !== '' || heldBefore) endWord(); raw = spelling; }"), 'the text road ends the word under way when the word holds something before the substitution, read from the word itself (behaviour: S18-lb-* above)');
+    assert.ok(hook.includes("if (buf === '' && (parts.length > 1 || !heldBefore)) { inWord = false; raw = ''; }"), 'a substitution that leaves nothing held clears the word whole, raw included (behaviour: S18-lb-empty-glue-*, and the raw pin above)');
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
