@@ -10100,3 +10100,216 @@ test("round 6, fifteenth commit, the runner's shape reproduced: the escape reade
     console.log(`# on the runner's shape, the residual table: ${m[1]} rows, ${m[2]} measured, ${m[4]} not run for a program the shape lacks, ${m[5]} for a refusing program (${refusals.map((l) => l.match(/the residual table's (\S+)/)[1]).join(', ')})`);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+
+// ── round 7 of fork PR #780 review, seventeenth commit (2026-09-23): the reviewer's correctness-1, correctness-2 and extra6-2 ─────────
+//
+// Three readings the resolver made and got wrong, each an allow while the shells wrote, each closed at its mechanism and pinned by execution:
+// every row runs through the hook as a process from the row's cwd (and, for a relative row, from a cwd in no project) and unguarded in bash,
+// zsh and dash over a fresh world, the writers pinned, with the twins that were refused before and the controls that stay allowed with no
+// shell writing. THE SPLICE RENDERER: the spliced printer built its re-lexed text by joining the words' raws, so a brace list among the
+// operands (one word per alternative, every alternative spelled as the list) was re-expanded once per alternative and the printed copy read
+// as an operand list too long to be a write; the head splice single-quoted every literal word whose raw differed from its text, a prefix
+// assignment included, so `X="a" $c ..` was spliced as a command named `X=a`. One renderer serves both now (renderWord, renderWords), keyed
+// on a word's text and marks. THE BRACE GROUP (the refuters' rider): a reason's spelling doubled a brace list the same way; the alternatives
+// of one list share an id and a spelling names the list once. THE LEADING BLANK (extra6-2, reproduced by the owner as the reviewer ruled): a
+// resolved substitution whose text opens with a blank ended the word under way even when nothing was under way, so an empty word stood
+// before the first field and a two-operand copy read as a copy into a directory; the word under way ends at the blank only when it holds
+// text or an explicit null, the fields every shell makes.
+test("round 7, seventeenth commit, the rows: a brace list beside a spliced printer is one word per alternative in the re-lexed text (the regression against the round-5 head, and the consumer roads), a prefix assignment before a head the roads splice keeps its name outside the quotes (declare, local, a script handed to a shell, eval, a substituted value, an alias, a hashed name, a bound path), a reason's spelling names a brace list once, and a resolved substitution's leading blank makes no empty word before the first field (cp, mv, install, ln, the backtick spelling, the project root, a cwd in no project, a script handed to a shell); each with the shells that write, the twins refused before and the controls that stay allowed", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const BZ = ['bash', 'zsh'];
+    const ZD = ['zsh', 'dash'];
+    const B = ['bash'];
+    const D = ['dash'];
+    const N = [];
+    const CP = 'cp ../base/report.md report.md';
+    const OPS = '../base/report.md report.md';
+    const LIST = '{cp,../base/report.md,report.md}';
+    const COULD_NOT = 'could not establish that text';
+    const NOT_LITERAL = 'not a literal path';
+    // [id, cwd, command, the shells that write, the verdict ('name', 'allow', or ['text', substring the reason holds, substring it must not hold]), the verdict from a cwd in no project ('allow' unless given; null: the row's cwd is that cwd)]
+    const rows = [
+      // THE SPLICE RENDERER at the spliced printer: the five rows the round-5 head refused by name and the round-6 head allowed while every shell ran the printed copy
+      ['S17-sp-brace-all', 'nad', `e=echo; $e ${LIST} | bash`, A, 'name'],
+      ['S17-sp-brace-operands', 'nad', `e=echo; $e cp {../base/report.md,report.md} | bash`, A, 'name'],
+      ['S17-sp-brace-empty-alt', 'nad', `e=echo; $e 'cp ../base/report.md' {report.md,} | bash`, A, 'name'],
+      ['S17-sp-printf-brace', 'nad', `p=printf; $p '%s ' ${LIST} | bash`, A, 'name'],
+      ['S17-sp-command-brace', 'nad', `e=echo; command $e ${LIST} | bash`, A, 'name'],
+      ['S17-sp-brace-sh', 'nad', `e=echo; $e ${LIST} | sh`, BZ, 'name'],
+      ['S17-sp-brace-zsh', 'nad', `e=echo; $e ${LIST} | zsh`, BZ, 'name'],
+      // the consumer roads (allowed at the round-5 head too: the roads did not exist there)
+      ['S17-sp-road-c', 'nad', `e=echo; bash -c "$($e ${LIST})"`, A, 'name'],
+      ['S17-sp-road-herestring', 'nad', `e=echo; bash <<< "$($e ${LIST})"`, BZ, 'name'],
+      ['S17-sp-road-eval', 'nad', `e=echo; eval "$($e ${LIST})"`, BZ, 'name'],
+      ['S17-sp-road-procsub', 'nad', `e=echo; bash <($e ${LIST})`, BZ, 'name'],
+      ['S17-sp-road-assign', 'nad', `e=echo; x=$($e ${LIST}); $x`, B, 'name'],
+      // the plain-printer and quoted-operand twins (refused before and after)
+      ['S17-sp-twin-plain-printer', 'nad', `echo ${LIST} | bash`, A, 'name'],
+      ['S17-sp-twin-quoted-operand', 'nad', `e=echo; $e '${CP}' | bash`, A, 'name'],
+      ['S17-sp-twin-plain-operands', 'nad', `e=echo; $e ${CP} | bash`, A, 'name'],
+      // controls: a brace-valued prefix assignment stays the assignment (quoting the word whole would make it a command name and the printer no printer);
+      // two real operands sharing a raw are two (a dedupe by raw would read one); an unread glob in an operand stays UNRESOLVABLE
+      ['S17-sp-ctl-assign-brace-prefix', 'nad', `e=echo; A={1,2} $e '${CP}' | bash`, A, 'name'],
+      ['S17-sp-ctl-shared-raw-real', 'nad', `e=echo; $e cp ../base/report.md ../base/report.md report.md | bash`, N, 'allow'],
+      ['S17-sp-ctl-glob', 'nad', `e=echo; $e cp ../base/*.md report.md | bash`, A, ['text', COULD_NOT]],
+      // THE BRACE GROUP (the rider): a list with an alternative the resolver does not read is refused as before, and the reason names the list once
+      ['S17-sp-rider-mixed-brace', 'nad', `e=echo; $e cp {$s,report.md} | bash`, N, ['text', 'filled in from $e cp {$s,report.md}, a text', '{$s,report.md} {$s,report.md}']],
+      ['S17-sp-rider-mixed-brace-src', 'nad', `e=echo; $e cp {../base/report.md,$s} | bash`, N, ['text', 'filled in from $e cp {../base/report.md,$s}, a text', '{../base/report.md,$s} {../base/report.md,$s}']],
+      // the head splice beside a brace list: refused before and after (the list re-lexed to its words)
+      ['S17-hs-brace', 'nad', `c=cp; $c {../base/report.md,report.md}`, BZ, 'name'],
+      ['S17-hs-assign-brace', 'nad', `c=cp; A={1,2} $c ${OPS}`, A, 'name'],
+      ['S17-hs-mixed-brace', 'nad', `c=cp; $c {$s,report.md}`, N, ['text', NOT_LITERAL]],
+      // THE SPLICE RENDERER at the head splice: a quoted prefix assignment before a head a road splices, allowed at the round-6 head while the shells ran the copy
+      ['S17-hs-declare-dq', 'nad', `declare c=cp; X="a" $c ${OPS}`, BZ, 'name'],
+      ['S17-hs-declare-sq', 'nad', `declare c=cp; X='a' $c ${OPS}`, BZ, 'name'],
+      ['S17-hs-declare-blank', 'nad', `declare c=cp; X="a b" $c ${OPS}`, BZ, 'name'],
+      ['S17-hs-declare-empty', 'nad', `declare c=cp; X="" $c ${OPS}`, BZ, 'name'],
+      ['S17-hs-declare-append', 'nad', `declare c=cp; X+="a" $c ${OPS}`, BZ, 'name'],
+      ['S17-hs-declare-two', 'nad', `declare c=cp; X="a" Y='b c' $c ${OPS}`, BZ, 'name'],
+      ['S17-hs-declare-sub', 'nad', `declare c=cp; X=$(echo a) $c ${OPS}`, BZ, 'name'],
+      ['S17-hs-declare-null-in-value', 'nad', `declare c=cp; X=""a $c ${OPS}`, BZ, 'name'],
+      ['S17-hs-local', 'nad', `f() { local c=cp; X="a" $c ${OPS}; }; f`, A, 'name'],
+      ['S17-hs-script-declare', 'nad', `bash -c 'declare c=cp; X="a" $c ${OPS}'`, A, 'name'],
+      ['S17-hs-script-local', 'nad', `bash -c 'f() { local c=cp; X="a" $c ${OPS}; }; f'`, A, 'name'],
+      ['S17-hs-script-export', 'nad', `export c=cp; bash -c 'X="a" $c ${OPS}'`, A, 'name'],
+      ['S17-hs-script-declare-x', 'nad', `declare -x c=cp; bash -c 'X="a" $c ${OPS}'`, BZ, 'name'],
+      ['S17-hs-script-sh', 'nad', `sh -c 'f() { local c=cp; X="a" $c ${OPS}; }; f'`, A, 'name'],
+      ['S17-hs-script-zsh', 'nad', `zsh -c 'declare c=cp; X="a" $c ${OPS}'`, A, 'name'],
+      ['S17-hs-eval-local', 'nad', `f() { local c=cp; eval 'X="a" $c ${OPS}'; }; f`, A, 'name'],
+      ['S17-hs-eval-declare', 'nad', `declare c=cp; eval 'X="a" $c ${OPS}'`, BZ, 'name'],
+      ['S17-hs-eval-alias', 'nad', `alias c=cp\neval 'X="a" c ${OPS}'`, ZD, 'name'],
+      ['S17-hs-alias', 'nad', `alias c=cp\nX="a" c ${OPS}`, D, 'name'],
+      ['S17-hs-hash', 'nad', `hash -p /usr/bin/cp c; X="a" c ${OPS}`, B, 'name'],
+      ['S17-hs-bound', 'nad', `cp /usr/bin/cp ../scratch/c2; X="a" ../scratch/c2 ${OPS}`, A, 'name'],
+      ['S17-hs-bound-glob', 'nad', `cp /usr/bin/cp ../scratch/c2; X="a" ../scratch/c? ${OPS}`, A, 'name'],
+      ['S17-hs-bound-out', 'out', `cp /usr/bin/cp {OUT}/scratch/c2; X="a" {OUT}/scratch/c2 {NA}/base/report.md {NA}/docs/report.md`, A, 'name', null],
+      // the plain twins (refused before and after: the quoting alone decided the verdict)
+      ['S17-hs-twin-plain-declare', 'nad', `declare c=cp; X=a $c ${OPS}`, BZ, 'name'],
+      ['S17-hs-twin-plain-local', 'nad', `f() { local c=cp; X=a $c ${OPS}; }; f`, A, 'name'],
+      ['S17-hs-twin-plain-alias', 'nad', `alias c=cp\nX=a c ${OPS}`, D, 'name'],
+      ['S17-hs-twin-no-prefix', 'nad', `declare c=cp; $c ${OPS}`, BZ, 'name'],
+      ['S17-hs-twin-readable', 'nad', `c=cp; X="a" $c ${OPS}`, A, 'name'],   // a plain assignment's value is read by the readability rule, no splice
+      ['S17-hs-twin-eval-escaped', 'nad', `c=cp; eval "X=\\"a\\" \\$c ${OPS}"`, A, 'name'],
+      ['S17-hs-twin-script-dq', 'nad', `c=cp; bash -c "X=\\"a\\" $c ${OPS}"`, A, 'name'],
+      // controls: a word every shell runs as a command named `X=a` (quoted marks on the name or the `=`, an empty quote pair before or inside the name,
+      // an escaped character, a positional whose value is assignment-shaped) is no assignment; no shell writes; the untracked destination stays allowed
+      ['S17-hs-ctl-quoted-name', 'nad', `declare c=cp; "X"=a $c ${OPS}`, N, 'allow'],
+      ['S17-hs-ctl-quoted-eq', 'nad', `declare c=cp; X"="a $c ${OPS}`, N, 'allow'],
+      ['S17-hs-ctl-quoted-whole', 'nad', `declare c=cp; 'X=a' $c ${OPS}`, N, 'allow'],
+      ['S17-hs-ctl-null-before-name', 'nad', `declare c=cp; ""X=a $c ${OPS}`, N, 'allow'],
+      ['S17-hs-ctl-null-in-name', 'nad', `declare c=cp; X""=a $c ${OPS}`, N, 'allow'],
+      ['S17-hs-ctl-escaped-name', 'nad', `declare c=cp; \\X=a $c ${OPS}`, N, 'allow'],
+      ['S17-hs-ctl-escaped-eq', 'nad', `declare c=cp; X\\=a $c ${OPS}`, N, 'allow'],
+      ['S17-hs-ctl-positional-value', 'nad', `set -- X=a; declare c=cp; "$1" $c ${OPS}`, N, 'allow'],
+      ['S17-hs-ctl-untracked-dest', 'nad', `declare c=cp; X="a" $c ../base/report.md ../scratch/other.md`, N, 'allow'],
+      // THE LEADING BLANK: the copying writers with a literal source, both substitution spellings, every cwd, a script handed to a shell
+      ['S17-lb-cp', 'nad', `cp ../base/report.md $(echo ' report.md')`, A, 'name'],
+      ['S17-lb-mv', 'nad', `mv ../base/report.md $(echo ' report.md')`, A, 'name'],
+      ['S17-lb-install', 'nad', `install ../base/report.md $(echo ' report.md')`, A, 'name'],
+      ['S17-lb-ln-f', 'nad', `ln -f ../base/report.md $(echo ' report.md')`, A, 'name'],
+      ['S17-lb-ln-sf', 'nad', `ln -sf ../base/report.md $(echo ' report.md')`, A, 'name'],
+      ['S17-lb-ln', 'nad', `ln ../base/report.md $(echo ' report.md')`, N, 'name'],   // ln without -f fails on the existing target and writes nothing: refused by name as the plain `ln ../base/report.md report.md` is
+      ['S17-lb-cp-backtick', 'nad', 'cp ../base/report.md `echo \' report.md\'`', A, 'name'],
+      ['S17-lb-mv-backtick', 'nad', 'mv ../base/report.md `echo \' report.md\'`', A, 'name'],
+      ['S17-lb-install-backtick', 'nad', 'install ../base/report.md `echo \' report.md\'`', A, 'name'],
+      ['S17-lb-ln-f-backtick', 'nad', 'ln -f ../base/report.md `echo \' report.md\'`', A, 'name'],
+      ['S17-lb-cp-root', 'na', `cp base/report.md $(echo ' docs/report.md')`, A, 'name'],
+      ['S17-lb-mv-root', 'na', `mv base/report.md $(echo ' docs/report.md')`, A, 'name'],
+      ['S17-lb-install-root', 'na', `install base/report.md $(echo ' docs/report.md')`, A, 'name'],
+      ['S17-lb-ln-f-root', 'na', `ln -f base/report.md $(echo ' docs/report.md')`, A, 'name'],
+      ['S17-lb-cp-out', 'out', `cp {NA}/base/report.md $(echo ' {NA}/docs/report.md')`, A, 'name', null],
+      ['S17-lb-mv-out', 'out', `mv {NA}/base/report.md $(echo ' {NA}/docs/report.md')`, A, 'name', null],
+      ['S17-lb-install-out', 'out', `install {NA}/base/report.md $(echo ' {NA}/docs/report.md')`, A, 'name', null],
+      ['S17-lb-ln-f-out', 'out', `ln -f {NA}/base/report.md $(echo ' {NA}/docs/report.md')`, A, 'name', null],
+      ['S17-lb-other-project', 'out', `cp {WEB}/base/report.md $(echo ' {WEB}/docs/report.md')`, A, 'name', null],
+      ['S17-lb-notes-new-file', 'na', `cp base/report.md $(echo ' notes/n2.md')`, A, 'name'],
+      ['S17-lb-two-blanks', 'nad', `cp ../base/report.md $(echo '  report.md')`, A, 'name'],
+      ['S17-lb-printf', 'nad', `cp ../base/report.md $(printf ' report.md')`, A, 'name'],
+      ['S17-lb-blank-only-middle', 'nad', `cp ../base/report.md $(echo ' ') report.md`, A, 'name'],
+      ['S17-lb-source', 'nad', `cp $(echo ' ../base/report.md') report.md`, A, 'name'],
+      ['S17-lb-continuation', 'nad', `cp ../base/report.md \\\n$(echo ' report.md')`, A, 'name'],   // an escaped newline before the substitution leaves nothing in the word
+      ['S17-lb-script-sh', 'nad', `sh -c "cp ../base/report.md \\$(echo ' report.md')"`, A, 'name'],
+      ['S17-lb-script-zsh', 'nad', `zsh -c "cp ../base/report.md \\$(echo ' report.md')"`, A, 'name'],
+      ['S17-lb-script-bash', 'nad', `bash -c "cp ../base/report.md \\$(echo ' report.md')"`, A, 'name'],
+      // the twins that keep the field every shell makes: an explicit null before the substitution, or text glued before it, is a field, so the copy has
+      // three operands and lands in a directory named report.md, which no shell has; allowed, no shell writes
+      ['S17-lb-twin-quoted-null', 'nad', `cp ../base/report.md ""$(echo ' report.md')`, N, 'allow'],
+      ['S17-lb-twin-single-null', 'nad', `cp ../base/report.md ''$(echo ' report.md')`, N, 'allow'],
+      ['S17-lb-twin-text-glue', 'nad', `cp ../base/report.md x$(echo ' report.md')`, N, 'allow'],
+      // controls: no blank and a trailing blank were refused by name before; a redirection target, a `tee`, a `cp -t` take other roads and were refused
+      // before; the double-quoted form is one word naming an untracked file; a printf escape opening the text is not read (UNRESOLVABLE); dd's `of=`
+      // is cut from its name and dd fails
+      ['S17-lb-ctl-noblank', 'nad', `cp ../base/report.md $(echo 'report.md')`, A, 'name'],
+      ['S17-lb-ctl-trailing', 'nad', `cp ../base/report.md $(echo 'report.md ')`, A, 'name'],
+      ['S17-lb-ctl-redirect', 'nad', `printf x > $(echo ' report.md')`, BZ, 'name'],   // dash splits no redirection target and writes an untracked name
+      ['S17-lb-ctl-tee', 'nad', `tee $(echo ' report.md') < ../base/report.md`, A, 'name'],
+      ['S17-lb-ctl-cp-t', 'nad', `cp -t $(echo ' .') ../base/report.md`, A, 'name'],
+      ['S17-lb-ctl-dq', 'nad', `cp ../base/report.md "$(echo ' report.md')"`, N, 'allow'],
+      ['S17-lb-ctl-newline-printf', 'nad', `cp ../base/report.md $(printf '\\nreport.md')`, A, ['text', NOT_LITERAL]],
+      ['S17-lb-ctl-tab-printf', 'nad', `cp ../base/report.md $(printf '\\treport.md')`, A, ['text', NOT_LITERAL]],
+      ['S17-lb-ctl-dd', 'nad', `dd if=../base/report.md of=$(echo ' report.md')`, N, 'allow'],
+    ];
+    const judge = (id, cwd, raw, writers, expect, outside = 'allow') => {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      w.build();
+      const h = w.hook(cmd, at);
+      assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error: ${h.reason.split('\n')[0]}`);
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else {
+          assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+          if (expect[2]) assert.ok(!h.reason.includes(expect[2]), `${id}: the reason not holding (${expect[2]}): ${h.reason.split('\n')[0]}`);
+        }
+      }
+      if (outside != null) {
+        w.build();
+        const o = w.hook(cmd, w.cwds.out);
+        assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
+      }
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    };
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect, outside] of rows) { judge(id, cwd, raw, writers, expect, outside); n++; }
+    assert.equal(n, 102);
+    // the mechanisms in-process: the words the lexer makes of a resolved substitution, the renderer over lexed words, the spelling helper, the group id
+    const words = (s) => lex(s).segments[0].words;
+    assert.deepEqual(words("cp a $(echo ' report.md')").map((x) => x.text), ['cp', 'a', 'report.md'], 'THE LEADING BLANK: no empty word before the first field (behaviour: S17-lb-cp)');
+    assert.deepEqual(words("cp a \"\"$(echo ' report.md')").map((x) => x.text), ['cp', 'a', '', 'report.md'], 'an explicit null before the substitution is the field every shell makes (behaviour: S17-lb-twin-quoted-null)');
+    assert.deepEqual(words("cp a $(echo ' ') b").map((x) => x.text), ['cp', 'a', 'b'], 'a text of blanks alone makes no word (behaviour: S17-lb-blank-only-middle)');
+    assert.deepEqual(words("cp a $(echo 'report.md ')").map((x) => x.text), ['cp', 'a', 'report.md'], 'a trailing blank makes no word either (the control, S17-lb-ctl-trailing)');
+    assert.deepEqual(words("cp a x$(echo ' report.md')").map((x) => x.text), ['cp', 'a', 'x', 'report.md'], 'text before the substitution is the first field (behaviour: S17-lb-twin-text-glue)');
+    assert.equal(guard.renderWords(words('echo {cp,a,b}')), "echo 'cp' 'a' 'b'", 'THE SPLICE RENDERER: a brace list of literal alternatives is one quoted word per alternative (behaviour: S17-sp-brace-all)');
+    assert.equal(guard.renderWords(words('echo {$s,report.md} c')), 'echo {$s,report.md} c', 'a list with an alternative the resolver does not read renders by its raw once (behaviour: S17-sp-rider-mixed-brace)');
+    assert.equal(guard.renderWords(words('X="a" cp a b')), "X='a' cp a b", 'an assignment-shaped word keeps its name outside the quotes (behaviour: S17-hs-declare-dq)');
+    assert.equal(guard.renderWords(words(`X+="a" X="" Y='b c' cp a "it's"`)), `X+='a' X='' Y='b c' cp a 'it'\\''s'`, '`+=`, an empty value, a blank in the value, a quote in a plain word (behaviour: S17-hs-declare-append, -empty, -two)');
+    assert.equal(guard.renderWords(words(`X"="a 'X=a' "X"=a cp a b`)), `'X=a' 'X=a' 'X=a' cp a b`, 'quoted marks on the name or the `=` keep the word the command name it is (behaviour: S17-hs-ctl-quoted-*)');
+    assert.equal(guard.renderWords(words('A={1,2} echo x')), "A='1' A='2' echo x", 'a brace-valued prefix stays an assignment per alternative (behaviour: S17-sp-ctl-assign-brace-prefix)');
+    assert.equal(guard.renderWords(words('$c "$@" x ../base/*.md')), '$c "$@" x ../base/*.md', 'a word that is not literal (an expansion, a glob) renders by its raw');
+    assert.equal(guard.renderWords(words('c=cp')), "c='cp'", 'an assignment whose raw is its text renders in the same NAME= form, the value the shell reads');
+    assert.equal(guard.renderWord({ text: 'X=a', literal: true, raw: '"$1"', marks: 'qqq' }), "'X=a'", 'a word the walk resolved carries quoted marks: a command name (behaviour: S17-hs-ctl-positional-value)');
+    assert.equal(guard.renderWord({ text: 'X=a', literal: true, raw: '"$1"', marks: null }), "X='a'", 'a word without marks is read by its text alone, toward a refusal');
+    assert.equal(guard.spellWords(words('echo {$s,report.md} c')), 'echo {$s,report.md} c', 'THE BRACE GROUP: a spelling names a list once (behaviour: S17-sp-rider-mixed-brace)');
+    assert.equal(guard.spellWords(words('echo {$s,report.md} {$s,report.md} c')), 'echo {$s,report.md} {$s,report.md} c', 'two lists typed are two');
+    assert.equal(guard.spellWords(words('cp a a b')), 'cp a a b', 'two real operands sharing a raw are two (behaviour: S17-sp-ctl-shared-raw-real)');
+    const bg = words('echo {a,b} {c,d}').map((x) => x.braceGroup);
+    assert.ok(bg[0] == null && bg[1] != null && bg[1] === bg[2] && bg[3] != null && bg[3] === bg[4] && bg[1] !== bg[3], `one id per list, none on a plain word: ${JSON.stringify(bg)}`);
+    // where the code lives (the rows above prove what it does)
+    const hook = fs.readFileSync(HOOK, 'utf8');
+    assert.ok(!hook.includes('const spliceRaw'), 'the head splice has no renderer of its own (behaviour: S17-hs-* above)');
+    assert.ok(hook.includes('const before = renderWords(s.words.slice(0, headIdx));') && hook.includes('const before = renderWords(seg.words.slice(0, at));'), 'both splices build from the words through the one renderer (behaviour: S17-sp-*, S17-hs-* above)');
+    assert.ok(hook.includes('if (k > 0) { if (buf || raw !== spelling) endWord(); raw = spelling; }'), 'the text road ends the word under way only when it holds text or an explicit null (behaviour: S17-lb-* above)');
+    assert.equal((hook.match(/\.raw\)\.join\(' '\)/g) || []).length, 0, 'no spelling is a join of raws (behaviour: S17-sp-rider-* above)');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});

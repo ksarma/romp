@@ -1054,6 +1054,21 @@
 // witness rows (`$c printf -v x '..'; $x` in bash, `cat <(echo '..') | bash` and `f() { cat; }; echo '..' > >(f | bash)` in bash and zsh). The table's
 // rows name their cwd where it is not docs/ (a sixth element); 423 rows over 9 classes, the class on every surface the property stands on, pinned by
 // the plan test with the record and the count.
+// ROUND 7 OF FORK PR #780 REVIEW, SEVENTEENTH COMMIT (2026-09-23; the reviewer's correctness-1, correctness-2 and extra6-2, the last reproduced by the
+// owner as ruled): three readings the resolver made and got wrong, each an allow while the shells wrote. THE SPLICE RENDERER (renderWord, renderWords;
+// splicedPrinter and runHeadSplices): one renderer for both splices, keyed on a word's text and marks. The spliced printer had joined the words' raws,
+// so a brace list among its operands was re-expanded once per alternative and `e=echo; $e {cp,../base/report.md,report.md} | bash` read as a copy
+// with eight operands (allowed; every shell ran the copy; the round-5 head refused it by name); the head splice had single-quoted every literal word
+// whose raw differed from its text, so `declare c=cp; X="a" $c ../base/report.md report.md` was spliced as a command named `X=a` (allowed; bash and
+// zsh ran the copy; the plain `X=a` refused). An assignment-shaped literal word renders as its name and operator plus the single-quoted value, any
+// other literal word whose raw differs from its text as its single-quoted text, a word that is not literal by its raw, a brace list with an
+// alternative the resolver does not read by its raw once. THE BRACE GROUP (endWord, spellWords): the alternatives of one brace list share an id, and
+// every spelling a reason prints names the list once (`$e cp {$s,report.md}` had been printed twice over). THE LEADING BLANK (placeReading's text
+// road): a resolved substitution whose text opens with a blank had ended the word under way even when nothing was under way, so `cp ../base/report.md
+// $(echo ' report.md')` from docs/ read as a copy into a directory named report.md and was allowed while bash, zsh and dash copied onto the tracked
+// file (mv, install, `ln -f`, `ln -sf`, the backtick spelling, a blank before the source, a text of blanks alone, the project root, a cwd in no
+// project and a script handed to a shell alike); the word under way ends at the blank only when it holds text or an explicit null, the fields every
+// shell makes. Every row is pinned with its writers in tools/romp-track-bash-guard.test.mjs (round 7, seventeenth commit).
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -1215,6 +1230,18 @@ function word(text, literal, raw, extra) {
     why: extra && extra.why ? extra.why : null,   // why an expansion in it stayed opaque (resolveWord's named expansion), for the refusal
   };
 }
+// THE BRACE GROUP (round 7 of fork PR #780 review, seventeenth commit; the reviewer's correctness-1 rider): a brace list the lexer expands is one
+// word per alternative, every alternative carrying the list's whole spelling as its raw, so a spelling joined from the words' raws repeated the list
+// once per alternative (`e=echo; $e cp {$s,report.md} | bash` was refused with a reason naming `$e cp {$s,report.md} {$s,report.md}`). endWord stamps
+// the alternatives of one list with one id; a spelling built from words (spellWords) and a splice built from words (renderWords) read the run of
+// words sharing an id as the one list they came from. A dedupe by raw alone would be wrong: `cp a a b` has two real operands sharing a raw.
+let braceSerial = 0;
+// the spelling of a run of words as typed: each word's raw, a brace list's alternatives once
+export const spellWords = (words) => {
+  const out = [];
+  for (let k = 0; k < words.length; k++) { const w = words[k]; if (k > 0 && w.braceGroup != null && words[k - 1].braceGroup === w.braceGroup) continue; out.push(w.raw); }
+  return out.join(' ');
+};
 
 // What the `$` at `pos` of `src` begins: { kind, len }. 'numeric' is `$$` or `${$}` (NUMERIC_EXPANSIONS); 'home' is
 // `$HOME` or `${HOME}` (the caller decides whether it stands at the start of a word followed by a slash or the
@@ -1559,7 +1586,7 @@ export function lex(command, shell = null, opts = {}) {
       else if (raw === ']]' && inTest) closeTest(i - 2, true);
       const alts = braceExpand(buf, marks);
       if (!alts) seg.words.push(word(buf, false, raw, { marks }));
-      else for (const [t, m] of alts) { const bw = mk(t, m); if (alts.length > 1 && t === '') bw.braceEmpty = true; seg.words.push(bw); }   // THE EMPTY ALTERNATIVE (round 6's sixth commit): an empty alternative of a brace list is a word bash drops and zsh keeps (extract judges both readings)
+      else { const group = alts.length > 1 ? ++braceSerial : null; for (const [t, m] of alts) { const bw = mk(t, m); if (alts.length > 1 && t === '') bw.braceEmpty = true; if (group != null) bw.braceGroup = group; seg.words.push(bw); } }   // THE EMPTY ALTERNATIVE (round 6's sixth commit): an empty alternative of a brace list is a word bash drops and zsh keeps (extract judges both readings); THE BRACE GROUP (round 7's seventeenth commit): the alternatives of one list share an id
       const rd = readingsOf();
       if (rd.length && (!alts || alts.length === 1)) seg.words[seg.words.length - 1].readings = rd;   // the word alone carries its readings (THE RESOLVED SUBSTITUTION, THE DEFAULT WORD)
       if (wordReadings && wordReadings.params && (!alts || alts.length === 1)) { const ps = paramsOf(); const last = seg.words[seg.words.length - 1]; if (ps) { last.readings = rd; last.readingParams = ps; } else last.unresolvableReading = glueUnresolvable(); }   // THE DEFAULT WORD's params (round 6's fifth commit): the names whose values the readings depend on, with the glue around the expansion, read beside the texts in extract's scriptTexts (the readings may be none: `${c:?}` stands for the value alone); glued to another expansion, the word is UNRESOLVABLE
@@ -1586,7 +1613,7 @@ export function lex(command, shell = null, opts = {}) {
     // is structural), given `view`, the segment with the redirections that carry the text removed (a pipe carries it on none; a process
     // substitution on one), so every other redirection on it still makes the text UNRESOLVABLE (shapeOnPrinter, closerOutput).
     const streamSite = (view) => {
-      if (view.words.length && !(view.words.length === 1 && plainWord(view.words[0]) && (view.words[0].text === '}' || Object.hasOwn(CLOSERS, view.words[0].text)))) return { kind: 'segment', spelling: view.words.map((w) => w.raw).join(' '), target: seg };   // THE PIPED SCRIPT: the producer's printed text, for extract's pipedScripts (THE RESOLVER'S CONTRACT); every piped segment with words is asked since round 6's seventh commit (segmentOutput answers null for a head that is no printer, and a head that is an expansion THE HEAD CANDIDATES resolve is read through THE SPLICED PRINTER), where the gate had been a literal echo or printf among the words; a `}` or a keyword closer alone falls to its own branch below (THE OUTPUT MODEL reads the group or compound around it)
+      if (view.words.length && !(view.words.length === 1 && plainWord(view.words[0]) && (view.words[0].text === '}' || Object.hasOwn(CLOSERS, view.words[0].text)))) return { kind: 'segment', spelling: spellWords(view.words), target: seg };   // THE PIPED SCRIPT: the producer's printed text, for extract's pipedScripts (THE RESOLVER'S CONTRACT); every piped segment with words is asked since round 6's seventh commit (segmentOutput answers null for a head that is no printer, and a head that is an expansion THE HEAD CANDIDATES resolve is read through THE SPLICED PRINTER), where the gate had been a literal echo or printf among the words; a `}` or a keyword closer alone falls to its own branch below (THE OUTPUT MODEL reads the group or compound around it)
       if (!view.words.length && segments.length && segments[segments.length - 1].paren === ')') {
         // THE OUTPUT MODEL (round 6's second commit, 2026-09-20; round 5's tests-1: `(echo 'cp ..') | bash` was pinned allowed under a label
         // that called the producer one the guard cannot read, while bash, zsh and dash ran the copy): a subshell before the pipe prints
@@ -1675,7 +1702,7 @@ export function lex(command, shell = null, opts = {}) {
         };
         seg.procsubFeeds = [];
         for (const r of fedSubs) {
-          const site = isExec ? { kind: 'exec', spelling: seg.words.map((w) => w.raw).join(' ') } : onStdout(r) ? groupSite : null;
+          const site = isExec ? { kind: 'exec', spelling: spellWords(seg.words) } : onStdout(r) ? groupSite : null;
           const holder = {};
           if (site) placeReading(streamOutput(site, view), site.spelling, 'segment', holder);
           seg.procsubFeeds.push({ inner: procsubOf(r.target), printed: holder.printed || null });
@@ -1692,7 +1719,7 @@ export function lex(command, shell = null, opts = {}) {
     seg.start = i;
   };
   // the spelling of a run of segments, for a compound producer's reading (the refusal names it)
-  const spellingOf = (segs) => segs.map((x) => (x.paren ? x.paren : x.words.map((w) => w.raw).join(' ') + (x.op && x.op !== '|' && x.op !== ')' ? x.op : ''))).join(' ').replace(/\s+/g, ' ').trim();
+  const spellingOf = (segs) => segs.map((x) => (x.paren ? x.paren : spellWords(x.words) + (x.op && x.op !== '|' && x.op !== ')' ? x.op : ''))).join(' ').replace(/\s+/g, ' ').trim();
   // After a newline, the bodies of every heredoc opened on the line just ended, each on the
   // segment that opened it (already pushed by reference when an operator ended it on that line).
   const readHeredocBodies = () => {
@@ -1923,8 +1950,18 @@ export function lex(command, shell = null, opts = {}) {
     if (ifsNamed) return false;   // among unquoted operands, and at a redirection target (round 6's fourth commit: `IFS=:; echo x > $(echo 'report.md:x')` opened report.md in zsh while the text was judged whole), while the command names IFS the result splits by a rule the guard does not read: not resolved, the expansion stays (a target the hook cannot read) and its command is read
     if (expect) { buf += text; marks += 'e'.repeat(text.length); return true; }   // a redirection target, or a `<`: the whole text, globbed; at a write target endWord adds each blank-separated field beside it (THE SPLIT TARGET)
     const parts = text.split(/[ \t\n]+/);   // '' at an end when the text begins or ends with a blank: the word under way ends there
+    // THE LEADING BLANK (round 7 of fork PR #780 review, seventeenth commit; the reviewer's extra6-2, reproduced: `cp ../base/report.md $(echo
+    // ' report.md')` from docs/ was allowed while bash, zsh and dash copied onto the tracked file, and so were mv, install, `ln -f`, `ln -sf`, the
+    // backtick spelling, a blank before the source, a text of blanks alone among the operands, the same line from the project root, from a cwd in
+    // no project and as a script handed to a shell): a text that opens with a blank split to a leading empty part, and the blank ENDED the word under
+    // way even when nothing was under way, so an empty word stood before the text's first field and a two-operand copy read as three, a copy into a
+    // directory named report.md, and no target was found. Leading blanks make no field in any shell (bash: Word Splitting; dash(1): Word Expansions;
+    // zsh splits a command substitution's result the same way), so the word under way ends at the blank only when it holds something: text (`x$(echo
+    // ' a')` is `x` and `a`, two fields in every shell) or an explicit null before the substitution (`""$(echo ' a')` is the null and `a`, two fields
+    // in every shell, measured; raw then carries the quotes before the spelling). A bare substitution, or one after an escaped newline, which
+    // leaves nothing in raw, pushes no word for the leading part; a trailing blank was already dropped by the check after the loop.
     parts.forEach((part, k) => {
-      if (k > 0) { endWord(); raw = spelling; }
+      if (k > 0) { if (buf || raw !== spelling) endWord(); raw = spelling; }
       if (part) { inWord = true; buf += part; marks += 'e'.repeat(part.length); }
     });
     if (!buf && raw === spelling) inWord = false;   // an empty result alone makes no word, as in the shells
@@ -3777,6 +3814,51 @@ function printfOutput(words) {
 // is decided BEFORE printer-ness, the same order the writer, consumer and passthrough heads already had (THE HEAD SPLICE in extract).
 // Depth is bounded (a value spelled as an expansion, `e='$e'`, would otherwise splice without end): past the cap the printer is
 // UNRESOLVABLE.
+// THE SPLICE RENDERER (round 7 of fork PR #780 review, seventeenth commit; the reviewer's correctness-1 and correctness-2, one renderer for both
+// splices): a splice re-lexes a text built from the words around the spliced name, and each word must re-lex to the word it already is. THE SPLICED
+// PRINTER built that text by joining the words' raws, so a brace list among the operands, one word per alternative all spelled as the list, was
+// re-expanded once per alternative: `e=echo; $e {cp,../base/report.md,report.md} | bash` from docs/ printed the copy three times over in the
+// reading, an eight-operand copy into a non-directory, and was allowed while bash, zsh and dash ran the copy, where the round-5 head had refused it
+// by name (`$e cp {../base/report.md,report.md}`, `$e 'cp ../base/report.md' {report.md,}`, printf's `%s ` and `command $e` alike, and the same text
+// under `bash -c "$(..)"`, a here-string, eval, `<(..)` and `x=$(..); $x`). THE HEAD SPLICE single-quoted every literal word whose raw differed from
+// its text, a prefix assignment included, so `declare c=cp; X="a" $c ../base/report.md report.md` was spliced as `'X=a' cp ..`, a command named
+// `X=a` with cp among its operands, and the copy was allowed while bash and zsh ran it (local, a script handed to a shell, eval, `X=$(echo a)`,
+// an alias, `hash -p` and a bound path alike, `X=""` and `X+="a"` too), where the plain `X=a $c ..` refused. THE RULE, keyed on a word's TEXT and
+// MARKS, never its raw alone: an assignment-shaped literal word (a name and `=` or `+=` under plain marks) renders as the name and operator plus its
+// single-quoted value, so it stays the assignment the shell reads (`X"="a` and `'X=a'`, a command named `X=a` in every shell, keep quoted marks on
+// the `=` and render whole); any other literal word whose raw differs from its text renders as its single-quoted text (a `"$@"` the walk expanded is
+// not re-expanded, a brace alternative is the one word it is); a word that is not literal renders by its raw, and a brace list whose alternatives
+// are not all literal (`{$s,report.md}`: an expansion in one alternative makes every alternative non-literal) renders by its raw ONCE, the run of
+// words sharing THE BRACE GROUP's id read as the list they came from, so the re-lex makes the same words. A word the walk resolved carries quoted
+// marks on the value, so a positional whose value is assignment-shaped (`set -- X=a; "$1" $c ..`) renders as the command name it is.
+const singleQuoted = (t) => `'${t.replace(/'/g, `'\\''`)}'`;
+const ASSIGNMENT_SHAPE = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
+// the `NAME=` or `NAME+=` a literal word opens with under plain marks, else null (a word without marks is read by its text alone: rendering a
+// non-assignment as an assignment errs toward a refusal, while quoting an assignment whole was this defect)
+const assignmentShapeOf = (w) => { const m = w.text.match(ASSIGNMENT_SHAPE); return m && (w.marks == null || /^u+$/.test(w.marks.slice(0, m[0].length))) ? m[0] : null; };
+export const renderWord = (w) => {
+  if (!w.literal) return w.raw;
+  const head = assignmentShapeOf(w);
+  if (head) return head + singleQuoted(w.text.slice(head.length));
+  return w.raw !== w.text ? singleQuoted(w.text) : w.raw;
+};
+// the words of a segment as a text that re-lexes to them: a brace list's run of words as its raw once when an alternative is not literal
+export const renderWords = (words) => {
+  const out = [];
+  for (let k = 0; k < words.length; k++) {
+    const w = words[k];
+    if (w.braceGroup != null) {
+      let e = k;
+      while (e + 1 < words.length && words[e + 1].braceGroup === w.braceGroup) e++;
+      const group = words.slice(k, e + 1);
+      if (group.every((g) => g.literal)) out.push(...group.map(renderWord)); else out.push(w.raw);
+      k = e;
+      continue;
+    }
+    out.push(renderWord(w));
+  }
+  return out.join(' ');
+};
 let activeHeadTexts = null;   // (word) => the texts the name stands for, or null; set by extract while it runs
 const SPLICE_DEPTH_CAP = 8;
 let spliceDepth = 0;
@@ -3786,8 +3868,8 @@ function splicedPrinter(s, headIdx) {
   const texts = activeHeadTexts(headWord);
   if (!texts || !texts.length) return null;
   if (spliceDepth >= SPLICE_DEPTH_CAP) return { name: 'echo', spliced: [], capped: true, raw: headWord.raw, args: [], chdirs: [], writes: [] };
-  const before = s.words.slice(0, headIdx).map((w) => w.raw).join(' ');
-  const after = s.words.slice(headIdx + 1).map((w) => w.raw).join(' ');
+  const before = renderWords(s.words.slice(0, headIdx));   // THE SPLICE RENDERER: from the words, never a join of raws
+  const after = renderWords(s.words.slice(headIdx + 1));
   const alternatives = [];
   let printer = null;
   spliceDepth++;
@@ -6005,7 +6087,7 @@ function extractIn(command, ctx) {
     try { const fds = fdsFor(segments[p]); fed = fedTexts(p, fds, textsOf(segments[p], fds).slice(segments[p].heredocs.length)); } finally { pipedActive.delete(p); }   // the cat's own here-documents are fed to the consumer by fedTexts's pipeline loop already: its `<` words and what feeds it are what this adds
     if (!fed.length) return [];
     if (cat.options.length) {
-      const spelling = segments[p].words.map((w) => w.raw).join(' ');
+      const spelling = spellWords(segments[p].words);
       cannotRead(word(spelling, false, spelling, { marks: 'x'.repeat(spelling.length) }), 'piped script', { kind: 'unresolvableReading', spelling, text: `a \`cat\` with the option word ${cat.options.map((o) => `\`${o}\``).join(', ')} stands before the pipe, and what it prints of the text this command feeds it depends on the option, which I do not model, so the script the shell reads is not known` });
       return [];
     }
@@ -6420,13 +6502,14 @@ function extractIn(command, ctx) {
       // a word the walk already expanded to a literal (a positional the replay bound, a `$name` the readability rule read) is spliced as
       // that literal, single-quoted, not by its raw spelling: raw would re-expand in the splice's re-lex, so `$c "$@"` after a `shift` had
       // spliced `cp "$@" "$@"` and doubled the operands to a copy no shell performs (round 6's seventh commit, THE POSITIONAL VALUE meeting
-      // THE HEAD SPLICE); a word raw and text agree on, or one still an expansion, keeps its raw
-      const spliceRaw = (w) => (w.literal && w.raw !== w.text ? `'${w.text.replace(/'/g, `'\\''`)}'` : w.raw);
-      const redirs = seg.redirects.map((r) => `${r.op} ${spliceRaw(r.target)}`).join(' ');
+      // THE HEAD SPLICE); a word raw and text agree on, or one still an expansion, keeps its raw; an assignment-shaped word keeps its name
+      // and operator outside the quotes, so a prefix assignment is not spliced as a command name (THE SPLICE RENDERER, round 7's seventeenth
+      // commit, the one renderer THE SPLICED PRINTER uses too)
+      const redirs = seg.redirects.map((r) => `${r.op} ${renderWord(r.target)}`).join(' ');
       for (; splicedUpTo < headTexts.length; splicedUpTo++) {   // `at`: the word the text stands for (the head, or a wrapper name THE PEELED NAME bound, or a keyword dash runs), the words around it as spelled
         const { text, chain, at = headIdx } = headTexts[splicedUpTo];
-        const before = seg.words.slice(0, at).map(spliceRaw).join(' ');
-        const after = seg.words.slice(at + 1).map(spliceRaw).join(' ');
+        const before = renderWords(seg.words.slice(0, at));
+        const after = renderWords(seg.words.slice(at + 1));
         recurse([before, text, after, redirs].filter(Boolean).join(' '), shell, false, ` through the command name \`${seg.words[at].raw}\``, stdinBodies(idx), chain, true, { adopt: true });   // the spliced text runs in this shell: a cd in it moves the shell (THE MOVED SHELL: `alias c=cd`, then `c ../notes`; `c=cd; $c ../notes`)
       }
     };
