@@ -10,6 +10,10 @@ across the wait while it grew before and grows again after. Flipped back, the bu
 The kernel's switch is polled from the driver after each flip, past five stale /version answers the driver serves its own marked reads
 first (the pinned Playwright does not poll an async waitForFunction predicate, so the wait that stood here gated nothing); the shell's
 own /version reads, which drive the rail, never meet a stale answer, and a read of the shell's shape inside each window shows it.
+The badge mirror's seed marks are replanted on every ON frame the pane receives between the seed and the first off frame, keyed on
+the frame's arrival in the pane's own record of received frames (an ON frame with a payload prunes them, the off frame keeps them),
+and one such frame is planted each run through the pane's own send, so the seed pin judges the off frame and not whichever frame
+last rewrote the store (round 2 of fork PR #904: the mechanism of this module's CI reds, which a driver-side wait orders nothing about).
 Round two: the Outline pane is turned on first so its page is loaded, and after the flip both panes show the notice ON TOP with
 the romp loader gone within seconds, not at its 30 s failsafe (the outline's _keepLoader used to re-assert it forever); a write
 the kernel refuses (a directory where the file goes) leaves the switch, the shell and the kernel on and draws the stale toast
@@ -49,10 +53,30 @@ const setF = await frameBy("/settings");
 await setF.waitForSelector("#rsettings:not([hidden])", { timeout: 15000 });
 await setF.waitForFunction(() => document.getElementById("rs-tasktrack") !== null, null, { timeout: 15000 });
 const feedF = await frameBy("/feed");
-// every feed frame the pane receives from here on, by either path (the window message, federation's direct delivery): the
-// flag it carried and its keys, so a notice that does not show is attributable to the wire or to the handler
-if (feedF) await feedF.evaluate(() => { const w = window; w.__ttFrames = [];
-  const note = (m, via) => { if (m && m.type === "feed") w.__ttFrames.push({ via, off: m.off === true, keys: Object.keys(m).length }); };
+// THE PANE'S OWN RECORD OF THE FEED FRAMES IT RECEIVES, from here on, by either path (the window message, federation's direct
+// delivery): the same two paths the pane's handler is installed on (ui/webview/frame-listener.ts), so this listener sees every frame
+// that handler sees, in the same order, and runs synchronously after it (registered later on both paths: the DOM's registration order
+// on window, federation's registration order in its emit). Each frame: its sequence number, its path, the off flag, its keys and
+// buildId, whether the seed below was in place, the badge mirror's store AFTER the pane handled it, and whether this listener replanted
+// the seed. So a notice that does not show is attributable to the wire or to the handler, and the seed pin's expectation is a function
+// of the frames the pane saw.
+// THE SEED REPLANT (round 2 of fork PR #904, the reviewers' finding on this module's CI reds): an ON frame with a payload rewrites the
+// store from the frame and prunes every card mark not in the payload (feed.ts applyFeedPayload, then mirrorBadges with cardsUnknown
+// false; the off frame's mirror keeps the card marks, cardsUnknown true), so an ON frame landing between the seed and the off frame
+// removed the seeds, and the seed pin read a store the off frame never touched, with the kernel already off at every read. While the
+// seed is armed (planted, no off frame yet), each ON frame's arrival replants it here, in the same task as the frame, before any other
+// frame can be handled: the store the FIRST off frame's mirror reads holds the seeds whatever landed before it. Keyed on the frame's
+// arrival, the event itself, no delay and no guess at quiescence; the first off frame disarms it, so the flip back on is judged on the
+// payload's own rule. A driver-side wait (the poll below included) orders nothing about these frames
+if (feedF) await feedF.evaluate(() => { const w = window; w.__ttFrames = []; w.__ttSeed = null;
+  const KEY = "romp:cardNotified";
+  const store = () => { try { return JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { return null; } };
+  const note = (m, via) => { if (!m || m.type !== "feed") return;
+    const rec = { seq: w.__ttFrames.length, via, off: m.off === true, keys: Object.keys(m).length, buildId: m.buildId === undefined ? null : m.buildId,
+                  afterSeed: !!w.__ttSeed, storeAfter: store(), reseeded: false };
+    const seed = w.__ttSeed;
+    if (seed && seed.armed) { if (rec.off) seed.armed = false; else { localStorage.setItem(KEY, JSON.stringify(seed.marks)); rec.reseeded = true; } }
+    w.__ttFrames.push(rec); };
   window.addEventListener("message", (e) => note(e.data, "window"));
   const fed = w.__rompFed; if (fed && typeof fed.onFrame === "function") fed.onFrame((e) => note(e.data, "fed")); });
 const feedFrames = () => feedF ? feedF.evaluate(() => window.__ttFrames) : Promise.resolve(null);
@@ -97,9 +121,11 @@ const kernel = async () => { const v = await readVersion(); const p = await page
 // THE KERNEL'S SWITCH, POLLED FROM THE DRIVER. The pinned Playwright (vscode-extension/package-lock.json) does not poll an ASYNC
 // waitForFunction predicate: the first call returns a promise, a truthy value, and the wait resolves on it whatever it resolves to, so
 // a wait handed `async (u) => (await fetch(u)...).taskTracking === false` returned at once (7 to 50 ms against its 10 s bound,
-// measured) and the reads after it raced the kernel's write (a finding on the project PR 2031; fork PR #862 and fork PR #899 in CI).
-// A bounded loop over the same read, a short pause between polls; the elapsed time and a timeout ride in `out`, so a kernel that never
-// wrote is named in the failing pin's table rather than read as a stale value
+// measured) and gated nothing: a wait that enforces nothing is a defect of this lab in its own right, whatever the reads after it
+// happened to hold (here they held the value: this kernel writes the switch before it echoes the gear, and the class wait covers the
+// echo). A bounded loop over the same read, a short pause between polls; the elapsed time and a timeout ride in `out`, so a kernel that
+// never wrote is named in the failing pin's table rather than read as a stale value. What this poll does NOT order: the feed frames the
+// pane receives (the record above), which is where the seed pin's race was
 // THE STALE ANSWERS THAT MAKE THE POLL SHOW ITS WAIT. In this lab the poll's first read already holds the new value (one fetch round
 // trip, 5 to 48 ms: the kernel writes the switch before it echoes the gear, and the class wait above covers that echo), so a poll cut to
 // one read, or to no bound, would stay green here; the race is a slower kernel's. So the first five MARKED /version reads after each flip
@@ -156,8 +182,20 @@ await setF.evaluate(() => { Array.from(document.querySelectorAll(".rs-stale-toas
 // put it back, so the flip below starts from on on every head and each test fails on its own assertion, not on a garbled sequence
 if (!(await setF.evaluate(() => document.getElementById("rs-tasktrack").checked))) { await setF.click("#rs-tasktrack"); await page.waitForTimeout(600); }
 // the badge mirror's seen set (round five, the medium): card-side marks seeded in the feed frame's store must survive the off
-// frames intact (no card left the payload; the payload was never built); the rings' mark is the rings' own to replace
-if (feedF) await feedF.evaluate(() => localStorage.setItem("romp:cardNotified", JSON.stringify(["n|seed-1", "w|seed-2|1700000000|judge", "sync|seed-3"])));
+// frames intact (no card left the payload; the payload was never built); the rings' mark is the rings' own to replace. Planted through
+// the pane's record, which replants it on every ON frame until the first off frame (the record's comment above)
+const SEED_MARKS = ["n|seed-1", "w|seed-2|1700000000|judge", "sync|seed-3"];
+if (feedF) await feedF.evaluate((marks) => { localStorage.setItem("romp:cardNotified", JSON.stringify(marks)); window.__ttSeed = { marks, armed: true, at: window.__ttFrames.length }; }, SEED_MARKS);
+// THE PLANTED ON FRAME, the reviewers' probe as a case of this module: a full frame asked for through the pane's own send (the road
+// feed.ts takes for needFullFeed: acquireVsCodeApi().postMessage, federation's outbound to the local kernel), which the kernel answers
+// from its cache at once, an ON frame with a payload. The driver waits for THAT ARRIVAL in the pane's record (a synchronous predicate
+// over the record: the event, no delay) before the click, so every run has an ON frame between the seed and the flip; the record shows
+// it pruning the seeds and the replant restoring them. Without the replant this frame reds the seed pin with the text the CI reds carried
+const plantedAt = feedF ? await feedF.evaluate(() => window.__ttFrames.length) : null;
+const plantT0 = Date.now();
+if (feedF) await feedF.evaluate(() => window.acquireVsCodeApi().postMessage({ type: "needFullFeed" }));
+const plantedArrived = feedF ? await feedF.waitForFunction((at) => window.__ttFrames.slice(at).some((f) => !f.off), plantedAt, { timeout: 10000 }).then(() => true).catch(() => false) : null;
+out.plantedFrame = feedF ? { at: plantedAt, arrived: plantedArrived, ms: Date.now() - plantT0 } : null;
 // THE FLIP, in the gear: a real click on the switch
 const flipAt = Date.now();
 armStale(true);   // on is the value before this flip: the driver's first five marked /version reads after the click say so
@@ -173,6 +211,7 @@ if (feedF) await feedF.waitForFunction(() => { const sp = document.getElementByI
 await page.waitForTimeout(2500);   // two more _keepLoader ticks: a loader re-asserted would show here
 out.off = { kernelWait: offWait, shell: await shell(), gear: await gear(), kernel: await kernel(), feedPane: await feedPane(), feedFrames: await feedFrames(),
             fleetPane: await paneRead(fleetF), feedPaneLoader: await paneRead(feedF), fleetSpinGoneMs,
+            seed: feedF ? await feedF.evaluate(() => window.__ttSeed) : null,
             seenAfterOff: feedF ? await feedF.evaluate(() => JSON.parse(localStorage.getItem("romp:cardNotified") || "[]")) : null };
 // THE ERROR CENTER WHILE OFF (round four, the ruling: the error center is not task tracking). A state file that cannot be read is
 // told while off: the session flags' store becomes a directory, the Sessions pane's next build reads it (a display reader that files
@@ -364,16 +403,62 @@ class ServedTaskTrackingSwitch(QueuedLab):
         self.assertTrue(any("session-flags" in r for r in e["rows"]), "the unreadable flags store is the row" + table)
         self.assertNotEqual(e["cueAfter"], e["before"]["cue"], "the bell's unread cue moved with it" + table)
 
+    def _seed_frames(self, r):
+        """The pane's own record of the feed frames it received (DRIVER, __ttFrames), read at the off scene and split at the seed: every
+        frame, the frames after the seed, the first off frame among them, and the ON frames with a payload between the seed and it."""
+        frames = r["off"].get("feedFrames") or []
+        after = [f for f in frames if f.get("afterSeed")]
+        first_off = next((f for f in after if f["off"]), None)
+        between = [f for f in after if not f["off"] and (first_off is None or f["seq"] < first_off["seq"])]
+        return frames, after, first_off, between
+
     def test_off_frames_keep_the_card_badge_seen_marks_and_the_return_to_on_applies_the_payloads_own_rule(self):
         # round five, the medium: the off branch handed the mirror no cards, and the mirror stores only the active set, so one off
-        # frame deleted every card mark and every card re-minted its bell row back on
-        r = self._result(); off = r["off"].get("seenAfterOff"); on = r["on"].get("seenAfterOn"); table = "\n  off: " + json.dumps(off) + " on: " + json.dumps(on) + " frames: " + json.dumps(r["off"].get("feedFrames"))
+        # frame deleted every card mark and every card re-minted its bell row back on. The expected store is a function of the frames
+        # the pane received after the seed (its own record, DRIVER): an off frame keeps the card marks and replaces the rings' own, an
+        # ON frame with a payload prunes the card marks not in the payload (the mechanism of this module's CI reds, round 2 of fork
+        # PR #904), and the lab replants the seed on each such frame before the first off frame; so the read after the off frame holds
+        # the seeds when an off frame followed the seed and no ON frame followed the off frame, and a red here names which premise failed
+        r = self._result(); off = r["off"].get("seenAfterOff"); on = r["on"].get("seenAfterOn")
+        frames, after, first_off, between = self._seed_frames(r)
+        table = "\n  off: " + json.dumps(off) + " on: " + json.dumps(on) + " seed: " + json.dumps(r["off"].get("seed")) + " frames: " + json.dumps(frames)
         self.assertIsNotNone(off, "the feed frame's store was read" + table)
-        self.assertTrue(r["off"].get("feedFrames") and any(f["off"] for f in r["off"]["feedFrames"]), "at least one off frame reached the mirror" + table)
+        self.assertTrue(frames and any(f["off"] for f in frames), "at least one off frame reached the mirror" + table)
+        self.assertIsNotNone(first_off, "an off frame reached the pane after the seed (a frame before the seed proves nothing about it)" + table)
+        late = [f for f in after if f["seq"] > first_off["seq"] and not f["off"]]
+        self.assertEqual(late, [], "no ON frame with a payload reached the pane after the off frame while off: one would prune the marks by the "
+                         "payload's rule, a built frame sent while off, the kernel's defect rather than the off frame's" + table)
         self.assertIn("n|seed-1", off, "the follow-up mark survives the off frames" + table)
         self.assertIn("w|seed-2|1700000000|judge", off, "the warning mark too" + table)
         self.assertNotIn("sync|seed-3", off, "the rings' half is the frame's own: a stale ring mark leaves" + table)
+        # back on, the payload's own rule needs a payload: the first ON frame after the last off frame is the writer
+        on_frames = r["on"].get("feedFrames") or []
+        last_off = max((f["seq"] for f in on_frames if f["off"]), default=-1)
+        rewrote = [f for f in on_frames if f["seq"] > last_off and not f["off"]]
+        self.assertTrue(rewrote, "an ON frame with a payload reached the pane after the flip back, the writer the rule below needs" + table + " on frames: " + json.dumps(on_frames))
         self.assertNotIn("n|seed-1", on or [], "back on, the payload's own rule: a card that is not in the payload takes its marks with it" + table)
+
+    def test_an_on_frame_between_the_seed_and_the_flip_prunes_the_seeds_and_the_replant_puts_them_back_before_the_off_frame(self):
+        # round 2 of fork PR #904, the reviewers' probe as a case: both CI reds' RESULT records showed the kernel already off at the
+        # reads and the seeds gone, the mechanism an ON frame with a payload landing between the seed and the off frame (feed.ts
+        # mirrorBadges rewrites the store from the frame). The driver plants such a frame every run (needFullFeed through the pane's own
+        # send) and waits for its arrival in the pane's record before the click; the record shows the frame pruned the seeds and the lab
+        # replanted them in the same task; the first off frame's store holds them. With the replant gone this reds on the off frame's
+        # store with the text the CI reds carried; with the planted frame gone it reds on the arrival, or on a record with no ON frame
+        # between the seed and the off frame
+        r = self._result(); pf = r.get("plantedFrame"); frames, after, first_off, between = self._seed_frames(r)
+        table = "\n  planted: " + json.dumps(pf) + " seed: " + json.dumps(r["off"].get("seed")) + " frames after the seed: " + json.dumps(after)
+        self.assertIsNotNone(pf, "the driver planted an ON frame after the seed and recorded it" + table)
+        self.assertTrue(pf["arrived"], "the planted ON frame reached the pane before the click (%s ms)" % pf.get("ms") + table)
+        self.assertIsNotNone(first_off, "an off frame reached the pane after the seed" + table)
+        self.assertTrue(between, "an ON frame with a payload reached the pane between the seed and the off frame" + table)
+        for f in between:
+            self.assertNotIn("n|seed-1", f["storeAfter"] or [], "frame %d: the ON frame's mirror pruned the seed by the payload's rule, the mechanism this case is about" % f["seq"] + table)
+        self.assertIn("n|seed-1", first_off["storeAfter"] or [], "the off frame's mirror kept the card marks the replant put back" + table)
+        self.assertIn("w|seed-2|1700000000|judge", first_off["storeAfter"] or [], "the warning mark too" + table)
+        for f in between:
+            self.assertTrue(f["reseeded"], "frame %d: the lab replanted the seed on the ON frame's arrival, in the same task" % f["seq"] + table)
+        self.assertFalse((r["off"].get("seed") or {}).get("armed", True), "the first off frame disarmed the replant, so the flip back is judged on the payload's own rule" + table)
 
     def test_the_driver_polled_the_kernels_switch_to_each_value_within_its_bound(self):
         # the flip's wait on the kernel is a poll from the driver (pollKernelSwitch in DRIVER): the pinned Playwright does not poll an

@@ -6,29 +6,36 @@ predicate once, and an async function returns a promise, a truthy value, so the 
 it resolves to. `page.waitForFunction(async () => false, null, { timeout: 3000 })` returns in about 20 ms with the value
 false where the synchronous `() => false` times out at 3000 ms (measured on the pinned version). A served-page test that
 awaited the kernel's state that way (`async (u) => (await fetch(u)).json().taskTracking === false`, the Task tracking switch
-lab) therefore proceeded at once, and the reads after it raced the kernel's write: a finding on the project PR 2031, and
-CI reds on fork PR #862 and fork PR #899. The remedy is a poll from the driver (a bounded loop over the same read, a short
-pause between polls, the elapsed time recorded: pollKernelSwitch in tests/test_task_tracking_switch_browser.py), or a
-synchronous predicate over state the page already holds.
+lab) therefore proceeded at once: a wait that enforces nothing is a defect of the lab in its own right, whatever the reads
+after it happen to hold (that lab's kernel writes before the gear echoes, so its reads held the value; its CI reds had another
+mechanism, a feed frame pruning the marks the lab had seeded, fixed in its driver). The remedy is a poll from the driver (a
+bounded loop over the same read, a short pause between polls, the elapsed time recorded: pollKernelSwitch in
+tests/test_task_tracking_switch_browser.py), or a synchronous predicate over state the page already holds.
 
 The pin is a text rule over the files that can drive a browser. Its population is a list of directories (population()):
 the Python labs and the node scripts under tests/, the webview's tests and helpers under ui/webview/ and the browser tests
 beside them at ui/'s top, the extension's sources under vscode-extension/src/, and the lab loops and benches under tools/
 and tools/romp-lab/. A census holds that list to the tree: every tracked file that holds the call, prose aside, must be in
 it, so a call site in a directory the list does not name fails by path rather than going unread (six tracked files stood
-outside the first list on 2026-09-22). Its bound, stated so a reader never takes it for more:
-(1) the first argument of a `waitForFunction(` call, read with brackets and string literals balanced, that begins with the
-`async` keyword (an async arrow or an async function expression); (2) a first argument that is a bare name bound in the
-same file to an async function (`const p = async () =>`, `async function p`); (3) a call through a wrapper, a function
-defined earlier in the same file whose parameter is that first argument, when a caller in the same file hands the wrapper,
-in that parameter's position, an async literal or a name bound to an async function. The wrapper definitions rule (3) reads,
-each with its parameter list read balanced (a typed parameter such as `pred: () => boolean` or a defaulted one is read
-whole): an arrow bound by const, let or var with a parenthesized list or one bare parameter, a function expression bound
-the same way, and a function declaration; the form table is a test of this file. Comment lines (`//`, `#`, `*`) are
-skipped, so a comment naming the shape is no offender and a pin in a comment is no cover. Out of its reach, by design: a
-class or object-literal method used as the wrapper, a wrapper defined after its caller in the text, a predicate or wrapper
-built in another file, a predicate produced by a call (`waitForFunction(make())`), a name rebound between its definition
-and the call, a regex literal holding an unbalanced bracket. The census that fixed the tree (2026-09-22) read every
+outside the first list on 2026-09-22). Its bound, stated so a reader never takes it for more. It reads:
+(1) the first argument of a `waitForFunction(` call, read with brackets and string literals balanced and bared (bare():
+leading comments, a `/* */` block or a `//` line, and enclosing parentheses removed to a fixed point, so `/* why */ async
+() =>` and `(async () => ...)` are the literal they wrap, while `(a, b) => ...` opens a list and stays whole), that begins
+with the `async` keyword (an async arrow or an async function expression); (2) a first argument that is a bare name bound
+in the same file to an async function (`const p = async () =>`, `async function p`); (3) a call through a wrapper, a
+function defined in the same file whose parameter is that first argument, when a caller in the same file hands the wrapper,
+in that parameter's position, an async literal or a name bound to an async function, the handed argument bared the same
+way. The wrapper definitions rule (3) reads, each with its parameter list read balanced (a typed parameter such as
+`pred: () => boolean` or a defaulted one is read whole): an arrow bound by const, let or var with a parenthesized list or
+one bare parameter, a function expression bound the same way, and a function declaration; the form table is a test of this
+file, and every shape named here has a planted red. Comment lines (`//`, `#`, `*`) are skipped, so a comment naming the
+shape is no offender and a pin in a comment is no cover. Out of its reach, by design, each with its reason: a class or
+object-literal method used as the wrapper (its head is none of the four definition forms); a method reference as the
+predicate (`waitForFunction(this.ready)`: whether a method is async is not decidable from the call site's text, and a
+dotted name has no same-file binding for rule (2) to read); a predicate or wrapper built in another file (the rule reads one
+file at a time); a predicate produced by a call (`waitForFunction(make())`: the call's result is not in the text); a name
+rebound between its definition and the call (rule (2) reads a binding, not the flow); a regex literal holding an unbalanced
+bracket (the scanner skips string and template literals, not regexes). The census that fixed the tree (2026-09-22) read every
 identifier-passed and wrapper-passed predicate by hand and found each synchronous; this rule holds that state. This file
 plants the shapes it refuses in its own tests, so the walk leaves it out by name. Reads the tree only: no kernel, no
 browser, no romp code loaded; the census asks git for the tracked list.
@@ -125,6 +132,28 @@ def first_argument(text, start):
     return arguments_of(text, start)[0]
 
 
+_LEAD_COMMENT = re.compile(r"\s*(?:/\*.*?\*/\s*|//[^\n]*\n\s*)+", re.S)
+
+
+def bare(segment):
+    """The argument with what stands before the predicate removed, to a fixed point: leading comments (a `/* */` block, a `//`
+    line) and enclosing parentheses, so `/* why */ async () => ...` and `(async () => ...)` read as the literal they wrap.
+    Enclosing means the parenthesis at the start closes at the segment's last character, read balanced with the arguments'
+    scanner: `(a, b) => f()` opens a parameter list, not an enclosure, and is returned whole."""
+    s = segment.strip()
+    while True:
+        m = _LEAD_COMMENT.match(s)
+        if m:
+            s = s[m.end():]
+            continue
+        if s.startswith("("):
+            _, close = _segments(s, 0)
+            if close == len(s) - 1:
+                s = s[1:close].strip()
+                continue
+        return s
+
+
 def _param_name(segment):
     """The name a parameter segment binds: its leading identifier (`pred: () => boolean` binds pred, `ms = bound(1)` binds
     ms); None for a rest or destructured parameter, which no bare argument name can equal."""
@@ -164,7 +193,8 @@ def _bound_to_async(text, name):
 
 def offenders(text, name="<text>"):
     """Every waitForFunction call in `text` whose first argument is asynchronous under the three rules of the module
-    docstring, as "<name>:<line>: <reason>" strings. Pure over its input, so a planted shape is tested without a file."""
+    docstring (the argument bared first: bare()), as "<name>:<line>: <reason>" strings. Pure over its input, so a planted
+    shape is tested without a file."""
     out = []
     defs = wrapper_defs(text)
     wrappers = {}   # wrapper name -> (the parameter it hands waitForFunction, that parameter's index), for rule (3)
@@ -173,7 +203,7 @@ def offenders(text, name="<text>"):
         if _is_comment_line(text, pos):
             continue
         line = text.count("\n", 0, pos) + 1
-        arg = first_argument(text, pos).strip()
+        arg = bare(first_argument(text, pos))
         if re.match(r"async\b", arg):
             out.append("%s:%d: waitForFunction is handed an async predicate literal" % (name, line))
             continue
@@ -193,7 +223,7 @@ def offenders(text, name="<text>"):
             args = arguments_of(text, cm.end() - 1)
             if k >= len(args):
                 continue
-            handed = args[k].strip()
+            handed = bare(args[k])
             line = text.count("\n", 0, cm.start()) + 1
             if re.match(r"async\b", handed):
                 out.append("%s:%d: %s hands waitForFunction its parameter %s, and this call passes an async predicate literal" % (name, line, wname, param))
@@ -288,6 +318,32 @@ class WaitForFunctionPredicatesAreSynchronous(unittest.TestCase):
         self.assertEqual(offenders(planted, "x.py"), ["x.py:1: waitForFunction is handed an async predicate literal"])
         self.assertEqual(offenders("await f.waitForFunction(async function () { return false; }, null, { timeout: 5 });", "y.js"),
                          ["y.js:1: waitForFunction is handed an async predicate literal"])
+
+    def test_a_planted_async_arrow_behind_a_leading_comment_or_enclosing_parentheses_reds(self):
+        # the shapes the first bound sentence passed over in silence (round 1 of fork PR #904, all-3): a block comment before the
+        # predicate, a line comment before it, an async arrow wrapped in parentheses, and both at once; each is the async literal
+        red = ["x.py:1: waitForFunction is handed an async predicate literal"]
+        self.assertEqual(offenders("await page.waitForFunction(/* the kernel's switch */ async (u) => (await fetch(u)).ok, cfg.v, { timeout: 5 });\n", "x.py"), red)
+        self.assertEqual(offenders("await page.waitForFunction(\n  // the kernel's switch\n  async (u) => (await fetch(u)).ok, cfg.v);\n", "x.py"), red)
+        self.assertEqual(offenders('await page.waitForFunction((async () => (await fetch("/v")).ok), null, { timeout: 5 });\n', "x.py"), red)
+        self.assertEqual(offenders("await page.waitForFunction(/* twice */ ((async () => false)), null);\n", "x.py"), red)
+        # the same shapes in a wrapper's predicate position
+        planted = ('const waitFn = async (fn, arg, why) => page.waitForFunction(fn, arg, { timeout: T });\n'
+                   'await waitFn(/* why */ (async () => true), null, "x");\n')
+        self.assertEqual(offenders(planted, "x.py"), ["x.py:2: waitFn hands waitForFunction its parameter fn, and this call passes an async predicate literal"])
+        # a parenthesized LIST is no enclosure, and a comment before a synchronous arrow changes nothing: both clean
+        self.assertEqual(offenders("await page.waitForFunction((a, b) => a === b, null);\nawait page.waitForFunction(/* sync */ () => true);\n", "x.py"), [])
+        self.assertEqual(bare("(a, b) => f(a, b)"), "(a, b) => f(a, b)")
+        self.assertEqual(bare("/* c */ ( (async () => 1) )"), "async () => 1")
+        self.assertEqual(bare("  // c\n  ready"), "ready")
+
+    def test_a_method_reference_as_the_predicate_is_out_of_reach_as_the_docstring_says(self):
+        # whether `this.ready` or `d.ready` names an async method is not decidable from the call site's text, and a dotted name has
+        # no same-file binding for rule (2) to read: named out of reach in the docstring; a reader that gains it moves this shape
+        # into a planted red
+        text = ("class Driver {\n  async ready() { return (await fetch('/v')).ok; }\n  wait() { return this.page.waitForFunction(this.ready); }\n}\n"
+                "const d = new Driver();\nawait page.waitForFunction(d.ready);\n")
+        self.assertEqual(offenders(text, "x.ts"), [])
 
     def test_a_planted_name_bound_to_an_async_function_reds(self):
         planted = 'const ready = async () => (await fetch("/v")).ok;\nawait page.waitForFunction(ready, null, { timeout: 5000 });\n'
