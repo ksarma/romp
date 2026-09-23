@@ -137,7 +137,9 @@ the spawn site, naming the file.
 """
 import ast
 import builtins
+import contextlib
 import glob
+import io
 import json
 import os
 import re
@@ -1823,9 +1825,13 @@ class HermeticKernelPostal(unittest.TestCase):
         the call and the argv; the same launch under kernel_env is none; eight modules whose only tie to the kernel is a
         local bound to its path, or to text spelling it, beside a nested pytest argv carrying the local's name as a flag
         or a word are none (the regex census named every one of them and missed the launch, the red-before of
-        2026-09-21); the roads label the two launches binding and the eight neither. A separate directory holds a
-        module that binds one name to the path and to a pytest argv in one function: the census is loud on it, naming
-        the module and both lines, and the roads table labels it refused."""
+        2026-09-21); the roads label the two launches binding and the eight neither. The --roads arm (_print_roads)
+        over the same directory prints a line per module with the road the roads table gives it and one line per
+        unresolved entry, and every count on its summary line equals what spawn_roads derives over that directory, its
+        offender count what _kernel_spawn_offenders derives (review round 9: the arm the census's cited figures come
+        from was run by no test). A separate directory holds a module that binds one name to the path and to a pytest
+        argv in one function: the census is loud on it, naming the module and both lines, and the roads table labels
+        it refused."""
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         head = 'import os, subprocess, sys, unittest\nBIN = "/tmp/TESTHOST/bin"\n\nclass T(unittest.TestCase):\n    def test_a(self):\n'
@@ -1849,6 +1855,41 @@ class HermeticKernelPostal(unittest.TestCase):
         roads = {name: road for name, (road, _, _) in spawn_roads(d).items()}
         self.assertEqual(roads, dict({n: "neither" for n in planted}, **{"test_launch_no_trio.py": "binding", "test_launch_kernel_env.py": "binding"}),
                          "the roads table over the planted directory: the two launches by the binding road, the eight collisions neither")
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            _print_roads(d)
+        out = printed.getvalue().splitlines()
+        table = spawn_roads(d)
+        entries = [(name, line, text, kind) for name, (_, _, unresolved) in table.items() for line, text, kind in unresolved]
+        spawn_sites = [r for _, sites, _ in table.values() for _, _, r in sites]
+        self.assertTrue(entries and spawn_sites, "the planted directory gives no unresolved entry or no spawn site: the "
+                        "summary's counts would be held against an empty population")
+        by_kind = {}
+        for _, _, _, kind in entries:
+            by_kind[kind] = by_kind.get(kind, 0) + 1
+        derived = dict({r: sum(1 for road, _, _ in table.values() if road == r) for r in ("argv", "binding", "neither", "refused")},
+                       modules=len(table), sites=len(spawn_sites), argv_sites=spawn_sites.count("argv"),
+                       binding_sites=spawn_sites.count("binding"), offenders=len(_kernel_spawn_offenders(d)),
+                       unresolved=len(entries), calls=len({(name, line) for name, line, _, _ in entries}),
+                       unresolved_modules=len({name for name, _, _, _ in entries}), kinds=by_kind,
+                       executable=sum(1 for _, _, text, _ in entries if text == "sys.executable"))
+        summary = [re.fullmatch(r"# summary: modules (\d+); argv (\d+); binding (\d+); neither (\d+); refused (\d+); spawn sites "
+                                r"(\d+) \(argv (\d+), binding (\d+)\); offenders (\d+); unresolved names (\d+) in (\d+) calls of "
+                                r"(\d+) modules by kind (\{.*\}); sys\.executable (\d+) of them", line) for line in out]
+        summary = [m for m in summary if m]
+        self.assertEqual(len(summary), 1, "the --roads arm prints one summary line in the shape this test reads: %r" % out[-1:])
+        fields = ("modules", "argv", "binding", "neither", "refused", "sites", "argv_sites", "binding_sites", "offenders",
+                  "unresolved", "calls", "unresolved_modules", "kinds", "executable")
+        values = summary[0].groups()
+        self.assertEqual(dict(zip(fields, [int(v) for v in values[:12]] + [ast.literal_eval(values[12]), int(values[13])])), derived,
+                         "the --roads summary over the planted directory against spawn_roads over it (modules, each road, the "
+                         "sites by road, the unresolved entries, their calls, modules and kinds, sys.executable among them) and "
+                         "_kernel_spawn_offenders over it (the offenders)")
+        opens = out.index(next(line for line in out if line.startswith("# unresolved:")))
+        self.assertEqual({line.split()[0]: line.split()[1] for line in out[:opens]}, {name: road for name, (road, _, _) in table.items()},
+                         "the --roads module lines (module, road) against the roads table")
+        self.assertEqual(len(out) - opens - 2, len(entries), "the --roads arm prints one line per unresolved entry between "
+                         "its unresolved header and its summary: %r" % out[opens:])
         loud_dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, loud_dir, True)
         rebinding = (head + '        k = os.path.join(BIN, "romp-kernel")\n        k = [sys.executable, "-m", "pytest", "-k", "boot"]\n'
