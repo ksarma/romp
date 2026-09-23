@@ -35,9 +35,12 @@ component for an unreadable root with no entry standing is the unreadable marker
 boundary guard); (13) what a reader that passes no faults list shows while the tree the agent's file lies under cannot
 be read, with no resolution standing (ViewerUnderAnUnreadableTree): the viewer's missing-transcript frame, equal to a
 removed tree's and keyed as it is, and an Agent head with no steps, both gone once the fault clears (a characterization,
-the witness of the texts that state it). Red-first on (1), the jobs-pass half of (6), (9), (10) and (11); (12) is red
-under a mutant per road; (13) is green before its change by design and red under the follow-up that has the viewer
-state the fault.
+the witness of the texts that state it); (14) a lookup that could not be made answers the memo's standing resolution
+only when that path lies under what the walk could not read (StandingResolutionUnderAFault): a standing path under a
+tree the walk read in full, a sibling's or the own tree before a listing that faults, is not answered, and one under
+the tree that faults, or under a sibling the listing could not name, is. Red-first on (1), the jobs-pass half of (6),
+(9), (10), (11) and (14); (12) is red under a mutant per road; (13) is green before its change by design and red under
+the follow-up that has the viewer state the fault.
 Synthetic fixtures only: placeholder ids, invented text, a temp directory."""
 import contextlib
 import errno
@@ -601,8 +604,9 @@ class UnreadableRoot(_Tree):
 
 class _Walk(_Tree):
     """The agent-file walk's fixture (no cases of its own): AID_FORK's lookup key forgotten around each case, a sibling
-    session's subagents tree in the project directory, a fault on one tree, and the lookup under a running chat build's
-    dependency scope. FaultExcludesItsOwnTree and FailClosedRoads share it."""
+    session's subagents tree in the project directory, a fault on one tree or on the project directory's listing, and
+    the lookup under a running chat build's dependency scope. FaultExcludesItsOwnTree, FailClosedRoads and
+    StandingResolutionUnderAFault share it."""
 
     def setUp(self):
         super().setUp()
@@ -651,6 +655,45 @@ class _Walk(_Tree):
                 raise OSError(errno.EIO, "input/output error")
             return real(p, *a, **k)
         with mock.patch.object(os, "lstat", eio):
+            yield
+
+    @contextlib.contextmanager
+    def _unlistable(self, how):
+        """The project directory cannot be listed inside the block while every path under it still reads. "eacces": the
+        directory at mode 0311 (search and write, no read: a real fault; lstat and stat under it still work); "eio": os.listdir
+        and os.scandir of that directory raising EIO by mock, every other call reading. Path.iterdir lists through os.listdir
+        (3.11, 3.12) or os.scandir (3.13 on); 3.10's pathlib lists through the os.listdir it bound at import, which the mock
+        does not reach, so the EIO variant asserts that first and is skipped there."""
+        proj = str(self.proj)
+        if how == "eacces":
+            if os.geteuid() == 0:
+                self.skipTest("permission bits do not bind root: no EACCES to drive")
+            os.chmod(proj, 0o311)
+            try:
+                with self.assertRaises(PermissionError, msg="premise: the real fault this case drives, on the listing alone"):
+                    list(self.proj.iterdir())
+                os.lstat(str(self.subdir))                          # premise: a path under the directory still reads
+                yield
+            finally:
+                os.chmod(proj, 0o755)
+            return
+
+        def eio(real):
+            def f(p=".", *a, **k):
+                if not isinstance(p, int) and os.fsdecode(p) == proj:
+                    raise OSError(errno.EIO, "input/output error")
+                return real(p, *a, **k)
+            return f
+        with mock.patch.object(os, "listdir", eio(os.listdir)), mock.patch.object(os, "scandir", eio(os.scandir)):
+            try:
+                list(self.proj.iterdir())
+                seen = False
+            except OSError:
+                seen = True
+            if not seen:
+                self.assertLess(sys.version_info, (3, 11), "premise: Path.iterdir reaches the mocked os.listdir or os.scandir "
+                                                           "on every interpreter but 3.10")
+                self.skipTest("3.10's pathlib lists through the os.listdir it bound at import: the EIO mock is not seen")
             yield
 
     def _lookup(self):
@@ -879,45 +922,6 @@ class FailClosedRoads(_Walk):
 
     ERR = {"eio": "OSError", "eacces": "PermissionError"}   # the type name the walk passes to the caller's faults
 
-    @contextlib.contextmanager
-    def _unlistable(self, how):
-        """The project directory cannot be listed inside the block while every path under it still reads. "eacces": the
-        directory at mode 0311 (search and write, no read: a real fault; lstat and stat under it still work); "eio": os.listdir
-        and os.scandir of that directory raising EIO by mock, every other call reading. Path.iterdir lists through os.listdir
-        (3.11, 3.12) or os.scandir (3.13 on); 3.10's pathlib lists through the os.listdir it bound at import, which the mock
-        does not reach, so the EIO variant asserts that first and is skipped there."""
-        proj = str(self.proj)
-        if how == "eacces":
-            if os.geteuid() == 0:
-                self.skipTest("permission bits do not bind root: no EACCES to drive")
-            os.chmod(proj, 0o311)
-            try:
-                with self.assertRaises(PermissionError, msg="premise: the real fault this case drives, on the listing alone"):
-                    list(self.proj.iterdir())
-                os.lstat(str(self.subdir))                          # premise: a path under the directory still reads
-                yield
-            finally:
-                os.chmod(proj, 0o755)
-            return
-
-        def eio(real):
-            def f(p=".", *a, **k):
-                if not isinstance(p, int) and os.fsdecode(p) == proj:
-                    raise OSError(errno.EIO, "input/output error")
-                return real(p, *a, **k)
-            return f
-        with mock.patch.object(os, "listdir", eio(os.listdir)), mock.patch.object(os, "scandir", eio(os.scandir)):
-            try:
-                list(self.proj.iterdir())
-                seen = False
-            except OSError:
-                seen = True
-            if not seen:
-                self.assertLess(sys.version_info, (3, 11), "premise: Path.iterdir reaches the mocked os.listdir or os.scandir "
-                                                           "on every interpreter but 3.10")
-                self.skipTest("3.10's pathlib lists through the os.listdir it bound at import: the EIO mock is not seen")
-            yield
-
     def _rebuilt_then_settles(self, notes, where, holder_file):
         """After the fault clears. The key the build recorded for `where` is _TREE_UNREADABLE, and the next signature's
         re-stat of the same record differs from it, so the chat tab is rebuilt; the rebuilt tab's lookup finds the file, with
@@ -1023,6 +1027,113 @@ class FailClosedRoads(_Walk):
         self.assertNotIn(root, km._SUBAGENT_TREES, "and the entry is popped, as for a missing root")
         self.assertEqual((km._SUBAGENT_TREES_GEN[0] - g0, km._SUBAGENT_ROOT_EVICTED.get(root)), (1, km._SUBAGENT_TREES_GEN[0]),
                          "and its eviction is recorded (the generation moved by one, the table naming the root at that value)")
+
+
+class StandingResolutionUnderAFault(_Walk):
+    """A lookup that could not be made (the file found nowhere while a tree, an entry or the listing faulted) answers the
+    memo's standing resolution only when that path lies under what the walk could not read; a standing path under a tree
+    the walk read in full is disproven by that read, and the answer is None with the fault (the pass applying round 2 of
+    #882's rulings found the fault applied wider than its subject). RED before this change, at the round-2 head and after
+    group A: _subagent_file answered the standing path whenever the lookup faulted, so AID_FORK's file, memoized under the
+    holder sibling's tree and since moved into another sibling's tree that cannot be read, was answered at its old path,
+    which no longer exists, because the other tree faulted; and a file memoized under the own tree and gone from it was
+    answered at its old path while the project directory could not be listed, although the listing excludes only the
+    siblings it could not name and the walk reads the own tree before it. Controls, green before the change and after
+    it: a standing path under the very tree that faults, or under a sibling while the listing faults, is answered with
+    the fault, since the walk could not look there. Each fault is driven under a real EACCES (skipped as root, whom
+    permission bits do not bind) and under an EIO by mock (the listing's EIO variant skipped on 3.10, whose pathlib lists
+    through the os.listdir it bound at import)."""
+
+    ERR = {"eio": "OSError", "eacces": "PermissionError"}   # the type name the walk passes to the caller's faults
+
+    def _memoized_under_the_holder(self):
+        """AID_FORK found under the holder sibling's tree and memoized: (the holder's root, the file, the memo entry)."""
+        hold, holder_file = self._sibling(SID_HOLD, holder=True)
+        got, faults, _notes = self._lookup()
+        self.assertEqual((got, faults), (holder_file, []), "premise: found under the holder sibling's tree")
+        entry = km._SUBAGENT_FILE_CACHE[self.fork_key]
+        self.assertEqual(entry[1], holder_file, "premise: memoized, the standing resolution")
+        return hold, holder_file, entry
+
+    def _moved_into_a_faulting_tree(self, how, after):
+        other, _ = self._sibling(SID_AFTER if after else SID_BEFORE)
+        hold, holder_file, entry = self._memoized_under_the_holder()
+        if after:
+            self._premise_order(SID_HOLD, SID_AFTER)
+        else:
+            self._premise_order(SID_BEFORE, SID_HOLD)
+        os.rename(str(holder_file), os.path.join(other, holder_file.name))   # the file leaves the holder for the other tree
+        with self._unreadable(other, how):
+            got, faults, _notes = self._lookup()
+        self.assertEqual(faults, [self.ERR[how]], "premise: the lookup could not be made, and the caller is told")
+        self.assertIsNone(got,
+                          "the walk read the holder's tree in full and the file is not there, so the standing path under it is "
+                          "disproven; answered %r (exists: %s): a fault on another tree decided the answer for a tree the walk read"
+                          % (got and os.path.relpath(str(got), self.td), bool(got) and os.path.exists(str(got))))
+        self.assertIs(km._SUBAGENT_FILE_CACHE.get(self.fork_key), entry,
+                      "and the lookup memoized nothing: the standing entry is untouched, so the next call walks again")
+
+    def test_a_standing_path_under_a_tree_the_walk_read_is_not_answered_when_a_tree_sorted_after_it_faults_eio(self):
+        self._moved_into_a_faulting_tree("eio", after=True)
+
+    def test_a_standing_path_under_a_tree_the_walk_read_is_not_answered_when_a_tree_sorted_after_it_faults_eacces(self):
+        self._moved_into_a_faulting_tree("eacces", after=True)
+
+    def test_a_standing_path_under_a_tree_the_walk_read_is_not_answered_when_a_tree_sorted_before_it_faults_eio(self):
+        self._moved_into_a_faulting_tree("eio", after=False)
+
+    def test_a_standing_path_under_a_tree_the_walk_read_is_not_answered_when_a_tree_sorted_before_it_faults_eacces(self):
+        self._moved_into_a_faulting_tree("eacces", after=False)
+
+    def _own_file_gone_and_the_listing_faults(self, how):
+        key = (str(self.tpath), AID_WF)
+        self.addCleanup(km._SUBAGENT_FILE_CACHE.pop, key, None)
+        own_file = self.wf / ("agent-%s.jsonl" % AID_WF)
+        self.assertEqual(km._subagent_file(str(self.tpath), AID_WF), own_file, "premise: found under the own tree and memoized")
+        os.rename(str(own_file), os.path.join(self.td, own_file.name))      # the file leaves the own tree and the project
+        with self._unlistable(how):
+            faults = []
+            got = km._subagent_file(str(self.tpath), AID_WF, faults)
+        self.assertEqual(faults, [self.ERR[how]], "premise: the listing could not be made, and the caller is told")
+        self.assertIsNone(got,
+                          "the walk read the own tree in full before the listing faulted and the file is not there, so the "
+                          "standing path under it is disproven; answered %r: the listing's fault excludes the siblings it could "
+                          "not name, not the own tree" % (got and os.path.relpath(str(got), self.td),))
+
+    def test_a_standing_path_under_the_own_tree_is_not_answered_when_the_project_directory_cannot_be_listed_eio(self):
+        self._own_file_gone_and_the_listing_faults("eio")
+
+    def test_a_standing_path_under_the_own_tree_is_not_answered_when_the_project_directory_cannot_be_listed_eacces(self):
+        self._own_file_gone_and_the_listing_faults("eacces")
+
+    # ── controls: a standing path where the walk could not look is answered, with the fault ────────────────────────────
+    def _under_the_faulting_tree(self, how):
+        hold, holder_file, _entry = self._memoized_under_the_holder()
+        (self.proj / "notes.txt").write_text("")                  # a new entry: the project directory's stamp moves, so the
+        with self._unreadable(hold, how):                          #  memo's re-check misses and the lookup walks
+            got, faults, _notes = self._lookup()
+        self.assertEqual((got, faults), (holder_file, [self.ERR[how]]),
+                         "the standing path lies under the tree that could not be read: answered, with the fault")
+
+    def test_control_a_standing_path_under_the_tree_that_faults_is_answered_eio(self):
+        self._under_the_faulting_tree("eio")
+
+    def test_control_a_standing_path_under_the_tree_that_faults_is_answered_eacces(self):
+        self._under_the_faulting_tree("eacces")
+
+    def _under_a_sibling_while_the_listing_faults(self, how):
+        hold, holder_file, _entry = self._memoized_under_the_holder()
+        (self.proj / "notes.txt").write_text("")                  # the project directory's stamp moves: the lookup walks
+        with self._unlistable(how):
+            got, faults, _notes = self._lookup()
+        self.assertEqual((got, faults), (holder_file, [self.ERR[how]]),
+                         "the standing path lies under a sibling the listing could not name: answered, with the fault")
+
+    def test_control_a_standing_path_under_a_sibling_is_answered_while_the_project_directory_cannot_be_listed_eio(self):
+        self._under_a_sibling_while_the_listing_faults("eio")
+
+    def test_control_a_standing_path_under_a_sibling_is_answered_while_the_project_directory_cannot_be_listed_eacces(self):
+        self._under_a_sibling_while_the_listing_faults("eacces")
 
 
 class ViewerUnderAnUnreadableTree(_Walk):
