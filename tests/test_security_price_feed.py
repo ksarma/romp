@@ -90,6 +90,30 @@ openLinkLocally, the two window.open lines beside their openLink posts); the eve
 commit at its set equality (the table there has no such row), and the new case is red with the sentences deleted from a scratch
 copy of the section and with the residual deleted from a scratch copy of the script's docstring.
 
+The fourth round (2026-09-23, the landing round again) found a road with no row and three cells that misstated the code. The
+section now says the chat-media road (on the web dashboard a rendered message's media loads from the host its URL names on
+render, with the cookies a cross-site subresource carries and no Referer; the editor webviews' CSP blocks it), the file viewer's
+GitHub button (an address romp composes from the checkout's owner and repository name, its branch or the commit sha when HEAD is
+detached, and the file's path, to github.com) in the clicked-link road's trigger list and sent clause, the sign-in link's opener
+per document (the settings page installs none: the browser's own open; the editor's chat panel posts openLink; the editor's feed
+panel leaves it to the webview host), the residual's third anchor (a message's own same-origin download anchor, the browser's own
+download) and, beside the disclosure, the echo rule and the served pages' scan, each in the script's own words. The pins:
+TheSectionIsTheTables holds every new sentence to the section and the table, the GitHub clause to the URL shapes
+tests/test_file_github.py executes (never a kernel.py spelling pin), the residual's class to the new-tab anchor builds derived by
+grep, the module's residual constant to the script's binding by execution, and each opener pin's message names the executed test
+that proves its leg or says text-pin-only; TheChatMediaRoadIsWitnessed ties the browser witness's header strings to Handler._send's
+lines and to the kernel's own answer to GET /chat in a child interpreter; the target pin needles the whole statement over
+updateExtension and counts `script` bound once. The executed witnesses are two browser legs, ui/webview/chat-media-loads-browser.test.ts
+and ui/webview/settings-signin-link-browser.test.ts, which skip without a browser and whose runs the round's record carries. Over the
+archive of the round's reviewed head each new case is red at its first SECURITY.md assertion (no such sentence), the table cases at
+the row or the cell (no chat-media row; the sent cell without the GitHub clause; the residual's old text) and the witness class at
+the witness's absence; the mutations, numbered on from the census module's (M26 is its last): the sanitizer's forbidden tags gaining
+img in a scratch copy of md-sanitize.ts (M27: the media witness red at the kept-element precondition), buildHtml's img-src widened
+to every host in a copy of extension.ts (M28: red at the editor CSP precondition), an opener installed on a copy of settings-page.ts
+(M29: the sign-in witness red at the window.open count), the click's script re-pointed by a .replace on the same statement (M30: the
+whole-statement needle red) and target.script re-pointed before the assignment (M31: the once-bound count red), the last two in
+copies of extension.ts.
+
 Text only: the behaviour is pinned in tests/test_price_feed_off.py (the kernel), the reference's prose in
 tests/test_reference_price_feed.py. The documents and the sources are read as files; nothing loads romp
 code, so no state root is minted (the table case runs scripts/network-inventory.py, a standard-library scan
@@ -239,12 +263,100 @@ CLICKED_LABEL = "a link you click (browser)"
 CLICKED_LINK = "A link you click, in the browser showing the dashboard or in one of the editor extension's views"
 CLICKED_HOST = "requests the clicked URL from the host it names with that browser's own cookies"
 CLICKED_NO_TOKEN = "None carries a serve token, a key or a login token, and nothing sends until you click"
-CLICK_RESIDUAL = ("an anchor with no scheme that the chat page's click delegate leaves to the default action (one the page built, or one in a "
-                  "message that does not resolve to a web address) is a gesture this tree does not route, and what the editor's own webview "
-                  "host does with it is outside this tree")
+CLICK_RESIDUAL = ("three anchors the chat page's click delegate leaves to the default action (one with no scheme that the page built; one with "
+                  "no scheme in a message that does not resolve to an http or https address; a message's own download anchor, one with no scheme "
+                  "carrying a `download` attribute whose href resolves to an http or https address on this page's origin, which the browser saves "
+                  "from this origin), and a page-built anchor with a scheme in a document that installs no opener (the gear's sign-in link on the "
+                  "dashboard's settings page and in the editor's feed panel is one), are gestures this tree does not route: on the dashboard the "
+                  "browser's own open or download, and what the editor's own webview host does with them is outside this tree")
+CLICK_RESIDUAL_CONDITION = ("download", "http or https", "this page's origin", "the browser saves")   # the third anchor's condition, render.ts's
 RENDER = _read("ui", "webview", "render.ts")
 LINK_OPENER = _read("ui", "webview", "link-opener.ts")
 VIEW_ROUTING = _read("vscode-extension", "src", "view-routing.ts")
+# The fourth round of the review of PR 878 (2026-09-23). The sign-in link opens by document (extra7-2): the section's sentence, and
+# the trigger cell's per-document clause as the script words it; the executed witness is the browser leg named below.
+CLICKED_SIGNIN = ("The sign-in link, an anchor the gear builds to open in a new tab, opens by document: on the dashboard's settings page, which "
+                  "installs no opener, the browser's own open in a new tab, no site of this tree running; in the editor's chat panel the chat "
+                  "delegate's `openLink` post to the extension; in the editor's feed panel the webview host's own link handling, outside this tree.")
+CLICKED_SIGNIN_CELL = ("the gear's sign-in link, an anchor the gear builds to open in a new tab (`a.target = '_blank'` in ui/webview/gear.js), opens by "
+                       "document: on the dashboard's settings page (/settings), which installs no opener, the browser's own open in a new tab, no "
+                       "site of this tree running on the click; in the editor extension's chat panel, which mounts the gear, the chat delegate's "
+                       "`openLink` post; in the editor's feed panel, which mounts the gear too and installs only the pull-request opener, the "
+                       "webview host's own link handling, outside this tree")
+SIGNIN_WITNESS = "ui/webview/settings-signin-link-browser.test.ts"
+GEAR_SIGNIN_BUILD = "a.href = f.url; a.target = '_blank'; a.rel = 'noreferrer';"
+SETTINGS_PAGE_INIT = "initGear((m: Record<string, unknown>) => api?.postMessage(m), { ownPage: true });"
+SETTINGS_PAGE = _read("ui", "webview", "settings-page.ts")
+# The chat-media road (tests-1): a rendered message's media loads on the web dashboard on render; the section's sentence, the
+# table's row and the executed witness (a page served under the dashboard's headers, the request events read; the editor CSP scene)
+CHAT_MEDIA_LABEL = "a rendered message's media (browser)"
+CHAT_MEDIA = ("on the web dashboard the chat's rendered markdown (a session's reply, your own message, a postal body) loads an image, video, "
+              "audio, srcset or picture media from the host its URL names the moment it renders")
+CHAT_MEDIA_COOKIES = "with whatever cookies that browser sends cross-site to that host and no Referer"
+CHAT_MEDIA_WITNESS = "ui/webview/chat-media-loads-browser.test.ts"
+# The GitHub button (extra7-1): the clicked-link row's sent cell names the address romp composes, held to the URL shapes
+# tests/test_file_github.py executes; the trigger cell names the button's mechanics per document; the section carries both
+CLICKED_GITHUB_SENT = "the file viewer's GitHub button carries an address romp composes (`_file_github_link` in kernel/kernel.py"
+CLICKED_GITHUB_TEMPLATE = "`https://github.com/<owner>/<repository>/blob/<branch or sha>/<path>`"
+CLICKED_GITHUB_PARTS = ("the checkout's owner and repository name read from its origin remote", "its current branch, or the commit sha when HEAD is detached",
+                        "the file's path inside the checkout", "each segment percent-encoded and slashes kept", "to github.com", "no query string is ever added")
+CLICKED_GITHUB_REFUSALS = ("an untracked, staged-only or uncommitted file", "a path outside a git checkout", "a checkout with no origin remote or with one not on github.com",
+                           "a relative path with no session directory to place it")
+CLICKED_GITHUB_TRIGGER = ("the file viewer's GitHub button (`GitHub ↗`, an anchor of class `fileview-btn` in the title bar's `fileview-gh` span, rowed "
+                          "once the owning kernel's `fileGitLink` reply carries a URL)")
+CLICKED_GITHUB_DEFAULT_OPEN = "on the Files pane, the feed page and the Waiting-on-you page the anchor's own default open (target `_blank`, rel `noopener`: the browser's new tab)"
+CLICKED_GITHUB_NO_EDITOR_LEG = "the viewer mounts in no editor webview (a file click there opens the file in the editor), so the button has no editor leg"
+SECURITY_GITHUB_TRIGGER_ITEM = "a URL in a viewed file, the file viewer's GitHub button, the gear's sign-in link)"
+SECURITY_GITHUB_SENT = ("for the file viewer's GitHub button, an address romp composes from the file's checkout (the owner and repository name from its origin "
+                        "remote, the current branch or the commit sha when HEAD is detached, and the file's path), on github.com, offered only for a committed "
+                        "file in a checkout whose origin is on GitHub")
+FILE_GITHUB_TEST = _read("tests", "test_file_github.py")
+GITHUB_BLOB = re.compile(r'"(https://github\.com/[^"\s]+/blob/[^"\s]*)"')
+DETACHED_SHAPE = '"https://github.com/TESTORG/notes-api/blob/%s/src/app.py" % sha'   # the detached-HEAD case fills the template with the commit sha
+FILE_VIEW = _read("ui", "webview", "file-view.ts")
+ANCHOR_BUILD = re.compile(r'el\("a", "([^"]*)"\)')
+TARGET_BLANK = re.compile(r"\.target = ['\"]_blank['\"]")
+OPENER_CLASS_SOURCES = {("ui/webview/file-view-links.ts", "URL_LINK_CLASS"): "fv-url", ("ui/webview/file-view-links.ts", "FRAG_LINK_CLASS"): "fv-frag",
+                        ("ui/webview/pr-links.ts", "PR_LINK_CLASS"): "pr-link", ("ui/webview/url-links.ts", "URL_LINK_CLASS"): "url-link"}
+SELECTOR_LINES = (("ui/webview/file-view.ts", "t.closest('[data-act=\"openpath\"], a.' + URL_LINK_CLASS + \", a.\" + FRAG_LINK_CLASS)"),
+                  ("ui/webview/file-view.ts", "return x && body.contains(x) ? x : null;"),
+                  ("ui/webview/pr-links.ts", "anchorHrefAt(t, \"a.\" + PR_LINK_CLASS + \"[href]\", (href) => /^https:\\/\\/github\\.com\\//.test(href));"),
+                  ("ui/webview/url-links.ts", "anchorHrefAt(t, \"a.\" + URL_LINK_CLASS + \"[href]\", isWebUrl);"),
+                  ("ui/webview/file-view.ts", "if (n) fileGroup.appendChild(n);"),
+                  ("ui/webview/file-view.ts", "acts.appendChild(viewGroup); acts.appendChild(fileGroup); acts.appendChild(close);"))
+# the page-built anchors with a scheme and a new-tab target, by (file, statement), each classified: the residual's witness, the
+# button the cells name, an excluded same-origin link-out, and the anchors an opener serves (a seventh build is red until it is placed)
+BLANK_ANCHOR_BUILDS = {
+    ("ui/webview/gear.js", GEAR_SIGNIN_BUILD): "the residual's witness: the sign-in link, in documents that install no opener (/settings, the editor's feed panel)",
+    ("ui/webview/file-view.ts", 'a.href = url; a.target = "_blank"; a.rel = "noopener";'): "the GitHub button, named in the road's trigger and sent cells",
+    ("ui/webview/file-view.ts", 'a.href = href; a.target = "_blank"; a.rel = "noopener";'): "excluded: the URL viewer's Open link-out, a same-origin href the chat delegate opens (data-new-tab)",
+    ("ui/webview/url-links.ts", 'a.target = "_blank";'): "served: a URL link (url-link), by the URL opener on the Waiting-on-you pane and the chat delegate",
+    ("ui/webview/pr-links.ts", 'a.target = "_blank";'): "served: a pull-request link (pr-link), by the shared opener and the chat delegate",
+}
+# The echo rule and the served pages (correctness-1, regression-2, fresh-1): two sentences the section and the script's docstring
+# share, one source, held here as DISCLOSURE is (tests/test_price_feed_census.py holds them in the docstring beside the executed plants)
+ECHO_RULE = ("An echo- or print-led shell line is skipped as a printed remedy only when nothing live follows the printed text: the text "
+             "outside quotes and the body of every `$(...)` and backtick substitution, wherever it stands, are scanned by the interpreter arm "
+             "and the tool list, so `echo \"$body\" | curl ...` and `echo \"rate: $(curl ...)\"` are sites and a remedy that names a tool "
+             "inside quotes is not.")
+SERVED_PAGES = ("The pages the kernel serves and its service worker's script, from its own string constants (the dashboard shell, the seven "
+                "pane pages, the token login page, the too-large page and /sw.js, with the shim, the timeline boot and the shell scripts they "
+                "inline), are read from kernel.py's syntax tree, each route's page function followed to the constants it returns or inlines, "
+                "and scanned as browser text keyed kernel/kernel.py plus tool, with the DOM loads counted; a route that serves text/html or "
+                "text/javascript from text the extraction cannot read fails the run (SERVED); a file the page reads at run time is covered "
+                "by the walk when it is a scanned kind, and a stylesheet is named, not scanned.")
+# The connection family through its bindings (extra6-1): the docstring's clause, which the section carries after its own lead-in
+# (the child_process family's treatment extended to http, https, net, tls and ws); tests/test_price_feed_census.py plants the shapes
+BINDING_ARM = ("a `get` or `request` of `http` or `https`, a `connect` or `createConnection` of `net` and a `connect` of `tls` through an "
+               "inline require, a namespace or default import, or a bare name the file binds from the module (renamed or not), and `ws` by "
+               "its constructor shape (`new <binding>(`, `new <namespace>.WebSocket(`, `new (require('ws'))(`), each an added arm beside "
+               "the literal spellings (`http.get(`, `net.connect(`, the bare global `new WebSocket(`), a call the literal list already "
+               "names on a line counted once under the same tool")
+# the dashboard's headers, as Handler._send writes them on every page: the browser witness pins them by value from the same lines
+DASHBOARD_HEADERS = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "SAMEORIGIN", "Content-Security-Policy": "frame-ancestors 'self'",
+                     "Referrer-Policy": "same-origin"}
+SEND_HEADERS = re.compile(r"\n    def _send\(self, code, body, ctype, cache=None, headers=None\):\n([\s\S]*?)\n        for k, v in \(headers or \{\}\)\.items\(\):")
+HEADER_LINE = re.compile(r'^        self\.send_header\("([^"]+)", "([^"]+)"\)', re.M)
 # the table's road labels (the first cell of `--table`, the ROADS literal's second field) and the words of the section that
 # say each road: a new road in the table is red here until it has a sentence and an entry; the local row owes no sentence
 ROAD_PHRASES = {
@@ -276,7 +388,8 @@ ROAD_PHRASES = {
     "the judges' CLI (session-or-judge-cli)": ("the judge CLIs",),
     "the postal bus to peer buses (bus-request)": ("the postal mail between the two machines' buses",),
     "a viewed file's pictures from the web (browser)": (IN_THE_BROWSER, PICTURES_DEFAULT),
-    CLICKED_LABEL: (CLICKED_LINK, CLICKED_HOST),
+    CHAT_MEDIA_LABEL: (CHAT_MEDIA, CHAT_MEDIA_COOKIES),
+    CLICKED_LABEL: (CLICKED_LINK, CLICKED_HOST, CLICKED_SIGNIN),
     "bootstrap.sh (install-time-by-hand)": ("Installing by hand (`bootstrap.sh`, `install.sh`) fetches from GitHub",),
     "bin/romp-sdk-setup (install-time-by-hand; also run by the kernel's self-update through install.sh)": (GET_PIP,),
     "vscode-extension/install.sh (install-time-by-hand; also run by the kernel's self-update and by the editor extension's "
@@ -341,6 +454,55 @@ def _class_label(cls):
     if p.returncode != 0:
         raise AssertionError("%s could not be imported to read CLASS_ROWS[%r]: %s" % (INVENTORY, cls, p.stderr[-800:]))
     return json.loads(p.stdout)
+
+
+def _script_binding(name):
+    """The script's own value of a module constant (ROADS, CLICK_RESIDUAL), read by importing it in a child interpreter as
+    _class_label does: never from its text, and never in this process."""
+    prog = ("import importlib.util, json, sys\n"
+            "spec = importlib.util.spec_from_file_location('network_inventory', sys.argv[1])\n"
+            "mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)\n"
+            "print(json.dumps(getattr(mod, sys.argv[2])))\n")
+    p = subprocess.run([sys.executable, "-c", prog, os.path.join(ROOT, INVENTORY), name], capture_output=True, text=True, timeout=60)
+    if p.returncode != 0:
+        raise AssertionError("%s could not be imported to read %s: %s" % (INVENTORY, name, p.stderr[-800:]))
+    return json.loads(p.stdout)
+
+
+def _road(road):
+    """The script's ROADS entry for `road`: (id, label, trigger, sent, off), the prose the table prints for that row."""
+    entry = next((r for r in _script_binding("ROADS") if r[0] == road), None)
+    if entry is None:
+        raise AssertionError("%s's ROADS has no entry %r" % (INVENTORY, road))
+    return entry
+
+
+def _blank_anchor_builds():
+    """Every `.target = '_blank'` statement over ui/webview's non-test .ts and .js files, as (file, stripped line): the page-built
+    anchors with a scheme the residual's class is derived from, by grep, never listed by hand."""
+    out = []
+    d = os.path.join(ROOT, "ui", "webview")
+    for name in sorted(os.listdir(d)):
+        if not name.endswith((".ts", ".js")) or ".test." in name:
+            continue
+        with open(os.path.join(d, name), encoding="utf-8") as f:
+            for line in f:
+                if TARGET_BLANK.search(line):
+                    out.append(("ui/webview/" + name, line.strip()))
+    return out
+
+
+def _executed_github_shapes():
+    """The blob URLs tests/test_file_github.py asserts the kernel composes, split into their parts: (owner, repository, ref, path
+    segments); the detached-HEAD case's template, filled there with the commit sha, is read with a 40-hex stand-in for the ref."""
+    shapes = []
+    for url in sorted(set(GITHUB_BLOB.findall(FILE_GITHUB_TEST))):
+        if "%s" in url:
+            if DETACHED_SHAPE not in FILE_GITHUB_TEST:
+                raise AssertionError("tests/test_file_github.py no longer fills the blob template with the detached commit sha")
+            url = url.replace("%s", "0" * 40)
+        shapes.append(url)
+    return shapes
 
 
 def _code_lines(src):
@@ -791,18 +953,234 @@ class TheSectionIsTheTables(_Pins):
         # openLinkLocally for the other panes, and the web dashboard's window.open beside each opener's openLink post
         open_link = _ts_function(EXTENSION, "openLink")
         self.assertTrue(open_link, "vscode-extension/src/extension.ts defines openLink")
-        self.assertQuoted("vscode.env.openExternal(uri);", open_link, "vscode-extension/src/extension.ts openLink", "the one call, inside the function the routes reach")
-        self.assertEqual(EXTENSION.count("vscode.env.openExternal("), 1, "vscode-extension/src/extension.ts: one call of openExternal, the road's one editor site")
+        self.assertQuoted("vscode.env.openExternal(uri);", open_link, "vscode-extension/src/extension.ts openLink",
+                          "the one call, inside the function the routes reach; text-pin-only (openLink needs the editor host, so nothing executes it): "
+                          "the sibling regex pin is vscode-extension/src/open-link-wiring.test.ts:44")
+        self.assertEqual(EXTENSION.count("vscode.env.openExternal("), 1, "vscode-extension/src/extension.ts: one call of openExternal, the road's one editor site (text-pin-only)")
         self.assertQuoted('if (m.type === "openLink" && typeof m.href === "string") { openLink(String(m.href)); return; }', EXTENSION,
-                          "vscode-extension/src/extension.ts", "the chat panel's route")
+                          "vscode-extension/src/extension.ts", "the chat panel's route; text-pin-only, beside vscode-extension/src/open-link-wiring.test.ts:37")
         self.assertEqual(EXTENSION.count("if (r.openLinkLocally) openLink(r.openLinkLocally);"), 3,
-                         "vscode-extension/src/extension.ts: the feed panel, the outline panel and wireView route the router's openLinkLocally")
+                         "vscode-extension/src/extension.ts: the feed panel, the outline panel and wireView route the router's openLinkLocally; "
+                         "text-pins-only, beside vscode-extension/src/open-link-wiring.test.ts:30")
         self.assertQuoted("openLinkLocally: m.href, forward: false", VIEW_ROUTING, "vscode-extension/src/view-routing.ts",
-                          "the router hands an openLink to the host for every pane; the kernel never sees it")
-        self.assertQuoted('window.open(href, "_blank", "noopener,noreferrer");', RENDER, "ui/webview/render.ts", "the web dashboard's leg in the chat page's delegate")
-        self.assertQuoted('vscodeApi.postMessage({ type: "openLink", href });', RENDER, "ui/webview/render.ts", "and the editor leg beside it")
-        self.assertQuoted('open: (href) => { window.open(href, "_blank", "noopener,noreferrer"); },', LINK_OPENER, "ui/webview/link-opener.ts", "the shared opener's web leg")
-        self.assertQuoted('else if (post) post({ type: "openLink", href });', LINK_OPENER, "ui/webview/link-opener.ts", "and its editor leg")
+                          "the router hands an openLink to the host for every pane; the kernel never sees it; executed by "
+                          "vscode-extension/src/view-routing.test.ts:47 and :54 (openLinkLocally is the href, forward false)")
+        # each opener pin names the executed test that proves its leg, or says text-pin-only where none exists (the fourth round,
+        # tests-3): a text pin keyed on where code lives says what it guards and points at the executed proof, so the weaker
+        # guarantee is never mistaken for the stronger one; the extension's five pins above are text-pins-only (openLink needs the
+        # editor host, so nothing executes it) beside the sibling regex pins in vscode-extension/src/open-link-wiring.test.ts:24-45
+        # (:30 the three routes, :37 the chat panel's route, :44 the openExternal call)
+        self.assertQuoted('window.open(href, "_blank", "noopener,noreferrer");', RENDER, "ui/webview/render.ts",
+                          "the web dashboard's leg in the chat page's delegate; executed by ui/webview/md-sanitize-chat-links-browser.test.ts:166, a "
+                          "click over the real render.ts bundle in headless Chromium that asserts window.open(href, \"_blank\", \"noopener,noreferrer\") "
+                          "was called (it skips without a playwright browser, which CI has none of); ui/webview/file-view-links-browser.test.ts lifts "
+                          "this delegate's source into the Files pane's page as a stand-in over another document, not the bundle, and is not this leg's witness")
+        self.assertQuoted('vscodeApi.postMessage({ type: "openLink", href });', RENDER, "ui/webview/render.ts",
+                          "and the editor leg beside it; text-pin-only: no executed test reaches render.ts's vscodeApi branch "
+                          "(ui/webview/chat-link-open.test.ts:54 is a regex over render.ts's text)")
+        self.assertQuoted('open: (href) => { window.open(href, "_blank", "noopener,noreferrer"); },', LINK_OPENER, "ui/webview/link-opener.ts",
+                          "the shared opener's web leg; text-pin-only: ui/webview/url-links.test.ts and ui/webview/pr-links.test.ts pass their own "
+                          "open, so browserEnv's window.open runs in no test")
+        self.assertQuoted('else if (post) post({ type: "openLink", href });', LINK_OPENER, "ui/webview/link-opener.ts",
+                          "and its editor leg; executed by ui/webview/url-links.test.ts:302 and ui/webview/pr-links.test.ts:866, which drive "
+                          "installLinkOpener under a vscode-webview: protocol and assert the posted message is { type: \"openLink\", href } and "
+                          "nothing was opened")
+
+
+    def test_the_residual_constant_is_the_scripts_and_names_the_third_anchors_condition(self):
+        # the fourth round (tests-2): the one sentence in its five homes gained a message's own same-origin download anchor, worded to
+        # render.ts's condition; this module's constant is held equal to the script's binding by execution, never by a second spelling
+        self.assertEqual(CLICK_RESIDUAL, _script_binding("CLICK_RESIDUAL"), "the module's residual sentence is the script's CLICK_RESIDUAL, read by import")
+        for word in CLICK_RESIDUAL_CONDITION:
+            self.assertIn(word, CLICK_RESIDUAL, "the third anchor's condition names %r (a download attribute and a same-origin http or https address, "
+                          "left to the browser's own download; executed in ui/webview/md-sanitize-chat-schemeless-browser.test.ts)" % word)
+
+    def test_the_sign_in_link_opens_by_document_and_the_settings_page_installs_no_opener(self):
+        # the fourth round (extra7-2): the trigger cell said the chat delegate opens the gear's sign-in link everywhere and the editor posts
+        # openLink; the web settings page installs no opener (the browser's own open), the editor's chat panel posts openLink, the editor's
+        # feed panel leaves it to the webview host. The section states it per document; the executed proof of the settings page is the
+        # browser leg; the editor feed panel's clause is a text pin by absence (no opener's selector matches the class-less anchor)
+        self.assertNetwork()
+        flat = _flat(NETWORK)
+        self.assertQuoted(CLICKED_SIGNIN, flat, self.DOC, "the sign-in link's opener, per document")
+        self.assertQuoted(CLICK_RESIDUAL, flat, self.DOC, "the residual names the sign-in link as the witness of its class")
+        rows, rc, err = _table()
+        self.assertTrue(rows, "%s --table printed no table (exit %s): %s" % (INVENTORY, rc, err))
+        cells = _row(rows, CLICKED_LABEL)
+        self.assertTrue(cells, "the table has the road as a row: %r" % CLICKED_LABEL)
+        self.assertQuoted(CLICKED_SIGNIN_CELL, cells[1], "the road's trigger cell", "the same mechanics, per document, in the table")
+        self.assertNotIn("a pull-request reference, the gear's sign-in link", cells[1], "the sign-in link left the chat delegate's list: the web chat mounts no gear")
+        # the witness's build and the page that hosts it, by content; the claim itself is executed by the browser leg
+        self.assertQuoted(GEAR_SIGNIN_BUILD, GEAR, "ui/webview/gear.js", "the anchor the gear builds: a scheme, a new tab, noreferrer, no class; executed by %s "
+                          "(a real click on the served settings page: zero window.open calls, zero openLink posts, the browser's own new page; it "
+                          "skips without a playwright browser, which CI has none of)" % SIGNIN_WITNESS)
+        self.assertQuoted(SETTINGS_PAGE_INIT, SETTINGS_PAGE, "ui/webview/settings-page.ts", "the settings page mounts the gear and nothing else: no "
+                          "delegate, no opener (executed by %s)" % SIGNIN_WITNESS)
+        for needle in ("window.open", "openLink", "addEventListener"):
+            self.assertNotIn(needle, SETTINGS_PAGE, "ui/webview/settings-page.ts installs no opener of its own (%r); the editor feed panel's clause is "
+                             "text-pin-only: feed.ts installs the pull-request opener alone and no editor host runs here" % needle)
+        self.assertTrue(os.path.isfile(os.path.join(ROOT, SIGNIN_WITNESS)), "the executed witness is in the tree: " + SIGNIN_WITNESS)
+        witness = _read(*SIGNIN_WITNESS.split("/"))
+        for needle in ("#rs-login-url a[href]", "__opens", "openLink", 'waitForEvent("page"'):
+            self.assertQuoted(needle, witness, SIGNIN_WITNESS, "the leg clicks the sign-in anchor, counts window.open and the posts, and waits on the browser's own open")
+        # the residual's class, derived by grep and not listed by hand: every page-built anchor with a scheme and a new-tab target under
+        # ui/webview, by (file, statement), each placed (the witness, the button the cells name, an excluded same-origin link-out, the
+        # anchors an opener serves); a build the map does not name is red until it is classified
+        builds = _blank_anchor_builds()
+        self.assertEqual(len(builds), 6, "the new-tab anchor builds under ui/webview: %r" % builds)
+        self.assertEqual(sorted(set(builds)), sorted(BLANK_ANCHOR_BUILDS), "every build is classified and every classification names a build")
+
+    def test_the_github_button_is_said_and_its_mechanics_are_the_codes(self):
+        # the fourth round (extra7-1): the file viewer's GitHub button is an anchor romp composes, a class none of the three homes named;
+        # the section's trigger list and sent clause name it, the trigger cell states its mechanics per document (the chat page's
+        # delegate; the anchor's own default open on the Files pane, the feed page and the Waiting-on-you page; no modified-click path;
+        # no editor webview mounts the viewer), and the code is held to that: the anchor's classes are disjoint from every opener's
+        # selector class, the viewer's linkOf reads the body alone, the button stands in the title bar
+        self.assertNetwork()
+        flat = _flat(NETWORK)
+        self.assertQuoted(SECURITY_GITHUB_TRIGGER_ITEM, flat, self.DOC, "the button in the section's list of what a click opens")
+        self.assertQuoted(SECURITY_GITHUB_SENT, flat, self.DOC, "what the button's address carries, in the section")
+        rows, rc, err = _table()
+        self.assertTrue(rows, "%s --table printed no table (exit %s): %s" % (INVENTORY, rc, err))
+        cells = _row(rows, CLICKED_LABEL)
+        self.assertTrue(cells, "the table has the road as a row: %r" % CLICKED_LABEL)
+        for phrase in (CLICKED_GITHUB_TRIGGER, CLICKED_GITHUB_DEFAULT_OPEN, CLICKED_GITHUB_NO_EDITOR_LEG,
+                       "on the chat page the click delegate takes it as it takes every anchor with a scheme",
+                       "so no modified-click path reaches it (`openUrlTab` runs only for a link `linkOf` returns)"):
+            self.assertQuoted(phrase, cells[1], "the road's trigger cell", "the button's mechanics, per document")
+        # the anchor's classes, derived by grep over the viewer's anchor builds, against the opener classes read from their own exports
+        anchors = sorted(ANCHOR_BUILD.findall(FILE_VIEW))
+        self.assertEqual(anchors, ["fileview-btn", "fileview-btn fileview-gh"], "the viewer builds two anchors: the GitHub button and the URL viewer's Open link-out")
+        opener_classes = set()
+        for (rel, const), value in OPENER_CLASS_SOURCES.items():
+            m = re.search(r'^export const %s = "([^"]+)";' % const, _read(*rel.split("/")), re.M)
+            self.assertTrue(m, "%s exports %s" % (rel, const))
+            self.assertEqual(m.group(1), value, "%s's %s" % (rel, const))
+            opener_classes.add(m.group(1))
+        self.assertFalse(set("fileview-btn".split()) & opener_classes, "no opener's selector class is on the button: its plain click is the anchor's own open "
+                         "outside the chat page (executed shape witness: ui/webview/github-link.test.ts, the anchor's href, target, rel and class)")
+        for rel, line in SELECTOR_LINES:
+            self.assertQuoted(line, _read(*rel.split("/")), rel, "the selector or the mount the cell's mechanics rest on, by content")
+        self.assertQuoted('a.href = url; a.target = "_blank"; a.rel = "noopener";', FILE_VIEW, "ui/webview/file-view.ts", "the href write the census lists as a "
+                          "dom-load line (tests/test_price_feed_census.py holds the listing by content)")
+
+    def test_the_github_buttons_sent_clause_names_what_the_executed_url_shapes_carry(self):
+        # the fourth round (extra7-1): the sent cell's clause is held to the URL shapes tests/test_file_github.py EXECUTES (the kernel's
+        # _file_github_url over a real checkout: a branch, a slashed branch kept literal, percent-encoded path segments, a root file, the
+        # commit sha when HEAD is detached), never to kernel.py's spelling: each part an executed URL carries is named by the clause, and
+        # the clause claims nothing the URLs lack (no query string, no fragment). This case pins the table's cell; the section's twin
+        # sentence is the neighbouring case's.
+        from urllib.parse import urlsplit
+        shapes = _executed_github_shapes()
+        self.assertGreaterEqual(len(shapes), 5, "tests/test_file_github.py asserts blob URLs by literal: %r" % shapes)
+        slashed = re.findall(r'"checkout", "-q", "-b", "([^"]+/[^"]+)"', FILE_GITHUB_TEST)   # the slashed branch the executed case checks out
+        self.assertTrue(slashed, "tests/test_file_github.py checks out a branch with a slash in its name")
+        features = set()
+        for url in shapes:
+            u = urlsplit(url)
+            self.assertEqual((u.scheme, u.netloc, u.query, u.fragment), ("https", "github.com", "", ""), url)
+            seg = u.path.split("/")[1:]
+            self.assertTrue(len(seg) >= 5 and seg[2] == "blob", url)
+            self.assertIn("%s/%s" % (seg[0], seg[1]), FILE_GITHUB_TEST, "the owner and repository are an origin remote the executed case configures: " + url)
+            rest = "/".join(seg[3:])   # the ref, then the file's path, slashes kept in both
+            if re.match(r"[0-9a-f]{40}/", rest): features.add("sha")
+            elif any(rest.startswith(b + "/") for b in slashed): features.add("slashed branch")
+            else: features.add("branch")
+            if "%20" in rest: features.add("percent-encoded")
+        self.assertEqual(features, {"branch", "slashed branch", "sha", "percent-encoded"}, "the executed shapes cover the branch, the slashed branch, the sha and the encoding: %r" % shapes)
+        sent = _road("clicked-link")[3]
+        self.assertQuoted(CLICKED_GITHUB_SENT, sent, "the road's sent cell", "the class the button adds: an address romp composes")
+        self.assertQuoted(CLICKED_GITHUB_TEMPLATE, sent, "the road's sent cell", "the template every executed URL fits: owner, repository, blob, the ref, the path")
+        for phrase in CLICKED_GITHUB_PARTS:
+            self.assertQuoted(phrase, sent, "the road's sent cell", "a part the executed URLs carry (the owner and repository, the branch or the sha, the "
+                              "encoded path with slashes kept, the host, no query string), named")
+        for phrase in CLICKED_GITHUB_REFUSALS:
+            self.assertQuoted(phrase, sent, "the road's sent cell", "a refusal tests/test_file_github.py executes (test_no_link_verdicts_name_their_reason)")
+        self.assertIn("def test_no_link_verdicts_name_their_reason", FILE_GITHUB_TEST, "the no-link verdicts are executed there")
+        clause = sent[sent.index(CLICKED_GITHUB_SENT):sent.index("no query string is ever added")]
+        self.assertNotIn("token", clause, "the clause claims no credential rides the address (none does: the executed URLs carry no query string)")
+
+    def test_the_chat_media_road_is_said_and_its_witness_is_the_browser_leg(self):
+        # the fourth round (tests-1): on the web dashboard a rendered message's media loads from the host its URL names the moment
+        # it renders, with no click and no gate; the section says so beside the viewer's gated pictures, the table has the row, and the
+        # executed proof is the browser leg (the request events of a page served under the dashboard's headers; the editor CSP scene)
+        self.assertNetwork()
+        flat = _flat(NETWORK)
+        self.assertQuoted(CHAT_MEDIA, flat, self.DOC, "the road: the chat's rendered markdown loads its media on render, on the web dashboard")
+        self.assertQuoted(CHAT_MEDIA_COOKIES, flat, self.DOC, "what rides: the cookies a cross-site subresource carries, and no Referer")
+        self.assertQuoted("the editor extension's webviews block these loads by their content security policy", flat, self.DOC, "the editor's negative")
+        rows, rc, err = _table()
+        self.assertTrue(rows, "%s --table printed no table (exit %s): %s" % (INVENTORY, rc, err))
+        cells = _row(rows, CHAT_MEDIA_LABEL)
+        self.assertTrue(cells, "the table has the road as a row: %r" % CHAT_MEDIA_LABEL)
+        self.assertEqual(cells[0], "ui/webview/render.ts (`mdImgPostPass`)", "the where cell: the pipeline's post-pass on a message's pictures")
+        self.assertQuoted("the render of a message on the web dashboard, and nothing else: no click, no gate, no setting", cells[1], "the road's trigger cell")
+        for phrase in ("with the cross-site cookies that browser sends to that host", "no Referer"):
+            self.assertQuoted(phrase, cells[2], "the road's sent cell", "the same fact the section states")
+        self.assertQuoted("none: no setting gates a message's media", cells[3], "the road's off-switch cell")
+        self.assertTrue(os.path.isfile(os.path.join(ROOT, CHAT_MEDIA_WITNESS)), "the executed witness is in the tree: " + CHAT_MEDIA_WITNESS)
+        witness = _read(*CHAT_MEDIA_WITNESS.split("/"))
+        for needle in ("cross_site=1", "media-src", "securitypolicyviolation", "Referrer-Policy"):
+            self.assertQuoted(needle, witness, CHAT_MEDIA_WITNESS, "the executed proof is that browser leg: the cross-site cookie read at the media host, the "
+                              "editor CSP's block, the header; it skips without a playwright browser, which CI has none of")
+
+    def test_the_echo_rule_and_the_served_pages_sentences_are_the_scripts_words(self):
+        # the fourth round (correctness-1, regression-2, fresh-1): the census's disclosure gained the echo rule (a printed remedy is skipped
+        # only when nothing live follows it) and the served pages are scanned; both sentences stand in the section and in the script's
+        # docstring, one source, and tests/test_price_feed_census.py plants the shapes each sentence names
+        self.assertNetwork()
+        flat = _flat(NETWORK)
+        self.assertQuoted(ECHO_RULE, flat, self.DOC, "the echo rule, beside the disclosure sentence")
+        self.assertQuoted(SERVED_PAGES, flat, self.DOC, "the served pages, beside the walk's claim")
+        self.assertQuoted(BINDING_ARM, flat, self.DOC, "the connection family through its bindings, beside the disclosure")
+        self.assertLess(flat.index(DISCLOSURE), flat.index(ECHO_RULE), "%s: the echo rule follows the disclosure it narrows" % self.DOC)
+        doc = re.match(r'(?s)\A(?:#[^\n]*\n)*"""(.*?)"""', INVENTORY_SRC)
+        self.assertTrue(doc, "%s opens with a module docstring" % INVENTORY)
+        docstring = _flat(doc.group(1))
+        self.assertQuoted(ECHO_RULE, docstring, "%s's docstring" % INVENTORY, "one source: the section's sentence is the script's")
+        self.assertQuoted(SERVED_PAGES, docstring, "%s's docstring" % INVENTORY, "one source: the section's sentence is the script's")
+        self.assertQuoted(BINDING_ARM, docstring, "%s's docstring" % INVENTORY, "one source: the section's sentence is the script's")
+
+
+class TheChatMediaRoadIsWitnessed(_Pins):
+    """The chat-media road's witness (ui/webview/chat-media-loads-browser.test.ts) serves its page under the four headers Handler._send
+    writes on every page the kernel serves, read from kernel/kernel.py's source and pinned there by value: a source pin, which this
+    class ties to the wire. The same regex here reads the same lines and must give the same four pairs; the kernel's own Handler,
+    driven in a child interpreter through tests/test_kernel_auth_hardening.py's harness (a hermetic state root, session-hosts off,
+    the kernel loaded under a private name, GET /chat answered by the real do_GET), must write exactly those headers on /chat. So a
+    header the kernel changes reds here and in the witness alike, and the witness's page is the kernel's in this one respect."""
+
+    def test_the_witness_pins_the_send_headers_by_value_and_the_kernel_writes_them_on_chat(self):
+        # the subject is the witness itself: over a tree without it this case is red here, at the file's absence
+        self.assertTrue(os.path.isfile(os.path.join(ROOT, CHAT_MEDIA_WITNESS)), "the chat-media road's executed witness is in the tree: " + CHAT_MEDIA_WITNESS)
+        witness = _read(*CHAT_MEDIA_WITNESS.split("/"))
+        self.assertQuoted("def _send\\(self, code, body, ctype, cache=None, headers=None\\):", witness, CHAT_MEDIA_WITNESS,
+                          "the witness reads its headers from Handler._send's own lines")
+        for name, value in DASHBOARD_HEADERS.items():
+            self.assertQuoted('"%s": "%s"' % (name, value), witness, CHAT_MEDIA_WITNESS, "the header pinned by value in the witness")
+        m = SEND_HEADERS.search(KERNEL)
+        self.assertTrue(m, "kernel/kernel.py Handler._send up to its caller-supplied headers loop")
+        self.assertEqual(dict(HEADER_LINE.findall(m.group(1))), DASHBOARD_HEADERS, "the unconditional send_header lines of _send, the four the witness serves")
+        # the wire: the kernel's Handler answers GET /chat in a child interpreter (nothing loads romp code in this process); the
+        # child's source stands inline as literal lines, the shape tests/test_tempdir_hygiene.py's ledger reads a child source in:
+        # tests/test_kernel_auth_hardening.py's import sets a hermetic XDG_STATE_HOME before the loads and loads the kernel under a
+        # private name; the child floors its root's session-hosts off (T348) before the Handler runs
+        p = subprocess.run([sys.executable, "-c", "\n".join([
+            "import json, os, sys",
+            "sys.path.insert(0, sys.argv[1])",
+            "import test_kernel_auth_hardening as A",
+            'root = os.path.join(os.environ["XDG_STATE_HOME"], "romp")',
+            "os.makedirs(root, exist_ok=True)",
+            'with open(os.path.join(root, "session-hosts"), "w") as fh: fh.write("off\\n")',
+            'status, sent, body = A._serve_get_full("/chat", headers={"X-Romp-Token": A.TOK})',
+            'print(json.dumps({"status": status, "headers": dict(sent)}))',
+        ]), HERE], capture_output=True, text=True, timeout=120)
+        self.assertEqual(p.returncode, 0, "the kernel's Handler could not be driven: " + p.stderr[-1500:])
+        wire = json.loads(p.stdout.strip().splitlines()[-1])
+        self.assertEqual(wire["status"], 200, wire)
+        for name, value in DASHBOARD_HEADERS.items():
+            self.assertEqual(wire["headers"].get(name), value, "GET /chat carries %s: %s on the wire, the value the witness serves: %r" % (name, value, wire["headers"]))
+        self.assertFalse([k for k in wire["headers"] if k.lower().startswith("cross-origin-")], "no Cross-Origin-* header on the wire either: %r" % wire["headers"])
 
 
 class TheEditorPromptRunsTheExtensionsOwnInstallScript(_Pins):
@@ -845,18 +1223,28 @@ class TheEditorPromptRunsTheExtensionsOwnInstallScript(_Pins):
                           "a candidate is the vscode-extension directory, so <dir>/install.sh is the extension's own script")
         self.assertQuoted('assert.equal(t?.script, path.join(CHECKOUT, "install.sh"))', UPDATE_TARGET_TEST,
                           "vscode-extension/src/update-target.test.ts", "the executed test this pin points at asserts the resolution")
-        # extension.ts hands the resolved script to runInstall, which runs it through bash: matched on code, comments stripped
+        # extension.ts hands the resolved script to runInstall, which runs it through bash: matched on code, comments stripped, over
+        # the updateExtension function's own text; the needle is the WHOLE statement (the fourth round, extra6-2: a prefix needle
+        # stayed green under `const script = target.script.replace(...)`), and `script` is bound exactly once over the function, so
+        # a re-pointing between the resolution and runInstall (`target.script = ...` before the assignment, which the whole-statement
+        # needle alone lets through since InstallTarget.script is a plain field, or a later `script = ...`) turns the pin red
         code, comments = _code_lines(EXTENSION)
-        for needle, why in (("const script = target.script", "the click's script is the resolved target's"),
+        target_fn = _ts_function(code, "updateExtension")
+        self.assertTrue(target_fn, self.TS + " defines updateExtension")
+        for needle, why in (("const script = target.script;", "the click's script is the resolved target's, the whole statement"),
                             ("runInstall(script, extDir)", "and it is what runInstall runs")):
-            self.assertQuoted(needle, code, self.TS + " (code, comments stripped)", why + "; " + self.EXECUTED)
+            self.assertQuoted(needle, target_fn, self.TS + " updateExtension (code, comments stripped)", why + "; " + self.EXECUTED)
+        bound = re.findall(r"\bscript\s*=(?![=>])", target_fn)
+        self.assertEqual(len(bound), 1, self.TS + " updateExtension binds `script` %d times, not once: the click's script is the resolved "
+                         "target's and nothing re-points it between the resolution and runInstall (a `target.script = ...` before the "
+                         "assignment, or a later `script = ...`, is a second binding); %s" % (len(bound), self.EXECUTED))
         run_install = _ts_function(code, "runInstall")
         self.assertTrue(run_install, self.TS + " defines runInstall")
         self.assertQuoted('execFile("bash", [script]', run_install, self.TS + " runInstall", "bash runs the resolved script and nothing else")
         # the control: the comments alone satisfy the old substring pin and none of the needles, which is why the match is
         # on code (the comments name install.sh where the code names its resolved path)
         self.assertIn("install.sh", comments, self.TS + ": the comments carry the bare substring the old pin matched")
-        for needle in ("const script = target.script", "runInstall(script, extDir)", 'execFile("bash", [script]'):
+        for needle in ("const script = target.script;", "runInstall(script, extDir)", 'execFile("bash", [script]'):
             self.assertNotIn(needle, comments, self.TS + ": %r sits in a comment, which runs nothing" % needle)
 
     def test_the_click_reaches_no_pip_and_no_sdk_setup(self):

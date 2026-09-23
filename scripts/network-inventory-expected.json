@@ -1,7 +1,7 @@
 {
  "classes": {
-  "browser-computed-url": 5,
-  "browser-dom-loads": 76,
+  "browser-computed-url": 9,
+  "browser-dom-loads": 103,
   "external-program": 108,
   "runtime-program": 2
  },
@@ -91,12 +91,12 @@
   "postal/postal_service.py:ensure Popen sys.executable": 1
  },
  "kinds": {
-  "js": 63,
+  "js": 107,
   "py": 160,
   "sh": 127
  },
  "local_roads": 5,
- "local_sites": 160,
+ "local_sites": 198,
  "per_key": {
   "bin/romp-codex-setup:pip install": 1,
   "bin/romp-manager:http.get": 3,
@@ -142,6 +142,7 @@
   "kernel/kernel.py:Handler._remote_file": 1,
   "kernel/kernel.py:Handler._remote_sessions": 1,
   "kernel/kernel.py:Handler._remote_ws": 1,
+  "kernel/kernel.py:WebSocket": 2,
   "kernel/kernel.py:_JudgeChild._start": 1,
   "kernel/kernel.py:_aprobe_commands": 1,
   "kernel/kernel.py:_ast_equal_blobs": 1,
@@ -214,7 +215,10 @@
   "kernel/kernel.py:_tree_of": 1,
   "kernel/kernel.py:_update_remote": 2,
   "kernel/kernel.py:_watch_run": 1,
+  "kernel/kernel.py:clients.openWindow": 1,
+  "kernel/kernel.py:fetch": 36,
   "kernel/kernel.py:main": 1,
+  "kernel/kernel.py:window.open": 1,
   "kernel/sdk_backend.py:SdkBackend._boot_reconcile": 1,
   "kernel/sdk_backend.py:SdkBackend._end_cli_tree": 1,
   "kernel/sdk_backend.py:SdkBackend._host_orphan_recover": 1,
@@ -243,6 +247,7 @@
   "postal/postal_service.py:ensure": 1,
   "ui/romp-timeline-view.js:execFile": 1,
   "ui/romp-timeline-view.js:fetch": 1,
+  "ui/romp-timeline-view.js:http.request": 2,
   "ui/webview/federation.ts:WebSocket": 1,
   "ui/webview/federation.ts:fetch": 1,
   "ui/webview/figure-gate.ts:figureHosts": 1,
@@ -257,6 +262,7 @@
   "ui/webview/preview.ts:fetch": 3,
   "ui/webview/preview.ts:window.open": 1,
   "ui/webview/render.ts:fetch": 8,
+  "ui/webview/render.ts:mdImgPostPass": 2,
   "ui/webview/render.ts:window.open": 1,
   "ui/webview/strip.ts:fetch": 11,
   "vscode-extension/install.sh:node -e": 1,
@@ -273,6 +279,7 @@
   "api-key-helper": 1,
   "browser-figures": 2,
   "bus-peers": 2,
+  "chat-media": 2,
   "clicked-link": 4,
   "drift-check": 1,
   "fast-org-probe": 2,
@@ -285,7 +292,7 @@
   "judge-cli": 3,
   "local-bus": 13,
   "local-git": 21,
-  "local-kernel": 173,
+  "local-kernel": 211,
   "local-manager": 9,
   "local-program": 36,
   "main-converge": 7,
@@ -302,6 +309,6 @@
   "watch-pr-registration": 1,
   "web-push": 2
  },
- "roads": 31,
- "sites": 350
+ "roads": 32,
+ "sites": 394
 }

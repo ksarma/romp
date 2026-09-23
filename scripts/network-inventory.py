@@ -10,8 +10,9 @@ from tools/, each with its road from the table below. Run from the repository ro
 Standard library only. The script exits 1, naming the reason, on: a site with no road (UNCLASSIFIED); a row naming no site
 (STALE ROW); no sites at all (a broken scan or moved roots); a declared root that is missing (SCOPE); a Python file that does
 not parse (PARSE); an import the census does not know (IMPORT); a road with no table entry or a table entry with no road
-(TABLE); and any figure that differs from the committed counts in scripts/network-inventory-expected.json (COUNTS): the
-totals, the counts by kind, by class, by road and by row key. So a scan that finds fewer sites than the committed count, a
+(TABLE); a route that serves a page from text the extraction did not read (SERVED); and any figure that differs from the
+committed counts in scripts/network-inventory-expected.json (COUNTS): the totals, the counts by kind, by class, by road and by
+row key. So a scan that finds fewer sites than the committed count, a
 file the walk stopped opening, or a second site inside a function that already has a row is a loud line, not a clean report.
 tests/test_price_feed_census.py runs this script over the tree and over mutated copies of it, so the guarantee is the suite's.
 
@@ -40,13 +41,16 @@ changes). Four classes of outbound activity this scan cannot derive are named in
   runtime-program: the external programs whose text is supplied at run time (the watch predicate, the operator's helper).
   browser-computed-url: a fetch, or a dynamic import(), in the browser or editor code whose first argument is computed at run
     time. A fetch is local only when its argument is a relative literal or a kernel-URL helper call (ku, kernelUrl, fileUrl,
-    sliceUrl); an absolute literal needs a row; a computed argument is counted here and listed; a dynamic import() with a
+    sliceUrl); an absolute literal needs a row; a computed argument is counted here and listed, and so is, in a page the kernel
+    serves, a literal whose URL carries a Python format slot (`%s`, `{}`), filled at serve time; a dynamic import() with a
     literal specifier is an import and goes through the package gate below, not a site.
   browser-dom-loads: the browser DOM's own loads (img, iframe, script, link and anchor src, srcset and href writes, setAttribute
-    of those, HTML templates carrying them), counted by pattern over the browser and editor code; the viewer's and the chat's
+    of those, HTML templates carrying them), counted by pattern over the browser and editor code and the served pages, one count
+    per line that carries one (a page template inlined as one string is one line, however many it carries); the viewer's and the chat's
     rendered-markdown insertions have no line of their own and are not counted, so the browser-figures road is named from the
-    gate's host-list read and the retry probe, not from a request; an anchor's href write loads nothing by itself (the click
-    that opens it is the clicked-link road), and a `window.open` is a site keyed file plus tool, never a load counted here.
+    gate's host-list read and the retry probe, not from a request; and the chat-media road from the pipeline's post-pass on a
+    message's pictures (`mdImgPostPass`), for the same reason; an anchor's href write loads nothing by itself (the click that
+    opens it is the clicked-link road), and a `window.open` is a site keyed file plus tool, never a load counted here.
 A fifth class is named in the table and not counted, since the scan cannot see it by construction: a socket primitive called
 on a receiver the census cannot resolve (an attribute-held or parameter socket) is not a site here. The scan resolves a socket
 receiver as a name bound to socket.socket() in the same function, or by a tuple-literal address argument; a rule on the method
@@ -55,10 +59,13 @@ plants one such call and holds this sentence to the behaviour.
 The clicked-link road holds the openers of a URL the content carries, on both hosts: the editor extension's one
 `vscode.env.openExternal` and the browser bundles' `window.open`, each a JavaScript site keyed file plus tool that takes a row (the
 road's rows name the chat page's click delegate, the shared opener the feed, the outline and the Waiting-on-you panes install, and
-the file viewer's URL anchors; the file preview's own-tab open of the kernel's own file URL takes a local row). Its residual: an
-anchor with no scheme that the chat page's click delegate leaves to the default action (one the page built, or one in a message
-that does not resolve to a web address) is a gesture this tree does not route, and what the editor's own webview host does with
-it is outside this tree.
+the file viewer's URL anchors; the file preview's own-tab open of the kernel's own file URL takes a local row). Its residual: three
+anchors the chat page's click delegate leaves to the default action (one with no scheme that the page built; one with no scheme in
+a message that does not resolve to an http or https address; a message's own download anchor, one with no scheme carrying a
+`download` attribute whose href resolves to an http or https address on this page's origin, which the browser saves from this
+origin), and a page-built anchor with a scheme in a document that installs no opener (the gear's sign-in link on the dashboard's
+settings page and in the editor's feed panel is one), are gestures this tree does not route: on the dashboard the browser's own
+open or download, and what the editor's own webview host does with them is outside this tree.
 
 What each side matches. The Python side reads every call by ast, resolved through import aliases, module constants and names
 bound to a primitive (a socket, an asyncio event loop, a primitive itself), and gates every import: a module outside
@@ -74,15 +81,40 @@ browser and editor side is a line scan too: the clients and the two URL openers 
 `window.open`, each a site that takes a row); the child_process family qualified to
 its binding (`child_process.<fn>(`, `require('child_process').<fn>(`, a namespace the file imports the module as, or a bare
 name the file binds from child_process by a destructured import or require; a bare `exec(` with no such binding is not a
-site, since RegExp exec is spelled the same way), each program site classed by its argv as the Python side classes its own;
-and an import gate over every package the scoped files import or require: a specifier that does not start with `.`, `/` or
+site, since RegExp exec is spelled the same way), each program site classed by its argv as the Python side classes its own; the
+connection family the same way: a `get` or `request` of `http` or `https`, a `connect` or `createConnection` of `net` and a
+`connect` of `tls` through an inline require, a namespace or default import, or a bare name the file binds from the module
+(renamed or not), and `ws` by its constructor shape (`new <binding>(`, `new <namespace>.WebSocket(`, `new (require('ws'))(`),
+each an added arm beside the literal spellings (`http.get(`, `net.connect(`, the bare global `new WebSocket(`), a call the
+literal list already names on a line counted once under the same tool; and an import gate over every package the scoped files
+import or require: a specifier that does not start with `.`, `/` or
 `*` names a package (its first path segment, two for a scoped package, `node:` dropped), and a package outside
 KNOWN_JS_IMPORTS fails the run (IMPORT). The shell and browser sides are matched by a named list with no completeness gate: a
 tool or a client the lists do not name is no site and no line; the Python side's gate is module-granular: an import outside the
-allow-list fails the run, and a primitive of a known module outside NET and SUB is not a site.
+allow-list fails the run, and a primitive of a known module outside NET and SUB is not a site. An echo- or print-led shell line
+is skipped as a printed remedy only when nothing live follows the printed text: the text outside quotes and the body of every
+`$(...)` and backtick substitution, wherever it stands, are scanned by the interpreter arm and the tool list, so `echo "$body" |
+curl ...` and `echo "rate: $(curl ...)"` are sites and a remedy that names a tool inside quotes is not.
+The pages the kernel serves and its service worker's script, from its own string constants (the dashboard shell, the seven pane
+pages, the token login page, the too-large page and /sw.js, with the shim, the timeline boot and the shell scripts they inline),
+are read from kernel.py's syntax tree, each route's page function followed to the constants it returns or inlines, and scanned as
+browser text keyed kernel/kernel.py plus tool, with the DOM loads counted; a route that serves text/html or text/javascript from
+text the extraction cannot read fails the run (SERVED); a file the page reads at run time is covered by the walk when it is a
+scanned kind, and a stylesheet is named, not scanned. The whole of kernel.py is not scanned as text, since a text scan misreads
+Python and JS concatenations (a Python method spelled like a client, a `from` inside a script split across Python literals).
+Over served text the import gate's statement form applies only to a line that starts with import or export (a line led by a
+closing brace is a multi-line import's last line in a module and any block's in a page's script), while a literal require() or
+import() is gated wherever it stands. The served pages' rows are keyed by tool (kernel/kernel.py plus WebSocket, window.open or
+clients.openWindow), so a second socket or opener in the served text is caught by the count per key when it changes the tool
+and not when it keeps it, as any rowed shell or JavaScript line is (the residual above). Named and not counted in the served
+text: a stylesheet's `url()` loads (THEME_CSS's fonts, _LOADER_CSS's face, _RDRIFT_CSS's and the dashboard shell's own rules, and
+the pane stylesheets under ui/webview read at run time), every one a `/media` path on the kernel's own origin, and the same-origin
+navigations no list names (`location.replace` on the token login page, `location.reload` in the shim and the shell,
+`navigator.serviceWorker.register('/sw.js')`, `history.replaceState`).
 A program the kernel starts (ssh, git, gh, npm, npx, the session CLIs, the operator's helper, a watch predicate) may open
 connections this scan cannot see: such a site is listed by program, on a road that says so."""
 import ast
+import builtins
 import json
 import os
 import re
@@ -183,8 +215,15 @@ _t("local-kernel", P + "_kernel_sessions_checked", P + "_kernel_post", P + "_ker
    "cli/restart_metrics.py:kernel_live", "cli/update.py:_kernel", "cli/update.py:_get", "cli/update.py:_post", "cli/version.py:_probe_kernel", "bin/romp:curl",
    "bin/romp-service:curl", "hooks/romp-wake.sh:curl", "hooks/romp-usertodo-context.sh:curl", "vscode-extension/src/extension.ts:http.get",
    "vscode-extension/src/extension.ts:WebSocket", "ui/webview/federation.ts:WebSocket",
-   "ui/webview/preview.ts:window.open")   # a browser fetch is placed by its URL, never by a row; preview.ts's `openFileTab` opens
+   "ui/webview/preview.ts:window.open",   # a browser fetch is placed by its URL, never by a row; preview.ts's `openFileTab` opens
                                           # `fileUrl(path, sid)`, the kernel's own file route, in the browser's own tab
+   "ui/romp-timeline-view.js:http.request",   # the timeline view's two `require('http').request` calls: the kernel proof (GET /healthz)
+                                              # and the panel's post, both to 127.0.0.1 with the panel's own token; the editor host
+                                              # reaching this machine's kernel, as the extension's http.get above
+   K + "WebSocket", K + "window.open", K + "clients.openWindow")   # the served pages' own script (served_texts): the shim's pane socket
+   # and the shell's socket dial location.host; the timeline boot's window.open is reached by no caller at this head (the view's one
+   # caller passes a vscode: URL, which the boot posts to the host and returns); the service worker's clients.openWindow opens the
+   # URL of the kernel's own push payload (_push_payload's data.url, a path on this origin), else /
 # The shell scripts' inline interpreter texts (external-program by class: a program text this scan does not read), keyed file
 # plus tool and rowed with what the text does, read once for the row: bin/romp's `python3 -c` and `python3 -` texts parse the
 # JSON the kernel's curls returned and render it, quote a query string (urllib.parse, no request), and stamp the restart audit
@@ -201,6 +240,8 @@ _t("local-program", K + "_port_open", K + "_primary_addr", K + "_rebuild_dist", 
    "kernel/host_transport.py:HostTransport.connect")   # the SDK transport's connection to a session host's Unix socket
 # _serve_fault: a test-only fault route runs `sh -c echo`, a fixed literal that prints and opens nothing (external-program by class)
 _t("browser-figures", "ui/webview/figure-gate.ts:figureHosts", "ui/webview/preview.ts:Image")
+_t("chat-media", "ui/webview/render.ts:mdImgPostPass")   # the chat pipeline's one line on a message's pictures before the browser fetches
+                                                          # them (md and userMd): the road is named from it, as browser-figures is from the gate's read
 # The openers of a URL the content carries, on both hosts: the extension's one `vscode.env.openExternal` (inside `openLink`, reached
 # from the chat panel's handler and from `routeViewMessage`'s `openLinkLocally` for the feed panel, the outline panel and view and
 # the timeline view) and the browser bundles' `window.open` in the chat page's click delegate, in the shared opener the feed, the
@@ -218,9 +259,12 @@ RUNTIME_ROADS = {"predicate-watch", "api-key-helper"}   # the program text itsel
 CLASSES = ("external-program", "runtime-program", "browser-computed-url", "browser-dom-loads")
 # The clicked-link road's residual, one text in three homes: the docstring above, the road's trigger cell below and SECURITY.md's
 # Network access section (tests/test_security_price_feed.py holds the three equal).
-CLICK_RESIDUAL = ("an anchor with no scheme that the chat page's click delegate leaves to the default action (one the page built, or one in a "
-                  "message that does not resolve to a web address) is a gesture this tree does not route, and what the editor's own webview "
-                  "host does with it is outside this tree")
+CLICK_RESIDUAL = ("three anchors the chat page's click delegate leaves to the default action (one with no scheme that the page built; one with "
+                  "no scheme in a message that does not resolve to an http or https address; a message's own download anchor, one with no scheme "
+                  "carrying a `download` attribute whose href resolves to an http or https address on this page's origin, which the browser saves "
+                  "from this origin), and a page-built anchor with a scheme in a document that installs no opener (the gear's sign-in link on the "
+                  "dashboard's settings page and in the editor's feed panel is one), are gestures this tree does not route: on the dashboard the "
+                  "browser's own open or download, and what the editor's own webview host does with them is outside this tree")
 
 # The table's prose columns, one entry per road in the order the ledger entry prints them; the where column is derived from the
 # sites on every run, so a hand-written member cannot survive here. Text: the repository's privacy documentation.
@@ -304,9 +348,13 @@ ROADS = [
   "a viewed markdown file's pictures and clips whose host is on the gear's Pictures from the web in files list load when the file opens (the default list, ui/webview/settings.ts `FIGURE_HOSTS_DEFAULT`: github.com, raw.githubusercontent.com and the other GitHub image and asset hosts, localhost, 127.0.0.1); a figure from another host loads on one click; the viewer's retry (`probeMdImgUrl`) probes a failed figure's URL",
   "GET of the figure's URL from the browser showing the dashboard, with that browser's own cookies for the host; the loads themselves are DOM insertions this scan cannot see (the browser-dom-loads row), so this road is named from the gate's host-list read and the retry probe, not from a request",
   "the setting (remove the hosts)"),
+ ("chat-media", "a rendered message's media (browser)",
+  "the render of a message on the web dashboard, and nothing else: no click, no gate, no setting; a session's reply (`md`, from the assistant branch of `renderEventInner`), your own message (`userMd`, from its user branch and from `renderQueued`'s echo of a pending send) and a postal body (`md` in `renderPostalService`; a peer agent's message in `renderTeammate`) go through marked and the shared sanitizer (ui/webview/md-sanitize.ts), whose html profile keeps `img` (src, srcset), `video` (src, poster), `audio`, `source` and `picture` (and an inline svg's `image`), and are written into the page with `innerHTML`, at which point the browser requests every one; `mdImgPostPass`, the row's site, is the pipeline's one line on a message's pictures before the browser fetches them (a URL that failed this page life is parked, and re-probed by the browser-figures row's `Image` site on a reconnect); the editor extension's webviews block these loads by their CSP (`img-src` the webview's own resource origin and `data:`, no `media-src` under `default-src 'none'`), so this road is the web dashboard's alone",
+  "GET of each media URL as the message's author wrote it (a session, you or a peer, a class this scan cannot bound), from the browser showing the dashboard to the host the URL names, with the cross-site cookies that browser sends to that host (a `SameSite=None` cookie; not a Lax or Strict one, which only a top-level navigation carries) and no Referer (every page the kernel serves carries `Referrer-Policy: same-origin`); no serve token, key or login token rides in it (the kernel's cookie is scoped to the kernel's own host, and the page's URL is not sent)",
+  "none: no setting gates a message's media (the gear's Pictures from the web in files list gates a viewed file's figures, not the chat's)"),
  ("clicked-link", "a link you click (browser)",
-  "your click, and nothing else: in the browser showing the dashboard, the chat page's click delegate (`window.open` in ui/webview/render.ts) opens every anchor with a scheme, a link in a session's reply or in your own message, a whole-backtick URL, a URL in a todo's text or a pinned note, the address a todo carries, a pull-request reference, the gear's sign-in link; the shared opener (ui/webview/link-opener.ts, installed by the feed, the outline and the Waiting-on-you panes) opens a pull-request or URL link on a pointer release or an Enter; the file viewer (`openUrlTab` in ui/webview/file-view.ts) opens a URL in a viewed file's text on a modified click (Ctrl, Cmd or the middle button; a plain click is left to the browser's own open of the anchor); in the editor extension the same openers post the href to the host, whose `openLink` (vscode-extension/src/extension.ts, from the chat panel's handler and from `routeViewMessage`'s `openLinkLocally` for the feed panel, the outline panel and view and the timeline view) hands it to `vscode.env.openExternal`, the extension's own `vscode://romp.romp-chat-view` deep link handled in the extension instead and never reaching a browser; every opener sits in a click or pointer-release handler, no automatic step; " + CLICK_RESIDUAL,
-  "the clicked URL, as the content carries it, to the host that URL names, requested by the browser showing the dashboard (a new tab, `noopener,noreferrer`) or, from the editor extension, by the operating system's default browser, with that browser's own cookies for the host: a pull-request link carries the session's repository name (from the checkout's origin remote, or the text's own owner/repo) and the number, to github.com; a link in a message, a todo, a pinned note or a viewed file is whatever its author wrote, a session, you or a peer, a class this scan cannot bound; the gear's sign-in link is the CLI's own OAuth request to claude.com or claude.ai; no serve token, key or login token rides in any of them (the serve token travels only on the bundles' own fetch and media URLs, the extension's websocket URL and its request header, never into a link)",
+  "your click, and nothing else: in the browser showing the dashboard, the chat page's click delegate (`window.open` in ui/webview/render.ts) opens every anchor with a scheme, a link in a session's reply or in your own message, a whole-backtick URL, a URL in a todo's text or a pinned note, the address a todo carries, a pull-request reference; the shared opener (ui/webview/link-opener.ts, installed by the feed, the outline and the Waiting-on-you panes) opens a pull-request or URL link on a pointer release or an Enter; the file viewer (`openUrlTab` in ui/webview/file-view.ts) opens a URL in a viewed file's text on a modified click (Ctrl, Cmd or the middle button; a plain click is left to the browser's own open of the anchor); the file viewer's GitHub button (`GitHub \u2197`, an anchor of class `fileview-btn` in the title bar's `fileview-gh` span, rowed once the owning kernel's `fileGitLink` reply carries a URL) opens as the document it stands in decides: on the chat page the click delegate takes it as it takes every anchor with a scheme (`window.open`, the anchor's default action cancelled); on the Files pane, the feed page and the Waiting-on-you page the anchor's own default open (target `_blank`, rel `noopener`: the browser's new tab), since no opener in those documents matches it (the viewer's own `linkOf` returns only `[data-act=\"openpath\"]`, `a.fv-url` and `a.fv-frag` inside the body, and the button stands in the title bar; the shared opener serves `a.pr-link` and `a.url-link`), so no modified-click path reaches it (`openUrlTab` runs only for a link `linkOf` returns) and a middle click is the browser's own on every page; the viewer mounts in no editor webview (a file click there opens the file in the editor), so the button has no editor leg; the gear's sign-in link, an anchor the gear builds to open in a new tab (`a.target = '_blank'` in ui/webview/gear.js), opens by document: on the dashboard's settings page (/settings), which installs no opener, the browser's own open in a new tab, no site of this tree running on the click; in the editor extension's chat panel, which mounts the gear, the chat delegate's `openLink` post; in the editor's feed panel, which mounts the gear too and installs only the pull-request opener, the webview host's own link handling, outside this tree; in the editor extension the chat delegate, the shared opener and the file viewer post the href to the host, whose `openLink` (vscode-extension/src/extension.ts, from the chat panel's handler and from `routeViewMessage`'s `openLinkLocally` for the feed panel, the outline panel and view and the timeline view) hands it to `vscode.env.openExternal`, the extension's own `vscode://romp.romp-chat-view` deep link handled in the extension instead and never reaching a browser; every opener sits in a click or pointer-release handler, no automatic step; " + CLICK_RESIDUAL,
+  "the clicked URL, as the content carries it, to the host that URL names, requested by the browser showing the dashboard (a new tab, `noopener,noreferrer`) or, from the editor extension, by the operating system's default browser, with that browser's own cookies for the host: a pull-request link carries the session's repository name (from the checkout's origin remote, or the text's own owner/repo) and the number, to github.com; the file viewer's GitHub button carries an address romp composes (`_file_github_link` in kernel/kernel.py, run by the kernel that owns the file, once per viewer open): `https://github.com/<owner>/<repository>/blob/<branch or sha>/<path>`, the checkout's owner and repository name read from its origin remote, its current branch, or the commit sha when HEAD is detached, and the file's path inside the checkout, each segment percent-encoded and slashes kept, to github.com, with that browser's own cookies for github.com and no Referer (the chat page's opener passes `noreferrer`; every page the kernel serves carries `Referrer-Policy: same-origin`); the button is not rowed, and no address composed, for an untracked, staged-only or uncommitted file, a path outside a git checkout, a checkout with no origin remote or with one not on github.com, or a relative path with no session directory to place it; no query string is ever added; a link in a message, a todo, a pinned note or a viewed file is whatever its author wrote, a session, you or a peer, a class this scan cannot bound; the gear's sign-in link is the CLI's own OAuth request to claude.com or claude.ai; no serve token, key or login token rides in any of them (the serve token travels only on the bundles' own fetch and media URLs, the extension's websocket URL and its request header, never into a link)",
   "none; nothing sends until you click"),
  ("install-bootstrap", "bootstrap.sh (install-time-by-hand)",
   "by hand: the documented one-liner, and re-runs",
@@ -326,7 +374,7 @@ ROADS = [
   "none"),
 ]
 LOCAL_ROW = ("local, set aside and counted (local)",
-  "each a connection to this machine or a fixed program with no network use of its own: the kernel to the manager, the postal bus and itself; the bus, bin/romp's curls, cli/*, the installed hooks, the VS Code extension and the manager to the kernel on 127.0.0.1; the browser's fetch and websocket to the kernel's own origin (a relative URL or a kernel-URL helper) and its own-tab open of a file the kernel serves (`fileUrl`); the SDK transport's connection to a session host's Unix socket; git read-only queries, ps, scutil and the systemd tools spelled out in the argv; and `_primary_addr`'s UDP connect to TEST-NET-1, which sends no packet. A program on a local road whose far end this scan cannot derive is counted in the external-program row, never here",
+  "each a connection to this machine or a fixed program with no network use of its own: the kernel to the manager, the postal bus and itself; the bus, bin/romp's curls, cli/*, the installed hooks, the VS Code extension and the manager to the kernel on 127.0.0.1; the browser's fetch and websocket to the kernel's own origin (a relative URL or a kernel-URL helper), the served pages' own scripts included (the shim's and the shell's sockets to location.host, the shell's fetches of its own routes, the service worker's open of the kernel's own push URL, and the timeline boot's window.open, which no caller reaches at this head), and its own-tab open of a file the kernel serves (`fileUrl`); the SDK transport's connection to a session host's Unix socket; git read-only queries, ps, scutil and the systemd tools spelled out in the argv; and `_primary_addr`'s UDP connect to TEST-NET-1, which sends no packet. A program on a local road whose far end this scan cannot derive is counted in the external-program row, never here",
   "as the kernel, the CLIs and the browser run", "nothing leaves the machine", "not applicable")
 # Each class label ends with the kind suffix; the external-program label is SECURITY.md's phrase for the class (a program
 # romp's code starts whose far end its arguments do not show, whichever of the kernel, a shell script, the manager or the
@@ -341,12 +389,12 @@ CLASS_ROWS = {
   "whatever the registered text sends: the predicate as `/bin/sh <scratch file holding the text>`, the helper or token command through the shell",
   "none"),
  "browser-computed-url": ("a browser request whose URL is computed at run time (not derivable by this scan)",
-  "as the dashboard runs: a fetch whose first argument is a variable, or a dynamic import of a computed module URL; at this head each reads a kernel URL by its binding (a `same-origin` mode, a `fileUrl` or `kernelUrl` result, the PDF worker's URL derived from its own chunk's script src), which the scan cannot derive from the line",
+  "as the dashboard runs: a fetch whose first argument is a variable, or a dynamic import of a computed module URL; at this head each reads a kernel URL by its binding (a `same-origin` mode, a `fileUrl` or `kernelUrl` result, the PDF worker's URL derived from its own chunk's script src), and in the dashboard shell's scripts a route literal its caller passes (fetchDoc, vact, readSwitch and post in kernel/kernel.py), which the scan cannot derive from the line",
   "to the URL the variable holds at run time; the kernel's own origin at this head by reading the bindings (the editor's webview reaches the same served bundles by its resource URL)",
   "not applicable"),
  "browser-dom-loads": ("the browser DOM's own loads (not derivable by this scan)",
   "as the dashboard and the editor views render: an element that loads (an image, a frame, a script, a stylesheet) loads its URL when the attribute lands, and an anchor's href waits for a click; the viewer's and the chat's rendered-markdown insertions load their figures with no attribute line at all and are not counted",
-  "to the URL written: kernel URLs (`fileUrl`, `mediaSrc`, `/media`), object URLs and editor webview URIs, and for a viewed file's figures the hosts the browser-figures road names; an anchor's href write loads nothing by itself, the click that opens it is the clicked-link road, and a `window.open` is a site of its own (that road, or a local row), not a load counted here",
+  "to the URL written: kernel URLs (`fileUrl`, `mediaSrc`, `/media`), object URLs and editor webview URIs, and for a viewed file's figures the hosts the browser-figures road names, and for a rendered message's media the host its URL names (the chat-media road); an anchor's href write loads nothing by itself, the click that opens it is the clicked-link road, and a `window.open` is a site of its own (that road, or a local row), not a load counted here",
   "the figure-host setting for figures; not applicable otherwise"),
 }
 # Named and not counted: the scan cannot see this class by construction, so its row states the mechanism and the test module
@@ -371,7 +419,9 @@ JS = [("fetch", r"\bfetch\("), ("WebSocket", r"new WebSocket\("), ("EventSource"
       ("http.request", r"\bhttps?\.request\("), ("net.connect", r"\bnet\.connect\("), ("net.createConnection", r"\bnet\.createConnection\("),
       ("tls.connect", r"\btls\.connect\("), ("XMLHttpRequest", r"\bXMLHttpRequest\b"), ("sendBeacon", r"\bsendBeacon\("),
       ("import()", r"(?<![\w.$])import\("), ("figureHosts", r"loadSettings\(\)\.figureHosts"),
-      ("openExternal", r"vscode\.env\.openExternal\("), ("window.open", r"window\.open\(")]   # the URL openers: sites that take a row
+      ("openExternal", r"vscode\.env\.openExternal\("), ("window.open", r"window\.open\("),   # the URL openers: sites that take a row
+      ("clients.openWindow", r"\bclients\.openWindow\("),   # the service worker's opener of a notification's URL: a site that takes a row
+      ("mdImgPostPass", r"(?<!function )\bmdImgPostPass\(")]   # the chat-media road's row; the definition in preview.ts is not a site
 # The child_process family is matched through its binding (see _cp_bindings), never as a bare name: `exec(` is RegExp exec too.
 DOM = [("attribute write", r"\.(?:src|srcset|href)\s*=[^=]"), ("setAttribute", r"setAttribute\(\s*[\"'](?:src|srcset|href)[\"']"),
        ("template", r"<(?:img|script|iframe|link|source|video|audio|a|embed|object)\b[^>]*\b(?:src|srcset|href)=")]   # window.open is a JS site, not a load
@@ -400,6 +450,7 @@ class Site(object):
 class Result(object):
     def __init__(self):
         self.sites, self.dom, self.problems, self.files, self.skipped = [], [], [], [], 0
+        self.served, self.served_files = [], []   # the Python files whose served pages were scanned; the stylesheets a page reads at run time
     def emit(self, *a):
         self.sites.append(Site(*a))
 
@@ -418,16 +469,20 @@ def _call_arg(line, opener):
 
 
 _HELPER_CALL = re.compile(r"^(?:%s)\(" % "|".join(KERNEL_URL_HELPERS))   # a kernel-URL helper call as the fetch argument
+SERVED_CTYPES = ("text/html", "text/javascript")   # the pages, and the service worker's script: text the kernel serves and the browser runs
 _SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")                        # a URL scheme at the head of a literal
+_PY_SLOT = re.compile(r"%[sdr(]|\{[A-Za-z_0-9]*\}")                         # a Python format slot inside a served page's literal
 
 
-def _fetch_class(arg):
-    """'local' (a relative literal, or a kernel-URL helper call), 'absolute' (a literal with a scheme or a host), or 'computed'."""
+def _fetch_class(arg, served=False):
+    """'local' (a relative literal, or a kernel-URL helper call), 'absolute' (a literal with a scheme or a host), or 'computed'
+    (a variable, a template with an expression, or in a page the kernel serves a literal carrying a Python format slot, filled
+    at serve time)."""
     if _HELPER_CALL.match(arg): return "local"
     if arg[:1] in ("'", '"', "`"):
         body = arg[1:arg.find(arg[0], 1)] if arg.find(arg[0], 1) > 0 else arg[1:]
         if body.startswith("//") or _SCHEME.match(body): return "absolute"
-        if body.startswith("${"): return "computed"
+        if body.startswith("${") or (served and _PY_SLOT.search(body)): return "computed"
         return "local"
     return "computed"
 
@@ -435,6 +490,7 @@ def _fetch_class(arg):
 class Scan(ast.NodeVisitor):
     def __init__(self, rel, res):
         self.rel, self.res, self.stack, self.alias, self.consts, self.binds, self.imports = rel, res, [], {}, {}, [], []
+        self.defs, self.routes = [], []   # the enclosing def nodes; the `_send` calls of a served page or script (served_texts)
     def visit_Import(self, n):
         self.alias.update({a.asname or a.name: a.name for a in n.names}); self.imports.extend((a.name.split(".")[0], n.lineno) for a in n.names)
     def visit_ImportFrom(self, n):
@@ -511,7 +567,7 @@ class Scan(ast.NodeVisitor):
             a = n.args
             for x, d in list(zip(a.args[len(a.args) - len(a.defaults):], a.defaults)) + list(zip(a.kwonlyargs, a.kw_defaults)):
                 if d is not None and self.prim(d): b[x.arg] = self.prim(d)
-        self.stack.append(n.name); self.binds.append(b); self.generic_visit(n); self.binds.pop(); self.stack.pop()
+        self.stack.append(n.name); self.binds.append(b); self.defs.append(n); self.generic_visit(n); self.defs.pop(); self.binds.pop(); self.stack.pop()
     visit_FunctionDef = visit_AsyncFunctionDef = visit_ClassDef = enter
     def argv(self, c):
         """(argv[0] as text, git subcommand or '', the literal after argv[0] or '') for a command call: a literal, a module constant
@@ -532,6 +588,11 @@ class Scan(ast.NodeVisitor):
         return "RUNTIME-SUPPLIED(%s)" % (ast.unparse(a)[:48] if a is not None else ""), sub, follow
     def visit_Call(self, n):
         d = self.dotted(n.func); p = SUB.get(d) or NET.get(d); attr = getattr(n.func, "attr", "")
+        if (attr == "_send" and len(n.args) >= 3 and isinstance(n.args[2], ast.Constant) and isinstance(n.args[2].value, str)
+                and n.args[2].value.startswith(SERVED_CTYPES)):   # a route that serves a page or a script: its text is scanned after the walk
+            fn = next((x for x in reversed(self.defs) if not isinstance(x, ast.ClassDef)), None)
+            cls = next((x.name for x in reversed(self.defs) if isinstance(x, ast.ClassDef)), None)
+            self.routes.append((n, fn, cls))
         if not p and isinstance(n.func, ast.Name) and self.binds:
             b = self.binds[-1].get(n.func.id)
             if isinstance(b, str) and b not in ("SOCKET", "LOOP"): p = b + " via " + n.func.id
@@ -573,8 +634,7 @@ def kind_of(path, name, under_js):
     if name.endswith(".py"): return "py"
     if name.endswith((".js", ".mjs", ".cjs")): return "js"
     if name.endswith(".sh"): return "sh"
-    if "." in name: return None
-    with open(path, "rb") as fh: first = fh.readline()
+    with open(path, "rb") as fh: first = fh.readline()   # a dotted name outside those extensions (a .bash hook) is read for its shebang too
     if not first.startswith(b"#!"): return None
     return "py" if b"python" in first else "js" if b"node" in first else "sh" if b"sh" in first else None
 
@@ -598,12 +658,48 @@ def walk(root, res):
         yield rel, "js" if rel.endswith((".js", ".mjs", ".cjs")) else "sh"
 
 
-_CP_MODULE = r"['\"](?:node:)?child_process['\"]"
-# The binding shapes, compiled once: a destructured require or import (the names), a require assigned whole or a namespace
-# or default import (the spaces), and the `as` or `:` that renames a destructured member.
-_CP_NAMES = re.compile(r"(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\(\s*%s\s*\)|import\s*(?:type\s+)?\{([^}]*)\}\s*from\s*%s" % (_CP_MODULE, _CP_MODULE))
-_CP_SPACES = re.compile(r"(?:const|let|var)\s+(\w+)\s*=\s*require\(\s*%s\s*\)|import\s+\*\s+as\s+(\w+)\s+from\s*%s|import\s+(\w+)\s+from\s*%s" % (_CP_MODULE, _CP_MODULE, _CP_MODULE))
-_CP_RENAME = re.compile(r"\s+as\s+|\s*:\s*")
+def _binding_patterns(mod):
+    """The binding shapes of one module, compiled once per module: the quoted specifier (`node:` or not), a destructured require
+    or import (the names), and a require assigned whole or a namespace or default import (the spaces)."""
+    spec = r"['\"](?:node:)?%s['\"]" % re.escape(mod)
+    names = re.compile(r"(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\(\s*%s\s*\)|import\s*(?:type\s+)?\{([^}]*)\}\s*from\s*%s" % (spec, spec))
+    spaces = re.compile(r"(?:const|let|var)\s+(\w+)\s*=\s*require\(\s*%s\s*\)|import\s+\*\s+as\s+(\w+)\s+from\s*%s|import\s+(\w+)\s+from\s*%s" % (spec, spec, spec))
+    return re.compile(spec), names, spaces, mod
+
+
+_CP_MODULE, _CP_NAMES, _CP_SPACES, _CP_NAME = _binding_patterns("child_process")
+_CP_RENAME = re.compile(r"\s+as\s+|\s*:\s*")   # the `as` or `:` that renames a destructured member
+# The connection family read through the same bindings (an added arm beside JS's literal spellings): module -> the members that
+# open a connection; the tool a site is keyed on is the literal list's own name (`http.get` for http and https alike). ws is
+# constructor-shaped (`new <binding>(`) and keyed `WebSocket`, the literal `new WebSocket(` entry's name.
+NET_FAMILY = {"http": ("get", "request"), "https": ("get", "request"), "net": ("connect", "createConnection"), "tls": ("connect",)}
+_NET_PATTERNS = {mod: _binding_patterns(mod) for mod in tuple(NET_FAMILY) + ("ws",)}
+
+
+def _names_module(text, patterns):
+    """Whether the file spells the module's quoted specifier at all (the four spellings _binding_patterns's specifier admits), a
+    substring check before any regex runs over the file."""
+    mod = patterns[3]
+    return any(q + m + q in text for q in "'\"" for m in (mod, "node:" + mod))
+
+
+def _module_bindings(text, patterns):
+    """(names, spaces) a JavaScript or TypeScript file binds from one module, by its patterns (_binding_patterns): `names` maps a
+    bare name the file destructures or imports to the member it stands for (renamed or not; a `type` import binds no value
+    but is read for parity), `spaces` holds the names the file keeps the module under."""
+    spec, names_rx, spaces_rx, _mod = patterns
+    names, spaces = {}, set()
+    if not _names_module(text, patterns): return names, spaces
+    for m in names_rx.finditer(text):
+        for part in (m.group(1) or m.group(2) or "").split(","):
+            part = part.strip()
+            if part.startswith("type "): part = part[5:].strip()
+            if part:
+                bits = [b.strip() for b in _CP_RENAME.split(part)]
+                names[bits[-1]] = bits[0]
+    for m in spaces_rx.finditer(text):
+        spaces.add(m.group(1) or m.group(2) or m.group(3))
+    return names, spaces
 
 
 def _cp_bindings(text):
@@ -615,17 +711,8 @@ def _cp_bindings(text):
     child_process binds nothing and qualifies no call, so it is None here and no line of it is a site. A family member
     called by a bare name the file does not bind is not a site."""
     if "child_process" not in text: return None
-    names, spaces = {}, set()
-    for m in _CP_NAMES.finditer(text):
-        for part in (m.group(1) or m.group(2) or "").split(","):
-            part = part.strip()
-            if part.startswith("type "): part = part[5:].strip()
-            if part:
-                bits = [b.strip() for b in _CP_RENAME.split(part)]
-                names[bits[-1]] = bits[0]
-    for m in _CP_SPACES.finditer(text):
-        spaces.add(m.group(1) or m.group(2) or m.group(3))
-    qual = [r"\bchild_process", r"require\(\s*%s\s*\)" % _CP_MODULE] + [r"\b" + re.escape(s) for s in sorted(spaces)]
+    names, spaces = _module_bindings(text, (_CP_MODULE, _CP_NAMES, _CP_SPACES, _CP_NAME))
+    qual = [r"\bchild_process", r"require\(\s*%s\s*\)" % _CP_MODULE.pattern] + [r"\b" + re.escape(s) for s in sorted(spaces)]
     bare = sorted(n for n, fn in names.items() if fn in CP_FAMILY)
     return {"names": names, "spaces": spaces, "qualified": re.compile(r"(?:%s)\.(%s)\(" % ("|".join(qual), "|".join(CP_FAMILY))),
             "bare": re.compile(r"(?<![\w.$])(%s)\(" % "|".join(map(re.escape, bare))) if bare else None}
@@ -638,6 +725,41 @@ def _cp_sites(ln, cp):
     out = [(m.group(1), m.end()) for m in cp["qualified"].finditer(ln)]
     if cp["bare"] is not None:
         out.extend((cp["names"][m.group(1)], m.end()) for m in cp["bare"].finditer(ln))
+    return out
+
+
+def _net_bindings(text):
+    """The connection family through the file's bindings, read once per file with the shapes _cp_bindings reads for
+    child_process, over the modules NET_FAMILY names and ws: a list of (pattern, tool of a match) arms. For http, https, net
+    and tls a member call qualified to an inline require or to a space (a namespace or default import, a require assigned
+    whole), and a call by a bare name the file binds from the module (renamed or not); for ws the constructor shape
+    (`new (require('ws'))(`, `new (require('ws').WebSocket)(`, `new <space>(`, `new <space>.WebSocket(`, `new <bound name>(`).
+    Empty for a file that names none of the modules; the bare global `new WebSocket(` is the literal list's."""
+    arms = []
+    for mod, members in NET_FAMILY.items():
+        if not _names_module(text, _NET_PATTERNS[mod]): continue
+        names, spaces = _module_bindings(text, _NET_PATTERNS[mod])
+        tool = ("http" if mod == "https" else mod) + ".%s"
+        qual = [r"require\(\s*%s\s*\)" % _NET_PATTERNS[mod][0].pattern] + [r"\b" + re.escape(s) for s in sorted(spaces)]
+        arms.append((re.compile(r"(?:%s)\.(%s)\(" % ("|".join(qual), "|".join(members))), lambda m, t=tool: t % m.group(1)))
+        bare = {n: fn for n, fn in names.items() if fn in members}
+        if bare:
+            arms.append((re.compile(r"(?<![\w.$])(%s)\(" % "|".join(map(re.escape, sorted(bare)))), lambda m, t=tool, b=bare: t % b[m.group(1)]))
+    if _names_module(text, _NET_PATTERNS["ws"]):
+        names, spaces = _module_bindings(text, _NET_PATTERNS["ws"])
+        heads = ([r"\(\s*require\(\s*%s\s*\)(?:\.WebSocket)?\s*\)" % _NET_PATTERNS["ws"][0].pattern]
+                 + [re.escape(s) + r"(?:\.WebSocket)?" for s in sorted(spaces)] + [re.escape(n) for n, fn in sorted(names.items()) if fn == "WebSocket"])
+        arms.append((re.compile(r"\bnew\s+(?:%s)\s*\(" % "|".join(heads)), lambda m: "WebSocket"))
+    return arms
+
+
+def _net_sites(ln, nb):
+    """The tools of the connection family's binding arm (_net_bindings) on the line, each once, in order of first match."""
+    out = []
+    for rx, tool_of in nb or ():
+        for m in rx.finditer(ln):
+            t = tool_of(m)
+            if t not in out: out.append(t)
     return out
 
 
@@ -685,12 +807,13 @@ _JS_SIDE_EFFECT = re.compile(r"import\s*(['\"])([^'\"]+)\1")
 _JS_REQUIRE = re.compile(r"(?<![\w.$])(?:require|import)\(\s*(['\"])([^'\"]+)\1\s*\)")
 
 
-def _js_specifiers(s):
+def _js_specifiers(s, served=False):
     """The module specifiers a JavaScript or TypeScript line imports or requires: an import or export statement's `from` string
-    (the closing line of a multi-line import starts with `}`), a side-effect import, and every literal require() and import()."""
+    (the closing line of a multi-line import starts with `}`; in served text, where a `}` leads any block, the statement form
+    applies only to a line that starts with import or export), a side-effect import, and every literal require() and import()."""
     if "import" not in s and "require" not in s and "from" not in s: return []   # every shape below spells one of the three
     out = []
-    if s.startswith(("import", "export", "}")):
+    if s.startswith(("import", "export")) or (not served and s.startswith("}")):
         m = _JS_FROM.search(s)
         if m: out.append(m.group(2))
         m = _JS_SIDE_EFFECT.match(s)
@@ -708,16 +831,77 @@ def _js_package(spec):
     return "/".join(parts[:2]) if spec.startswith("@") else parts[0]
 
 
-def line_scan(rel, kind, text, res):
-    """The shell or JavaScript sites, the DOM loads and the package gate over one file's text (read once, by scan)."""
+def _live_remainder(text):
+    """The live text of a shell line after its echo or print lead: the text outside quotes, and the whole body of every
+    $(...) and backtick substitution wherever it stands (inside double quotes too); the printed text inside quotes is not
+    live. A paren-depth walk with quote states, not a regex: a nested $(...) closes at its own paren, a quoted paren
+    inside a body does not close it, an unterminated body runs to the end of the line, and a word-initial # ends the
+    live text (a comment)."""
+    n = len(text); live = []
+
+    def body(i, close):
+        """(index after the closer, body text) for a substitution whose opener ended at i."""
+        j, depth, q = i, 0, None
+        while j < n:
+            ch = text[j]
+            if q:
+                if ch == "\\" and q == '"': j += 2; continue
+                if ch == q: q = None; j += 1; continue
+                if q == '"' and text.startswith("$(", j): j = body(j + 2, ")")[0]; continue
+                if q == '"' and ch == "`": j = body(j + 1, "`")[0]; continue
+                j += 1; continue
+            if ch == "\\": j += 2; continue
+            if ch in "'\"": q = ch; j += 1; continue
+            if text.startswith("$(", j): j = body(j + 2, ")")[0]; continue
+            if close == ")":
+                if ch == "(": depth += 1
+                elif ch == ")":
+                    if depth == 0: return j + 1, text[i:j]
+                    depth -= 1
+                elif ch == "`": j = body(j + 1, "`")[0]; continue
+            elif ch == "`":
+                return j + 1, text[i:j]
+            j += 1
+        return n, text[i:n]
+
+    i, q = 0, None
+    while i < n:
+        ch = text[i]
+        if q == "'":
+            if ch == "'": q = None
+            i += 1; continue
+        if q == '"':
+            if ch == "\\": i += 2; continue
+            if ch == '"': q = None; i += 1; continue
+            if text.startswith("$(", i): i, b = body(i + 2, ")"); live.append(" " + b + " "); continue
+            if ch == "`": i, b = body(i + 1, "`"); live.append(" " + b + " "); continue
+            i += 1; continue
+        if ch == "\\": live.append(text[i:i + 2]); i += 2; continue
+        if ch in "'\"": q = ch; i += 1; continue
+        if text.startswith("$(", i): i, b = body(i + 2, ")"); live.append(" " + b + " "); continue
+        if ch == "`": i, b = body(i + 1, "`"); live.append(" " + b + " "); continue
+        if ch == "#" and (i == 0 or text[i - 1] in " \t"): break
+        live.append(ch); i += 1
+    return "".join(live)
+
+
+def line_scan(rel, kind, text, res, base=0, dom=None, served=False):
+    """The shell or JavaScript sites, the DOM loads and the package gate over one file's text (read once, by scan). For a page
+    the kernel serves (served_texts), `base` offsets the line numbers to the constant's place in its Python file, `dom` forces
+    the DOM arm on (None keeps the rule: the browser and editor roots), and `served` narrows the import gate's statement form
+    to a line that starts with import or export."""
     tools, any_tool, comment = (JS_RX, JS_ANY, ("//", "*", "/*")) if kind == "js" else (SH_RX, SH_ANY, ("#",))
-    dom = kind == "js" and rel.startswith(tuple(d + "/" for d in JS_ROOTS))
+    if dom is None: dom = kind == "js" and rel.startswith(tuple(d + "/" for d in JS_ROOTS))
     cp = _cp_bindings(text) if kind == "js" else None
-    for i, ln in enumerate(text.splitlines(), 1):
-        s = ln.strip()
-        if s.startswith(comment) or s.startswith(("echo ", "print(")): continue   # a printed remedy is not a request
+    nb = _net_bindings(text) if kind == "js" else None
+    for i, ln in enumerate(text.splitlines(), base + 1):
+        s = ln.strip(); live = ln; seen = set()
+        if s.startswith(comment): continue
+        if kind == "sh" and s.startswith(("echo ", "print(")):   # a printed remedy is not a request: only what follows the printed text
+            live = _live_remainder(s[5:] if s.startswith("echo ") else s[6:])   # live (_live_remainder) is scanned, and a line with nothing live is skipped
+            if not live.strip(): continue
         if kind == "js":
-            for spec in _js_specifiers(s):
+            for spec in _js_specifiers(s, served):
                 pkg = _js_package(spec)
                 if pkg and pkg not in KNOWN_JS_IMPORTS:
                     res.problems.append("IMPORT %s:%d imports %s, a package the census does not know: a client that opens connections or starts programs "
@@ -734,29 +918,205 @@ def line_scan(rel, kind, text, res):
                 if fn == "execFile" and 'execFile("bash"' in ln: tool, road = "install.sh", T.get(rel + ":install.sh")
                 res.emit(rel, i, tool, (head + " " + sub).strip(), "-", road, cls, kind)
         else:
-            for m in SH_INTERPRETER.finditer(ln):   # the interpreter arm: keyed file plus tool, external-program by class
+            for m in SH_INTERPRETER.finditer(live):   # the interpreter arm: keyed file plus tool, external-program by class
                 tool = "%s %s" % (os.path.basename(m.group("head")), m.group("flag"))
                 res.emit(rel, i, tool, s[:70], "-", T.get("%s:%s" % (rel, tool)), "external-program", kind)
-        if any_tool.search(ln):   # the list's alternation (_compiled): a miss means no tool below matches, so the loop is skipped
+        if any_tool.search(live):   # the list's alternation (_compiled): a miss means no tool below matches, so the loop is skipped
             for tool, rx in tools:
-                if rx.search(ln):
+                if rx.search(live):
                     road, cls, head = T.get("%s:%s" % (rel, tool)), None, s[:70]
                     if tool == "fetch":   # placed by its URL: the argument is what the listing shows
-                        arg = _call_arg(ln, "fetch("); fc = _fetch_class(arg); head = "fetch(%s)" % arg[:60]
+                        arg = _call_arg(live, "fetch("); fc = _fetch_class(arg, served); head = "fetch(%s)" % arg[:60]
                         if fc == "local": road = "local-kernel"
                         elif fc == "computed": cls = "browser-computed-url"
                     if tool == "import()":   # a literal specifier is an import (gated above), a computed one a site of the class
-                        arg = _call_arg(ln, "import(")
+                        arg = _call_arg(live, "import(")
                         if arg[:1] in ("'", '"', "`") and "${" not in arg: continue
                         cls, head = "browser-computed-url", "import(%s)" % arg[:60]
-                    res.emit(rel, i, tool, head, "-", road, cls, kind)
+                    seen.add(tool); res.emit(rel, i, tool, head, "-", road, cls, kind)
+        for tool in _net_sites(live, nb):   # the connection family through the file's bindings: a tool the literal list named on this line is counted once
+            if tool not in seen: res.emit(rel, i, tool, s[:70], "-", T.get("%s:%s" % (rel, tool)), None, kind)
         if dom and DOM_ANY.search(ln):
             for name, rx in DOM_RX:
                 if rx.search(ln): res.dom.append((rel, i, name, s[:70])); break
 
 
+_TEXT_CALLS = ("format", "join", "replace", "strip", "lstrip", "rstrip")   # a call on a text receiver: the receiver and the arguments are text
+_READ_CALLS = ("read_text", "read")                                        # a file read bound to a page's slot
+
+
+class _Served(object):
+    """The text a route's page is served from, followed through the module's syntax tree: the body expression of each `_send`
+    resolved to its string constants (a literal, an f-string's parts, `+` and `%` operands and the argument tuple, a
+    conditional's branches, a comprehension's element, a module constant by name, a local by every binding it has in the
+    function, a `.format`, `.join`, `.replace` or `.strip` receiver and its arguments, every `return` of a module function or
+    a `self.` method the page calls, and the arguments of any other call), each a piece (label, first line, text) for
+    line_scan; a local bound to a `.read_text()` or `.read()` is a file slot (label, line, path) the walk covers or names; a
+    parameter, an attribute, a subscript, a comparison, a boolean or unary expression and a lambda are value slots (no text);
+    anything else is text the census did not read, a SERVED problem by name, as is a route whose body yields no piece and no
+    file slot."""
+    def __init__(self, rel, tree):
+        self.rel, self.consts, self.funcs, self.methods, self.names = rel, {}, {}, {}, set(dir(builtins))
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name): self.consts[node.targets[0].id] = node.value
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)): self.funcs[node.name] = node
+            elif isinstance(node, ast.ClassDef): self.methods[node.name] = {n.name: n for n in node.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            if isinstance(node, (ast.Import, ast.ImportFrom)): self.names.update((a.asname or a.name).split(".")[0] for a in node.names)
+            else: self.names.update(n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)) if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) else None
+        self.names.update(self.funcs); self.names.update(self.methods)   # every module-level binding: a bare name of one is a value slot
+        self.pieces, self.files, self.problems = [], [], []
+
+    @staticmethod
+    def _locals(fn):
+        """(name -> every value bound to it by a single-name assignment in the function's own body, the other names the body
+        binds (a loop or with target, an except name, an unpacking, a walrus), the functions defined inside it), nested defs
+        not entered."""
+        out, bound, nested, stack = {}, set(), {}, list(fn.body)
+        while stack:
+            n = stack.pop()
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)): nested[n.name] = n; continue
+            if isinstance(n, (ast.ClassDef, ast.Lambda)): continue
+            if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name): out.setdefault(n.targets[0].id, []).append(n.value)
+            elif isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name): out.setdefault(n.target.id, []).append(n.value)
+            elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.value is not None: out.setdefault(n.target.id, []).append(n.value)
+            elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store): bound.add(n.id)
+            elif isinstance(n, ast.ExceptHandler) and n.name: bound.add(n.name)
+            stack.extend(ast.iter_child_nodes(n))
+        return out, bound, nested
+
+    @staticmethod
+    def _returns(fn):
+        out, stack = [], list(fn.body)
+        while stack:
+            n = stack.pop()
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)): continue
+            if isinstance(n, ast.Return) and n.value is not None: out.append(n.value)
+            stack.extend(ast.iter_child_nodes(n))
+        return out
+
+    def _ctx(self, fn, cls, outer=None):
+        """(the value-slot names: parameters and the other names the body binds, the locals, the class, the nested functions);
+        a nested function's context (outer given) sees the enclosing function's names and locals under its own."""
+        a = fn.args
+        params = {x.arg for x in a.posonlyargs + a.args + a.kwonlyargs} | ({a.vararg.arg} if a.vararg else set()) | ({a.kwarg.arg} if a.kwarg else set())
+        local, bound, nested = self._locals(fn)
+        if outer is not None:
+            params, local, nested = params | outer[0], dict(outer[1], **local), dict(outer[3], **nested)
+        return params | bound, local, cls, nested
+
+    def _path(self, e):
+        """The repository-relative path a pathlib expression spells: `ROOT / "ui" / "x.css"` through the module's constants, with
+        Path(__file__) as this file and .parent as its directory; None when the census cannot read it."""
+        if isinstance(e, ast.BinOp) and isinstance(e.op, ast.Div) and isinstance(e.right, ast.Constant) and isinstance(e.right.value, str):
+            left = self._path(e.left)
+            return None if left is None else (left + "/" if left else "") + e.right.value
+        if isinstance(e, ast.Name):
+            if e.id in self.consts: return self._path(self.consts[e.id])
+            return None
+        if isinstance(e, ast.Attribute) and e.attr == "parent":
+            base = self._path(e.value)
+            return None if base is None else os.path.dirname(base)
+        if isinstance(e, ast.Call) and isinstance(e.func, ast.Attribute) and e.func.attr == "resolve": return self._path(e.func.value)
+        if isinstance(e, ast.Call) and isinstance(e.func, ast.Name) and e.func.id in ("Path", "open") and e.args:
+            a = e.args[0]
+            if isinstance(a, ast.Name) and a.id == "__file__": return self.rel
+            if isinstance(a, ast.Constant) and isinstance(a.value, str): return a.value
+            return self._path(a)
+        return None
+
+    def resolve(self, e, ctx, label, done):
+        """Add the text `e` evaluates to under ctx (the value-slot names, the locals, the class, the nested functions) as pieces
+        and file slots; `done` holds the names already followed for this route, so a constant, a function or a local is read
+        once per route and a cycle stops."""
+        params, local, cls, nested = ctx
+        if isinstance(e, ast.Constant):
+            if isinstance(e.value, str): self.pieces.append((label, e.lineno, e.value))
+        elif isinstance(e, ast.JoinedStr):
+            for v in e.values:
+                if isinstance(v, ast.Constant): self.pieces.append((label, e.lineno, v.value))
+                elif isinstance(v, ast.FormattedValue): self.resolve(v.value, ctx, label, done)
+        elif isinstance(e, ast.BinOp) and isinstance(e.op, (ast.Add, ast.Mod)):
+            self.resolve(e.left, ctx, label, done); self.resolve(e.right, ctx, label, done)
+        elif isinstance(e, (ast.Tuple, ast.List)):
+            for x in e.elts: self.resolve(x, ctx, label, done)
+        elif isinstance(e, ast.IfExp):
+            self.resolve(e.body, ctx, label, done); self.resolve(e.orelse, ctx, label, done)
+        elif isinstance(e, (ast.GeneratorExp, ast.ListComp, ast.SetComp)):
+            names = {n.id for g in e.generators for n in ast.walk(g.target) if isinstance(n, ast.Name)}
+            self.resolve(e.elt, (params | names, local, cls, nested), label, done)
+        elif isinstance(e, ast.Dict):
+            for x in e.keys + e.values:
+                if x is not None: self.resolve(x, ctx, label, done)
+        elif isinstance(e, ast.Set):
+            for x in e.elts: self.resolve(x, ctx, label, done)
+        elif isinstance(e, (ast.Await, ast.Yield, ast.YieldFrom, ast.NamedExpr)):
+            if e.value is not None: self.resolve(e.value, ctx, label, done)
+        elif isinstance(e, ast.Name):
+            if e.id in local:
+                key = ("local", id(local), e.id)   # a local read once per function per route: `x = x.replace(...)` reads itself
+                if key in done: return
+                done.add(key)
+                for v in local[e.id]:
+                    if isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) and v.func.attr in _READ_CALLS:   # a file read bound to a slot
+                        self.files.append((label, v.lineno, e.id, self._path(v.func.value)))
+                    else: self.resolve(v, ctx, label, done)
+            elif e.id in self.consts:
+                if e.id not in done: done.add(e.id); self.resolve(self.consts[e.id], (set(), {}, None, {}), e.id, done)
+            elif e.id not in params and e.id not in nested and e.id not in self.names:   # a name bound nowhere the census reads
+                self.problems.append("SERVED %s:%d builds a served page from %s, text the census did not read" % (self.rel, e.lineno, ast.unparse(e)[:60]))
+        elif isinstance(e, ast.Call):
+            f = e.func
+            if isinstance(f, ast.Attribute) and f.attr in _READ_CALLS: self.files.append((label, e.lineno, ast.unparse(f.value)[:40], self._path(f.value)))
+            elif isinstance(f, ast.Attribute) and f.attr in _TEXT_CALLS: self.resolve(f.value, ctx, label, done)
+            elif isinstance(f, ast.Name) and f.id in nested:   # a function defined inside the page function, over its names
+                key = ("nested", id(nested[f.id]))
+                if key not in done:
+                    done.add(key); fn = nested[f.id]
+                    for r in self._returns(fn): self.resolve(r, self._ctx(fn, cls, ctx), label + "." + f.id, done)
+            elif isinstance(f, ast.Name) and f.id in self.funcs:
+                if f.id not in done:
+                    done.add(f.id); fn = self.funcs[f.id]
+                    for r in self._returns(fn): self.resolve(r, self._ctx(fn, None), f.id, done)
+            elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "self" and cls and f.attr in self.methods.get(cls, {}):
+                key = cls + "." + f.attr
+                if key not in done:
+                    done.add(key); fn = self.methods[cls][f.attr]
+                    for r in self._returns(fn): self.resolve(r, self._ctx(fn, cls), key, done)
+            for a in e.args + [k.value for k in e.keywords]: self.resolve(a, ctx, label, done)   # a value slot's arguments are text too (json.dumps(x))
+        elif isinstance(e, (ast.Attribute, ast.Subscript, ast.Compare, ast.BoolOp, ast.UnaryOp, ast.Lambda, ast.Starred, ast.BinOp, ast.Slice)):
+            pass   # a value slot: no text of its own (a BinOp here is arithmetic or a pathlib join, not the `+` or `%` above)
+        else:
+            self.problems.append("SERVED %s:%d builds a served page from %s, text the census did not read" % (self.rel, e.lineno, ast.unparse(e)[:60]))
+
+    def run(self, routes):
+        for call, fn, cls in routes:
+            before = len(self.pieces), len(self.files)
+            ctx = self._ctx(fn, cls) if fn is not None else (set(), {}, cls, {})
+            self.resolve(call.args[1], ctx, fn.name if fn is not None else "<module>", set())
+            if (len(self.pieces), len(self.files)) == before:
+                self.problems.append("SERVED %s:%d serves %s from %s, text the census did not read"
+                                     % (self.rel, call.lineno, call.args[2].value.split(";")[0], ast.unparse(call.args[1])[:60]))
+
+
+def served_texts(rel, tree, routes, res):
+    """The served pages' pass over one Python file: every piece the routes reach scanned as browser text with the DOM arm on,
+    keyed file plus tool at the constant's own lines; a file a page reads at run time is covered by the walk when it is a
+    scanned kind (not scanned again), named when it is a stylesheet, and a SERVED problem otherwise."""
+    sv = _Served(rel, tree); sv.run(routes)
+    seen = set()
+    for label, lineno, text in sorted(sv.pieces, key=lambda p: (p[1], p[2])):
+        if (lineno, text) in seen: continue
+        seen.add((lineno, text)); line_scan(rel, "js", text, res, base=lineno - 1, dom=True, served=True)
+    for label, lineno, name, path in sorted(sv.files, key=lambda f: f[1]):
+        if path is not None and path in res.files: continue
+        if path is not None and path.endswith(".css"):
+            if (rel, lineno, path) not in res.served_files: res.served_files.append((rel, lineno, path))
+        else: res.problems.append("SERVED %s:%d reads %s for a served page, a file the walk does not scan" % (rel, lineno, path or name))
+    res.problems.extend(sv.problems); res.served.append(rel)
+
+
 def scan(root):
-    res = Result(); bootstrap = None
+    res = Result(); bootstrap = None; served = []
     for rel, kind in walk(root, res):   # each file's text is read once here: a Python file strictly, the others with replacement
         res.files.append(rel)
         with open(os.path.join(root, rel), encoding="utf-8", errors=None if kind == "py" else "replace") as fh: text = fh.read()
@@ -770,6 +1130,8 @@ def scan(root):
             if mod not in KNOWN_IMPORTS:
                 res.problems.append("IMPORT %s:%d imports %s, a module the census does not know: a client that opens connections takes its "
                                     "primitives into NET or SUB; either way add it to KNOWN_IMPORTS with the reason" % (rel, line, mod))
+        if sc.routes: served.append((rel, tree, sorted(sc.routes, key=lambda r: r[0].lineno)))   # the served pass runs after the walk: a file slot is checked against res.files
+    for rel, tree, routes in served: served_texts(rel, tree, routes, res)
     if bootstrap is not None:
         for ln in bootstrap.split("\n"):   # the documented one-liner: the user's own curl of this script is a road too
             if ln.startswith("#") and "curl" in ln and "bootstrap.sh | bash" in ln:
@@ -826,6 +1188,7 @@ def render_sites(res, fig, out):
         if s.cls and tag != "(%s)" % s.cls: tag += " [%s]" % s.cls
         out.write("%s:%d  %s  %s  in %s  -> %s\n" % (s.file, s.line, s.prim, s.head, s.fn, tag))
     for rel, i, name, s in res.dom: out.write("%s:%d  dom-load  %s  %s  -> (browser-dom-loads)\n" % (rel, i, name, s))
+    for rel, i, path in res.served_files: out.write("%s:%d  served-file  %s  -> (a stylesheet a served page reads: named, not scanned)\n" % (rel, i, path))
     c = fig["classes"]
     out.write("--- %d sites, %d roads (%d of them local), %d local sites set aside, %d unclassified; %d external-program, %d runtime-program, "
               "%d browser-computed-url, %d browser-dom-loads; %d files scanned, %d skipped by kind\n"
@@ -869,7 +1232,9 @@ def render_table(res, fig, out):
     where = {"external-program": "%d sites, by program: %s" % (len(ext), _programs(ext)),
              "runtime-program": _where(rt) + " (%d sites)" % len(rt),
              "browser-computed-url": "%d sites: %s" % (len(comp), "; ".join("%s `%s`" % (s.file, s.head) for s in comp)),
-             "browser-dom-loads": "%d lines in %d files under %s (%s)" % (len(res.dom), len(files), " and ".join(JS_ROOTS), ", ".join("%s %d" % (k, kinds[k]) for k in sorted(kinds)))}
+             "browser-dom-loads": "%d lines in %d files under %s%s (%s)" % (len(res.dom), len(files), " and ".join(JS_ROOTS),
+                                   (" and in the pages %s serves" % " and ".join(sorted(res.served))) if res.served else "",
+                                   ", ".join("%s %d" % (k, kinds[k]) for k in sorted(kinds)))}
     for cls in CLASSES:
         label, trigger, sent, off = CLASS_ROWS[cls]
         out.write("| %s | %s | %s | %s | %s |\n" % (label, where[cls], trigger, sent, off))

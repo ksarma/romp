@@ -178,31 +178,55 @@ pricing. The kernel's other connections, and the programs it runs that connect
 on their own, are listed below. The list is derived from the code by
 `python3 scripts/network-inventory.py`, run from the repository root: the
 script walks kernel/, cli/, postal/, bin/, hooks/, ui/, vscode-extension/src
-and the install scripts for every site that opens a connection or starts a
-program, compares what it finds with the counts committed beside it in
+and the install scripts, and reads the pages the kernel serves from its own
+text, for every site that opens a connection or starts a program, compares what
+it finds with the counts committed beside it in
 `scripts/network-inventory-expected.json`, and exits 1 naming any site it
 cannot place, any count that differs, any HTTP or socket client it does not
 know and any row of its table that names no site; the test suite runs it
-(`tests/test_price_feed_census.py`). The shell and browser sides are matched
-by a named list with no completeness gate: a tool or a client the lists do not
-name is no site and no line; the Python side's gate is module-granular: an
-import outside the allow-list fails the run, and a primitive of a known module
-outside NET and SUB is not a site. NET and SUB are the script's lists of the
-connection and command primitives it reads. Four classes of outbound activity
-the scan cannot derive are named and counted in its table rather than left
-out: an external program started whose far end its arguments do not show (a
-shell, node, perl or python as the program, whether the kernel starts it, a
-shell script of romp's runs its text inline (`python3 -c`, a heredoc,
-`node -e`), or the manager or the editor extension starts it; a command run
-through a shell; git with a subcommand the code does not spell out; an argv
-the code does not spell out); a program whose text is supplied at run time (a
-watch predicate, the apiKeyHelper or a login's token command); a browser
-request whose URL is computed at run time (a fetch, or a dynamic import of a
-module); and the loads the browser makes on its own for what a page inserts
-(an image, a frame, a script, a link). A fifth is named in the table and not
-counted, since the scan cannot see it: a socket primitive called on a receiver
-the census cannot resolve (an attribute-held or parameter socket) is not a
-site here.
+(`tests/test_price_feed_census.py`). The pages the kernel serves and its
+service worker's script, from its own string constants (the dashboard shell,
+the seven pane pages, the token login page, the too-large page and /sw.js, with
+the shim, the timeline boot and the shell scripts they inline), are read from
+kernel.py's syntax tree, each route's page function followed to the constants
+it returns or inlines, and scanned as browser text keyed kernel/kernel.py plus
+tool, with the DOM loads counted; a route that serves text/html or
+text/javascript from text the extraction cannot read fails the run (SERVED); a
+file the page reads at run time is covered by the walk when it is a scanned
+kind, and a stylesheet is named, not scanned. The shell and browser sides are
+matched by a named list with no completeness gate: a tool or a client the lists
+do not name is no site and no line; the Python side's gate is module-granular:
+an import outside the allow-list fails the run, and a primitive of a known
+module outside NET and SUB is not a site. An echo- or print-led shell line is
+skipped as a printed remedy only when nothing live follows the printed text:
+the text outside quotes and the body of every `$(...)` and backtick
+substitution, wherever it stands, are scanned by the interpreter arm and the
+tool list, so `echo "$body" | curl ...` and `echo "rate: $(curl ...)"` are
+sites and a remedy that names a tool inside quotes is not. On the browser and
+editor side a client the list names is a site however the file binds it, the
+connection family read through its bindings as the child_process family is: a
+`get` or `request` of `http` or `https`, a `connect` or `createConnection` of
+`net` and a `connect` of `tls` through an inline require, a namespace or
+default import, or a bare name the file binds from the module (renamed or not),
+and `ws` by its constructor shape (`new <binding>(`,
+`new <namespace>.WebSocket(`, `new (require('ws'))(`), each an added arm beside
+the literal spellings (`http.get(`, `net.connect(`, the bare global
+`new WebSocket(`), a call the literal list already names on a line counted once
+under the same tool. NET and SUB are the script's lists of the connection and
+command primitives it reads. Four classes of outbound activity the scan cannot
+derive are named and counted in its table rather than left out: an external
+program started whose far end its arguments do not show (a shell, node, perl or
+python as the program, whether the kernel starts it, a shell script of romp's
+runs its text inline (`python3 -c`, a heredoc, `node -e`), or the manager or
+the editor extension starts it; a command run through a shell; git with a
+subcommand the code does not spell out; an argv the code does not spell out); a
+program whose text is supplied at run time (a watch predicate, the apiKeyHelper
+or a login's token command); a browser request whose URL is computed at run
+time (a fetch, or a dynamic import of a module); and the loads the browser
+makes on its own for what a page inserts (an image, a frame, a script, a link).
+A fifth is named in the table and not counted, since the scan cannot see it: a
+socket primitive called on a receiver the census cannot resolve (an
+attribute-held or parameter socket) is not a site here.
 
 `ROMP_PRICE_FEED=off` in the kernel's environment (`service.env` for the
 installed service, then a manager restart) stops that fetch: the Token usage
@@ -233,6 +257,16 @@ kernel, the pictures a viewed markdown file loads from the hosts on the gear's
 Pictures from the web in files list, which starts as github.com, its image and
 asset hosts, localhost and 127.0.0.1 (a figure from any other host makes no
 request until you click it; removing a host from the list stops its loads).
+Also in the browser, with no click and no setting of yours: on the web
+dashboard the chat's rendered markdown (a session's reply, your own message, a
+postal body) loads an image, video, audio, srcset or picture media from the
+host its URL names the moment it renders (a video's poster and an inline svg's
+image load the same way), with whatever cookies that browser sends cross-site
+to that host and no Referer (a SameSite=None cookie, not the fuller set a
+top-level navigation carries; every page the kernel serves carries
+`Referrer-Policy: same-origin`); the editor extension's webviews block these
+loads by their content security policy, so this is the web dashboard's alone,
+and no serve token, key or login token rides in the request.
 
 The other connections open when something sets them up, you or a session you
 are running: an attached machine (ssh commands to it and tunnels to it, and
@@ -260,23 +294,37 @@ script exits after the build and sends nothing more. A link you click, in the
 browser showing the dashboard or in one of the editor extension's views (a link
 in a session's reply or in your own message, a pull-request reference in a
 message, a card or an outline row, a URL in a todo's text or the address a todo
-carries, a URL in a viewed file, the gear's sign-in link), opens in a browser
-that requests the clicked URL from the host it names with that browser's own
-cookies: on the web dashboard the browser showing it, in a new tab; from the
-editor extension the operating system's default browser, which
-`vscode.env.openExternal` hands the URL to. For a pull-request reference that
-is the session's repository name and the number, on github.com; for a link in a
-message, a todo or a viewed file, whatever its author wrote, a session, you or
-a peer; for the sign-in link, the CLI's own sign-in request to claude.com or
-claude.ai. None carries a serve token, a key or a login token, and nothing
-sends until you click; an anchor with no scheme that the chat page's click
-delegate leaves to the default action (one the page built, or one in a message
-that does not resolve to a web address) is a gesture this tree does not route,
-and what the editor's own webview host does with it is outside this tree.
-Installing by hand
-(`bootstrap.sh`, `install.sh`) fetches from GitHub, PyPI (and
-bootstrap.pypa.io for get-pip.py when the python lacks ensurepip;
-`ROMP_NO_GET_PIP=1` skips that fetch) and the npm registry, and
+carries, a URL in a viewed file, the file viewer's GitHub button, the gear's
+sign-in link), opens in a browser that requests the clicked URL from the host
+it names with that browser's own cookies: on the web dashboard the browser
+showing it, in a new tab; from the editor extension the operating system's
+default browser, which `vscode.env.openExternal` hands the URL to. For a
+pull-request reference that is the session's repository name and the number, on
+github.com; for the file viewer's GitHub button, an address romp composes from
+the file's checkout (the owner and repository name from its origin remote, the
+current branch or the commit sha when HEAD is detached, and the file's path),
+on github.com, offered only for a committed file in a checkout whose origin is
+on GitHub; for a link in a message, a todo or a viewed file, whatever its
+author wrote, a session, you or a peer; for the sign-in link, the CLI's own
+sign-in request to claude.com or claude.ai. The sign-in link, an anchor the
+gear builds to open in a new tab, opens by document: on the dashboard's
+settings page, which installs no opener, the browser's own open in a new tab,
+no site of this tree running; in the editor's chat panel the chat delegate's
+`openLink` post to the extension; in the editor's feed panel the webview host's
+own link handling, outside this tree. None carries a serve token, a key or a
+login token, and nothing sends until you click; three anchors the chat page's
+click delegate leaves to the default action (one with no scheme that the page
+built; one with no scheme in a message that does not resolve to an http or
+https address; a message's own download anchor, one with no scheme carrying a
+`download` attribute whose href resolves to an http or https address on this
+page's origin, which the browser saves from this origin), and a page-built
+anchor with a scheme in a document that installs no opener (the gear's sign-in
+link on the dashboard's settings page and in the editor's feed panel is one),
+are gestures this tree does not route: on the dashboard the browser's own open
+or download, and what the editor's own webview host does with them is outside
+this tree. Installing by hand (`bootstrap.sh`, `install.sh`) fetches from
+GitHub, PyPI (and bootstrap.pypa.io for get-pip.py when the python lacks
+ensurepip; `ROMP_NO_GET_PIP=1` skips that fetch) and the npm registry, and
 `bin/romp-codex-setup`, run by hand for Codex sessions, fetches the Codex SDK
 from PyPI and the pinned Codex CLI from GitHub.
 

