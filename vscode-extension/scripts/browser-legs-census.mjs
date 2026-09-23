@@ -14,15 +14,24 @@
 //              the suffix list esbuild.js testBuild() hands the bundler as resolveExtensions, read from that config by execution
 //              and kept nowhere here (bundlerOrder): the file that stands at the spelled path when one does, then that path with
 //              each suffix in turn, then a script spelling's rewrite, a .js or .jsx as the .ts, then the .tsx beside it, a .cjs as
-//              the .cts and a .mjs as the .mts, never as the .ts, then a directory's index with each suffix; so a real-viewer-leg.cjs
-//              or .js beside the launcher, which the bundler loads for that spelling, is read by its own content and not as the
-//              launcher (p348, p349, p376), and so is the .cts or the .mts a .cjs or .mjs spelling reaches when no such file stands
-//              (p370, p371) and the .tsx a spelling with no suffix reaches before the .ts of the same name (p386, p387); the census
-//              test's parity pin bundles each relative literal specifier a plant loads by a form the bundler resolves (an import or
-//              export that is not type-only, import =, a require or import() of a literal) and holds the file the local road
-//              resolves (resolveLocal) equal to the one the bundler loads, while this road's own reading, resolveSpec's, is held by
-//              the rows p370, p371, p373, p376 and p387; a load node resolves when the test runs (a path call, a createRequire-bound
-//              loader) is read in the same order, which is not node's, since node tries a .js and never a .ts, the bound the
+//              the .cts and a .mjs as the .mts, never as the .ts, then the index of a directory that holds no package.json, with
+//              each suffix; so a real-viewer-leg.cjs or .js beside the launcher, which the bundler loads for that spelling, is read
+//              by its own content and not as the launcher (p348, p349, p376), and so is the .cts or the .mts a .cjs or .mjs
+//              spelling reaches when no such file stands (p370, p371) and the .tsx a spelling with no suffix reaches before the .ts
+//              of the same name (p386, p387); three steps of the bundler's resolution the census does not take are refused at the
+//              importer by name instead: a directory that holds a package.json, whose main field, and module field for an import,
+//              the bundler reads before the directory's index (p393 to p395; node reads the main field too, for a load it resolves
+//              when the test runs, p399), a spelling that names no file and carries a ?query or #hash suffix, which the bundler
+//              drops (p396, p397), and a file reached through a symbolic link, which the bundler reads at its real path and
+//              resolves that module's loads from (p398); under node_modules the bundler tries a .js and a .jsx first, and the
+//              census reads no file there; the census test's parity pin bundles each relative literal specifier a plant loads by a
+//              form the bundler resolves (an import or export that is not type-only, import =, a require or import() of a literal)
+//              and holds the file the local road resolves (resolveLocal) equal to the one the bundler loads, or each refusal true
+//              against the bundler's reading, while this road's own reading, resolveSpec's, is held by the rows p370, p371, p373,
+//              p376 and p387; a load node resolves when the test runs (a path call, a createRequire-bound loader) is read in the
+//              same order and against the module's directory and the two bases below, which is not node's reading: node tries a .js
+//              and never a .ts, and resolves against the loader's own anchor when the test runs (beside the bundle under out-tests/
+//              for a loader bound to __filename or __dirname, the working directory for one bound to process.cwd()), the bound the
 //              parity pin names with its held witness, p392; a specifier FOLDED
 //              from pieces resolves by the same rule, a concatenation of literals through resolveSpec and a chain that crossed a
 //              path call or carries a placeholder piece through resolveLocal, beside the module and under the repo root and
@@ -214,7 +223,9 @@
 //              the walker does not follow which branch the value takes, so the engines and launches read through it, or where
 //              inBrowser is called from, are unread); a local declaration
 //              shadowing a launcher or playwright binding; a parse diagnostic; a loaded module of the tree as the `loaded`
-//              clause states, or a relative specifier that names no file, or two; THE INVARIANT's refusal, below; THE SAFETY
+//              clause states, or a relative specifier that names no file, or two, or reaches a step of the bundler's resolution the
+//              census does not take (a directory's package.json, a dropped ?query or #hash, a symbolic link: the launcher clause);
+//              THE INVARIANT's refusal, below; THE SAFETY
 //              NET's, below it; and a module whose classification THREW (the compiler's or the walker's recursion overflowing on a
 //              deeply nested module, a path under a leg directory that is no readable file, a form that trips the walker), refused
 //              by name with the exception's name and message as the thrown record (rel and refusals alone, the parse-diagnostic
@@ -423,8 +434,10 @@ export function classify(ts, file, src, opts = {}) {
     // every spelling names the file the bundler loads for it, in the bundler's order (candidatesOf, the one list the local road
     // reads too): the first candidate that stands as a file, the spelled path, then that path with each suffix of the test build's
     // resolveExtensions in turn, then a .js or .jsx spelling's .ts and .tsx, a .cjs spelling's .cts or a .mjs spelling's .mts
-    // (rewritesOf), then a directory's index with each suffix; when none stands, the first rewrite's path, a .ts, .cts or .mts
-    // spelling as spelled, and any other spelling with .ts added, a path that names no file, which the local road refuses
+    // (rewritesOf), then the index with each suffix of a directory that holds no package.json; when none stands, the first
+    // rewrite's path, a .ts, .cts or .mts spelling as spelled, and any other spelling with .ts added, a path that names no file,
+    // which the local road refuses with its true reason (resolveLocal: no file, or a directory's package.json, or a dropped
+    // ?query or #hash; it also refuses a file reached through a symbolic link)
     const rw = rewritesOf(abs);
     abs = candidatesOf(abs).find(fileAt) || (rw ? rw[0] : /\.[cm]?ts$/.test(abs) ? abs : abs + ".ts");
     return { kind: abs === launcherAbs ? "launcher" : "local", spec, abs };
@@ -1701,16 +1714,39 @@ export function bundlerOrder() {
   if (!Array.isArray(list) || list.length === 0 || !list.every((x) => typeof x === "string" && /^\.[^/\\]+$/.test(x))) throw new Error("browser-legs-census: " + build + " testBuild() carries no resolveExtensions list of suffixes (got " + JSON.stringify(list) + "): the census resolves a load in the order the test build does and keeps no default of its own, so spell the list in testBuild()");
   return (bundlerSuffixes = Object.freeze([...list]));
 }
+/** Whether a path is a directory that holds a package.json: the bundler reads such a directory's main field (and, for an import,
+ *  its module field) before its index, and node its main field for a load it resolves when the test runs, a step the census does
+ *  not take, so candidatesOf offers no index for it and resolveLocal refuses the load naming the package.json (the author's
+ *  closing pass after the order's build; before it the census read the index while the bundler loaded the file the field
+ *  names, p393 to p395, and so did node for a loader anchored at the working directory, p399). */
+const holdsPackage = (p) => { try { return fs.statSync(p).isDirectory() && fileAt(path.join(p, "package.json")) !== null; } catch { return false; } };
 /** The files a path names, in the bundler's order, for every spelling alike: the path as spelled, then that path with each suffix
  *  of the test build's resolveExtensions in turn (bundlerOrder), then a .js, .jsx, .cjs or .mjs spelling's rewrites (rewritesOf),
- *  then the directory's index with each suffix in the same order, the order the installed bundler's resolver tries them in. So a
- *  spelling with no suffix reaches a .tsx before the .ts of the same name (p386, and the launcher's name, p387), a .jsx (p388,
- *  p389) and a directory's index.tsx before its index.ts (p390), and a .js spelling reaches that path with a suffix added before
- *  its rewrite (p391). Before the order was read from the build, a spelling with no script suffix took a list kept here (the .ts, a
- *  .d.ts, a .js, a .mjs, a .cjs, the index's .ts and .js, the path itself last) and a script spelling its path and rewrites alone;
- *  before the review's round 7 the .ts came first for every script spelling, so a real-viewer-leg.cjs beside the launcher, loaded
- *  by that spelling, was read as the launcher while the bundler loads the .cjs. */
-const candidatesOf = (raw) => { const order = bundlerOrder(); return [raw, ...order.map((ext) => raw + ext), ...(rewritesOf(raw) || []), ...order.map((ext) => path.join(raw, "index" + ext))]; };
+ *  then, for a directory that holds no package.json, its index with each suffix in the same order, the order the installed
+ *  bundler's resolver tries them in outside node_modules (under node_modules it tries a .js and a .jsx first, and the census reads
+ *  no file there). A directory that holds a package.json offers no index: the bundler reads that file's main or module field
+ *  first, and resolveLocal refuses the load (holdsPackage). So a spelling with no suffix reaches a .tsx before the .ts of the same
+ *  name (p386, and the launcher's name, p387), a .jsx (p388, p389) and a directory's index.tsx before its index.ts (p390), and a
+ *  .js spelling reaches that path with a suffix added before its rewrite (p391). Before the order was read from the build, a
+ *  spelling with no script suffix took a list kept here (the .ts, a .d.ts, a .js, a .mjs, a .cjs, the index's .ts and .js, the
+ *  path itself last) and a script spelling its path and rewrites alone; before the review's round 7 the .ts came first for every
+ *  script spelling, so a real-viewer-leg.cjs beside the launcher, loaded by that spelling, was read as the launcher while the
+ *  bundler loads the .cjs. */
+const candidatesOf = (raw) => { const order = bundlerOrder(); return [raw, ...order.map((ext) => raw + ext), ...(rewritesOf(raw) || []), ...(holdsPackage(raw) ? [] : order.map((ext) => path.join(raw, "index" + ext)))]; };
+/** Whether a file of the tree is reached through a symbolic link below the directory the census reads from: the bundler, and node,
+ *  read a file at its real path and resolve that module's own relative loads from there, where the census keys and walks the
+ *  path as spelled, so a load past a link names other files to the two. The segments of the path relative to the root are
+ *  checked one by one, after any leading .. (a checkout that lives under a linked directory moves whole, and the relative
+ *  structure below it is the same to both); a file under node_modules is a package, which the census reads nothing of, and is
+ *  not checked (the author's closing pass after the order's build; before it such a load was read at the link's path, p398). */
+const throughLink = (abs, root) => {
+  if (isPackagePath(abs)) return false;
+  const segs = path.relative(root, abs).split(path.sep);
+  let at = root, i = 0;
+  for (; i < segs.length && segs[i] === ".."; i++) at = path.dirname(at);
+  for (; i < segs.length; i++) { at = path.join(at, segs[i]); try { if (fs.lstatSync(at).isSymbolicLink()) return true; } catch { return false; } }
+  return false;
+};
 /** The file a local specifier names. A relative specifier resolves against the loading module's directory; a specifier that
  *  names no file there (a loader bound elsewhere by createRequire, a path expression folded to its literal pieces with the
  *  non-literal pieces dropped) resolves against the two bases loaders in this tree are anchored to, the repo root and
@@ -1719,15 +1755,29 @@ const candidatesOf = (raw) => { const order = bundlerOrder(); return [raw, ...or
  *  the checkout is never read as a module of the tree and never an ambiguity, and the population is derived from the tree alone.
  *  The first resolution, beside the module, is the module's own relative path and may name a file outside the checkout (a test
  *  that loads one does so by its spelling): stated, not clamped. Returns { abs } (a file that is not a script, json or css, is
- *  returned and read by nobody), { ambiguous: [a, b] } when the two bases name different files, or null when none does. */
+ *  returned and read by nobody), { ambiguous: [a, b] } when the two bases name different files, or null when none does; and three
+ *  refusals of a load the bundler resolves by a step the census does not take (the author's closing pass after the order's build):
+ *  { pkg } when the specifier names a directory that holds a package.json and no file answers it, beside the module first and then
+ *  under a base (holdsPackage; pkg is that package.json), { linked } when the file it names is reached through a symbolic link
+ *  (throughLink; linked is the path as spelled), and { suffixed } when it names no file and carries a ?query or #hash suffix, which
+ *  the bundler drops before it resolves the rest (suffixed is the suffix from its first ? or #). Each is refused at the importer
+ *  with that reason, where before the census read the directory's index, read the link's path, or refused the suffixed spelling as
+ *  naming no file, the wrong reason. */
 export function resolveLocal(fromFile, spec, root) {
   const clean = spec.replace(/<[^>]*>/g, "").replace(/\/{2,}/g, "/").replace(/^\/+/, "");
-  const first = candidatesOf(path.resolve(path.dirname(fromFile), spec)).map(fileAt).find(Boolean);
-  if (first) return { abs: first };
+  const at = (abs) => (throughLink(abs, root) ? { linked: abs } : { abs });
+  const beside = path.resolve(path.dirname(fromFile), spec);
+  const first = candidatesOf(beside).map(fileAt).find(Boolean);
+  if (first) return at(first);
+  if (holdsPackage(beside)) return { pkg: path.join(beside, "package.json") };
   const underRoot = (p) => { const rel = path.relative(root, p); return rel !== "" && rel !== ".." && !rel.startsWith(".." + path.sep) && !path.isAbsolute(rel); };
-  const hits = [...new Set([root, path.join(root, "vscode-extension")].map((b) => candidatesOf(path.resolve(b, clean)).filter(underRoot).map(fileAt).find(Boolean)).filter(Boolean))];
-  if (hits.length === 1) return { abs: hits[0] };
+  const bases = [root, path.join(root, "vscode-extension")].map((b) => path.resolve(b, clean));
+  const hits = [...new Set(bases.map((p) => candidatesOf(p).filter(underRoot).map(fileAt).find(Boolean)).filter(Boolean))];
+  if (hits.length === 1) return at(hits[0]);
   if (hits.length > 1) return { ambiguous: hits };
+  const pkgBase = bases.find((p) => underRoot(p) && holdsPackage(p));
+  if (pkgBase) return { pkg: path.join(pkgBase, "package.json") };
+  if (/[?#]/.test(spec)) return { suffixed: spec.slice(spec.search(/[?#]/)) };
   return null;
 }
 const isPackagePath = (abs) => abs.split(path.sep).includes("node_modules");
@@ -1761,10 +1811,16 @@ export function localRefusals(ts, r, file, root, opts, ownCache) {
   };
   const out = [], carried = [];
   const at = (li, why) => { const msg = r.rel + ":" + li.line + ": " + why + ": the walker reads a module of the tree for the launcher and playwright bindings it holds and follows nothing through it; import ui/webview/real-viewer-leg.ts directly in this module, or teach scripts/browser-legs-census.mjs the module: " + li.text; if (!out.includes(msg)) out.push(msg); };
-  const unresolved = (li, to, where) => (to === null ? "loads " + li.spec + ", which names no file in the tree (tried beside " + where + ", under the repo root and under vscode-extension/)" : "loads " + li.spec + ", which names two files (" + to.ambiguous.map((a) => path.relative(root, a)).join(" and ") + "), so the walker cannot tell which one it reads");
+  // the reason a load resolves to no one file the walker reads, resolveLocal's verdict in words: no file, two files, or one of the
+  // three steps the bundler takes and the census does not (a directory's package.json, a symbolic link, a dropped ?query or #hash)
+  const unresolved = (li, to, where) => (to === null ? "loads " + li.spec + ", which names no file in the tree (tried beside " + where + ", under the repo root and under vscode-extension/)"
+    : to.ambiguous ? "loads " + li.spec + ", which names two files (" + to.ambiguous.map((a) => path.relative(root, a)).join(" and ") + "), so the walker cannot tell which one it reads"
+    : to.pkg ? "loads " + li.spec + ", which names the directory " + path.relative(root, path.dirname(to.pkg)) + ", and it holds a package.json, whose main field (and module field, for an import the bundler resolves) is read before the directory's index, a step the census does not take, so the file it loads is unread"
+    : to.linked ? "loads " + li.spec + ", which reaches " + path.relative(root, to.linked) + " through a symbolic link: the bundler reads the file at its real path and resolves that module's own loads from there, where the census reads the path as spelled, so the modules it loads are unread"
+    : "loads " + li.spec + ", which names no file as spelled: the bundler drops its " + to.suffixed + " suffix and resolves the rest (node does not), a step the census does not take, so the file it loads is unread");
   for (const li of r.localImports) {
     const start = resolveLocal(file, li.spec, root);
-    if (start === null || start.ambiguous) { at(li, unresolved(li, start, r.rel)); continue; }
+    if (start === null || !start.abs) { at(li, unresolved(li, start, r.rel)); continue; }
     if (!MODULE_EXT.test(start.abs) || isPackagePath(start.abs)) continue;   // json, css: not a script; a package under node_modules binds nothing of the tree
     const seen = new Set([start.abs]), queue = [{ abs: start.abs, chain: [] }];
     let refused = false;
@@ -1793,7 +1849,7 @@ export function localRefusals(ts, r, file, root, opts, ownCache) {
       if (rec.launcherReexport) { at(li, link + ", which re-exports the shared launcher's inBrowser, so a call this module makes through that export, and the engine it passes, is unread"); refused = true; break; }
       passed.push({ li, rec, rel });
       for (const n of next) {
-        if (n.to === null || n.to.ambiguous) { at(li, link + ", which " + unresolved(n.li, n.to, rel) + " (" + rel + ":" + n.li.line + ")"); refused = true; break; }
+        if (n.to === null || !n.to.abs) { at(li, link + ", which " + unresolved(n.li, n.to, rel) + " (" + rel + ":" + n.li.line + ")"); refused = true; break; }
         if (!MODULE_EXT.test(n.to.abs) || isPackagePath(n.to.abs) || seen.has(n.to.abs)) continue;
         seen.add(n.to.abs); queue.push({ abs: n.to.abs, chain: via });
       }

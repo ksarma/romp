@@ -114,8 +114,10 @@ const webview = {
   logLevel: "info",
 };
 
-// The suffixes the test build tries, in order, for a relative specifier: the spelled path first, then that path with each suffix
-// below, then a .js, .jsx, .cjs or .mjs spelling's TypeScript rewrite, then a directory's index with each suffix. The list is
+// The suffixes the test build tries, in order, for a relative specifier outside node_modules (under it esbuild tries .js and .jsx
+// first): the spelled path first, then that path with each suffix below, then a .js, .jsx, .cjs or .mjs spelling's TypeScript
+// rewrite, then a directory's index with each suffix, after the main field (and, for an import, the module field) of a package.json
+// the directory holds, a step the census refuses by name rather than take. The list is
 // esbuild's own default (its --help: default ".tsx,.ts,.jsx,.js,.css,.json"; spelling it changes no byte of the test build),
 // spelled here so it has one home the browser-legs census can read: scripts/browser-legs-census.mjs takes it from testBuild() by
 // execution and resolves the modules a test loads in this order, so a reorder here moves the census with the bundle

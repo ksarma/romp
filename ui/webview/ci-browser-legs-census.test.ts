@@ -114,8 +114,15 @@
 // launcher, class shared, gap null, no refusal, where the bundler loads the .tsx, which launches Firefox; a spelling with no
 // suffix the bundler resolves to a .jsx, beside a .js the census read (class none, no refusal) or alone (refused as naming no
 // file); a directory's index.tsx beside its index.ts, the index.ts read; a .js spelling whose path with .ts added stands beside
-// its rewrite, the rewrite read; and a load node resolves when the test runs, read in the bundler's order while node tries a .js
-// and never a .ts, the bound the parity pin names, held), every one is red under
+// its rewrite, the rewrite read; and a load node resolves when the test runs, read in the bundler's order and against the module's
+// directory and the census's two fallback bases, where node tries a .js and never a .ts and resolves against the loader's own
+// anchor, the bound the parity pin names, held, with its loader bound to the working directory npm test runs in; and, from the
+// author's closing pass after that build, three steps of the bundler's resolution the census does not take, each refused by name
+// since: a directory holding a package.json whose main field (naming a leg beside a clean index, or a .js the bundler rewrites to
+// the index.ts beside an index.tsx) or, for an import, module field the bundler reads before the index the census read, and whose
+// main field node reads for a loader anchored at the working directory; a ?query or #hash suffix the bundler drops, refused before
+// as naming no file; and a directory reached through a symbolic link, whose index the bundler reads at its real path and resolves
+// its relative loads from, where the census read the link's path), every one is red under
 // the census before round 6 (the module at the round-5 head) unless the table names it held with its reason, and the same test holds
 // the table to that statement. A module
 // whose classification throws for any other reason is refused by name and the census goes on, executed over a synthetic root by a
@@ -149,7 +156,7 @@ type Census = {
   rosterGap(r: Rec): string | null;
   engineNames(r: Rec): string[];
   classOf(r: Rec): string;
-  resolveLocal(fromFile: string, spec: string, root: string): { abs: string } | { ambiguous: string[] } | null;
+  resolveLocal(fromFile: string, spec: string, root: string): { abs: string } | { ambiguous: string[] } | { pkg: string } | { suffixed: string } | { linked: string } | null;
   bundlerOrder(): readonly string[];   // the suffix order candidatesOf reads, esbuild.js testBuild()'s resolveExtensions read by execution (the order's build after round 7)
   EMBEDDED_PHRASE: string;
   ENGINE_PHRASE: string;
@@ -1151,7 +1158,27 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p389-r7o-e4-no-suffix-reaches-a-jsx-alone.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p389-r7o-e4-no-suffix-reaches-a-jsx-alone.test.ts:2: loads ui/webview/bundler-order-jsx-alone.jsx, which names a playwright package (playwright)" }, // e4: require("./bundler-order-jsx-alone") beside the .jsx alone (before: refused as naming no file)
   { dir: W, file: "p390-r7o-e5-directory-index-tsx-before-ts.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p390-r7o-e5-directory-index-tsx-before-ts.test.ts:2: loads ui/webview/bundler-order-dir/index.tsx, which names a playwright package (playwright)" }, // e5: require("./bundler-order-dir"), a directory holding index.ts and index.tsx (before: class none, no refusal, the index.ts read)
   { dir: W, file: "p391-r7o-e6-js-spelling-suffixed-before-its-rewrite.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p391-r7o-e6-js-spelling-suffixed-before-its-rewrite.test.ts:2: loads ui/webview/bundler-order-dotjs.js.ts, which names a playwright package (playwright)" }, // e6: require("./bundler-order-dotjs.js") beside bundler-order-dotjs.js.ts and bundler-order-dotjs.ts (before: class none, no refusal, the rewrite read)
-  { dir: W, file: "p392-r7o-e7-node-resolved-load-held.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, holds: "a stated residual boundary: a load node resolves when the test runs, a createRequire-bound loader or a path call, is read in the bundler's order like every load while node tries a .js and never a .ts, so load(\"./bundler-order-node\") through createRequire(__filename), beside a .ts and a .js that launches Firefox, is read as the .ts, class none with no refusal under the census before round 6, at the round-7 closing head and since, while node, resolving the same spelling beside the module, loads the .js: the witness of the bound the parity test's comment names, which that test holds by resolving the specifier through node beside the census's file" }, // e7: the node-resolved load, held
+  { dir: W, file: "p392-r7o-e7-node-resolved-load-held.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, holds: "a stated residual boundary: a load node resolves when the test runs, a createRequire-bound loader or a path call, is read in the bundler's order and against the module's directory and the census's two fallback bases, while node tries a .js and never a .ts and resolves against the loader's own anchor when the test runs, so load(\"../ui/webview/bundler-order-node\") through createRequire(path.join(process.cwd(), \"package.json\")), beside a .ts and a .js that launches Firefox, is read as the .ts under the vscode-extension/ base, class none with no refusal under the census before round 6, at the round-7 closing head and since, while node, anchored at vscode-extension/, the working directory npm test runs in, loads the .js: the witness of the bound the parity test's comment names, which that test holds by resolving the specifier through node from that anchor beside the census's file" }, // e7: the node-resolved load, held (the author's closing pass after the order's build: anchored at the working directory, where before it was bound to __filename, which node resolves beside the bundle under out-tests/, where no file stands)
+  // The author's closing pass after the order's build: three steps of the bundler's resolution the census does not take, each
+  // refused by name since at the importer (resolveLocal's pkg, suffixed and linked verdicts). p393 to p395: a directory holding a
+  // package.json, whose main field (p393 names a leg.ts beside a clean index.ts, p394 names ./index.js, which the bundler rewrites
+  // to the index.ts that launches Firefox, beside an index.tsx) or, for an import statement, module field (p395) the bundler reads
+  // before the directory's index, the index read before (class none, no refusal; p394 refused through its index.ts before the
+  // order's build and class none at it, the index.tsx read). p396 and p397: a ?query and a #hash suffix, which the bundler drops to
+  // load the file that launches Firefox, refused before as naming no file, the wrong reason. p398: a directory reached through a
+  // symbolic link, whose index the bundler reads at its real path, resolving its ../bundler-link-helper beside that path to a file
+  // that launches Firefox, where the census read the link's path and the clean helper beside it (class none, no refusal). p399:
+  // p393's directory loaded through a loader anchored at the working directory, reached under the census's vscode-extension/ base,
+  // whose main node reads when the test runs, the index read before (class none, no refusal). Each red under the census at the
+  // order's build, at the round-7 closing head and before round 6, and green since; the parity test holds each refusal true against
+  // the bundler's own resolution.
+  { dir: W, file: "p393-r7c-k1-package-main-before-the-index.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p393-r7c-k1-package-main-before-the-index.test.ts:2: loads ./bundler-pkg-main, which names the directory ui/webview/bundler-pkg-main, and it holds a package.json, whose main field (and module field, for an import the bundler resolves) is read before the directory's index, a step the census does not take, so the file it loads is unread" }, // k1: require("./bundler-pkg-main"), its package.json's main a leg.ts beside a clean index.ts (before: class none, no refusal, the index read)
+  { dir: W, file: "p394-r7c-k2-package-main-js-rewrite-before-the-index.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p394-r7c-k2-package-main-js-rewrite-before-the-index.test.ts:2: loads ./bundler-pkg-main-js, which names the directory ui/webview/bundler-pkg-main-js, and it holds a package.json, whose main field (and module field, for an import the bundler resolves) is read before the directory's index, a step the census does not take, so the file it loads is unread" }, // k2: require("./bundler-pkg-main-js"), main ./index.js to the index.ts beside an index.tsx (at the order's build: class none, no refusal, the index.tsx read)
+  { dir: W, file: "p395-r7c-k3-package-module-field-for-an-import.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p395-r7c-k3-package-module-field-for-an-import.test.ts:2: loads ./bundler-pkg-module, which names the directory ui/webview/bundler-pkg-module, and it holds a package.json, whose main field (and module field, for an import the bundler resolves) is read before the directory's index, a step the census does not take, so the file it loads is unread" }, // k3: import * as h from "./bundler-pkg-module", its package.json's module field a leg.ts (before: class none, no refusal, the index read)
+  { dir: W, file: "p396-r7c-k4-query-suffix-dropped.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p396-r7c-k4-query-suffix-dropped.test.ts:2: loads ./bundler-suffix-query?raw, which names no file as spelled: the bundler drops its ?raw suffix and resolves the rest (node does not), a step the census does not take, so the file it loads is unread" }, // k4: require("./bundler-suffix-query?raw") (before: refused as naming no file in the tree)
+  { dir: W, file: "p397-r7c-k5-hash-suffix-dropped.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p397-r7c-k5-hash-suffix-dropped.test.ts:2: loads ./bundler-suffix-hash#frag, which names no file as spelled: the bundler drops its #frag suffix and resolves the rest (node does not), a step the census does not take, so the file it loads is unread" }, // k5: require("./bundler-suffix-hash#frag") (before: refused as naming no file in the tree)
+  { dir: W, file: "p398-r7c-k6-symbolic-link-real-path.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p398-r7c-k6-symbolic-link-real-path.test.ts:2: loads ./bundler-link-dir, which reaches ui/webview/bundler-link-dir/index.ts through a symbolic link: the bundler reads the file at its real path and resolves that module's own loads from there, where the census reads the path as spelled, so the modules it loads are unread" }, // k6: require("./bundler-link-dir"), a link to ../bundler-link-target/pkg (before: class none, no refusal, the helper beside the link's path read)
+  { dir: W, file: "p399-r7c-k7-node-resolved-load-of-a-package-directory.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p399-r7c-k7-node-resolved-load-of-a-package-directory.test.ts:5: loads ../ui/webview/bundler-pkg-main, which names the directory ui/webview/bundler-pkg-main, and it holds a package.json, whose main field (and module field, for an import the bundler resolves) is read before the directory's index, a step the census does not take, so the file it loads is unread" }, // k7: load("../ui/webview/bundler-pkg-main") through createRequire(path.join(process.cwd(), "package.json")), the directory reached under the vscode-extension/ base, whose main node reads when the test runs (before: class none, no refusal, the index read)
 ];
 const bundleOf = (p: Plant): string => "out-tests/" + p.dir + "/" + p.file.replace(/\.test\.ts$/, ".test.js");
 
@@ -1545,7 +1572,7 @@ test("resolveLocal's two fallback bases (the repo root and vscode-extension/) re
   assert.deepEqual(resolveLocal(plant, "../../../ui/outside-helper", root), { abs: sibling }, "the beside resolution (the module's own relative path) may name a file outside the checkout and is stated, not clamped: ../../../ui/outside-helper from root/ui/webview names the sibling");
 });
 
-test("the census resolves each planted specifier to the file the bundler loads (correctness-1, the review's round 7, the maintainer's condition on the bundler's mapping): for every relative string specifier a plant loads by a form the bundler resolves when it bundles (an import or export declaration that is not type-only, an import = require, a require or import() call on a literal), a metafile build of a one-line entry beside the plant, with esbuild.js testBuild's platform, format, resolveExtensions and nodePaths and every file it resolves loaded empty, names the file the bundler loads, and resolveLocal, the census's local road over the one list resolveSpec reads too, names the same file, or both name none; the census's suffix order is testBuild's resolveExtensions, read from it by execution; the rows the mapping's arms and the order name are in the population, so it cannot pass empty; the bound it cannot cover, a load node resolves when the test runs, has its held witness, p392, outside the population, whose file node resolves otherwise than the census; before the mapping a .cjs or .mjs spelling that named no file was read as the .ts beside it, which this reds naming p370 and p371, and before the order was read from the build a spelling with no suffix was read by a list kept by hand and a .js spelling skipped its suffixed path, which this reds naming p386 to p391", async (t) => {
+test("the census resolves each planted specifier to the file the bundler loads (correctness-1, the review's round 7, the maintainer's condition on the bundler's mapping): for every relative string specifier a plant loads by a form the bundler resolves when it bundles (an import or export declaration that is not type-only, an import = require, a require or import() call on a literal), a metafile build of a one-line entry beside the plant, with esbuild.js testBuild's platform, format, resolveExtensions and nodePaths and every file it resolves loaded empty, names the file the bundler loads, and resolveLocal, the census's local road over the one list resolveSpec reads too, names the same file, or both name none, or the census refuses the load naming a step of the bundler's it does not take (a directory's package.json, a dropped ?query or #hash, a symbolic link), each refusal held true against the bundler's own resolution; the census's suffix order is testBuild's resolveExtensions, read from it by execution; the rows the mapping's arms, the order and the three refusals name are in the population, so it cannot pass empty; the bound it cannot cover, a load node resolves when the test runs, has its held witness, p392, outside the population, whose file node, anchored where npm test runs, resolves otherwise than the census; before the mapping a .cjs or .mjs spelling that named no file was read as the .ts beside it, which this reds naming p370 and p371, and before the order was read from the build a spelling with no suffix was read by a list kept by hand and a .js spelling skipped its suffixed path, which this reds naming p386 to p391, and before the author's closing pass after it the census read a directory's index past its package.json, a link's path and no file for a suffixed spelling, which this reds naming p393, p394 and p396 to p398 (p395's import form is the plants test's)", async (t) => {
   // Holds the PROPERTY that the census and the bundler resolve alike, derived from the bundler's own resolution and never from a
   // table kept here: a rewrite or an order the census reads otherwise (the round's first build read a .cjs or .mjs as the .ts beside
   // it, where the bundler reads the .cts or the .mts and never the .ts; the round-7 closing head read a spelling with no suffix by a
@@ -1555,11 +1582,20 @@ test("the census resolves each planted specifier to the file the bundler loads (
   // their suffix order from esbuild.js testBuild(), the bundler through the resolveExtensions passed below and the census through
   // bundlerOrder, which reads the same config by execution (held equal first), so a reorder there moves both and this stays green,
   // while the plant rows whose file the reorder moves red (the .ts before the .tsx and the .js before the .jsx reds p386, p387, p388
-  // and p390 in the plants test). THE BOUND this cannot cover: a specifier a plant builds or loads at
-  // run time (a path call, a createRequire-bound loader) is resolved by node when the test runs, not by the bundler, and is outside
-  // this population; the census reads it in the bundler's order, which is not node's (node tries a .js and never a .ts), and its
-  // held witness, p392, is executed at the end: its load is outside the population, and node resolves it to another file than the
-  // census does.
+  // and p390 in the plants test). Three steps of the bundler's the census does not take are refused by name instead (resolveLocal's
+  // pkg, suffixed and linked verdicts), and each refusal is held TRUE here against the bundler's own reading, never passed as a
+  // mismatch: a directory holding a package.json, whose main or module field the bundler reads before the index, is one the bundler
+  // resolves to a file (the refusal covers the load's every kind, so the require form below stands for an import, whose module field
+  // the bundler also reads, p395); a spelling that names no file with a ?query or #hash is one the bundler resolves with the suffix
+  // kept on the file the rest names; and a file reached through a symbolic link is one the bundler loads at its real path, another
+  // path than the census's. THE BOUND this cannot cover: a specifier a plant builds or loads at run time (a path call, a
+  // createRequire-bound loader) is resolved by node when the test runs, not by the bundler, and is outside this population; the census
+  // reads it in the bundler's order, which is not node's (node tries a .js and never a .ts), and against the module's directory and
+  // its two fallback bases, the repo root and vscode-extension/, where node resolves it against the loader's own anchor when the test
+  // runs (beside the bundle under out-tests/ for a loader bound to __filename or __dirname, the working directory, vscode-extension/
+  // under npm test, for one bound to process.cwd()). Its held witness, p392, a loader bound to the working directory's package.json,
+  // is executed at the end: its load is outside the population, and node, anchored at vscode-extension/, resolves it to another file
+  // than the census does.
   const census = await load();
   const ts = census.loadTypescript();
   const req = createRequire(path.join(EXT, "package.json"));
@@ -1586,13 +1622,15 @@ test("the census resolves each planted specifier to the file the bundler loads (
     visit(sf);
     return out;
   };
-  const checked = new Set<string>(), mismatches: string[] = [];
+  const checked = new Set<string>(), mismatches: string[] = [], refused = new Map<string, string>();
   let specifiers = 0;
   for (const p of PLANT_TABLE) {
     const id = (/^p\d+/.exec(p.file) || [""])[0], root = path.join(PLANTS, p.root || ""), dir = path.join(root, p.dir), file = path.join(dir, p.file);
     for (const { spec, line } of specsOf(file)) {
       const cr = census.resolveLocal(file, spec, root);
-      const censusFile = cr === null ? null : "ambiguous" in cr ? "two files (" + cr.ambiguous.map((a) => path.relative(root, a)).join(" and ") + ")" : path.relative(root, cr.abs);
+      // a refusal of a step the census does not take, held true below against the bundler's reading, never compared as a file
+      const refusal = cr !== null && !("abs" in cr) && !("ambiguous" in cr) ? cr : null;
+      const censusFile = cr === null || refusal ? null : "ambiguous" in cr ? "two files (" + cr.ambiguous.map((a) => path.relative(root, a)).join(" and ") + ")" : "abs" in cr ? path.relative(root, cr.abs) : null;
       let bundlerFile: string | null = null;
       try {
         const res = await esbuild.build({ stdin: { contents: "require(" + JSON.stringify(spec) + ");\n", resolveDir: dir, sourcefile: ENTRY, loader: "js" }, bundle: true, write: false, metafile: true, platform: cfg.platform, format: cfg.format, resolveExtensions: cfg.resolveExtensions, nodePaths: cfg.nodePaths, logLevel: "silent", absWorkingDir: root, outdir: path.join(root, "out-parity"),
@@ -1606,6 +1644,22 @@ test("the census resolves each planted specifier to the file the bundler loads (
       }
       checked.add(id);
       specifiers++;
+      if (refusal) {
+        const where = id + " (" + (p.root ? p.root + "/" : "") + p.dir + "/" + p.file + ":" + line + ") loads " + spec + ": the census refuses it ";
+        if ("pkg" in refusal) {
+          refused.set(id, "pkg");
+          if (!(fs.existsSync(refusal.pkg) && bundlerFile !== null)) mismatches.push(where + "as naming a directory holding a package.json (" + path.relative(root, refusal.pkg) + "), which the bundler resolves to a file: it does not (" + (bundlerFile === null ? "no file" : bundlerFile) + ", the package.json " + (fs.existsSync(refusal.pkg) ? "present" : "absent") + ")");
+        } else if ("suffixed" in refusal) {
+          refused.set(id, "suffixed");
+          const rest = bundlerFile !== null && bundlerFile.endsWith(refusal.suffixed) ? bundlerFile.slice(0, bundlerFile.length - refusal.suffixed.length) : null;
+          if (!(rest !== null && fs.existsSync(path.resolve(root, rest)) && fs.statSync(path.resolve(root, rest)).isFile())) mismatches.push(where + "as a spelling whose " + refusal.suffixed + " suffix the bundler drops before resolving the rest: the bundler loads " + (bundlerFile === null ? "no file" : bundlerFile) + ", not a file of the tree with that suffix kept");
+        } else {
+          refused.set(id, "linked");
+          const real = path.relative(root, fs.realpathSync(refusal.linked)), spelled = path.relative(root, refusal.linked);
+          if (!(bundlerFile === real && real !== spelled)) mismatches.push(where + "as reaching " + spelled + " through a symbolic link, which the bundler loads at its real path (" + real + "): the bundler loads " + (bundlerFile === null ? "no file" : bundlerFile));
+        }
+        continue;
+      }
       if (censusFile !== bundlerFile) mismatches.push(id + " (" + (p.root ? p.root + "/" : "") + p.dir + "/" + p.file + ":" + line + ") loads " + spec + ": the census resolves " + (censusFile === null ? "no file" : censusFile) + ", the bundler loads " + (bundlerFile === null ? "no file (it cannot resolve the specifier)" : bundlerFile));
     }
   }
@@ -1615,20 +1669,28 @@ test("the census resolves each planted specifier to the file the bundler loads (
   // spelled (p374) and the .js spelling beside a declaration file alone (p375), the .js spelling with a .js beside the launcher
   // (p376), the extensionless spelling every launcher plant carries (p01), and the order's: a .tsx beside a .ts with no suffix
   // (p386, the launcher's name among them, p387), a .jsx reached with no suffix beside a .js and alone (p388, p389), a directory's
-  // index.tsx beside its index.ts (p390) and a .js spelling's suffixed path before its rewrite (p391)
-  for (const id of ["p01", "p23", "p236", "p348", "p370", "p371", "p372", "p373", "p374", "p375", "p376", "p386", "p387", "p388", "p389", "p390", "p391"]) assert.ok(checked.has(id), "the parity population holds " + id + ", a row the bundler's mapping or order names, so the comparison reads the specifiers it is about (" + checked.size + " rows checked). Holds the property");
-  t.diagnostic("bundler parity: " + specifiers + " specifiers over " + checked.size + " plant rows, " + mismatches.length + " resolved otherwise by the census");
-  assert.deepEqual(mismatches, [], "each planted specifier the bundler resolves names the file the census resolves, and a specifier the bundler cannot resolve names no file to the census: a census that reads another file than the bundler loads judges a module no test runs. Holds the property: " + mismatches.join(" | "));
+  // index.tsx beside its index.ts (p390) and a .js spelling's suffixed path before its rewrite (p391); and the three refusals, each
+  // with the verdict its row names: a directory's package.json (p393 to p395), a dropped ?query and #hash (p396, p397) and a
+  // symbolic link (p398)
+  for (const id of ["p01", "p23", "p236", "p348", "p370", "p371", "p372", "p373", "p374", "p375", "p376", "p386", "p387", "p388", "p389", "p390", "p391", "p393", "p394", "p395", "p396", "p397", "p398"]) assert.ok(checked.has(id), "the parity population holds " + id + ", a row the bundler's mapping, order or refusals name, so the comparison reads the specifiers it is about (" + checked.size + " rows checked). Holds the property");
+  t.diagnostic("bundler parity: " + specifiers + " specifiers over " + checked.size + " plant rows, " + mismatches.length + " resolved otherwise by the census, " + refused.size + " rows refused by a step the census does not take");
+  assert.deepEqual(mismatches, [], "each planted specifier the bundler resolves names the file the census resolves, and a specifier the bundler cannot resolve names no file to the census, unless the census refuses it by a step of the bundler's it does not take, a refusal the bundler's own reading holds true: a census that reads another file than the bundler loads judges a module no test runs. Holds the property: " + mismatches.join(" | "));
+  for (const [id, kind] of [["p393", "pkg"], ["p394", "pkg"], ["p395", "pkg"], ["p396", "suffixed"], ["p397", "suffixed"], ["p398", "linked"]]) assert.equal(refused.get(id), kind, id + "'s specifier is refused by the census's " + kind + " verdict, the step of the bundler's its row plants, and held true against the bundler above (got " + JSON.stringify(refused.get(id)) + "). Holds the property");
   // the bound's held witness: p392 loads through a createRequire-bound loader, a load the bundler leaves to node, so it is outside
-  // the population above; the census reads the specifier in the bundler's order and node, resolving it beside the module, takes
-  // another file, which is why the row is held (a stated residual boundary) and not red. Holds the property that the witness
-  // witnesses the bound: a witness whose files node and the census resolve alike would state a bound it does not exhibit
+  // the population above; the loader is bound to the working directory's package.json, so node resolves it when the test runs from
+  // vscode-extension/, where npm test runs, and not beside the source module, which no run does (the bundle stands under
+  // out-tests/: bound to __filename, as the witness was before the author's closing pass after the order's build, the load names no
+  // file at run time); the census reads the specifier in the bundler's order under its vscode-extension/ base and node, from that
+  // anchor, takes another file, which is why the row is held (a stated residual boundary) and not red. Holds the property that the
+  // witness witnesses the bound: a witness whose files node and the census resolve alike would state a bound it does not exhibit
   const witness = PLANT_TABLE.find((p) => p.file.startsWith("p392-")) as Plant;
   assert.ok(witness && typeof witness.holds === "string" && witness.holds.startsWith("a stated residual boundary: ") && !checked.has("p392"), "p392, the witness of the bound this test cannot cover, is a held row (a stated residual boundary) outside the parity population (" + JSON.stringify(witness && witness.holds) + ")");
-  const wFile = path.join(PLANTS, witness.dir, witness.file), wSpec = "./bundler-order-node";
-  assert.ok(read(wFile).includes("createRequire(__filename)") && read(wFile).includes("load(" + JSON.stringify(wSpec) + ")"), "p392 loads " + wSpec + " through a createRequire-bound loader, the run-time load the bound names");
-  const wCensus = census.resolveLocal(wFile, wSpec, PLANTS), wNode = createRequire(wFile).resolve(wSpec);
-  assert.ok(wCensus !== null && "abs" in wCensus && wCensus.abs !== wNode, "p392's specifier names one file to the census (" + JSON.stringify(wCensus) + ") and another to node resolving it beside the module (" + wNode + "): the bound is exhibited, not only stated. Holds the property");
+  const wFile = path.join(PLANTS, witness.dir, witness.file), wSpec = "../ui/webview/bundler-order-node";
+  assert.ok(read(wFile).includes("createRequire(path.join(process.cwd(), \"package.json\"))") && read(wFile).includes("load(" + JSON.stringify(wSpec) + ")"), "p392 loads " + wSpec + " through a loader bound to the working directory's package.json, the run-time load the bound names, anchored where the test runs");
+  let wNode = "no file";
+  try { wNode = createRequire(path.join(PLANTS, "vscode-extension", "package.json")).resolve(wSpec); } catch (e) { wNode = "no file (" + String((e as Error).message).split("\n")[0] + ")"; }
+  const wCensus = census.resolveLocal(wFile, wSpec, PLANTS);
+  assert.ok(wCensus !== null && "abs" in wCensus && fs.existsSync(wNode) && wCensus.abs !== wNode, "p392's specifier names one file to the census (" + JSON.stringify(wCensus) + ") and another to node resolving it from vscode-extension/, the loader's anchor when npm test runs (" + wNode + "): the bound is exhibited, not only stated. Holds the property");
 });
 
 test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminate against the census before round 3 and what the others hold: 45 red under that census (44 at round 3, and p74 since round 5's safety net refused a text that census passed), 6 hold one of four stated reasons instead (holds), and 3 of the 45 red on a property other than their section's and name the plant that carries it (carried); which of its 67 round-4 rows (p89 to p155) discriminate against the census before round 4: 62 red under that census and 5 hold a stated reason instead; and which of its round-5 rows (p156 to R5_LAST) discriminate against the census before round 5, the module at the round-4 head: every one red under it unless R5_HELD names it with its reason; and which of its round-6 rows (R6_FIRST to R6_LAST, p249 onward) discriminate against the census before round 6, the module at the round-5 head: every one red under it unless R6_HELD names it with its reason; the discrimination itself was established by running each earlier census over the plants, recorded in the PR's notes, and is not re-run here, since none of those censuses is in the tree at test time, so this test holds the TABLE's statement, not the fact", () => {
@@ -1703,7 +1765,7 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // ranges are held to abut: p246 to p248, the three plants of THE SAFETY NET's arms that had none, are the round-5 range's (refused
   // by the census before round 6, red under the census before round 5), so a moved R5_LAST alone cannot slide them into the round-6
   // population, whose statement (red under the census before round 6) would be false for them and which this test cannot re-run
-  const R6_FIRST = 249, R6_LAST = 392;
+  const R6_FIRST = 249, R6_LAST = 399;
   const R6_HELD = ["p252", "p260", "p261", "p266", "p275", "p276", "p277", "p278", "p279", "p290", "p291", "p297", "p298", "p303", "p304", "p305", "p308", "p309", "p310", "p311", "p326", "p334", "p341", "p342", "p345", "p346", "p353", "p363", "p365", "p366", "p367", "p368", "p383", "p385", "p392"];
   const R6_CARRIED: string[] = [];
   const inRound6 = (p: Plant) => num(p) >= R6_FIRST && num(p) <= R6_LAST;
@@ -1767,7 +1829,13 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // a .js beside a .jsx, a directory's index.ts beside its index.tsx and a .js spelling's rewrite beside its suffixed path read,
   // class none with no refusal, the launcher's name bound as the launcher beside a .tsx, class shared, gap null, no refusal, and a
   // .jsx alone refused as naming no file, before round 6, at the round-6 head and at the round-7 closing head, where the row
-  // expects the .tsx's, the .jsx's, the index.tsx's or the suffixed path's content read), unless
+  // expects the .tsx's, the .jsx's, the index.tsx's or the suffixed path's content read), and, from the author's closing pass
+  // after the order's build, a step of the bundler's the census does not take, p393 to p399 (a directory holding a package.json
+  // whose main or module field names another file than the index read, class none with no refusal, or for p394 refused through its
+  // index.ts before the order's build, and for p399 reached through a loader anchored at the working directory, whose main node
+  // reads; a ?query or #hash suffix refused as naming no file; a directory reached through a symbolic link read at the link's path,
+  // class none with no refusal; before round 6, at the round-6 head, at the round-7 closing head and at the order's build, where
+  // the row expects the step's refusal), unless
   // R6_HELD names it with
   // holds set (the renamed-parameter control, the two name-position controls, the argument-position control, the five read-position
   // controls, the literal control and the path-call control of the literal chain, and, of the swallow read, the .finally and bare
@@ -1780,7 +1848,8 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // and p353, its controls, p363, p366, p367 and p368, the climb's boundary, p365, and the swallow rule's two further witnesses,
   // Promise.allSettled over a bound array and over its spread, p345 and p346; and, from the author's closing pass after it, the
   // template's control, p383, and the swallow rule's respelled-form witness, p385; and, from the order's build after it, the
-  // node-resolved load's witness, p392, the bound the parity test names); a round-6 builder who adds a row moves R6_LAST to
+  // node-resolved load's witness, p392, the bound the parity test names, anchored at the working directory since the author's
+  // closing pass after that build); a round-6 builder who adds a row moves R6_LAST to
   // it and, when the row stays green under that census, adds it to
   // R6_HELD with holds set (the round-5 population above is closed)
   const NOT_RERUN6 = " (the discrimination was established by running the census before round 6, the module at the round-5 head, over the plants, recorded in the PR's notes, and is not re-run here, since that census is not in the tree at test time: this assertion holds the table's statement, not the fact)";
