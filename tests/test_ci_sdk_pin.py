@@ -18,8 +18,9 @@ This module holds five things, and it never skips: a pin that skips reports gree
    steps do. And a POPULATION CHECK over the workflow's pytest invocations (PytestPopulation, ListedInvocations and
    PopulationCheckReds below; round 3's ruling, 2026-09-20, replacing two pins on the Run pytest step's text alone):
    every command that runs pytest in ci.yml passes `-p no:anyio`, and either sets ROMP_SDK_REQUIRE=1 in the environment
-   GitHub Actions merges for it (the workflow's env, the job's, the step's, a VAR=value prefix on the command; later
-   scopes override earlier) or is listed in SWITCH_LISTED by (job, step name) with a reason whose premises the test
+   GitHub Actions merges for it, as the file writes it (an env: key line of the workflow's env, the job's or the
+   step's, in the file's own layout, or a VAR=value prefix on the command; later scopes override earlier; any other
+   line that spells the switch is red, below) or is listed in SWITCH_LISTED by (job, step name) with a reason whose premises the test
    checks over every pytest line of the step; an invocation that does neither is named with its job, step and file
    line, and so is one whose step name another pytest-running step of the job shares (`ambiguous`: the key would name
    two steps, and GitHub Actions does not require unique names). The population is derived from
@@ -51,13 +52,20 @@ This module holds five things, and it never skips: a pin that skips reports gree
    and on any other line, by the census), a pytest run by a script or action a step calls, and every other workflow
    file under .github/workflows/. The flag half
    keys on the spelling `-p no:anyio` with one space, the switch half on the merged value reading exactly 1 (a quoted
-   value read verbatim, so `"1 "` is not 1), and their messages say so. The switch half reads what the run text does
-   to the variable only by its spelling (round 4's ruling, 2026-09-23): a step whose run text spells ROMP_SDK_REQUIRE
-   anywhere other than as a VAR=value prefix on its pytest command (an unset, export, declare, env -u or assignment, on
-   an earlier line or before the command on its own line; a comment too), or whose job's other run texts spell it (a
-   write to $GITHUB_ENV sets it for the steps after), is `unparsed`, red until read, since the parser does not run the
-   shell. Outside that read: a write of the switch by a script or action a step calls, and a write to $GITHUB_ENV that
-   does not spell its name (a dump of the environment, a file copied in). The pin below does not
+   value read verbatim, so `"1 "` is not 1, and a plain value continued on the next line folded as YAML folds it), and
+   their messages say so. The switch half reads what the run text does to the variable only by its spelling (round
+   4's ruling, 2026-09-23): a step whose run text spells ROMP_SDK_REQUIRE anywhere other than as a VAR=value prefix on
+   its pytest command (an unset, export, declare, env -u or assignment, on an earlier line or before the command on
+   its own line; a comment too), or whose job's other run texts spell it (a write to $GITHUB_ENV sets it for the steps
+   after), is `unparsed`, red until read, since the parser does not run the shell. And every line of ci.yml that spells
+   the switch, outside a comment, is an env: key line the merge read (a bare key at its scope's indent, its value on
+   that line) or lies in a run text the parser read, or the switch census in PytestPopulation names it (review round
+   4's verify, 2026-09-23): an env: written as an alias or a flow mapping, a quoted or spaced key, a value continued on
+   the next line, and a step's shell: or a job's defaults that spells the switch are each red at their line. Outside
+   that read: any write of the switch that does not spell its name, wherever it is written. Among them: one in a
+   step's own run text (`env -i`, sudo's reset of the environment, an indirect unset such as `unset "${!ROMP_@}"`, a
+   loop over the environment), one in a step's shell: or a job's defaults (`shell: env -i bash -e {0}`), one by a
+   script or action a step calls, and one to $GITHUB_ENV (a dump of the environment, a file copied in). The pin below does not
    catch a bad transitive release: a red that no commit explains is one, and the comment says so.
 2. The derivation, executed rather than read: the step's own sed run at the repo root prints one well-formed version
    equal to the constant read as a regex over the file (the installer's and the bats test's read) and as the attribute
@@ -825,22 +833,42 @@ def _top_sections(src):
     return out
 
 
-def _env_block(text, env_indent):
+def _env_block(text, env_indent, keys_out=None):
     """The `env:` mapping whose `env:` line sits at `env_indent` spaces: {name: value}, the value's surrounding quotes
     stripped (`"1"` reads as `1`) and a trailing ` # comment` dropped. A quoted value is kept verbatim inside its quotes,
     whitespace included, as YAML keeps it (`"1 "` reads as `1 `, which is not 1; both runtime readers of the switch
     compare with == "1"); only an unquoted plain value is stripped (review round 4, 2026-09-23: the strip reached inside
     quotes, and `"1 "` read as the switch on). Comment and blank lines inside the block are skipped. A value that is a
-    `${{ }}` expression is kept as its text, which is never `1`: the safe side."""
+    `${{ }}` expression is kept as its text, which is never `1`: the safe side. A line indented past the key line
+    before it that is not itself a key line continues that key's value: a plain value's lines are folded with one
+    space, as YAML folds them (`1` then `0` reads `1 0`; until review round 4's verify, 2026-09-23, it read `1`), and
+    the key is marked as not read clean. `keys_out`, when a list is given, receives [offset of the key's line in
+    `text`, name, clean] for every key line read, clean False for a key whose value runs on past its line (the switch
+    census, switch_line_census, counts only a clean key line as read). Not read at all: an `env:` line that carries
+    anything after the colon but a comment (an alias `env: *x`, an anchor, a flow mapping), and a line this regex does
+    not read as a key (a quoted or spaced key)."""
     pad = " " * env_indent
     m = re.search(r"^%senv:[ \t]*(?:#.*)?\n((?:%s .*\n|[ \t]*\n)+)" % (pad, pad), text, re.M)
     out = {}
+    keys = [] if keys_out is None else keys_out
     if m:
-        for line in m.group(1).splitlines():
-            km = re.match(r"""^\s*([A-Za-z_][A-Za-z0-9_]*):[ \t]*(?:"([^"]*)"|'([^']*)'|([^#]*?))[ \t]*(?:#.*)?$""", line)
+        pos, last = m.start(1), None      # last: [name, indent, its entry in keys, whether its value is plain]
+        for line in m.group(1).splitlines(keepends=True):
+            off, pos = pos, pos + len(line)
+            body = line.rstrip("\n")
+            if not body.strip() or body.lstrip().startswith("#"):
+                continue
+            indent = len(body) - len(body.lstrip(" "))
+            km = re.match(r"""^\s*([A-Za-z_][A-Za-z0-9_]*):[ \t]*(?:"([^"]*)"|'([^']*)'|([^#]*?))[ \t]*(?:#.*)?$""", body)
             if km:
                 double, single, plain = km.group(2), km.group(3), km.group(4)
                 out[km.group(1)] = double if double is not None else single if single is not None else plain.strip()
+                keys.append([off, km.group(1), True])
+                last = [km.group(1), indent, keys[-1], plain is not None]
+            elif last is not None and indent > last[1]:
+                if last[3]:
+                    out[last[0]] = (out[last[0]] + " " + _comment_cut(body).strip()).strip()
+                last[2][2] = False
     return out
 
 
@@ -1008,12 +1036,13 @@ def _run_scalar(stext, m, skip):
     return paras, None
 
 
-def pytest_invocations(src, read=None):
+def pytest_invocations(src, read=None, switch_read=None):
     """Every pytest invocation in a workflow's text, as dicts: job, step (the `name:`, else "(unnamed step)"), line (in
     the file) and last_line (the last file line of the command as read: its last backslash continuation, or the last
     line of its folded paragraph; the span line..last_line is what the line census counts as read), env (the
     workflow's env updated by the job's, by the step's, then by VAR=value prefixes on the command
-    itself: the scopes GitHub Actions merges, later overriding earlier), args (the command's own arguments: the rest
+    itself: the scopes GitHub Actions merges, later overriding earlier, each read by _env_block from its env: key
+    lines in the file's own layout; switch_line_census reds a spelling of the switch anywhere else), args (the command's own arguments: the rest
     of ITS command, the line split into commands at its operators and cut at a comment first by _shell_commands, so a
     line running two pytest commands is two invocations at one line and a flag in the next command or in a comment is
     not this one's), run (the step's whole run text), job_run (every run text in the job) and cwd (the step's
@@ -1026,7 +1055,10 @@ def pytest_invocations(src, read=None):
     other run texts spell it (keyed on the spelling, comments included; the env merge reads the declared scopes, and
     an unset, export or assignment in the shell, or a write to $GITHUB_ENV in an earlier step, changes what pytest
     starts with), a dict with `unparsed` set to the reason and args None. `read`, when a list is given, receives {first, last, text} for every command line the
-    parser read in a step's run, row or not (pytest_line_census judges the pip exclusion on that text).
+    parser read in a step's run, row or not (pytest_line_census judges the pip exclusion on that text; the switch
+    census counts those lines as run text read). `switch_read`, when a list is given, receives {line, job, step, scope,
+    clean} for every ROMP_SDK_REQUIRE key line _env_block read in a scope the merge reads (the workflow's env, a job's
+    env, a step's env; job and step None where the scope is wider), clean False where the value runs on past the line.
     A text parse over the file's own indentation (top-level keys at column 0, jobs at 2, job keys at 4, steps at 6,
     step keys at 8, env keys and run block lines at 10), the way this file's other pins and tests/test_ci_bats_bound.py
     read it: no YAML library in the test deps. A step in any other layout (steps at indent 4 or 8, `-   name:`, a flow
@@ -1038,9 +1070,18 @@ def pytest_invocations(src, read=None):
     `make test`)."""
     sections = _top_sections(src)
     assert "jobs" in sections, "ci.yml has no jobs: mapping at column 0: re-anchor this parser"
+
+    def env_of(text, indent, base, scope, job=None, step=None):
+        keys = []
+        out = _env_block(text, indent, keys)
+        if switch_read is not None:
+            switch_read.extend({"line": _line_of(src, base + off), "job": job, "step": step, "scope": scope, "clean": clean}
+                               for off, name, clean in keys if name == SWITCH)
+        return out
+
     wf_env = {}
-    for _off, text in sections.get("env", []):
-        wf_env.update(_env_block(text, 0))
+    for off, text in sections.get("env", []):
+        wf_env.update(env_of(text, 0, off, "workflow"))
     jobs_at, body = sections["jobs"][0]
     found = []
     jobs = list(JOB_RE.finditer(body))
@@ -1050,7 +1091,7 @@ def pytest_invocations(src, read=None):
         jtext = body[jm.end():jend]
         jbase = jobs_at + jm.end()
         job_env = dict(wf_env)
-        job_env.update(_env_block(jtext, 4))
+        job_env.update(env_of(jtext, 4, jbase, "job", job))
         dm = re.search(r"^    defaults:\n      run:\n        working-directory: (.*)$", jtext, re.M)
         job_wd = dm.group(1).strip() if dm else None
         steps = list(STEP_START_RE.finditer(jtext))
@@ -1068,7 +1109,7 @@ def pytest_invocations(src, read=None):
             wm = re.search(r"^        working-directory: (.*)$", stext, re.M)
             cwd = wm.group(1).strip() if wm else job_wd
             env = dict(job_env)
-            env.update(_env_block(stext, 8))
+            env.update(env_of(stext, 8, sbase, "step", job, step))
             lines, unreadable = _step_run(stext)
             if lines is None:
                 continue
@@ -1207,6 +1248,35 @@ def pytest_line_census(src):
             commands = [YAML_KEY_PREFIX_RE.sub("", c, count=1).strip() for c in CENSUS_SPLIT_RE.split(joined)]
         mentions = [c for c in commands if PYTEST_WORD_RE.search(c)]
         if mentions and all(PIP_INSTALL_RE.match(c) for c in mentions):
+            continue
+        counted.append(idx + 1)
+        if idx + 1 not in covered:
+            uncovered.append((idx + 1, line.strip()))
+    return counted, uncovered
+
+
+def switch_line_census(src):
+    """The switch census (review round 4's verify, 2026-09-23; ruling A's shape applied to the switch): (the lines that
+    spell ROMP_SDK_REQUIRE and count, [(line, text) of the counted lines the parser read neither as an env: key nor as
+    run text]), file lines 1-based. A line counts when it spells the switch's name with a trailing comment cut
+    (_comment_cut; a comment line never counts). A counted line is read when it is an env: key line of the switch that
+    _env_block read clean in a scope the merge reads (the workflow's env, a job's, a step's: a bare key at the scope's
+    indent, its value on that line), or when it lies in the run text of a step the parser read, whose every spelling
+    of the switch the switch half reads as `unparsed` (pytest_invocations). Anything else sets or clears the switch
+    where the merge does not look and reds here: an `env:` written as an alias (`env: *x`) or a flow mapping, a quoted
+    or spaced key, a value continued on the next line, a step's `shell:` or a job's `defaults: run: shell:` that
+    spells the name, a line in a layout the parser does not read. Until 2026-09-23 each of these read ok beside a
+    pytest step that ran with the switch at 0, `1 0` or unset. Keyed on the spelling over the whole file, so a name: or
+    an if: that spells the switch reds too: rename it. What this census cannot see is a write that does not spell the
+    name (module docstring, item 1)."""
+    read, switch_read = [], []
+    pytest_invocations(src, read, switch_read)
+    covered = {e["line"] for e in switch_read if e["clean"]}
+    for entry in read:
+        covered.update(range(entry["first"], entry["last"] + 1))
+    counted, uncovered = [], []
+    for idx, line in enumerate(src.splitlines()):
+        if SWITCH not in _comment_cut(line):
             continue
         counted.append(idx + 1)
         if idx + 1 not in covered:
@@ -1446,6 +1516,26 @@ class PytestPopulation(unittest.TestCase):
                          "pytest-spelling command is a pip install are excused. Such a line is in a layout the parser does not read (steps at another indent, a flow "
                          "mapping, a quoted or spaced run key) or outside any run (an artifact path, an action input): "
                          "red until the parser reads it or the line is reworded:\n  "
+                         + "\n  ".join("line %d: %s" % u for u in uncovered))
+
+    def test_every_line_that_spells_the_switch_is_an_env_key_or_a_run_text_the_parser_read(self):
+        # the switch census (review round 4's verify, 2026-09-23): the switch half reads the env: key lines of the file's
+        # own layout and the run texts, and until then an env: written as an alias or a flow mapping, a quoted or spaced
+        # key, a value continued on the next line, or a shell: or defaults key that set or cleared the switch read ok
+        # beside a pytest that ran without it. Every line that spells the switch is one the parser read, or it is named.
+        # The census's population is derived and must hold the matrix step's own switch line, so an empty census is red
+        switch_read = []
+        pytest_invocations(self.src, switch_read=switch_read)
+        matrix = [e["line"] for e in switch_read if (e["job"], e["step"]) == MATRIX_STEP and e["clean"]]
+        counted, uncovered = switch_line_census(self.src)
+        self.assertTrue(matrix and set(matrix) <= set(counted), "the switch census does not count the matrix step's switch "
+                        "line %r among the lines it counts %r: an empty or partial census is red, not green" % (matrix, counted))
+        self.assertEqual(uncovered, [], "lines of ci.yml that spell %s (keyed on the spelling, with a trailing comment cut) "
+                         "that the parser read neither as an env: key line (a bare key at its scope's indent, its value on "
+                         "that line) nor as run text: such a line sets or clears the switch where the env merge does not "
+                         "look (an env: alias or flow mapping, a quoted or spaced key, a continued value, a step's shell: "
+                         "or a job's defaults, a name: or if: that spells it). Red until it is an env: key the parser reads, "
+                         "moves into a run text, or stops spelling the name:\n  " % SWITCH
                          + "\n  ".join("line %d: %s" % u for u in uncovered))
 
     def test_every_line_where_a_job_key_goes_is_a_job_the_parser_reads(self):
@@ -1801,6 +1891,50 @@ class PopulationCheckReds(unittest.TestCase):
         # the control: without the writing step the same job env makes it ok
         control = self._with_shell_job_env(self._with_step_in_shell_job(runner)[0])
         self.assertEqual([verdict(i) for i in self._new(control)], ["ok"])
+
+    def test_a_switch_written_where_the_env_merge_does_not_look_is_named_by_the_switch_census(self):
+        # review round 4's verify (attacks, M2, and prose-records, 2026-09-23): with the shell job's env setting the switch
+        # to "1", which the merge reads, each shape below read ok while pytest ran with the switch at 0 or unset (PyYAML
+        # and a shim, the lens's runs): the merge reads env: key lines in the file's own layout and nothing else. The
+        # switch census names the line that sets or clears it; the row's own verdict is the misread it exists for
+        run = "        run: python -m pytest tests/test_a.py -q -p no:anyio\n"
+        for label, step, text in (
+                ("a flow-mapping env", '      - name: Flow env (pytest)\n        env: {%s: "0"}\n' % SWITCH + run, 'env: {%s: "0"}' % SWITCH),
+                ("a quoted key", '      - name: Quoted key (pytest)\n        env:\n          "%s": "0"\n' % SWITCH + run, '"%s": "0"' % SWITCH),
+                ("a spaced key", '      - name: Spaced key (pytest)\n        env:\n          %s : "0"\n' % SWITCH + run, '%s : "0"' % SWITCH),
+                ("an env: alias, its anchor on another step's env",
+                 '      - name: Setup\n        env: &offenv\n          %s: "0"\n        run: make setup\n'
+                 '      - name: Aliased env (pytest)\n        env: *offenv\n' % SWITCH + run, '%s: "0"' % SWITCH),
+                ("a step's shell: that sets it", "      - name: Shell template (pytest)\n        shell: env %s=0 bash -e {0}\n" % SWITCH + run,
+                 "shell: env %s=0 bash -e {0}" % SWITCH)):
+            with self.subTest(form=label):
+                src = self._with_shell_job_env(self._with_step_in_shell_job(step)[0])
+                at = [n + 1 for n, l in enumerate(src.splitlines()) if l.strip() == text]
+                self.assertEqual(len(at), 1, "%s: the planted line is not unique: re-anchor this case" % label)
+                self.assertEqual([verdict(i) for i in self._new(src)], ["ok"], "%s: the merge alone reads the job's switch" % label)
+                self.assertEqual(switch_line_census(src)[1], [(at[0], text)], label)
+        # a job's defaults: run: shell: that clears it, over the shell job's own header
+        src = self._with_shell_job_env(self._with_step_in_shell_job("      - name: Defaults (pytest)\n" + run)[0])
+        text = "shell: env -u %s bash -e {0}" % SWITCH
+        src = src.replace("\n  shell:\n    env:", "\n  shell:\n    defaults:\n      run:\n        %s\n    env:" % text, 1)
+        at = [n + 1 for n, l in enumerate(src.splitlines()) if l.strip() == text]
+        self.assertEqual(len(at), 1, "the shell job's header moved: re-anchor this case")
+        self.assertEqual([verdict(i) for i in self._new(src)], ["ok"])
+        self.assertEqual(switch_line_census(src)[1], [(at[0], text)])
+        # a plain value continued on the next line: YAML folds it to `1 0`, which is not 1, and the key line is named
+        src, first = self._with_step_in_shell_job("      - name: Continued value (pytest)\n        env:\n          %s: 1\n"
+                                                  "            0\n" % SWITCH + run)
+        new = self._new(src)
+        self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in new], [("1 0", "unlisted")], [_describe(i) for i in new])
+        self.assertEqual(switch_line_census(src)[1], [(first + 2, "%s: 1" % SWITCH)])
+        # the controls: the switch as a step env key, a job env key with a trailing comment, and spelled in run text (the
+        # switch half reads that as unparsed) are each read, and the census names nothing
+        for label, src in (("a step env key", self._with_step_in_shell_job('      - name: Keyed (pytest)\n        env:\n          %s: "1"\n' % SWITCH + run)[0]),
+                           ("a job env key with a comment", self._with_shell_job_env(self._with_step_in_shell_job("      - name: Job keyed (pytest)\n" + run)[0], '"1"   # a trailing comment')),
+                           ("run text", self._with_step_in_shell_job("      - name: In the run text (pytest)\n        run: |\n          export %s=1\n"
+                                                                     "          python -m pytest tests/test_a.py -q -p no:anyio\n" % SWITCH)[0])):
+            with self.subTest(control=label):
+                self.assertEqual(switch_line_census(src)[1], [], label)
 
     def test_the_switch_without_the_flag_and_the_flag_without_the_switch_are_both_unlisted(self):
         half_a = ('      - name: Half A (pytest)\n        env:\n          ROMP_SDK_REQUIRE: "1"\n'

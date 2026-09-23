@@ -221,13 +221,17 @@ jobs:
           # warns and the host case skips, saying so. tests/test_ci_sdk_pin.py's population check holds
           # this on every pytest invocation in this file, not on this step's text: each command that runs
           # pytest here sets the switch to exactly 1 in the env Actions merges for it (workflow, job, step,
-          # or a prefix on the command; a quoted value read as written) or is listed there by job and step
-          # name with a reason the test checks (the served-page step alone today, whose job installs no
-          # SDK), and each passes -p no:anyio with no listing. The check does not run the shell: a step
-          # whose run block spells the switch other than as that prefix (an unset, an export, an
-          # assignment), or whose job's other run blocks spell it (a write to $GITHUB_ENV reaches the
-          # steps after), is red until read; a write by a script or action a step calls, or one to
-          # $GITHUB_ENV that does not spell the name, is outside it. The check reads this file's text:
+          # each an env: key line as this file writes them, or a prefix on the command; a quoted value read
+          # as written) or is listed there by job and step name with a reason the test checks (the
+          # served-page step alone today, whose job installs no SDK), and each passes -p no:anyio with no
+          # listing. The check does not run the shell: a step whose run block spells the switch other
+          # than as that prefix (an unset, an export, an assignment), or whose job's other run blocks
+          # spell it (a write to $GITHUB_ENV reaches the steps after), is red until read, and so is any
+          # other line here that spells the switch outside an env: key line it reads (an aliased or flow
+          # env:, a quoted or spaced key, a continued value, a step's shell: or a job's defaults). Any
+          # write of the switch that does not spell its name is outside it: in a run block (env -i, an
+          # indirect unset, a loop over the environment), in a shell: or defaults key, by a script or
+          # action a step calls, or to $GITHUB_ENV. The check reads this file's text:
           # every line here that spells pytest, outside a comment or a name: key and other than a pip
           # install, is read as a command or is red until it is read, whatever its layout (its line
           # census), and so is a job key it does not read; a run line that never spells pytest, a pytest
