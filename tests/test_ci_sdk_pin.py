@@ -209,8 +209,11 @@ This module holds five things, and it never skips: a pin that skips reports gree
    star import from a module the census does not read, a builtin name, read as the builtin, or a module name no scope
    binds, read as that module (subprocess, os, shlex, asyncio, pytest, _pytest), which the star import may rebind; a
    call in a class body through a name the class binds, which the census reads as the class's binding, where the body
-   reads the name past the class until that binding runs; among others); each of those named here has a case holding
-   its outcome, no row. What the flag
+   reads the name past the class until that binding runs; among others); and so is every module whose text spells
+   neither pytest nor py.test and holds no star import, which the census skips without a parse, so nothing above is read
+   or refused in it (an argv there whose -m module name is a name, or whose pytest is spelled through adjacent string
+   literals or an escape, gives no row; the second verify pass, 2026-09-23, found the prefilter skipping a star import
+   too, and it now parses one); each of those named here has a case holding its outcome, no row. What the flag
    buys, in every pytest process the census and the population check read in which nothing loads the plugin again by its
    entry-point name or its module name (`-p anyio` or `-p anyio.pytest_plugin` after the flag on the line,
    PYTEST_PLUGINS in the environment, plugins= handed to pytest.main; both checks key on the flag's spelling and read
@@ -3026,10 +3029,17 @@ class PopulationCheckReds(unittest.TestCase):
 # child_pytest_launchers (its docstring and _launchers_in's are the rule); the derivation case prints the listing:
 #   python -m pytest tests/test_ci_sdk_pin.py -q -p no:cacheprovider -p no:anyio -k ChildPytestLaunchers -rP
 # ---------------------------------------------------------------------------------------------------------------------
-# a module whose text spells neither can name pytest in no argv and no string; no word boundaries, so the one token
-# `-mpytest` counts (until 2026-09-21 the prefilter was `\bpytest\b`, which it does not match, and a module whose only
-# spelling was that token was skipped without a parse while _launchers_in read it)
+# the text prefilter (child_pytest_launchers): a module is parsed when its text spells pytest or py.test, or holds a star
+# import, and is skipped without a parse otherwise. No word boundaries, so the one token `-mpytest` counts (until
+# 2026-09-21 the prefilter was `\bpytest\b`, which it does not match, and a module whose only spelling was that token was
+# skipped without a parse while _launchers_in read it). A star import counts whatever its module (the fail-closed design's
+# second verify pass, 2026-09-23: a module that star-imported a helper re-exporting pytest.main, and never spelled
+# pytest, was skipped, so the refusal beside such a star import never ran there). What the prefilter skips is the
+# census's residual, and the key is not a proof that the module runs no pytest: an argv whose -m module name is a name,
+# or whose pytest is spelled through adjacent string literals or an escape, reads as a launcher or is refused in a
+# parsed module and gives no row in a skipped one
 PYTEST_TEXT_RE = re.compile(r"pytest|py\.test")
+STAR_IMPORT_TEXT_RE = re.compile(r"import[\s\\]*\*")    # `import *`, `import*`, or the star after a backslash continuation
 # a pytest command inside ONE string: `python -m pytest` (any interpreter spelling), or pytest / py.test by name or path,
 # at command position (the start of the string, or after whitespace, `;`, `&`, `|` or `(`); or a `pytest.main(` call, an
 # in-process pytest inside a `-c` string or a shell string (2026-09-21)
@@ -3532,7 +3542,11 @@ def _launchers_in(src, filename):
 def child_pytest_launchers(directory=None):
     """Every launcher and unparsed pytest command under tests/ (every *.py below `directory`, subdirectories included,
     __pycache__ skipped), by _launchers_in; `file` is the path relative to the directory. A module whose text spells
-    neither pytest nor py.test is skipped without a parse: it can name pytest in no argv and no string."""
+    neither pytest nor py.test and holds no star import (PYTEST_TEXT_RE, STAR_IMPORT_TEXT_RE) is skipped without a parse,
+    and nothing in it is read: that is a residual, not a proof, since an argv there whose -m module name is a name, or
+    whose pytest is spelled through adjacent string literals or an escape, runs pytest and gives no row. Parsing every
+    module instead reds git commit-tree argv literals in tests/fixtures/, whose -m takes a message built with %, on
+    valid code (2026-09-23)."""
     directory = HERE if directory is None else directory
     out = []
     for dirpath, dirnames, filenames in os.walk(directory):
@@ -3543,7 +3557,7 @@ def child_pytest_launchers(directory=None):
             path = os.path.join(dirpath, name)
             with open(path, encoding="utf-8") as f:
                 src = f.read()
-            if not PYTEST_TEXT_RE.search(src):
+            if not (PYTEST_TEXT_RE.search(src) or STAR_IMPORT_TEXT_RE.search(src)):
                 continue
             for r in _launchers_in(src, path):
                 r["file"] = os.path.relpath(path, directory)
@@ -3579,7 +3593,7 @@ class ChildPytestLaunchers(unittest.TestCase):
 
     @classmethod
     def found(cls):
-        if cls._found is None:      # once per process: every module under tests/ that spells pytest is parsed
+        if cls._found is None:      # once per process: every module under tests/ that spells pytest or holds a star import is parsed
             cls._found = child_pytest_launchers()
         return cls._found
 
@@ -3988,6 +4002,36 @@ class ChildPytestLaunchers(unittest.TestCase):
         self.assertEqual([(r["file"], r["kind"], r["flag"], r["unparsed"]) for r in rows],
                          [("test_one_token.py", "<interpreter> -mpytest", False, None)],
                          "the walk must parse a module whose only spelling of pytest is the one token `-mpytest`: %r" % rows)
+
+    def test_the_walk_parses_a_module_holding_a_star_import_and_what_it_skips_gives_no_row(self):
+        # the fail-closed design's second verify pass (2026-09-23): the prefilter skipped a module that star-imported a
+        # helper re-exporting pytest.main and never spelled pytest, so the refusal beside such a star import never ran
+        # there, and executed the module ran pytest.main(["-q"]). A star import now lets a module through, by its text,
+        # the star after a backslash continuation included. What the prefilter still skips is the residual, pinned here:
+        # a module that spells no pytest and holds no star import gives no row through the walk, though _launchers_in
+        # reads or refuses each of these, and each runs pytest without the flag
+        d = tempfile.mkdtemp(prefix="census-walk-")
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        refused = "a name no scope here binds, in a module with a star import from helpers_zz"
+        skipped = {"test_concat.py": 'import subprocess, sys\nsubprocess.run([sys.executable, "-m", "py" "test", "-q"])\n',
+                   "test_escape.py": 'import subprocess, sys\nsubprocess.run([sys.executable, "-m", "py\\x74est", "-q"])\n',
+                   "test_modvar.py": 'import subprocess, sys\nfrom helpers_zz import MOD\nsubprocess.run([sys.executable, "-m", MOD, "-q"])\n'}
+        files = dict(skipped, **{"helpers_zz.py": 'from pytest import main\n__all__ = ["main"]\n',
+                                 "test_star_silent.py": 'from helpers_zz import *\n\n\ndef test_child():\n    return main(["-q"])\n',
+                                 "test_star_continued.py": 'from helpers_zz import \\\n    *\n\ndef test_child():\n    return main(["-q"])\n'})
+        for name, text in files.items():
+            with open(os.path.join(d, name), "w") as f:
+                f.write(text)
+        rows = child_pytest_launchers(d)
+        self.assertEqual([(r["file"], r["line"], r["kind"]) for r in rows],
+                         [("test_star_continued.py", 5, "a call the census cannot resolve"),
+                          ("test_star_silent.py", 5, "a call the census cannot resolve")], [_describe_launcher(r) for r in rows])
+        self.assertTrue(all(refused in r["unparsed"] for r in rows), [_describe_launcher(r) for r in rows])
+        for name, text in skipped.items():
+            with self.subTest(skipped=name):
+                self.assertFalse(PYTEST_TEXT_RE.search(text) or STAR_IMPORT_TEXT_RE.search(text), name)
+                self.assertEqual(len(_launchers_in(text, name)), 1, "%s: _launchers_in reads it, so its missing row is the "
+                                 "prefilter's residual" % name)
 
     def test_a_live_launcher_with_its_flag_removed_is_named_at_its_line(self):
         # the census against what it refuses, on a copy of a live launcher module's text: the flag removed from one
