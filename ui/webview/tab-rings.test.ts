@@ -32,7 +32,7 @@ test("the tab wears its ring through the registry's composition, right after the
   assert.doesNotMatch(RENDER, /tabAskClass/, "the branch's one-off ask class is gone: the yellow ring is a widget like the others");
   // this fork reaches sectionPip and sectionPipMembers through tab-snapshot.ts standInPip (the tabhide layer's stand-in over a
   // header's hidden members), so render.ts imports the state class and the titles from tab-state and the stand-in from tab-snapshot
-  assert.match(RENDER, /^import \{ tabStateClass, sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick \} from "\.\/tab-state";/m);
+  assert.match(RENDER, /^import \{ tabStateClass, sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick, openUserTodo \} from "\.\/tab-state";/m);   // openUserTodo: the roster count's one open predicate (correctness-1, review round 1 of the roster change)
   assert.match(RENDER, /^import \{ [^}]*\bstandInPip\b[^}]* \} from "\.\/tab-snapshot";/m);
   assert.match(RENDER, /^import \{ composeTabWidgets, composeTabRing, ringSwitch, tabHotkey, miniChord \} from "\.\/tab-widgets";/m);   // miniChord joined the import with the per-tab hot keys (merged 2026-09-14)
   // the folded header's pip and its tooltip read the same switches, so a fold never shows a colour no unfolded tab would

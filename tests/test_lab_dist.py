@@ -1358,8 +1358,9 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
         whatever TMPDIR the run has: node's stderr starts with the headline and ends with the reader's line, and its
         stack and requireStack dump between them repeat the config's path eight times (nine under the preload), so
         the stream ran to 1038 + 8 x len(ext) chars and the 2000-char tail alone lost the headline once the ext path
-        passed about 121 chars. xdist nests the conftest's temp root one level deeper and a sweep's TMPDIR is longer
-        still, so the same-error and subpath tests above went red under `-n` at a TMPDIR of about 60 chars and alone
+        passed about 121 chars. xdist nested the conftest's temp root one level deeper (until 2026-09-21; a worker's
+        root sits beside the controller's now) and a sweep's TMPDIR is longer still, so the same-error and subpath
+        tests above went red under `-n` at a TMPDIR of about 60 chars and alone
         at about 80 while CI's /tmp stayed green: deterministic on path length, not on order or fan-out. The message
         now carries the head of the stream as well, so both the headline and the reader's line are in it at this
         length, as a head and a tail (the stream does not fit whole here), plain and under the stand-in."""
@@ -2261,7 +2262,14 @@ _TREE_COPIERS = {"test_lab_dist.py", "test_github_repo.py",             # test_g
                  # upstream's copy primitive and its guard (the same entry as above): dist_copy.py IS a copytree over
                  # dist for upstream's own labs, called by none here (_TWIN_CALLERS); test_dist_copy_staging.py copies a
                  # scratch tree to prove the staging names are skipped, never the extension's dist
-                 "dist_copy.py", "test_dist_copy_staging.py"}
+                 "dist_copy.py", "test_dist_copy_staging.py",
+                 # test_bats_bare_negation.py (fork PR #871) copies the checkout, less .git, node_modules, the python caches and
+                 # the extension's build outputs (dist, out-tests: its COPY_EXCLUDES, every name one git ignores and no tracked
+                 # path has), into a scratch tree per rewrite so bats can run a rewritten test alone without touching the
+                 # checkout; the copy is removed after its run. It builds no dist and names none as a source: a shell job's
+                 # checkout holds no dist, and a built one on a developer's box is left out of the copy (the ratchet named the
+                 # module in CI's Python cells, 2026-09-20)
+                 "test_bats_bare_negation.py"}
 _KEY_READERS = {"test_kernel_bundle_staleness.py",                     # imports lab_dist for the input parity pin
                 "test_kernel_bundle_vendor_inputs.py"}                 # and for the BUILD_TIMEOUT pin; neither serves
 # the only files that may import upstream's dist_copy or call copy_dist without the lab_dist. prefix (the header above,
@@ -2359,6 +2367,10 @@ class ServedModulesUseTheHelper(unittest.TestCase):
         self.assertEqual(offences("test_perf_bench.py", 'shutil.copytree(os.path.join(ROOT, "kernel"), os.path.join(scratch, "kernel"), '
                                                         'ignore=shutil.ignore_patterns("__pycache__"))\n'), [])
         self.assertEqual(offences("test_perf_bench.py", "shutil.copytree(os.path.join(EXT, 'dist'), lab)\n"), ["copytree(dist"])
+        # the bats bare-negation module's per-rewrite copy of the checkout into a scratch tree (fork PR #871, its _copy_tree over
+        # COPY_EXCLUDES) is allowlisted, and refused the extension's dist like every tree copier
+        self.assertEqual(offences("test_bats_bare_negation.py", 'shutil.copytree(root, tree, symlinks=True, ignore=shutil.ignore_patterns(*COPY_EXCLUDES))\n'), [])
+        self.assertEqual(offences("test_bats_bare_negation.py", "shutil.copytree(os.path.join(EXT, 'dist'), lab)\n"), ["copytree(dist"])
 
     def test_every_served_module_calls_copy_dist(self):
         served = []
