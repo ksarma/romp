@@ -1051,7 +1051,9 @@ function bundledModules(): Promise<string[]> {
   })();
   return bundledP;
 }
-/** Every file under `dir`, recursively, repo-relative with forward slashes. */
+/** Every regular file under `dir`, recursively, repo-relative with forward slashes. A symlink, to a file or to a directory, is skipped: the
+ *  walk takes a Dirent that is a directory (walked) or a file (listed), and a symlink's is neither, so a symlinked module is never listed;
+ *  the census's paragraph says what catches one a bundle loads (the maintainer's round 8 ruling, tests-4 and extra7-3). */
 function filesUnder(dir: string): string[] {
   const out: string[] = [];
   const walk = (d: string): void => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (e.isFile()) out.push(path.relative(ROOT, p).split(path.sep).join("/")); } };
@@ -1135,6 +1137,12 @@ test("every module the page bundles load, read with the compiler: the only write
   // the vendored package's own exports map), so a module that starts or stops being loaded, appears outside the directory or leaves it, is
   // named here or reds, and a module in the directory that a page bundle loads but the listing's partition files under the anchor map's
   // fixtures or under tests and types (a module-suffix file under the fixture directory, a test of any module suffix, a `.d.ts`) reds too.
+  // The listing skips a symlink, to a file or to a directory (filesUnder), and esbuild under the shipped config (no preserveSymlinks key, so
+  // off) keys a module a bundle loads through a symlink by the TARGET's real path, never the link's: a target inside the directory is a listed
+  // module, so a symlinked import of one of the seven unloaded modules is named by the unloaded equality (it stops being unloaded) and one of
+  // a module already loaded changes nothing; a target outside the directory is named by the outside equality as a sixth module; a symlink no
+  // bundle loads is neither listed nor loaded and is silent, the case the old docstring's "every file" hid (the maintainer's round 8 ruling,
+  // tests-4 and extra7-3).
   // The walk is the loaded set: a module no page runs mints nothing the kernel receives. The tests are excluded because a test's literal is
   // not a minter the page runs (the bundles are built from the production modules alone), and because this census's own reverse plants and
   // the fixture rows in this file would red it.
