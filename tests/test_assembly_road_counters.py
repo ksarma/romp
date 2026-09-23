@@ -1,29 +1,91 @@
 #!/usr/bin/env python3
 """T398 (2026-09-12): a boot parsed two documented live leaves whole with no fallback counted, and nothing on GET /perf named the
 road the parse took. The assembly's road counters (serve, fold, restore, full with its reason, bypass, the g:<reason> demotions)
-ride asmCheckpoint.parse and the boot-health row, beside asmCheckpoint.removed, the document files removed per reason."""
+ride asmCheckpoint.parse and the boot-health row, beside asmCheckpoint.removed, the document files removed per reason.
+
+Ordering sensitivity of the two stage tests (2026-09-20). kernel/event_model.py holds ONE process-wide slot for the calling
+thread's stage-mark provider (_READ_STAGE_FN, installed by set_read_stage_provider; _SET_STAGE_FN and set_stage_provider are its
+pair), and every kernel load installs its own _current_read_stage and _set_stage there at module level, so the kernel loaded LAST
+in the process owns the slot. The event model is one object for the whole process: it is loaded under the fixed name
+romp_event_model, and load_source re-executes a name already in sys.modules into the same module object, so kernel_module().em
+is this module's em (the one statement of that premise in this file; _boot_row_parse points here). 524 test files load their
+own kernel instance under 432 distinct module names, and 508 of the 524 make the call at module body depth (outside any def, so
+at collection) while 16 make it only inside a def (census 2026-09-20 by ast over tests/*.py: Call nodes whose func is
+load_source, a Name or an Attribute, with a str first argument and a second argument whose source segment contains romp-kernel,
+so a call inside a string literal is excluded by construction; the split is whether the Call has a FunctionDef ancestor). The
+same census as one line, run from the checkout root, printing files, names, module-level files and def-only files:
+python3 -c 'import ast,glob;T=[(f,s,ast.parse(s)) for f in glob.glob("tests/*.py") for s in [open(f).read()]];D={id(c) for f,s,t in T for d in ast.walk(t) if isinstance(d,(ast.FunctionDef,ast.AsyncFunctionDef,ast.Lambda)) for c in ast.walk(d)};R=[(f,c) for f,s,t in T for c in ast.walk(t) if isinstance(c,ast.Call) and getattr(c.func,"id",getattr(c.func,"attr",0))=="load_source" and len(c.args)>1 and isinstance(c.args[0],ast.Constant) and isinstance(c.args[0].value,str) and "romp-kernel" in (ast.get_source_segment(s,c.args[1]) or "")];F={f for f,c in R};M={f for f,c in R if id(c) not in D};print(len(F),len({c.args[0].value for f,c in R}),len(M),len(F-M))'
+This module takes its kernel through test_asm_checkpoint.kernel_module(), which loads romp_kernel_t323s4a once per process into
+the module-level cache _KM. test_whole_reads_and_hydrations_are_counted_under_the_calling_threads_stage and
+test_the_push_mark_is_restored_on_every_exit_and_the_pushs_reads_count_under_push mark the stage on that instance's _STAGE_TL and
+read the count back through the slot, so with the slot pointing at another instance's thread-local the rows read `none`
+({'none:zero<-_push': ...}, {'none:upgrade<-_job_stage': ...}). In any collection that includes tests/test_intr_marks_memo.py or
+tests/test_merge_tx_sets_light.py the cache is filled AT COLLECTION, by their module-level `km = TA.kernel_module()` on the same
+bare module object this file imports, so setUp's kernel_module() returns the cached kernel and installs nothing, and the slot
+stays with the collection's last module-level kernel load (tests/test_ws_send_bounded.py, romp_kernel_wsbound, in the current
+file order). What moves it back is a test of pytest's own copy of tests/test_asm_checkpoint.py, imported as the package module
+tests.test_asm_checkpoint with a separate, empty _KM: its first kernel_module() call re-executes romp_kernel_t323s4a into the same
+module object and re-installs the providers. Nine of that file's 21 classes call kernel_module(): StringRowsAndRestoreSplit,
+HydrationAttribution, ClearedSessionDocument, CrossSessionRewoundCandidates, SeededDocumentMemo, and the setUpClass of
+PlannerOverRestored, ConvergeAssembly, ReadersOverRestoredHydrateOnlyWhatTheyNeed and KernelOverRestored; LazyBodies, the
+file's last class, is not one of them. So the pair passes in a process only if a test of one of the nine classes ran before it:
+alone (nothing fills the cache at collection) and in a full serial run (test_asm_checkpoint.py sorts before this file) it is
+green; under xdist (--dist load, the default with -n) every worker collects everything and takes a contiguous slice of the
+collection (chunk = items // workers // 4, xdist 3.8.0), and the pair is red on a worker whose slice holds no test of the nine
+classes (a slice holding LazyBodies' test and no other of that file's reds too). In the sweeps (run-sweep.sh: -n 10 under an
+80G scope; 17,697 to 17,750 items, chunk 442 or 443) gw1's slice began past the last item of the nine classes, which is why the
+pair was red on gw1 in every full xdist sweep of PRs that did not touch this module (four sightings, 2026-09-19/20) and green
+alone; in this tree at 20933397f (two collections of one tree: 17,604 items under the sweeps' invocation, which passes
+run-sweep.sh's --ignore=tests/test_cut_turn_tree_kill.py, and 17,618 under bare pytest, which collects that file's 14 items too;
+either way chunk 440, the last item of the nine classes, SeededDocumentMemo's, at index 441, LazyBodies' at 442 and the pair at
+511 and 516, the ignored file sorting after this one; on this tree the three round-1 and round-2 guard tests below sort before the pair
+and move it to 514 and 519 under the same chunk, and the round-3 raise pin, test_z_a_raise_from_setups_second_install_still_puts_the_saved_pair_back,
+sorts after the pair and moves neither index) gw1 holds the nine's last item and the pair, and the pair passes. setUp below saves the
+slot's pair, registers the two cleanups that restore it, then installs this kernel's providers through the public setters, so
+the slot is this kernel's for the test's length and a later-loaded kernel's own tests are unaffected. Two repros without xdist,
+as explicit node ids in the order given. Both reproduce at the parent commit 20933397f, or on this tree with setUp's four
+provider lines (the two installs and their two cleanups) removed; on this tree with the binding, both orders are green (verified
+2026-09-20, this tree and a copy with the four lines commented out). In both, "the roads test" is
+tests/test_assembly_road_counters.py::AssemblyRoadCounters::test_the_roads_ride_the_perf_block_with_the_full_parses_reason
+(the module's other roads-named test, test_the_boot_health_row_carries_the_parses_roads, is in neither). The first: the roads test,
+the two stage tests,
+tests/test_intr_marks_memo.py::MarksMemo::test_a_cut_armed_after_the_key_and_before_the_persist_is_answered_but_not_persisted,
+tests/test_ws_liveness.py::PhantomPanesAreDropped::test_a_the_beat_carries_a_ping_and_a_browser_answers_it (the last two run after
+the pair; they only fill the cache and take the slot at collection). The second, a run-time kernel load between setUp's first
+call and the pair, which moves the slot the same way: the roads test,
+tests/test_pusher_cadence.py::EnvOverride::test_romp_push_min_interval_sets_the_constant (loads romp_kernel_cadence_env in its
+body), then the two stage tests."""
 import json
 import os
+import shutil
+import subprocess
 import sys
 import unittest
 HERE = os.path.dirname(os.path.realpath(__file__))
+ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-from test_asm_checkpoint import em, G, SID, NOW, Harness, kernel_module, _strip   # noqa: E402
+from test_asm_checkpoint import em, G, SID, NOW, Harness, kernel_module, _strip, BIN   # noqa: E402
 
 
 class AssemblyRoadCounters(Harness):
     def setUp(self):
         super().setUp()
-        kernel_module()                                   # the kernel's first load refreshes the event model's globals: load it
+        km = kernel_module()                              # the kernel's first load refreshes the event model's globals: load it
         #                                                   before any counter is read, so the row and the test see one dict
+        saved = (em._READ_STAGE_FN[0], em._SET_STAGE_FN[0])   # the event model's one stage-provider slot is the LAST loaded kernel's
+        self.addCleanup(em.set_read_stage_provider, saved[0]) #  (module docstring). Both restores register BEFORE either
+        self.addCleanup(em.set_stage_provider, saved[1])      #  install: a raise between the installs still puts the pair back;
+        em.set_read_stage_provider(km._current_read_stage)    #  then the slot points at THIS kernel, whose thread-local the stage
+        em.set_stage_provider(km._set_stage)                  #  tests mark, for the test's length; the decoy test and the raise pin keep the order
 
     def _reset(self):
         for k in list(em._ASM_STATS):
             em._ASM_STATS[k] = 0
 
     def _boot_row_parse(self):
-        """The boot-health row's `parse` as the kernel writes it, over THIS test's event model (the kernel module holds its own
-        instance; the row reads whichever `em` the kernel names)."""
+        """The boot-health row's `parse` as the kernel writes it. The row reads whichever `em` the kernel names; today km.em is em
+        (the module docstring: one event model object per process, loaded under one fixed name), so the km.em = em swap below
+        changes nothing and stands as a guard for a kernel loaded with another event model name."""
         km = kernel_module()
         saved = (km._append_restart_cut, km._BOOT_HEALTH_DONE[0], km.em); rows = []
         km._append_restart_cut = lambda row: rows.append(row); km._BOOT_HEALTH_DONE[0] = False; km.em = em
@@ -848,6 +910,173 @@ class AssemblyRoadCounters(Harness):
             km._push([client], live_map={})
         self.assertEqual(seen, ["connect", "push"], "a fresh client's push is marked connect; the pusher's push, push")
         self.assertIsNone(km._current_read_stage(), "restored after a raise out of the push")
+
+    def test_a_fresh_kernel_load_installs_its_own_pair_in_the_slot_in_a_child_process(self):
+        """Review round 1 (fresh-1, 2026-09-20): with setUp installing the providers itself, this module no longer reds when the
+        kernel's own module-level install is deleted, the two product lines in kernel/kernel.py below the _stage_marked and
+        _stage_default decorators, em.set_read_stage_provider(_current_read_stage) and em.set_stage_provider(_set_stage), which the
+        two stage tests caught before the binding. Of the two, only the setter's line has another in-process test:
+        tests/test_stage_marks.py::StageMarksCensus::test_the_pools_submit_carries_the_submitters_stage_into_the_worker pins
+        em.set_stage_provider(_set_stage) in kernel.py's source (round 2, tests-1); no in-process test catches the read install's
+        line. What this test adds beyond a source pin is that it executes the install: a child process loads the event model under
+        its fixed name, then bin/romp-kernel under a private name, and reports whether the slot holds that kernel's
+        _current_read_stage and _set_stage after the fresh load, so an install that is present in the source and does not take
+        (the wrong function, the wrong event model object, an install before the event model's load) reds here and not at the pin.
+        A child process, not an in-process load, because a fresh kernel load in this process would move the slot for the rest of
+        the worker (the module docstring's mechanism) and become the ordering hazard this module documents."""
+        code = ("import sys; sys.path.insert(0, %r)\n"                       # the tests dir, where romp_load lives
+                "from romp_load import load_source\n"
+                "em = load_source('romp_event_model', %r)\n"
+                "km = load_source('romp_kernel_fresh1_probe', %r)\n"
+                "print(em._READ_STAGE_FN[0] is km._current_read_stage, em._SET_STAGE_FN[0] is km._set_stage)\n"
+                % (HERE, os.path.join(BIN, "romp-event-model"), os.path.join(BIN, "romp-kernel")))
+        env = dict(os.environ)
+        env["ROMP_KERNEL_NO_OPEN"] = "1"                                     # as kernel_module() sets before its load
+        r = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, "the child's loads failed; stderr:\n%s" % r.stderr[-2000:])
+        self.assertEqual(r.stdout.split(), ["True", "True"],
+                         "a fresh kernel's module-level install owns the slot (read provider, setter): stdout %r; stderr:\n%s"
+                         % (r.stdout, r.stderr[-2000:]))
+
+    def test_a_test_of_this_class_runs_with_the_slot_holding_this_kernels_pair(self):
+        """Review round 2 (extra4-1, 2026-09-20): while a test of this class runs, both halves of the slot are this kernel's and the
+        setter half works: a mark set through em._set_stage_mark lands on this kernel's thread-local. Alone in a process this holds
+        without setUp (this kernel's own load put its pair in the slot), so the mutation that reds it is the decoy test's: it runs
+        this method through a TestSuite under a decoy pair, where only setUp's installs can put this kernel's pair in the slot.
+        Deleting setUp's em.set_stage_provider(km._set_stage) reds this method under the decoy (the setter half is the decoy's, and
+        the probe mark never reaches km._STAGE_TL), and of the module's other tests only the raise pin reds for that line (round 4:
+        with no setter install there is no raise, 0 errors, not 1); deleting em.set_read_stage_provider(km._current_read_stage) reds
+        this method under the decoy too (the first assertion). The mapping for all four of setUp's provider lines is in the decoy
+        test's docstring."""
+        km = kernel_module()
+        self.assertIs(em._READ_STAGE_FN[0], km._current_read_stage, "the read half is this kernel's (setUp's first install)")
+        self.assertIs(em._SET_STAGE_FN[0], km._set_stage, "the setter half is this kernel's (setUp's second install)")
+        before = km._current_read_stage()
+        self.addCleanup(km._set_stage, before)
+        em._set_stage_mark("probe")                                        # through the slot, as a pool worker sets its mark
+        self.assertEqual(km._current_read_stage(), "probe", "a mark set through the slot lands on this kernel's thread-local")
+        km._set_stage(None)
+        self.assertIsNone(km._current_read_stage())
+
+    def test_a_decoy_pair_in_the_slot_is_displaced_for_a_stage_tests_length_and_stands_again_after_it(self):
+        """Review round 1 (tests-4, 2026-09-20): the guard on setUp's binding itself. A decoy read provider (answers "decoy") and a
+        decoy setter go into the slot through the public setters; one of the two stage tests and then the slot test above
+        (test_a_test_of_this_class_runs_with_the_slot_holding_this_kernels_pair) each run through their OWN TestSuite into their
+        own TestResult and pass, because setUp pointed the slot at this kernel for each test's length; and after EACH of them the
+        decoy pair is in the slot again, because setUp's cleanups put it back. One suite per inner test and the two restore
+        assertions inside the loop (round 3, extra4-1): round 2 ran both inner tests through one suite and asserted the pair once
+        after it, and with an even number of inner setUp/cleanup rounds a cross-wired restore (saved[1] in setUp's read cleanup,
+        saved[0] in its setter cleanup) swaps the two halves twice and leaves the decoy pair where the assertions look; asserting
+        after each inner test sees the single swap whatever the count (verified 2026-09-20 in fresh copies, -B: at b9e14eba3 the
+        module was green with the two restore lines cross-wired, 34 passed; on this tree the same cross-wiring gives 2 failed, 33
+        passed, this test at the first inner test's read assertion and the raise pin below). With setUp's four provider lines
+        removed this reds deterministically in every collection, alone or in any order: the stage test's marks are read through
+        the decoy and its rows book `decoy:`, not `jobs.probe:`. The original defect did not have that property (red only on a
+        worker whose slice held no test of the nine calling classes, module docstring). Round 2 (extra4-1), remeasured in round 4
+        with the raise pin (test_z_a_raise_from_setups_second_install_still_puts_the_saved_pair_back) in the module: each of
+        setUp's four provider lines has a mutation that reds this test (verified 2026-09-20 by deleting each line alone in a fresh
+        copy of the tree, -B, and running the module: this test red all four times; the read cleanup's and the setter install's
+        deletions red the raise pin beside it, 2 failed, 33 passed each; the setter cleanup's and the read install's deletions red
+        this test alone, 1 failed, 34 passed each). Outside a decoy, in a module-alone run, the rest of the module stays green with
+        any one of the four gone, because this kernel's own load put its pair in the slot; in a collection where a later kernel
+        load took the slot, the READ install alone reds the two stage tests, which read their counts through em's read provider
+        but write their marks through the kernel's own thread-local, so the setter install alone does not (verified 2026-09-20 in
+        fresh copies, -B, with the module docstring's five-node collection-order repro: only the read install deleted, 2 failed,
+        3 passed, the pair booking `none:`; only the setter install deleted, 5 passed). Deleting
+        self.addCleanup(em.set_read_stage_provider, saved[0]) reds this test because the read half stays this kernel's after the
+        inner run (the "put the decoy read provider back" assertion); the raise pin reds beside it, its read half leaking the same
+        way. Deleting self.addCleanup(em.set_stage_provider, saved[1]) reds this test because the setter half stays this kernel's
+        after the inner run ("and the decoy setter"). Deleting em.set_read_stage_provider(km._current_read_stage) reds this test
+        because the inner stage test reads its marks through the decoy and books `decoy:upgrade<-_job_stage` (the loop stops at
+        that first inner test). Deleting em.set_stage_provider(km._set_stage) reds this test because the inner slot test finds the
+        decoy setter in the slot ("the setter half is this kernel's"); before the slot test existed that line had no mutation
+        behind it, and the raise pin reds beside it now (no install, so no raise: 0 errors, not 1)."""
+        def decoy_read():
+            return "decoy"
+
+        def decoy_set(name):
+            return None
+        saved = (em._READ_STAGE_FN[0], em._SET_STAGE_FN[0])                 # this test's own setUp put this kernel's pair here
+        self.addCleanup(em.set_read_stage_provider, saved[0])
+        self.addCleanup(em.set_stage_provider, saved[1])
+        em.set_read_stage_provider(decoy_read)
+        em.set_stage_provider(decoy_set)
+        self.assertEqual(em._read_stage(), "decoy")
+        for name in ("test_whole_reads_and_hydrations_are_counted_under_the_calling_threads_stage",
+                     "test_a_test_of_this_class_runs_with_the_slot_holding_this_kernels_pair"):
+            result = unittest.TestResult()                                  # one suite and one result per inner test: the two
+            unittest.TestSuite([AssemblyRoadCounters(name)]).run(result)    #  restore assertions run after EACH inner run
+            self.assertEqual(result.testsRun, 1, name)
+            self.assertTrue(result.wasSuccessful(), "%s under a decoy slot:\n%s"
+                            % (name, "\n".join(text for _, text in result.failures + result.errors)))
+            self.assertIs(em._READ_STAGE_FN[0], decoy_read, "setUp's cleanup put the decoy read provider back after %s" % name)
+            self.assertIs(em._SET_STAGE_FN[0], decoy_set, "and the decoy setter, after %s" % name)
+
+    def test_z_a_raise_from_setups_second_install_still_puts_the_saved_pair_back(self):
+        """Review round 3 (correctness-1, tests-1, extra5-1, extra6-2, 2026-09-20): the pin on setUp's register-before-install
+        order. Round 3 moved setUp's two restore cleanups above its two installs so that a raise between the installs still puts
+        the saved pair back, and nothing else in the module tells that order from the one it replaced (both installs, then both
+        cleanups): with the four lines in the old order and this test absent the module is green. Here a decoy pair goes into the
+        slot through the public setters, this test's own saved pair restored by cleanups registered before those installs;
+        em.set_stage_provider is replaced by a wrapper, its restoring cleanup registered before the replacement (the same order),
+        that raises RuntimeError with a distinctive message when called with this kernel's setter, which is setUp's second
+        install, and passes every other call (the inner cleanup's, with the decoy setter) through to the real one; then the roads
+        test, test_the_roads_ride_the_perf_block_with_the_full_parses_reason, runs alone through its own TestSuite into a
+        TestResult. Asserted: one test ran; one error, whose text carries the injected message and the install's source line (the
+        cause, not a count: an error count of one is satisfied by any failure, this test's own included); and afterwards both
+        halves of the slot are the decoy pair. The read install ran before the raise, so only a read cleanup registered before it
+        puts the decoy read provider back: with setUp's two installs moved above its two cleanups, the raise comes before either
+        cleanup is registered, this kernel's read provider stays in the slot past the inner run and the read assertion here fails
+        (verified 2026-09-20 in a fresh copy of the tree with the four lines in that order, -B: 1 failed, 34 passed, this test
+        alone). The inner setUp raised after Harness.setUp made its temp directory (inner.td), and a test whose setUp raised runs
+        no tearDown, so directly after the inner run this test registers a cleanup that removes that directory whichever way the
+        assertions below go (round 4: with the removal on the pass path only, a red at the slot assertions, the case this test
+        exists for, left that directory in the run's private temp root until the tests package removed the root at run end;
+        measured 2026-09-20 in fresh copies with setUp in the old order: one empty directory left before exit without the
+        cleanup, none with it), and on the pass path removes it itself and asserts it is gone. Named
+        test_z_ deliberately: unittest orders methods by name, no test_the_ name sorts after
+        test_whole_reads_and_hydrations_are_counted_under_the_calling_threads_stage, and a name sorting before the pair would move
+        the pair's collection indices in the module docstring (514 and 519 on this tree); this name sorts last in the class and
+        they stand. It adds one collected item: the module goes from 34 to 35 tests, the module docstring's two collection totals
+        at 20933397f (17,604 and 17,618) are 17,608 and 17,622 on this tree (the three round-1 and round-2 guard tests and this
+        one; chunk 17,608 // 10 // 4 = 440 either way), and the 21-file xdist group in the PR body goes from 515 to 516 passed."""
+        def decoy_read():
+            return "decoy"
+
+        def decoy_set(name):
+            return None
+        km = kernel_module()
+        saved = (em._READ_STAGE_FN[0], em._SET_STAGE_FN[0])                 # this test's own setUp put this kernel's pair here
+        self.addCleanup(em.set_read_stage_provider, saved[0])               # both restores registered before the installs, as setUp
+        self.addCleanup(em.set_stage_provider, saved[1])                    #  does
+        em.set_read_stage_provider(decoy_read)
+        em.set_stage_provider(decoy_set)
+        message = "synthetic raise at the second install (round 3 pin)"
+        real_set = em.set_stage_provider
+        self.addCleanup(setattr, em, "set_stage_provider", real_set)        # registered BEFORE the replacement: the order this pins
+
+        def raising_install(fn):
+            if fn is km._set_stage:                                          # setUp's second install raises; every other call (the
+                raise RuntimeError(message)                                  #  inner cleanup's, with the decoy setter) passes through
+            return real_set(fn)
+        em.set_stage_provider = raising_install
+        inner = AssemblyRoadCounters("test_the_roads_ride_the_perf_block_with_the_full_parses_reason")
+        result = unittest.TestResult()
+        unittest.TestSuite([inner]).run(result)
+        self.addCleanup(shutil.rmtree, inner.td, ignore_errors=True)        # the inner setUp raised, so no tearDown removed inner.td;
+        #                                                                     a red below (the case this test exists for) must not leak it
+        self.assertEqual(result.testsRun, 1)
+        self.assertEqual(len(result.errors), 1, "one error, the injected raise:\n%s"
+                         % "\n".join(text for _, text in result.failures + result.errors))
+        text = result.errors[0][1]
+        self.assertIn(message, text, "the error is the injected raise, not another failure")
+        self.assertIn("em.set_stage_provider(km._set_stage)", text, "raised at setUp's second install (its source line), not in a cleanup")
+        self.assertIs(em._READ_STAGE_FN[0], decoy_read,
+                      "the read install ran before the raise; only a read cleanup registered before it puts the decoy back")
+        self.assertIs(em._SET_STAGE_FN[0], decoy_set, "the setter install raised before it took; the decoy setter stands")
+        self.assertTrue(inner.td.is_dir(), "Harness.setUp made the inner temp directory and no tearDown ran after the raise")
+        shutil.rmtree(inner.td)
+        self.assertFalse(inner.td.exists())
 
 if __name__ == "__main__":
     unittest.main()

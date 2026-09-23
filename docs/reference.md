@@ -709,13 +709,25 @@ the only session-side signal and they clear at the landing; the kernel log's
 per-session line is the durable record. A third choice, Automatic, is the rule
 that held before: the API key when a helper is configured, else the login; it
 clears the explicit default, the group's sub-line says which rule holds, and
-the sessions following the default are reconnected the same way. Until the
-default is set here, the last per-session pick seeds it (as a model or effort
-pick does); once set here, a per-session pick is about that session alone and
-moves no default. A session created while a default stands, the explicit one
-or the last pick's remembered value, is seeded with it as a pick of its own
-and is not moved by a later change of the default; a session created while
-none stood follows the default wherever it moves. A
+the sessions following the default are reconnected the same way. A
+per-session pick, before or after the default is set here, is about that
+session alone and moves no default: the new-session picker preselects the
+machine default (the explicit one, else the rule that holds), and a session
+created with no pick of its own follows the machine default, not the last
+pick. A session created while an explicit default stands is seeded with it as
+a pick of its own and is not moved by a later change of the default; a session
+created while none stood follows the default wherever it moves. Since a
+per-session pick's remembered value seeds no new session, a box whose last
+per-session pick was a login, the machine's own or a stored one, bills new
+sessions on the key from this kernel on when its settings carry an
+apiKeyHelper; with no helper, a remembered stored-login pick bills them on the
+machine's own login, or on whatever the CLI resolves by itself when no login is
+signed in either. A remembered key pick keeps the key and makes new sessions
+followers of the default. Where the account moves, or the remembered pick names
+a side this machine cannot bill, the spawn says so as a problem row on the new
+session, naming the pick, what the session bills and the Set default billing
+submenu; a repeat while the pick stands counts on the one ring entry. All of
+this holds until a default is set here. A
 remote session's flyout names its host, and the pick sets that host's default
 (the op routes to the session's owning kernel). The judges follow the same
 resolution: a judge on a session with no pick of its own bills the machine's
@@ -725,13 +737,13 @@ when the right would clip and the left has room, below the row when neither
 side has room, above it when below does not fit, and only then clamped inside
 the window; it never covers its row while a place beside or beyond it exists.
 
-On a one-auth box the picker never chooses the missing side. A remembered
-default that names the side this box cannot bill is set aside at spawn and the
-unpicked rule below decides instead, in both directions: a remembered login
-pick on a machine with no login seeds new sessions on the API key when a
-helper is configured, exactly as a remembered key pick on a helper-less machine
-already fell to the login, and the fall is said once per process as a problem
-row. An explicit pick that names the missing
+On a one-auth box the picker never chooses the missing side. An explicit
+machine default that names the side this box cannot bill is set aside at spawn
+and the unpicked rule below decides instead, in both directions: an explicit
+login default on a machine with no login seeds new sessions on the API key
+when a helper is configured, exactly as an explicit key default on a
+helper-less machine falls to the login, and the fall is said once per process
+as a problem row. An explicit pick that names the missing
 side (a session picked "login" on a box that later lost its login) launches on
 the other side when one exists and says so once per session start, on the tab
 menu's Billing sub-line as `⚠ login unavailable, billing API key` and in the
@@ -759,10 +771,12 @@ login-billed launches.
 The login is named by its account (the email the credential store records);
 the key option is labelled plainly `API key`. No fragment of the key, not even
 a last-4 tail, ever reaches a browser or a screen, and romp never sees the key
-at all. A new session defaults to the last pick made anywhere, and before any
-pick to the key when a helper is configured. A remembered key pick on a box
-whose settings carry no helper leaves new sessions unpicked, and the kernel
-log says so once, naming the settings file to configure.
+at all. A new session is preselected on the machine's explicit default when
+the box can bill it, else on the rule that holds without one: the key when a
+helper is configured, else the login. An explicit key default on a box whose
+settings carry no helper leaves new sessions unpicked, and the kernel log says
+so once, naming the settings file to configure and the Set default billing
+submenu.
 
 A tab not yet loaded after a reconnect shows "Not loaded yet — click to load"
 as its hover tooltip, until its transcript arrives. The strip's skeleton tabs
@@ -805,9 +819,9 @@ explicit default becomes the box's expectation and the env var goes inert (it
 described the unpicked design), so the sessions following the default are
 judged against it, never against stale doctrine; a per-session **Billing**
 pick is about that session alone and leaves the declaration speaking for the
-others. An API-key value remembered from a box that no longer holds a key, a
-pick's or the explicit default, is set aside at spawn, so it seeds nothing
-(the per-init check still judges each landing against the explicit default).
+others. An explicit API-key default on a box that no longer holds a key is set
+aside at spawn, so it seeds nothing (the per-init check still judges each
+landing against the default).
 
 The kernel also checks, once at boot and before anything is spawned, that no
 retired key path is still configured. A `service.env` that still carries a key
@@ -2160,35 +2174,57 @@ the SDK's byte for byte. It reads the CLI's stdout without pause and appends
 every message to an append-only journal (`hosts/<sid>/journal-<n>.jsonl`, one
 JSON object per line, offsets that are the record's ordinal since the CLI
 started, 64 MB segments rotated at turn boundaries, acknowledged segments
-deleted), serves one Unix socket (`hosts/<sid8>.sock`, mode 0600), and holds
-the session's lease as the holder. The kernel keeps the SDK client, its hooks
-and its permission callback and speaks to the host over the socket. On a
-restart the drain detaches from every host instead of ending its CLI: the
-host keeps the CLI and its turn, journals what it says, parks any permission
-request or hook callback the CLI raises (a permission waits without expiry; a
-hook the kernel registers with a 540 second timeout is answered by the host
-itself with the event's neutral output after 480 seconds of parking, and each
-such answer becomes a problem row when a kernel next attaches, since the
-kernel never saw that hook), and the next kernel attaches by the lease,
-replays the journal from the offset it last acknowledged in the registry
-(`hostAck` on `sdk/<sid>.json`, written by the kernel, the registry's only
-writer), and sends its own initialize, which the CLI accepts as a replacement
-of its hook table. The turn was never cut: no continuation notice, no
-`cutTurns` entry, and a `host.attached` row in `session-events.jsonl` for
-every attach, at boot or later. The interrupt escalation's signal rungs and a
-kill or a conserve close become requests to the host; a graceful end closes
-the CLI's stdin and waits (an idle CLI exits at once, a busy one after its
-turn), with SIGKILL only past a settable grace. A host whose kernel never
-returns ends an idle CLI after `session-host-grace` seconds (900 by default).
-If a host dies, its CLI finishes its turn on stdin end-of-file and exits; the
-kernel files a `host.died` row, waits for that exit, replays the orphan
-journal through the same path a live attach uses, and only then resumes the
-session from the transcript, so a conversation never has two writers. On
-Linux the host runs in a transient scope of its own (`romp-host-<sid8>-<t>`)
-outside the service cgroup and starts the CLI through `bin/romp-cli-scope` as
-before, so the CLI's own scope and its memory limits are unchanged; the boot
-sweep stops a dead host's scope by its lease. On macOS the host is a plain
-detached process and everything else is the same.
+deleted), serves one Unix socket (`hosts/<sid8>.sock`, mode 0600 from the
+moment the path exists: the host binds a temp name of its own beside it, its
+pid and random digits, tightens that, and renames it into place; a published
+path longer than the socket path budget, 107 bytes on Linux, is refused
+before anything is bound and the host exits, having started no CLI and
+written no lease, since that check, the directory checks below and the sweep
+of a dead host's leftovers all run before the host spawns the CLI, and after
+the lease only one check of `hosts/`, the bind, the tightening and the rename
+run; `hosts/` itself is made 0700 when the kernel writes a host's spawn
+specification and when a host starts, before it spawns its CLI or binds its
+socket, and each `hosts/<sid>/` when the specification is written and when
+the host opens its journal; a loose one is tightened on those same roads, and
+one that is a symlink, that belongs to another user, or that stays loose
+after the tightening is refused on every one of them. When the kernel meets
+it, writing the specification, the spawn fails with a launch error naming the
+directory; when the host meets it first, the host exits before serving its
+socket and the launch error names its exit code and where the reason is:
+`hosts/<sid>/host.log` when the host wrote a row (its `socket-bind-failed`
+row names the step), `host.stderr` beside the specification when it refused
+before its first row. A `hosts/` symlinked onto another volume worked before
+this check and now stops every session on the machine until the link is
+replaced by a directory; to keep the state elsewhere, point the state root
+there, `ROMP_STATE_DIR` or `XDG_STATE_HOME`), and holds the session's lease
+as the holder. The kernel keeps the SDK client, its hooks and its permission
+callback and speaks to the host over the socket. On a restart the drain
+detaches from every host instead of ending its CLI: the host keeps the CLI
+and its turn, journals what it says, parks any permission request or hook
+callback the CLI raises (a permission waits without expiry; a hook the kernel
+registers with a 540 second timeout is answered by the host itself with the
+event's neutral output after 480 seconds of parking, and each such answer
+becomes a problem row when a kernel next attaches, since the kernel never saw
+that hook), and the next kernel attaches by the lease, replays the journal
+from the offset it last acknowledged in the registry (`hostAck` on
+`sdk/<sid>.json`, written by the kernel, the registry's only writer), and
+sends its own initialize, which the CLI accepts as a replacement of its hook
+table. The turn was never cut: no continuation notice, no `cutTurns` entry,
+and a `host.attached` row in `session-events.jsonl` for every attach, at boot
+or later. The interrupt escalation's signal rungs and a kill or a conserve
+close become requests to the host; a graceful end closes the CLI's stdin and
+waits (an idle CLI exits at once, a busy one after its turn), with SIGKILL
+only past a settable grace. A host whose kernel never returns ends an idle
+CLI after `session-host-grace` seconds (900 by default). If a host dies, its
+CLI finishes its turn on stdin end-of-file and exits; the kernel files a
+`host.died` row, waits for that exit, replays the orphan journal through the
+same path a live attach uses, and only then resumes the session from the
+transcript, so a conversation never has two writers. On Linux the host runs
+in a transient scope of its own (`romp-host-<sid8>-<t>`) outside the service
+cgroup and starts the CLI through `bin/romp-cli-scope` as before, so the
+CLI's own scope and its memory limits are unchanged; the boot sweep stops a
+dead host's scope by its lease. On macOS the host is a plain detached process
+and everything else is the same.
 
 A message the kernel cannot handle does not end the session's CLI. The kernel
 handles each streamed message on its own: when a handler raises, it logs the
