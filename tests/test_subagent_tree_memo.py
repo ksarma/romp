@@ -1143,7 +1143,8 @@ class StandingResolutionUnderAFault(_Walk):
 class FaultBelowTheRoot(_Walk):
     """A place below a tree's root that the tree read could not read, the root itself reading: workflows/ whose listing
     fails (a real EACCES, the directory at mode 000; an EIO by mock on its os.scandir) or the workflow directory that holds
-    AID_WF's file at mode 000. The agent-file walk excludes that place as it excludes a tree whose root could not be read,
+    the agent's file at mode 000, in the own tree and in a sibling's. The agent-file walk excludes that place as it
+    excludes a tree whose root could not be read,
     so with the file under it the lookup answers None with the fault, memoizes nothing and walks again at the next
     lookup, and the running chat build is told the place is unreadable; once the fault clears, the key the build recorded
     differs from the next signature's re-stat (the tab is rebuilt) and the lookup finds the file. RED at the round-2 head
@@ -1242,6 +1243,51 @@ class FaultBelowTheRoot(_Walk):
 
     def test_a_workflow_directory_that_cannot_be_listed_eacces_is_a_fault_with_nothing_memoized(self):
         self._fault_below("eacces-wf")
+
+    def _sibling_fault_below(self, how):
+        """The same road in a sibling's tree: AID_FORK's file in a workflow directory of the holder sibling's tree, that
+        directory at mode 000 (its listing and the candidate stat under it fail), or the sibling's workflows/ listing
+        failing by an EIO by mock on its os.scandir, so the workflow directory is never found (an EIO on the workflow
+        directory's own listing would leave the candidate stat of the file inside it reading, and the file found)."""
+        hold, _ = self._sibling(SID_HOLD)
+        wf = Path(hold) / "workflows" / "wf_00000000000000f2"
+        wf.mkdir()
+        holder_file = wf / ("agent-%s.jsonl" % AID_FORK)
+        holder_file.write_text("")
+        _age(str(self.proj / SID_HOLD))
+        place = str(wf) if how == "eacces" else str(wf.parent)
+        if how == "eacces":
+            if os.geteuid() == 0:
+                self.skipTest("permission bits do not bind root: no EACCES to drive")
+            os.chmod(str(wf), 0o000)
+            fault = contextlib.nullcontext()
+        else:
+            real = os.scandir
+
+            def eio(p=".", *a, **k):
+                if not isinstance(p, int) and os.fsdecode(p) == place:
+                    raise OSError(errno.EIO, "input/output error")
+                return real(p, *a, **k)
+            fault = mock.patch.object(os, "scandir", eio)
+        try:
+            with fault:
+                got, faults, notes = self._lookup()
+        finally:
+            os.chmod(str(wf), 0o755)
+        self.assertIsNone(got, "the file lies under the sibling's place its tree read could not read")
+        self.assertNotIn(self.fork_key, km._SUBAGENT_FILE_CACHE,
+                         "the walk could not read the place the file lies under, so its miss is not memoized: %r"
+                         % (km._SUBAGENT_FILE_CACHE.get(self.fork_key),))
+        self.assertEqual(faults, ["PermissionError" if how == "eacces" else "OSError"], "the caller is told")
+        self.assertIn((place, km._TREE_UNREADABLE), notes, "the running chat build is told the place is unreadable")
+        got, faults, _notes = self._lookup()
+        self.assertEqual((got, faults), (holder_file, []), "the fault cleared: the next lookup finds the file, with no fault")
+
+    def test_a_workflow_directory_under_a_siblings_tree_that_cannot_be_listed_eacces_is_a_fault_with_nothing_memoized(self):
+        self._sibling_fault_below("eacces")
+
+    def test_a_workflows_directory_under_a_siblings_tree_that_cannot_be_listed_eio_is_a_fault_with_nothing_memoized(self):
+        self._sibling_fault_below("eio")
 
     # ── controls, green before the change and after it ─────────────────────────────────────────────────────────────────
     def test_control_a_file_under_a_readable_sibling_is_found_past_a_fault_below_the_own_root(self):
