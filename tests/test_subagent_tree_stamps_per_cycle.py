@@ -149,6 +149,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 from romp_load import load_source
+from tests.thread_ends import join_started
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -2544,10 +2545,11 @@ class EvictionTableLock(_World):
 
     def _eviction_world(self, table, cap=None):
         """The table swapped for `table`, the cleared generation for a fresh [0], the cap for `cap` when given and the lock,
-        on a kernel that has one, for a _QueueWatch over it; each put back by cleanup, after every thread the case started
-        is released and joined, so no paused thread writes into the restored globals. Returns the watch (None on a kernel
-        with no lock)."""
-        self.events, self.threads = {}, []
+        on a kernel that has one, for a _QueueWatch over it; each put back by cleanup. The table's `go` is kept as the gate
+        _run's cleanups set: every thread a case starts goes through _run after this call, so its cleanup, registered later,
+        runs first (unittest runs cleanups last in, first out) and no paused thread writes into the restored globals.
+        Returns the watch (None on a kernel with no lock)."""
+        self.events, self.gate = {}, table.go
         real = getattr(km, "_SUBAGENT_EVICT_LOCK", None)
         watch = _QueueWatch(real, self.events) if real is not None else None
         patches = [mock.patch.object(km, "_SUBAGENT_ROOT_EVICTED", table), mock.patch.object(km, "_SUBAGENT_ROOTS_CLEARED_GEN", [0])]
@@ -2558,17 +2560,13 @@ class EvictionTableLock(_World):
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
-        self.addCleanup(self._release_and_join, table)    # registered last, so it runs before the patches stop
         return watch
-
-    def _release_and_join(self, table):
-        table.go.set()
-        for th in self.threads:
-            th.join(30)
 
     def _run(self, name, fn):
         """`fn` on a new thread named `name`: its thread, its result, its errors and the Event set when it queues behind
-        the lock or ends."""
+        the lock or ends. The thread's stop is registered as a cleanup before its start (tests/thread_ends.py's
+        join_started: it sets the gate a paused thread waits on, then joins the thread, bounded at 30 s), so a failed
+        assertion anywhere in the case still releases and joins it before the patches of _eviction_world stop."""
         run = SimpleNamespace(out={}, errs=[], ev=self.events.setdefault(name, threading.Event()))
 
         def body():
@@ -2579,7 +2577,7 @@ class EvictionTableLock(_World):
             finally:
                 run.ev.set()
         run.thread = threading.Thread(target=body, name=name, daemon=True)
-        self.threads.append(run.thread)
+        self.addCleanup(join_started, self.gate, [run.thread], 30)
         run.thread.start()
         return run
 
