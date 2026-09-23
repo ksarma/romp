@@ -43,9 +43,20 @@ turns, that hold keeps every session from starting a new turn, a side effect no
 subresource load may trigger. A token presented explicitly, as `?token=` or
 `X-Romp-Token`, is accepted from any Origin: federated (cross-machine) calls
 need it, and a cross-site page cannot obtain it: the dashboard drops `?token=`
-from its address as it loads, and every page the kernel serves carries
-`Referrer-Policy: same-origin`, so the token never reaches another origin in a
-`Referer`.
+from its address as it loads (a pane page opened on its own, such as
+`/chat?token=`, keeps it), and every page the kernel serves carries
+`Referrer-Policy: same-origin`, so a request to another origin carries no
+`Referer`. One exception is known: an inline SVG's paint reference to another
+origin in a file the viewer shows, once the viewer loads that figure (its host
+is on the gear's list, or the reader clicked its placeholder). Its request can
+send the page's origin (in Chromium a `mask` does). In one recorded run, before
+the sanitizer removed these references from chat messages, a chat message's
+`fill` sent the full URL of a page opened as `/chat?token=`, token included. No
+later run has reproduced it, the viewer's runs in
+`tests/test_paint_refs_kernel_pages_browser.py` included, so treat a page opened
+that way as able to send its token with such a request. Everywhere else the
+sanitizer removes these references, and an `.svg` opened in its own tab loads
+nothing from another host (see Output sanitization below).
 The token-exempt routes are the no-side-effect liveness probes (`/healthz`,
 `/version` and `/busy` on the kernel, `/ping` on the bus) and the install files:
 `/manifest.webmanifest` and the three home-screen icons under `/media/`
@@ -99,14 +110,28 @@ UID can read.
   origin (a `url()` in a `fill`, `stroke`, `mask`, `clip-path`, `filter` or
   `marker-*` attribute, or in an inline `style` declaration) are removed from
   the sanitized markup before any node reaches the page, by the sanitizer and
-  again by the file preview card, so none of them makes a request to another
-  host when a chat message or a previewed file renders; a same-document
-  `url(#id)`, a `data:` URL and this origin's own stay (in an editor webview
-  the sanitizer also keeps the kernel's origin), and the file viewer gates the
-  same references behind a click instead (`ui/webview/paint-refs.ts`,
-  checked against the code by `ui/webview/paint-refs-census.test.ts` and, in
-  the browser, by `ui/webview/chat-paint-refs-browser.test.ts` and
-  `tests/test_file_preview_browser.py`). One renderer writes into that
+  again by the strip that the file preview card and the feed's notice cards run,
+  so none of them makes a request to another host when a chat message, a
+  previewed file or a notice card renders; a same-document `url(#id)`, a `data:`
+  URL and this origin's own stay (in an editor webview the sanitizer also keeps
+  the kernel's origin), and the file viewer gates the same references behind a
+  click instead (`ui/webview/paint-refs.ts`, checked against the code by
+  `ui/webview/paint-refs-census.test.ts` and, in the browser, by
+  `ui/webview/chat-paint-refs-browser.test.ts`,
+  `tests/test_file_preview_browser.py` and
+  `tests/test_paint_refs_kernel_pages_browser.py`). Once the reader clicks, or
+  when the host is on the gear's list, those references load, and such a request
+  can send the page's origin: the exception to the `Referer` rule in the trust
+  model above. An `.svg` opened in its own tab (on the web dashboard, a Cmd,
+  Ctrl or middle click on a path link to it in a viewed file) is served by the
+  kernel's `/file` route, and by its `/remote/<host>/file` relay, as a document
+  whose `Content-Security-Policy` is `sandbox` and four fetch directives:
+  `default-src 'none'`, `img-src data: blob:`, `style-src 'unsafe-inline'` and
+  `font-src data:`. It runs no script and loads nothing its markup names from
+  any host (no image, stylesheet, font, frame, video or paint reference), while
+  an embedded `data:` image and an inline style still render
+  (`kernel/kernel.py`, checked in the browser by
+  `tests/test_svg_tab_policy_browser.py`). One renderer writes into that
   sanitized DOM after DOMPurify has run: KaTeX. The sanitizer keeps only color
   in an inline `style`, and
   KaTeX's layout is inline style, so a formula's TeX passes through DOMPurify

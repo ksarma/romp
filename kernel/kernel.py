@@ -73202,10 +73202,17 @@ class Handler(BaseHTTPRequestHandler):
         # `/?token=` on its first load (the address scrub in _landing's head script drops it; a pane page
         # opened bare as `/chat?token=` keeps it). same-origin sends the full Referer on requests to this
         # origin and nothing cross-origin (a transcript's <img> from another host, a link out), whatever
-        # the browser's default, on every page the kernel serves: the SECURITY.md claim that a cross-site
-        # page cannot obtain the token then holds by construction. same-origin and not no-referrer: a
-        # same-origin GET carries no Origin header, so the Referer is the one header that names the page
-        # origin behind it to the kernel, and this keeps it.
+        # the browser's default, on every page the kernel serves, with one exception known: an inline svg's
+        # paint reference to another origin. The sanitizer removes those everywhere but the file viewer
+        # (paint-refs.ts), which loads one once it loads the figure (a host on the gear's list, or a click
+        # on the placeholder), and its request can send the page's origin (in Chromium a mask does: its
+        # Referer does not follow this policy). In one recorded run, before the sanitizer removed them from
+        # chat messages, a chat message's fill sent a bare `/chat?token=` page's full URL, token included;
+        # no later run has reproduced it. SECURITY.md states the exception beside its claim that a
+        # cross-site page cannot obtain the token, and tests/test_paint_refs_kernel_pages_browser.py holds
+        # what the viewer's figures send, from a bare page and from the shell's frame. same-origin and not
+        # no-referrer: a same-origin GET carries no Origin header, so the Referer is the one header that
+        # names the page origin behind it to the kernel, and this keeps it.
         self.send_header("Referrer-Policy", "same-origin")
         for k, v in (headers or {}).items():
             self.send_header(k, v)
