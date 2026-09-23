@@ -444,6 +444,41 @@ test('hostSheets: a helper <style> run formatted by .format() applied after the 
   const d = tempTree(pySrc('def _spin(cid):', '    return ("<style>a{{b:{0}}}</style>"', '            "<div>{0}</div>").format(cid)', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
   try { assert.throws(() => hostSheets(d), /_spin.*formatted/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
 });
+// The class, not two spellings (the file review's round 13, correctness-1 with kernel-3 and extra8-1): the refusal had tested the
+// blanked remainder for `%` and `.format(` alone, so every other call that decodes the run to text the page does not serve had
+// passed silently. Each shape below is legal Python 3.12 that serves the substituted text (executed in the round's probe), and each
+// decoded to its placeholder text with no throw at the head that review read.
+test('hostSheets: a helper <style> run formatted by .format_map() after its closing literal fails by name, the same substitution one method over (the file review\'s round 13, correctness-1 with extra8-1; a property pin over a synthetic tree, red before the class refusal)', () => {
+  const d = tempTree(pySrc('def _spin(cid):', '    return ("<style>a{{b:{c}}}</style>"', '            "<div>{c}</div>").format_map({"c": cid})', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.throws(() => hostSheets(d), /_spin.*formatted/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+test('hostSheets: a helper <style> run formatted by .format with whitespace before its paren or after its dot fails by name, both gaps Python accepts (the file review\'s round 13, kernel-3 with extra8-1; a property pin over a synthetic tree, red before the class refusal)', () => {
+  for (const call of ['.format (cid)', '. format(cid)']) {
+    const d = tempTree(pySrc('def _spin(cid):', '    return ("<style>a{{b:{0}}}</style>"', '            "<div>{0}</div>")' + call, '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+    try { assert.throws(() => hostSheets(d), /_spin.*formatted/, call); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+  }
+});
+test('hostSheets: a helper <style> run formatted by .format broken over a line end before its paren or after its dot, inside enclosing parens, fails by name (the file review\'s round 13, kernel-3; a property pin over a synthetic tree, red before the class refusal)', () => {
+  for (const tail of [['             "<div>{0}</div>").format', '            (cid))'], ['             "<div>{0}</div>").', '            format(cid))']]) {
+    const d = tempTree(pySrc('def _spin(cid):', '    return (("<style>a{{b:{0}}}</style>"', ...tail, '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+    try { assert.throws(() => hostSheets(d), /_spin.*formatted/, tail.join(' | ')); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+  }
+});
+test('hostSheets: a helper <style> run rewritten by a method that is no format at all (.replace after its closing literal) fails by name, a member of the class (the file review\'s round 13, correctness-1; a property pin over a synthetic tree, red before the class refusal)', () => {
+  const d = tempTree(pySrc('def _spin(cid):', '    return ("<style>a{b:X}</style>"', '            "<div>X</div>").replace("X", cid)', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.throws(() => hostSheets(d), /_spin.*formatted/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+test('hostSheets: a helper <style> run formatted by .__mod__ after its closing literal fails by name, the % operator spelled as its method (the file review\'s round 13, extra8-1; a property pin over a synthetic tree, red before the class refusal)', () => {
+  const d = tempTree(pySrc('def _spin(cid):', '    return ("<style>a{b:%s}</style>"', '            "<div>%s</div>").__mod__((cid, cid))', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.throws(() => hostSheets(d), /_spin.*formatted/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+test('hostSheets: a helper <style> run passed as the argument of str.format, str.format_map or str.__mod__ standing BEFORE its opening literal fails by name, the call outside the scanned remainder (the file review\'s round 13, extra8-1; a property pin over a synthetic tree, red before the text before the run joined the scan)', () => {
+  const heads = [['    return str.format("<style>a{{b:{0}}}</style>"', '                      "<div>{0}</div>", cid)'], ['    return str.format_map("<style>a{{b:{c}}}</style>"', '                          "<div>{c}</div>", {"c": cid})'], ['    return str.__mod__("<style>a{b:%s}</style>"', '                       "<div>%s</div>", (cid, cid))']];
+  for (const body of heads) {
+    const d = tempTree(pySrc('def _spin(cid):', ...body, '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+    try { assert.throws(() => hostSheets(d), /_spin.*formatted/, body[0]); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+  }
+});
 test('hostSheets control: a % inside a trailing comment or inside a later literal after the closing literal is not the operator, so the run decodes as before (the file review\'s round 12, kernel-1 with extra8-1: the scan blanks literals and comments before it looks; a property pin over a synthetic tree, green before and after, red under a scan that does not blank)', () => {
   const d = tempTree(pySrc('def _spin(cid):', '    return ("<style>a{b:c}</style>"   # 100% of the pane', '            "<div style=\'width:50%\'>" + cid + "</div>")', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
   try { assert.deepEqual(hostSheets(d).map((x) => [x.name, x.css]), [['kernel/kernel.py _spin', 'a{b:c}']]); } finally { fs.rmSync(d, { recursive: true, force: true }); }
@@ -469,6 +504,24 @@ test('hostSheets control: a % inside a triple-quoted literal or inside a literal
 test('hostSheets: a helper <style> run holding a second block fails by name rather than reading the markup between the blocks as a sheet (the file review\'s round 11, extra7-1; a property pin over a synthetic tree, red before the refusal)', () => {
   const d = tempTree(pySrc('def _spin(cid):', '    return "<style>a{b:c}</style><div></div><style>d{e:f}</style>"', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
   try { assert.throws(() => hostSheets(d), /_spin/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+// A `<style` outside the run (the file review's round 13, kernel-1 with extra8-2): the reader took the first `"<style>` and the first
+// `</style>"` and looked at nothing around them, so a second block in a literal of its own, before or after the run, in either quote
+// style, was dropped from the population with no throw while the docstring said it failed by name. Each shape below decoded to one
+// block alone at the head that review read (executed in the round's probe); the raw text is read, since the blanked text would hide the literal.
+test('hostSheets: a helper writing a second <style> block in a third literal after its run fails by name rather than dropping the block from the population (the file review\'s round 13, kernel-1; a property pin over a synthetic tree, red before the refusal)', () => {
+  const d = tempTree(pySrc('def _spin(cid):', '    return ("<style>a{b:c}</style>"', '            "<div></div>"', '            "<style>d{e:f}</style>")', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.throws(() => hostSheets(d), /_spin.*outside the run/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+test('hostSheets: a helper folding a <style> block into a markup literal ahead of its run fails by name rather than reading the later run alone (the file review\'s round 13, kernel-1; a property pin over a synthetic tree, red before the refusal)', () => {
+  const d = tempTree(pySrc('def _spin(cid):', '    return ("<div><style>x{y:z}</style></div>"', '            "<style>d{e:f}</style>")', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.throws(() => hostSheets(d), /_spin.*outside the run/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+test('hostSheets: a helper adding a page-specific <style> block in its own literal after the shared run, double- or single-quoted, fails by name rather than serving it outside the population (the file review\'s round 13, extra8-2; a property pin over a synthetic tree, red before the refusal)', () => {
+  for (const second of ['"<style>d{e:f}</style>"', "'<style>d{e:f}</style>'"]) {
+    const d = tempTree(pySrc('def _spin(cid):', '    return "<style>a{b:c}</style>" + cid + ' + second, '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+    try { assert.throws(() => hostSheets(d), /_spin.*outside the run/, second); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+  }
 });
 test('hostSheets: a helper <style> literal with a prefix letter (an f-string) fails by name, since its text is not what Python serves (the file review\'s round 11, extra7-1; a property pin over a synthetic tree, red before the refusal)', () => {
   const d = tempTree(pySrc('def _spin(cid):', '    return f"<style>a{{b:c}}</style>"', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
