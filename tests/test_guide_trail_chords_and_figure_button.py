@@ -113,10 +113,12 @@ PICTURE = ("A picture in a rendered file that comes from a file or a web address
                 "ure that failed to load, which opens nothing either; a `data:` picture, whose bytes are written into"
                 " the file itself and which does not open; a picture smaller than 48 pixels on either side (a badge, "
                 "an inline icon), which the button would cover, and which a plain click still opens when no link hold"
-                "s it; and a picture inside a link that holds more than the picture (a caption beside it), where a cl"
-                "ick follows the link (a link with no address left, or an anchor that only marks a place, is not a li"
-                "nk a click can follow, so a picture inside it keeps its button and its tooltip, and a plain click op"
-                "ens it), while a picture that is all its link holds keeps its button beside the link.")
+                "s it (a small picture from the web has the dashed border itself, on a mouse or trackpad while the po"
+                "inter is over it and on a phone or tablet at all times, since its tooltip never shows there); and a "
+                "picture inside a link that holds more than the picture (a caption beside it), where a click follows "
+                "the link (a link with no address left, or an anchor that only marks a place, is not a link a click c"
+                "an follow, so a picture inside it keeps its button and its tooltip, and a plain click opens it), whi"
+                "le a picture that is all its link holds keeps its button beside the link.")
 PICTURE_HEAD = PICTURE[:PICTURE.index("; a plain click")]
 PICTURE_NONE = PICTURE[PICTURE.index("a figure waiting behind"):]
 # the guide's condition clause for the Back and Forward pair, the browser plan's matching clause, and the one line of openFileView both claim

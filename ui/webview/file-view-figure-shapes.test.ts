@@ -86,11 +86,12 @@ test("the one decision: figureWantsControl reads the figure's state by one rule 
     "const want = figureWantsControl(img, anchor, filePath);",
     "const target = figureTarget(img, filePath);",
     "dressFigureTitle(img, target);",
+    "dressFigureMark(img, want);",
     "if (standing) { if (!want) removeFigureControl(standing); else dressFigureControl(standing, target); return; }",
     "if (!want) return;",
     'const b = el("button", "fileview-btn fileview-icon " + FIGOPEN_CLASS) as HTMLButtonElement;',
     "parent.insertBefore(b, anchor.nextSibling);",
-  ], "decideFigureControl: the verdict against the control standing, one place that adds or removes, the target read once and the dress applied from it (sentence pins, in order)");
+  ], "decideFigureControl: the verdict against the control standing, one place that adds or removes, the target read once and the dress applied from it, the picture's title and then its mark before the control's branches (sentence pins, in order; the executed read of the title and the mark on a remote picture under the floor is file-figure-open-browser.test.ts's under-the-floor case, the file review's round 12, fresh-1 with tests-2)");
   // the removal hands the keyboard on first (the file review's round 2, ui-4): the holder read before the control goes, the
   // viewer body's takeKeyboard (registered per open) called after it, with the ring the holder wore
   const remove = between(VIEW, "function removeFigureControl(control: HTMLElement): void {", "\n}\n");

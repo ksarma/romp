@@ -1965,7 +1965,12 @@ a.fileview-gh-note { border-style: dashed; }
    dressFigureControl, keyed on the figure's target: `fv-figopen-web` beside the class, the outbound glyph and words naming the host)
    wears the border dashed, the gate's dress for a figure from another host, so the control that leaves the page reads apart from
    the one that opens a file before any gesture; no accent: the accent is highlight chrome, and a kind's mark wears it only where
-   ui/CLAUDE.md names an exception. Byte-equal in both sheets (fileview-parity.test.ts); laid out in file-figure-open-browser.test.ts. */
+   ui/CLAUDE.md names an exception. A picture from the web that wears no control (a loaded picture under the floor, FIGOPEN_MIN_PX)
+   carries the dashed dress itself, an outline keyed on the mark the decision sets (`img[data-fv-figweb]`, file-view.ts dressFigureMark),
+   on hover, and at rest on a device with no hover, where its tooltip cannot show (the file review's round 12, fresh-1); an outline and
+   not a border, since a border on the img widens its box, and in the button's border token (var(--card-border)), the one the control's
+   dashed border wears, so the two dresses are one colour. Byte-equal in both sheets (fileview-parity.test.ts); laid out in
+   file-figure-open-browser.test.ts. */
 .fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }
 .fileview-md .fv-figopen:hover { background: var(--bg) linear-gradient(var(--accent-wash), var(--accent-wash)); }
 .fileview-md .fv-figopen-left { float: left; }
@@ -1973,6 +1978,8 @@ a.fileview-gh-note { border-style: dashed; }
 .fileview-md .fv-figopen-web { border-style: dashed; }
 @media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible { opacity: 1; } }
 @media screen and (hover: none) { .fileview-md .fv-figopen { opacity: 0.8; } }   /* touch: no hover state, so keep it visible; never print */
+@media screen { .fileview-md img[data-fv-figweb]:hover { outline: 1px dashed var(--card-border); outline-offset: 1px; } }
+@media screen and (hover: none) { .fileview-md img[data-fv-figweb] { outline: 1px dashed var(--card-border); outline-offset: 1px; } }   /* touch: a picture under the floor has no control and its tooltip never shows, so the mark stands at rest; never print */
 .fileview-md :not(pre) > code {
   font-family: var(--mono, ui-monospace, monospace); font-size: 0.92em;
   color: var(--code-fg, #e1c08d); background: var(--code-bg, rgba(217, 119, 87, 0.10));

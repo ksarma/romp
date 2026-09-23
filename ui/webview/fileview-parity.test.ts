@@ -99,6 +99,9 @@ const RULES = [
   ".fileview-md .fv-figopen {", ".fileview-md .fv-figopen:hover {", ".fileview-md .fv-figopen-left {", ".fileview-md .fv-figopen-right {", ".fileview-md .fv-figopen-web {",
   "@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible {",
   "@media screen and (hover: none) { .fileview-md .fv-figopen {",
+  // the picture's own outbound mark for a web picture with no control (the file review's round 12, fresh-1): the two one-line screen
+  // blocks keyed on the img's attribute, byte-equal in both sheets (file-figure-open.test.ts derives the set by the attribute)
+  "@media screen { .fileview-md img[data-fv-figweb]:hover {", "@media screen and (hover: none) { .fileview-md img[data-fv-figweb] {",
   ".fileview-cm {", ".fileview-cm .cm-editor {", ".fileview-editor {",
   ".fileview-dir-link {", ".fileview-dir-link:hover {",
   // links inside a shown file (file-view-links.ts): the light dress on a URL anchor and a path link, and the Markdown link that names a file

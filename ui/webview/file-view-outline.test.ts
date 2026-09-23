@@ -23,6 +23,7 @@ import { headingSlug, uniqueSlugs } from "./md-links";
 import { OUTLINE_NOTE, OUTLINE_HEADINGS, FOLD_HEADING, MATH_HEADING, CODE_HEADING, QUOTED_HEADING } from "./file-view-outline-fixture";
 import type { FileViewActionCtx, At } from "./file-view";
 import { setMdSanitizer } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md)
+import { loadGatedHost, forgetLoadedHosts } from "./figure-gate";   // the gate lifted for a synthetic host before a paint of remote pictures (the picture-title case)
 import { cssRules, renderRule } from "./css-rules.mjs";
 import { hostSheets } from "./host-sheets.mjs";
 
@@ -1020,4 +1021,25 @@ test("a landing under a press on the Outline BUTTON (PR review round 2): the lan
   o.ctx.reload(); await settle();
   assert.equal(paints, p3 + 1, "a landing with no press behind it paints at once");
   assert.equal(popover(o), null, "…and closes the popover: the reader did not just ask for it");
+});
+
+// ── the picture's title and the control's words for a picture from the web, over the stand-in's paint (the file review's round 12,
+// tests-1): the address with credentials is ASSEMBLED at run time through the URL API, never written as a literal (the repository's
+// rule against credential-shaped literals in fixtures)
+test("a picture from the web whose address carries credentials, and one whose address carries a written port, painted with the host loaded: the picture's title is the address with the username and password taken out and the port kept (shownAddress), after the author's title when one stands; the control's title PROPERTY and aria-label name the host with its port (targetHost), with the web class; the local picture keeps the one word set and no title. file-figure-open.test.ts pins the call site's spelling alone, so this executed case is what holds the strip: red under a `return href;` body (a property pin over the paint)", async (t) => {
+  const cred = new URL("http://example.test/p.svg"); cred.username = "user"; cred.password = "pass";
+  assert.match(cred.href, /^http:\/\/user:pass@example\.test\/p\.svg$/, "the assembled address carries the credentials");
+  loadGatedHost("example.test", doc as unknown as ParentNode);   // the host on no list: lifted for this document before the paint (remoteHost keys on the hostname, so the ported address is lifted with it)
+  t.after(() => { forgetLoadedHosts(); });   // a module-level set: cleared, so no other case paints example.test unlisted
+  const o = await open(REPORT, '# R\n\n<img src="' + cred.href + '" alt="cred">\n\n<img src="http://example.test:8080/q.svg" alt="port" title="Figure 9">\n\n![local](figs/plot.svg)\n', t);
+  const imgs = o.body.querySelector(".fileview-md")!.querySelectorAll("img");
+  assert.deepEqual(imgs.map((i) => i.getAttribute("alt")), ["cred", "port", "local"], "the three pictures painted, none gated");
+  assert.deepEqual(imgs.map((i) => i.getAttribute("title")), ["Opens in a new tab: http://example.test/p.svg", "Figure 9\nOpens in a new tab: http://example.test:8080/q.svg", null],
+    "the picture's title: the address with its credentials emptied (never user:pass@ in a tooltip), the port kept, the author's title first on its own line; the local picture none");
+  const controls = imgs.map((i) => { const n = i.nextSibling; return n instanceof El && n.hasAttribute("data-fv-figopen") ? n : null; });
+  assert.ok(controls.every((c) => c !== null), "a control after each picture (a stand-in is decided from its source: no floor, no state)");
+  const words = ["Open the picture in a new tab at example.test", "Open the picture in a new tab at example.test:8080", "Open the picture"];
+  assert.deepEqual(controls.map((c) => c!.title), words, "the control's title PROPERTY (dressFigureControl writes the property; no attribute is set here): the host with its port, never the credentials or the path");
+  assert.deepEqual(controls.map((c) => c!.getAttribute("aria-label")), words, "and the aria-label, the same words");
+  assert.deepEqual(controls.map((c) => c!.classList.contains("fv-figopen-web")), [true, true, false], "the web class on the two remote controls alone");
 });

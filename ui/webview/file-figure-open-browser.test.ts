@@ -22,10 +22,15 @@
 // ui-1 with extra8-1); a remote picture inside an author's named anchor or a dead host:port link, bare, captioned and under
 // the floor, carries the address line on the picture and, where the floor allows, its control (the captioned one's inside the
 // anchor, after the picture), and its plain click opens the tab, while the picture inside a live web link keeps no line (the
-// file review's round 12, correctness-1 with ui-1: the three readers of "whose click is this" read one predicate). Red over
+// file review's round 12, correctness-1 with ui-1: the three readers of "whose click is this" read one predicate); one relayed
+// address carries a written port, which the control's words keep (URL.host, so two servers on one name read apart; the file
+// review's round 12, fresh-2); a remote picture under the floor (20 by 20, from the second server) wears no control, carries the
+// address in its title and wears the outbound mark on the picture itself, on hover on a fine pointer and at rest under CDP touch
+// emulation (hover none), where a tap opens the tab at the address, the popup and the second server's log read, and the mark's
+// colour is the control's border colour under both themes (the file review's round 12, fresh-1 with tests-2). Red over
 // the unchanged viewer at the first control assertion (no control exists), the outbound
 // case red at the head before it, where the two controls presented one surface, and the link-shapes case red at the round-12
-// head, where the title and the control read any anchor while the click did not. Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid and example.test addresses,
+// head, where the title and the control read any anchor while the click did not, and the under-the-floor case red at that head too, where no rule dressed the picture. Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid and example.test addresses,
 // /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -426,16 +431,20 @@ test("in a browser: a top-level html-block figure wearing the production control
 // origin differs from the page's and the bytes come from a real second server the test starts itself.
 const WEB = "http://example.test";
 const WEB_HOST = "example.test";
+const WEB_PORT = "http://example.test:8443";                          // the same name with a written port, relayed to the second server too: the control's words keep the port (URL.host), so two servers on one name read apart (the file review's round 12, fresh-2)
+const WEB_PORT_HOST = "example.test:8443";
 const WEB_WORDS = "Open the picture in a new tab at " + WEB_HOST;      // the control's title and aria-label for a picture from the web (file-view.ts figureOpenWebTitle)
 const WEB_LINE = (href: string): string => "Opens in a new tab: " + href;   // the picture's own title line for the two click roads (file-view.ts figureWebTitleLine)
 const AUTHOR_TITLE = "Figure 2: an author's title";
 const PLOT3 = ROOT + "/docs/figs/plot3.svg";
 // a local figure; a remote one with an author's title; a remote one with none; a <picture> whose wide candidate is remote and
-// whose narrow one (the img's src) is local, so a viewport change re-selects the kind with no add or remove of the control
+// whose narrow one (the img's src) is local, so a viewport change re-selects the kind with no add or remove of the control; a
+// remote one at the same name with a written port
 const WEB_TEXT = "# Report\n\n![local](figs/plot.svg)\n\n" + PARA(1) + "\n\n"
   + '<img src="' + WEB + '/pic.svg" alt="remote" title="' + AUTHOR_TITLE + '">\n\n' + PARA(2) + "\n\n"
   + "![bare](" + WEB + "/bare.svg)\n\n" + PARA(3) + "\n\n"
-  + '<picture><source media="(min-width: 800px)" srcset="' + WEB + '/wide.svg"><img src="figs/plot3.svg" alt="adaptive" title="Figure 4"></picture>\n\n' + PARA(4) + "\n";
+  + '<picture><source media="(min-width: 800px)" srcset="' + WEB + '/wide.svg"><img src="figs/plot3.svg" alt="adaptive" title="Figure 4"></picture>\n\n' + PARA(4) + "\n\n"
+  + "![ported](" + WEB_PORT + "/port.svg)\n\n" + PARA(5) + "\n";
 const WEB_DOCS: Record<string, string> = { [REPORT]: WEB_TEXT, [PLOT]: svg("#456"), [PLOT3]: svg("#465") };
 const sized = (w: number, h: number, fill: string): string => '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '"><rect width="' + w + '" height="' + h + '" fill="' + fill + '"/></svg>';
 /** The second server: a real http server on another loopback port, serving every remote picture (300 by 200, or the size `sizes`
@@ -471,7 +480,7 @@ test("in a browser: a LOADED picture from the web beside a local one shows where
   try {
     await inBrowser(t, async (browser) => {
       const before = async (pg: any): Promise<void> => {
-        await pg.context().route((u: URL) => u.href.startsWith(WEB + "/"), async (route: any) => {
+        await pg.context().route((u: URL) => u.href.startsWith(WEB + "/") || u.href.startsWith(WEB_PORT + "/"), async (route: any) => {
           const a = await fromSecond(second.port, new URL(route.request().url()).pathname);
           return route.fulfill({ status: a.status, contentType: a.type, body: a.body });
         });
@@ -486,13 +495,15 @@ test("in a browser: a LOADED picture from the web beside a local one shows where
       await page.waitForFunction(() => Array.from(document.querySelectorAll(".fileview-md img")).every((i) => !i.closest('[data-act="fv-load"]') && (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalWidth > 0 && (() => { let a: Element = i; for (let p = a.parentElement; p && (p.localName === "picture"); p = a.parentElement) a = p; return !!(a.nextElementSibling && a.nextElementSibling.hasAttribute("data-fv-figopen")); })()), null, { timeout: 10000 });
       await frames(page, 2);
       const d = await dress(page);
-      assert.deepEqual(d.map((x) => x.alt), ["local", "remote", "bare", "adaptive"], "the four figures, each loaded with a control");
-      assert.ok(served.some((s) => s.endsWith("/pic.svg")) && served.some((s) => s.endsWith("/wide.svg")), "the second server served the remote pictures: " + JSON.stringify(served));
+      assert.deepEqual(d.map((x) => x.alt), ["local", "remote", "bare", "adaptive", "ported"], "the five figures, each loaded with a control");
+      assert.ok(served.some((s) => s.endsWith("/pic.svg")) && served.some((s) => s.endsWith("/wide.svg")) && served.some((s) => s.endsWith("/port.svg")), "the second server served the remote pictures, the ported address's among them: " + JSON.stringify(served));
       assert.ok(d[3].shown.startsWith(WEB + "/"), "at 900 px the <picture> shows its wide, remote candidate: " + d[3].shown);
       // FAILS BEFORE: the remote control wears the local words, Open the picture, no web class and the same glyph
       assert.deepEqual([d[1].title, d[1].aria, d[1].web], [WEB_WORDS, WEB_WORDS, true], "the remote picture's control names the host and the tab, and carries the web class");
       assert.deepEqual([d[0].title, d[0].aria, d[0].web], ["Open the picture", "Open the picture", false], "the local picture's control keeps the one word set and no web class");
       assert.deepEqual([d[2].title, d[2].web, d[3].title, d[3].web], [WEB_WORDS, true, WEB_WORDS, true], "the bare remote picture and the <picture> on its remote candidate wear the web words and class too");
+      // the written port is part of the words (URL.host, never hostname: two servers on one name read apart) and of the title's address
+      assert.deepEqual([d[4].title, d[4].aria, d[4].web, d[4].imgTitle], ["Open the picture in a new tab at " + WEB_PORT_HOST, "Open the picture in a new tab at " + WEB_PORT_HOST, true, WEB_LINE(WEB_PORT + "/port.svg")], "the ported address: the control's words name the host WITH its port and the picture's title carries the address with it (the file review's round 12, fresh-2: red under a .hostname read, which every fixture without a port left green; a property pin over the control's title property)");
       assert.ok(d[1].glyph && d[0].glyph && d[1].glyph !== d[0].glyph, "the outbound glyph differs from the local control's corner arrows");
       assert.match(d[1].glyph!, /<path /, "the outbound glyph draws a box"); assert.match(d[1].glyph!, /<line /, "with an arrow leaving it");
       assert.equal(d[2].glyph, d[1].glyph, "one outbound drawing for every web control"); assert.equal(d[3].glyph, d[1].glyph);
@@ -608,6 +619,103 @@ test("in a browser: a LOADED remote picture inside an author's named anchor or a
       }
       assert.deepEqual(await clickPicture(page, "deadcap", true), [WEB + "/deadcap.svg"], "a Ctrl-click on the captioned dead link's picture: the tab too, once");
       assert.ok(served.some((s) => s.endsWith("/floor.svg")), "the second server served the pictures: " + JSON.stringify(served));
+      assert.deepEqual(errors, [], "no page errors");
+      await page.close();
+    });
+  } finally { await second.close(); }
+});
+
+// ── a remote picture under the floor: no control, the address in its title, and the outbound mark on the picture itself ──────
+// (the file review's round 12, fresh-1 with tests-2: the floor withholds the control under 48 px and the picture's title is a
+// hover tooltip, so on a coarse pointer a plain tap opened the credentialed tab with nothing visible before it, and no executed
+// case read the title of a remote picture under the floor; the picture now wears the control's dashed dress itself, an outline
+// keyed on the mark the decision sets, at rest where hover is none and on hover otherwise, in the control's own border token)
+const TINY_TEXT = "# Report\n\n![local](figs/plot.svg)\n\n" + PARA(1) + "\n\n![build](" + WEB + "/tiny.svg)\n\n" + PARA(2) + "\n\n![big](" + WEB + "/pic.svg)\n\n" + PARA(3) + "\n";
+const TINY_DOCS: Record<string, string> = { [REPORT]: TINY_TEXT, [PLOT]: svg("#456") };
+type Under = { alt: string; w: number; h: number; control: boolean; controlOpacity: string | null; controlBorder: string | null; title: string | null; mark: boolean; outline: string; outlineWidth: string; outlineColor: string; border: string };
+/** The three figures as the reader sees them: the box, the control after the img with its opacity and border colour, the title, the
+ *  mark attribute, and the computed outline and border; with the media the page is under and the badge's centre. */
+const under = (page: any): Promise<{ hoverNone: boolean; coarse: boolean; imgs: Under[]; centre: { x: number; y: number } }> => page.evaluate(() => {
+  const imgs = Array.from(document.querySelectorAll(".fileview-md img")) as HTMLImageElement[];
+  const b = imgs[1].getBoundingClientRect();
+  return {
+    hoverNone: matchMedia("(hover: none)").matches, coarse: matchMedia("(pointer: coarse)").matches, centre: { x: b.left + b.width / 2, y: b.top + b.height / 2 },
+    imgs: imgs.map((img) => { const r = img.getBoundingClientRect(); const cs = getComputedStyle(img); const n = img.nextElementSibling; const c = n && n.hasAttribute("data-fv-figopen") ? n as HTMLElement : null;
+      return { alt: img.getAttribute("alt") || "", w: r.width, h: r.height, control: !!c, controlOpacity: c ? getComputedStyle(c).opacity : null, controlBorder: c ? getComputedStyle(c).borderColor : null, title: img.getAttribute("title"), mark: img.hasAttribute("data-fv-figweb"), outline: cs.outlineStyle, outlineWidth: cs.outlineWidth, outlineColor: cs.outlineColor, border: cs.borderStyle + " " + cs.borderWidth }; }),
+  };
+});
+
+test("in a browser: a remote picture under the floor (20 by 20, from the second server) wears no control and carries the address in its title (the executed read of the property file-figure-open.test.ts and file-view-figure-shapes.test.ts pin by spelling); the picture itself wears the outbound mark, the control's dashed dress as an outline: on a fine pointer on hover alone, and on a coarse pointer (CDP touch emulation, hover none) at rest, so the tap's open is visible before it happens, its colour the control's border colour in the dark theme and in the light one; the tap opens the tab at the address (the popup and the second server's log, never a window.open stub) and the viewer stays; the loaded picture beside it keeps its control and wears no mark (the file review's round 12, fresh-1 with tests-2)", { timeout: 240000 }, async (t) => {
+  const served: string[] = [];
+  const second = await secondServer(served, { "/tiny.svg": [20, 20] });
+  try {
+    await inBrowser(t, async (browser) => {
+      const before = async (pg: any): Promise<void> => {
+        await pg.context().route((u: URL) => u.href.startsWith(WEB + "/"), async (route: any) => {
+          const a = await fromSecond(second.port, new URL(route.request().url()).pathname);
+          return route.fulfill({ status: a.status, contentType: a.type, body: a.body });
+        });
+      };
+      const { page, errors } = await openViewer(browser, "chat", 900, 600, {
+        docs: TINY_DOCS, before,
+        serve: (u) => { const p = u.pathname === "/file" ? u.searchParams.get("path") || "" : ""; return TINY_DOCS[p] !== undefined && /\.svg$/.test(p) ? { status: 200, type: "image/svg+xml", body: TINY_DOCS[p] } : null; },
+      });
+      await page.waitForFunction(() => { const i = document.querySelectorAll(".fileview-md img")[0] as HTMLImageElement; return i.complete && i.naturalWidth > 0; }, null, { timeout: 10000 });
+      await page.click('[data-act="fv-load"]');
+      // every figure loaded and out of its placeholder; no control is waited for: the badge gets none
+      await page.waitForFunction(() => Array.from(document.querySelectorAll(".fileview-md img")).every((i) => !i.closest('[data-act="fv-load"]') && (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalWidth > 0), null, { timeout: 10000 });
+      await frames(page, 3);
+      const rest = await under(page);
+      assert.equal(rest.hoverNone, false, "a fine pointer before the emulation");
+      assert.deepEqual(rest.imgs.map((x) => x.alt), ["local", "build", "big"], "the three figures");
+      const badge = rest.imgs[1], big = rest.imgs[2];
+      assert.ok(badge.w < 48 && badge.h < 48 && badge.w > 0, "the badge is under the floor on both sides: " + badge.w + " by " + badge.h);
+      // tests-2: the title of a remote picture under the floor, read off the real paint
+      assert.equal(badge.control, false, "no control under the floor");
+      assert.equal(badge.title, WEB_LINE(WEB + "/tiny.svg"), "the picture's own title carries the address, decided before the control's verdict (red when dressFigureTitle moves inside the control's branches)");
+      assert.deepEqual([big.control, big.title, big.mark, big.outline], [true, WEB_LINE(WEB + "/pic.svg"), false, "none"], "the loaded picture over the floor: its control and title, and no mark of its own (the mark's population is the title's less the pictures a control stands on)");
+      assert.deepEqual([badge.outline, badge.border], ["none", "none 0px"], "at rest on a fine pointer the badge wears no mark: the hover shows it, as it reveals the control");
+      await page.mouse.move(rest.centre.x, rest.centre.y);
+      await frames(page, 2);
+      const hovered = await under(page);
+      // FAILS BEFORE: no rule dressed the picture; the only surface was the title, a tooltip
+      assert.deepEqual([hovered.imgs[1].mark, hovered.imgs[1].outline, hovered.imgs[1].outlineWidth], [true, "dashed", "1px"], "the pointer over the badge: the outbound mark, the control's dashed dress as an outline on the picture itself");
+      assert.deepEqual([hovered.imgs[1].w, hovered.imgs[1].h], [badge.w, badge.h], "an outline, not a border: the badge's box is unchanged by the mark");
+      await page.mouse.move(5, 5);
+      await frames(page, 2);
+      assert.equal((await under(page)).imgs[1].outline, "none", "and gone with the pointer");
+      // no hover (a touch device): Chromium's (hover: none) follows touch emulation and does not revert, so this half is last
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+      await frames(page, 2);
+      const touch = await under(page);
+      assert.deepEqual([touch.hoverNone, touch.coarse], [true, true], "hover none and a coarse pointer under the emulation");
+      // FAILS BEFORE: outline none, the tap's open shown nowhere
+      assert.deepEqual([touch.imgs[1].mark, touch.imgs[1].outline, touch.imgs[1].outlineWidth], [true, "dashed", "1px"], "at rest on a coarse pointer the badge wears the mark: the open is visible before the tap");
+      assert.deepEqual([touch.imgs[2].controlOpacity, touch.imgs[2].outline], ["0.8", "none"], "the picture with a control: the control visible at rest, no mark on the picture");
+      // one colour token for the two dresses (the owner's call with the ruling): the mark's outline colour is the control's border
+      // colour, in the dark theme and, with body.theme-light, in the light one; the two themes resolve it apart, so the read is not one value twice
+      assert.equal(touch.imgs[1].outlineColor, touch.imgs[2].controlBorder, "dark theme: the mark's outline colour is the control's border colour, one token (" + touch.imgs[1].outlineColor + ")");
+      // the theme flipped on the body; the control's border colour TRANSITIONS to the light value (.fileview-btn's 0.12 s
+      // border-color ease) while the outline has no transition, so the light read waits for the control's transitionend (bounded)
+      await page.evaluate(() => new Promise<void>((done) => { const c = document.querySelectorAll(".fileview-md img")[2].nextElementSibling as HTMLElement; c.addEventListener("transitionend", () => done(), { once: true }); setTimeout(done, 1500); document.body.classList.add("theme-light"); }));
+      await frames(page, 2);
+      const light = await under(page);
+      assert.equal(light.imgs[1].outlineColor, light.imgs[2].controlBorder, "light theme: the same, in that theme's value (" + light.imgs[1].outlineColor + ")");
+      assert.notEqual(light.imgs[1].outlineColor, touch.imgs[1].outlineColor, "the two themes resolve the token apart: " + light.imgs[1].outlineColor + " against " + touch.imgs[1].outlineColor);
+      assert.deepEqual([light.imgs[1].mark, light.imgs[1].outline], [true, "dashed"], "the mark stands in the light theme too");
+      await page.evaluate(() => document.body.classList.remove("theme-light"));
+      await frames(page, 2);
+      const before2 = served.filter((s) => s.endsWith("/tiny.svg")).length;
+      const popupP = page.context().waitForEvent("page", { timeout: 10000 });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: touch.centre.x, y: touch.centre.y }] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      const popup = await popupP;
+      await popup.waitForLoadState().catch(() => null);
+      assert.equal(popup.url(), WEB + "/tiny.svg", "the tap opens a tab at the picture's address (the popup's URL)");
+      assert.ok(served.filter((s) => s.endsWith("/tiny.svg")).length > before2, "the second server answered the tab's own request: " + JSON.stringify(served));
+      assert.equal(await base(page), "report.md", "the viewer stays on the report");
+      await popup.close();
       assert.deepEqual(errors, [], "no page errors");
       await page.close();
     });

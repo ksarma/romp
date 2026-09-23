@@ -4735,6 +4735,16 @@ export function figureWebTitleLine(address: string): string { return "Opens in a
  *  decision that finds the picture's candidate local again restores that title and takes the mark off. Found by the mark, never
  *  by the title's text: the sanitizer keeps an author's `title` and lets no data-* attribute through. */
 const FIGTITLE_MARK = "data-fv-figtitle";
+/** The mark on a picture from the web that wears NO control (a loaded picture under the floor, FIGOPEN_MIN_PX): the picture itself
+ *  carries the control's outbound dress, a dashed outline the sheets key on this attribute (`.fileview-md img[data-fv-figweb]`), on
+ *  hover where the device has one and at rest where it has none (a coarse pointer), as the control's own reveal is, so the plain
+ *  tap's open is shown before it happens where the title is no surface (a tooltip never shows on touch; the file review's round 12,
+ *  fresh-1). Set and taken off at every decision beside the title (dressFigureMark): the population is the title's (FIGTITLE_MARK, a
+ *  web target whose click is the figure's own) less the pictures a control stands on, whose control carries the dress. A data-*
+ *  attribute, never a class: the sanitizer keeps an author's `class` and lets no data-* attribute through, so no authored picture
+ *  wears the mark. The outline wears the button's border token (var(--card-border)), the one the control's dashed border wears, so
+ *  the two dresses are one colour (the owner's call with that ruling). */
+const FIGWEB_MARK = "data-fv-figweb";
 /** The host the control's words name for a web target: the address's host (with its port when one is written), never its
  *  credentials or its path; the address as written when it does not parse. */
 function targetHost(href: string): string {
@@ -5136,6 +5146,7 @@ function decideFigureControl(img: Element, filePath: string): void {
   const want = figureWantsControl(img, anchor, filePath);
   const target = figureTarget(img, filePath);   // the kind the dress is keyed on, read at every decision (a standing control's included), as the click reads it
   dressFigureTitle(img, target);
+  dressFigureMark(img, want);
   if (standing) { if (!want) removeFigureControl(standing); else dressFigureControl(standing, target); return; }
   if (!want) return;
   const b = el("button", "fileview-btn fileview-icon " + FIGOPEN_CLASS) as HTMLButtonElement;
@@ -5171,7 +5182,8 @@ function dressFigureControl(b: HTMLElement, target: FigureTarget | null): void {
  *  file, or nothing to open, the author's title alone or none. The author's title is kept under FIGTITLE_MARK while the viewer's
  *  line stands, so the next decision restores it when the candidate is local again (a `<picture>` at a media change) and a
  *  decision never appends the line twice. Whatever the control's verdict: a remote picture under the floor wears no control and
- *  its plain click still opens the tab (the guide's sentence), so its title says so too. Cursor unchanged. */
+ *  its plain click still opens the tab (the guide's sentence), so its title says so too, and the mark for the picture no control
+ *  stands on is dressFigureMark's, decided after it. Cursor unchanged. */
 function dressFigureTitle(img: Element, target: FigureTarget | null): void {
   const web = target !== null && target.kind === "web" && figureLinkOf(img) === null;
   const held = img.getAttribute(FIGTITLE_MARK);
@@ -5184,6 +5196,13 @@ function dressFigureTitle(img: Element, target: FigureTarget | null): void {
     if (held) img.setAttribute("title", held); else img.removeAttribute("title");
     img.removeAttribute(FIGTITLE_MARK);
   }
+}
+/** The picture's own outbound mark (FIGWEB_MARK): on a picture whose title carries the viewer's line (FIGTITLE_MARK, set by
+ *  dressFigureTitle at this decision) and on which no control stands (`want` false: a loaded picture under the floor); taken off
+ *  otherwise, so a picture that grows past the floor, or whose candidate turns local, loses it at that decision, as the title does. */
+function dressFigureMark(img: Element, want: boolean): void {
+  if (!want && img.hasAttribute(FIGTITLE_MARK)) img.setAttribute(FIGWEB_MARK, "");
+  else img.removeAttribute(FIGWEB_MARK);
 }
 /** The control's glyph (ICON_EXPAND, the bar's family, and ICON_OUTBOUND for a picture from the web), the two drawings parsed ONCE
  *  in one write onto a holder that enters no document and cloned into each control. The control is placed under the Rendered box during the render, and a write of innerHTML on a live-document
