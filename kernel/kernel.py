@@ -35294,17 +35294,43 @@ _SUBAGENT_TREES_GEN = [0]       # the count of roots that have left _SUBAGENT_TR
 #                                 while _subagent_vouched says no eviction of the root it depends on has happened since: the table below
 #                                 says which root each value evicted, so an eviction drops from every open scope what depended on that
 #                                 root and nothing else (2026-09-21, round 1 of #882's ruling; until then one process-wide value emptied every scope's
-#                                 three maps on any eviction). Advisory like the tallies, written without a lock: an increment lost
-#                                 under a race could let a thread serve one cycle's entry past a concurrent eviction of its root,
-#                                 bounded by that cycle's end
+#                                 three maps on any eviction). Incremented at one site, _subagent_root_evicted, under
+#                                 _SUBAGENT_EVICT_LOCK, so no increment is lost (written without a lock until round 2 of #882, when
+#                                 a lost increment could let a thread serve one cycle's entry past a concurrent eviction of its
+#                                 root); a hold site reads it unlocked, one load before its disk read: a value read while an
+#                                 eviction is being recorded is either the one before it, which that eviction's store outdates, or
+#                                 its own, and the disk read that follows postdates the eviction
 _SUBAGENT_ROOT_EVICTED = {}     # root -> the _SUBAGENT_TREES_GEN value its latest eviction moved to (_subagent_root_evicted); an entry
 #                                 held under g0 for that root is vouched while the value is at or below g0. One int per root ever
 #                                 evicted, bounded at _SUBAGENT_ROOT_EVICTED_MAX: an eviction of a root not in a full table clears it
 #                                 and records the value in _SUBAGENT_ROOTS_CLEARED_GEN, which drops every entry held before the clear
-#                                 once (the safe side: one re-validation, never a stale serve). Read and written by every thread that
-#                                 reads a tree, without a lock, as the memo and the gen are
+#                                 once (the safe side: one re-validation, never a stale serve, with evictions and vouches running
+#                                 on other threads too: tests/test_subagent_tree_stamps_per_cycle.py EvictionTableLock's
+#                                 clear-straddle and wiped-record cases). Written and read under _SUBAGENT_EVICT_LOCK
 _SUBAGENT_ROOT_EVICTED_MAX = 1024
 _SUBAGENT_ROOTS_CLEARED_GEN = [0]   # the gen value at the table's latest clear (0: never): no scope entry held under an older g0 is vouched
+_SUBAGENT_EVICT_LOCK = threading.Lock()   # the eviction table's lock, stated here once (round 2 of #882, group E; the other
+#                                           texts point here). Lifetime: the process's, made at import and never replaced; each
+#                                           holder takes and releases it inside one call. It guards _subagent_root_evicted whole
+#                                           (the increment of _SUBAGENT_TREES_GEN, the cap check, the clear, the write of
+#                                           _SUBAGENT_ROOTS_CLEARED_GEN and the root's store as max(its value, g)) and every read
+#                                           _subagent_vouched makes (the root's table value, then the cleared generation, then
+#                                           the gen), so a vouch sees an eviction whole or not at all and the order of the writes
+#                                           inside it does not matter. Nothing is called under it (dict and list operations
+#                                           only: no I/O, no kernel function), so a holder never waits on anything else. Only the
+#                                           pusher and jobs threads vouch (a handler thread holds no scope), and a vouch waits
+#                                           only while another thread is recording an eviction. Written unlocked until round 2
+#                                           of #882, the table had three windows in which a vouch answered True for an entry held
+#                                           before its root's latest eviction, each executed with real threads in
+#                                           tests/test_subagent_tree_stamps_per_cycle.py EvictionTableLock (True unlocked, False
+#                                           under the lock): the clear straddle (a vouch reading the table after a clear and the
+#                                           cleared generation before its write), the wiped record (another root's eviction
+#                                           recorded between the clearing thread's cap check and its clear, erased while the
+#                                           cleared generation written was the clearing thread's older value), and one root's
+#                                           out-of-order stores (the earlier eviction's store landing last), which the class's
+#                                           end-to-end case drives to a removed tree's pair served. Under the lock each store's g
+#                                           exceeds every value stored before it, so the max equals g (the out-of-order case's
+#                                           docstring states what the mutants show)
 _TREE_UNREADABLE = "unreadable"     # a reader's answer for a subagents root whose own lstat failed for a reason other than absence
 #                                     (_SubagentTreeUnreadable, raised by _subagent_tree, whose docstring states the shape): the feed key's
 #                                     identity component and the chat build's dependency note carry it where a stat's key would go, a
@@ -35423,12 +35449,20 @@ def _subagent_vouched(root, g0):
     _SUBAGENT_ROOT_EVICTED value at or below g0; a root never evicted reads 0). An entry that depends on no known root
     (`root` None: a stamp _dir_stamp took itself, whose tree the scope cannot name) is vouched only while the generation
     itself has not moved, the rule every entry had before 2026-09-21, kept for the one population that has no root
-    to key on. Monotonic comparisons, so a value read a moment early errs to the safe side."""
-    if _SUBAGENT_ROOTS_CLEARED_GEN[0] > g0:
+    to key on. The reads are taken under _SUBAGENT_EVICT_LOCK (its comment), so no eviction is seen half made; the gen
+    and a root's value only rise, and a clear writes a cleared generation above every value it erases, so the larger of
+    a root's value and the cleared generation, which decides the answer, never falls. So once an eviction of its root is
+    recorded a vouch answers False at every later lookup: the safe side, executed by
+    tests/test_subagent_tree_stamps_per_cycle.py EvictionTableLock's three window cases."""
+    with _SUBAGENT_EVICT_LOCK:
+        evicted = _SUBAGENT_ROOT_EVICTED.get(root, 0)   # the table before the cleared generation, the order round 2 of #882 ruled
+        cleared = _SUBAGENT_ROOTS_CLEARED_GEN[0]
+        gen = _SUBAGENT_TREES_GEN[0]
+    if cleared > g0:
         return False
     if root is None:
-        return _SUBAGENT_TREES_GEN[0] == g0
-    return _SUBAGENT_ROOT_EVICTED.get(root, 0) <= g0
+        return gen == g0
+    return evicted <= g0
 
 
 def _subagent_root_evicted(d):
@@ -35437,14 +35471,15 @@ def _subagent_root_evicted(d):
     the root's table entry takes the new value, so every scope entry that depends on `d` and was held under an older value
     is dropped at its next lookup (_subagent_vouched), and nothing held for any other root moves. At the table's cap
     (_SUBAGENT_ROOT_EVICTED_MAX roots, `d` not among them) the table is cleared first and _SUBAGENT_ROOTS_CLEARED_GEN takes
-    the value, which drops every entry held before the clear once. Unlocked, as the memo's own writes are: a lost increment
-    under a race is bounded by the cycle (the comment at _SUBAGENT_TREES_GEN)."""
-    _SUBAGENT_TREES_GEN[0] += 1
-    g = _SUBAGENT_TREES_GEN[0]
-    if d not in _SUBAGENT_ROOT_EVICTED and len(_SUBAGENT_ROOT_EVICTED) >= _SUBAGENT_ROOT_EVICTED_MAX:
-        _SUBAGENT_ROOT_EVICTED.clear()
-        _SUBAGENT_ROOTS_CLEARED_GEN[0] = g
-    _SUBAGENT_ROOT_EVICTED[d] = g
+    the value, which drops every entry held before the clear once. The whole body runs under _SUBAGENT_EVICT_LOCK (its
+    comment: what it guards and why)."""
+    with _SUBAGENT_EVICT_LOCK:
+        _SUBAGENT_TREES_GEN[0] += 1
+        g = _SUBAGENT_TREES_GEN[0]
+        if d not in _SUBAGENT_ROOT_EVICTED and len(_SUBAGENT_ROOT_EVICTED) >= _SUBAGENT_ROOT_EVICTED_MAX:
+            _SUBAGENT_ROOT_EVICTED.clear()
+            _SUBAGENT_ROOTS_CLEARED_GEN[0] = g
+        _SUBAGENT_ROOT_EVICTED[d] = max(_SUBAGENT_ROOT_EVICTED.get(d, 0), g)
 
 
 def _subagent_scope_hold(sc, d, dirs, stats, g0):

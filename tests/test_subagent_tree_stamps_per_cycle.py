@@ -104,7 +104,11 @@ cost sentence's pin in the tree; a lab lifted from this world measured the same 
 census's own roads (round 2 of #882, extra6-2), executed on the tree under the spy: each road the spy closes (a
 non-normalized or relative spelling of the root, a call given a dir_fd, io.FileIO) is counted, and each road it leaves
 open (a DirEntry from a listing of the root's parent, a path outside the tree, an os class outside CLASSES, a bare
-descriptor, a symlinked spelling, pathlib on 3.10) has an executed witness whose census is {}.
+descriptor, a symlinked spelling, pathlib on 3.10) has an executed witness whose census is {}. (9) The eviction table's
+lock (round 2 of #882, group E): the clear straddle, the wiped record and one root's out-of-order stores, each driven
+with real threads, answer vouched False under the lock where the unlocked table answered True, and the out-of-order
+store driven through the real forget, walk and pop serves no pair of a removed tree (the unlocked table served its 2
+directories), beside a control with no race.
 
 Every count is derived from D and A in the test, never written out. The cycle's jobs that read the tree through
 mechanisms of their own (the fold checkpoint writer's realpath per checkpointed file, the spend guard's window-file
@@ -126,6 +130,7 @@ import time
 import traceback
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 from romp_load import load_source
 
@@ -2054,7 +2059,9 @@ class ScopedInvalidation(_World):
     def test_the_table_of_evicted_roots_at_its_cap_is_cleared_and_every_held_entry_dropped_once(self):
         """The table is bounded: an eviction of a root not in it while it holds _SUBAGENT_ROOT_EVICTED_MAX roots clears it
         and records the clear's generation, so every entry held under an older generation is dropped at its next lookup
-        (one re-validation, the safe side: never a stale serve) and entries held after it are vouched by the table again.
+        (one re-validation) and entries held after it are vouched by the table again. Single-threaded: it shows the clear's
+        edge on one thread; that a clear serves nothing stale while evictions and vouches run on other threads is
+        EvictionTableLock's (the clear-straddle and wiped-record cases).
         Keys on each of the three maps at the clear edge, by execution and not through the shared predicate alone: the held
         pair costs D lstats once on the read after the clearing eviction (0 before it and after that), a stamp indexed from
         the held tree costs 1 stat once, and the held launch folds are redone once (A folds), where a clear that recorded no
@@ -2122,6 +2129,311 @@ class ScopedInvalidation(_World):
                              % ((sp.total()["dir_lstat"], sp.total()["dir_stat"]),))
             self.assertIs(out, held_pair[0], "the tree read was answered the re-held pair (served), keyed on identity")
             self.assertIs(r, held_stamp[0], "and the stamp call the re-indexed stamp (served), keyed on identity")
+
+
+class _PausingTable(dict):
+    """The eviction table (_SUBAGENT_ROOT_EVICTED) with one pause point, armed per case for one named thread: "store"
+    pauses that thread's store of `key` before it lands (its value already computed), "clear before" pauses its clear()
+    before the table is emptied, "clear after" once it has been. At the pause the thread sets `reached` and waits for
+    `go`; every other thread, and the armed thread after its one pause, runs through. The hook calls nothing of the
+    kernel's, so the thread paused in it, which holds _SUBAGENT_EVICT_LOCK at that point, never asks for the lock again
+    (the notes-dir probe's hooks called the kernel from inside the clear and the store on the same thread, which a lock
+    that admits no call under it cannot serve)."""
+
+    def __init__(self):
+        super().__init__()
+        self.phase = self.key = self.thread = None
+        self.reached, self.go = threading.Event(), threading.Event()
+
+    def arm(self, phase, thread, key=None):
+        self.phase, self.thread, self.key = phase, thread, key
+
+    def _at(self, phase, key=None):
+        if self.phase != phase or threading.current_thread().name != self.thread or (phase == "store" and key != self.key):
+            return
+        self.phase = None
+        self.reached.set()
+        if not self.go.wait(30):
+            raise AssertionError("the thread paused at %r was never released" % phase)
+
+    def __setitem__(self, k, v):
+        self._at("store", k)
+        super().__setitem__(k, v)
+
+    def clear(self):
+        self._at("clear before")
+        super().clear()
+        self._at("clear after")
+
+
+class _QueueWatch:
+    """_SUBAGENT_EVICT_LOCK behind a wrapper that marks the moment a thread finds the lock held by another thread and is
+    about to wait for it (its non-blocking try failed): it sets the thread's Event in `events` (keyed by thread name) and
+    records (thread, holder) in `queued`. A case waits on that Event, which the thread also sets when it ends, before it
+    releases the paused holder, so it knows the second thread has reached the lock, where a kernel with no lock runs the
+    same thread to its end, with no time window."""
+
+    def __init__(self, real, events):
+        self.real, self.events, self.holder, self.queued = real, events, None, []
+
+    def acquire(self, blocking=True, timeout=-1):
+        me = threading.current_thread().name
+        if self.real.acquire(False):
+            self.holder = me
+            return True
+        if not blocking:
+            return False
+        self.queued.append((me, self.holder))
+        ev = self.events.get(me)
+        if ev is not None:
+            ev.set()
+        if not self.real.acquire(True, timeout):
+            return False
+        self.holder = me
+        return True
+
+    def release(self):
+        self.holder = None
+        self.real.release()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.release()
+        return False
+
+
+class EvictionTableLock(_World):
+    """(9) The eviction table's writes and the vouch's reads under one lock (round 2 of #882, group E; the lock's lifetime
+    and what it guards are stated once, at _SUBAGENT_EVICT_LOCK). Until then _subagent_root_evicted wrote the gen, the
+    table and the cleared generation unlocked and _subagent_vouched read them unlocked, which left three windows in which
+    a vouch answered True for an entry held before its root's latest eviction. Each window case drives its window with
+    real threads: the writing thread is paused inside the table (_PausingTable) at the window's line, the other thread
+    runs until it queues behind the lock (_QueueWatch) or, on a kernel with no lock, to its end, and then the paused
+    thread is released. Each window's vouch answers True with no lock and False with it; the end-to-end case drives the
+    out-of-order store through the real forget, walk and pop until a removed tree's pair is served (2 directories with no
+    lock, 0 with it), beside its control with no race (0 on both). Every wait is bounded at 30 s, so a lost wake fails
+    instead of hanging, and nothing waits on a time window."""
+
+    def _roots(self):
+        """Three root strings under the test's temp directory (the table cases never touch the disk)."""
+        return tuple(os.path.join(self.td.name, n, "subagents") for n in ("r", "s1", "s2"))
+
+    def _eviction_world(self, table, cap=None):
+        """The table swapped for `table`, the cleared generation for a fresh [0], the cap for `cap` when given and the lock,
+        on a kernel that has one, for a _QueueWatch over it; each put back by cleanup, after every thread the case started
+        is released and joined, so no paused thread writes into the restored globals. Returns the watch (None on a kernel
+        with no lock)."""
+        self.events, self.threads = {}, []
+        real = getattr(km, "_SUBAGENT_EVICT_LOCK", None)
+        watch = _QueueWatch(real, self.events) if real is not None else None
+        patches = [mock.patch.object(km, "_SUBAGENT_ROOT_EVICTED", table), mock.patch.object(km, "_SUBAGENT_ROOTS_CLEARED_GEN", [0])]
+        if cap is not None:
+            patches.append(mock.patch.object(km, "_SUBAGENT_ROOT_EVICTED_MAX", cap))
+        if watch is not None:
+            patches.append(mock.patch.object(km, "_SUBAGENT_EVICT_LOCK", watch))
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        self.addCleanup(self._release_and_join, table)    # registered last, so it runs before the patches stop
+        return watch
+
+    def _release_and_join(self, table):
+        table.go.set()
+        for th in self.threads:
+            th.join(30)
+
+    def _run(self, name, fn):
+        """`fn` on a new thread named `name`: its thread, its result, its errors and the Event set when it queues behind
+        the lock or ends."""
+        run = SimpleNamespace(out={}, errs=[], ev=self.events.setdefault(name, threading.Event()))
+
+        def body():
+            try:
+                run.out["value"] = fn()
+            except Exception:
+                run.errs.append(traceback.format_exc())
+            finally:
+                run.ev.set()
+        run.thread = threading.Thread(target=body, name=name, daemon=True)
+        self.threads.append(run.thread)
+        run.thread.start()
+        return run
+
+    def _wait(self, ev, what):
+        self.assertTrue(ev.wait(30), "%s, within 30 s" % what)
+
+    def _joined(self, run):
+        run.thread.join(30)
+        self.assertFalse(run.thread.is_alive(), "%s returned" % run.thread.name)
+        self.assertEqual(run.errs, [], "%s raised" % run.thread.name)
+        return run.out.get("value")
+
+    def test_a_vouch_made_while_another_thread_clears_the_table_answers_false_for_a_root_evicted_after_its_hold(self):
+        """The clear straddle. An entry for root r is held under g0, then r is evicted (its record g0 + 1, and the vouch
+        answers False); the table fills to its cap (2), and a third root's eviction clears it. A vouch of (r, g0) made on
+        another thread while the clearing thread stands after the clear and before the cleared generation's write read,
+        with no lock, an empty table and the old cleared generation: True, an entry held before r's eviction vouched.
+        Under the lock the vouch waits for the whole eviction and reads the cleared generation it wrote: False. Keys on
+        that one answer, with the premise (False before the clear) and the answer after the clear asserted beside it. Red
+        under the vouch's reads taken outside the lock and under the clear taken outside it."""
+        table = _PausingTable()
+        watch = self._eviction_world(table, cap=2)
+        r, s1, s2 = self._roots()
+        g0 = km._SUBAGENT_TREES_GEN[0]                    # an entry for r held under g0
+        km._subagent_root_evicted(r)                      # r leaves the memo after the hold
+        self.assertIs(km._subagent_vouched(r, g0), False, "premise: r's eviction outdates the hold")
+        km._subagent_root_evicted(s1)                     # the table at its cap
+        table.arm("clear after", "stamps-clearer")
+        clearer = self._run("stamps-clearer", lambda: km._subagent_root_evicted(s2))   # a root not in the full table: the clear
+        self._wait(table.reached, "the clearing thread reached the point after its clear")
+        reader = self._run("stamps-reader", lambda: km._subagent_vouched(r, g0))
+        self._wait(reader.ev, "the vouching thread queued behind the lock or returned")
+        table.go.set()
+        answer = self._joined(reader)
+        self._joined(clearer)
+        self.assertIs(answer, False,
+                      "_subagent_vouched(r, g0) on another thread while the clearing thread stood between its clear and its "
+                      "cleared generation's write: %r; keyed on False, r having been evicted after the hold (a vouch sees an "
+                      "eviction whole or not at all); True is the straddle, the table read after the clear and the cleared "
+                      "generation before its write" % (answer,))
+        self.assertEqual(km._SUBAGENT_ROOTS_CLEARED_GEN[0], km._SUBAGENT_TREES_GEN[0], "the clear recorded the generation it happened at")
+        self.assertIs(km._subagent_vouched(r, g0), False, "and a vouch after the clear answers False")
+        if watch is not None:
+            self.assertIn(("stamps-reader", "stamps-clearer"), watch.queued, "the vouch waited behind the clearing thread")
+
+    def test_an_eviction_recorded_while_another_thread_clears_the_table_is_not_wiped_by_that_clear(self):
+        """The wiped record. r is in the table (evicted once before) and the table is at its cap (2); a third root's
+        eviction passes the cap check and is paused before its clear. An entry for r is then held under the gen that
+        eviction made (g0: a read after its increment), and another thread evicts r again (g0 + 1, after the hold). With
+        no lock that record landed before the paused clear, which wiped it, and the cleared generation written was the
+        clearing thread's own g0, so no value above g0 named r's second eviction: vouched(r, g0) True, for as long as the
+        hold lasts. Under the lock the second eviction waits for the whole clearing eviction and is recorded after the
+        clear: False, the table holding both roots. Keys on that answer and on the table. Red under the clear taken outside
+        the lock; the vouch here runs after both threads end, so the vouch's own lock is not this case's subject."""
+        table = _PausingTable()
+        self._eviction_world(table, cap=2)
+        r, s1, s2 = self._roots()
+        km._subagent_root_evicted(r)                      # r evicted once before
+        km._subagent_root_evicted(s1)                     # the table at its cap
+        table.arm("clear before", "stamps-clearer")
+        clearer = self._run("stamps-clearer", lambda: km._subagent_root_evicted(s2))
+        self._wait(table.reached, "the clearing thread passed the cap check and reached its clear")
+        g0 = km._SUBAGENT_TREES_GEN[0]                    # an entry for r held under the clearing eviction's value
+        evictor = self._run("stamps-evictor", lambda: km._subagent_root_evicted(r))   # r leaves the memo again, after the hold
+        self._wait(evictor.ev, "the evicting thread queued behind the lock or returned")
+        table.go.set()
+        self._joined(evictor)
+        self._joined(clearer)
+        answer = km._subagent_vouched(r, g0)
+        self.assertIs(answer, False,
+                      "_subagent_vouched(r, g0) after r's second eviction (g0 + 1) ran while the clearing eviction (g0) stood "
+                      "between its cap check and its clear: %r; keyed on False; True is the wiped record: the clear erased r's "
+                      "g0 + 1 and the cleared generation written was g0; table %r, cleared generation %d, g0 %d"
+                      % (answer, dict(table), km._SUBAGENT_ROOTS_CLEARED_GEN[0], g0))
+        self.assertEqual(dict(table), {s2: g0, r: g0 + 1}, "the clearing root at g0 and r's second eviction at g0 + 1, recorded after the clear")
+
+    def test_two_evictions_of_one_root_leave_its_record_at_the_later_one(self):
+        """The out-of-order stores. A first eviction of r makes its increment (g0) and is paused before its store lands; an
+        entry for r is then held under g0 (a read after the first eviction's pop, which re-inserted r), and a second
+        eviction of r (g0 + 1, after the hold) runs on another thread. With no lock the second store landed first and the
+        first one's late store moved r's record back to g0: vouched(r, g0) True, an entry held before r's latest eviction
+        vouched. Under the lock the second eviction waits for the first to finish, so its store lands last: r's record
+        g0 + 1, and False. Keys on that answer and on the record.
+
+        The mutants, each applied alone to the locked kernel: the store taken outside the lock reds this case (the paused
+        store's value was computed before the pause, so the earlier value overwrites the later one, with max or without);
+        the store without max is green, and equivalent while the store is under the lock: the increment and the store run
+        in one critical section, _subagent_root_evicted is the table's one writer and holds the gen's one increment, so
+        each store's g exceeds every value stored before it and max(existing, g) is g on every call."""
+        table = _PausingTable()
+        watch = self._eviction_world(table)
+        r, _s1, _s2 = self._roots()
+        table.arm("store", "stamps-first", key=r)
+        first = self._run("stamps-first", lambda: km._subagent_root_evicted(r))
+        self._wait(table.reached, "the first eviction made its increment and reached its store")
+        g0 = km._SUBAGENT_TREES_GEN[0]                    # an entry for r held under the first eviction's value
+        second = self._run("stamps-second", lambda: km._subagent_root_evicted(r))   # r leaves the memo again, after the hold
+        self._wait(second.ev, "the second eviction queued behind the lock or returned")
+        table.go.set()
+        self._joined(second)
+        self._joined(first)
+        answer = km._subagent_vouched(r, g0)
+        self.assertIs(answer, False,
+                      "_subagent_vouched(r, g0) after a second eviction of r ran while the first eviction's store (g0) was "
+                      "paused: %r; keyed on False; True is the out-of-order store, r's record %r where g0 + 1 = %d is owed"
+                      % (answer, table.get(r), g0 + 1))
+        self.assertEqual(table.get(r), g0 + 1, "r's record is its later eviction's value")
+        if watch is not None:
+            self.assertIn(("stamps-second", "stamps-first"), watch.queued, "the second eviction waited behind the first")
+
+    def _two_directory_root(self, tag):
+        """A second session's transcript and beside it a subagents tree of two directories (the root and workflows/), aged
+        and walked into the cross-cycle memo outside any scope, owned by nobody alive: its root as a string."""
+        other_t = Path(self.td.name) / tag / (OTHER_SID + ".jsonl")
+        other_t.parent.mkdir()
+        other_t.write_text("")
+        other = km._subagents_dir(other_t)
+        (other / "workflows").mkdir(parents=True)
+        _age(other)
+        self.addCleanup(km._SUBAGENT_TREES.pop, str(other), None)
+        got, _st = km._subagent_tree(str(other))
+        self.assertEqual(len(got), 2, "the tree walked into the cross-cycle memo: its 2 directories")
+        return str(other)
+
+    def _end_to_end(self, race):
+        """The out-of-order store through the real functions (the round-2 review's end-to-end shape). A forget on a thread
+        with no scope evicts the unowned root: it pops the entry and makes its increment, and with `race` its store is
+        paused. This thread's scope then walks the root and holds its pair under the forget's value; the tree is removed
+        on disk, and a thread with no scope reads the root: the missing-root pop, a second eviction. Then the forget is
+        released. Returns what this thread's next read of the root answers: (directories, served moved, the root on
+        disk)."""
+        root = self._two_directory_root("e2e")
+        table = _PausingTable()
+        self._eviction_world(table)
+        sc = self._open()
+        if race:
+            table.arm("store", "stamps-forget", key=root)
+        forget = self._run("stamps-forget", lambda: km._subagent_trees_forget([{"path": self.path}]))
+        if race:
+            self._wait(table.reached, "the forget popped the root, made its increment and reached its store")
+        else:
+            self._joined(forget)
+        dirs, _st = km._subagent_tree(root)
+        self.assertEqual(len(dirs), 2, "this thread's scope walked the root again and holds its 2 directories")
+        self.assertIn(root, sc["trees"], "the pair is held")
+        shutil.rmtree(root)
+        popper = self._run("stamps-popper", lambda: km._subagent_tree(root))
+        self._wait(popper.ev, "the popping thread queued behind the lock or returned")
+        table.go.set()
+        self.assertEqual(self._joined(popper), ((), ()), "the pop found nothing at the root")
+        self._joined(forget)
+        b = self._stats()
+        got = km._subagent_tree(root)
+        return len(got[0]), self._delta(b)["served"], os.path.exists(root)
+
+    def test_a_removed_trees_pair_is_not_served_after_a_late_store_of_an_earlier_eviction_end_to_end(self):
+        """End to end: the forget's store paused, the walk and hold, the removal, the pop, then the forget's late store.
+        With no lock the pop's record (g0 + 1) landed first and the forget's late store moved the root's record back to the
+        hold's g0, so this thread's next read was served the removed tree's pair: 2 directories and served + 1. Under the
+        lock the pop waits for the forget's eviction and its record lands last, so the read drops the hold and finds
+        nothing at the root. Keys on (directories, served moved, on disk) == (0, 0, False); the control below runs the
+        same sequence with no race. Red under the store taken outside the lock."""
+        got = self._end_to_end(race=True)
+        self.assertEqual(got, (0, 0, False),
+                         "(directories, served moved, the root on disk) on this thread's read of a root it held under the forget's "
+                         "value, after the tree was removed and a thread with no scope popped it while the forget's store was "
+                         "paused: %r; keyed on (0, 0, False): the pop's eviction outdates the hold and the read finds nothing at "
+                         "the root; (2, 1, False) is the removed tree's pair served, the forget's late store having moved the "
+                         "root's record back to the hold's value" % (got,))
+
+    def test_control_the_same_sequence_with_no_race_serves_no_pair_of_the_removed_tree(self):
+        """The end-to-end case's control: the same forget, walk, removal and pop with the forget run to its end first.
+        (0, 0, False) with and without the lock."""
+        got = self._end_to_end(race=False)
+        self.assertEqual(got, (0, 0, False), "(directories, served moved, the root on disk) with no race: %r; keyed on (0, 0, False)" % (got,))
 
 
 class DependencyKey(_World):
