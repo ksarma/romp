@@ -32,6 +32,7 @@ from pathlib import Path
 from unittest import mock
 
 from romp_load import load_source
+from tests import guarded_reads   # the shared Reader seam: every read under the state root goes through it (round 4 of the state-root review)
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -346,15 +347,11 @@ class JudgeUsageReader(unittest.TestCase):
                 gate.wait(WAIT)
                 return chunk
 
-        def gated_open(path, *a, **k):
-            f = real_open(path, *a, **k)
-            if str(path).endswith("judge-usage.jsonl"):
-                opened.append(1)
-                if len(opened) == 1:
-                    return _ParkAfterRead(f)
-            return f
+        def gated(f, mode):                         # the ledger is read through the guarded reader (round 4 of the state-root review)
+            opened.append(1)
+            return _ParkAfterRead(f) if len(opened) == 1 else f
         got = {}
-        with mock.patch.object(km, "open", gated_open, create=True):
+        with guarded_reads.wrap_open(lambda p: p.endswith("judge-usage.jsonl"), gated):
             t1 = _run(lambda: got.__setitem__(1, km._judge_usage_rows()))
             self.assertTrue(entered.wait(WAIT))
             t2 = _run(lambda: got.__setitem__(2, km._judge_usage_rows()))
@@ -732,14 +729,12 @@ class PinAssociationMemo(unittest.TestCase):
         fired = []
         real_open = open
 
-        def opener(path, *a, **k):
-            f = real_open(path, *a, **k)
-            mode = a[0] if a else k.get("mode", "r")
-            if str(path) == str(self.path) and "r" in mode and not fired:
+        def opener(f, mode):                        # the sidecar is read through the guarded reader (round 4 of the state-root review)
+            if "r" in mode and not fired:
                 fired.append(1)
                 return _LinesThenWriter(f, lambda: km._pin_assoc_append(SID, "u2", "/x/plot.png", "pinB"))
             return f
-        with mock.patch.object(km, "open", opener, create=True):
+        with guarded_reads.wrap_open(lambda p: p == str(self.path), opener):
             got = km._pin_assoc(SID, "u2")
         self.assertEqual(got, {"/x/plot.png": "pinB"}, "was: {} — the loader's older copy replaced the appended memo")
         self.assertEqual(km._pin_assoc(SID, "u1"), {"/x/a.png": "pinA"})

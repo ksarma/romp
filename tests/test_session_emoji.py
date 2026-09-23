@@ -295,11 +295,13 @@ class Store(unittest.TestCase):
         self.names.mkdir()
         self._saved = (km.NAMES, km.jd.STATE)
         km.NAMES = self.names
-        km.jd.STATE = Path(self.tmp) / "state"
+        (Path(self.tmp) / "state").mkdir()
+        km.jd._rebind_state(Path(self.tmp) / "state")   # the seam floors a umask-mode root at 0700 (round 4, 2026-09-21): the per-module chmod is gone
         km._pal_cache.update({"name": km.pal.DEFAULT, "mt": None})
 
     def tearDown(self):
         km.NAMES, km.jd.STATE = self._saved
+        km.jd._rebind_state(km.jd.STATE)
         km._pal_cache.update({"name": km.pal.DEFAULT, "mt": None})
 
     def _line(self, sid=SID):
@@ -612,7 +614,8 @@ class EmojiRoute(unittest.TestCase):
         self._saved = (km.NAMES, km.jd.STATE, km._live_map, km._live_names, km._mark_views_dirty,
                        km._host_for_sid, getattr(km, "_remote_forward_status", None), km._demand_redial)
         km.NAMES = self.names
-        km.jd.STATE = Path(self.tmp) / "state"
+        (Path(self.tmp) / "state").mkdir()
+        km.jd._rebind_state(Path(self.tmp) / "state")   # the seam floors a umask-mode root at 0700 (round 4, 2026-09-21): the per-module chmod is gone
         km._live_map = lambda: {}
         km._live_names = lambda tm: {"web": SID}
         km._host_for_sid = lambda sid: None
@@ -624,6 +627,7 @@ class EmojiRoute(unittest.TestCase):
     def tearDown(self):
         (km.NAMES, km.jd.STATE, km._live_map, km._live_names, km._mark_views_dirty,
          km._host_for_sid, km._remote_forward_status, km._demand_redial) = self._saved
+        km.jd._rebind_state(km.jd.STATE)
 
     def _post(self, body):
         # km.TOKEN, not os.environ (test_color_route.py has the collection-order story)
@@ -924,7 +928,8 @@ class WsOp(unittest.TestCase):
         self.names.mkdir()
         self._saved = (km.NAMES, km.jd.STATE, km._mark_views_dirty)
         km.NAMES = self.names
-        km.jd.STATE = Path(self.tmp) / "state"
+        (Path(self.tmp) / "state").mkdir()
+        km.jd._rebind_state(Path(self.tmp) / "state")   # the seam floors a umask-mode root at 0700 (round 4, 2026-09-21): the per-module chmod is gone
         self.dirty = []
         km._mark_views_dirty = lambda: self.dirty.append(1)
         self.sent = []
@@ -932,6 +937,7 @@ class WsOp(unittest.TestCase):
 
     def tearDown(self):
         km.NAMES, km.jd.STATE, km._mark_views_dirty = self._saved
+        km.jd._rebind_state(km.jd.STATE)
 
     def _op(self, emoji):
         km.Handler._dispatch_ws(types.SimpleNamespace(), {"type": "setSessionEmoji", "id": SID, "emoji": emoji}, self.client)

@@ -20,6 +20,7 @@ import unittest
 import urllib.request
 from http.server import ThreadingHTTPServer
 from romp_load import load_source
+from tests import guarded_reads   # the shared Reader seam: every read under the state root goes through it (round 4 of the state-root review)
 from pathlib import Path
 from unittest import mock
 
@@ -456,13 +457,14 @@ class LearnedVersions(_ModelsServer):
         """The reg files under STATE/sdk the kernel READS while held — only those: the /models route
         also reads the pick store, the CLI-block file and the catalog cache, so an unfiltered counter
         is never zero."""
-        reads, real, sdk = [], Path.read_text, str(jd.STATE / "sdk") + os.sep
+        srm = km.jd.srm                      # every read under the state root goes through a Reader of the shared module (round 4 of the
+        reads, real, sdk = [], srm.Reader.read_text, str(jd.STATE / "sdk") + os.sep   # state-root review): the kernel's and the backend's alike
 
-        def read_text(p, *a, **k):
+        def read_text(reader, p, *a, **k):
             if str(p).startswith(sdk):
-                reads.append(p.name)
-            return real(p, *a, **k)
-        with mock.patch.object(Path, "read_text", read_text):
+                reads.append(Path(p).name)
+            return real(reader, p, *a, **k)
+        with mock.patch.object(srm.Reader, "read_text", read_text):
             yield reads
 
     def test_a_warm_scan_re_reads_no_reg_whose_file_is_unchanged(self):
@@ -680,7 +682,8 @@ class AliasMigration(unittest.TestCase):
             return real_bytes(p, *a, **k)
         err = io.StringIO()
         with mock.patch.object(Path, "read_text", read_text), mock.patch.object(Path, "read_bytes", read_bytes), \
-                contextlib.redirect_stderr(err):
+                guarded_reads.fault(jd.STATE / "sdk" / "locked.json", lambda: PermissionError(13, "Permission denied")), \
+                contextlib.redirect_stderr(err):                  # the guarded reader's open: the road the pass's reads take now
             n = km._model_alias_boot_pass()
         self.assertEqual(n, 5, "everything readable still migrates")
         self.assertFalse((jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).exists())

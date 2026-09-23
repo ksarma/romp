@@ -42,6 +42,7 @@ import types
 import unittest
 from unittest import mock
 from romp_load import load_source
+from tests import guarded_reads   # the shared Reader seam: every read under the state root goes through it (round 4 of the state-root review)
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -690,10 +691,12 @@ class Differential(_World):
         reg = jd.STATE / "sdk" / (SID + ".json")
         reg.parent.mkdir(parents=True, exist_ok=True)
         reg.write_text(json.dumps({"sid": SID, "hostAck": {"offset": 1}}))
-        with mock.patch.object(Path, "read_text", autospec=True, side_effect=Path.read_text) as read:
+        # the decode road is the guarded reader's read_text (round 4 of the state-root review; _thread_reg_read); the judge's
+        # _cli_epoch opens the file for its epoch on every check through Reader.open and is not a decode
+        with guarded_reads.count(lambda p: p == str(reg), method="read_text") as reads:
             for _ in range(5):
                 self.sig()
-            self.assertEqual(sum(call.args[0] == reg for call in read.call_args_list), 1)
+            self.assertEqual(len(reads), 1)
 
     def test_the_task_store_misses_under_tasks(self):
         a = self.sig()

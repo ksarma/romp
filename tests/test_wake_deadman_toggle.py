@@ -24,6 +24,7 @@ import os
 import tempfile
 import unittest
 from romp_load import load_source
+from tests import guarded_reads   # the shared Reader seam: every read under the state root goes through it (round 4 of the state-root review)
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -281,7 +282,9 @@ class UnreadableLedgerPausesThePass(_Base):
             return real(p, *a, **k)
         Path.read_text = failing
         self.addCleanup(setattr, Path, "read_text", real)
-        return lambda: setattr(Path, "read_text", real)
+        guarded = guarded_reads.start_fault(self.ledger, lambda: OSError(errno.EIO, "Input/output error"))   # the guarded reader's
+        self.addCleanup(guarded.stop)                                                                            # open, the ledger's road now
+        return lambda: (setattr(Path, "read_text", real), guarded.stop())
 
     def test_no_wake_fires_from_an_unproved_snapshot_and_the_first_proved_read_resumes(self):
         self._toggle(True)

@@ -26,7 +26,7 @@ Auxiliary inputs the file adapter may read (same category as the transcript):
                                transcript lost to an API-errored try; judge parse only)
   timeline/messages.jsonl   -> peer rompUuid for a postal atom (join on the msg id)
 """
-import array, bisect, collections, copy, gzip, json, os, re, sys, time, hashlib, threading, weakref
+import array, bisect, collections, copy, gzip, json, os, re, stat, sys, time, hashlib, threading, weakref
 from datetime import datetime
 from pathlib import Path
 
@@ -40,6 +40,58 @@ PROJECTS = Path(os.environ.get("CLAUDE_CONFIG_DIR") or str(HOME / ".claude")) / 
 NAMES    = STATE / "names"
 STATES_DIR   = STATE / "states"
 MESSAGES_LOG = STATE / "timeline" / "messages.jsonl"
+
+
+def _load_state_root_mode():
+    """kernel/state_root_mode.py under its fixed module name, THE SAME FILE the judge, the bus and the session host load
+    (one implementation; a copy already in sys.modules under that name is reused, so one process holds one module
+    object). A loader, not a copy of the predicate: tests/test_state_root_mode.py's OneText pins that."""
+    import importlib.util
+    name = "romp_state_root_mode"
+    mod = sys.modules.get(name)
+    if mod is not None:
+        return mod
+    path = Path(__file__).resolve().parent / "state_root_mode.py"
+    spec = importlib.util.spec_from_file_location(name, str(path))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    return mod
+
+
+_srm = _load_state_root_mode()
+_STATE_ROOT_FN = None            # () -> the state root at call time, set by the judge (set_state_root) so a rebind moves the guard
+READER_REFUSED_HOOKS = []        # (path, reason, line) callables (the judge forwards to its own, the kernel files a row)
+
+
+def set_state_root(fn):
+    """Kernel/judge wiring: `fn()` names the state root at CALL time for this module's guarded reader (the judge's STATE,
+    which _rebind_state moves); None falls back to this module's import-time STATE."""
+    global _STATE_ROOT_FN
+    _STATE_ROOT_FN = fn
+
+
+def _state_root():
+    return _STATE_ROOT_FN() if _STATE_ROOT_FN is not None else STATE
+
+
+def _reader_refused(path, reason, line):
+    for fn in list(READER_REFUSED_HOOKS):
+        try:
+            fn(path, reason, line)
+        except Exception:
+            pass
+
+
+# THE GUARDED READERS over the state root (kernel/state_root_mode.py, part 3): the checkpoint documents and sidecars, the
+# states logs and the timeline log are read through _gr, so a planted entry (a symlink, a foreign-owned or a
+# writable-by-another file or directory) is quarantined and read as absent. A transcript, which lives outside the root,
+# passes through unguarded: it is not the root's to guard.
+_gr = _srm.Reader(_state_root, on_refused=_reader_refused, who="event-model")
 
 # A turn ends when the model hands the floor back: stream `end_turn` / `stop_sequence`.
 # Mid-turn the model stops with `tool_use` (a tool cycle) — that does NOT end the turn.
@@ -1099,10 +1151,10 @@ def _ckpt_decode(o):
 def _ckpt_load(path):
     """The verified-by-shape checkpoint document for `path`, or None (absent, or a fallback was counted)."""
     cp = _ckpt_file(path)
-    if cp is None or not cp.exists():
+    if cp is None or not _gr.exists(cp):
         return None
     try:
-        text = cp.read_bytes()
+        text = _gr.read_bytes(cp)
         _count_read(str(cp), len(text))                   # the document is a read of the boot too (/perf, the bench)
         doc = json.loads(text.decode("utf-8"))
     except (OSError, ValueError) as e:
@@ -1524,9 +1576,9 @@ def checkpoint_write(path, force=False):
            "guard": tail.hex(), "count": int(count), "lastUuid": (last.get("uuid") if isinstance(last, dict) else None),
            "seq": seq, "t": time.time(), "folds": folds}
     try:
-        cp.parent.mkdir(parents=True, exist_ok=True)
+        _srm.make_dir(cp.parent, parents=True, root=_state_root())
         tmp = cp.with_name("%s.%d.%x.tmp" % (cp.name, os.getpid(), threading.get_ident()))
-        tmp.write_text(json.dumps(doc, separators=(",", ":")))
+        _srm.write_text(tmp, json.dumps(doc, separators=(",", ":")))
         os.replace(tmp, cp)
     except OSError:
         return False
@@ -1635,7 +1687,7 @@ def _asm_retire_version_mark(meta, doc):
     d2 = {k: v for k, v in doc.items() if k != "refused"}
     mtmp = meta.with_name(meta.name + ".%d.tmp" % os.getpid())
     try:
-        mtmp.write_text(json.dumps(d2))
+        _srm.write_text(mtmp, json.dumps(d2))
         os.replace(mtmp, meta)
     except OSError as e:
         try:
@@ -1651,32 +1703,38 @@ def _asm_retire_version_mark(meta, doc):
 
 def checkpoint_sweep():
     """One pass over the checkpoint directory at boot: a document whose recorded file no longer exists, or that does
-    not parse, is removed (counted as swept), so cleared and removed sessions do not grow the directory forever."""
+    not parse, is removed (counted as swept), so cleared and removed sessions do not grow the directory forever. Every
+    read here goes through the guarded reader (2026-09-20, the state-root enumeration's HIGH 1, then round 4): the
+    directory itself is judged once at _ckpt_dir() by its provider (the judge's guarded checkpoint directory), and a
+    symlink planted at <root>/checkpoints while the root was writable is quarantined there, so this sweep never opens the
+    directory it pointed at (Path.glob and is_dir followed it, and unlinked every *.json in the target that did not parse
+    as a checkpoint document: measured, a victim file outside the root gone); each document and sidecar is judged again
+    as it is read, and a planted one is quarantined and read as absent."""
     d = _ckpt_dir()
-    if d is None or not Path(d).is_dir():
+    if d is None or not _gr.isdir(Path(d)):
         return 0
     gone = 0
-    for aside in Path(d).glob("*.asm.json.gz.meta.retired-*"):   # a retired refusal sidecar (the writer keeps the bytes of a mark it
-        cp = aside.with_name(aside.name.split(".meta.retired-")[0])   #  replaced): it leaves with its document, never on its own
-        if not cp.exists():
+    for aside in _gr.glob(Path(d), "*.asm.json.gz.meta.retired-*"):   # a retired refusal sidecar (the writer keeps the bytes of a
+        cp = aside.with_name(aside.name.split(".meta.retired-")[0])   #  mark it replaced): it leaves with its document, never on its own
+        if not _gr.exists(cp):
             try:
                 aside.unlink(); gone += 1
             except OSError:
                 pass
-    for cp in list(Path(d).glob("*.json")) + list(Path(d).glob("*.asm.json.gz")):
+    for cp in _gr.glob(Path(d), "*.json") + _gr.glob(Path(d), "*.asm.json.gz"):
         keep = False
         try:
             meta = cp.with_name(cp.name + ".meta") if cp.name.endswith(".gz") else None
-            if meta is not None and meta.exists():
-                text = meta.read_bytes()                      # the sidecar: the sweep never inflates a document
+            if meta is not None and _gr.exists(meta):
+                text = _gr.read_bytes(meta)                   # the sidecar: the sweep never inflates a document
             else:
-                text = cp.read_bytes()
+                text = _gr.read_bytes(cp)
                 if cp.name.endswith(".gz"):
                     text = gzip.decompress(text)
             _count_read(str(cp), len(text))
             doc = json.loads(text.decode("utf-8"))
             keep = isinstance(doc, dict) and isinstance(doc.get("path"), str) and os.path.exists(doc["path"])
-            if keep and meta is not None and meta.exists() and isinstance(doc.get("refused"), dict):
+            if keep and meta is not None and _gr.exists(meta) and isinstance(doc.get("refused"), dict):
                 av = doc.get("av")
                 if not isinstance(av, int) or av < _ASM_CKPT_V:
                     # A refusal mark belongs to the cut rule it was made under (plans/checkpoint-mark-version-retirement.md,
@@ -1695,7 +1753,7 @@ def checkpoint_sweep():
                 if cp.name.endswith(".gz"):                # an assembly document: counted as removed, its sidecar with it
                     _asm_removed("sweep")
                     cp.with_name(cp.name + ".meta").unlink(missing_ok=True)
-                    for aside in Path(d).glob(cp.name + ".meta.retired-*"):   # and every retired refusal sidecar it left
+                    for aside in _gr.glob(Path(d), cp.name + ".meta.retired-*"):   # and every retired refusal sidecar it left
                         try:
                             aside.unlink()
                         except OSError:
@@ -1989,7 +2047,7 @@ def _read_jsonl_entry_unlocked(path, on_fail=None, tail_ok=False, tail_from=None
     elif hit is None and tail_ok and _CKPT_DIR_FN is not None:
         hit = restored = _checkpoint_entry(path, st)
     try:
-        with open(path, "rb") as fh:
+        with _gr.open(path, "rb") as fh:                      # a states log or the timeline log: guarded; a transcript passes through
             base, gen, done, kind = 0, None, False, "zero"
             grown = hit is not None and (st.st_size > hit[1] or (restored is not None and st.st_size == hit[1]
                                                                     and (st.st_mtime == hit[0] or tail_from is not None)))
@@ -5636,7 +5694,7 @@ def asm_sidecar_refresh(leaf_path, doc):
         return False
     meta = cp.with_name(cp.name + ".meta")
     try:
-        text = meta.read_bytes(); _count_read(str(meta), len(text))   # counted like the seeds read (round two, low 3)
+        text = _gr.read_bytes(meta); _count_read(str(meta), len(text))   # counted like the seeds read (round two, low 3)
         d = json.loads(text.decode("utf-8"))
         if isinstance(d, dict) and isinstance(d.get("files"), list) and "linked" in d:
             return False
@@ -5644,7 +5702,7 @@ def asm_sidecar_refresh(leaf_path, doc):
         pass
     try:
         mtmp = meta.with_name(meta.name + ".%d.tmp" % os.getpid())
-        mtmp.write_text(json.dumps(_asm_sidecar(doc)))
+        _srm.write_text(mtmp, json.dumps(_asm_sidecar(doc)))
         os.replace(mtmp, meta)
         return True
     except OSError:
@@ -5675,7 +5733,7 @@ def _asm_mark_refused(leaf_path, reason, rompuuid=None, sdk_human=False):
     key = (os.path.realpath(str(leaf_path)), str(rompuuid), bool(sdk_human))   # the writer's own key (asm_checkpoint_write)
     with _asm_key_lock(key):                                 # the writer and the sidecar refresh write this file under the KEY lock;
         try:                                                  #  the mark joins them there (round three, low 2), with a tmp name of its
-            d = json.loads(meta.read_bytes().decode("utf-8"))   #  own, and re-reads after its replace: a writer racing in between
+            d = json.loads(_gr.read_bytes(meta).decode("utf-8"))   #  own, and re-reads after its replace: a writer racing in between
             if not isinstance(d, dict):                        #  leaves the mark absent, which the next refusal re-applies
                 d = {}
         except (OSError, ValueError):
@@ -5683,11 +5741,11 @@ def _asm_mark_refused(leaf_path, reason, rompuuid=None, sdk_human=False):
         d["refused"] = {"reason": reason, "size": st_[0], "mtime": st_[1]}
         try:
             mtmp = meta.with_name(meta.name + ".mark.%d.%x.tmp" % (os.getpid(), threading.get_ident()))
-            mtmp.write_text(json.dumps(d)); os.replace(mtmp, meta)
+            _srm.write_text(mtmp, json.dumps(d)); os.replace(mtmp, meta)
         except OSError:
             return False
         try:
-            return (json.loads(meta.read_bytes().decode("utf-8")).get("refused") or {}).get("reason") == reason
+            return (json.loads(_gr.read_bytes(meta).decode("utf-8")).get("refused") or {}).get("reason") == reason
         except (OSError, ValueError, AttributeError):
             return False
 
@@ -5697,15 +5755,15 @@ def _asm_retire_refusal_mark(meta):
     must not stand over the new document. The old sidecar's bytes are kept beside it as `<meta>.retired-<stamp>` for forensics,
     the way the flags quarantine keeps its sidecar; only the mark the readers key on goes (with the file). Best-effort."""
     try:
-        text = meta.read_bytes()
+        text = _gr.read_bytes(meta)
         d = json.loads(text.decode("utf-8"))
     except (OSError, ValueError):
         return
     if not (isinstance(d, dict) and isinstance(d.get("refused"), dict)):
         return
-    for prior in meta.parent.glob(meta.name + ".retired-*"):   # this very mark already kept aside (a retirement whose rewrite keeps
-        try:                                                    #  failing retries at every sweep): one copy, never one per retry (the
-            if prior.read_bytes() == text:                      #  1717 read, low 2)
+    for prior in _gr.glob(meta.parent, meta.name + ".retired-*"):   # this very mark already kept aside (a retirement whose rewrite
+        try:                                                         #  keeps failing retries at every sweep): one copy, never one per
+            if _gr.read_bytes(prior) == text:                        #  retry (the 1717 read, low 2)
                 return
         except OSError:
             continue
@@ -5715,7 +5773,7 @@ def _asm_retire_refusal_mark(meta):
         n += 1
         aside = meta.with_name("%s.retired-%s-%d" % (meta.name, stamp, n))
     try:
-        aside.write_bytes(text)
+        _srm.write_bytes(aside, text)
     except OSError as e:                                # best effort by design, but never silent: the mark's forensic copy is lost, so
         _asm_removed("refusedMark:asideFailed")         #  count it and say so once (the 1717 read, low 4); the retirement itself proceeds
         _say_once("checkpoint: the refusal mark of %s could not be kept aside (%s)" % (meta.name, e))
@@ -5729,7 +5787,7 @@ def _asm_refusal_stands(leaf_path):
         return False
     meta = cp.with_name(cp.name + ".meta")
     try:
-        text = meta.read_bytes(); _count_read(str(meta), len(text))
+        text = _gr.read_bytes(meta); _count_read(str(meta), len(text))
         d = json.loads(text.decode("utf-8"))
         ref = d.get("refused") if isinstance(d, dict) else None
     except (OSError, ValueError):
@@ -5751,7 +5809,7 @@ def asm_document_seeds(leaf_path):
     cp = _asm_ckpt_file(leaf_path)
     meta = cp.with_name(cp.name + ".meta")
     try:
-        text = meta.read_bytes(); _count_read(str(meta), len(text))   # the one steady-state read this predicate adds: counted
+        text = _gr.read_bytes(meta); _count_read(str(meta), len(text))   # the one steady-state read this predicate adds: counted
         d = json.loads(text.decode("utf-8"))
     except (OSError, ValueError):
         return True                                       # no readable sidecar: the document stands, its inputs unknown
@@ -6528,15 +6586,15 @@ def asm_checkpoint_write(leaf_path, rompuuid, sdk_human=False, tree=None, reason
         if len(data) > _ASM_CKPT_CAP:                                  #  bytes a boot reads are the compressed ones
             return skip("oversize")
         try:
-            cp.parent.mkdir(parents=True, exist_ok=True)
+            _srm.make_dir(cp.parent, parents=True, root=_state_root())
             tmp = cp.with_name("%s.%d.%x.tmp" % (cp.name, os.getpid(), threading.get_ident()))
-            tmp.write_bytes(data)
+            _srm.write_bytes(tmp, data)
             _t_write = time.monotonic()                   # the window's edge: a refusal stamped before this was against the document
             os.replace(tmp, cp)                           #  the replace retires (popped below); one stamped after it stands
             meta = cp.with_name(cp.name + ".meta")            # {"av", "path"}: what the boot sweep reads, never the document
             _asm_retire_refusal_mark(meta)                    # a refusedStanding mark for the cut this write replaces is history
             mtmp = meta.with_name(meta.name + ".%d.tmp" % os.getpid())
-            mtmp.write_text(json.dumps(_asm_sidecar(doc)))   # the inputs' fsids and whether resume links joined them: what
+            _srm.write_text(mtmp, json.dumps(_asm_sidecar(doc)))   # the inputs' fsids and whether resume links joined them: what
             #                                                   asm_document_seeds reads, never the document
             os.replace(mtmp, meta)
         except OSError:
@@ -6789,7 +6847,7 @@ def _asm_ckpt_load(leaf_path, rompuuid, sdk_human, candidate_files, links, quiet
             else:
                 memo_key = mkey
         if doc is None:
-            data = cp.read_bytes()
+            data = _gr.read_bytes(cp)
             _count_read(str(cp), len(data))
             doc = json.loads(gzip.decompress(data).decode("utf-8"))
     except (OSError, ValueError, EOFError) as e:

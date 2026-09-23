@@ -2334,8 +2334,12 @@ class ChatSigHelpers(unittest.TestCase):
         threads folds thread two's three stats and its names count too (and any stat the test process makes in the
         background, so its stats reading is not a fixed number), and a shared backend counter folds thread two's two
         registry reads, so regReads reads 3. The stats are real calls through the kernel's os.stat wrapper, under the
-        outside interception, whose rule agrees."""
+        outside interception, whose rule agrees. A registry read walks its path by lstat through the guarded reader
+        (kernel/state_root_mode.py, round 4 of the state-root review: the root, sdk/ and the file), and those lstats go
+        through the same counting wrapper, so one guarded read costs G stats, measured here on this thread first; the
+        pin is 1 + G, and thread two's leak would add 3 + 2 G."""
         sb = self._reg_reader()
+        G = self._guard_stats(sb, self.SIDS[0])
         td = tempfile.TemporaryDirectory(); self.addCleanup(td.cleanup)
         p = os.path.join(td.name, "f")
         with open(p, "w") as f:
@@ -2375,14 +2379,30 @@ class ChatSigHelpers(unittest.TestCase):
         after = km._chat_sig_stats_report()
         self.assertEqual(failures, [])
         d = {k: after[k] - before[k] for k in after}
-        self.assertEqual((d["stats"], d["regReads"], d["namesReads"]), (1, 1, 0), "the fold sees the scope's own thread's reads alone")
-        self.assertEqual(ic.total, 1, "the outside rule agrees: only the thread with the open scope")
+        self.assertEqual((d["stats"], d["regReads"], d["namesReads"]), (1 + G, 1, 0), "the fold sees the scope's own thread's reads alone")
+        self.assertEqual(ic.total, 1 + G, "the outside rule agrees: only the thread with the open scope")
+
+    def _guard_stats(self, sb, sid):
+        """The stats ONE guarded registry read makes on this root: the guarded reader's lstats of every component from the
+        root down (kernel/state_root_mode.py), through the kernel's counting wrapper, measured inside a scope on this
+        thread before the threads under test run, after one warming read: the reader resolves the root once per process
+        (realpath, one lstat per component of the root's own path) and remembers it, so the first read on a root costs
+        more than every later one. At least one: the guard walks the path."""
+        sb.read_reg(km.jd.STATE, sid)                    # the warming read: the root's resolution is memoized after it
+        before = km._chat_sig_stats_report()
+        with km._chat_sig_scope():
+            sb.read_reg(km.jd.STATE, sid)
+        g = km._chat_sig_stats_report()["stats"] - before["stats"]
+        self.assertGreaterEqual(g, 1, "the guarded read walks its path by lstat through the counting wrapper")
+        return g
 
     def test_two_scopes_open_at_once_each_fold_their_own_threads_reads(self):
         """The mirror case: two threads open scopes at once, read different amounts (two stats and one registry read; three
         and two) and close, each fold pinned to its own thread's reads through a spy on the fold (_chat_sig_bump, keyed by
-        the folding thread). A shared accumulator folds the sum, or the other thread's reads, on at least one of them."""
+        the folding thread). A shared accumulator folds the sum, or the other thread's reads, on at least one of them.
+        Each registry read costs G stats more (the guarded reader's lstats, measured first, as above)."""
         sb = self._reg_reader()
+        G = self._guard_stats(sb, self.SIDS[2])
         td = tempfile.TemporaryDirectory(); self.addCleanup(td.cleanup)
         p = os.path.join(td.name, "f")
         with open(p, "w") as f:
@@ -2415,8 +2435,8 @@ class ChatSigHelpers(unittest.TestCase):
             for t in ths:
                 t.join(15)
         self.assertEqual(failures, [])
-        self.assertEqual((folds[idents["a"]]["stats"], folds[idents["a"]]["regReads"]), (2, 1), "thread a's fold is its own reads")
-        self.assertEqual((folds[idents["b"]]["stats"], folds[idents["b"]]["regReads"]), (3, 2), "thread b's fold is its own reads")
+        self.assertEqual((folds[idents["a"]]["stats"], folds[idents["a"]]["regReads"]), (2 + G, 1), "thread a's fold is its own reads")
+        self.assertEqual((folds[idents["b"]]["stats"], folds[idents["b"]]["regReads"]), (3 + 2 * G, 2), "thread b's fold is its own reads")
 
 
 def _direntry_stat_sites(source):

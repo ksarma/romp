@@ -12,7 +12,6 @@ this process through its environment (sdk_backend.py, split_spawn_secrets and _s
 road (spawn_env_secret_names: a name ending _API_KEY or _TOKEN in any letter case, or one of 1Password's);
 both transports build the CLI's environment from this process's own with the spec's overlay on top, so
 each such variable reaches the CLI from here and no file under the state root holds it."""
-import glob
 import importlib.util
 import os
 import sys
@@ -22,6 +21,21 @@ HERE = Path(__file__).resolve().parent
 KERNEL_DIR = HERE.parent / "kernel"
 if str(KERNEL_DIR) not in sys.path:
     sys.path.insert(0, str(KERNEL_DIR))
+
+
+def _state_root_mode():
+    """kernel/state_root_mode.py under its fixed module name (the same file the kernel, the bus and session_host load):
+    the guarded reader over the state root, so the venv's site-packages reaches sys.path only when every component
+    from the root down is this uid's, not a symlink and not writable by another local user (round 4 of the state-root
+    review: a planted site-packages went onto sys.path at position zero here as in the kernel)."""
+    name = "romp_state_root_mode"
+    mod = sys.modules.get(name)
+    if mod is None:
+        spec = importlib.util.spec_from_file_location(name, str(KERNEL_DIR / "state_root_mode.py"))
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[name] = mod
+        spec.loader.exec_module(mod)
+    return mod
 
 
 def _sdk_on_path() -> None:
@@ -34,9 +48,9 @@ def _sdk_on_path() -> None:
     state = Path(os.environ.get("ROMP_STATE_DIR") or Path(os.environ.get("XDG_STATE_HOME")
                  or str(Path.home() / ".local/state")) / "romp")
     tag = "python%d.%d%s" % (sys.version_info[0], sys.version_info[1], "t" if "t" in getattr(sys, "abiflags", "") else "")
-    for sp in sorted(glob.glob(str(state / "sdkvenv" / "lib" / tag / "site-packages"))):
-        if sp not in sys.path:
-            sys.path.insert(0, sp)
+    _gr = _state_root_mode().Reader(lambda: state, who="session-host")
+    for sp in _gr.glob(str(state / "sdkvenv" / "lib"), tag + "/site-packages"):
+        _gr.sys_path_dir(sp, 0)
 
 
 _sdk_on_path()

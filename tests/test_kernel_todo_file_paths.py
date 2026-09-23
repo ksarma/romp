@@ -90,8 +90,8 @@ class _World(unittest.TestCase):
         self.tmp = os.path.realpath(self.td.name)
         self.saved = jd.STATE
         self.addCleanup(self._restore_state)
-        jd.STATE = Path(self.tmp) / "state"
-        jd.STATE.mkdir()
+        (Path(self.tmp) / "state").mkdir()
+        jd._rebind_state(Path(self.tmp) / "state")   # the seam floors a umask-mode root at 0700 (round 4, 2026-09-21): the per-module chmod is gone
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
         km._set_user_todos(True)
@@ -112,7 +112,7 @@ class _World(unittest.TestCase):
         km._cwd_of, km._push_all, km._push_soon = self._saved
 
     def _restore_state(self):
-        jd.STATE = self.saved
+        jd._rebind_state(self.saved)
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
 

@@ -11,6 +11,17 @@
 set -euo pipefail
 STATE="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"
 VENV="$STATE/codexvenv"
+# Resolve the repo root through any symlink (matches bin/romp-serve and bin/romp-sdk-setup): pick_python's guard on the
+# venv's pyvenv.cfg runs kernel/state_root_mode.py from this checkout (the state root's trust boundary, 2026-09-21).
+src="${BASH_SOURCE[0]}"
+while [[ -L "$src" ]]; do
+    tgt="$(readlink "$src")"
+    case "$tgt" in
+        /*) src="$tgt" ;;
+        *)  src="$(cd "$(dirname "$src")" && pwd)/$tgt" ;;
+    esac
+done
+ROMP_DIR="$(cd "$(dirname "$src")/.." && pwd)"
 PIN="openai-codex==0.144.4"
 
 # KEEP IN SYNC with bin/romp-serve's pick_python, byte for byte: tests/romp-serve.bats diffs the three copies
@@ -72,6 +83,29 @@ pick_python() {
     }
     local state="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"
     local cfg="$state/sdkvenv/pyvenv.cfg"
+    # THE GUARD (the state root's trust boundary, kernel/state_root_mode.py, the one implementation the kernel, the bus
+    # and the session host load): the cfg names an interpreter this function then RUNS, so a cfg a peer planted while
+    # the root was writable, or a symlink to one, is refused before it is read. The module judges every component from
+    # the root down (this uid's, not a symlink, not writable by another local user by its discriminator) and quarantines
+    # a failing entry with one stderr line; this picker then reads no cfg. Run with the first python3 on PATH (the module
+    # is stdlib-only, and the picker has chosen nothing yet) from the enclosing script's checkout (ROMP_DIR). Exit 0 is
+    # trusted, 1 refused; anything else (no python3, no ROMP_DIR, a python3 that cannot run the module: a bare test PATH)
+    # falls back to what bash can judge alone, without the group database: the cfg, the venv and the root are this uid's
+    # and none is a symlink. Builtins only here, like the rest of this function (a bare PATH has no coreutils).
+    local guard="${ROMP_DIR:-}/kernel/state_root_mode.py" verdict=2
+    if [[ -e "$cfg" || -L "$cfg" ]]; then
+        if [[ -n "${ROMP_DIR:-}" && -r "$guard" ]] && command -v python3 >/dev/null 2>&1; then
+            python3 "$guard" trusted "$state" "$cfg" && verdict=0 || verdict=$?
+        fi
+        if [[ "$verdict" == 1 ]]; then
+            cfg=""
+        elif [[ "$verdict" != 0 ]]; then
+            if [[ -L "$cfg" || -L "$state/sdkvenv" || -L "$state" || ! -O "$cfg" || ! -O "$state/sdkvenv" || ! -O "$state" ]]; then
+                echo "romp: the SDK venv's pyvenv.cfg under $state is a symlink or not this account's: not read (the interpreter it names is not trusted)" >&2
+                cfg=""
+            fi
+        fi
+    fi
     if [[ -r "$cfg" ]]; then
         local key val exe="" home="" ver="" mm="" abi="" tag=""
         while IFS='=' read -r key val || [[ -n "$key" ]]; do

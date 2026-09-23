@@ -188,8 +188,8 @@ class GateDifferential(unittest.TestCase):
         km._push_subagents = lambda clients, now, live_map: None
         km.NAMES = Path(self.tmp) / "names"
         km.NAMES.mkdir()
-        km.jd.STATE = Path(self.tmp) / "state"
-        km.jd.STATE.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(km.jd._rebind_state, km.jd.STATE)   # the shared judge goes back to the root it had
+        km.jd._rebind_state(Path(self.tmp) / "state", make=True)   # made and floored at 0700 through the seam (tests-5 of the state-root review)
         km._built_chat.clear()
         km._prev_chat_events.clear()
         km._prev_chat_ledger.clear()

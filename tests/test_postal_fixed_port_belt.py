@@ -137,7 +137,8 @@ class FixedPortBelt(unittest.TestCase):
         self.assertLess(ens.index("_fixed_port_refusal()"), ens.index("subprocess.Popen("), "the refusal sits before the spawn")
         self.assertIn("_refuse_loudly(why)", ens)
         srv = src[src.index("def serve():"):src.index("def serve():") + 400]
-        self.assertLess(srv.index("_fixed_port_refusal()"), srv.index("STATE.mkdir"), "serve refuses before it touches anything")
+        self.assertLess(srv.index("_fixed_port_refusal()"), srv.index("STATE.parent.mkdir"),   # the root's own mkdir(mode=0o700) is
+                        "serve refuses before it touches anything")                             # serve's first touch of the disk
 
 
 if __name__ == "__main__":

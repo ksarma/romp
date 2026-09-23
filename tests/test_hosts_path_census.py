@@ -79,7 +79,8 @@ THE METHOD, in the order it runs.
   path-taking os and os.path functions, the Path methods, shutil, `asyncio.open_unix_connection`, `start_unix_server`,
   the subprocess constructors; a `**` splat into one is taken as its path position. `by-descriptor`: a `dir_fd` keyword,
   or the first argument of fstat, fchmod, fdopen, scandir or write, carries `fd` taint, and a subprocess's stdin, stdout
-  or stderr keyword too. `by-path`: a path position carries `path` or `text` taint and no descriptor does. `exec-arg`: a
+  or stderr keyword too (a read through the state root's guarded reader, `_gr.open(p)` and its kin, READER_METHODS, is
+  a by-path terminal of the primitive's kind: the reader judges the components and then reads by path). `by-path`: a path position carries `path` or `text` taint and no descriptor does. `exec-arg`: a
   subprocess's argv carries the path. `mixed`: one call reached by a path at one site and by a name under a descriptor
   at another. And `escape`: a `path`-tainted value at one of the SIX forms the escape rule covers, reported by file and
   line with the form named (a call the walk cannot resolve to a function of the three files, a pure conversion, a
@@ -176,6 +177,23 @@ PATH_METHODS = {"exists", "is_dir", "is_file", "is_symlink", "is_fifo", "is_sock
                 "glob", "rglob", "iterdir", "rename", "replace", "symlink_to", "hardlink_to", "resolve", "samefile",
                 "readlink", "owner", "group", "connect", "bind"}
 YIELDS_PATHS = {"glob", "rglob", "iterdir", "os.scandir", "os.listdir"}
+# THE STATE ROOT'S GUARDED READER (kernel/state_root_mode.py Reader; fork PR 874, merged with this census 2026-09-21):
+# `_gr.open(p)`, `self._gr.glob(d, pat)`, `_reader(state_dir).read_text(p)`. The reader lstat-judges every component from
+# the state root down (not a symlink, this uid's, not writable by another) and quarantines what fails, then performs the
+# read through the site's own pathlib or os primitive BY PATH (its primitive rule), so a guarded read is a by-path
+# terminal of the primitive's kind: a guard is not a descriptor, and a listed by-path site that takes the guard keeps
+# its row under the same key (the method's name and its first argument, the key the bare primitive had). The receiver
+# is recognised by its binding (`_gr`, `<obj>._gr`, the call `_reader(...)` or `_srm.Reader(...)`), the method by name.
+READER_METHODS = {"open", "read_text", "read_bytes", "os_open", "gzip_open", "stat", "exists", "isdir", "dir", "listdir",
+                  "scandir", "iterdir", "glob", "sys_path_dir", "trust"}
+READER_YIELDS_PATHS = {"glob", "iterdir", "listdir", "scandir", "dir"}
+# THE STATE ROOT'S OWNER-ONLY CREATORS (kernel/state_root_mode.py part 4; fork PR 874's round 4f, 2026-09-21): `_srm.open_private(p,
+# "a")`, `_srm.write_text(p, text)`, `_srm.make_dir(d, ...)`, `_srm.touch(p)`. Each births the entry 0600 or 0700 under any
+# umask and then runs the site's own primitive BY PATH (open, Path.write_text, os.mkdir, Path.touch), so a creation through
+# one is a by-path terminal of the primitive's kind, keyed by that kind and its first argument: the key the bare primitive
+# had, so a listed site that takes the creator keeps its row (Journal._open_segment's and _persist_gaps's opens, the host's
+# log and identity.json). The receiver is the shared module (`_srm`, `srm`, `jd.srm`), the method by name.
+CREATOR_METHODS = {"open_private": "open", "write_text": "write_text", "write_bytes": "write_bytes", "make_dir": "mkdir", "touch": "touch"}
 # THE FOUR LISTS BELOW are decided member by member by ONE question (the round-7 addendum, after the verifiers found
 # `setdefault` among the pure methods and `re.sub` among the sinks): can a hosts path flow THROUGH this call, either OUT
 # of it in its return (then it is PURE: the return carries the receiver's and the arguments' tags) or INTO its receiver to
@@ -1217,9 +1235,30 @@ class Census:
                     cur.append(c)
                     self._changed = True
 
+    @staticmethod
+    def _is_guarded_reader(node):
+        """The receiver of a guarded read (READER_METHODS): the name `_gr` (a module's or a function's reader), an attribute
+        `_gr` on any receiver (a backend's, a Journal's, a host's), or the reader a `_reader(state_dir)` or
+        `_srm.Reader(...)` call answers."""
+        if isinstance(node, ast.Name):
+            return node.id == "_gr"
+        if isinstance(node, ast.Attribute):
+            return node.attr == "_gr"
+        if isinstance(node, ast.Call):
+            return _dotted(node.func) in ("_reader", "_srm.Reader")
+        return False
+
+    @staticmethod
+    def _is_creator_module(node):
+        """The receiver of an owner-only creator (CREATOR_METHODS): the shared state-root module, bound as `_srm` (the
+        handed-root modules and the host), `srm` (the judge) or `jd.srm` (the kernel)."""
+        return _dotted(node).split(".")[-1].endswith("srm") if isinstance(node, (ast.Name, ast.Attribute)) else False
+
     def _terminal(self, e, fn, name, arg_tags, kw_tags):
         """Record `e` as a terminal when a path or descriptor position carries taint; returns the tags the call
-        yields (a descriptor for os.open, paths for a listing) or None when the call is no terminal."""
+        yields (a descriptor for os.open, paths for a listing) or None when the call is no terminal. A call on the
+        state root's guarded reader (READER_METHODS, _is_guarded_reader) is a by-path terminal keyed by the method's
+        name and its first argument."""
         recv_tags, is_method, m = set(), False, None
         if isinstance(e.func, ast.Attribute):
             m = e.func.attr
@@ -1227,6 +1266,13 @@ class Census:
         positions = PATH_FUNCS.get(name)
         fd_positions = FD_FUNCS.get(name)
         exec_positions = EXEC_FUNCS.get(name)
+        reader = m in READER_METHODS and self._is_guarded_reader(e.func.value)
+        if reader:
+            # the state root's guarded reader (READER_METHODS): a by-path read of the primitive's kind at the first argument
+            positions, name = (0,), m
+        elif m in CREATOR_METHODS and self._is_creator_module(e.func.value):
+            # the state root's owner-only creator (CREATOR_METHODS): a by-path creation of the primitive's kind at the first argument
+            positions, name = (0,), CREATOR_METHODS[m]
         if positions is None and fd_positions is None and exec_positions is None:
             if m in PATH_METHODS and recv_tags and self._class_named(e.func.value, fn) is None:
                 is_method = True
@@ -1288,12 +1334,12 @@ class Census:
             self._changed = True
         origins = path_tags | fd_tags
         # what the call yields
-        if name == "os.open" or (is_method and m == "open"):
+        if name == "os.open" or (is_method and m == "open") or (reader and m == "os_open"):
             text = self.segment(fn, e)
             return {Tag("fd", fn.file, e.lineno, text, fn.qual, self._ord_of(fn, "fd", text, e))}
         if name == "os.fdopen":
             return {t for t in origins if t.kind == "fd"}
-        if (is_method and m in YIELDS_PATHS) or name in YIELDS_PATHS:
+        if (is_method and m in YIELDS_PATHS) or name in YIELDS_PATHS or (reader and m in READER_YIELDS_PATHS):
             return {t for t in origins if t.kind != "fd"} if not fd_tags else set()
         if is_method and m in ("resolve", "readlink") or name == "os.path.realpath":
             return path_tags
@@ -1724,7 +1770,7 @@ RESIDUAL = {
     ('kernel/session_host.py', 'Journal._turn_boundary', 'os.unlink', 'self._path(seg)', 1):
         ('by-path', HOST, "an acknowledged segment deleted by path"),
     ('kernel/session_host.py', 'Journal.read_from', 'open', 'self._path(seg)', 1):
-        ('by-path', HOST, "a segment read by path"),
+        ('by-path', HOST, "a segment read by path; through the state root's guarded reader since fork PR 874 (the components from the root down lstat-judged, a plant quarantined, then the open by path)"),
     ('kernel/session_host.py', 'owner_only_dir', 'mkdir', 'd', 1):
         ('by-path', HELPER, "the mkdir by path; hosts/ for hosts_dir's callers, hosts/<sid>/ for write_spawn_spec and the host's Journal (condition 1's window)"),
     ('kernel/session_host.py', 'owner_only_dir', 'os.lstat', 'd', 1):
@@ -1733,8 +1779,17 @@ RESIDUAL = {
         ('by-path', HELPER, "the chmod by path of a loose directory of ours; it follows a link swapped in between the lstat and this call onto any object this uid owns"),
     ('kernel/session_host.py', 'owner_only_dir', 'os.lstat', 'd', 2):
         ('by-path', HELPER, "the read-back by path"),
+    # hosts_dir's three reads of the STATE ROOT itself, tainted since fork PR 874 (merged 2026-09-21) because the host's
+    # constructor calls hosts_dir(root) with the root derived from the spec path in argv (the declared seed), before the
+    # guarded reader opens the spec: the layout the path implies is made ours through 814's helpers first
+    ('kernel/session_host.py', 'hosts_dir', 'exists', 'root', 1):
+        ('by-path', HELPER, "whether the root is on disk, read before the mkdir to decide the create road (a root the call made is tightened); on the host's road the root is on disk before any host runs, so the create road is a hand-run host's over a root no romp tool has made"),
+    ('kernel/session_host.py', 'hosts_dir', 'os.lstat', 'root', 1):
+        ('by-path', HELPER, "the create road's lstat of the root it made (a link swapped in refused, a foreign uid refused), before the descriptor open"),
+    ('kernel/session_host.py', 'hosts_dir', 'os.open', 'root', 1):
+        ('by-path', HELPER, "the create road's open of the root it made, O_DIRECTORY|O_NOFOLLOW by path, for the fchmod that tightens it and the fstat read-back (kernel-4, round 4 of 814's review): a link swapped in after the lstat fails this open"),
     ('kernel/session_host.py', 'SessionHost.__init__', 'open', 'self.spec_path', 1):
-        ('by-path', HOST, "the spec opened by path with no O_NOFOLLOW before any guard: the host-side item the queue keeps (the launcher's argv contract), not this PR's"),
+        ('by-path', HOST, "the spec opened by path with no O_NOFOLLOW before any guard of this PR's: the host-side item the queue keeps (the launcher's argv contract), not this PR's. Since fork PR 874 the open goes through the state root's guarded reader over the root three parents up (every component lstat-judged, a symlink or a foreign-owned spec quarantined and the host not started), by path still: the item stands"),
     ('kernel/session_host.py', 'SessionHost.log', 'open', 'self.log_path', 1):
         ('by-path', HOST, "host.log appended by path after the constructor's guard"),
     ('kernel/session_host.py', 'SessionHost._sweep_stale_temps', 'glob', 'self.sock_path.parent', 1):

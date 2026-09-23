@@ -438,7 +438,7 @@ class Routes(_RouteLab):
                          "an OSC hyperlink goes whole too (review round 3, 2026-09-08; every family below)")
 
     def test_the_tool_and_the_kernel_share_one_cleaner(self):
-        # the bus imports nothing from the kernel, so the tool carries a copy; the two SOURCES are pinned
+        # the bus imports nothing else from the kernel (the state-root check is the one shared file), so the tool carries a copy; the two SOURCES are pinned
         # equal, so the tool refuses exactly what the kernel would (a text that cleans to nothing) instead of
         # posting it and reporting the kernel's 400 as "try again shortly" (review round 2, 2026-09-08)
         self.assertEqual(km._PINNED_ANSI_RE.pattern, pm._PINNED_ANSI_RE.pattern)

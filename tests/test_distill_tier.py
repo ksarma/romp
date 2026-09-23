@@ -28,7 +28,6 @@ class DistillTierResolution(unittest.TestCase):
         jd._state_cache.clear()
 
     def _put(self, name, value):
-        jd.STATE.mkdir(parents=True, exist_ok=True)
         (jd.STATE / name).write_text(value)
         jd._state_cache.clear()   # same-second writes share an mtime; the cache is not under test
 

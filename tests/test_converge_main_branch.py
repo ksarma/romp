@@ -76,14 +76,13 @@ class ConvergeMovesMain(unittest.TestCase):
         self.target = commit(other, "three")
         git(other, "push", "-q", "origin", "main")
         self.saved_state = jd.STATE
-        jd.STATE = root / "state"
-        jd.STATE.mkdir()
+        jd._rebind_state(root / "state", make=True)   # made and floored at 0700 through the seam (tests-5 of the state-root review)
         with km._SYNC_LOCK:
             del km._SYNC_NOTICES[:]
         km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
 
     def tearDown(self):
-        jd.STATE = self.saved_state
+        jd._rebind_state(self.saved_state)
         self.td.cleanup()
 
     def converge(self):

@@ -26,7 +26,8 @@ WALK_SID = "33333333-4444-5555-6666-777777777777"   # the walk test's own synthe
 
 PUSHER_JOBS = ("beginCheckpointCycle", "sessionsListing", "applyPendingOps", "turnNotify", "persistCheckpoints", "convergeCheckpoints",
                "bootRowBackstop", "kernelSample", "apiHealth")
-HOUSEKEEPING = ("liftSpentAwaiting", "deathSweep", "endOnIdle", "deferralSweep",
+HOUSEKEEPING = ("stateRootMode",   # the state root's mode re-check (2026-09-20), first: the premise of every write in the pass
+                "liftSpentAwaiting", "deathSweep", "endOnIdle", "deferralSweep",
                 "unreadableStores",   # this fork's unreadable-store warn, a stage of the jobs pass since the 2026-09-15 pull-in (the rulings' item 9)
                 "autoNudge", "interruptBlock",
                 "persistTickSeen", "persistIntrMarks", "persistSpendTrees", "autoPauseOnLimit", "usagePoll", "autoPauseOnSpend",
@@ -53,7 +54,7 @@ class Partition(unittest.TestCase):
         self.assertFalse(set(pusher) & set(jobs), "no job on both threads")
         self.assertEqual(set(pusher) | set(jobs), set(km._PerfStats.JOBS), "together they are the JOBS census")
         # the collector keeps the two lists by thread since 2026-09-18 (stage attribution: the pusher's nine are seeded under
-        # pusher.cycleJobsMs, the jobs thread's nineteen as flat `jobs.<job>` rows), so each must be the source's, in order
+        # pusher.cycleJobsMs, the jobs thread's as flat `jobs.<job>` rows), so each must be the source's, in order
         self.assertEqual(km._PerfStats.CYCLE_JOBS, PUSHER_JOBS, "CYCLE_JOBS is _pusher_cycle_jobs's list")
         self.assertEqual(km._PerfStats.PASS_JOBS, HOUSEKEEPING, "PASS_JOBS is _jobs_pass's list")
         self.assertEqual(km._PerfStats.JOBS, PUSHER_JOBS + HOUSEKEEPING, "JOBS is the census as CYCLE_JOBS + PASS_JOBS")
@@ -292,7 +293,7 @@ class TheBrowserNeverWaitsOnTheHousekeeping(_LabCycles):
 
     def test_a_run_of_both_loops_keeps_each_threads_job_rows_apart(self):
         """The real _pusher_cycle and _jobs_cycle, every job quiet: the nine cycle jobs' walls land under pusher.cycleJobsMs
-        and sum to at most the pusher's `jobs` container, the nineteen housekeeping jobs' land in the flat `jobs.<job>` rows
+        and sum to at most the pusher's `jobs` container, the housekeeping jobs' land in the flat `jobs.<job>` rows
         and sum to at most `jobsPass`, no cycle job's key is in stages_ms, and nothing is foreign. Each sum is a set of
         disjoint intervals inside its container's, so the bound is exact, not a ratio (the ratio tests here were coin
         tosses under load)."""

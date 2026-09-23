@@ -1517,9 +1517,10 @@ class FsCompleteness(_Gate):
             allowed = self._allowed(tier, sid, path)
             roots = (str(jd.STATE), str(self.pdir), str(self.claude / "tasks"))
             scratch = (str(jd.JUDGE_SCRATCH), str(jd.NAMES), str(self.claude / "tasks" / Path(path).stem))
-            stray = sorted(p for p in touched
-                           if p.startswith(roots) and p not in allowed and not os.path.isdir(p)
-                           and not p.startswith(scratch))
+            components = {a[:i] for a in allowed for i in range(len(a)) if a[i] == os.sep}   # the guarded reader lstat's every component
+            stray = sorted(p for p in touched                                                    # from the root down to a file it reads
+                           if p.startswith(roots) and p not in allowed and not os.path.isdir(p)   # (kernel/state_root_mode.py): a component
+                           and not p.startswith(scratch) and p not in components)                 # of an allowed path is not a read of its own
             self.assertEqual(stray, [], "%s read files its signature does not carry for %s" % (tier, sid))
 
     def test_the_planners_idle_reads_are_all_in_its_signature(self):

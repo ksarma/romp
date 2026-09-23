@@ -3255,11 +3255,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   rows here to `pusher.cycleJobsMs.<job>`: their `jobs.<job>` keys are gone
   from `stages_ms`, and a `jobs.<job>` row is the jobs thread's time under
   that name, where before it was every thread's; the nine do not compare
-  across a capture pair spanning the change, while the nineteen remaining
+  across a capture pair spanning the change, while the twenty remaining
   `jobs.<job>` container rows (the pass jobs) keep their names and their
   values: the act-now pass the dashboard's arms run on the WS handler thread
   closes no `jobs.<job>` container, so the jobs thread alone wrote those
-  nineteen. A job's part rows narrow too: the `jobs.autoNudge.<part>` rows
+  rows (nineteen on that day; `jobs.stateRootMode`, the state root's mode
+  re-check, joined the pass on 2026-09-20). A job's part rows narrow too: the `jobs.autoNudge.<part>` rows
   shed that pass's share, now counted under `stagesForeign` (the
   `stagesForeign` bullet below, since 2026-09-18). The `push.*` rows
   narrowed to the pusher's own work: the connect pushes' part, in those rows
@@ -5539,6 +5540,223 @@ never the previous numbers.
 State is written under `${XDG_STATE_HOME:-~/.local/state}/romp/`. Transcripts
 are read in place from where Claude Code writes them (`~/.claude/projects/`)
 and never copied.
+
+The state root's mode is checked, and the check has a consequence (since
+2026-09-20): a root another local user can write to, or one whose mode
+cannot be read, stops the process. Every romp tool makes the root
+owner-only (`0700`) when it loads, best-effort; the kernel reads the mode
+back and, when the mode is a problem, refuses. The refusal is one shape
+everywhere, an exit with code 2. The check is one implementation,
+`kernel/state_root_mode.py`, loaded by path under one fixed module name by
+the kernel's judge module, by the event model, by the postal bus and by the
+session host, so every long-lived writer under one root judges it by one
+rule and says it in one voice; none of the loaders defines a copy of it
+(`tests/test_state_root_mode.py`, `OneText`, holds that as an AST fact).
+
+What "writable by another local user" means (the discriminator): the mode
+carries an other write bit (`0707`, `0722`, `0777`), or it carries a group
+write bit and the group is not the owner's private group. A group is the
+owner's private group when the group database lists no member but the
+owner and no other account has that group as its primary group. On a box
+with user-private groups a directory made at the umask's mode under
+`umask 0002` reads `0775` and is writable by nobody but its owner, so it
+is not refused: it is re-tightened to `0700` and reported once. The same
+`0775` under a shared group (`users`, `staff`, a project group) is refused.
+Write access by another local user is what lets that user plant or replace
+entries under the root, which is the cross-session code-execution road. A
+group database that cannot be read, or that does not answer within a few
+seconds (the lookup runs in a thread joined with a timeout, so a hung name
+service cannot hang the boot, a request or a read; a definite answer is
+kept for five minutes), counts as writable, the restricted side, with its
+own message and remedy: the group database could not be read (the errno
+or `timeout`); check `getent group <gid>` and the name service; romp
+refuses until it can tell who else can write here. That remedy is never the
+distrust remedy below, since the fault is elsewhere. A root whose mode
+cannot be read is treated as writable too, because an unverified root is
+not one to serve from and a `stat` on a local directory does not fail
+transiently (a missing root means it was removed or renamed, and continuing
+would re-create it under a parent someone else may own). A state root path
+that exists and is not a directory is refused at every check with
+`ENOTDIR` and its own remedy: remove it and recreate the root as a
+directory (or point `ROMP_STATE_DIR` at one); the file is never made
+`0700` on the way, and the judge module's own import line names `ENOTDIR`
+rather than a loose mode.
+
+Two reads decide at the kernel's import and at boot. The current read, by
+the discriminator. And the import read: the mode the judge module read on
+a pre-existing root before its own `chmod`, together with whether the root
+held any entry at that read. A pre-existing root that was writable by
+another local user at that read and held entries is refused whatever the
+`chmod` did afterwards, with the distrust remedy: entries planted while the
+root was writable are not to be trusted, so remove `serve-token`,
+`repo-root` and every entry you did not make, or recreate the root, then
+`chmod 700` it; what the next boot's readers refuse lands in the root's
+`quarantine` directory (below). A root that was empty at the import's read
+is a creation default, whoever made it: the manager, the command-line tools
+and every test harness make the root at the umask's mode a moment before
+the first romp process tightens it, and nothing could have been planted in
+an empty directory, so the ordinary first boot is silent. The bus's start
+gate and the session host's apply the same rule to their own first read.
+
+Every read of the root's contents is guarded (since 2026-09-21). The
+population of those reads is derived from the code, not listed by hand: an
+AST census (`tests/test_state_root_readers.py`) over the kernel, the judge,
+the event model, the bus, the session host and the six kernel-side modules
+the kernel hands its root to (the stored logins, the palette, the host
+transport, the SDK backend, the Codex backend and the Codex runtime) finds
+every read of a path built from the state root, or from a `state_dir` a
+caller handed in (`read_text`, `read_bytes`, a read-mode `open`, `glob`,
+`listdir`, `iterdir`, `scandir`, a listing entry's `.path`, `is_dir`, and
+`sys.path` insertions of one) and fails when one does not go through a
+guarded reader or sit on its short allowlist with a reason; `python3
+tests/test_state_root_readers.py --list` prints the population. The five
+modules that bind the root at import hold one reader each; the six that are
+handed it build one per call over the root they were given, and its rows
+reach the same error centre. The guard's property: every component from
+the state root down to the path, `lstat`'ed, is not a symlink, is owned by
+this process's uid, and is not writable by another local user by the same
+discriminator. A `0775` venv or a `0664` parked-ops mirror under the owner's
+private group passes; the property is ownership plus the absence of a
+symlink plus the discriminator, never a directory's mode alone. A path
+that is not under the root (a transcript under the Claude config
+directory) is not the root's to guard, and the plain read runs. Entries
+under the root are born owner-only by code, whatever the process umask
+(since 2026-09-21): every directory a romp process makes there is `0700`
+and every file `0600` before its first byte (the kernel's, the judge's,
+the bus's and the session host's through the shared module's creators;
+the CLI's, the manager's and the remote update shell's few files by a
+`umask 077` or a mode at the site; the codex judge's reply file by the
+umask its child is given), so the readers never quarantine a process's
+own fresh entries under a permissive umask; the population of creators in
+the eleven modules is derived and pinned the same way
+(`tests/test_state_root_writers.py --list`), the sites outside them by a
+text pin in the same module. An entry made before that date at the
+umask's mode is tightened on its next use; an installed tree's inner
+files keep the installer's modes.
+
+What a guarded reader does when the guard fails is the quarantine
+contract: the first failing component under the root is renamed to
+`<root>/quarantine/<utc-stamp>.<its path below the root, slashes as dots>`
+(the `quarantine` directory is created `0700`), one kernel-log line says
+so, one error-centre row of the `refused` kind names the entry and the
+reason (not this uid's, a symlink, writable by another local user, or a
+group the database could not describe), and the reader then behaves as if
+the path were absent: the parked-ops mirror loads empty, the memo files
+read empty, a planted `checkpoints` directory is swept over as nothing, a
+planted `sdkvenv` or `codexvenv` never reaches `sys.path`, a planted login
+record is never read (its token command is never run), a planted message
+file in a box's `new/` is never listed as mail, a symlinked `messages.jsonl`
+or `server.pid` is never read or written through. Nothing planted is adopted,
+and nothing is merely skipped: a plant that was only skipped stood on disk
+to be adopted at the next boot, whereas a quarantined one is out of the
+root and kept for review. A quarantine that itself fails (`EPERM`, a busy
+mount) says so and the read still answers absent. A root that itself fails
+the guard (gone, not a directory, another user's) is the check's case, not
+an entry's: the readers under it answer absent, quarantine nothing, file no
+row, and say it once per root in the kernel log. The checkpoints directory
+is judged once at `_ckpt_dir()` and cached until the state root is rebound,
+since every checkpoint door, the boot sweep included, builds its paths
+under it.
+
+The check runs three times in the kernel. First at the module import,
+before the first read of an entry under the root, before the serve token is
+read and before the repo-root record is written, so the kernel never adopts
+an entry a writable root already held; a refused root exits 2 there. A
+pre-existing root that read `0775` under the owner's private group, or
+`0755`, is not refused: the import's `chmod` tightens it, and the boot
+files one kernel-log line and one error-centre row saying what was read and
+that it was re-tightened. The serve token keeps its own guards (the loader
+reads no token through a symlink and faults on a foreign-owned or
+unchmodable token), and its lock file is opened without following a link
+and waited for at most thirty seconds, so a lock a peer planted and holds
+open ends the start in a fault naming the lock and the timeout rather than a
+hang; the repo-root record is written by a temp and a rename, so a planted
+entry at that path is replaced rather than written through or left standing,
+and a write that fails is said in the kernel log with its `errno` and filed
+as an error-centre row at boot. Second at boot in `main()`, before any
+thread starts, under the same two reads (the two doors agree), where the
+rows for what the import-time readers quarantined are filed. Third on a
+cadence while serving: the housekeeping pass re-reads the mode as its first
+job, and every HTTP request re-reads it before routing, each read standing
+for 15 seconds. A refuse or unknown verdict found while serving exits the
+process from whichever thread found it, with no drain and no further
+write, and the manager restarts the kernel, whose boot refuses again while
+the root reads so. A client frame on an already-open WebSocket runs its
+operation without a read of its own: the socket road relies on the request
+road's check and the housekeeping pass's, and what it does hold is an exit
+already taken, since a frame that arrives while a finder's exit is in
+flight runs nothing.
+
+The re-check reads the mode before it repairs. A root this user owns that
+was loosened after boot is re-tightened to `0700` by the check's own
+best-effort `chmod`, but the verdict is taken from the mode as read, so
+the loosening is reported (a mode writable by another still exits; a
+`0755` mode, or `0775` under the private group, files a row that says it
+was re-tightened) rather than silently erased. A root that is not `0700`
+but writable by nobody else is a privacy fault, not a code-execution one:
+one row in the dashboard's error center, under its own `refused` bell
+kind, and one kernel-log line per transition (keyed on the mode and the
+cause, so an `errno` that changes under a constant mode files again), and
+no refusal. The row is built to fit the bell whole, with the remedy first
+and the root's path named at most once; the full line with the path goes
+to the kernel log. A `chmod` or `mkdir` the repair could not run travels
+with its `errno` name and text on every surface, since a `chmod` that
+could not run is not a quieter version of one that ran; a root that reads
+`0700` but that this user's `chmod` cannot change (a root another user
+owns) files one row and one line per transition with the verdict still
+`ok`, the import's own failed `chmod` folded in and labelled as the
+import's. The check reads the mode of the path the root resolves to, its
+owner and group for the group judgment, and whether it is a directory: not
+the parents; the repair chmods that resolved path.
+
+`/version` carries `stateRootMode` (`verdict`, `modeRead`, `modeAfter`,
+`repaired`, `err`, `importRepairError`, `remedy`, `checkedAt`) with no
+filesystem path, since that route answers with no token; the kernel log
+names the root. A served kernel only ever shows `verdict` `ok` or `warn`
+there, since a refuse or unknown verdict has already exited the process.
+The remedy is `chmod 700` on the root, or, when the root is not this
+user's to change, making it this user's first.
+
+Every long-lived writer under the root runs the check. The postal bus is a
+second serving daemon on the same state root, kept alive by the kernel, and
+it loads the same file (the one thing it loads from the kernel's directory):
+the gate runs at the module's import in every mode, not only under `serve`,
+because the module reads or mints the serve token under the root at import
+whatever it was invoked for, so `romp mail` and each session's message
+server are gated the same way; a bus that finds the root writable by another
+local user, or unreadable, exits 2 before it reads the serve token and
+binds, on the mode as read at its start, whatever its own `chmod` then did
+(a pre-existing `0777` root that held entries is refused with the distrust
+remedy even though the bus tightened it; an empty one is a creation default
+and starts silently; a pre-existing `0755` root, or `0775` under the owner's
+private group, is re-tightened and said once; a root the bus makes itself is
+made `0700` at the `mkdir`, with no looser instant), and again from its
+monitor loop, every poll, on the mode as read before that poll's repair, when
+the root loosens under it; a root that is not `0700` but writable by nobody
+else logs one line and serves. The bus's readers of the maildir, the markers,
+the timeline log, the pid file, the names and the flags are guarded the same
+way, and its pid file is written by a temp and a rename. The session host
+(`bin/romp-session-host`), which is on by default, writes its lease under the
+root every three seconds and outlives the kernel, runs the check at its start
+(before the spawn spec is read, and before the CLI is spawned) and on every
+beat: a refuse or unknown verdict exits 2 with the line on stderr and one
+`state-root-refused` row in its `host.log` (never a path), so a hostile root
+stops the kernel, the bus and every host. The command-line tools that only
+talk to the bus write nothing under the root themselves, and `bin/romp-serve`,
+`bin/romp-sdk-setup` and `bin/romp-codex-setup` run the same module over the
+SDK venv's `pyvenv.cfg` before their python picker reads it, since that file
+names an interpreter they then run.
+
+The check has limits worth stating. It reads the resolved root's own mode,
+its owner and its group, not its parents', and it trusts the file system's
+report of them; it is a guard against a local co-tenant, not against
+`root`. And there is a boundary no check can close: a file or directory
+descriptor another account opened inside the root while it was writable
+survives the tightening, because the operating system checks permission
+when a descriptor is opened and not on each later write. So removing and
+recreating the root is the boundary of what any of this promises: the
+checks refuse the window and quarantine what was planted in it; only
+removal and re-creation close a descriptor a peer already holds.
 
 The self-updater's report, `update-report.json`, is read once, by the next
 kernel boot or by the running kernel's banner poll, and archived as

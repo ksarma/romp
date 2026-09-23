@@ -1465,7 +1465,7 @@ class ContainerKidsCache(unittest.TestCase):
 
 class JobRowsByOwner(unittest.TestCase):
     """A `jobs.<job>` stage is written from two threads under one prefix: nine jobs in _pusher_cycle_jobs on the pusher and
-    nineteen in _jobs_pass on the jobs thread (plus a job's parts from _sub_stage). Until 2026-09-18 stage() added every
+    the housekeeping jobs in _jobs_pass on the jobs thread (plus a job's parts from _sub_stage). Until 2026-09-18 stage() added every
     writer's wall to the one flat row, so a row said which thread's time it held only by the lists in the source, and a
     job that changed lists, or a test driving both loops on one thread, merged the two silently. Now stage() routes a
     dotted `jobs.` write by the WRITER'S OWNER: the jobs thread's to the flat row (stages_ms), the pusher's to
@@ -4654,8 +4654,8 @@ class PushStages(unittest.TestCase):
         self.saved_state = (km.jd.STATE, dict(km._built_chat), dict(km._prev_chat_events),
                             dict(km._prev_chat_ledger), list(km._last_tab_order))
         km.NAMES = names
-        km.jd.STATE = Path(self.tmp) / "state"
-        km.jd.STATE.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(km.jd._rebind_state, km.jd.STATE)   # the shared judge goes back to the root it had
+        km.jd._rebind_state(Path(self.tmp) / "state", make=True)   # made and floored at 0700 through the seam (tests-5 of the state-root review)
         km._live_map = lambda: {}
         km._live_names = lambda tm: {"web": SID}
         km._chat_tab_sessions = lambda now, live_map: [{"sid": SID, "name": "web", "path": str(self.transcript),

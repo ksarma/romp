@@ -171,8 +171,8 @@ class World:
         self.outside.write_text("scratch\n")
         # the kernel's state, sandboxed under tmp_path
         self.saved_state = jd.STATE
-        jd.STATE = tmp_path / "state"
-        jd.STATE.mkdir()
+        (tmp_path / "state").mkdir()
+        jd._rebind_state(tmp_path / "state")   # the seam floors a umask-mode root at 0700 (round 4, 2026-09-21): the per-module chmod is gone
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
         km._set_user_todos(True)
@@ -216,7 +216,7 @@ class World:
         km._live_map, km._cwd_of, backend_for = self.saved_trace
         km.Sessions.backend_for = backend_for
         km._set_file_editing(False)
-        jd.STATE = self.saved_state
+        jd._rebind_state(self.saved_state)
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
 

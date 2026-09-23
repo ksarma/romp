@@ -72,7 +72,7 @@ class ServedRestart(unittest.TestCase):
         for d in ("names", "sdk", "states", "timeline"):
             os.makedirs(os.path.join(self.state, d), exist_ok=True)
         os.makedirs(self.cwd, exist_ok=True)
-        os.symlink(SDKVENV, os.path.join(self.state, "sdkvenv"))
+        self._lab_sdkvenv()
         Path(self.state, "names", self.sid).write_text("web\t%s\t#9cd2ff\t#0c1a2e\n" % self.cwd)
         Path(self.state, "sdk", self.sid + ".json").write_text(json.dumps(
             {"sid": self.sid, "name": "web", "cwd": self.cwd, "mode": "bypassPermissions", "effort": "high", "lastSid": self.sid, "alive": True}))
@@ -80,6 +80,35 @@ class ServedRestart(unittest.TestCase):
         self.dist = os.path.join(self.lab, "dist")
         lab_dist.copy_dist(self.dist)   # a lab copy under the harness lock: the kernel must never rebuild bundles in the shared checkout
         self.fake_log = os.path.join(self.lab, "fake-cli.log")
+
+    def _lab_sdkvenv(self):
+        """The lab's sdkvenv: a real directory tree of the lab's own (pyvenv.cfg copied; lib/python3.X/site-packages made
+        0700 at every level) whose site-packages ENTRIES link to the live venv's packages. Through the round-4 tree of fork
+        PR 874 the lab put one symlink at <state>/sdkvenv pointing at the live venv, and the kernel's guarded reader
+        refuses a symlink at any component under the state root (a symlinked sdkvenv is the planted-venv shape it
+        quarantines, tests/test_state_root_mode.py TheGuardedReadersQuarantine), so the kernel found no SDK and every
+        session crashed at its import (round 4d, 2026-09-21; the case had skipped on this box until the extension's
+        node_modules existed, and skips on CI, which has no SDK venv). The guard judges the directory it puts on sys.path,
+        which is the lab's; what Python imports through the entries inside it is not a read of the state root, and a copy
+        of the live site-packages (about 280 MB) per case is not a lab."""
+        venv = os.path.join(self.state, "sdkvenv")
+        os.mkdir(venv, 0o700)
+        cfg = os.path.join(SDKVENV, "pyvenv.cfg")
+        if os.path.isfile(cfg):
+            shutil.copyfile(cfg, os.path.join(venv, "pyvenv.cfg"))
+        lib = os.path.join(venv, "lib")
+        os.mkdir(lib, 0o700)
+        for tag in _tags:
+            live = os.path.join(SDKVENV, "lib", tag, "site-packages")
+            if not os.path.isdir(live):
+                continue
+            os.mkdir(os.path.join(lib, tag), 0o700)
+            site = os.path.join(lib, tag, "site-packages")
+            os.mkdir(site, 0o700)
+            for entry in os.listdir(live):
+                os.symlink(os.path.join(live, entry), os.path.join(site, entry))
+        for d in (venv, lib):
+            os.chmod(d, 0o700)                       # the mkdir's mode is masked by the umask; the guard wants no group or other write
 
     def _sweep(self):
         """Kill what the case started and remove its lab. Runs on the instance as setUp left it, whole or not (a skip or an

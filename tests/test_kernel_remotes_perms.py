@@ -148,14 +148,18 @@ class RemotesFilePermissions(unittest.TestCase):
 
 
 class AtomicWriteMode(unittest.TestCase):
-    def test_mode_applied_and_default_unchanged(self):
+    def test_mode_applied_and_the_default_is_owner_only_too(self):
+        """A mode names an exact mode; NO mode is 0600 as well since round 4f of the state-root review (2026-09-21): the
+        mode-less road runs the shared module's creator (kernel/state_root_mode.py write_text), which births the temp at
+        0600 before Path.write_text runs, so a file this helper publishes under the root is owner-only whatever the
+        process umask (until then the mode-less temp inherited the umask, 0644 under 0022, and this test asserted it)."""
         d = km.jd.STATE / "permtest"
         d.mkdir(parents=True, exist_ok=True)
         secret, plain = d / "secret.json", d / "plain.json"
         km._atomic_write(secret, "{}", mode=0o600)
         km._atomic_write(plain, "{}")
         self.assertEqual(_mode(secret), 0o600)
-        self.assertNotEqual(_mode(plain), 0o600, "no mode → umask default, unchanged behavior")
+        self.assertEqual(_mode(plain), 0o600, "no mode: born 0600 by the creator, whatever the umask (round 4f)")
 
     def test_no_temp_files_left_behind(self):
         d = km.jd.STATE / "permtest2"
@@ -168,13 +172,18 @@ class AtomicWriteMode(unittest.TestCase):
         os.chmod recorded and NOT performed, so a chmod-after road leaves the file at the umask's mode and a case
         reads the descriptor's mode and nothing else."""
         fchmods, chmods = [], []
-        real_fchmod = os.fchmod
+        real_fchmod, real_chmod = os.fchmod, os.chmod
 
         def fchmod_probe(fd, mode):
             fchmods.append((mode, os.fstat(fd).st_size))
             return real_fchmod(fd, mode)
 
         def chmod_probe(path, mode, *a, **k):
+            if os.path.isdir(path):
+                # a DIRECTORY's chmod is the shared module's make_dir tightening the target's parent (round 4f of the
+                # state-root review, 2026-09-21: the test's own mkdir made it at the umask's mode), not a mode put on the
+                # file after its write: performed, and not counted against the descriptor rule this probe holds
+                return real_chmod(path, mode, *a, **k)
             chmods.append((str(path), mode))
         for name, probe in (("fchmod", fchmod_probe), ("chmod", chmod_probe)):
             patch = mock.patch.object(os, name, probe)

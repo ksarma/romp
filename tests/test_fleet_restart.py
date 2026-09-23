@@ -260,7 +260,7 @@ class ReportSurvivesTheRestart(unittest.TestCase):
     def test_the_route_hands_the_report_back_and_the_page_shows_it_once(self):
         src = inspect.getsource(km.Handler)
         self.assertIn('if u.path == "/fleet-restart":', src)
-        self.assertIn("FLEET_REPORT.read_text()", src)
+        self.assertIn("_gr.read_text(FLEET_REPORT)", src)
         self.assertIn("threading.Thread(target=_fleet_restart_run,", src)
         self.assertIn('kwargs={"manager_port": _mport}, daemon=True).start()', src,
                       "the remote leg carries the port resolved before the ack, like the local one")

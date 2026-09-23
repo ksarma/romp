@@ -41,6 +41,7 @@ import fcntl
 import hashlib
 import hmac
 import http.client
+import importlib.util
 import itertools
 import json
 import os
@@ -86,6 +87,143 @@ USER_TODOS_SWITCH = STATE.parent / "user-todos-enabled.json"   # the kernel's pe
 CODEX_REGISTRY = STATE.parent / "codex" / "registry.json"   # the kernel's Codex backend's store: rows keyed by the stable sid, each carrying the native thread id ("tid"); read by _codex_self_id only
 
 
+# ── the state root's mode (2026-09-20) ─────────────────────────────────────────────────────────────────
+# The bus is a second serving daemon on the same state root as the kernel, kept alive by the kernel itself
+# (its _ensure_postal_bus) and by every session's MCP process (`ensure`), and it writes under that root:
+# mailboxes, markers, the timeline log, its pid file. Until 2026-09-20 it had no look at the root's mode at
+# all, so a root writable by other local users (the cross-session code-execution road: another local user
+# can plant or replace entries under it) that stopped the kernel left the bus accepting and writing mail
+# (the 2026-09-20 review's fresh-3). Now the bus refuses the same root the same way, by THE SAME CODE: the
+# check is kernel/state_root_mode.py, loaded here by path under the fixed name the kernel's judge module
+# uses (_srm, below; round 4: "one implementation imported twice", where round 2 carried a reduced copy
+# under a keep-in-sync comment, and a comment is not a mechanism). This is the one file the bus loads from kernel/;
+# the serve-token loader below stays the bus's own copy, pinned to the kernel's by AST identity.
+#
+# What the check says: a mode writable by another local user refuses (an OTHER write bit; or a GROUP write
+# bit under a group that is not the owner's private group, the group database read within a bound; a
+# database that cannot be read or does not answer refuses with its own message naming getent and the name
+# service), a mode that is not 0700 but writable by nobody else warns (0755; 0775 under the owner's
+# private group, which is what every directory made under umask 0002 on a user-private-group box reads),
+# a mode that cannot be read is unknown, refuse-class. The check READS BEFORE IT REPAIRS and its verdict
+# is on the read. The bus applies it at START before the serve token below is read or minted and before
+# the bind (_state_root_gate, run at import in serve mode and again in serve() after the root is made),
+# and from the monitor loop every POLL while serving (os._exit from that thread: no drain, no further
+# write). A warn root is said once per transition on stderr (the bus has no error centre; server.log
+# carries it) and served.
+#
+# THE START READ IS THE IMPORT-READ RULE'S READ (round 4). A pre-existing root that the start gate READ
+# writable by another local user is refused whatever the gate's own chmod did afterwards, with the
+# distrust remedy in the kernel's import gate's words (srm.import_read_refusal, "start"): entries
+# planted while it was writable are not to be trusted; remove serve-token, repo-root and every entry you
+# did not make, or recreate the root, then chmod 700. Round 2b served that root with one loud line; the
+# artifact enumeration (plans/state-root-mode.md) found ten paths under the root the bus start touches
+# after the gate, most unguarded, planted mail among them. UNVERIFIED IS REFUSED, one exception: a root
+# that does not exist yet at START is not unverified but unmade (nothing has created it in this process;
+# the kernel's judge module creates the kernel's, the token mint and serve() create the bus's), so the
+# import gate lets ENOENT through and records it, and serve(), which makes the root, then chmods it 0700
+# FIRST and checks it (a fresh directory carries the umask's mode, a creation default and not a
+# loosening: the exemption a root the process created has under the rule). Once serving, ENOENT means
+# the root was removed or renamed, and the bus exits like the kernel does.
+
+
+def _load_state_root_mode():
+    """kernel/state_root_mode.py under its fixed module name, THE SAME FILE the kernel's judge module loads: found from
+    this file's resolved location (bin/romp-postal-service is a symlink into postal/, and the checkout holds kernel/
+    beside it). A copy already in sys.modules under that name (a process that loaded the kernel first) is reused, so
+    one process holds one module object. A checkout without the file cannot start the bus in serve mode: the
+    FileNotFoundError is the loud signal, since a bus that could not judge its root must not serve from it."""
+    name = "romp_state_root_mode"
+    mod = sys.modules.get(name)
+    if mod is not None:
+        return mod
+    path = Path(__file__).resolve().parent.parent / "kernel" / "state_root_mode.py"
+    spec = importlib.util.spec_from_file_location(name, str(path))
+    if spec is None or spec.loader is None:
+        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(path))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    return mod
+
+
+_srm = _load_state_root_mode()
+_errno_text = _srm.errno_text   # "ENAME: strerror" from the errno alone, never str(e), which carries the path
+# THE GUARDED READERS over the state root (kernel/state_root_mode.py, part 3): every read of a path under the root in this
+# file (the maildir, the markers, the timeline log, the pid file, the names, the flags, the outbox and readbox, the
+# quarantine) goes through _gr (tests/test_state_root_readers.py's census pins that), and a planted entry, a symlink, a
+# foreign-owned or a writable-by-another file or directory, is quarantined and read as absent: planted mail in a box's
+# new/ is never delivered, a symlinked messages.jsonl is never read or appended through, a symlinked server.pid is never
+# written through. The bus has no error centre; the reader's stderr line lands in server.log.
+_gr = _srm.Reader(lambda: STATE.parent, who="postal")
+
+
+_STATE_ROOT_SAID = [None]   # the last (verdict, mode, repaired, errnos) said on stderr: one line per transition, not per poll
+_STATE_ROOT_UNMADE_AT_START = [False]   # the import gate found no root (ENOENT): this process makes it, so serve() establishes 0700 first
+
+
+def _state_root_gate(where, absent_ok=False, establish=False):
+    """The bus's refusal (2026-09-20; the block above): the root's mode checked at `where` ("start" at import in
+    serve mode and in serve() before the bind; "poll" from the monitor loop) by the shared check (_srm.check). Verdict
+    refuse or unknown, ON THE MODE AS READ before the check's own repair: the full line (the root's path in full:
+    stderr is this uid's surface) and exit 2, SystemExit from the main thread at start and os._exit from the monitor
+    thread (a SystemExit raised there would be swallowed by the thread bootstrap and stop the monitor alone). At
+    start on a pre-existing root the line is the import-read rule's (_srm.import_read_refusal, "start"): the read
+    was writable by another local user, the chmod ran or failed, the distrust remedy. `absent_ok`: the start gate at
+    import, where a root that does not exist yet is unmade rather than unverified (recorded in
+    _STATE_ROOT_UNMADE_AT_START; the token mint or serve() creates it). `establish`: serve()'s gate for a root this
+    process made (the import gate found none): the fresh directory carries the umask's mode, a creation default and
+    not a loosening, so it is chmod'ed 0700 before the read, the way kernel/judge.py's import treats its own mkdir.
+    Verdict warn (0755; 0775 under the owner's private group), or ok with a failed chmod: one stderr line per
+    transition (keyed on the verdict and its cause), and the root is served; a warn root the check could tighten is
+    re-tightened AND said ("was mode 0775, re-tightened to 0700"), so the tightening leaves a trace. Returns the check."""
+    if establish:
+        try:
+            os.chmod(STATE.parent, 0o700)          # a root this process made: the umask's mode is a creation default
+        except OSError:
+            pass
+    chk = _srm.check(STATE.parent, list_entries=(where == "start"))
+    root = STATE.parent
+    if where == "start":
+        if chk["verdict"] == "unknown" and absent_ok and chk["statErrno"] == "ENOENT":
+            _STATE_ROOT_UNMADE_AT_START[0] = True
+            return chk
+    verdict, line = chk["verdict"], chk["line"]
+    if (verdict == "refuse" and where == "start" and not establish and chk["modeRead"] is not None
+            and not chk["notDirectory"]):
+        # a pre-existing root read writable at start: the import-read rule's words, one voice with the kernel's gate. A
+        # root that was EMPTY at this read is a creation default whoever made it (round 4): the verdict then stands on
+        # the mode as it reads after this gate's own chmod, so a root another tool made a moment ago starts silently
+        empty = chk["entries"] is not None and len(chk["entries"]) == 0
+        ref = _srm.import_read_refusal(root, chk["modeRead"], (chk["uid"], chk["gid"]), "start",
+                                       repair_error=chk["repairError"], empty=empty)
+        if ref is not None:
+            line = ref["line"]
+        elif empty and chk["repaired"]:
+            verdict, line = "ok", None                   # tightened from its creation default before anything was planted
+    if verdict in ("refuse", "unknown"):
+        sys.stderr.write("romp-postal-service: %s. The bus %s (exit 2).\n"
+                         % (line, "did NOT start" if where == "start" else "stops now, found by its monitor"))
+        sys.stderr.flush()
+        if where == "start":
+            raise SystemExit(2)
+        os._exit(2)
+    key = (chk["verdict"], chk["modeReadText"], chk["repaired"], chk["repairErrno"], chk["statErrno"])
+    if line and key != _STATE_ROOT_SAID[0]:
+        sys.stderr.write("romp-postal-service: %s\n" % line)
+    _STATE_ROOT_SAID[0] = key
+    return chk
+
+
+# the bus's start, in EVERY mode (round 3, extra6-2: the module reads or mints the serve token under the root at import,
+# whatever argv says, so `romp mail` and each session's MCP process write under the root too and are gated the same
+# way; until round 4 the gate ran under argv "serve" alone): BEFORE the serve token below is read or minted from that root
+_state_root_gate("start", absent_ok=True)
+
+
 # ── serve-token gate (Jupyter's model; the same 0600 file the kernel mints) ─────
 # Loopback is reachable by EVERY local user on the machine, so the bus — which can wake sessions
 # and hand them mail as their next turn — requires the machine's serve token on every
@@ -96,7 +234,8 @@ CODEX_REGISTRY = STATE.parent / "codex" / "registry.json"   # the kernel's Codex
 # restarted bus gets every token re-notified, see peers_snapshot).
 #
 # _serve_token_read_or_mint is a COPY of the kernel's (kernel.py, same name; KEEP IN SYNC): the bus
-# imports nothing from kernel/ by design, and the two daemons boot together, so they must agree on
+# imports nothing else from kernel/ (the state root's check above is the one file it loads from there,
+# by path), and the two daemons boot together, so they must agree on
 # the whole contract, not just the path. Why it is shaped this way is in the kernel's docstring; in
 # one line: FileNotFoundError is the only mint trigger, the mint lands by rename of a 0600 temp,
 # and it all happens under serve-token.lock. A fault raises RuntimeError, which at import refuses to
@@ -182,17 +321,30 @@ def _serve_token_read_or_mint(f, who):
 
     lfd = None
     try:
-        f.parent.mkdir(parents=True, exist_ok=True)
-        lfd = os.open(str(lock), os.O_RDWR | os.O_CREAT, 0o600)
+        f.parent.mkdir(parents=True, exist_ok=True, mode=0o700)   # a root this call makes (the bus, on a box with none) is 0700 from its first instant
+        lfd = os.open(str(lock), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)   # never through a planted link (round 3, correctness-2)
         try:
             fcntl.flock(lfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             # another starter (the kernel and the bus boot together) is reading or minting: say so
-            # once, then wait for it. The blocking take is the right wait; it was just silent, and a
-            # starter stuck behind a wedged holder looked hung (review find, 2026-09-08).
+            # once, then wait for it, BOUNDED (round 3, extra5-4): a foreign lock file planted while the
+            # root was writable and held flocked through a descriptor its owner keeps open would hold a
+            # blocking take forever, and the manager would see a kernel that never boots. The wait was
+            # silent before 2026-09-08 (a starter stuck behind a wedged holder looked hung).
             print("[%s] serve token: waiting for the holder of %s (another starter is reading or "
-                  "minting it)" % (who, lock), file=sys.stderr)
-            fcntl.flock(lfd, fcntl.LOCK_EX)
+                  "minting it; giving up after %d s)" % (who, lock, SERVE_TOKEN_LOCK_WAIT_S), file=sys.stderr)
+            deadline = time.monotonic() + SERVE_TOKEN_LOCK_WAIT_S
+            while True:
+                try:
+                    fcntl.flock(lfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        fault(lock, "take the lock within %d s (its holder never released it; a lock file planted while the "
+                                    "state root was writable and held open blocks the start this way)" % SERVE_TOKEN_LOCK_WAIT_S,
+                              TimeoutError(errno.ETIMEDOUT, os.strerror(errno.ETIMEDOUT)),
+                              fix="End the holder, or remove the lock file when it is not yours (or set ROMP_SERVE_TOKEN)")
+                    time.sleep(0.1)
     except OSError as e:
         if lfd is not None:
             try:
@@ -233,6 +385,9 @@ def _serve_token_read_or_mint(f, who):
         except OSError:
             pass
         os.close(lfd)
+
+
+SERVE_TOKEN_LOCK_WAIT_S = 30   # the bounded wait for serve-token.lock's holder (the kernel's copy names the same figure)
 
 
 def _load_serve_token():
@@ -329,7 +484,7 @@ def _codex_self_id(tid):
     refuses on the missing identity prints `why` (_identity_refusal)."""
     path = CODEX_REGISTRY
     try:
-        rows = json.loads(path.read_text(encoding="utf-8"))
+        rows = json.loads(_gr.read_text(path, encoding="utf-8"))
     except FileNotFoundError:
         return None, "CODEX_THREAD_ID is set but %s does not exist, so this thread cannot be matched to a session" % path
     except OSError as e:
@@ -426,7 +581,7 @@ def _self_identity():
     if not fsid:
         return sid, None
     try:
-        return sid, ((NAMES_DIR / fsid).read_text().split("\t")[0].strip() or None)
+        return sid, (_gr.read_text(NAMES_DIR / fsid).split("\t")[0].strip() or None)
     except Exception:
         return sid, None
 
@@ -500,7 +655,7 @@ def _mailbox(sid):
         raise ValueError("unsafe session id")
     mb = MAILROOT / sid
     for d in ("tmp", "new", "cur"):
-        (mb / d).mkdir(parents=True, exist_ok=True)
+        _srm.make_dir(mb / d, parents=True, root=STATE.parent)
     return mb
 
 def _unique():
@@ -537,8 +692,8 @@ def _mark_pending(sid):
         return
     try:
         if not empty:
-            MAILPENDING.mkdir(parents=True, exist_ok=True)
-            m.touch()
+            _srm.make_dir(MAILPENDING, parents=True, root=STATE.parent)
+            _srm.touch(m)
         else:
             m.unlink()                                 # FileNotFoundError lands in the except below like every other fault
     except Exception:
@@ -558,8 +713,9 @@ def _tl_append(fname, obj):
     ignoring the return: each is an annotation on a message that already exists, not the record of
     whether it does."""
     try:
-        TLDIR.mkdir(parents=True, exist_ok=True)
-        with open(TLDIR / fname, "a") as fh:
+        _srm.make_dir(TLDIR, parents=True, root=STATE.parent)
+        _gr.exists(TLDIR / fname)                      # a planted link at the log is quarantined before the append (never written through)
+        with _srm.open_private(TLDIR / fname, "a") as fh:
             fh.write(json.dumps(obj) + "\n")
         if _TL_FAULT[0]:
             _TL_FAULT[0] = False
@@ -744,7 +900,7 @@ def deliver(to_id, from_name, from_id, body, park=False, kind="", from_host="",
     if relay_marker:
         hdr += "X-Relay-Marker: %s\n" % _hdr_val(relay_marker)   # the kernel's marker id (clamped above; the one
         #                                                          sanitizer every header value passes, as well)
-    tmp.write_text(hdr + "\n" + body + "\n")
+    _srm.write_text(tmp, hdr + "\n" + body + "\n")
     # Timeline log: a message was SENT (the matching exec event is logged when
     # the recipient consumes it in read_box). id = maildir filename joins the two.
     ev = {"t": int(time.time()), "ev": "sent", "id": name,
@@ -926,13 +1082,13 @@ def read_box(sid, consume):
         return []
     mb = MAILROOT / sid
     newd = mb / "new"
-    if not newd.is_dir():
+    if not _gr.isdir(newd):
         return []
     if consume:
-        (mb / "cur").mkdir(parents=True, exist_ok=True)
+        _srm.make_dir(mb / "cur", parents=True, root=STATE.parent)
     out = []
     try:
-        entries = sorted(newd.iterdir(), key=lambda p: p.name)   # oldest first
+        entries = sorted(_gr.iterdir(newd), key=lambda p: p.name)   # oldest first; a planted message file is quarantined here, never delivered
     except OSError as e:
         raise InboxUnreadable("inbox of %s cannot be listed (%s: %s)" % (sid, type(e).__name__, str(e)[:120]))
     _INBOX_UNREADABLE_SAID.discard(sid)                   # listed: a later fault is a new spell
@@ -940,7 +1096,7 @@ def read_box(sid, consume):
         if not f.is_file():
             continue
         try:
-            text = f.read_text(errors="replace")
+            text = _gr.read_text(f, errors="replace")
         except FileNotFoundError:
             continue                                 # consumed or recalled between the listing and the read
         except OSError as e:
@@ -1010,11 +1166,11 @@ def restore(sid, mid):
     if state == "missing":               # recalled/swept while we held it: nothing to put back
         return RESTORE_MISSING
     try:
-        head = src.read_text(errors="replace").partition("\n\n")[0]
+        head = _gr.read_text(src, errors="replace").partition("\n\n")[0]
     except OSError:
         head = ""
     try:
-        (MAILROOT / sid / "new").mkdir(parents=True, exist_ok=True)
+        _srm.make_dir(MAILROOT / sid / "new", parents=True, root=STATE.parent)
         src.rename(MAILROOT / sid / "new" / mid)
     except FileNotFoundError:
         return RESTORE_MISSING
@@ -1524,7 +1680,7 @@ def _dir_empty(d):
     """True when `d` is a directory with nothing in it or does not exist (an absent directory holds nothing), False when it
     holds an entry, None when it exists but cannot be read (unknown is never empty)."""
     try:
-        return not any(d.iterdir())
+        return not any(_gr.iterdir(d))
     except OSError as e:
         return True if e.errno in REG_MISSING_ERRNOS else None   # ENOTDIR is in the tuple: a new/ that is a file is MISSING, the
     #                                                              same word the reg rule gives it (a False here minted a permanent
@@ -1574,7 +1730,7 @@ def _thread_of(sid):
             return ""
         if state == "unreadable":
             return THREAD_REG_UNREADABLE
-        d = json.loads(p.read_text())
+        d = json.loads(_gr.read_text(p))
         return str(d.get("threadOf") or "") if isinstance(d, dict) else THREAD_REG_UNREADABLE
     except Exception:
         return THREAD_REG_UNREADABLE
@@ -1637,12 +1793,12 @@ def _session_flags_read():
                  else "no flags known yet, so mail is held for EVERY session (closed) until the file is written again"))
         return _FLAGS_LAST[0], _FLAGS_LAST[0] is not None
     try:
-        d = json.loads(SESSION_FLAGS.read_text())
+        d = json.loads(_gr.read_text(SESSION_FLAGS))
         if not isinstance(d, dict):
             raise ValueError("not an object")
     except FileNotFoundError:
         try:
-            quarantined = any(True for _ in SESSION_FLAGS.parent.glob(SESSION_FLAGS.name + ".corrupt-*"))
+            quarantined = bool(_gr.glob(SESSION_FLAGS.parent, SESSION_FLAGS.name + ".corrupt-*"))
         except OSError:
             quarantined = True
         if quarantined:
@@ -1683,7 +1839,7 @@ def _user_todos_on():
     restart. Absent, unreadable or malformed all read False (the opt-in must be provable), the
     kernel's own _user_todos_on rule; reading never creates the file."""
     try:
-        d = json.loads(USER_TODOS_SWITCH.read_text())
+        d = json.loads(_gr.read_text(USER_TODOS_SWITCH))
         return bool(isinstance(d, dict) and d.get("enabled"))
     except Exception:
         return False
@@ -1715,7 +1871,7 @@ def _name_for_id(sid, rows=None):
         if a["id"] == sid:
             return a["name"]
     try:
-        return (NAMES_DIR / sid).read_text().split("\t")[0].strip() or sid[:8]
+        return _gr.read_text(NAMES_DIR / sid).split("\t")[0].strip() or sid[:8]
     except Exception:
         return sid[:8]
 
@@ -1731,7 +1887,7 @@ def _recip_id_for(to, rows=None):
     for a in agents:
         if a["name"] == to:
             return a["id"]
-    if _safe_id(to) and (MAILROOT / to).is_dir():  # already an id with a mailbox (in-flight mail)
+    if _safe_id(to) and _gr.isdir(MAILROOT / to):  # already an id with a mailbox (in-flight mail)
         return to
     return None
 
@@ -1753,7 +1909,7 @@ def _durable_session(bare, by_id):
         # the short-id form (the ` · <8-char>` every list_agents row shows) — the third address
         # form, blink-protected like the other two: prefix-match the registry files themselves
         try:
-            sids = [f.stem for f in (root / "sdk").glob("*.json") if f.stem.startswith(bare)]
+            sids = [f.stem for f in _gr.glob(root / "sdk", "*.json") if f.stem.startswith(bare)]
         except OSError:
             sids = []
         if len(sids) != 1:
@@ -1762,9 +1918,9 @@ def _durable_session(bare, by_id):
         sids = []
     if not by_id and not sids:
         try:
-            for f in NAMES_DIR.iterdir():
+            for f in _gr.iterdir(NAMES_DIR):
                 try:
-                    if f.read_text().split("\t")[0].strip() == bare:
+                    if _gr.read_text(f).split("\t")[0].strip() == bare:
                         sids.append(f.name)
                 except OSError:
                     continue
@@ -1772,7 +1928,7 @@ def _durable_session(bare, by_id):
             pass
     for sid in sids:
         try:
-            reg = json.loads((root / "sdk" / (sid + ".json")).read_text())
+            reg = json.loads(_gr.read_text(root / "sdk" / (sid + ".json")))
         except (OSError, ValueError):
             continue
         if isinstance(reg, dict) and reg.get("alive"):
@@ -1966,30 +2122,30 @@ def _recall(from_id, to, mid, kept=None):
 
     if to:
         rid = _recip_id_for(to, rows=_rows())
-        if not rid and MAILROOT.is_dir():
+        if not rid and _gr.isdir(MAILROOT):
             # Addressing is live-only, but RECALL is not addressing: the sender is unsending their
             # own bytes, not raising the dead. Mail parked for a session that has since died sits
             # right here in its new/ — a name that no longer resolves live falls back to the
             # durable name map so parked mail stays recallable (sighting 2026-08-29: a handoff
             # parked for a dead session could not be unsent by name; only the raw id worked).
-            hits = [b.name for b in MAILROOT.iterdir()
-                    if b.is_dir() and _name_for_id(b.name, rows=_rows()) == to]
+            hits = [b.name for b in _gr.iterdir(MAILROOT)
+                    if _gr.isdir(b) and _name_for_id(b.name, rows=_rows()) == to]
             rid = hits[0] if len(hits) == 1 else None    # two dead boxes, one name: refuse, stay scoped
         boxes = [rid] if rid else []
-    elif MAILROOT.is_dir():
-        boxes = [b.name for b in MAILROOT.iterdir() if b.is_dir()]
+    elif _gr.isdir(MAILROOT):
+        boxes = [b.name for b in _gr.iterdir(MAILROOT) if _gr.isdir(b)]
     else:
         boxes = []
     removed = []
     for rid in boxes:
         newd = MAILROOT / rid / "new"
-        if not newd.is_dir():
+        if not _gr.isdir(newd):
             continue
-        for f in list(newd.iterdir()):
+        for f in _gr.iterdir(newd):
             if not f.is_file() or (mid and f.name != mid):
                 continue
             try:
-                text = f.read_text(errors="replace")
+                text = _gr.read_text(f, errors="replace")
             except Exception:
                 continue
             meta = {}
@@ -2005,20 +2161,20 @@ def _recall(from_id, to, mid, kept=None):
             removed.append({"to": _name_for_id(rid, rows=_rows()), "id": f.name, "body": " ".join(body.split())[:120]})
             _tl_append("messages.jsonl", {"t": int(time.time()), "ev": "recall", "id": f.name, "box": "new"})
         _mark_pending(rid)         # recall may have emptied new/ -> reconcile the marker
-    if peers_on() and OUTBOX.is_dir():
+    if peers_on() and _gr.isdir(OUTBOX):
         # A recall that beats the truck wins: parked cross-host mail is still local, so the sender
         # can unsend it right up until an exchange carries it — and not one moment after (the
         # `carried` mark; see the docstring). Forwarded mail (origin set) belongs to a sender on
         # another host — never touched here.
-        for hostdir in OUTBOX.iterdir():
-            if not hostdir.is_dir():
+        for hostdir in _gr.iterdir(OUTBOX):
+            if not _gr.isdir(hostdir):
                 continue
-            for f in list(hostdir.glob("*.json")):
+            for f in _gr.glob(hostdir, "*.json"):
                 if mid and f.stem != mid:
                     continue
                 with _outbox_lock:                   # the listing, the mark and this unlink share it: no
                     try:                             # unlink of a record an exchange is carrying right now
-                        msg = json.loads(f.read_text())
+                        msg = json.loads(_gr.read_text(f))
                     except Exception:
                         continue
                     if msg.get("frm_id") != from_id or msg.get("origin"):
@@ -2049,10 +2205,10 @@ def _relay_marker_sent_row(from_id, marker):
     the question once). A row whose id was bounced as NOT PARKED never went anywhere and does not count. Reads the
     log's tail, newest first."""
     log = TLDIR / "messages.jsonl"
-    if not (from_id and marker) or not log.exists():
+    if not (from_id and marker) or not _gr.exists(log):
         return None
     try:
-        lines = log.read_text(errors="replace").splitlines()
+        lines = _gr.read_text(log, errors="replace").splitlines()
     except OSError:
         return None
     unsent = set()
@@ -2074,10 +2230,10 @@ def _sent_receipts(mid):
     oldest first. exec is None until the recipient reads it; recalled is set if the
     sender later unsent it (so it shows 'recalled', not a permanent 'pending')."""
     log = TLDIR / "messages.jsonl"
-    if not mid or not log.exists():
+    if not mid or not _gr.exists(log):
         return []
     sent, execs, recalls, relays, bounced, bounced_why = {}, {}, {}, {}, {}, {}
-    for line in log.read_text(errors="replace").splitlines():
+    for line in _gr.read_text(log, errors="replace").splitlines():
         try: e = json.loads(line)
         except Exception: continue
         ev = e.get("ev")
@@ -2199,7 +2355,7 @@ def _sweep_orphans():
     resend/route, then drop the orphaned copy. Only messages older than
     ORPHAN_GRACE are touched, so a session that closes and resumes (same id) within
     the grace still gets its mail. Run periodically by the bus monitor."""
-    if not MAILROOT.is_dir():
+    if not _gr.isdir(MAILROOT):
         return
     live = local_agents(threads=True)                 # a comment thread's box is live while its row is (2026-09-10)
     if not live:                                       # [] is also what an UNANSWERED listing collapses to (kernel
@@ -2209,15 +2365,15 @@ def _sweep_orphans():
     live_ids = {a["id"] for a in live}
     by_name = {a["name"]: a for a in live}
     now = time.time()
-    for box in MAILROOT.iterdir():
-        if not box.is_dir() or box.name in live_ids:   # live recipient -> not orphaned
+    for box in _gr.iterdir(MAILROOT):
+        if not _gr.isdir(box) or box.name in live_ids:   # live recipient -> not orphaned
             continue
         newd = box / "new"
-        if not newd.is_dir():
+        if not _gr.isdir(newd):
             continue
         recip = _name_for_id(box.name, rows=live)  # dead by construction: the registry names it, no fetch
         try:
-            files = list(newd.iterdir())
+            files = _gr.iterdir(newd)
         except OSError as e:
             _say_inbox_unreadable_once(box.name, "inbox of %s cannot be listed (%s: %s)" % (box.name, type(e).__name__, str(e)[:120]))
             continue                                    # skipped with a line, never bounced or tidied
@@ -2226,7 +2382,7 @@ def _sweep_orphans():
             if not f.is_file():
                 continue
             try:
-                text = f.read_text(errors="replace")
+                text = _gr.read_text(f, errors="replace")
             except FileNotFoundError:
                 continue
             except OSError as e:
@@ -2283,7 +2439,7 @@ def _sweep_orphans():
         _mark_pending(box.name)                         # bounced orphans may have emptied new/
         try:                                            # tidy: drop the mailbox if nothing's left
             if all(_dir_empty(box / d) for d in ("new", "cur", "tmp")) \
-                    and not any(p.is_file() for p in box.iterdir()):
+                    and not any(p.is_file() for p in _gr.iterdir(box)):
                 # …and no `.corrupt-*` sidecar beside the three dirs: a file moved aside is evidence
                 # the tidy must not sweep away with the empty box (review find, 2026-09-08). _dir_empty
                 # answers None for a directory that cannot be read, and all() over a None is False (an
@@ -2304,7 +2460,7 @@ def _warn_stuck_mail():
     being idle/waiting, NOT working — a message to a session mid-turn legitimately waits for its next turn, so
     that must never trip a false alarm. One-time via a persisted WARNED/<msg-id> marker; markers for delivered
     messages are pruned so WARNED stays bounded to currently-pending mail."""
-    if not MAILROOT.is_dir():
+    if not _gr.isdir(MAILROOT):
         return
     live = local_agents(threads=True)                 # thread rows too: an idle thread can be stuck like any session
     if not live:                                       # kernel hiccup, not "everyone's stuck" — don't warn
@@ -2313,16 +2469,16 @@ def _warn_stuck_mail():
     by_name = {a["name"]: a for a in live}
     now = time.time()
     seen_ids = set()                                   # every msg id still pending anywhere → prune stale markers after
-    for box in MAILROOT.iterdir():
-        if not box.is_dir():
+    for box in _gr.iterdir(MAILROOT):
+        if not _gr.isdir(box):
             continue
         newd = box / "new"
-        if not newd.is_dir():
+        if not _gr.isdir(newd):
             continue
         recip = by_id.get(box.name)
         recip_settled = bool(recip and recip.get("state", "") in ("idle", "waiting"))
         try:
-            files = list(newd.iterdir())
+            files = _gr.iterdir(newd)
         except OSError as e:
             _say_inbox_unreadable_once(box.name, "inbox of %s cannot be listed (%s: %s)" % (box.name, type(e).__name__, str(e)[:120]))
             continue                                    # skipped with a line: no warning owed on what cannot be seen
@@ -2342,7 +2498,7 @@ def _warn_stuck_mail():
             if marker.exists():                        # already warned the sender about this one
                 continue
             try:
-                text = f.read_text(errors="replace")
+                text = _gr.read_text(f, errors="replace")
             except Exception:
                 continue
             meta = {}
@@ -2366,13 +2522,13 @@ def _warn_stuck_mail():
                     _log("stuck-warn to %s failed: %s" % (s.get("name", "?"), e))
                 _refusal_over("stuck-mail warning")
             try:                                        # mark one-time even if the sender was dead/absent → no re-scan churn
-                WARNED.mkdir(parents=True, exist_ok=True)
-                marker.touch()
+                _srm.make_dir(WARNED, parents=True, root=STATE.parent)
+                _srm.touch(marker)
             except Exception:
                 pass
     try:                                                # prune markers whose message finally delivered (left new/)
-        if WARNED.is_dir():
-            for mk in WARNED.iterdir():
+        if _gr.isdir(WARNED):
+            for mk in _gr.iterdir(WARNED):
                 if mk.name not in seen_ids:
                     mk.unlink(missing_ok=True)
     except Exception:
@@ -2614,7 +2770,7 @@ def _wake_when_ready(sid):
         deadline = time.time() + WAKE_TIMEOUT
         while time.time() < deadline:
             newd = MAILROOT / sid / "new"
-            if not (newd.is_dir() and any(newd.iterdir())):
+            if not (_gr.isdir(newd) and any(_gr.iterdir(newd))):
                 return                                        # nothing pending (or already delivered)
             agent = next((a for a in local_agents(threads=True) if a["id"] == sid), None)   # a reviving thread is a live row
             if not agent:
@@ -3192,6 +3348,7 @@ def _monitor(httpd, boot_fp=""):
     idle = 0
     while True:
         time.sleep(POLL)
+        _state_root_gate("poll")           # the state root's mode (2026-09-20): a root loosened under us exits 2 here, every POLL
         _maybe_restart_for_code(boot_fp)   # reload if the on-disk code changed under us (does not return on restart)
         idle, stop = _monitor_tick(idle)
         if stop:
@@ -3207,11 +3364,11 @@ def _hold_claim(sid, mid):
     if not (_safe_id(sid) and _safe_id(mid)):
         return
     try:
-        MAILHELD.mkdir(parents=True, exist_ok=True)
+        _srm.make_dir(MAILHELD, parents=True, root=STATE.parent)
         m = MAILHELD / sid
-        have = set(m.read_text().split()) if m.exists() else set()
+        have = set(_gr.read_text(m).split()) if _gr.exists(m) else set()
         if mid not in have:
-            with open(m, "a") as f:
+            with _srm.open_private(m, "a") as f:
                 f.write(mid + "\n")
     except OSError as e:
         _log("held claim %s for %s: the marker could not be written (%s); the claim stands in cur/ unrecorded" % (mid, sid, e))
@@ -3224,13 +3381,13 @@ def _retry_held_claims():
     emptied marker is removed. Only the recorded ids are touched, never a cur/ walk: cur/ also holds the claims of a
     push in flight."""
     try:
-        markers = [m for m in MAILHELD.iterdir() if m.is_file()] if MAILHELD.is_dir() else []
+        markers = [m for m in _gr.iterdir(MAILHELD) if m.is_file()] if _gr.isdir(MAILHELD) else []
     except OSError:
         return
     for m in markers:
         sid = m.name
         try:
-            mids = [x for x in m.read_text().split() if _safe_id(x)]
+            mids = [x for x in _gr.read_text(m).split() if _safe_id(x)]
         except OSError:
             continue
         keep = []
@@ -3242,7 +3399,7 @@ def _retry_held_claims():
                 _log("held claim %s for %s put back in new/ (cur/ reads again)" % (mid, sid))
         try:
             if keep:
-                m.write_text("".join(x + "\n" for x in keep))
+                _srm.write_text(m, "".join(x + "\n" for x in keep))
             else:
                 m.unlink()
         except OSError as e:
@@ -3268,9 +3425,9 @@ def _retry_pending():
     restore() could not answer for (mail-held/) are put back first, so their mail is pending mail this
     same pass (2026-09-14)."""
     _retry_held_claims()
-    if not MAILPENDING.is_dir():
+    if not _gr.isdir(MAILPENDING):
         return
-    markers = [m for m in MAILPENDING.iterdir() if m.is_file()]
+    markers = [m for m in _gr.iterdir(MAILPENDING) if m.is_file()]
     if not markers:
         return                                 # nothing pending: no GET /sessions this pass (2026-09-06)
     live = None                                # fetched once, and only for a marker that still holds mail
@@ -3303,11 +3460,11 @@ def _retry_loop():
 def _reconcile_markers():
     """One-time sync of every pending-mail marker to the actual new/ boxes — so mail
     that predates the marker feature (or any drift) is corrected on bus startup."""
-    if not MAILROOT.is_dir():
+    if not _gr.isdir(MAILROOT):
         return
     try:
-        for box in MAILROOT.iterdir():
-            if box.is_dir():
+        for box in _gr.iterdir(MAILROOT):
+            if _gr.isdir(box):
                 _mark_pending(box.name)
     except Exception as e:
         _log("marker reconcile failed: %s" % e)
@@ -3322,7 +3479,7 @@ def _rebuild_rows_for_rowless_mail(box, sent, ended):
     marked `recovered`. The file is never removed and never bounced. Returns how many rows landed."""
     newd = box / "new"
     try:
-        files = sorted((f for f in newd.iterdir() if f.is_file()), key=lambda p: p.name) if newd.is_dir() else []
+        files = sorted((f for f in _gr.iterdir(newd) if f.is_file()), key=lambda p: p.name) if _gr.isdir(newd) else []
     except OSError:
         return 0
     n = 0
@@ -3330,7 +3487,7 @@ def _rebuild_rows_for_rowless_mail(box, sent, ended):
         if f.name in sent or f.name in ended:
             continue
         try:
-            text = f.read_text(errors="replace")
+            text = _gr.read_text(f, errors="replace")
         except FileNotFoundError:
             continue
         except OSError as e:
@@ -3409,7 +3566,7 @@ def _sweep_unfinished_writes():
     evidence and are never touched."""
     sent, ended = set(), set()
     try:
-        for line in (TLDIR / "messages.jsonl").read_text(errors="replace").splitlines():
+        for line in _gr.read_text(TLDIR / "messages.jsonl", errors="replace").splitlines():
             try:
                 o = json.loads(line)
             except ValueError:
@@ -3433,13 +3590,13 @@ def _sweep_unfinished_writes():
 
     removed, closed, standing, recovered, standing_records = 0, 0, 0, 0, 0
     try:
-        boxes = [b for b in MAILROOT.iterdir() if b.is_dir()] if MAILROOT.is_dir() else []
+        boxes = [b for b in _gr.iterdir(MAILROOT) if _gr.isdir(b)] if _gr.isdir(MAILROOT) else []
     except OSError:
         boxes = []
     for box in boxes:
         tmpd = box / "tmp"
         try:
-            temps = [f for f in tmpd.iterdir() if f.is_file()] if tmpd.is_dir() else []
+            temps = [f for f in _gr.iterdir(tmpd) if f.is_file()] if _gr.isdir(tmpd) else []
         except OSError:
             temps = []
         for f in temps:
@@ -3471,12 +3628,12 @@ def _sweep_unfinished_writes():
         recovered += _rebuild_rows_for_rowless_mail(box, sent, ended)
     for store, why in ((OUTBOX, WHY_STOPPED_BEFORE_PARK), (READBOX, None)):
         try:
-            hostdirs = [h for h in store.iterdir() if h.is_dir()] if store.is_dir() else []
+            hostdirs = [h for h in _gr.iterdir(store) if _gr.isdir(h)] if _gr.isdir(store) else []
         except OSError:
             continue
         for hostdir in hostdirs:
             try:
-                temps = sorted(hostdir.glob("*.json.tmp-*"))
+                temps = _gr.glob(hostdir, "*.json.tmp-*")
             except OSError:
                 continue
             for f in temps:
@@ -3599,8 +3756,12 @@ def serve():
     if why:
         _refuse_loudly(why)
         return 2
-    STATE.mkdir(parents=True, exist_ok=True)
-    MAILROOT.mkdir(parents=True, exist_ok=True)
+    STATE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)   # a root this call makes is 0700 from its first instant (the
+    _srm.make_dir(STATE, parents=True, root=STATE.parent)   #  token mint above made it the same way when the import gate found none)
+    _state_root_gate("start", establish=_STATE_ROOT_UNMADE_AT_START[0])   # the state root's mode (2026-09-20): a root this process
+    #                                            made is chmod'ed 0700 first (a creation default); any other is read, repaired and
+    #                                            judged on what it reads now; refuse or unknown exits 2 before the bind
+    _srm.make_dir(MAILROOT, parents=True, root=STATE.parent)
     _reconcile_markers()
     _sweep_unfinished_writes()             # temps a crash left: removed, said, their ledgers closed (2026-09-08)
     if peers_on():
@@ -3611,7 +3772,17 @@ def serve():
         _log("bus already running on %d (%s)" % (PORT, e))
         return 0
     try:
-        PIDFILE.write_text(str(os.getpid()))
+        # never through a planted symlink (the enumeration's MEDIUM: a link at server.pid made every start truncate and
+        # overwrite the file it pointed at): the entry is judged first, a plant quarantined, and the write is by a temp
+        # this process created O_EXCL and os.replace, which replaces whatever stands at the path without following it
+        _gr.exists(PIDFILE)
+        _pid_tmp = PIDFILE.with_name("%s.%d.tmp" % (PIDFILE.name, os.getpid()))
+        _pid_fd = os.open(str(_pid_tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            os.write(_pid_fd, str(os.getpid()).encode())
+        finally:
+            os.close(_pid_fd)
+        os.replace(_pid_tmp, PIDFILE)
     except Exception:
         pass
     _log("bus up on %s (pid %d)" % (BASE, os.getpid()))
@@ -3622,7 +3793,7 @@ def serve():
         httpd.serve_forever()
     finally:
         try:
-            if PIDFILE.exists() and PIDFILE.read_text().strip() == str(os.getpid()):
+            if _gr.exists(PIDFILE) and _gr.read_text(PIDFILE).strip() == str(os.getpid()):
                 PIDFILE.unlink()
         except Exception:
             pass
@@ -3776,9 +3947,9 @@ def _hold_rows():
     Bounded — past 20 the COUNT is the story and the holder's own dashboard has the rest."""
     out = []
     try:
-        for f in sorted(QUARANTINE.glob("*.json")):
+        for f in _gr.glob(QUARANTINE, "*.json"):
             try:
-                m = json.loads(f.read_text())
+                m = json.loads(_gr.read_text(f))
             except Exception:
                 continue
             out.append({"mid": m.get("mid"), "frm": m.get("frm") or "?", "to": m.get("to") or "?",
@@ -3856,7 +4027,7 @@ def _write_remote_sids():
                 if pa.get("id"):
                     ids.add(str(pa["id"]))
         tmp = STATE / "remote-sids.tmp"
-        tmp.write_text("\n".join(sorted(ids)) + ("\n" if ids else ""))
+        _srm.write_text(tmp, "\n".join(sorted(ids)) + ("\n" if ids else ""))
         os.replace(tmp, STATE / "remote-sids")
     except Exception:
         pass
@@ -3950,20 +4121,20 @@ def _minted_host_id():
     """Last-resort stable identity: mint once, persist, reuse. O_EXCL so two processes (bus and
     kernel) racing to mint converge on whoever wrote first."""
     try:
-        name = _HOST_ID_FILE.read_text().strip()
+        name = _gr.read_text(_HOST_ID_FILE).strip()
         if _safe_id(name):
             return name
     except OSError:
         pass
     name = "host-%08x" % random.getrandbits(32)
     try:
-        _HOST_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(str(_HOST_ID_FILE), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        _srm.make_dir(_HOST_ID_FILE.parent, parents=True, root=STATE.parent)
+        fd = os.open(str(_HOST_ID_FILE), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)   # owner-only by code (0644 until round 4f)
         os.write(fd, (name + "\n").encode())
         os.close(fd)
     except FileExistsError:
         try:
-            prior = _HOST_ID_FILE.read_text().strip()
+            prior = _gr.read_text(_HOST_ID_FILE).strip()
             if _safe_id(prior):
                 return prior
         except OSError:
@@ -4021,7 +4192,7 @@ def _seen_load():
     global _seen_ids
     if _seen_ids is None:
         try:
-            _seen_ids = set(PEER_SEEN.read_text().split()[-_SEEN_CAP:])
+            _seen_ids = set(_gr.read_text(PEER_SEEN).split()[-_SEEN_CAP:])
         except Exception:
             _seen_ids = set()
     return _seen_ids
@@ -4032,8 +4203,8 @@ def peer_seen_check(mid):
 def peer_seen_add(mid):
     _seen_load().add(mid)
     try:
-        PEER_SEEN.parent.mkdir(parents=True, exist_ok=True)
-        with PEER_SEEN.open("a") as f:
+        _srm.make_dir(PEER_SEEN.parent, parents=True, root=STATE.parent)
+        with _srm.open_private(PEER_SEEN, "a") as f:
             f.write(mid + "\n")
     except Exception as e:
         _log("peer-seen append failed: %s" % e)     # dedupe degrades to the in-memory window
@@ -4047,10 +4218,10 @@ def _atomic_json_put(path, obj):
     that could leave a half-record, and the listings then skipped it silently, every pass, forever.)
     Raises OSError; the caller says so."""
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _srm.make_dir(path.parent, parents=True, root=STATE.parent)
     tmp = path.with_name("%s.tmp-%d-%s" % (path.name, os.getpid(), os.urandom(4).hex()))
     try:
-        with open(tmp, "w") as fh:
+        with _srm.open_private(tmp, "w") as fh:
             fh.write(json.dumps(obj))
             fh.flush()
             os.fsync(fh.fileno())
@@ -4090,14 +4261,14 @@ def _list_json_records(d, where, close_ledger_for=None):
     said on stderr and as one bell row on the dashboard (_refused_notice)."""
     out = []
     try:
-        files = sorted(d.glob("*.json"))
+        files = _gr.glob(d, "*.json")
     except OSError:
         return out
     for f in files:
         st = None
         try:
-            st = f.stat()
-            rec = json.loads(f.read_text())
+            st = _gr.stat(f)
+            rec = json.loads(_gr.read_text(f))
             if not isinstance(rec, dict):
                 raise ValueError("not a JSON object")
             out.append(rec)
@@ -4161,7 +4332,7 @@ def outbox_get(host, mid):
     if not (_safe_id(host) and _safe_id(mid)):   # host/mid are path components — block traversal
         return None
     try:
-        return json.loads((OUTBOX / host / (mid + ".json")).read_text())
+        return json.loads(_gr.read_text(OUTBOX / host / (mid + ".json")))
     except Exception:
         return None
 
@@ -4293,7 +4464,7 @@ def readbox_del(host, rec):
         return
     f = READBOX / host / (mid + ".json")
     try:
-        cur = json.loads(f.read_text())
+        cur = json.loads(_gr.read_text(f))
         if bool(cur.get("unread")) == bool((rec or {}).get("unread")):
             f.unlink()
     except Exception:
@@ -4410,7 +4581,7 @@ def _presence_good_load():
     if _LOCAL_PRESENCE_GOOD[1]:
         return
     try:
-        rows = json.loads(_PRESENCE_GOOD_FILE.read_text())
+        rows = json.loads(_gr.read_text(_PRESENCE_GOOD_FILE))
         if isinstance(rows, list):
             _LOCAL_PRESENCE_GOOD[0], _LOCAL_PRESENCE_GOOD[1] = rows, True
     except Exception:
@@ -4424,7 +4595,7 @@ def _remember_presence(rows):
     _LOCAL_PRESENCE_GOOD[0], _LOCAL_PRESENCE_GOOD[1] = rows, True
     try:
         tmp = _PRESENCE_GOOD_FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(rows))
+        _srm.write_text(tmp, json.dumps(rows))
         os.replace(tmp, _PRESENCE_GOOD_FILE)     # the disk twin follows every answered read
     except Exception:
         pass
@@ -4509,9 +4680,9 @@ def _quarantine_put(origin, m, to_id, via="", wire_id=None):
         if m.get("relayMarker"):
             rec["relayMarker"] = str(m.get("relayMarker"))[:64]
     try:
-        QUARANTINE.mkdir(parents=True, exist_ok=True)
+        _srm.make_dir(QUARANTINE, parents=True, root=STATE.parent)
         tmp = QUARANTINE / (mid + ".tmp")
-        tmp.write_text(json.dumps(rec))
+        _srm.write_text(tmp, json.dumps(rec))
         tmp.rename(QUARANTINE / (mid + ".json"))      # atomic publish (the kernel may be reading the dir)
         _refusal_over("quarantine")                   # a hold landed: the next refusal here is a new episode
         _log("quarantine: held %s from %s -> %s (directed)" % (mid, origin, rec["to"]))
@@ -4534,9 +4705,9 @@ def quarantine_list():
     """All held messages, newest first — the kernel's card source + the approve/deny UI."""
     out = []
     try:
-        for f in QUARANTINE.glob("*.json"):
+        for f in _gr.glob(QUARANTINE, "*.json"):
             try:
-                out.append(json.loads(f.read_text()))
+                out.append(json.loads(_gr.read_text(f)))
             except (OSError, ValueError):
                 continue
     except OSError:
@@ -4548,7 +4719,7 @@ def quarantine_get(mid):
     if not _safe_id(mid):
         return None
     try:
-        return json.loads((QUARANTINE / (mid + ".json")).read_text())
+        return json.loads(_gr.read_text(QUARANTINE / (mid + ".json")))
     except (OSError, ValueError):
         return None
 
@@ -5313,8 +5484,8 @@ def ensure():
     if why:
         _refuse_loudly(why)
         return False
-    STATE.mkdir(parents=True, exist_ok=True)
-    logf = open(LOG, "a")
+    _srm.make_dir(STATE, parents=True, root=STATE.parent)
+    logf = _srm.open_private(LOG, "a")
     subprocess.Popen([sys.executable, os.path.abspath(__file__), "serve"],
                      stdout=logf, stderr=logf, stdin=subprocess.DEVNULL, start_new_session=True)
     for _ in range(40):           # ~4s
@@ -5331,7 +5502,7 @@ def restart():
     remote — don't kill anything, just re-ensure the tunnel."""
     if not is_client_only():
         try:
-            pid = int(PIDFILE.read_text().strip())
+            pid = int(_gr.read_text(PIDFILE).strip())
         except Exception:
             pid = 0
         if pid:
@@ -6330,9 +6501,9 @@ def setup_remote(force=False):
         print("(re-run with --force if this really is a remote machine.)")
         return 0
     import signal as _sig
-    if PIDFILE.exists():
+    if _gr.exists(PIDFILE):
         try:
-            os.kill(int(PIDFILE.read_text().strip()), _sig.SIGTERM)
+            os.kill(int(_gr.read_text(PIDFILE).strip()), _sig.SIGTERM)
             print("Stopped the local-only bus that was running here (frees the port for the tunnel).")
         except Exception:
             pass

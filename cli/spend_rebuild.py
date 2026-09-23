@@ -278,6 +278,9 @@ def _fmt(n):
 
 
 def main(argv=None):
+    os.umask(0o077)   # every file this tool makes is under the state root (spend.json, its .bak, the temps): born owner-only
+                      # under any umask, since the kernel reads spend.json through its guarded readers and would quarantine one
+                      # left at a permissive umask's mode (the state-root review, 2026-09-21; tests/test_state_root_writers.py)
     ap = argparse.ArgumentParser(prog="romp spend-rebuild", description=__doc__.split("\n\n", 1)[0])
     ap.add_argument("--apply", action="store_true", help="rewrite spend.json (default: dry run)")
     ap.add_argument("--by-session", action="store_true", help="also print each session's recount")

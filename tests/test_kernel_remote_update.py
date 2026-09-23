@@ -524,7 +524,9 @@ class UpdateRemote(unittest.TestCase):
         apply = next(a[-1] for a in calls if isinstance(a[-1], str) and "reset --hard" in a[-1])
         gate = '[ -f "$LOGDIR/down-by-romp" ] || arow; '
         owned_row = '[ ! -f "$LOGDIR/down-by-romp" ] || arow; '
-        self.assertIn('arow() { python3 -c', apply, "the audit row is one function, called per site")
+        # round 4f of the state-root review: the helper writes its row in a subshell under umask 077, so the far root's
+        # ledger is born 0600 under any login-shell umask (the far kernel's guarded readers would quarantine a looser one)
+        self.assertIn('arow() { ( umask 077; python3 -c', apply, "the audit row is one function, called per site")
         self.assertLess(apply.index("arow() {"), apply.index(gate))
         self.assertLess(apply.index(gate), apply.index("OWNED=0; if command -v node"),
                         "a live host: the row is on disk before the owning-manager check runs")

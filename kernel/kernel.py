@@ -50,6 +50,122 @@ _ls_spec.loader.exec_module(_ls_mod)
 load_source = _ls_mod.load_source   # file-path imports with load_module()'s sys.modules semantics (kernel/loadsource.py)
 em = load_source("romp_event_model", HERE / "event_model.py")
 jd = load_source("romp_judge", HERE / "judge.py")
+
+_READER_REFUSED_PENDING = []   # (path, reason, line): refusals the guarded readers made before _sync_notice exists (the
+#                                import-time readers: the downtime log, the memo files, pending-ops.json, the checkpoint
+#                                directory, the sdkvenv); the boot check files them
+
+
+def _reader_refused_row(path, reason, line):
+    """THE ROW for a guarded reader's refusal (kernel/state_root_mode.py, Reader.on_refused): one error-centre row of the
+    refused kind naming the entry and the reason (_state_root_reader_row, built to fit the bell), filed now when
+    _sync_notice exists and parked until the boot check otherwise. The reader already said the full line on stderr."""
+    _READER_REFUSED_PENDING.append((path, reason, line))
+    _flush_reader_refusals()
+
+
+def _flush_reader_refusals():
+    fn = globals().get("_sync_notice")
+    if fn is None:
+        return
+    while _READER_REFUSED_PENDING:
+        path, reason, _line = _READER_REFUSED_PENDING.pop(0)
+        try:
+            fn(_state_root_reader_row(path, reason), ok=False, kind="refused")
+        except Exception:
+            pass
+
+
+for _hooks in (jd.READER_REFUSED_HOOKS, em.READER_REFUSED_HOOKS, jd.srm.REFUSED_HOOKS):   # the judge's and the event model's readers
+    _hooks[:] = [h for h in _hooks if getattr(h, "__name__", "") != "_reader_refused_row"]   # file their rows here too, and so do the
+    _hooks.append(_reader_refused_row)     # per-call readers of the modules this kernel hands its root to (logins, palette, host_transport,
+#                                            sdk_backend, codex_backend, codex_runtime: the shared module's REFUSED_HOOKS); one hook per
+#                                            process, however many times a test re-executes this module
+# THE GUARDED READERS over this kernel's root (kernel/state_root_mode.py, part 3): every read of a path under jd.STATE in
+# this file goes through _gr (tests/test_state_root_readers.py's census pins that, with an allowlist that names the two
+# exceptions and their reasons), and a planted entry, a symlink, a foreign-owned or a writable-by-another file or
+# directory, is quarantined and read as absent; nothing planted is adopted. The root is resolved at call time, so a
+# test's jd._rebind_state moves the guard with everything else.
+_gr = jd.srm.Reader(lambda: jd.STATE, on_refused=_reader_refused_row, who="kernel")
+
+
+def _state_root_refusal(chk):
+    """The line a gate refuses with, or None (round 4 of the 2026-09-20 review: the import gate and the boot check apply
+    the same two reads, so the two doors agree): the CURRENT read's refuse or unknown verdict first (its line carries
+    this check's own errno and what was read), else THE IMPORT-READ RULE's refusal (chk["importRefusal"], built by
+    kernel/judge.py from the mode the judge module read before its own chmod on a pre-existing root)."""
+    if chk["verdict"] in ("refuse", "unknown"):
+        return chk["line"]
+    ref = chk.get("importRefusal")
+    return ref["line"] if ref else None
+
+
+def _state_root_import_gate():
+    """THE FIRST THING THIS KERNEL DOES WITH ITS STATE ROOT (2026-09-20): read its mode, and refuse to go on when the root
+    is writable by another local user, or was when this process first read it, or cannot be read. Run here at import,
+    right after the judge module (whose own import made the root 0700 best-effort and recorded what it read before its
+    chmod), and BEFORE TOKEN = _load_token() reads or mints the serve token and _persist_repo_root() writes under the
+    root, and before _load_downtime(), the first read of an entry under the root. The order is the point (the
+    2026-09-20 review's fresh-2 and fresh-1): until then the boot check ran in main(), after the import had already
+    adopted the serve token the root held and written repo-root into it, and a planted symlink at serve-token killed
+    the import with the token's RuntimeError, so the refusal this check exists for never printed and the operator was
+    sent to the wrong fix. Now a hostile root is refused before any entry under it is trusted.
+
+    TWO READS DECIDE (round 4, romp-manager's word of 2026-09-20 22:51Z, after the artifact enumeration in
+    plans/state-root-mode.md). The CURRENT read, by the discriminator (kernel/state_root_mode.py): an other write bit,
+    or a group write bit under a group that is not the owner's private group, is writable by another local user and
+    refused; a group write bit under the owner's private group, or 0755 and the like, is warn-class; a group database
+    that cannot be read or does not answer within the bound is refused with its own message (check getent group and
+    the name service), never the distrust remedy. And THE IMPORT READ (chk["importRefusal"]): a PRE-EXISTING root whose
+    mode as the judge module read it, before its own chmod, was writable by another local user AND WHICH HELD ENTRIES
+    at that read is refused HERE whatever that chmod did afterwards, with the distrust remedy: entries planted while it
+    was writable are not to be trusted, remove serve-token, repo-root and every entry you did not make, or recreate the
+    root, then chmod 700 (and the guarded readers quarantine what they meet under it). A root that was EMPTY at the
+    import's read is exempt, whoever made it (round 4, correctness-3 of round 3: a fresh directory's umask mode is a
+    creation default, the manager, the CLI and every harness make the root a moment before the first romp process
+    tightens it, and nothing could have been planted in an empty directory), so the ordinary first boot is silent.
+    Round 2b had settled the other way (the tightened root booted with a loud row) on the argument that the two named
+    artifacts, the token and repo-root, were guarded; the enumeration found this import touching thirteen paths under
+    the root after the gate, most unguarded (a planted symlink at checkpoints made the boot sweep unlink files outside
+    the root; planted pending-ops.json parked ops replay into a session), so the window itself is refused, and every
+    reader of the root's contents is guarded besides (_gr, the census in tests/test_state_root_readers.py). The suite
+    stays collectable because every harness root reads 0775 under the owner's private group on a user-private-group
+    box, which the discriminator calls warn-class: re-tightened and reported once at boot (_state_root_import_mode_row).
+
+    UNVERIFIED DEFAULTS TO THE RESTRICTED SIDE (the standing rule; the review's section E asked for this to be argued
+    rather than inherited): a root whose mode cannot be read is refused exactly like one read writable. The cost of
+    being wrong the other way is the whole boundary: the root's mode is the premise of _atomic_write's interim-mode
+    argument and of every credential file under it, and serving from a root nobody could verify is serving from a
+    root that may be anyone's. The cost of being wrong this way is small: a stat on a local directory does not fail
+    transiently (no network, no lock, no quota), so an unreadable root is one that was removed, renamed or made
+    untraversable, and ENOENT in particular means the root the import created a moment ago is gone: continuing would
+    re-create it under a parent someone else may own. The same rule holds at runtime (_state_root_verdict). The group
+    database is the one lookup that can fail transiently, which is why its failure has its own remedy and its wait a
+    bound.
+
+    SystemExit(2), the exit code every refusal of this kernel carries, and the full line with the root's path on
+    stderr, since this is the operator's surface. Under bin/romp-manager the respawn backoff repeats this refusal
+    until the root is repaired; a kernel that finds its root hostile after boot exits 2 the same way
+    (_state_root_exit_now), so the manager sees one shape. The boot check applies the same two reads (the two doors
+    agree: _state_root_refusal). Pinned by execution in a child process (tests/test_state_root_mode.py:
+    TheImportGateComesFirst, AServedKernelRefusesAtRuntime), not by a source index: a self-owned pre-existing 0777 root
+    exits 2 here with the distrust remedy, the root reading 0700 afterwards (the judge's chmod ran) and a planted
+    symlink at serve-token untouched; a pre-existing 0775 root under the owner's private group imports and boots with
+    one row; a root the import created imports; a 0700 root imports fine; an unreadable root exits 2.
+
+    THE BOUNDARY: a descriptor a peer opened inside the root while it was writable survives the tightening (POSIX
+    checks permission at open, not per operation), so the distrust remedy, remove and recreate, is the boundary of
+    what any mode check promises (plans/state-root-mode.md)."""
+    chk = jd.state_root_mode_check()
+    line = _state_root_refusal(chk)
+    if line:
+        sys.stderr.write("romp-kernel: %s. romp did NOT start.\n" % line)
+        sys.stderr.flush()
+        raise SystemExit(2)
+    return chk
+
+
+_STATE_ROOT_IMPORT_CHECK = _state_root_import_gate()   # before any read of the root's contents: _load_downtime() below is the first, then the token load
 cm = load_source("romp_colormap", HERE / "colormap.py")  # age → recency tint
 pal = load_source("romp_palette", HERE / "palette.py")  # session-identity palettes (selectable)
 sb = load_source("romp_session_backend", HERE / "session_backend.py")  # the SessionBackend ABC
@@ -1243,7 +1359,8 @@ class _PerfStats:
     # thread owning neither loop's to stagesForeign
     CYCLE_JOBS = ("beginCheckpointCycle", "sessionsListing", "applyPendingOps", "turnNotify", "persistCheckpoints", "convergeCheckpoints",
                   "bootRowBackstop", "kernelSample", "apiHealth")
-    PASS_JOBS = ("liftSpentAwaiting", "deathSweep", "endOnIdle", "deferralSweep",
+    PASS_JOBS = ("stateRootMode",       # the state root's mode re-check (2026-09-20), first: the premise of every write in the pass
+                 "liftSpentAwaiting", "deathSweep", "endOnIdle", "deferralSweep",
                  "unreadableStores",   # the fork's unreadable-store warn (PR 322), a housekeeping stage on the jobs thread since the 2026-09-15 pull-in
                  "autoNudge", "interruptBlock", "persistTickSeen", "persistIntrMarks", "persistSpendTrees", "autoPauseOnLimit", "usagePoll",
                  "autoPauseOnSpend", "spendGuard", "autoResumeRetry", "autoResumeSession", "autoRetry", "idleQueueDrive", "clearDoneNotes")
@@ -2828,7 +2945,7 @@ def _load_intr_marks():
     recomputed on its first miss; a refused row is never trusted and never read as a dead session, and it stands on disk
     until the next changed write replaces the file."""
     try:
-        d = json.loads(_intr_marks_path().read_text(encoding="utf-8"))
+        d = json.loads(_gr.read_text(_intr_marks_path(), encoding="utf-8"))
     except Exception:
         return 0
     rows = d.get("rows") if isinstance(d, dict) and d.get("v") == _INTR_MARKS_DISK_V else None
@@ -2863,8 +2980,8 @@ def _persist_intr_marks(force=False):
     p = _intr_marks_path()
     tmp = p.with_name(p.name + ".tmp.%d.%x" % (os.getpid(), threading.get_ident()))
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(json.dumps(snap), encoding="utf-8")
+        jd.srm.make_dir(p.parent, parents=True, root=jd.STATE)
+        jd.srm.write_text(tmp, json.dumps(snap), encoding="utf-8")
         os.replace(tmp, p)
         _INTR_MARKS_WRITE_SAID[0] = False                 # a clean write re-arms the say-once latch
         return True
@@ -3161,7 +3278,7 @@ def _record_suspend(iv):
     (the timeline reads _downtime, loaded from the file at startup). Best-effort, never raises."""
     _downtime.append(iv)                             # the state FIRST, its file (the reader's key) LAST: a look landing between
     try:                                             #  the two sees the suspension and a stat that will move under its memo; the
-        with open(jd.STATE / "kernel-downtime.jsonl", "a") as f:   #  other order let a look record a skippable memo without the
+        with jd.srm.open_private(jd.STATE / "kernel-downtime.jsonl", "a") as f:   #  other order let a look record a skippable memo without the
             f.write(json.dumps({"start": iv[0], "end": iv[1]}) + "\n")   #  suspension under the final stat (T401 (2) round six)
         _files_stat_mark()                           # the downtime log is a keyed file of every session
     except OSError:
@@ -3171,7 +3288,7 @@ def _record_suspend(iv):
 
 def _load_downtime():
     try:
-        for line in (jd.STATE / "kernel-downtime.jsonl").read_text().splitlines():
+        for line in _gr.read_text(jd.STATE / "kernel-downtime.jsonl").splitlines():
             try:
                 o = json.loads(line); _downtime.append((o["start"], o["end"]))
             except Exception:
@@ -3378,6 +3495,11 @@ def _version_info():
             # the API added beyond the shipped seed, and the last refresh failure — so a stale list
             # is a visible fact in `romp version`, never a guess
             "modelCatalog": _catalog_public_status(),
+            # the state root's mode as last checked (2026-09-20): verdict ok | warn (a refuse or unknown verdict exits the
+            # process, so a served kernel never shows one; unchecked before any check), the mode as read and after the
+            # repair, whether this check repaired it, the check's error with its errno, the import's own failed call,
+            # a path-free remedy and checkedAt. No path: the root's default sits under $HOME (_state_root_public_status)
+            "stateRootMode": _state_root_public_status(),
             "autoNudge": _mv["autoNudge"],   # server-side toggle state → the gear checkbox reflects the kernel
             "compactSuggest": _mv["compactSuggest"],   # T208+: its gear checkbox rides the same read
             "conserveMemory": _conserve_on(),   # the T148 toggle: close idle tab-less claude processes
@@ -3473,7 +3595,7 @@ def _client_diag_append(fp, line):
                     _client_diag_rotate_failed = True
                     print("[client-diag] could not rotate %s to %s.1 (%s): the file keeps growing past %d bytes"
                           % (fp, fp, e, CLIENT_DIAG_MAX_BYTES), file=sys.stderr)
-        with open(fp, "a", encoding="utf-8") as f:
+        with jd.srm.open_private(fp, "a", encoding="utf-8") as f:
             f.write(line)
 
 
@@ -3770,17 +3892,30 @@ def _serve_token_read_or_mint(f, who):
 
     lfd = None
     try:
-        f.parent.mkdir(parents=True, exist_ok=True)
-        lfd = os.open(str(lock), os.O_RDWR | os.O_CREAT, 0o600)
+        f.parent.mkdir(parents=True, exist_ok=True, mode=0o700)   # a root this call makes (the bus, on a box with none) is 0700 from its first instant
+        lfd = os.open(str(lock), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)   # never through a planted link (round 3, correctness-2)
         try:
             fcntl.flock(lfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             # another starter (the kernel and the bus boot together) is reading or minting: say so
-            # once, then wait for it. The blocking take is the right wait; it was just silent, and a
-            # starter stuck behind a wedged holder looked hung (review find, 2026-09-08).
+            # once, then wait for it, BOUNDED (round 3, extra5-4): a foreign lock file planted while the
+            # root was writable and held flocked through a descriptor its owner keeps open would hold a
+            # blocking take forever, and the manager would see a kernel that never boots. The wait was
+            # silent before 2026-09-08 (a starter stuck behind a wedged holder looked hung).
             print("[%s] serve token: waiting for the holder of %s (another starter is reading or "
-                  "minting it)" % (who, lock), file=sys.stderr)
-            fcntl.flock(lfd, fcntl.LOCK_EX)
+                  "minting it; giving up after %d s)" % (who, lock, SERVE_TOKEN_LOCK_WAIT_S), file=sys.stderr)
+            deadline = time.monotonic() + SERVE_TOKEN_LOCK_WAIT_S
+            while True:
+                try:
+                    fcntl.flock(lfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        fault(lock, "take the lock within %d s (its holder never released it; a lock file planted while the "
+                                    "state root was writable and held open blocks the start this way)" % SERVE_TOKEN_LOCK_WAIT_S,
+                              TimeoutError(errno.ETIMEDOUT, os.strerror(errno.ETIMEDOUT)),
+                              fix="End the holder, or remove the lock file when it is not yours (or set ROMP_SERVE_TOKEN)")
+                    time.sleep(0.1)
     except OSError as e:
         if lfd is not None:
             try:
@@ -3821,6 +3956,9 @@ def _serve_token_read_or_mint(f, who):
         except OSError:
             pass
         os.close(lfd)
+
+
+SERVE_TOKEN_LOCK_WAIT_S = 30   # the bounded wait for serve-token.lock's holder (the bus's copy names the same figure)
 
 
 def _load_token():
@@ -3887,6 +4025,10 @@ def _spend_handoff(code):
     return False
 
 
+_REPO_ROOT_WRITE_ERROR = None   # "ENAME: strerror" when the import's repo-root write failed: said on stderr here, filed as an
+#                                 error-centre row by the boot check (_state_root_boot_check), shown by nothing else
+
+
 def _persist_repo_root():
     """The kernel's own repo root, written into state at boot (state/romp/repo-root). This is the
     AUTHORITATIVE answer for a peer kernel's clone-discovery probes (_start_remote_kernel,
@@ -3894,12 +4036,48 @@ def _persist_repo_root():
     file over ssh FIRST instead of guessing conventional dirs — the guess list missed a clone at
     ~/projects/romp while that machine's kernel was literally up, reporting "romp not installed"
     (the user 2026-08-11). Best-effort, unlike the serve-token mint above, which refuses rather
-    than degrade: a wrong repo-root misleads a probe, a wrong token strands every client."""
+    than degrade: a wrong repo-root misleads a probe, a wrong token strands every client.
+
+    Written the way the token mint writes (round 2 of the 2026-09-20 review, fresh-1): a temp created
+    O_EXCL under the root and os.replace'd onto the path. Until then this was write_text in place with
+    the OSError swallowed, so a planted entry this uid could not open (a foreign-owned file) survived
+    every boot unmentioned and was later read and run by a peer's probe, and a planted symlink at the
+    path was written THROUGH, truncating a file outside the root. A rename replaces the entry itself
+    whatever it is (the directory is this uid's), and a write that still fails is said on stderr with
+    its errno and filed as an error-centre row at boot rather than swallowed. No mkdir: the root exists
+    (the judge module's import made it and the import gate read it), and a mkdir here would re-create a
+    root that vanished in between under a parent someone else may own."""
+    global _REPO_ROOT_WRITE_ERROR
+    f = jd.STATE / "repo-root"
+    tmp = f.with_name("%s.%d.tmp" % (f.name, os.getpid()))
+    fd = None
     try:
-        jd.STATE.mkdir(parents=True, exist_ok=True)
-        (jd.STATE / "repo-root").write_text(str(ROOT) + "\n")
-    except OSError:
-        pass
+        try:
+            os.unlink(tmp)                   # a temp a crashed earlier attempt of this pid left; O_EXCL below must not trip on it
+        except FileNotFoundError:
+            pass
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        data = (str(ROOT) + "\n").encode()
+        n = os.write(fd, data)
+        if n != len(data):
+            raise OSError(errno.EIO, "short write, %d of %d bytes" % (n, len(data)))
+        os.close(fd)
+        fd = None
+        os.replace(str(tmp), str(f))
+        _REPO_ROOT_WRITE_ERROR = None
+    except OSError as e:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        _REPO_ROOT_WRITE_ERROR = jd._errno_text(e)
+        sys.stderr.write("romp-kernel: the repo-root record %s could not be written (%s): a peer's clone discovery reads it "
+                         "over ssh; remove whatever stands at that path and restart\n" % (f, _REPO_ROOT_WRITE_ERROR))
 
 _persist_repo_root()
 
@@ -4013,7 +4191,7 @@ def _names_snapshot():
     staleness the liveness snapshot already tolerates by construction."""
     snap = {}
     try:
-        for f in NAMES.iterdir():
+        for f in _gr.iterdir(NAMES):
             try:
                 # per-entry memo on (mtime_ns, size, inode) (2026-09-03): entries are published by
                 # os.replace, so any rewrite moves the key; an unchanged entry costs one stat, not a read
@@ -4021,7 +4199,7 @@ def _names_snapshot():
                 key = (st.st_mtime_ns, st.st_size, st.st_ino)
                 hit = _names_entry_memo.get(f.name)
                 if hit is None or hit[0] != key:
-                    hit = (key, f.read_text().rstrip("\n").split("\t"))
+                    hit = (key, _gr.read_text(f).rstrip("\n").split("\t"))
                     _names_entry_memo[f.name] = hit
                 snap[f.name] = hit[1]
             except Exception:   # OSError, but ALSO UnicodeDecodeError on a torn/raw-bytes entry — the
@@ -4050,7 +4228,7 @@ def _names_parts(sid):
         return snap.get(str(sid))
     _chat_sig_count("namesReads")                      # a raw names read inside a signature (memos.chatSig)
     try:
-        return (NAMES / str(sid)).read_text().rstrip("\n").split("\t")
+        return _gr.read_text(NAMES / str(sid)).rstrip("\n").split("\t")
     except Exception:
         return None
 
@@ -4081,7 +4259,7 @@ def _palette_name():
         mt = None
     if _pal_cache["mt"] != mt:
         try:
-            n = f.read_text().strip()
+            n = _gr.read_text(f).strip()
         except OSError:
             n = pal.DEFAULT
         _pal_cache["name"] = n if n in pal.PALETTES else pal.DEFAULT
@@ -4095,7 +4273,7 @@ def _write_palette_mirror():
     every switch; bin/romp falls back to the default set when it doesn't exist (kernel never booted)."""
     try:
         n = _palette_name()
-        jd.STATE.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(jd.STATE, parents=True, root=jd.STATE)
         _atomic_write(jd.STATE / "palette-colors",
                       "".join("%s\t%s\n" % bf for bf in zip(pal.colors(n), pal.fgs(n))))
     except OSError:
@@ -4294,7 +4472,7 @@ def _load_model_catalog_cache():
     picker and the seed alone is only what this build shipped with. Returns the cached row count; zero
     (absent, unreadable, or no rows) is what makes _model_catalog_boot fetch, the one boot that does."""
     try:
-        d = json.loads(_catalog_cache_path().read_text())
+        d = json.loads(_gr.read_text(_catalog_cache_path()))
         rows = d.get("models") if isinstance(d, dict) else None
         if not isinstance(rows, list):
             return 0
@@ -4462,7 +4640,7 @@ def _cli_model_blocks():
     (the API is the source; the CLI gates by version), so the refusal is surfaced on the version row
     the moment it is known rather than only at pick time (T222)."""
     try:
-        d = json.loads((jd.STATE / "cli-model-blocks.json").read_text())
+        d = json.loads(_gr.read_text(jd.STATE / "cli-model-blocks.json"))
         return d if isinstance(d, dict) else {}
     except Exception:
         return {}
@@ -4516,7 +4694,7 @@ def _reported_model_ids():
     contribute nothing — exactly what the uncached scan skipped; a failed read or parse is not cached,
     so the next call retries it, and a reg that vanished leaves the cache on the next scan."""
     try:
-        entries = sorted(os.scandir(jd.STATE / "sdk"), key=lambda e: e.name)   # the glob was sorted: same order
+        entries = sorted(_gr.scandir(jd.STATE / "sdk"), key=lambda e: e.name)   # the glob was sorted: same order
     except OSError:                              # a missing sdk/ dir included — no regs yet
         return []
     out, seen = [], set()
@@ -4534,7 +4712,7 @@ def _reported_model_ids():
             mid = hit[1]
         else:
             try:
-                reg = json.loads(Path(de.path).read_text())
+                reg = json.loads(_gr.read_text(de.path))
             except (OSError, ValueError):
                 _learned_reg_cache.pop(de.path, None)
                 continue
@@ -4636,7 +4814,7 @@ def _model_picks(learned=None):
     pick NO list knows is the catalog's staleness event (T222): it may name a model newer than the
     list, so it fires one refresh, and is honored the moment the catalog learns the id."""
     try:
-        d = json.loads((jd.STATE / MODEL_PICKS_FILE_NAME).read_text())
+        d = json.loads(_gr.read_text(jd.STATE / MODEL_PICKS_FILE_NAME))
     except Exception:
         return {}
     if not isinstance(d, dict):
@@ -4696,7 +4874,7 @@ def _note_model_pick(value):
     # again the moment the catalog learns the id.
     with _model_picks_lock:
         try:
-            picks = json.loads((jd.STATE / MODEL_PICKS_FILE_NAME).read_text())
+            picks = json.loads(_gr.read_text(jd.STATE / MODEL_PICKS_FILE_NAME))
         except Exception:
             picks = {}
         picks = picks if isinstance(picks, dict) else {}
@@ -4720,7 +4898,7 @@ def _forget_model_pick(fam, only=None):
     the user has since accepted."""
     with _model_picks_lock:
         try:
-            picks = json.loads((jd.STATE / MODEL_PICKS_FILE_NAME).read_text())
+            picks = json.loads(_gr.read_text(jd.STATE / MODEL_PICKS_FILE_NAME))
         except Exception:
             return
         if not isinstance(picks, dict) or fam not in picks:
@@ -4814,7 +4992,7 @@ def _model_alias_boot_pass():
         # JSON.
         nonlocal fails
         try:
-            data = p.read_bytes()
+            data = _gr.read_bytes(p)
         except FileNotFoundError:
             return None
         except OSError as e:
@@ -4846,7 +5024,7 @@ def _model_alias_boot_pass():
             n += len(stale)
             moved.append("model-picks dropped %s" % ", ".join(stale))
     try:
-        regs = sorted((jd.STATE / "sdk").glob("*.json"))
+        regs = _gr.glob(jd.STATE / "sdk", "*.json")
     except OSError:
         regs = []
     for rp in regs:
@@ -4866,7 +5044,7 @@ def _model_alias_boot_pass():
         sys.stderr.write("romp-kernel: model-alias migration could not read %d file(s) — no marker "
                          "written, retrying next boot\n" % fails)
     else:
-        jd.STATE.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(jd.STATE, parents=True, root=jd.STATE)
         _atomic_write(marker, json.dumps({"t": int(time.time()), "moved": n}))
     return n
 # "ultracode" tops the ladder (the user 2026-08-04): the CLI's own /effort offers it — xhigh effort plus
@@ -4919,7 +5097,7 @@ def _names_fields_for_edit(sid, what):
     p = NAMES / str(sid)
     for attempt in (0, 1):
         try:
-            text = p.read_text()
+            text = _gr.read_text(p)
         except Exception:
             return None
         parts = text.rstrip("\n").split("\t")
@@ -5277,13 +5455,13 @@ def _set_palette(name):
     if name not in pal.PALETTES:
         return False
     try:
-        jd.STATE.mkdir(parents=True, exist_ok=True)
-        (jd.STATE / "palette").write_text(name)
+        jd.srm.make_dir(jd.STATE, parents=True, root=jd.STATE)
+        jd.srm.write_text(jd.STATE / "palette", name)
     except OSError:
         return False
     new_bg, new_fg = pal.colors(name), pal.fgs(name)
     try:
-        sids = [f.name for f in NAMES.iterdir() if f.is_file()]
+        sids = [f.name for f in _gr.iterdir(NAMES) if f.is_file()]
     except OSError:
         sids = []
     for sid in sids:
@@ -6325,7 +6503,7 @@ def _postal_unread(sid):
     """How many delivered postal messages `sid` has not read yet (its maildir new/): the one queued signal the
     nudge walk's gates do not see (_backend_queued counts composer turns only). Best-effort 0."""
     try:
-        return sum(1 for _ in (jd.STATE / "postal" / "mail" / str(sid) / "new").iterdir())
+        return len(_gr.iterdir(jd.STATE / "postal" / "mail" / str(sid) / "new"))
     except OSError:
         return 0
 
@@ -6897,13 +7075,13 @@ def _read_state_json(path, st=None, expect=None, _tries=3):
     path = Path(path)
     if st is None:
         try:
-            st = path.stat()
+            st = _gr.stat(path)
         except FileNotFoundError:
             return None
         except OSError as e:
             raise _StateUnreadable(path, "stat failed: %s" % _errno_text(e))
     try:
-        raw = path.read_bytes()
+        raw = _gr.read_bytes(path)
     except FileNotFoundError:
         return None
     except OSError as e:
@@ -7106,8 +7284,12 @@ def _atomic_write(path, text, mode=None):
     `mode` (e.g. 0o600) is set on the temp's DESCRIPTOR (os.fchmod) before the first write, and os.replace
     carries it onto the published path, so the text never exists at a wider mode and a looser existing file
     tightens on its next write: required for any file holding a CREDENTIAL. The mode is applied on the
-    descriptor before the write, so it is not subject to the umask. Without a mode the temp inherits the umask
-    (usually 0644). Every mode-bearing caller today passes 0600: the Web Push VAPID private key (push-vapid.json,
+    descriptor before the write, so it is not subject to the umask. Without a mode the temp is BORN 0600 too, by
+    the shared module's creator (jd.srm.write_text: an O_CREAT at 0600 and an fchmod before Path.write_text runs;
+    round 4f, 2026-09-21: until then the mode-less road inherited the umask, usually 0644, and under a permissive
+    umask the readers quarantined the kernel's own fresh files), so every file this helper publishes under the root
+    is owner-only whatever the process umask; a mode argument still names an exact mode (0640 stays 0640). Every
+    mode-bearing caller today passes 0600: the Web Push VAPID private key (push-vapid.json,
     _vapid_keys; a credential travels this road, which is the strongest reason the mode is set before the
     write), remotes.json (every attached host's serve token: at 0644 any other local user could read those
     tokens and drive the REMOTE kernels, defeating the loopback token gate for federation) and its refused-rows
@@ -7133,19 +7315,23 @@ def _atomic_write(path, text, mode=None):
     state root (the reviewer's call, round 1): a file this helper has not rewritten since keeps its older
     mode until its next write, and the owner-only state root is what makes that interim safe: kernel/judge.py
     chmods it 0700 on import and, since review round 2 (2026-09-19), reads the mode back and says so once on
-    stderr when it is not 0700, so that premise is checked rather than assumed. tests/test_kernel_remotes_perms.py
+    stderr when it is not 0700, so that premise is checked rather than assumed. Since 2026-09-20 the check has a
+    consequence: a root writable by group or other, or one whose mode cannot be read, stops the kernel, at import and
+    at boot with exit 2 and, found later by the re-check, with an immediate exit 2 from whichever thread found it, so
+    no writer (this helper included) runs on under it; a root not 0700 but not writable by others files an error-centre
+    row (_state_root_import_gate, _state_root_boot_check, _state_root_verdict). tests/test_kernel_remotes_perms.py
     pins the shape: one fchmod on the descriptor while the temp is still empty, no chmod on any path, the
     requested mode published exactly under a permissive and a restrictive umask, a leftover temp overwritten
     rather than refused, and a raising fchmod closing the descriptor and leaving no temp."""
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    jd.srm.make_dir(path.parent, parents=True, root=jd.STATE)
     with _atomic_lock:
         _atomic_seq[0] += 1
         n = _atomic_seq[0]
     tmp = path.with_name("%s.tmp.%d.%d.%d" % (path.name, os.getpid(), threading.get_ident(), n))
     try:
         if mode is None:
-            tmp.write_text(text)
+            jd.srm.write_text(tmp, text)
         else:
             fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
             try:
@@ -7215,13 +7401,13 @@ def _order_audit(kind, old, new, stack=None, only_permuted=False):
         line = json.dumps(rec) + "\n"
         path = _order_audit_path()
         try:
-            if path.exists() and path.stat().st_size > _ORDER_AUDIT_CAP:
-                lines = path.read_text().splitlines(keepends=True)
+            if _gr.exists(path) and _gr.stat(path).st_size > _ORDER_AUDIT_CAP:
+                lines = _gr.read_text(path).splitlines(keepends=True)
                 _atomic_write(path, "".join(lines[len(lines) // 2:]))
         except Exception:
             pass
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a") as f:
+        jd.srm.make_dir(path.parent, parents=True, root=jd.STATE)
+        with jd.srm.open_private(path, "a") as f:
             f.write(line)
     except Exception:
         sys.stderr.write("order audit: %s\n" % traceback.format_exc())
@@ -9486,7 +9672,7 @@ def _flags_quarantined(p):
     store has been written or cleanly read since is history (_retire_flags_quarantine renamed it `.retired-*`, bytes
     kept), so deleting the flags file later beside an old sidecar is a fresh install, not a re-entered hold."""
     try:
-        return any(True for _ in p.parent.glob(p.name + ".corrupt-*"))
+        return bool(_gr.glob(p.parent, p.name + ".corrupt-*"))
     except OSError:
         return True
 
@@ -9497,7 +9683,7 @@ def _retire_flags_quarantine(p):
     mark the readers key on goes), said once on stderr. Best-effort: a rename that fails leaves the mark, and the
     readers keep holding, which is the safe side."""
     try:
-        sides = list(p.parent.glob(p.name + ".corrupt-*"))
+        sides = _gr.glob(p.parent, p.name + ".corrupt-*")
     except OSError:
         return
     for side in sides:
@@ -9513,7 +9699,7 @@ def _flags_exit_text(p):
     """The refusal's remedy, the one in-product exit of the fail-closed hold: what to write and what it does."""
     sides = []
     try:
-        sides = sorted(s.name for s in p.parent.glob(p.name + ".corrupt-*"))
+        sides = sorted(s.name for s in _gr.glob(p.parent, p.name + ".corrupt-*"))
     except OSError:
         pass
     return ("the session settings file %s was moved aside%s (torn bytes) and no flags are known, so mail is held for every "
@@ -9624,9 +9810,9 @@ def _set_session_flag(sid, flag, value):
                     if nd.get("parentId") is None and not nd.get("cleared") and status.get(nid) != "cleared"]
             if tops:
                 p = jd.STATE / "cleared.jsonl"
-                p.parent.mkdir(parents=True, exist_ok=True)
+                jd.srm.make_dir(p.parent, parents=True, root=jd.STATE)
                 t = time.time()
-                with p.open("a") as fh:
+                with jd.srm.open_private(p, "a") as fh:
                     for nid in tops:
                         fh.write(json.dumps({"id": nid, "t": t, "op": "clear"}) + "\n")
                 _mark_nodes_cleared(tops, True)               # durable node flag → sealed across judge passes
@@ -9889,7 +10075,7 @@ def _user_todos():
     if hit is not None and hit[0] == key:
         return hit[1]
     try:
-        d = json.loads(p.read_text())
+        d = json.loads(_gr.read_text(p))
         found = ", ".join(sorted(map(str, d)))[:200] if isinstance(d, dict) else type(d).__name__
     except Exception as e:
         d, found = None, "unparsable JSON (%s)" % e
@@ -9967,7 +10153,7 @@ def _user_todos_log_write(line):
             os.replace(p, p.with_name("user-todos-log.1.jsonl"))
     except OSError:
         pass                                         # no file yet: nothing to rotate
-    with open(p, "a", encoding="utf-8") as f:
+    with jd.srm.open_private(p, "a", encoding="utf-8") as f:
         f.write(line + "\n")
 
 
@@ -10533,7 +10719,7 @@ def _user_todo_session_ended(sid):
     if reg:
         return not reg.get("alive")
     try:
-        m = json.loads((jd.STATE / "gone" / (sid + ".json")).read_text())
+        m = json.loads(_gr.read_text(jd.STATE / "gone" / (sid + ".json")))
     except Exception:
         return False
     if not isinstance(m, dict):
@@ -10670,7 +10856,7 @@ def _pinned_notes():
     if hit is not None and hit[0] == key:
         return hit[1]
     try:
-        d = json.loads(p.read_text())
+        d = json.loads(_gr.read_text(p))
         found = ", ".join(sorted(map(str, d)))[:200] if isinstance(d, dict) else type(d).__name__
     except Exception as e:
         d, found = None, "unparsable JSON (%s)" % e
@@ -11119,12 +11305,12 @@ def _user_todo_loss_boot_pass(wait=False):
     seen = set()                                     # one offer per (sid, tid), however many echoes
     store = _user_todos()
     try:
-        regs = sorted((jd.STATE / "sdk").glob("*.json"))   # same files _thread_reg reads
+        regs = _gr.glob(jd.STATE / "sdk", "*.json")        # same files _thread_reg reads
     except OSError:
         return 0
     for p in regs:
         try:
-            reg = json.loads(p.read_text())
+            reg = json.loads(_gr.read_text(p))
         except (OSError, ValueError):
             continue
         if not isinstance(reg, dict):
@@ -11388,7 +11574,7 @@ def _ledger_read(p, cache, default, what, normalize=None, lock=None, _tries=3):
     and THEIR bytes get their own read here, bounded by `_tries` — the shape the goal store's reader wears
     (the maintainer's fold on PR #1019). Only a file that keeps changing under every read ends unproved."""
     try:
-        st = p.stat()
+        st = _gr.stat(p)
     except FileNotFoundError:
         return _ledger_proved(what, default())
     except OSError as e:
@@ -11399,7 +11585,7 @@ def _ledger_read(p, cache, default, what, normalize=None, lock=None, _tries=3):
         return _ledger_proved(what, hit[1])
     reason = None                          # set when the bytes were read whole and are not a ledger
     try:
-        raw = p.read_text(encoding="utf-8")
+        raw = _gr.read_text(p, encoding="utf-8")
     except FileNotFoundError:
         return _ledger_proved(what, default())   # removed between the stat and the read: absent
     except OSError as e:
@@ -11551,7 +11737,7 @@ def _ledger_write_proved(p, what, d, cache, normalize=None):
     _ledger_proved(what, None)               # a proved write ends the episode too
     try:
         st = p.stat()
-        back = json.loads(p.read_text(encoding="utf-8"))
+        back = json.loads(_gr.read_text(p, encoding="utf-8"))
         st2 = p.stat()
         if isinstance(back, dict) and (st.st_mtime_ns, st.st_size) == (st2.st_mtime_ns, st2.st_size):
             if normalize is not None:
@@ -11617,7 +11803,7 @@ _conserve_hidden_at = {}                # sid -> first moment seen hidden+idle (
 
 def _conserve_on():
     try:
-        d = json.loads((jd.STATE / CONSERVE_FILE_NAME).read_text())
+        d = json.loads(_gr.read_text(jd.STATE / CONSERVE_FILE_NAME))
         return bool(isinstance(d, dict) and d.get("enabled"))
     except Exception:
         return False
@@ -11758,7 +11944,7 @@ def _file_editing_on():
     the tunnel settings dict report it so disagreement is surfaced, never hidden. Default OFF —
     absent file, unreadable file, or malformed JSON all refuse: the opt-in must be provable."""
     try:
-        return bool(json.loads((jd.STATE / "file-editing.json").read_text()).get("enabled"))
+        return bool(json.loads(_gr.read_text(jd.STATE / "file-editing.json")).get("enabled"))
     except Exception:
         return False
 
@@ -11774,7 +11960,7 @@ def _set_file_editing(enabled, gt=None):
     lock's own comment)."""
     with _SETTINGS_LOCK:
         try:
-            prev = json.loads((jd.STATE / "file-editing.json").read_text())
+            prev = json.loads(_gr.read_text(jd.STATE / "file-editing.json"))
         except Exception:
             prev = None
         prev_gt = _gt_int(prev.get("gt")) if isinstance(prev, dict) else 0
@@ -11824,7 +12010,7 @@ def _whole_chat_frames_on():
     restart; the flip dirties the view caches (the chat signature carries the floor, so every tab rebuilds). The reversible
     lever for a page that cannot fill the regions above a documented tab's cut: on until the page fix lands, then off."""
     try:
-        d = json.loads((jd.STATE / WHOLE_CHAT_FRAMES_FILE).read_text())
+        d = json.loads(_gr.read_text(jd.STATE / WHOLE_CHAT_FRAMES_FILE))
     except Exception:
         return False
     v = d.get("enabled") if isinstance(d, dict) else None
@@ -11859,7 +12045,7 @@ def _set_whole_chat_frames(enabled, gt=None):
     every kernel setting flip keeps (the feed cache and the chat tabs must not serve the old floor)."""
     with _SETTINGS_LOCK:
         try:
-            prev = json.loads((jd.STATE / WHOLE_CHAT_FRAMES_FILE).read_text())
+            prev = json.loads(_gr.read_text(jd.STATE / WHOLE_CHAT_FRAMES_FILE))
         except Exception:
             prev = None
         prev_gt = _gt_int(prev.get("gt")) if isinstance(prev, dict) else 0
@@ -11897,7 +12083,7 @@ def _thinking_summaries_on():
     """OFF unless this install's file says yes: absent, unreadable or malformed all read False — the
     opt-in must be provable, and reading never creates the file (shipping never turns it on)."""
     try:
-        return bool(json.loads((jd.STATE / THINKING_SUMMARIES_FILE).read_text()).get("enabled"))
+        return bool(json.loads(_gr.read_text(jd.STATE / THINKING_SUMMARIES_FILE)).get("enabled"))
     except Exception:
         return False
 
@@ -11912,7 +12098,7 @@ def _set_thinking_summaries(enabled, gt=None):
     stamped gesture applies over it. Read-check-write under _SETTINGS_LOCK, like its siblings."""
     with _SETTINGS_LOCK:
         try:
-            prev = json.loads((jd.STATE / THINKING_SUMMARIES_FILE).read_text())
+            prev = json.loads(_gr.read_text(jd.STATE / THINKING_SUMMARIES_FILE))
         except Exception:
             prev = None
         prev_gt = _gt_int(prev.get("gt")) if isinstance(prev, dict) else 0
@@ -11980,7 +12166,7 @@ def _task_tracking_on():
     per episode (_note_tracking_read_fault); only the literal false turns tracking off."""
     p = jd.STATE / TASK_TRACKING_FILE
     try:
-        raw = p.read_text()
+        raw = _gr.read_text(p)
     except FileNotFoundError:
         _tt_read_fault_said.pop(str(p), None)
         return True
@@ -12008,7 +12194,7 @@ def _set_task_tracking(enabled, gt=None):
     OSError reads as a socket failure to the WS reader loop). Read-check-write under _SETTINGS_LOCK."""
     with _SETTINGS_LOCK:
         try:
-            prev = json.loads((jd.STATE / TASK_TRACKING_FILE).read_text())
+            prev = json.loads(_gr.read_text(jd.STATE / TASK_TRACKING_FILE))
         except Exception:
             prev = None
         prev_gt = _gt_int(prev.get("gt")) if isinstance(prev, dict) else 0
@@ -12031,7 +12217,7 @@ def _task_tracking_gt():
     """The switch's last-applied gesture stamp, 0 when the file is absent or garbled: /version's settingsGt (the gear's
     clock pre-learns it), the stale frame's storedGt, and a peer's adoption check (T404 round two, low 2 and medium 5)."""
     try:
-        d = json.loads((jd.STATE / TASK_TRACKING_FILE).read_text())
+        d = json.loads(_gr.read_text(jd.STATE / TASK_TRACKING_FILE))
         return _gt_int(d.get("gt")) if isinstance(d, dict) else 0
     except Exception:
         return 0
@@ -12071,7 +12257,7 @@ def _user_todos_on():
     the opt-in must be provable, and reading never creates the file (shipping never turns it on)."""
     _chat_sig_count("switchReads")                     # a switch read inside a signature (memos.chatSig)
     try:
-        return bool(json.loads((jd.STATE / USER_TODOS_SWITCH_FILE).read_text()).get("enabled"))
+        return bool(json.loads(_gr.read_text(jd.STATE / USER_TODOS_SWITCH_FILE)).get("enabled"))
     except Exception:
         return False
 
@@ -12085,7 +12271,7 @@ def _set_user_todos(enabled, gt=None):
     _SETTINGS_LOCK. Flips the SWITCH only: every stored todo stays on disk either way."""
     with _SETTINGS_LOCK:
         try:
-            prev = json.loads((jd.STATE / USER_TODOS_SWITCH_FILE).read_text())
+            prev = json.loads(_gr.read_text(jd.STATE / USER_TODOS_SWITCH_FILE))
         except Exception:
             prev = None
         prev_gt = _gt_int(prev.get("gt")) if isinstance(prev, dict) else 0
@@ -12345,7 +12531,7 @@ def _other_kernels():
 
 def _update_mode():
     try:
-        m = json.loads((jd.STATE / "update-mode.json").read_text()).get("mode")
+        m = json.loads(_gr.read_text(jd.STATE / "update-mode.json")).get("mode")
         return m if m in _UPDATE_MODES else "ask"
     except (OSError, ValueError, AttributeError):
         return "ask"
@@ -12355,7 +12541,7 @@ def _update_mode_gt():
     """Last-applied gesture stamp for the update mode — a file without the field (written before
     the mechanism), or no file at all, reads as 0, so any stamped gesture applies over it."""
     try:
-        d = json.loads((jd.STATE / "update-mode.json").read_text())
+        d = json.loads(_gr.read_text(jd.STATE / "update-mode.json"))
         return _gt_int(d.get("gt")) if isinstance(d, dict) else 0
     except (OSError, ValueError):
         return 0
@@ -12578,8 +12764,8 @@ def _consume_update_report(running_only=False, _tries=3):
     report replaced under the quarantine gets (see the identity check below)."""
     p = jd.STATE / "update-report.json"
     try:
-        st = p.stat()          # BEFORE the read: the quarantine below moves only the file whose bytes it read
-        rep = json.loads(p.read_bytes())
+        st = _gr.stat(p)       # BEFORE the read: the quarantine below moves only the file whose bytes it read
+        rep = json.loads(_gr.read_bytes(p))
     except (OSError, ValueError):
         return None
     if not isinstance(rep, dict):
@@ -12705,7 +12891,7 @@ def _update_check():
     if _update_mode() == "auto":
         tried = ""
         try:
-            tried = json.loads((jd.STATE / "update-attempted.json").read_text()).get("tag", "")
+            tried = json.loads(_gr.read_text(jd.STATE / "update-attempted.json")).get("tag", "")
         except (OSError, ValueError, AttributeError):
             pass
         if tried == latest:
@@ -12830,7 +13016,7 @@ def _main_tracking():
         attached = bool(_remotes)
     if not attached:
         try:
-            attached = bool(json.loads(KNOWN_FILE.read_text()))
+            attached = bool(json.loads(_gr.read_text(KNOWN_FILE)))
         except Exception:
             attached = False
     return _main_channel_verdict(_checkout_branch(), _update_mode(), attached)
@@ -12846,7 +13032,7 @@ _DISMISSED_UPDATES_FILE_NAME = "update-dismissed.json"
 
 def _dismissed_updates():
     try:
-        d = json.loads((jd.STATE / _DISMISSED_UPDATES_FILE_NAME).read_text())
+        d = json.loads(_gr.read_text(jd.STATE / _DISMISSED_UPDATES_FILE_NAME))
         return [str(x) for x in d if isinstance(x, str)][-20:] if isinstance(d, list) else []
     except Exception:
         return []
@@ -13198,7 +13384,7 @@ def _last_deploy_restart_t():
     behavior. A row stamped in the FUTURE (a clock stepped back) is ignored rather than holding every
     converge until the clock catches up (review find)."""
     try:
-        lines = RESTART_CUTS_FILE.read_text().strip().splitlines()[-200:]
+        lines = _gr.read_text(RESTART_CUTS_FILE).strip().splitlines()[-200:]
     except Exception:
         lines = []                      # no ledger yet (or unreadable): the audit file below still counts
     horizon = time.time() + 60.0
@@ -13245,7 +13431,7 @@ def _last_deploy_restart_t():
         elif "cutTurns" in r:
             cuts.append((float(r["t"]), float(r.get("auditT") or 0)))
     try:
-        alines = (jd.STATE / "restart-audit.jsonl").read_text().strip().splitlines()[-200:]
+        alines = _gr.read_text(jd.STATE / "restart-audit.jsonl").strip().splitlines()[-200:]
     except Exception:
         alines = []
     for line in reversed(alines):
@@ -13796,7 +13982,7 @@ def _auto_update_remotes_on():
     exactly how the "retry retry retry" storm happened (see the apiRetry episode gate) — every connected
     client fired its own."""
     try:
-        return bool(json.loads((jd.STATE / "auto-update-remotes.json").read_text()).get("enabled"))
+        return bool(json.loads(_gr.read_text(jd.STATE / "auto-update-remotes.json")).get("enabled"))
     except Exception:
         return False
 
@@ -13808,7 +13994,7 @@ def _set_auto_update_remotes(enabled):
 def _retry_paused_on():
     p = jd.STATE / "retry-paused.json"
     try:
-        d = json.loads(p.read_text())
+        d = json.loads(_gr.read_text(p))
         return bool(d.get("paused"))
     except Exception:
         return False
@@ -13872,7 +14058,7 @@ def _set_retry_paused(paused, reason="", bills="", lifted_at=None):
     # the clean read that ends the episode says so once.
     p = jd.STATE / "retry-paused.json"
     try:
-        prev = json.loads(p.read_text())
+        prev = json.loads(_gr.read_text(p))
         if not isinstance(prev, dict):
             prev = {}
     except FileNotFoundError:
@@ -13920,7 +14106,7 @@ def _retry_pause_reason():
     reads it too. A pause file written for a limit before the reason was recorded carries none and reads
     manual."""
     try:
-        return str(json.loads((jd.STATE / "retry-paused.json").read_text()).get("reason") or "")
+        return str(json.loads(_gr.read_text(jd.STATE / "retry-paused.json")).get("reason") or "")
     except Exception:
         return ""
 
@@ -13928,7 +14114,7 @@ def _retry_pause_reason():
 def _retry_pause_ts():
     """The wall-clock instant the current pause began (the auto-resume floor), or 0."""
     try:
-        return float(json.loads((jd.STATE / "retry-paused.json").read_text()).get("t") or 0)
+        return float(json.loads(_gr.read_text(jd.STATE / "retry-paused.json")).get("t") or 0)
     except Exception:
         return 0.0
 
@@ -13938,7 +14124,7 @@ def _retry_pause_bills():
     the file records none (a limit or manual pause, or a spend pause written before the billing was
     recorded). _auto_resume_retry's spend rule reads it; "" there takes any session's fresh output."""
     try:
-        return str(json.loads((jd.STATE / "retry-paused.json").read_text()).get("bills") or "")
+        return str(json.loads(_gr.read_text(jd.STATE / "retry-paused.json")).get("bills") or "")
     except Exception:
         return ""
 
@@ -13954,7 +14140,7 @@ def _retry_pause_lifted_at():
     exactly when it is older than liftedAt. Only the record's identity, not its stamp, could order it against
     the lift across a step."""
     try:
-        return float(json.loads((jd.STATE / "retry-paused.json").read_text()).get("liftedAt") or 0)
+        return float(json.loads(_gr.read_text(jd.STATE / "retry-paused.json")).get("liftedAt") or 0)
     except Exception:
         return 0.0
 
@@ -15047,7 +15233,7 @@ def _tick_seen_path():
 def _load_tick_seen():
     """Read the persisted memo into _TICK_SEEN (best-effort; a missing or torn file is an empty memo)."""
     try:
-        d = json.loads(_tick_seen_path().read_text(encoding="utf-8"))
+        d = json.loads(_gr.read_text(_tick_seen_path(), encoding="utf-8"))
     except Exception:
         return 0
     n = 0
@@ -15078,8 +15264,8 @@ def _persist_tick_seen(force=False):
     p = _tick_seen_path()
     tmp = p.with_name(p.name + ".tmp.%d.%x" % (os.getpid(), threading.get_ident()))   # per WRITER: the exit's force write
     try:                                                                                #  runs beside the pusher's persist
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(body, encoding="utf-8")
+        jd.srm.make_dir(p.parent, parents=True, root=jd.STATE)
+        jd.srm.write_text(tmp, body, encoding="utf-8")
         os.replace(tmp, p)
         _TICK_SEEN_WRITE_SAID[0] = False             # a clean write re-arms the say-once latch: the next fault episode is said too
         return True
@@ -15249,7 +15435,7 @@ def _asker_row_alive(asker):
     both directions."""
     p = jd.STATE / "sdk" / (str(asker) + ".json")
     try:
-        text = p.read_text(encoding="utf-8")
+        text = _gr.read_text(p, encoding="utf-8")
     except FileNotFoundError:
         return False
     except (OSError, ValueError):                       # a read fault, or bytes that are not UTF-8 (UnicodeDecodeError is a
@@ -16011,8 +16197,8 @@ def _log_nudge_event(sid, gid, t, count, verdict="fired", ev_t=None, parked_s=No
     older readers key on sid/gid/t/count."""
     try:
         p = jd.STATE / "nudge-events.jsonl"
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with p.open("a") as f:
+        jd.srm.make_dir(p.parent, parents=True, root=jd.STATE)
+        with jd.srm.open_private(p, "a") as f:
             f.write(json.dumps({"sid": sid, "gid": gid, "t": int(t), "count": count,
                                 "verdict": verdict,
                                 **({"evT": int(ev_t)} if ev_t else {}),
@@ -17419,7 +17605,7 @@ def _dead_wait_corroborated(sid, stats=None, now=None):
         return None                              # the check itself failed (an unlistable sdk/)
     if present:
         try:
-            reg_d = json.loads(reg.read_text())
+            reg_d = json.loads(_gr.read_text(reg))
             if "alive" in reg_d:
                 return not bool(reg_d.get("alive"))
             present = False                      # a GUTTED reg (the backend's routine write re-created it with no
@@ -17434,7 +17620,7 @@ def _dead_wait_corroborated(sid, stats=None, now=None):
                 sys.stderr.write("dead-wait: unreadable SDK reg for %s — standing down this cycle\n" % sid)
             return None
     try:                                         # a corroborated death some writer already stamped,
-        m = json.loads((jd.STATE / "gone" / (sid + ".json")).read_text())   # still standing —
+        m = json.loads(_gr.read_text(jd.STATE / "gone" / (sid + ".json")))   # still standing —
         if isinstance(m, dict) and int(m.get("t") or 0) >= int((_last_states_row(sid) or {}).get("t") or 0):
             return True                          # answers without a probe, even under a wedged server
     except (OSError, ValueError):
@@ -17526,7 +17712,7 @@ def _dead_wait_sweep(alive_ids, nudged, now):
     prev, _PREV_ALIVE = _PREV_ALIVE, set(alive_ids)
     if prev is None:
         try:
-            cands = {f.stem for f in (jd.STATE / "goals").glob("*.json")} - set(alive_ids)
+            cands = {f.stem for f in _gr.glob(jd.STATE / "goals", "*.json")} - set(alive_ids)
         except OSError:
             return
     else:
@@ -19467,7 +19653,7 @@ def _working_notes():
     # entry's (name, mtime_ns, size, ino), so a rewritten or removed note misses exactly.
     entries = []
     try:
-        with os.scandir(WORKING_DIR) as it:
+        with _gr.scandir(WORKING_DIR) as it:
             for e in it:
                 try:
                     st = _entry_stat(e)
@@ -19508,7 +19694,7 @@ def _set_working_note(sid, text):
     if p is None:
         return
     if (text or "").strip():
-        WORKING_DIR.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(WORKING_DIR, parents=True, root=jd.STATE)
         _atomic_write(p, text)
     else:
         try:
@@ -20482,8 +20668,8 @@ def _seed_fork_stores(parent_sid, sid, path, cut_uuid):
         src = jd.CAPDIR / (parent_sid + ".jsonl")
         pref = parent_sid + ":"
         rows = []
-        if src.exists():
-            for line in src.read_text(errors="replace").splitlines():
+        if _gr.exists(src):
+            for line in _gr.read_text(src, errors="replace").splitlines():
                 try:
                     o = json.loads(line)
                 except ValueError:
@@ -20536,7 +20722,7 @@ def _comments_path(sid):
 
 def _load_comments(sid):
     try:
-        d = json.loads(_comments_path(sid).read_text())
+        d = json.loads(_gr.read_text(_comments_path(sid)))
         return d if isinstance(d, dict) else {"threads": []}
     except (OSError, ValueError):
         return {"threads": []}
@@ -20822,7 +21008,7 @@ def _thread_reg_read(tsid):
             return hit[1], hit[2]
         _thread_reg_stats["miss"] += 1
     try:
-        d = json.loads(p.read_text())
+        d = json.loads(_gr.read_text(p))
         state, d = ("ok", d) if isinstance(d, dict) else ("unreadable", {})
         why = None if state == "ok" else "is not a JSON object"
     except (OSError, ValueError) as e:
@@ -20893,7 +21079,7 @@ def _thread_messages(tsid, cut_uuid, floor_t=0):
     by_uuid = parent_of = leaf = None
     if cut_uuid and size > _THREAD_TAIL_BYTES:
         try:
-            with open(path, "rb") as f:
+            with _gr.open(path, "rb") as f:
                 f.seek(size - _THREAD_TAIL_BYTES)
                 lines = f.read().split(b"\n")[1:]    # drop the partial first line of the window
         except OSError:
@@ -22032,7 +22218,7 @@ def _comment_fork_owner(tid):
     kept nothing else). The store is one small json per commented-on session; None when no parent
     holds it (including an empty/absent comments dir)."""
     try:
-        files = sorted((jd.STATE / "comments").glob("*.json"))
+        files = _gr.glob(jd.STATE / "comments", "*.json")
     except OSError:
         return None
     for f in files:
@@ -22163,10 +22349,14 @@ def _sdk_venv_site_packages():
     """(match, found): the SDK venv's site-packages directories built for the python THIS process runs
     (_running_python_tag), and every one on disk whatever its tag. bin/romp-sdk-setup builds the venv
     under ~/.local/state/romp/sdkvenv; the kernel never touches system python. Shared by
-    _ensure_sdk_on_path (the SDK) and _push_crypto (the cryptography package the same venv carries)."""
-    import glob
+    _ensure_sdk_on_path (the SDK) and _push_crypto (the cryptography package the same venv carries). Read through the
+    guarded reader (round 4, the review's kernel-1: a site-packages a peer planted while the root was writable, or a
+    symlink to one, went onto sys.path at position zero and shadowed every module the kernel imports after it): every
+    component from the root down is this uid's, not a symlink and not writable by another local user, else the entry
+    is quarantined and no path is answered; a 0775 venv under the owner's private group, what bin/romp-sdk-setup builds
+    under umask 0002, passes."""
     running = _running_python_tag()
-    found = sorted(glob.glob(str(jd.STATE / "sdkvenv" / "lib" / "python3.*" / "site-packages")))
+    found = [str(p) for p in _gr.glob(str(jd.STATE / "sdkvenv" / "lib"), "python3.*/site-packages")]
     return [sp for sp in found if Path(sp).parent.name == "python" + running], found
 
 
@@ -22187,8 +22377,7 @@ def _ensure_sdk_on_path():
     running = _running_python_tag()
     match, found = _sdk_venv_site_packages()
     for sp in match:
-        if sp not in sys.path:
-            sys.path.insert(0, sp)
+        _gr.sys_path_dir(sp, 0)                   # the guard again at the door: a directory judged, then sys.path[0]
     if found and not match:
         built = sorted(Path(sp).parent.name[len("python"):] for sp in found)
         if built != _SDK_VENV_BUILT_FOR:          # one line per verdict, not one per caller
@@ -22489,7 +22678,7 @@ def _judge_engine_name():
     absent/unknown → claude. Read here (not through the judge module) so the /models handler can gate
     its Codex consult without importing the judge."""
     try:
-        v = (jd.STATE / "judge-engine").read_text().strip()
+        v = _gr.read_text(jd.STATE / "judge-engine").strip()
     except OSError:
         return "claude"
     return v if v in ("claude", "codex") else "claude"
@@ -22501,7 +22690,7 @@ def _default_backend():
     The dashboard's + dialog always names a backend (its own toggle), so this governs the
     headless paths: `romp new` and POST /new."""
     try:
-        v = (jd.STATE / "default-backend").read_text().strip()
+        v = _gr.read_text(jd.STATE / "default-backend").strip()
     except OSError:
         return "sdk"
     return v if v in ("sdk", "codex") else "sdk"
@@ -22523,6 +22712,329 @@ def _sdk_problem(text):
     _SDK_BOOT_PROBLEMS.append({"seq": len(_SDK_BOOT_PROBLEMS) + 1, "t": time.time(), "text": str(text)})
     del _SDK_BOOT_PROBLEMS[:-20]
 
+
+# ── the state root's mode (2026-09-20) ───────────────────────────────────────────────────────────────────
+# kernel/judge.py makes the state root 0700 at import, best-effort, and until 2026-09-20 the kernel took that
+# on trust: a root this uid could not tighten was said once on stderr and served anyway, and a root loosened
+# after boot was never read again. The root's mode is the premise of _atomic_write's interim-mode argument (a
+# file this uid wrote at a looser mode is not exposed because the root is owner-only), so the check lives here
+# with a consequence, and the consequence is one shape everywhere: THE PROCESS STOPS. The check itself is ONE
+# implementation, kernel/state_root_mode.py, loaded by path by the judge module (jd.srm) and by the postal bus
+# (round 4). THE DISCRIMINATOR: a root is writable by another local user when its mode carries an OTHER write
+# bit, or a GROUP write bit under a group that is not the owner's private group (the group database lists no
+# member but the owner and no other account has the gid as its primary group), which is the cross-session
+# code-execution road (another local user can plant or replace entries under it); a group write bit under the
+# owner's private group is warn-class, like 0755 (a privacy fault, not a code-execution one), which is what every
+# directory made under umask 0002 reads on a user-private-group box until the judge import tightens it; a group
+# database that cannot be read or does not answer within a bound (a daemon thread joined with a timeout) counts
+# as writable, the restricted side, with its OWN message and remedy (check getent group and the name service;
+# romp refuses until it can tell who else can write here), never the distrust remedy; and a root whose mode
+# cannot be read is unverified (the argument beside _state_root_import_gate). Every refuse-class verdict exits 2:
+# at import before the serve token is read (_state_root_import_gate), at boot in main() (_state_root_boot_check,
+# SystemExit in the main thread), and found by the re-check after boot, os._exit(2) from whichever thread found
+# it (_state_root_exit_now: the full line to stderr, a flush, no drain and no further write; a second finder does
+# not return to its caller, it raises _StateRootExiting and its thread ends there).
+# THE IMPORT-READ RULE (round 4, after the artifact enumeration in plans/state-root-mode.md refuted round 2b's
+# settlement): the import gate and the boot check also judge the mode the judge module READ before its own chmod
+# (_STATE_ROOT_MODE_AT_IMPORT with that read's owner and group): a PRE-EXISTING root that was writable by another
+# local user then is refused whatever the chmod did afterwards, with the distrust remedy (entries planted while
+# it was writable are not to be trusted: remove serve-token, repo-root and every entry you did not make, or
+# recreate the root, then chmod 700), because after the gate the import reads or writes thirteen paths under
+# the root (the enumeration; a planted symlink at checkpoints made the boot sweep unlink files outside the root
+# until round 4's guard in kernel/event_model.py) and a mode check on the tightened root cannot see the window
+# in which they were planted; a root the import CREATED is exempt (a fresh directory's umask mode is a creation
+# default and not a loosening). A pre-existing root that read 0775 under the owner's private group, or 0755, is
+# not refused: it is re-tightened and reported once at boot, one loud line and one error-centre row
+# (_state_root_import_mode_row). The exit is the round-2 decision (the 2026-09-20 review's section A): round 1
+# latched every request to 503 and left every internal writer running under the hostile root, the housekeeping
+# pass whose own stage set the latch included, so the doors closed while the write primitive the road depends on
+# carried on. An exit is the only shape that stops every writer by construction: the housekeeping pass, the
+# pusher, the judge passes, the timers, the SDK backend's threads. The manager sees exit 2 and respawns (its
+# backoff grows to 10 s on quick exits); the import gate then refuses again while the root reads hostile, so
+# the manager crash-loops one line per attempt into its log until the root is repaired, and a deploy parked on
+# its quiet window applies into a kernel that refuses at boot the same way. The check runs on the jobs pass's
+# cadence (_jobs_pass, the `jobs.stateRootMode` stage, FIRST in the pass) and before every request
+# (Handler._state_root_recheck), each at most every STATE_ROOT_CHECK_S over one cache (_state_root_verdict). The
+# re-check READS BEFORE IT REPAIRS (judge.state_root_mode_check): a root this uid owns that is loosened to 0755
+# after boot is re-tightened AND reported ("was 0755, re-tightened to 0700"), so the loosening leaves a trace;
+# one loosened to 0777 exits 2 on what was read, whether or not the chmod could tighten it on the way out. The
+# rows ride _sync_notice under the bell's "refused" kind (the kind a state file that cannot be read or written
+# wears; not the mutable "sdk" kind of _sdk_problem, whose one mute would hide these with the backend's), are
+# keyed on the verdict AND its cause so an errno that changes under a constant mode refiles, and are built to
+# fit the bell whole (SYNC_NOTICE_FIT) with the point and the remedy first and the root's path at most once
+# (_state_root_row); the full line with the path goes to stderr. A chmod that could not run travels with its
+# errno on every surface (the line, the row, /version's stateRootMode), a root that reads 0700 but whose chmod
+# fails included (verdict ok with a line: one row per transition), and the import's own failed mkdir or chmod is
+# folded in, labelled as the import's (correctness-3). THE BOUNDARY no mode check can close: a descriptor a peer
+# opened inside the root while it was writable survives the tightening (POSIX checks permission at open), so
+# the distrust remedy, remove and recreate, is the boundary of what any of this promises. _sdk_problem's
+# sequence collision (its seq is len(ring)+1 over a ring trimmed to 20, so a long-lived kernel's rows share one
+# signature and the bell drops them) is pre-existing and not touched here; these rows no longer ride it.
+STATE_ROOT_CHECK_S = 15.0                      # the re-check cadence; ROMP_STATE_ROOT_CHECK_S overrides it (tests)
+_STATE_ROOT_MODE = None                        # the last check dict (jd.state_root_mode_check), None before the first
+_STATE_ROOT_KEY = None                         # the last transition key the warn surface filed (_state_root_key)
+_STATE_ROOT_LOCK = threading.Lock()            # one re-read and one transition at a time; the refusal flag below rides it
+_STATE_ROOT_REFUSED = False                    # True once the runtime refusal is on its way: a second finder raises _StateRootExiting
+_state_root_exit = os._exit                    # the runtime refusal's exit, module-level so a test can double it (a raising
+#                                                double stands in for a process that is gone)
+
+
+def _state_root_check_interval():
+    """Seconds between two re-reads of the root's mode: ROMP_STATE_ROOT_CHECK_S when it parses, else STATE_ROOT_CHECK_S.
+    Read at call time so a test can set it after the kernel loaded."""
+    raw = (os.environ.get("ROMP_STATE_ROOT_CHECK_S") or "").strip()
+    if raw:
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            pass
+    return STATE_ROOT_CHECK_S
+
+
+def _state_root_key(chk):
+    """The state the transition rule compares: the verdict with its cause (the mode read, whether this check repaired
+    it, the chmod's errno name and the stat's), so a cause that changes under one verdict (EPERM to EACCES under a
+    constant 0755, 0755 to 0750, unrepaired to repaired) is a new transition and refiles (the 2026-09-20 review's
+    extra6-2), while a check that stays in one state files nothing. Plain ok (no error) is one state of its own, so
+    a return to it after warn says nothing. None for no check."""
+    if chk is None:
+        return None
+    if chk["verdict"] == "ok" and not chk.get("err"):
+        return ("ok",)
+    return (chk["verdict"], chk.get("modeReadText"), bool(chk.get("repaired")), chk.get("repairErrno"),
+            chk.get("statErrno"))
+
+
+def _state_root_row(chk, point=None, remedy=None):
+    """The error-centre row for a check, built to fit the bell whole (SYNC_NOTICE_FIT, the rule _notice_list and
+    _manager_refusal follow; the 2026-09-20 review's extra7-2): the point and the path-free remedy FIRST, then the
+    check's error text and then the root's path, each appended only while the whole still fits, so a long root costs
+    the path on the row (it is on the stderr line, this uid's surface) and never the way out. The path appears at
+    most once. `point` and `remedy` override the check's (the boot check's import-mode row)."""
+    def cap(t):
+        t = t.strip().rstrip(".")
+        return t[:1].upper() + t[1:]
+    head = "%s. %s." % (cap(point or chk["point"] or ""), cap(remedy or chk.get("bellRemedy") or chk["remedyPublic"]))
+    for tail in ((" (%s)." % chk["err"]) if chk.get("err") else "", " Root: %s." % chk["root"]):
+        if tail and len(head + tail) <= SYNC_NOTICE_FIT:
+            head += tail
+    return head
+
+
+def _state_root_unknown_check(exc_text, now):
+    """The check dict cached when jd.state_root_mode_check itself raised (not an OSError, which it catches): verdict
+    unknown with the exception's type name, so the refusal that follows names its cause; the traceback is written by
+    the caller, once, before the exit."""
+    root = str(jd.STATE)
+    return {"root": root, "modeRead": None, "modeReadText": None, "verdict": "unknown", "repaired": False, "modeAfter": None,
+            "err": "check raised: " + exc_text, "statErrno": None, "repairErrno": None, "importModeRead": None,
+            "importCreated": False, "importEmpty": None, "importRepairError": None,
+            "point": "the state root's mode could not be checked (the check raised %s)" % exc_text,
+            "line": ("state root %s could not be checked for its mode (the check raised %s): an unverified root is not "
+                     "served from; restore the state root at %s and report the traceback above" % (root, exc_text, root)),
+            "remedy": "restore the state root at %s and report the traceback above" % root,
+            "remedyPublic": "restore the state root and report the traceback above",
+            "bellRemedy": "restore the state root and report the traceback above", "t": now}
+
+
+class _StateRootExiting(BaseException):
+    """Raised to the SECOND finder of a runtime refusal (round 2 of the 2026-09-20 review): the first finder is writing
+    its line and calling os._exit(2), and a second road (another request thread, the jobs pass) that found the same
+    verdict must not RETURN to its caller and run its request or stage under the hostile root while the first finder's
+    stderr write is still in flight (a stderr pipe whose reader is behind widens that window to a whole request or
+    pass). A BaseException, not an Exception, so the `except Exception` guards on every road let it through and the
+    thread ends there; the process is gone a moment later. Never raised to the first finder, whose exit does not
+    return (or, under a test's raising double, raises the double)."""
+
+
+def _state_root_exit_now(chk, where):
+    """The runtime refusal (the 2026-09-20 review's section A: the same refusal as the boot's, from wherever the check
+    found it). Idempotent under _STATE_ROOT_LOCK: the first finder sets _STATE_ROOT_REFUSED, writes the full line
+    (the root's path in full: stderr is this uid's surface) with what happens next, flushes, and calls
+    _state_root_exit(2), which is os._exit: no drain, no atexit, no further write of any kind, since every writer in
+    this process is now writing under a root another local user can write. A second finder (the other road, another
+    request thread) raises _StateRootExiting and never returns to its caller, so no request or stage runs on while the
+    first finder's line is in flight. The manager sees exit 2 and respawns; the import gate refuses again while the
+    root reads so. Not SystemExit: raised from a non-main thread (the jobs thread, a request thread) it is swallowed
+    by the thread bootstrap and would kill that thread alone, quietly, leaving every other writer running."""
+    global _STATE_ROOT_REFUSED
+    with _STATE_ROOT_LOCK:
+        if _STATE_ROOT_REFUSED:
+            raise _StateRootExiting()
+        _STATE_ROOT_REFUSED = True
+    try:
+        sys.stderr.write("romp-kernel: %s. romp stops now (exit 2; found by %s): the manager restarts it, and the boot "
+                         "refuses again while the root reads so.\n" % (chk["line"], where))
+        sys.stderr.flush()
+    finally:
+        _state_root_exit(2)
+
+
+def _state_root_read(now):
+    """One read of the root's mode (jd.state_root_mode_check); a check that raises (not an OSError, which it catches) is
+    returned as an unknown check naming the exception's type, with the traceback written first, so the refusal that
+    follows has its cause on the same surface."""
+    try:
+        return jd.state_root_mode_check()
+    except Exception as e:
+        sys.stderr.write("state-root-mode: the check raised:\n%s" % traceback.format_exc())
+        return _state_root_unknown_check(type(e).__name__, now)
+
+
+def _state_root_verdict(now, where="a re-check"):
+    """The runtime arm: the root's current verdict, re-read when the cached check is older than the interval, the
+    transition rule applied under one lock (so two roads, the jobs pass and a request, never file one transition
+    twice), and a refuse or unknown verdict handed to _state_root_exit_now, which does not return. `where` names the
+    road for the exit line. The warn surface: entering warn, or ok with a repair error, or a new cause under either
+    (_state_root_key) says the line on stderr and files one row (_sync_notice, kind "refused"); a check that stays in
+    one state says nothing, and a return to plain ok says nothing. Returns the verdict string. The cache answers
+    while its age, `now` minus the check's time.time(), is inside [0, interval); a negative age (the jobs pass hands
+    an int second, which can trail a float check time within the same second, or a clock stepped back) re-reads
+    rather than trusting a check the caller's clock says has not happened."""
+    global _STATE_ROOT_MODE, _STATE_ROOT_KEY
+
+    def fresh(chk):
+        return chk is not None and 0 <= (now - float(chk.get("t") or 0)) < _state_root_check_interval()
+    chk = _STATE_ROOT_MODE
+    if not fresh(chk):
+        with _STATE_ROOT_LOCK:
+            chk = _STATE_ROOT_MODE
+            if not fresh(chk):                            # else another thread re-read it while this one waited
+                chk = _state_root_read(now)
+                _STATE_ROOT_MODE = chk
+                if chk["verdict"] not in ("refuse", "unknown"):
+                    key = _state_root_key(chk)
+                    if key != _STATE_ROOT_KEY:
+                        _STATE_ROOT_KEY = key
+                        if chk["line"]:                   # warn, or ok with a repair error: said once per transition
+                            sys.stderr.write("romp-kernel: %s\n" % chk["line"])
+                            _sync_notice(_state_root_row(chk), ok=False, kind="refused")
+    if chk["verdict"] in ("refuse", "unknown"):
+        _state_root_exit_now(chk, where)                  # outside the lock: the flag inside takes it
+    return chk["verdict"]
+
+
+def _state_root_import_mode_row(chk):
+    """The boot's warn-class transition for the import's PRE-CHMOD mode (the 2026-09-20 review, round 2 item 2; the
+    round-2b row, kept under round 4's discriminator): (line, point, bell) when the import read a mode that was not 0700
+    on a PRE-EXISTING root, the read was NOT writable by another local user (else chk["importRefusal"] is set and the
+    gates refuse before this is built), and the import's own chmod then tightened it (no import repair error: the root
+    was 0700 the moment the import was done with it); else None. Two shapes. A read with no group or other write bit
+    (0755, 0750, 0711): "read 0755 at import, re-tightened to 0700", find what loosened it while romp was down. A read
+    with a group write bit under the owner's private group (0775, 0770: what every directory made under umask 0002 reads
+    on a user-private-group box until the judge import tightens it): the same fact naming the private group, said and
+    filed but neither a refusal nor the distrust remedy, since no other account holds that group and nothing could have
+    been planted through it; the remedy is to find what made or loosened it while romp was down (a creator that makes
+    the root at the umask's mode is the usual answer: plans/state-root-mode.md, the follow-up). A root the import CREATED
+    is exempt: a fresh directory carries the umask's mode until the chmod that follows it, a creation default and not a
+    loosening. Built here, apart from _state_root_boot_check, so the fit test can build the row exactly as the boot does
+    (the bell keeps the remedy whole: SYNC_NOTICE_FIT)."""
+    imp = chk.get("importModeRead")
+    if (imp is None or imp == 0o700 or chk.get("importCreated") or chk.get("importEmpty") or chk.get("importRepairError")
+            or chk.get("importRefusal")):
+        return None                                   # importEmpty: a root another tool made a moment ago boots silently (round 4)
+    if imp & jd.STATE_ROOT_WRITE_BITS:
+        point = ("the state root read %04o at import (a group write bit under the owner's private group), re-tightened to "
+                 "0700" % imp)
+        bell = "find what made or loosened the state root while romp was down"
+        line = ("state root %s read %04o at import (a group write bit under the owner's private group, which no other "
+                "account holds), re-tightened to 0700 by the import's chmod: no other account could write it, but something "
+                "made or loosened it while romp was down; find what made or loosened %s" % (chk["root"], imp, chk["root"]))
+    else:
+        point = "the state root read %04o at import, re-tightened to 0700" % imp
+        bell = "find what loosened the state root while romp was down"
+        line = ("state root %s read %04o at import, re-tightened to 0700 by the import's chmod: something loosened it "
+                "while romp was down; find what loosened %s while romp was down" % (chk["root"], imp, chk["root"]))
+    return line, point, bell
+
+
+def _repo_root_write_row(err, root):
+    """The error-centre row for a repo-root write that failed at import (_persist_repo_root): the point and the
+    remedy first, the root's path only while the whole fits SYNC_NOTICE_FIT, the rule every state-root row follows."""
+    head = ("The repo-root record could not be written (%s). Remove whatever stands at repo-root under the state root and "
+            "restart; a peer's clone discovery reads it." % err)
+    tail = " Root: %s." % root
+    return head + tail if len(head + tail) <= SYNC_NOTICE_FIT else head
+
+
+_READER_REASON_TEXT = {"symlink": "a symlink", "owner": "not this uid's", "writable": "writable by another local user",
+                       "lookup": "under a group the group database could not describe", "error": "unreadable",
+                       "root": "under a root that failed its own check"}
+
+
+def _state_root_reader_row(path, reason):
+    """The error-centre row for an entry a guarded reader refused (kernel/state_root_mode.py, the quarantine contract):
+    the point (the entry, named relative to the root, and the reason), then the path-free remedy, then the quarantine
+    directory's path only while the whole fits SYNC_NOTICE_FIT, the rule every state-root row follows. The reader said
+    the full line, with every path, on stderr."""
+    root = str(jd.STATE)
+    rel = os.path.relpath(path, root) if str(path).startswith(root.rstrip("/") + "/") else os.path.basename(str(path))
+    what = _READER_REASON_TEXT.get(reason, reason)
+    if reason == "root":
+        head = "State root entry %s was read as absent: the root itself failed its check. The gate decides the root." % rel
+    else:
+        head = ("State root entry %s was %s: quarantined and read as absent; nothing planted is adopted. Review it under "
+                "the root's quarantine directory, then remove it." % (rel, what))
+    tail = " Quarantine: %s/%s." % (root, jd.srm.QUARANTINE_DIR)
+    return head + tail if len(head + tail) <= SYNC_NOTICE_FIT else head
+
+
+def _state_root_boot_check():
+    """The boot arm, called from main() right after jd._cred.check_boot_environment() and BEFORE any thread starts: the
+    second look after the import gate (_state_root_import_gate ran before the token load; the root could have moved
+    since, and this is where the warn surface exists). The same two reads as the import gate (_state_root_refusal: the
+    current read's refuse or unknown verdict, or the import-read rule's refusal; the two doors agree): the loud line and
+    SystemExit(2), the import gate's shape (main thread, nothing to drain). Otherwise the warn surface: the import's
+    PRE-CHMOD mode, when it differed from 0700 on a pre-existing root that the import's own chmod then tightened and the
+    discriminator called not writable by another local user, is a warn-class transition of its own, said and filed,
+    loud and not fatal (_state_root_import_mode_row: "read 0755 at import, re-tightened to 0700", or "read 0775 at
+    import (a group write bit under the owner's private group), re-tightened to 0700"); a repo-root write that failed
+    at import is filed (_persist_repo_root said it on stderr; the row is this uid's other surface); every entry a
+    guarded reader refused before this point (the import-time readers: the downtime log, the memo files, the parked-ops
+    mirror, the checkpoints directory, the sdkvenv; each quarantined and read as absent, said on stderr by the reader) is
+    filed now (_flush_reader_refusals, one refused-kind row each); then the check's own line (warn, or ok with a repair
+    error) is said and filed.
+    The check is stored as the re-check's previous state, so the first runtime pass files no second row for the same
+    state."""
+    global _STATE_ROOT_MODE, _STATE_ROOT_KEY
+    chk = jd.state_root_mode_check()
+    with _STATE_ROOT_LOCK:
+        _STATE_ROOT_MODE = chk
+    refusal = _state_root_refusal(chk)
+    if refusal:
+        sys.stderr.write("romp-kernel: %s. romp did NOT start.\n" % refusal)
+        sys.stderr.flush()
+        raise SystemExit(2)
+    row = _state_root_import_mode_row(chk)
+    if row:
+        line, point, bell = row
+        sys.stderr.write("romp-kernel: %s\n" % line)
+        _sync_notice(_state_root_row(chk, point=point, remedy=bell), ok=False, kind="refused")
+    if _REPO_ROOT_WRITE_ERROR:
+        _sync_notice(_repo_root_write_row(_REPO_ROOT_WRITE_ERROR, chk["root"]), ok=False, kind="refused")
+    _flush_reader_refusals()                          # the import-time readers' quarantines, one row each
+    with _STATE_ROOT_LOCK:
+        _STATE_ROOT_KEY = _state_root_key(chk)
+    if chk["line"]:
+        sys.stderr.write("romp-kernel: %s\n" % chk["line"])
+        _sync_notice(_state_root_row(chk), ok=False, kind="refused")
+    return chk
+
+
+def _state_root_public_status():
+    """/version's stateRootMode block: verdict ("unchecked" before any check), modeRead and modeAfter as "%04o" or null,
+    repaired, err, importRepairError, remedy and checkedAt. NO FILESYSTEM PATH: /version is auth-exempt and its contract
+    is no paths (_version_info's docstring; the state root's default sits under $HOME and names the user), so the
+    remedy here is the check's remedyPublic ("the state root" for the path) where the stderr line names the root; err
+    is built from errno alone (jd._errno_text), never from an exception's text."""
+    chk = _STATE_ROOT_MODE
+    if chk is None:
+        return {"verdict": "unchecked", "modeRead": None, "modeAfter": None, "repaired": False, "err": None,
+                "importRepairError": None, "remedy": None, "checkedAt": None}
+    return {"verdict": chk["verdict"], "modeRead": chk["modeReadText"],
+            "modeAfter": ("%04o" % chk["modeAfter"]) if chk.get("modeAfter") is not None else None,
+            "repaired": bool(chk.get("repaired")), "err": chk["err"], "importRepairError": chk.get("importRepairError"),
+            "remedy": chk["remedyPublic"], "checkedAt": int(chk["t"])}
 
 def _auth_key_present():
     """Whether a session with no login pick bills the API key on this box: an apiKeyHelper is configured in
@@ -22572,7 +23084,7 @@ def _auth_avail():
     key = _auth_key_present()
     d = {}
     try:
-        d = json.loads((jd.STATE / "sdk-defaults.json").read_text())
+        d = json.loads(_gr.read_text(jd.STATE / "sdk-defaults.json"))
         d = d if isinstance(d, dict) else {}
     except Exception:
         d = {}
@@ -22657,7 +23169,7 @@ def _usage_cap_open(now=None):
     (T368 review): the offer self-expires when resets_at passes, and that crossing has to move the memo key the
     way the interrupt window and the settle gap do, or a served card would keep offering a switch past the reset."""
     try:
-        u = json.loads((jd.STATE / "usage.json").read_text())
+        u = json.loads(_gr.read_text(jd.STATE / "usage.json"))
     except Exception:
         return None
     now = time.time() if now is None else now
@@ -22768,7 +23280,7 @@ def _session_event_rows(since=0.0, limit=200, tail=SESSION_EVENTS_TAIL):
     the file's tail only; a missing or unreadable ledger is ([], 0)."""
     path = jd.STATE / "session-events.jsonl"
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()[-int(tail):]
+        lines = _gr.read_text(path, encoding="utf-8").splitlines()[-int(tail):]
     except OSError:
         return [], 0
     rows = []
@@ -22873,7 +23385,7 @@ def _save_cmd_cache():
 
 def _load_cmd_cache():
     try:
-        d = json.loads(_CMD_CACHE_FILE.read_text())
+        d = json.loads(_gr.read_text(_CMD_CACHE_FILE))
     except Exception:
         return                                       # no file yet / unreadable → cold start, as before
     if not isinstance(d, dict) or d.get("claude") != _claude_fingerprint():
@@ -23513,7 +24025,7 @@ def _refuse_drive_records(client, op, sid, msg, what, cause, lead):
             break
     target = str(msg.get("name") or "") if op in _TARGET_NAME_OPS else ""
     try:
-        with (jd.STATE / "undelivered.jsonl").open("a") as fh:
+        with jd.srm.open_private(jd.STATE / "undelivered.jsonl", "a") as fh:
             fh.write(json.dumps({"at": int(time.time()), "op": op, "sid": sid, "what": what,
                                  "itemId": msg.get("itemId") or "", "text": text, "target": target}) + "\n")
     except OSError:
@@ -24670,15 +25182,15 @@ def _sdk_records_blind(rows=None):
     `rows` is accepted for the callers that hand the read over; the directory check needs none."""
     d = jd.SDKDIR
     try:
-        if d.is_dir():
-            os.listdir(d)
+        if _gr.isdir(d):
+            _gr.listdir(d)
             return False
     except OSError:
         pass                                         # unreadable: blind if anything below says sessions exist
     if _LIVE_LAST_ROWS.get("sdk"):
         return True
     try:
-        names = [f.name for f in jd.NAMES.iterdir()]
+        names = [f.name for f in _gr.iterdir(jd.NAMES)]
     except OSError:
         return False
     if not names:
@@ -24920,7 +25432,7 @@ class Sessions:
     def working_note(sid):
         p = _working_note_path(sid)
         try:
-            return p.read_text().strip() if p else ""
+            return _gr.read_text(p).strip() if p else ""
         except OSError:
             return ""
 
@@ -24946,7 +25458,7 @@ def _set_name(sid, name):
             # fail loudly (2026-09-08): re-read raw so the errno is the real one (FileNotFoundError when the
             # entry is absent: _rename_session's "nothing known to rename"); a record that reads with no name
             # was reported by _names_fields_for_edit and is left alone, and the rename says why it did not take
-            text = (NAMES / str(sid)).read_text()
+            text = _gr.read_text(NAMES / str(sid))
             raise RuntimeError("names/%s reads with no name (%d bytes, twice); nothing written" % (sid, len(text)))
         parts += [""] * (4 - len(parts))
         parts[0] = name
@@ -25083,12 +25595,12 @@ def _tunnel_log(host, event, **kw):
     """Append one record to the dial log. Best-effort and never raises: logging must not be able to break
     the supervisor that is trying to reconnect you."""
     try:
-        TUNNEL_LOG.parent.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(TUNNEL_LOG.parent, parents=True, root=jd.STATE)
         if TUNNEL_LOG.exists() and TUNNEL_LOG.stat().st_size > TUNNEL_LOG_MAX:
             TUNNEL_LOG.replace(TUNNEL_LOG.with_suffix(".jsonl.1"))     # keep exactly one generation back
         rec = {"t": round(time.time(), 3), "host": host, "event": event}
         rec.update(kw)
-        with open(TUNNEL_LOG, "a") as f:
+        with jd.srm.open_private(TUNNEL_LOG, "a") as f:
             f.write(json.dumps(rec, default=str) + "\n")
     except Exception:
         pass
@@ -25101,7 +25613,7 @@ def _tunnel_err_path(host):
 def _tunnel_stderr(host, limit=4000):
     """What the LAST dial for this host printed, minus benign chatter. '' when it said nothing."""
     try:
-        return _ssh_err(_tunnel_err_path(host).read_text(errors="replace"))[-limit:]
+        return _ssh_err(_gr.read_text(_tunnel_err_path(host), errors="replace"))[-limit:]
     except Exception:
         return ""
 
@@ -25261,7 +25773,15 @@ def _ensure_postal_bus():
     silently (the 2026-07-27 federation shakedown: the new box answered /sessions while every message
     to it sat parked). The postal service's own `ensure` is idempotent, respects client-only mode, and
     no-ops when the bus is already up, so the kernel can insist at every boot. Absolute paths: a
-    bootstrap-started kernel's non-login shell has neither the repo's bin/ nor a guaranteed PATH."""
+    bootstrap-started kernel's non-login shell has neither the repo's bin/ nor a guaranteed PATH. The bus
+    checks the state root's mode as this kernel does (2026-09-20; postal_service.py's copy of the check):
+    a bus that finds the root writable by other local users, or unreadable, exits 2 before it reads the
+    serve token or binds (on the mode as it reads after the start's own repair, the rule this kernel's
+    import gate follows; a root that read writable and was tightened is said, one loud line, and served),
+    and again from its monitor loop when the root loosens later, so an `ensure` here
+    on a hostile root starts a bus that leaves at once and is respawned by the next ensure (this kernel's
+    boot, a session's MCP process) until the kernel itself refuses at its import gate, which on the same
+    root it does first."""
     try:
         r = subprocess.run([sys.executable, str(BIN / "romp-postal-service"), "ensure"],
                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=30)
@@ -25879,20 +26399,20 @@ def _minted_host_id():
     """Last-resort stable identity: mint once, persist, reuse. O_EXCL so two processes (bus and
     kernel) racing to mint converge on whoever wrote first."""
     try:
-        name = _HOST_ID_FILE.read_text().strip()
+        name = _gr.read_text(_HOST_ID_FILE).strip()
         if _safe_id(name):
             return name
     except OSError:
         pass
     name = "host-%08x" % random.getrandbits(32)
     try:
-        _HOST_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(str(_HOST_ID_FILE), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        jd.srm.make_dir(_HOST_ID_FILE.parent, parents=True, root=jd.STATE)
+        fd = os.open(str(_HOST_ID_FILE), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)   # owner-only by code (0644 until round 4f)
         os.write(fd, (name + "\n").encode())
         os.close(fd)
     except FileExistsError:
         try:
-            prior = _HOST_ID_FILE.read_text().strip()
+            prior = _gr.read_text(_HOST_ID_FILE).strip()
             if _safe_id(prior):
                 return prior
         except OSError:
@@ -26449,6 +26969,10 @@ def _start_remote_kernel(host):
            'if [ -z "$S" ]; then echo NOROMP; exit 0; fi; '
            'LOGDIR="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"; mkdir -p "$LOGDIR"; '
            'if [ -f "$LOGDIR/down-by-romp" ]; then echo DOWN; exit 0; fi; '
+           # the far root's kernel.log is born 0600 under any login-shell umask (round 4f's review): the append target is made
+           # empty in a subshell under umask 077 before the kernel appends to it, so the far kernel's guarded readers never
+           # quarantine an entry this script made; the kernel itself keeps the shell's umask (its own entries are born by code)
+           '( umask 077; : >>"$LOGDIR/kernel.log" ); '
            'nohup "$S" >>"$LOGDIR/kernel.log" 2>&1 </dev/null & echo "STARTED:$S"')
     try:
         r = subprocess.run([SSH_BIN] + _SSH_OPTS + ["--", host, cmd], capture_output=True, text=True, timeout=25)
@@ -26526,9 +27050,9 @@ def _spawn_tunnel(r):
     _reap_stray_tunnels(r["host"])   # clear any orphan on this host's ports first, so we never leak a 2nd tunnel
     argv = _tunnel_argv(r)
     try:
-        TUNNEL_ERR_DIR.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(TUNNEL_ERR_DIR, parents=True, root=jd.STATE)
         # truncated per dial, so the file always holds THIS attempt's words; the jsonl keeps the history
-        errf = open(_tunnel_err_path(r["host"]), "w+b")
+        errf = jd.srm.open_private(_tunnel_err_path(r["host"]), "w+b")
     except Exception:
         errf = None
     try:
@@ -26928,7 +27452,7 @@ def _registry_set_aside(path, rows, mode=None):
 
 def _remotes_load():
     try:
-        rows = json.loads(REMOTES_FILE.read_text())
+        rows = json.loads(_gr.read_text(REMOTES_FILE))
     except Exception:
         return
     try:
@@ -27098,7 +27622,7 @@ _known_lock = threading.Lock()
 
 def _known_load():
     try:
-        rows = json.loads(KNOWN_FILE.read_text())
+        rows = json.loads(_gr.read_text(KNOWN_FILE))
     except Exception:
         return
     if not isinstance(rows, list):
@@ -27805,7 +28329,7 @@ _pr_watch_save_faults = {}   # fault text → True: the save faults already said
 
 def _pr_watches_load():
     try:
-        rows = json.loads(PR_WATCH_FILE.read_text())
+        rows = json.loads(_gr.read_text(PR_WATCH_FILE))
     except Exception:
         return
     if not isinstance(rows, list):
@@ -27989,7 +28513,7 @@ def _watch_escalate_default():
     """The box-default escalation target (STATE/watch-escalate.json {"name": ...}) — set once by
     the managing session; absent = no default, no pings (the kernel never guesses a manager)."""
     try:
-        d = json.loads((jd.STATE / "watch-escalate.json").read_text())
+        d = json.loads(_gr.read_text(jd.STATE / "watch-escalate.json"))
         return str(d.get("name") or "").strip() if isinstance(d, dict) else ""
     except Exception:
         return ""
@@ -28362,12 +28886,12 @@ _WATCH_KEYS = ("id", "cmd", "every", "timeoutS", "sid", "note", "at", "soft")
 
 def _watches_load():
     try:
-        for f in (jd.STATE / "watch-scratch").glob("*.sh"):
+        for f in _gr.glob(jd.STATE / "watch-scratch", "*.sh"):
             f.unlink()          # a crash mid-run strands its predicate script; boot sweeps the scratch
     except Exception:
         pass
     try:
-        rows = json.loads(WATCH_FILE.read_text())
+        rows = json.loads(_gr.read_text(WATCH_FILE))
     except Exception:
         return
     if not isinstance(rows, list):
@@ -28463,7 +28987,7 @@ def _notice_rows(sid):
             return ent[1]
     rows, size = [], 0
     try:
-        raw = p.read_text()
+        raw = _gr.read_text(p)
     except OSError:
         return []
     for line in raw.splitlines():
@@ -28640,7 +29164,7 @@ def _notice_rows_unlocked(sid):
     p = _notice_path(sid)
     rows = []
     try:
-        for line in p.read_text().splitlines():
+        for line in _gr.read_text(p).splitlines():
             try:
                 o = json.loads(line)
             except Exception:
@@ -28656,8 +29180,8 @@ def _notice_append(sid, row):
     """Append one row under the lock the caller holds; "" or the write fault's prose (a write that fails is said, never lost)."""
     try:
         d = _notice_dir()
-        d.mkdir(parents=True, exist_ok=True)
-        with open(_notice_path(sid), "a") as f:
+        jd.srm.make_dir(d, parents=True, root=jd.STATE)
+        with jd.srm.open_private(_notice_path(sid), "a") as f:
             f.write(json.dumps(row) + "\n")
         return ""
     except OSError as e:
@@ -28711,7 +29235,7 @@ def _notice_cards(now, cleared):
     function of the row alone, so the per-client dedup holds across unchanged builds. Best-effort []."""
     out = []
     try:
-        sids = sorted(n[:-6] for n in os.listdir(_notice_dir()) if n.endswith(".jsonl"))
+        sids = sorted(n[:-6] for n in _gr.listdir(_notice_dir()) if n.endswith(".jsonl"))
     except OSError:
         return out
     for sid in sids:
@@ -28805,7 +29329,7 @@ def _compact_notices(now=None):
     now = int(now if now is not None else time.time())
     moved = 0
     try:
-        names = [n[:-6] for n in os.listdir(_notice_dir()) if n.endswith(".jsonl")]
+        names = [n[:-6] for n in _gr.listdir(_notice_dir()) if n.endswith(".jsonl")]
     except OSError:
         return 0
     ledger = jd.STATE / "cleared.jsonl"
@@ -28865,13 +29389,13 @@ def _compact_notices(now=None):
                     sys.stderr.write("notice: the archive pass held %s's rows (%s)\n" % (sid[:8], ierr))
                     continue
                 try:
-                    _notice_archive_dir().mkdir(parents=True, exist_ok=True)
-                    with open(apath, "a") as f:
+                    jd.srm.make_dir(_notice_archive_dir(), parents=True, root=jd.STATE)
+                    with jd.srm.open_private(apath, "a") as f:
                         for r in arch:
                             f.write(json.dumps(dict(r, archivedAt=now)) + "\n")   # the pass's stamp: one block a pass, the restore's tail read stops at its edge
                     tmp = p.with_name(p.name + ".tmp.%d" % os.getpid())
-                    tmp.write_text("".join(json.dumps(r) + "\n" for r in keep))
-                    os.replace(tmp, p)
+                    jd.srm.write_text(tmp, "".join(json.dumps(r) + "\n" for r in keep))   # born 0600 (round 4f's review): the replace
+                    os.replace(tmp, p)                                                      # carries the inode's mode onto the live file
                     moved += len(arch)
                 except OSError as e:
                     sys.stderr.write("notice: the archive pass could not move %s's rows (%s)\n" % (sid[:8], e))
@@ -28935,9 +29459,9 @@ def _notice_revs_write_unlocked(sid, revs, arch_st):
     archive's stat it describes beside the map: "" or the fault's prose. The caller holds _notice_lock."""
     ip = _notice_revs_path(sid)
     try:
-        _notice_archive_dir().mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(_notice_archive_dir(), parents=True, root=jd.STATE)
         tmp = ip.with_name(ip.name + ".tmp.%d" % os.getpid())
-        tmp.write_text(json.dumps({"revs": revs, "archive": _notice_archive_desc(arch_st)}, sort_keys=True))
+        jd.srm.write_text(tmp, json.dumps({"revs": revs, "archive": _notice_archive_desc(arch_st)}, sort_keys=True))
         os.replace(tmp, ip)
         return ""
     except OSError as e:
@@ -28950,7 +29474,7 @@ def _notice_revs_read_unlocked(sid):
     The caller holds _notice_lock."""
     ip = _notice_revs_path(sid)
     try:
-        raw = ip.read_text()
+        raw = _gr.read_text(ip)
     except FileNotFoundError:
         return None, None, 0, ""
     except OSError as e:
@@ -28971,7 +29495,7 @@ def _notice_revs_rebuild_unlocked(sid, ap, arch_st, standing=None):
     uncached, so the next post rebuilds again (round two, low 2: the true map was in hand and the post was refused); only
     an archive that cannot be read refuses. The caller holds _notice_lock."""
     try:
-        raw = ap.read_text()
+        raw = _gr.read_text(ap)
     except OSError as e:
         return None, "the notice archive could not be read (%s)" % e
     _NOTICE_ARCH_REBUILDS["count"] += 1
@@ -29065,10 +29589,10 @@ def _notice_archive_tail_read_unlocked(ap, wants):
     block to the file's start. Returns (cut, kept, back): the byte offset where the parsed region begins (the head before it
     is unread and copied byte for byte by the caller), the parsed region's other lines in file order (bytes), and the wanted
     rows in file order (dicts). Raises OSError as the file does. The caller holds _notice_lock."""
-    size = ap.stat().st_size
+    size = _gr.stat(ap).st_size
     kept, back, found = [], [], set()
     stamp, stop, cut, rem = None, False, 0, b""
-    with open(ap, "rb") as f:
+    with _gr.open(ap, "rb") as f:
         pos = size
         while pos > 0 and not stop:
             step = min(NOTICE_ARCHIVE_READ_BLOCK, pos)
@@ -29148,8 +29672,8 @@ def _restore_notice_archive(item_ids):
                 continue
             pre_st, pre_err = _notice_file_stat(ap, "the notice archive")   # the archive as the index may describe it, before the rewrite
             try:
-                _notice_dir().mkdir(parents=True, exist_ok=True)
-                with open(_notice_path(sid), "a") as f:
+                jd.srm.make_dir(_notice_dir(), parents=True, root=jd.STATE)
+                with jd.srm.open_private(_notice_path(sid), "a") as f:
                     for o in back:
                         f.write(json.dumps({k: v for k, v in o.items() if k != "archivedAt"}) + "\n")   # the pass's stamp stays in the archive
             except OSError as e:
@@ -29157,7 +29681,7 @@ def _restore_notice_archive(item_ids):
                 continue
             try:
                 tmp = ap.with_name(ap.name + ".tmp.%d" % os.getpid())
-                with open(ap, "rb") as src, open(tmp, "wb") as dst:
+                with _gr.open(ap, "rb") as src, jd.srm.open_private(tmp, "wb") as dst:
                     left = cut                         # the unread head, byte for byte, never parsed
                     while left > 0:
                         chunk = src.read(min(1 << 20, left))
@@ -29381,9 +29905,9 @@ def _watch_run(cmd):
     sp = None
     try:
         sd = jd.STATE / "watch-scratch"
-        sd.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(sd, parents=True, root=jd.STATE)
         sp = sd / ("w-%s.sh" % os.urandom(4).hex())
-        sp.write_text(cmd + "\n")
+        jd.srm.write_text(sp, cmd + "\n")
         r = subprocess.run(["/bin/sh", str(sp)], capture_output=True, text=True,
                            timeout=WATCH_RUN_TIMEOUT)
         out = ((r.stdout or "") + (("\n" + r.stderr) if r.stderr else "")).strip()
@@ -30028,8 +30552,11 @@ def _update_remote(host, head=None):
         # a refused hop, _MANAGER_REFUSED_ACTION) lands on the far host with the status the client named,
         # the client's own stderr line (which names the file it read and the way out) is in update.log,
         # and the apply exits 0 with the REFUSED tag so _verdict says what did not happen and why.
-        'arow() { python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
-        '\'reason\':\'from %s to %s\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; }; '
+        # every append this script makes under the far root is born 0600 under any login-shell umask (round 4f's review):
+        # a writer runs in a subshell under umask 077, an append log is made empty the same way before the command that
+        # appends to it, so the far kernel's guarded readers never quarantine an entry this script made
+        'arow() { ( umask 077; python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
+        '\'reason\':\'from %s to %s\'}))" >>"$LOGDIR/restart-audit.jsonl" ) 2>/dev/null || true; }; '
         '[ -f "$LOGDIR/down-by-romp" ] || arow; '
         'OWNED=0; if command -v node >/dev/null 2>&1 && [ -x "$R/bin/romp-manager" ]; then '
         'OWNED="$("$R/bin/romp-manager" status 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); '
@@ -30037,19 +30564,19 @@ def _update_remote(host, head=None):
         'if [ "$OWNED" = 1 ]; then '
         # a manager owning the kernel beside a `romp down` marker (see above): its restart is attributed too
         '[ ! -f "$LOGDIR/down-by-romp" ] || arow; '
-        '"$R/bin/romp-manager" restart-all >>"$LOGDIR/update.log" 2>&1; MRC=$?; '
+        '( umask 077; : >>"$LOGDIR/update.log" ); "$R/bin/romp-manager" restart-all >>"$LOGDIR/update.log" 2>&1; MRC=$?; '
         'if [ "$MRC" = 0 ]; then echo "SYNCED:$NEW:MANAGED$K"; exit 0; fi; '
         # the status the client named ("answered HTTP <code>"), read back from the lines it just appended
         'if [ "$MRC" = 3 ]; then MCODE="$(tail -n 5 "$LOGDIR/update.log" | sed -n "s/.*answered HTTP \\([0-9][0-9][0-9]\\).*/\\1/p" | tail -n 1)"; '
-        'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'manager-refused-restart-all\',\'door\':\'/restart-all\','
-        '\'status\':int(\'${MCODE:-0}\'),\'reason\':\'p2p-update from %s to %s\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; '
+        '( umask 077; python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'manager-refused-restart-all\',\'door\':\'/restart-all\','
+        '\'status\':int(\'${MCODE:-0}\'),\'reason\':\'p2p-update from %s to %s\'}))" >>"$LOGDIR/restart-audit.jsonl" ) 2>/dev/null || true; '
         'echo "REFUSED:$NEW:${MCODE:-?}$K"; exit 0; fi; fi; '
         # stopped on purpose (see above): synced, nothing restarted
         'if [ -f "$LOGDIR/down-by-romp" ]; then echo "SYNCED:$NEW:DOWN$K"; exit 0; fi; '
         # LAST RESORT (no owning manager answering on this host): the immediate path below — audit row,
         # kill, then `ensure` upgrades the host to a supervised kernel.
-        'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
-        '\'reason\':\'from %s to %s (immediate: no owning manager)\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; '
+        '( umask 077; python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
+        '\'reason\':\'from %s to %s (immediate: no owning manager)\'}))" >>"$LOGDIR/restart-audit.jsonl" ) 2>/dev/null || true; '
         # SELF-MATCH GUARD. `pkill -f` matches its pattern against every process's FULL COMMAND LINE —
         # including this apply script's own, because the pattern text sits literally inside it. The plain
         # spelling therefore killed the apply shell AT THIS LINE, before it could restart the kernel or
@@ -30059,7 +30586,8 @@ def _update_remote(host, head=None):
         # `romp-kern[e]l` is a regex that still matches the real process (romp-kernel) while NOT matching
         # this script's own text (romp-kern[e]l), so pkill can no longer take itself down.
         'pkill -f "bin/romp-kern[e]l" 2>/dev/null; '
-        'if command -v node >/dev/null 2>&1 && [ -x "$R/bin/romp-manager" ]; then "$R/bin/romp-manager" ensure >>"$LOGDIR/update.log" 2>&1 || true; fi; '
+        'if command -v node >/dev/null 2>&1 && [ -x "$R/bin/romp-manager" ]; then ( umask 077; : >>"$LOGDIR/update.log" ); "$R/bin/romp-manager" ensure >>"$LOGDIR/update.log" 2>&1 || true; fi; '
+        '( umask 077; : >>"$LOGDIR/kernel.log" ); '
         'UP=0; for i in 1 2 3 4 5 6 7 8; do sleep 1; if bash -c "exec 3<>/dev/tcp/127.0.0.1/%d" 2>/dev/null; then UP=1; break; fi; done; '
         'if [ "$UP" = 0 ]; then nohup "$R/bin/romp-serve" >>"$LOGDIR/kernel.log" 2>&1 </dev/null &  sleep 1; fi; '
         'echo "SYNCED:$NEW:FALLBACK$K"'
@@ -30431,10 +30959,13 @@ def _restart_remote_kernel(host):
         # a host stopped by `romp down` stays stopped: no audit row, no kill, no boot
         'if [ -f "$LOGDIR/down-by-romp" ]; then echo DOWN; exit 0; fi; '
         # never an anonymous SIGTERM (T238): the far kernel's cut row names this explicit restart
-        'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'remote-restart\','
-        '\'reason\':\'requested from %s\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; '
+        # the row, the ensure log and the fallback kernel.log are born 0600 under any login-shell umask (round 4f's review;
+        # _update_remote's apply has the same shape): a subshell under umask 077 writes the row or makes the append target empty
+        '( umask 077; python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'remote-restart\','
+        '\'reason\':\'requested from %s\'}))" >>"$LOGDIR/restart-audit.jsonl" ) 2>/dev/null || true; '
         'pkill -f "bin/romp-kern[e]l" 2>/dev/null; '
-        'if command -v node >/dev/null 2>&1 && [ -x "$R/bin/romp-manager" ]; then "$R/bin/romp-manager" ensure >>"$LOGDIR/update.log" 2>&1 || true; fi; '
+        'if command -v node >/dev/null 2>&1 && [ -x "$R/bin/romp-manager" ]; then ( umask 077; : >>"$LOGDIR/update.log" ); "$R/bin/romp-manager" ensure >>"$LOGDIR/update.log" 2>&1 || true; fi; '
+        '( umask 077; : >>"$LOGDIR/kernel.log" ); '
         'UP=0; for i in 1 2 3 4 5 6 7 8; do sleep 1; if bash -c "exec 3<>/dev/tcp/127.0.0.1/%d" 2>/dev/null; then UP=1; break; fi; done; '
         'if [ "$UP" = 0 ]; then nohup "$R/bin/romp-serve" >>"$LOGDIR/kernel.log" 2>&1 </dev/null &  sleep 1; fi; '
         'echo "RESTARTED:$UP"'
@@ -30598,7 +31129,7 @@ def _audit_restart_request(action, **kw):
     try:
         rec = {"t": int(time.time()), "action": action}
         rec.update({k: v for k, v in kw.items() if v})
-        with open(jd.STATE / "restart-audit.jsonl", "a", encoding="utf-8") as f:
+        with jd.srm.open_private(jd.STATE / "restart-audit.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
     except Exception:
         pass
@@ -30634,7 +31165,7 @@ def _audit_unrequested_signal(signum, pending=False, now=None, manager_stopped=F
                "managerPid": int(mgr) if mgr.isdigit() else None,
                "managerRequested": False, "managerStopped": bool(manager_stopped),
                "managerRestartPending": bool(pending), "reason": reason}
-        with open(jd.STATE / "restart-audit.jsonl", "a", encoding="utf-8") as f:
+        with jd.srm.open_private(jd.STATE / "restart-audit.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
     except Exception:
         pass
@@ -30667,7 +31198,7 @@ def _manager_sigterm_row_for_us(now=None, window=90, started=None, reasons=("sto
     a service stop notes every kernel, and each session's own end-on-idle row lands in the same file,
     so a short tail would miss the note behind a dozen such rows and file the stop as a stray signal."""
     try:
-        tail = (jd.STATE / "restart-audit.jsonl").read_text().strip().splitlines()
+        tail = _gr.read_text(jd.STATE / "restart-audit.jsonl").strip().splitlines()
     except Exception:
         return None
     t0 = int(now if now is not None else time.time())
@@ -30742,7 +31273,7 @@ def _audit_parent_gone(manager_pid, now=None):
         rec = {"t": int(now if now is not None else time.time()), "action": "parent-gone",
                "pid": os.getpid(), "ppid": os.getppid(), "managerPid": manager_pid,
                "reason": PARENT_GONE_REASON}
-        with open(jd.STATE / "restart-audit.jsonl", "a", encoding="utf-8") as f:
+        with jd.srm.open_private(jd.STATE / "restart-audit.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
     except Exception:
         pass
@@ -30797,7 +31328,7 @@ def _kernel_sample_tick(now=None):
                 row["gcGen2Collections"] = int(g2[0]); row["gcGen2MsSum"] = round(float(g2[1]), 1)
         except Exception:
             pass
-        with open(KERNEL_SAMPLES_FILE, "a", encoding="utf-8") as fh:
+        with jd.srm.open_private(KERNEL_SAMPLES_FILE, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, separators=(",", ":")) + "\n")
         return True
     except Exception:
@@ -30873,7 +31404,7 @@ def _append_restart_cut(row):
     """Best-effort append in a dying process: flushed line-buffered write, never raises — the
     ledger must not be able to break the restart itself (the audit's discipline)."""
     try:
-        with open(RESTART_CUTS_FILE, "a", encoding="utf-8") as f:
+        with jd.srm.open_private(RESTART_CUTS_FILE, "a", encoding="utf-8") as f:
             f.write(json.dumps(row) + "\n")
             f.flush()
     except Exception:
@@ -30907,7 +31438,7 @@ def _append_boot_settled(first_serve, reconcile_done):
     try:
         prev_cut = None
         try:
-            for line in RESTART_CUTS_FILE.read_text(encoding="utf-8").splitlines():
+            for line in _gr.read_text(RESTART_CUTS_FILE, encoding="utf-8").splitlines():
                 try:
                     r = json.loads(line)
                 except Exception:
@@ -31219,7 +31750,7 @@ def _consumed_audit_t():
     20-minute window long after its restart landed, so an unaudited SIGTERM 15 minutes later
     inherited its reason and even counted as a deploy for the cool-down (T240 review)."""
     try:
-        lines = RESTART_CUTS_FILE.read_text().strip().splitlines()
+        lines = _gr.read_text(RESTART_CUTS_FILE).strip().splitlines()
     except Exception:
         return 0
     for line in reversed(lines[-50:]):
@@ -31327,7 +31858,7 @@ def _recent_restart_audit(window=90, now=None, started=None):
         nothing else labels the exit, and the manager's note answers when there is one, since the row has
         no label of its own."""
     try:
-        tail = (jd.STATE / "restart-audit.jsonl").read_text().strip().splitlines()
+        tail = _gr.read_text(jd.STATE / "restart-audit.jsonl").strip().splitlines()
         if not tail:
             return None
         consumed = _consumed_audit_t()
@@ -31438,7 +31969,7 @@ def _manager_token():
     if t:
         return t
     try:
-        return (jd.STATE / "serve-token").read_text().strip() or TOKEN
+        return _gr.read_text(jd.STATE / "serve-token").strip() or TOKEN
     except OSError:
         return TOKEN
 
@@ -32016,7 +32547,7 @@ def _sessions_listing_key(live_map, names):
                          bool(_compacting_now(sid, tm=m, path=paths.get(sid))))
                         for sid, m in (live_map or {}).items()))
     try:
-        with os.scandir(WORKING_DIR) as it:
+        with _gr.scandir(WORKING_DIR) as it:
             notes = tuple(sorted((e.name, st.st_mtime_ns, st.st_size, st.st_ino)
                                  for e, st in ((e, _entry_stat(e)) for e in it if e.is_file())))
     except OSError:                                        # (name, mtime_ns, size, ino): the key _working_notes itself memoizes on
@@ -32313,7 +32844,7 @@ def _thread_names():
     out = {}
     try:
         cdir = jd.STATE / "comments"
-        files = sorted(cdir.glob("*.json")) if cdir.is_dir() else []
+        files = _gr.glob(cdir, "*.json")
         for f in files:
             parent = f.stem
             for t in (_load_comments(parent).get("threads") or []):
@@ -32438,10 +32969,10 @@ def _death_boot_pass(now=None):
     stamped over."""
     now = int(now or time.time())
     try:
-        jd.SDKDIR.mkdir(parents=True, exist_ok=True)   # the kernel owns the directory's existence: from here on
+        jd.srm.make_dir(jd.SDKDIR, parents=True, root=jd.STATE)   # the kernel owns the directory's existence: from here on
     except OSError:                                    # a MISSING sdk/ is a vanished one, never a fresh root's
         pass                                           # (the blindness guard below reads the failure)
-    if not jd.NAMES.is_dir():
+    if not _gr.isdir(jd.NAMES):
         return
     cx = _codex()
     blind = _codex_records_blind(cx)
@@ -32452,7 +32983,7 @@ def _death_boot_pass(now=None):
         sys.stderr.write("death-boot: the Codex registry cannot be read — reg-less sids skipped this boot\n")
     n = 0
     stood = 0
-    for f in sorted(jd.NAMES.iterdir()):
+    for f in _gr.iterdir(jd.NAMES):
         sid = f.name
         reg = jd.SDKDIR / (sid + ".json")
         present = _sdk_reg_exists(sid)
@@ -32461,7 +32992,7 @@ def _death_boot_pass(now=None):
         gutted = False
         if present:
             try:
-                reg_d = json.loads(reg.read_text())
+                reg_d = json.loads(_gr.read_text(reg))
                 if bool(reg_d.get("alive")):
                     continue                         # revivable/crash-looped: the resume contract owns it
                 gutted = "alive" not in reg_d        # re-created with no alive bit: no verdict of its own
@@ -32493,7 +33024,7 @@ def _last_states_row(sid):
     supersededBy row) — the death writers' idempotence/veto read. Event-rate only (a kill gesture, a
     set-diff departure, one boot pass); never on a per-push path."""
     try:
-        rows = (jd.STATE / "states" / (sid + ".jsonl")).read_text().splitlines()
+        rows = _gr.read_text(jd.STATE / "states" / (sid + ".jsonl")).splitlines()
         for ln in reversed(rows):
             try:
                 r = json.loads(ln)
@@ -32519,7 +33050,7 @@ def _death_stamp_due(sid):
         return False
     m = None
     try:
-        m = json.loads((jd.STATE / "gone" / (sid + ".json")).read_text())
+        m = json.loads(_gr.read_text(jd.STATE / "gone" / (sid + ".json")))
     except Exception:
         m = None
     if not isinstance(m, dict):
@@ -32534,7 +33065,7 @@ def _death_stamp_due(sid):
 # armed — never mid-own-turn. A state file, not memory: the request survives kernel restarts.
 def _end_on_idle_load():
     try:
-        v = json.loads((jd.STATE / "end-on-idle.json").read_text())
+        v = json.loads(_gr.read_text(jd.STATE / "end-on-idle.json"))
         return set(x for x in v if isinstance(x, str)) if isinstance(v, list) else set()
     except (OSError, ValueError):
         return set()
@@ -32659,9 +33190,9 @@ def _record_death(sid, now, by):
         return False
     try:
         gd = jd.STATE / "gone"
-        gd.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(gd, parents=True, root=jd.STATE)
         tmp = gd / (sid + ".json.tmp")
-        tmp.write_text(json.dumps({"t": int(now) - 1, "by": by}))
+        jd.srm.write_text(tmp, json.dumps({"t": int(now) - 1, "by": by}))
         os.replace(tmp, gd / (sid + ".json"))
     except Exception:
         sys.stderr.write("record-death %s: %s\n" % (sid, traceback.format_exc()))
@@ -32688,11 +33219,11 @@ def _record_idle(sid, now, by=""):
         return
     try:
         sdir = jd.STATE / "states"
-        sdir.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(sdir, parents=True, root=jd.STATE)
         rec = {"t": int(now) - 1, "state": "idle"}
         if by:
             rec["by"] = by
-        with open(sdir / (sid + ".jsonl"), "a") as f:
+        with jd.srm.open_private(sdir / (sid + ".jsonl"), "a") as f:
             f.write(json.dumps(rec) + "\n")
     except Exception:
         pass
@@ -33240,7 +33771,7 @@ def _held_mail_count(sid):
     thread whose mail is off will receive the moment it is broken out (T356 follow-up). 0 when the box is absent or
     unreadable; a directory listing, bounded by the box itself."""
     try:
-        return sum(1 for _ in (jd.STATE / "postal" / "mail" / str(sid) / "new").iterdir())
+        return len(_gr.iterdir(jd.STATE / "postal" / "mail" / str(sid) / "new"))
     except OSError:
         return 0
 
@@ -36431,7 +36962,7 @@ def _captions(fsid):
         _caps_memo_stats["miss"] += 1
     out = _Caps()
     try:
-        with open(p, errors="replace") as fh:
+        with _gr.open(p, errors="replace") as fh:
             text = fh.read()
     except FileNotFoundError:
         return out                                        # unlinked between the stat and the read: the next stat pops it
@@ -36745,8 +37276,8 @@ def _name_color_by_name(name):
                 return {"bg": parts[2], "fg": "#ffffff"}
         return None
     try:
-        for f in NAMES.iterdir():
-            parts = f.read_text().rstrip("\n").split("\t")
+        for f in _gr.iterdir(NAMES):
+            parts = _gr.read_text(f).rstrip("\n").split("\t")
             if parts and parts[0] == name and len(parts) > 2 and parts[2].startswith("#"):
                 return {"bg": parts[2], "fg": "#ffffff"}
     except Exception:
@@ -37433,7 +37964,7 @@ def _judge_store_fp():
     out = []
     for d in (jd.GOALDIR, jd.CAPDIR, jd.ARCHDIR, jd.STATE / "goals-archive", jd.STATE / "episodes"):
         try:
-            with os.scandir(d) as it:
+            with _gr.scandir(d) as it:
                 for e in it:
                     try:
                         st = _entry_stat(e)
@@ -37607,7 +38138,7 @@ def _goals_memo_evict_unowned(owned):
         _goals_memo[0] = kept
         _goals_memo_stats["evict"] += gone
     try:
-        present = {e.name[:-5] for e in os.scandir(jd.GOALDIR) if e.name.endswith(".json") and e.is_file()}
+        present = {e.name[:-5] for e in _gr.scandir(jd.GOALDIR) if e.name.endswith(".json") and e.is_file()}
     except OSError:
         present = set()                                # no directory: no store for the pass to step over
     evicted = {os.path.basename(path)[:-5] for path in memo.keys() - kept.keys()}
@@ -37654,7 +38185,7 @@ def _begin_goals_pass():
     memo = {}
     hit = miss = compare_miss = fail = skip = 0
     try:
-        entries = [e for e in os.scandir(jd.GOALDIR) if e.name.endswith(".json") and e.is_file()]
+        entries = [e for e in _gr.scandir(jd.GOALDIR) if e.name.endswith(".json") and e.is_file()]
     except OSError:
         entries = []
     for ent in entries:
@@ -37663,7 +38194,7 @@ def _begin_goals_pass():
             skip += 1                                  # ruled unowned by the last sweep: no open, no entry;
             continue                                   # the feed reads it live if asked (_feed_goals)
         try:
-            with open(path, "rb") as fh:
+            with _gr.open(path, "rb") as fh:
                 st = os.fstat(fh.fileno())
                 key = (st.st_ino, st.st_mtime_ns, st.st_size)
                 data = fh.read()
@@ -39232,7 +39763,7 @@ def _rewind_holds_map():
         if _rewind_holds[0] is None:
             try:
                 _rewind_holds[0] = {str(k): v for k, v in
-                                    json.loads(_rewind_holds_file().read_text()).items()
+                                    json.loads(_gr.read_text(_rewind_holds_file())).items()
                                     if isinstance(v, dict)}
             except Exception:
                 _rewind_holds[0] = {}
@@ -39242,7 +39773,7 @@ def _rewind_holds_map():
 def _rewind_holds_save():
     try:
         tmp = _rewind_holds_file().with_suffix(".json.tmp.%d" % os.getpid())
-        tmp.write_text(json.dumps(_rewind_holds[0] or {}))
+        jd.srm.write_text(tmp, json.dumps(_rewind_holds[0] or {}))
         tmp.rename(_rewind_holds_file())
     except Exception as e:
         sys.stderr.write("rewind-hold: persist failed: %s\n" % e)
@@ -39511,7 +40042,7 @@ def _rewind_migration_bg():
             sys.stderr.write("romp-kernel: rewind migration left %d session(s) unreconciled — "
                              "no marker written, retrying next boot\n" % fails)
         else:
-            marker.write_text(json.dumps({"t": int(time.time()), "archived": n}))
+            jd.srm.write_text(marker, json.dumps({"t": int(time.time()), "archived": n}))
         if n:
             sys.stderr.write("romp-kernel: rewind migration archived %d dead-branch goal node(s)\n" % n)
     except Exception:
@@ -40085,7 +40616,7 @@ def _load_pending_ops():
             o = o[:4] + (True, None, o[4])           # the stage-1 record: a user send, no attachments, the todo id seventh
         return o
     try:
-        d = json.loads(_PENDING_OPS_FILE.read_text())
+        d = json.loads(_gr.read_text(_PENDING_OPS_FILE))   # guarded: a planted mirror or a symlink is quarantined, never replayed
         return {str(k): [_shape(o) for o in v if isinstance(o, list) and o]
                 for k, v in d.items() if isinstance(v, list) and v}
     except OSError:
@@ -42593,7 +43124,7 @@ def _sdk_transcript_path(sid):
     session has no transcript and discover() can't see it yet."""
     _chat_sig_count("namesReads")                      # a raw names read inside a signature (memos.chatSig)
     try:
-        parts = (NAMES / sid).read_text().rstrip("\n").split("\t")
+        parts = _gr.read_text(NAMES / sid).rstrip("\n").split("\t")
         cwd = parts[1] if len(parts) > 1 and parts[1] else os.path.expanduser("~")
     except OSError:
         cwd = os.path.expanduser("~")
@@ -44705,7 +45236,7 @@ def _cleared_foreign(cleared):
     local = set()
     for d in (jd.GOALDIR, jd.GOALARCHDIR):
         try:
-            local.update(n[:-5] for n in os.listdir(d) if n.endswith(".json"))
+            local.update(n[:-5] for n in _gr.listdir(d) if n.endswith(".json"))
         except OSError:
             pass
     # newest first under the cap (T287: a cut by id text dropped yesterday's clears on a long ledger), and only
@@ -44745,7 +45276,7 @@ def _cleared_ids():
         return slot[1]
     cur = {}
     try:
-        for line in path.read_text().splitlines():
+        for line in _gr.read_text(path).splitlines():
             try:
                 o = json.loads(line)
             except Exception:
@@ -44929,9 +45460,9 @@ def _episode_boundary_check(sid, path, now):
     if not tops:
         return
     p = jd.STATE / "cleared.jsonl"
-    p.parent.mkdir(parents=True, exist_ok=True)
+    jd.srm.make_dir(p.parent, parents=True, root=jd.STATE)
     t = time.time()                  # one shared batch t → a single Undo restores the whole boundary batch
-    with p.open("a") as fh:
+    with jd.srm.open_private(p, "a") as fh:
         for nid in tops:
             fh.write(json.dumps({"id": nid, "t": t, "op": "clear"}) + "\n")
     # The settle's OWN record — which cards this boundary dropped — rides the episodes log as an
@@ -45087,9 +45618,9 @@ def _clear_all(item_ids):
     seen = set(item_ids)
     item_ids = item_ids + [i for i in _delegation_linked_ids(item_ids) if i not in seen]   # + the delegation's peer copy
     p = jd.STATE / "cleared.jsonl"
-    p.parent.mkdir(parents=True, exist_ok=True)
+    jd.srm.make_dir(p.parent, parents=True, root=jd.STATE)
     t = time.time()
-    with p.open("a") as f:
+    with jd.srm.open_private(p, "a") as f:
         for iid in item_ids:
             f.write(json.dumps({"id": iid, "t": t, "op": "clear"}) + "\n")
     _files_stat_mark()                                # the clears log is a keyed file of every session (plans/nudge-walk-events.md)
@@ -45131,7 +45662,7 @@ def _undo_clear():
     restored = [i for i in restored if not i.startswith("notice:")]
     skipped = dict(_restore_goal_archive(restored))   # pull the restored tops back OUT of the archive FIRST,
     restored = [i for i in restored if i.rsplit(":", 1)[0] not in skipped]   # (a session it could not read
-    with (jd.STATE / "cleared.jsonl").open("a") as f:   # keeps its clear rows: still the newest batch)
+    with jd.srm.open_private(jd.STATE / "cleared.jsonl", "a") as f:   # keeps its clear rows: still the newest batch)
         for iid in restored + notices:
             f.write(json.dumps({"id": iid, "t": time.time(), "op": "undo"}) + "\n")
     _files_stat_mark()                                # the clears log is a keyed file of every session (plans/nudge-walk-events.md)
@@ -45147,7 +45678,7 @@ def _undo_clear():
         # per row split a two-card batch into two one-card batches and each further Undo brought back one
         # card, against the promise that the next Undo restores exactly them (review find, 2026-09-08).
         t = time.time()
-        with (jd.STATE / "cleared.jsonl").open("a") as f:
+        with jd.srm.open_private(jd.STATE / "cleared.jsonl", "a") as f:
             for iid in restored + notices:
                 if iid.rsplit(":", 1)[0] in late or (iid.startswith("notice:") and iid.split(":", 3)[1] in nlate):
                     f.write(json.dumps({"id": iid, "t": t, "op": "clear"}) + "\n")
@@ -45288,7 +45819,7 @@ def _compact_goal_stores():
         except Exception:
             sys.stderr.write("compact: notified snapshot: %s\n" % traceback.format_exc())
     try:
-        paths = glob.glob(str(jd.GOALDIR / "*.json"))
+        paths = _gr.glob(str(jd.GOALDIR), "*.json")
     except Exception:
         return 0
     for fp in paths:
@@ -46065,7 +46596,7 @@ def _judge_error_rows(now, horizon=3 * 86400, tail_bytes=262144):
         return hit[1]
     rows = []
     try:
-        with open(p, "rb") as f:
+        with _gr.open(p, "rb") as f:
             if st.st_size > tail_bytes:
                 f.seek(-tail_bytes, 2)
                 f.readline()                          # drop the partial first line
@@ -46136,7 +46667,7 @@ def _boundary_clear_notices(alive):
         out.append({"sid": s["sid"], "name": s["name"], "t": r.get("t") or 0,
                     "titles": [str(d.get("text") or "") for d in (r.get("settled") or [])]})
     try:
-        gone = [p.name[:-5] for p in (jd.STATE / "gone").iterdir() if p.name.endswith(".json")]
+        gone = [p.name[:-5] for p in _gr.iterdir(jd.STATE / "gone") if p.name.endswith(".json")]
     except OSError:
         gone = []
     for sid in gone:
@@ -46154,7 +46685,7 @@ def _boundary_clear_notices(alive):
             continue                                   # died with nothing open: records on disk, no interrupt
         r = max(ended, key=lambda x: x.get("t") or 0)
         try:
-            name = (jd.NAMES / sid).read_text().split("\t")[0].strip()
+            name = _gr.read_text(jd.NAMES / sid).split("\t")[0].strip()
         except Exception:
             name = sid[:8]
         if name in live_names:
@@ -48340,7 +48871,7 @@ def _login_start():
             return "a login flow is already running — finish or cancel it first"
         scratch = jd.STATE / "login-scratch"
         try:
-            scratch.mkdir(parents=True, exist_ok=True)
+            jd.srm.make_dir(scratch, parents=True, root=jd.STATE)
         except Exception:
             pass
         env = dict(os.environ)
@@ -48751,7 +49282,7 @@ def _usage_doc():
     spend vanished from the summed spend across hosts (the user 2026-08-13). An empty snapshot falls through
     instead; every read of it tolerates absence."""
     try:
-        return json.loads((jd.STATE / "usage.json").read_text())
+        return json.loads(_gr.read_text(jd.STATE / "usage.json"))
     except Exception:
         return {}
 
@@ -48834,7 +49365,7 @@ def _spend_doc():
     path. A file that parses to something other than an object reaches the readers as it is, and they fail
     on it as they did."""
     try:
-        return json.loads((jd.STATE / "spend.json").read_text())
+        return json.loads(_gr.read_text(jd.STATE / "spend.json"))
     except Exception:
         return {}
 
@@ -48917,7 +49448,7 @@ def _judge_failures():
     A give-up stamps a "*-failed" warn; jd.judge_failure_scan() counts them and names the cause."""
     try:
         gd = jd.GOALDIR
-        fp = tuple(sorted((p.name, int(p.stat().st_mtime)) for p in gd.glob("*.json"))) if gd.exists() else ()
+        fp = tuple(sorted((p.name, int(p.stat().st_mtime)) for p in _gr.glob(gd, "*.json"))) if _gr.exists(gd) else ()
     except Exception:
         fp = None
     fp0, val0 = _jf_cache[0]
@@ -49097,7 +49628,7 @@ def _spend_tree_load(leaf, now=None):
     now = time.time() if now is None else now
     p = _spend_tree_path(leaf)
     try:
-        raw = p.read_bytes()
+        raw = _gr.read_bytes(p)
     except OSError:
         _SPEND_TREE_EVICTED_FULL.pop(str(leaf), None)     # no memo to reload: its clock has nothing to attach to (low 2)
         return None
@@ -49140,18 +49671,18 @@ def _sweep_spend_trees():
     sessions do not grow the directory forever (round two, low 3: 0.73 MB for the largest tree, kept for good before
     this); a tmp file a kill left between write and replace goes too."""
     d = jd.STATE / _SPEND_TREE_DIR
-    if not d.is_dir():
+    if not _gr.isdir(d):
         return 0
     gone = 0
-    for p in list(d.glob("*.json.tmp.*")):                # a tmp a kill left between write and replace (low 3): never a memo
+    for p in _gr.glob(d, "*.json.tmp.*"):                 # a tmp a kill left between write and replace (low 3): never a memo
         try:
             p.unlink(); gone += 1
         except OSError:
             pass
-    for p in list(d.glob("*.json")):
+    for p in _gr.glob(d, "*.json"):
         keep = False
         try:
-            m = json.loads(p.read_bytes().decode("utf-8"))
+            m = json.loads(_gr.read_bytes(p).decode("utf-8"))
             keep = isinstance(m, dict) and isinstance(m.get("leaf"), str) and os.path.exists(m["leaf"])
         except (OSError, ValueError):
             keep = False
@@ -49206,8 +49737,8 @@ def _persist_spend_trees(force=False, only=None):
                     pass
             continue
         try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(body, encoding="utf-8")
+            jd.srm.make_dir(p.parent, parents=True, root=jd.STATE)
+            jd.srm.write_text(tmp, body, encoding="utf-8")
             os.replace(tmp, p)
             m["dirty"] = False; n += 1
         except OSError as e:                             # a read-only directory, a full disk, a path replaced by a directory: the
@@ -49437,7 +49968,7 @@ def _spend_guard_seed():
         return
     _SPEND_GUARD_SEEDED[0] = True
     try:
-        lines = (jd.STATE / "session-events.jsonl").read_text(encoding="utf-8").splitlines()[-SESSION_EVENTS_TAIL:]
+        lines = _gr.read_text(jd.STATE / "session-events.jsonl", encoding="utf-8").splitlines()[-SESSION_EVENTS_TAIL:]
     except OSError:
         return
     for ln in lines:
@@ -49717,7 +50248,7 @@ def _spend_series(keyed_only=False, now=None, doc=None):
     here, as every standalone caller does."""
     if doc is None:
         try:
-            doc = json.loads((jd.STATE / "spend.json").read_text())
+            doc = json.loads(_gr.read_text(jd.STATE / "spend.json"))
         except Exception:
             return None
     d = doc
@@ -49758,7 +50289,7 @@ def _spend_budgets():
     what gives a window's bar its FILL: the fraction is spend-over-budget, and without a cap there is no
     honest fraction to draw — the row shows plain dollars instead."""
     try:
-        d = json.loads((jd.STATE / "spend-budgets.json").read_text())
+        d = json.loads(_gr.read_text(jd.STATE / "spend-budgets.json"))
         return {k: float(d[k]) for k in ("fiveHour", "sevenDay", "month")
                 if isinstance(d.get(k), (int, float)) and d[k] > 0}
     except Exception:
@@ -49808,7 +50339,7 @@ def _spend_scope():
     or "computed" for a login with no key at all, where the rail shows no spend and every recorded
     figure is a computed cost, not a bill."""
     try:
-        o = json.loads((jd.STATE / "usage.json").read_text())
+        o = json.loads(_gr.read_text(jd.STATE / "usage.json"))
     except Exception:
         o = {}
     if o.get("apiKey") or not _claude_account():
@@ -49840,7 +50371,7 @@ def _spend_detail_local(now=None):
     Bucket keys are the recorder's LOCAL time; tz/tzOffsetMin let a viewer elsewhere label that."""
     now = time.time() if now is None else now
     try:
-        d = json.loads((jd.STATE / "spend.json").read_text())
+        d = json.loads(_gr.read_text(jd.STATE / "spend.json"))
     except Exception:
         d = {}
     days = d.get("days") if isinstance(d.get("days"), dict) else {}
@@ -50394,7 +50925,7 @@ def _spend_windows(keyed_only=False, now=None, doc=None):
     and _spend_series); None reads the file here, as the analytics build and every other caller do."""
     if doc is None:
         try:
-            doc = json.loads((jd.STATE / "spend.json").read_text())
+            doc = json.loads(_gr.read_text(jd.STATE / "spend.json"))
         except Exception:
             doc = {}
     d = doc
@@ -50776,12 +51307,12 @@ def _quarantine_cards(now, cleared):
     qdir = jd.STATE / "postal" / "quarantine"
     out = []
     try:
-        files = sorted(qdir.glob("*.json"))
+        files = _gr.glob(qdir, "*.json")
     except OSError:
         return out
     for f in files:
         try:
-            rec = json.loads(f.read_text())
+            rec = json.loads(_gr.read_text(f))
         except (OSError, ValueError):
             continue
         mid = rec.get("mid") or ""
@@ -51607,7 +52138,7 @@ def _derive_judging_marks(sid, caps, goals, seg_ends=None):
             out.append((n["briefedMt"], {"judge": "distiller", "sid": sid, "t": endt(n["briefedMt"]),
                                          "kind": "brief", "text": n.get("blockSummary") or text}))
     try:                                                      # archiver — the headline/abstract refresh
-        arch = json.loads((jd.STATE / "archive" / (sid + ".json")).read_text(errors="replace"))
+        arch = json.loads(_gr.read_text(jd.STATE / "archive" / (sid + ".json"), errors="replace"))
         if arch.get("t"):
             out.append((arch["t"], {"judge": "archiver", "sid": sid, "t": arch["t"], "kind": "index",
                                     "text": arch.get("headline", "")}))
@@ -52364,7 +52895,7 @@ def _judge_usage_rows_locked():
     if size <= c["size"] or c["size"] < 0:
         c["size"], c["rows"] = 0, []                    # rotated/truncated/rewritten, or the first read
     try:
-        with open(p, "rb") as fh:
+        with _gr.open(p, "rb") as fh:
             fh.seek(c["size"])
             chunk = fh.read()
     except OSError:
@@ -53037,7 +53568,7 @@ def _spend_ledger_window(now, window, keyed_only=False):
     kernel rendered the previous date, 2026-09-06). The oldest bucket itself may hold only part of its
     hour or day (the ledger began mid-bucket); that sliver is in neither figure, and the modal says so."""
     try:
-        d = json.loads((jd.STATE / "spend.json").read_text())
+        d = json.loads(_gr.read_text(jd.STATE / "spend.json"))
     except Exception:
         return None
     days = d.get("days") if isinstance(d.get("days"), dict) else {}
@@ -57620,7 +58151,7 @@ def _colormap():
         return cm.DEFAULT
     if _cmap_cache["mt"] != mt:
         try:
-            n = f.read_text().strip()
+            n = _gr.read_text(f).strip()
         except OSError:
             n = cm.DEFAULT
         _cmap_cache["name"] = n if n in cm.COLORMAPS else cm.DEFAULT
@@ -57686,8 +58217,8 @@ def _set_colormap(name):
     """Persist the chosen colormap name (ignored if unknown); the next push recolours the feed."""
     if name in cm.COLORMAPS:
         try:
-            jd.STATE.mkdir(parents=True, exist_ok=True)
-            (jd.STATE / "colormap").write_text(name)
+            jd.srm.make_dir(jd.STATE, parents=True, root=jd.STATE)
+            jd.srm.write_text(jd.STATE / "colormap", name)
         except OSError:
             pass
 
@@ -57722,7 +58253,7 @@ def _set_judge_state(fname, value, allowed, allow_empty=False, gt=None):
             return None
         stamp = gt if gt is not None else int(time.time() * 1000)
         try:
-            jd.STATE.mkdir(parents=True, exist_ok=True)
+            jd.srm.make_dir(jd.STATE, parents=True, root=jd.STATE)
             _atomic_write(jd.STATE / (fname + ".gt"), str(stamp))
         except OSError as e:
             sys.stderr.write("setting %s: could not write the gesture stamp (%s) — nothing "
@@ -57745,7 +58276,7 @@ def _set_judge_state(fname, value, allowed, allow_empty=False, gt=None):
 def _judge_state_gt(fname):
     """Last-applied gesture stamp for a judge-tier store — absent or garbled orders as 0."""
     try:
-        return _gt_int((jd.STATE / (fname + ".gt")).read_text().strip())
+        return _gt_int(_gr.read_text(jd.STATE / (fname + ".gt")).strip())
     except Exception:
         return 0
 
@@ -57830,7 +58361,7 @@ def _migrate_judge_fast_tiers():
             n += 1
             if carry:
                 sys.stderr.write("judges: fast mode carried over to the %s tier as %s (its model: %s)\n" % (word, v, model_of()))
-        jd.STATE.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(jd.STATE, parents=True, root=jd.STATE)
         _atomic_write(marker, str(int(time.time())))
         return n
     except Exception:
@@ -57994,12 +58525,12 @@ def _mesh_settings_snapshot():
     stamp), a pair it persisted and the equal-stamp rule then froze on both machines."""
     d = _auto_nudge_data()
     try:
-        fe = json.loads((jd.STATE / "file-editing.json").read_text())
+        fe = json.loads(_gr.read_text(jd.STATE / "file-editing.json"))
     except Exception:
         fe = None
     fe = fe if isinstance(fe, dict) else {}
     try:
-        tt = json.loads((jd.STATE / TASK_TRACKING_FILE).read_text())
+        tt = json.loads(_gr.read_text(jd.STATE / TASK_TRACKING_FILE))
     except Exception:
         tt = None
     tt = tt if isinstance(tt, dict) else {}
@@ -58153,9 +58684,9 @@ def _setting_stored_gt(name):
         return _update_mode_gt()
     if name in ("file-editing", "thinking-summaries", "whole-chat-frames"):
         try:
-            d = json.loads((jd.STATE / (THINKING_SUMMARIES_FILE if name == "thinking-summaries"
-                                        else WHOLE_CHAT_FRAMES_FILE if name == "whole-chat-frames"
-                                        else "file-editing.json")).read_text())
+            d = json.loads(_gr.read_text(jd.STATE / (THINKING_SUMMARIES_FILE if name == "thinking-summaries"
+                                                     else WHOLE_CHAT_FRAMES_FILE if name == "whole-chat-frames"
+                                                     else "file-editing.json")))
             return _gt_int(d.get("gt")) if isinstance(d, dict) else 0
         except Exception:
             return 0
@@ -58166,7 +58697,7 @@ def _setting_stored_gt(name):
         # the sidecar below, which the switch never writes, so /version taught a dashboard 0 and its
         # first toggle after another device's stood down as stale (fold follow-up, 2026-09-07)
         try:
-            d = json.loads((jd.STATE / USER_TODOS_SWITCH_FILE).read_text())
+            d = json.loads(_gr.read_text(jd.STATE / USER_TODOS_SWITCH_FILE))
             return _gt_int(d.get("gt")) if isinstance(d, dict) else 0
         except Exception:
             return 0
@@ -58985,10 +59516,10 @@ def _save_dropped_file(name, b64):
     under the state dir's drops/ and return the saved path for the prompt to reference. None on failure."""
     try:
         drops = jd.STATE / "drops"
-        drops.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(drops, parents=True, root=jd.STATE)
         safe = re.sub(r"[^\w.-]+", "_", name)[-80:] or "drop"
         f = drops / ("%d-%s" % (int(time.time() * 1000), safe))
-        f.write_bytes(base64.b64decode(b64))
+        jd.srm.write_bytes(f, base64.b64decode(b64))
         return str(f)
     except (OSError, ValueError):
         # the caller warns the client; this names the actual cause (fail loudly, CLAUDE.md)
@@ -60777,7 +61308,7 @@ def _pin_dir():
     if _MENTION_PINS is None:
         _MENTION_PINS = jd.STATE / "mention-pins"
         try:
-            _MENTION_PINS.mkdir(parents=True, exist_ok=True)
+            jd.srm.make_dir(_MENTION_PINS, parents=True, root=jd.STATE)
         except OSError:
             pass
     return _MENTION_PINS
@@ -60798,7 +61329,7 @@ _PIN_ASSOC_MEMO = {}                    # sid -> {uuid: {target: pin id}}, the s
 def _pin_assoc_dir():
     d = _pin_dir() / "assoc"
     try:
-        d.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(d, parents=True, root=jd.STATE)
     except OSError:
         pass
     return d
@@ -60816,7 +61347,7 @@ def _pin_assoc_memo(sid):
         return memo
     memo = {}
     try:
-        with open(_pin_assoc_dir() / (str(sid) + ".jsonl"), encoding="utf-8") as f:
+        with _gr.open(_pin_assoc_dir() / (str(sid) + ".jsonl"), encoding="utf-8") as f:
             for line in f:
                 try:
                     row = json.loads(line)
@@ -60840,7 +61371,7 @@ def _pin_assoc_append(sid, uuid, target, pid):
     the old in-memory behavior for this message, never blocks the build."""
     _pin_assoc_memo(sid).setdefault(uuid, {})[target] = pid
     try:
-        with open(_pin_assoc_dir() / (str(sid) + ".jsonl"), "a", encoding="utf-8") as f:
+        with jd.srm.open_private(_pin_assoc_dir() / (str(sid) + ".jsonl"), "a", encoding="utf-8") as f:
             f.write(json.dumps({"u": uuid, "t": target, "p": pid}) + "\n")
     except OSError:
         pass
@@ -60872,13 +61403,13 @@ def _pin_mention(fp):
     try:
         if not dst.exists():
             tmp = d / (pid + ".tmp.%d" % os.getpid())
-            tmp.write_bytes(raw)
+            jd.srm.write_bytes(tmp, raw)
             os.replace(tmp, dst)
             # bound the store on the write event, oldest first (mtime; serves don't touch it — a pin
             # for a busy old chat can age out, and the fallback is the live file)
             try:
                 rows = [(st.st_mtime, st.st_size, e.path)
-                        for e, st in ((e, _entry_stat(e)) for e in os.scandir(d) if e.is_file() and not e.name.endswith(".tmp"))]
+                        for e, st in ((e, _entry_stat(e)) for e in _gr.scandir(d) if e.is_file() and not e.name.endswith(".tmp"))]
                 total = sum(sz for _, sz, _ in rows)
                 for _, sz, path_ in sorted(rows):
                     if total <= _PIN_STORE_MAX_BYTES:
@@ -61086,7 +61617,7 @@ def _note_chat_divergence(sid, name, chat_state, row_state, now):
     else:
         rec["cleared"] = True
     try:
-        with open(jd.STATE / "chat-divergence.jsonl", "a") as f:
+        with jd.srm.open_private(jd.STATE / "chat-divergence.jsonl", "a") as f:
             f.write(json.dumps(rec) + "\n")
     except OSError:
         pass
@@ -63483,8 +64014,7 @@ def _push_crypto():
         import importlib
         added = False
         for sp in _sdk_venv_site_packages()[0]:
-            if sp not in sys.path:
-                sys.path.append(sp)
+            if sp not in sys.path and _gr.sys_path_dir(sp):   # appended, through the guard (the same door as _ensure_sdk_on_path)
                 added = True
         if added or _PUSH_CRYPTO_TRIED[0]:
             importlib.invalidate_caches()
@@ -63524,7 +64054,7 @@ def _push_subs():
     """endpoint -> subscription ({endpoint, keys:{p256dh,auth}}). Fresh read, no mtime cache:
     consulted only on bell events and subscribe/unsubscribe, never per feed build."""
     try:
-        d = json.loads((jd.STATE / "push-subscriptions.json").read_text())
+        d = json.loads(_gr.read_text(jd.STATE / "push-subscriptions.json"))
         return d if isinstance(d, dict) else {}
     except (OSError, ValueError):
         return {}
@@ -63642,7 +64172,7 @@ def _vapid_keys():
     f = jd.STATE / "push-vapid.json"
     priv = None
     try:
-        d = json.loads(f.read_text())
+        d = json.loads(_gr.read_text(f))
         priv = cg["ec"].derive_private_key(int(d["d"], 16), cg["ec"].SECP256R1())
     except (OSError, ValueError, KeyError, TypeError):
         pass
@@ -63789,7 +64319,7 @@ def _push_ledger_path():
 def _push_ledger():
     """Every row, oldest first — a fresh read (the block above: no memory, so a restart loses nothing)."""
     try:
-        d = json.loads(_push_ledger_path().read_text())
+        d = json.loads(_gr.read_text(_push_ledger_path()))
         rows = d.get("rows") if isinstance(d, dict) else None
         return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
     except (OSError, ValueError, AttributeError):
@@ -64827,8 +65357,8 @@ def _judges_in_child():
     False while the fallback latch stands (JUDGE_CHILD_LOST_SPAWNS_MAX consecutive lost spawns) until the file's stat changes."""
     p = jd.STATE / JUDGES_PROCESS_FILE
     try:
-        st = p.stat()
-        on = p.read_text(encoding="utf-8").strip().lower() == "on"
+        st = _gr.stat(p)
+        on = _gr.read_text(p, encoding="utf-8").strip().lower() == "on"
     except FileNotFoundError:
         _JUDGE_SWITCH_SAID["read"] = None
         return False
@@ -64964,7 +65494,7 @@ class _JudgeChild:
 
     def _write_pid_record(self, p):
         try:
-            _judge_child_pid_file().write_text(json.dumps({"pid": p.pid, "parent": os.getpid(), "t": int(time.time())}))
+            jd.srm.write_text(_judge_child_pid_file(), json.dumps({"pid": p.pid, "parent": os.getpid(), "t": int(time.time())}))
         except OSError:
             pass
 
@@ -64990,7 +65520,7 @@ class _JudgeChild:
         self.swept = True                                 # marked only once the root was listed
         for f in recs:
             try:
-                rec = json.loads(f.read_text())
+                rec = json.loads(_gr.read_text(f))
             except (OSError, ValueError):
                 continue
             pid, parent = rec.get("pid"), rec.get("parent")
@@ -65558,6 +66088,10 @@ def _jobs_pass(now, live_map):
         #                                   so the jobs below are the flat rows', whatever ran before on this thread
     _own_stat = _files_stat_pass_open(live_map)   # the dirty set taken, the prelude's observers read, the pass's shared ten-file
     #                                               snapshot opened when the caller did not (closed below; the cycle's finally too)
+    try:                                  # the state root's mode, re-read on this pass's cadence (2026-09-20): a root loosened after
+        _job_stage('stateRootMode', lambda: _state_root_verdict(now, "the housekeeping pass"))   # boot exits the process here
+    except Exception:                     # (os._exit 2, nothing below runs); FIRST, since the root's mode is the premise of every
+        sys.stderr.write("state-root-mode: %s\n" % traceback.format_exc())   # write below
     try:                                  # EXACT retraction first: dispatches returned → the stamp is spent,
         _job_stage('liftSpentAwaiting', lambda: _lift_spent_awaiting(now, live_map))   # so the nudge tick below never wakes a wait that already ended
     except Exception:
@@ -73278,6 +73812,19 @@ class Handler(BaseHTTPRequestHandler):
         return bool(TOKEN) and (_ct_eq((q.get("token") or [""])[0], TOKEN)
                                 or _ct_eq(self.headers.get("X-Romp-Token") or "", TOKEN))
 
+    def _state_root_recheck(self):
+        """The request road's look at the state root's mode (2026-09-20), run first by every method before routing: the
+        cached check answers inside the interval, a stale one is re-read (_state_root_verdict), and a refuse or unknown
+        verdict exits the process from this thread (_state_root_exit_now: the client sees the connection drop, never an
+        answer built under a hostile root). Nothing is answered here otherwise: the round-1 503 latch that stood in
+        this place closed the doors and left every internal writer running, so it was replaced by the exit (the
+        2026-09-20 review's section A). A check that raises is folded into an unknown verdict by _state_root_read;
+        the guard here is for the exit double a test installs, so the handler never dies on anything else."""
+        try:
+            _state_root_verdict(time.time(), "a request")
+        except Exception:
+            sys.stderr.write("state-root-mode (request): %s\n" % traceback.format_exc())
+
     def _file_slice(self, fp, q):
         """GET /file?slice=1[&anchor=slug] — the file preview popover's one fetch (T351): JSON with the kind, the title
         (the file's name), the text slice (a markdown or code file's head, or the section `anchor` names; a missing
@@ -73315,7 +73862,7 @@ class Handler(BaseHTTPRequestHandler):
         pin = (q.get("pin") or [""])[0]
         if pin and _PIN_ID_RE.match(pin):
             pf = _pin_dir() / pin
-            if pf.is_file():
+            if _gr.exists(pf) and pf.is_file():          # a pin blob under the root: judged (a planted one is quarantined) before it is served
                 fp = str(pf)
         mime = _PREVIEW_MIME.get(os.path.splitext(fp)[1].lower())
         text = not mime and _is_text_path(fp)
@@ -73388,7 +73935,7 @@ class Handler(BaseHTTPRequestHandler):
         if rng:
             if rng >= size:
                 return self._send(416, "range starts past the end: %d >= %d" % (rng, size), "text/plain")
-            with open(fp, "rb") as f:
+            with _gr.open(fp, "rb") as f:            # a pin blob under the root is guarded; a live file outside it passes through
                 f.seek(rng)
                 raw = f.read()
             self.send_response(206)
@@ -73406,7 +73953,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(raw)
             return
-        with open(fp, "rb") as f:
+        with _gr.open(fp, "rb") as f:                # a pin blob under the root is guarded; a live file outside it passes through
             raw = f.read()
         if text:
             body = _decode_text(raw)
@@ -73495,6 +74042,9 @@ class Handler(BaseHTTPRequestHandler):
         first). Approve only what the auth gate itself allows — the actual request
         still runs the full _authorize on arrival; this grants delivery, not access."""
         q = parse_qs(urlparse(self.path).query)
+        self._set_cookie = None
+        self._cors_origin = None
+        self._state_root_recheck()                        # the state root's mode (2026-09-20): a hostile root exits the process here
         ok, _, _ = self._authorize(q)
         origin = self.headers.get("Origin")
         if not (ok and origin):
@@ -73522,6 +74072,7 @@ class Handler(BaseHTTPRequestHandler):
         # foreign origin — the federated dashboard — and a denial clears the echo).
         self._cors_origin = self.headers.get("Origin") if self._origin_ok() else None
         try:
+            self._state_root_recheck()                    # the state root's mode (2026-09-20): a hostile root exits the process here
             ok, self._set_cookie, why = self._authorize(q)
             self._cors_origin = self.headers.get("Origin") if ok else None   # echoed by _send (CORS delivery)
             if not ok:
@@ -73553,6 +74104,8 @@ class Handler(BaseHTTPRequestHandler):
         # foreign origin — the federated dashboard — and a denial clears the echo).
         self._cors_origin = self.headers.get("Origin") if self._origin_ok() else None
         try:
+            self._state_root_recheck()                    # the state root's mode (2026-09-20): a hostile root exits the process
+            #                                               here, before the token gate and every route, /ws upgrades included
             if p == "/healthz":
                 # liveness probe — exempt from auth. X-Romp-Boot identifies THIS kernel process: the
                 # restart button reloads only when the id flips (a bare 200 can still be the old kernel
@@ -74101,7 +74654,7 @@ class Handler(BaseHTTPRequestHandler):
                     # not an object is as ended as a failure — the consume sets it aside; peeking
                     # `.get` on it used to 500 every poll for the kernel's life.
                     try:
-                        _peek, _have = json.loads((jd.STATE / "update-report.json").read_text()), True
+                        _peek, _have = json.loads(_gr.read_text(jd.STATE / "update-report.json")), True
                     except (OSError, ValueError):
                         _peek, _have = None, False     # no report yet, or a write still in progress
                     # `_have`, not `_peek is not None`: a report that parses to null is a report
@@ -74315,6 +74868,8 @@ class Handler(BaseHTTPRequestHandler):
         # foreign origin — the federated dashboard — and a denial clears the echo).
         self._cors_origin = self.headers.get("Origin") if self._origin_ok() else None
         try:
+            self._state_root_recheck()                    # the state root's mode (2026-09-20): a hostile root exits the process
+            #                                               here, before the token gate and the routes, the body unread
             if u.path == "/push/ack":
                 # The push worker's word on one push (the ledger block above _push_ledger): {pid, stage: 'shown' |
                 # 'clicked', v}. AUTHENTICATED BY THE PID ALONE, ahead of _authorize on purpose: a worker's fetch
@@ -74433,7 +74988,7 @@ class Handler(BaseHTTPRequestHandler):
                 # What the last fleet restart did, read back by the page AFTER it reloads (the restart
                 # itself takes the reporting process down with it). Empty when there has never been one.
                 try:
-                    return self._send(200, FLEET_REPORT.read_text(), "application/json")
+                    return self._send(200, _gr.read_text(FLEET_REPORT), "application/json")
                 except OSError:
                     return self._send(200, json.dumps({"rows": []}), "application/json")
             if u.path == "/down":
@@ -76982,7 +77537,7 @@ class Handler(BaseHTTPRequestHandler):
             # gesture.
             try:
                 p = jd.STATE / "card-opens.jsonl"
-                with open(p, "a") as f:
+                with jd.srm.open_private(p, "a") as f:
                     f.write(json.dumps({"t": int(time.time()), "itemId": str(msg["itemId"])[:200],
                                         "sid": str(msg.get("sid") or "")[:64]}) + "\n")
             except OSError:
@@ -77057,7 +77612,7 @@ class Handler(BaseHTTPRequestHandler):
                 for _k in ("settled", "superseded", "gesture", "cancelled"):   # gesture: the reader took the landing over (round three, low 3); cancelled: they clicked the wait away (T402)
                     if isinstance(msg.get(_k), bool):
                         rec[_k] = msg[_k]
-                with open(jd.STATE / "locate-audit.jsonl", "a", encoding="utf-8") as f:
+                with jd.srm.open_private(jd.STATE / "locate-audit.jsonl", "a", encoding="utf-8") as f:
                     f.write(json.dumps(rec) + "\n")
             except OSError:
                 pass
@@ -77779,6 +78334,13 @@ class Handler(BaseHTTPRequestHandler):
                     sys.stderr.write("ws: undecodable client frame dropped (op 0x%x, %d bytes)\n"
                                      % (op, len(payload or b"")))
                 try:
+                    # THE SOCKET ROAD'S CONTRACT (round 3, tests-6): a frame on an already-open socket runs its op; the
+                    # state root's check is the request road's (every method, before routing) and the jobs road's (the
+                    # pass's first stage), and this road relies on them. What it does hold is the exit already taken:
+                    # once a finder set _STATE_ROOT_REFUSED, a frame that arrives while that finder's line is in flight
+                    # runs nothing (_StateRootExiting ends this thread, as it ends a second finder's).
+                    if _STATE_ROOT_REFUSED:
+                        raise _StateRootExiting()
                     self._dispatch_ws(msg, client)
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     raise   # a genuine socket failure → let the outer handler tear the connection down
@@ -78692,6 +79254,12 @@ def main():
     # postal bus or the SDK backend spawn anything that could inherit it. RuntimeError: the
     # manager crash-loops the traceback into manager.log until the file is repaired (the serve token's shape).
     jd._cred.check_boot_environment()
+    # The state root's mode (2026-09-20), the second look: the import gate refused a hostile or unreadable root before
+    # the serve token was read (_state_root_import_gate); this re-reads it here, before any thread, exits 2 the same way
+    # if it moved, and is where the warn surface files (a root not 0700 but not writable by others, the import's own
+    # pre-chmod read when it differed, a chmod this uid cannot run). Re-checked on the jobs pass and before every
+    # request after this (_state_root_verdict), where a hostile root exits the process from the thread that found it.
+    _state_root_boot_check()
     _ensure_bundles()
     try:                                                      # the diary boot sweep (2026-07-07): migrate every
         _death_boot_pass()                                    # deaths no kernel was up to see: stamp them

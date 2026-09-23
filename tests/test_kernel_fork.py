@@ -23,6 +23,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from romp_load import load_source
+from tests import guarded_reads   # the shared Reader seam: every read under the state root goes through it (round 4 of the state-root review)
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -144,7 +145,8 @@ def _reads_fault(target):
         return real_rt(self, *a, **k)
     Path.read_bytes, Path.read_text = rb, rt
     try:
-        yield
+        with guarded_reads.fault(target, lambda: OSError(errno.EIO, "injected EIO")):   # ...and the guarded reader's open, the road the store's reads take now
+            yield
     finally:
         Path.read_bytes, Path.read_text = real_rb, real_rt
 

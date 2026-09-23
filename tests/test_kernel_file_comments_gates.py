@@ -105,8 +105,7 @@ class _World(unittest.TestCase):
         km._FILE_COMMENTS_HOST = Path(self.stub_path)
         # the state sandbox
         self.saved_state = jd.STATE
-        jd.STATE = Path(self.tmp) / "state"
-        jd.STATE.mkdir()
+        jd._rebind_state(Path(self.tmp) / "state", make=True)   # made and floored at 0700 through the seam (tests-5 of the state-root review)
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
         km._set_user_todos(True)
@@ -136,7 +135,7 @@ class _World(unittest.TestCase):
         km._FILE_COMMENTS_HOST, km._FILE_COMMENTS_TIMEOUT, km._FILE_COMMENTS_REPLY_MAX = self._saved
         km._name_of, km._sdk, km._send_or_park = self._saved2
         km._set_file_editing(False)
-        jd.STATE = self.saved_state
+        jd._rebind_state(self.saved_state)
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
         shutil.rmtree(self.tmp, ignore_errors=True)

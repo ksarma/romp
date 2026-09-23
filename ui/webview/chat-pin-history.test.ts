@@ -39,5 +39,7 @@ test("the kernel pins at the resolve latch and serves pins shape-gated with live
   assert.match(KERNEL, /ev\["pathPins"\] = pp/, "attached on both user and assistant events");
   assert.match(KERNEL, /_PIN_ID_RE = re\.compile\(r"\^\[0-9a-f\]\{64\}\\\.\[a-z0-9\]\{1,8\}\$"\)/);
   assert.match(KERNEL, /if pin and _PIN_ID_RE\.match\(pin\):/);
-  assert.match(KERNEL, /if pf\.is_file\(\):\s*\n\s*fp = str\(pf\)/, "a missing blob falls through to the live file");
+  // the blob lives under the state root, so it is judged by the guarded reader before it is served (fork PR 874:
+  // a planted blob is quarantined and reads absent); the fall-through to the live file is unchanged
+  assert.match(KERNEL, /if _gr\.exists\(pf\) and pf\.is_file\(\):[^\n]*\n\s*fp = str\(pf\)/, "a missing blob falls through to the live file");
 });

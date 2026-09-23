@@ -52,7 +52,8 @@ class ColorRoute(unittest.TestCase):
         self._saved = (km.NAMES, km.jd.STATE, km._live_map, km._live_names,
                        km._mark_views_dirty)
         km.NAMES = self.names
-        km.jd.STATE = Path(self.tmp) / "state"
+        (Path(self.tmp) / "state").mkdir()
+        km.jd._rebind_state(Path(self.tmp) / "state")   # the seam floors a umask-mode root at 0700 (round 4, 2026-09-21): the per-module chmod is gone
         km._pal_cache.update({"name": km.pal.DEFAULT, "mt": None})   # drop the mtime cache between sandboxes
         km._live_map = lambda: {}
         km._live_names = lambda tm: {"web": SID}
@@ -62,6 +63,7 @@ class ColorRoute(unittest.TestCase):
     def tearDown(self):
         (km.NAMES, km.jd.STATE, km._live_map, km._live_names,
          km._mark_views_dirty) = self._saved
+        km.jd._rebind_state(km.jd.STATE)
         km._pal_cache.update({"name": km.pal.DEFAULT, "mt": None})
 
     def _post(self, body):

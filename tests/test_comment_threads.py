@@ -1397,24 +1397,26 @@ class FakeBackend:
 @contextlib.contextmanager
 def _views_reads_fault():
     """Fail every byte read of the views store with an EIO for the duration of the block (its proved reader
-    reads bytes); everything else reads normally."""
-    real_rb, real_rt = Path.read_bytes, Path.read_text
+    reads bytes); everything else reads normally. The reads go through the kernel's guarded reader (km._gr,
+    kernel/state_root_mode.py: every read under the state root does since round 4 of the state-root review),
+    so the fault sits on that reader's read_bytes and read_text, not on Path's."""
+    real_rb, real_rt = km._gr.read_bytes, km._gr.read_text
     tgt = str(jd.STATE / "timeline-views.json")
 
-    def rb(self, *a, **k):
-        if str(self) == tgt:
+    def rb(path, *a, **k):
+        if str(path) == tgt:
             raise OSError(errno.EIO, "injected EIO")
-        return real_rb(self, *a, **k)
+        return real_rb(path, *a, **k)
 
-    def rt(self, *a, **k):
-        if str(self) == tgt:
+    def rt(path, *a, **k):
+        if str(path) == tgt:
             raise OSError(errno.EIO, "injected EIO")
-        return real_rt(self, *a, **k)
-    Path.read_bytes, Path.read_text = rb, rt
+        return real_rt(path, *a, **k)
+    km._gr.read_bytes, km._gr.read_text = rb, rt
     try:
         yield
     finally:
-        Path.read_bytes, Path.read_text = real_rb, real_rt
+        del km._gr.read_bytes, km._gr.read_text          # the instance attributes go; the class's methods stand
 
 
 class CommentOps(CommentBase):
@@ -1474,7 +1476,6 @@ class CommentOps(CommentBase):
         km.jd._state_cache.clear()
 
     def _put_default(self, name, value):
-        km.jd.STATE.mkdir(parents=True, exist_ok=True)
         (km.jd.STATE / name).write_text(value)
         km.jd._state_cache.clear()   # same-second writes share an mtime; the cache is not under test
 
@@ -1992,7 +1993,6 @@ class ForkCommentRoutes(CommentBase):
         self.assertTrue(res.get("ok"), res)
 
     def test_fork_comment_applies_the_default_comment_settings(self):
-        km.jd.STATE.mkdir(parents=True, exist_ok=True)
         (km.jd.STATE / "comment-model").write_text("haiku")
         km.jd._state_cache.clear()
         km._fork_comment_request({"id": PARENT, "text": self.OPENER})

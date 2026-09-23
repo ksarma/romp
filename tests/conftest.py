@@ -277,6 +277,35 @@ def _no_real_service_env():
     yield
 
 
+class StateRootExitTakenInTest(BaseException):
+    """The kernel's runtime state-root exit (os._exit(2)), met INSIDE a test: raised by the double below instead of ending
+    the worker, so a test whose minted root read hostile reds with a traceback that names this, and the kernel's own line
+    is on the captured stderr (round 3's tests-5 as the round-4 review re-found it: with xdist off the exit killed the
+    pytest process with no readable red). A BaseException, as the kernel's own _StateRootExiting is, so the `except
+    Exception` guards on every road let it through."""
+
+
+@pytest.fixture(autouse=True)
+def _state_root_exit_is_a_raise_not_a_dead_worker():
+    """For the test's length, kernel.py's _state_root_exit (module-level, the seam tests/test_state_root_mode.py doubles
+    too) raises StateRootExitTakenInTest instead of calling os._exit; restored after. A test module that installs its own
+    double in setUp saves and restores this one, in the usual order."""
+    km = sys.modules.get("romp_kernel")
+    if km is None or not hasattr(km, "_state_root_exit"):
+        yield
+        return
+    saved = km._state_root_exit
+
+    def double(code):
+        raise StateRootExitTakenInTest("the kernel took the state-root exit (%r) inside this test: the root it is bound to read "
+                                       "hostile; the kernel's line is on the captured stderr" % (code,))
+    km._state_root_exit = double
+    try:
+        yield
+    finally:
+        km._state_root_exit = saved
+
+
 @pytest.fixture(autouse=True)
 def _no_real_claude_config():
     os.environ["CLAUDE_CONFIG_DIR"] = _CLAUDE_CONFIG

@@ -5423,7 +5423,7 @@ class ViewBuilder(unittest.TestCase):
         # error would keep the store out of the snapshot until its next publish.
         path = jd.GOALDIR / (SID + ".json")
         real, calls = self._count_decodes()
-        real_open, failed = builtins.open, []
+        real_open, failed = km._gr.open, []      # the pass opens its stores through the kernel's guarded reader (round 4 of the state-root review)
 
         def failing_open(file, *a, **kw):
             if not failed and str(file) == str(path):
@@ -5433,7 +5433,7 @@ class ViewBuilder(unittest.TestCase):
         err, saved_err = io.StringIO(), sys.stderr
         sys.stderr = err
         try:
-            with mock.patch.object(builtins, "open", failing_open):
+            with mock.patch.object(km._gr, "open", failing_open):
                 km._begin_goals_pass()
             try:
                 self.assertEqual(failed, [1], "the store's open failed once")
@@ -5646,7 +5646,7 @@ class ViewBuilder(unittest.TestCase):
         # unchanged file again next pass (one wasted decode, never a stale parse).
         store = {"rompUuid": self.OTHER_SID, "seq": 0, "nodes": {}, "placements": {}, "status": {}}
         path = self._publish_store(self.OTHER_SID, store)
-        real_open, fired = builtins.open, []
+        real_open, fired = km._gr.open, []       # the guarded reader's open (round 4 of the state-root review)
 
         def publishing_open(file, *a, **kw):
             if not fired and str(file) == str(path):
@@ -5655,7 +5655,7 @@ class ViewBuilder(unittest.TestCase):
             return real_open(file, *a, **kw)
         real, calls = self._count_decodes()
         try:
-            with mock.patch.object(builtins, "open", publishing_open):
+            with mock.patch.object(km._gr, "open", publishing_open):
                 km._begin_goals_pass()
             try:
                 self.assertEqual(fired, [1])
@@ -5681,7 +5681,7 @@ class ViewBuilder(unittest.TestCase):
         # (EMFILE, EIO) is said and counted.
         path = self._publish_store(self.OTHER_SID, {"rompUuid": self.OTHER_SID, "seq": 0, "nodes": {},
                                                     "placements": {}, "status": {}})
-        real_open, fired = builtins.open, []
+        real_open, fired = km._gr.open, []       # the guarded reader's open (round 4 of the state-root review)
 
         def vanishing_open(file, *a, **kw):
             if not fired and str(file) == str(path):
@@ -5693,7 +5693,7 @@ class ViewBuilder(unittest.TestCase):
         err, saved_err = io.StringIO(), sys.stderr
         sys.stderr = err
         try:
-            with mock.patch.object(builtins, "open", vanishing_open):
+            with mock.patch.object(km._gr, "open", vanishing_open):
                 km._begin_goals_pass()
             try:
                 self.assertEqual(fired, [1])
@@ -5780,7 +5780,7 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual(report["bytes"], sum(p.stat().st_size for p in jd.GOALDIR.glob("*.json")))
         st = other.stat()
         os.utime(other, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))   # a moved key, so the read runs
-        real_open = builtins.open
+        real_open = km._gr.open                  # the guarded reader's open (round 4 of the state-root review)
 
         def failing_open(file, *a, **kw):
             if str(file) == str(other):
@@ -5789,7 +5789,7 @@ class ViewBuilder(unittest.TestCase):
         err, saved_err = io.StringIO(), sys.stderr
         sys.stderr = err
         try:
-            with mock.patch.object(builtins, "open", failing_open):
+            with mock.patch.object(km._gr, "open", failing_open):
                 d = deltas(lambda: (km._begin_goals_pass(), km._end_goals_pass()))
         finally:
             sys.stderr = saved_err

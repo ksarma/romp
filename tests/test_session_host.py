@@ -84,9 +84,26 @@ def padded_root(case, total, tail):
         case.fail("the system temp dir %s is too deep to build a %d-byte socket path under it: run the suite under a shorter "
                   "TMPDIR (the padded cases fail rather than skip, so a green module means they ran)" % (system_tmp(), total))
     root = os.path.join(base, "p" * pad)
-    os.mkdir(root)
+    os.mkdir(root, 0o700)
+    os.chmod(root, 0o700)     # a STATE ROOT a test mints is 0700 (fork PR 874: a root writable by another local user is the
+    #                           gate's refusal, and the guarded readers read nothing under it); SocketMode's 000 umask would
+    #                           otherwise leave it 0777 and every read of the spec under it absent
     case.assertEqual(len(os.fsencode(os.path.join(root, tail))), total, root)
     return root
+
+
+def _leases_dir(root):
+    """`<root>/leases/` made 0700 before the host runs, the shape a kernel at umask 002 under the owner's private group
+    leaves (0775 there, which the discriminator admits). The cases of this module that run under a 000 umask (SocketMode's
+    setUp, two HostProcess cases) would otherwise have write_lease's own `mkdir(parents=True, exist_ok=True)` make it 0777,
+    and the state root's guarded reader (fork PR 874) quarantines an entry with an other write bit on the next read, so
+    the lease the host had just written read absent. The umask is the cases' instrument for the socket temp's mode, not a
+    claim about the lease directory; that the kernel's own directories are born at the umask's mode, and so are refused
+    under a umask or a group the discriminator does not admit, is recorded in the PR's notes as a finding of the merge."""
+    d = Path(root) / "leases"
+    d.mkdir(mode=0o700, exist_ok=True)
+    os.chmod(d, 0o700)
+    return d
 
 
 def require_utf8_names(case):
@@ -804,6 +821,7 @@ class SocketMode(unittest.TestCase):
         self.root = root
         self.sdir = Path(root) / "hosts" / sid
         self.sdir.mkdir(parents=True, mode=0o700)
+        _leases_dir(root)
         spec = {"sid": sid, "name": "web", "version": "abc12345", "state_dir": root, "protocol": 1,
                 "cli_path": FAKE, "cwd": root, "unattached_grace_s": 3600}
         (self.sdir / "spawn.json").write_text(json.dumps(spec))
@@ -4139,6 +4157,7 @@ class HostProcess(unittest.TestCase):
     def _spec(self, **over):
         d = Path(self.state) / "hosts" / SID
         d.mkdir(parents=True, mode=0o700)
+        _leases_dir(self.state)
         spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": self.state, "protocol": 1,
                 "cli_path": FAKE, "cwd": self.state, "permission_prompt_tool_name": "stdio", "permission_mode": "default",
                 "env": self._overlay(),

@@ -30,6 +30,7 @@ import tracemalloc
 import unittest
 from pathlib import Path
 from romp_load import load_source
+from tests import guarded_reads   # the shared Reader seam: every read under the state root goes through it (round 4 of the state-root review)
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -452,14 +453,11 @@ class AReaderNeverChasesAWriter(unittest.TestCase):
         late = json.dumps({"late": True}).encode() + b"\n"
         real_open = builtins.open
 
-        def open_then_append(path, mode="r", *a, **k):
-            fh = real_open(path, mode, *a, **k)
-            if str(path) == self.path and "b" in mode and "r" in mode:
-                with real_open(self.path, "ab") as w:
-                    w.write(late)                              # the writer lands between the reader's stat and its read
-            return fh
+        def append_late(path):
+            with real_open(self.path, "ab") as w:
+                w.write(late)                                  # the writer lands between the reader's stat and its read
 
-        with mock.patch.object(em, "open", open_then_append, create=True):
+        with guarded_reads.before_open(self.path, append_late):   # the reader opens through the guarded reader (round 4 of the state-root review)
             ent = em._read_jsonl_entry(self.path)
         self.assertEqual(len(ent[4]), 50, "the late record lies past the end the stat captured")
         self.assertEqual(ent[2], ent[1], "consumed up to the size the stat saw")

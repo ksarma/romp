@@ -420,12 +420,15 @@ class StateShadow:
             return p.relative_to(self.state)
         return None
 
-    def target(self, path):
-        """Where a write to `path` lands: its shadow when it aims at the copy (recorded), itself when it
-        is already in the shadow (the audit log's own trim); a write aimed anywhere else is refused."""
+    def target(self, path, record=True):
+        """Where a write to `path` lands: its shadow when it aims at the copy (recorded, unless `record` is
+        False: the import-time repo-root temp, a path the report does not name; its rename's destination
+        is what is recorded), itself when it is already in the shadow (the audit log's own trim); a write
+        aimed anywhere else is refused."""
         r = self.rel(path)
         if r is not None:
-            self.written.append(str(r))
+            if record:
+                self.written.append(str(r))
             t = self.root / r
             t.parent.mkdir(parents=True, exist_ok=True)
             return t
@@ -600,7 +603,12 @@ def install_guards(km, sbmod, shadow, rec, no_git=False):
     real_start = threading.Thread.start
 
     def counted_start(self, *a, **k):
-        rec["thread_starts"] += 1
+        # the state root's guarded readers ask the group database about a file's group once per (gid, uid), in a thread
+        # joined with a bound (kernel/state_root_mode.py: a hung name service must not hang a read); the judge primes the
+        # process's own group at import, and this counter replaces pwd.getpwuid above, so the first group-bit read in a
+        # builder asks once more through the counting wrapper. That one bounded lookup is the guard's, not a builder's.
+        if getattr(self, "name", "") != "state-root-group-lookup":
+            rec["thread_starts"] += 1
         return real_start(self, *a, **k)
     threading.Thread.start = counted_start
     return names
@@ -748,10 +756,16 @@ def make_backend(sbmod, state, dormant_rows, all_regs):
 
 # ── loading ─────────────────────────────────────────────────────────────────────────────────────
 def load_kernel(repo, shadow=None):
-    """Import the checkout's kernel in-process. With a `shadow`, every Path.write_text the import
-    performs against the state copy lands in the shadow instead (the kernel writes its repo-root
-    marker at import, before any guard can be installed on the module); the diversion is removed
-    once the import returns, and the guards install_guards puts on the named write doors take over."""
+    """Import the checkout's kernel in-process. With a `shadow`, every write the import performs against
+    the state copy lands in the shadow instead: every Path.write_text (the repo-root marker's door until
+    2026-09-20), and every os.open that creates or writes plus every os.replace whose destination is under
+    the copy (the marker's door since: a temp opened O_EXCL under the root and renamed onto repo-root,
+    kernel.py's _persist_repo_root; a read-only os.open is left alone). A temp's os.open (a name ending in
+    .tmp) is diverted unrecorded and its rename's destination is recorded; any other os.open write is
+    recorded under its own name, so a new import-time door shows in the shadowed list. The kernel writes the marker at
+    import, before any guard can be installed on the module, so the loader is the only place that can
+    take it; the diversion is removed once the import returns, and the guards install_guards puts on the
+    named write doors take over."""
     kpath = os.path.join(repo, "kernel", "kernel.py")
     if not os.path.isfile(kpath):
         raise BenchError("no kernel at %s" % kpath)
@@ -765,13 +779,31 @@ def load_kernel(repo, shadow=None):
     _ls_mod = importlib.util.module_from_spec(_ls_spec)
     _ls_spec.loader.exec_module(_ls_mod)
     load_source = _ls_mod.load_source
-    real_write_text = Path.write_text
+    real_write_text, real_os_open, real_os_replace = Path.write_text, os.open, os.replace
+    write_flags = os.O_WRONLY | os.O_RDWR | os.O_CREAT
+
+    def diverted(path, record):
+        """The path a write to `path` takes: its shadow when it aims at the copy, itself otherwise."""
+        if not isinstance(path, (str, os.PathLike)) or shadow.rel(path) is None:
+            return path
+        return shadow.target(path, record=record)
 
     def diverted_write_text(self, data, *a, **k):
-        target = shadow.target(self) if shadow.rel(self) is not None else self
-        return real_write_text(target, data, *a, **k)
+        return real_write_text(diverted(self, True), data, *a, **k)
+
+    def diverted_os_open(path, flags, *a, **k):
+        # a write or create under the copy lands in the shadow, RECORDED unless its name ends in .tmp (the repo-root
+        # temp and the token mint's: the report does not name a temp, and the rename below records the destination),
+        # so an import-time os.open write that no rename follows is still listed rather than absorbed unnamed
+        # (review find, 2026-09-20); a read-only open reads the copy as ever
+        if flags & write_flags:
+            path = diverted(path, not str(path).endswith(".tmp"))
+        return real_os_open(path, flags, *a, **k)
+
+    def diverted_os_replace(src, dst, *a, **k):
+        return real_os_replace(diverted(src, False), diverted(dst, True), *a, **k)
     if shadow is not None:
-        Path.write_text = diverted_write_text
+        Path.write_text, os.open, os.replace = diverted_write_text, diverted_os_open, diverted_os_replace
     try:
         km = load_source("romp_kernel_perf_bench", kpath)
         # a backend already loaded under this name (by the kernel's import, or earlier in this process) is
@@ -780,7 +812,7 @@ def load_kernel(repo, shadow=None):
         if sbmod is None:
             sbmod = load_source("romp_sdk_backend", os.path.join(repo, "kernel", "sdk_backend.py"))
     finally:
-        Path.write_text = real_write_text
+        Path.write_text, os.open, os.replace = real_write_text, real_os_open, real_os_replace
     for sym in ("_live_scope", "Sessions", "build_session", "build_feed", "build_timeline", "_push",
                 "_names_snapshot", "_sessions", "_parse", "_parse_cache", "_live_map", "_atomic_write",
                 "_built_feed", "_built_timeline", "em", "jd"):
