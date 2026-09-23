@@ -974,10 +974,12 @@ SHARED_HANDOFF_KEYS = ("absent", "fallback", "corrupt", "unreadable_journal")
 # corrupt and unreadable_journal, are hand-off keys that are NOT call keys, so a bump of either beside a goal_io loads bump with no
 # call through the door balanced the shared
 # reconciliation (no call key moved) and the writer one (one hand-off per loads) and red nothing in _pass; the bound is where it
-# reds on a pass with no fill, and the cases' writerLoads elements where one such pair rides beside each fill (the bound admits
-# second == fills). The other two, dup and refuse, are neither call keys nor hand-off keys, so a bump of either moves no
-# reconciliation and the bound admits it up to the fills; _pass holds them to zero on every pass, with the reason zero holds in this
-# harness (review round 4, extra5-1: a spurious bump of either beside a genuine fill was witnessed by nothing).
+# reds on a pass with no fill, and the writerLoads elements of the cases that read one where one such pair rides beside each fill
+# (the bound admits second == fills; the raise case and the first row of the case whose records the sweep does not own drive
+# passes with fills and read none, so such a pair on a road only they reach is caught by nothing, as _pass's docstring says). The
+# other two, dup and refuse, are neither call keys nor hand-off keys, so a bump of either moves no reconciliation and the bound
+# admits it up to the fills; _pass holds them to zero on every pass, with the reason zero holds in this harness (review round 4,
+# extra5-1: a spurious bump of either beside a genuine fill was witnessed by nothing).
 SHARED_SECOND_KEYS = ("unreadable_journal", "corrupt", "dup", "refuse")
 # The fill road's entry keys: the call keys whose bump falls through into the fill (the statement list holding it does not end in
 # a return or a raise), so the fills a pass made are their sum, the bound's right-hand side in _pass. The roster pin derives them
@@ -2563,7 +2565,11 @@ class _WalkHarness(unittest.TestCase):
         and passes the bound; the cases' writerLoads elements are what red it there, 2 against 0 on the first pass (a
         consolidation-pass verifier's state), and two pairs per fill red the bound again, 4 against 2. So for the hand-off second keys,
         corrupt and unreadable_journal, the two layers cover different passes: the bound holds the passes with no fill on its own, and
-        the tuples' writerLoads elements the passes with fills. For dup and refuse, neither call keys nor hand-off keys, the
+        the tuples' writerLoads elements the passes with fills of the cases that read one. Two drives have passes with fills and read
+        no writerLoads element, the raise case on every pass and the first row of the case whose records the sweep does not own, so
+        a pair riding beside each fill on a road only those drives reach is caught by nothing in the module (a staging check of the
+        round-9 fixes planted the pair in the tick's per-session handler, which a look reaches only by raising, and the module stayed
+        green). For dup and refuse, neither call keys nor hand-off keys, the
         writerLoads elements see nothing, so the second layer is the zero line beside the bound: this harness is single-threaded (no
         concurrent fill, so no dup) and writes no goals-archive during a pass (so no refuse), and a bump of either on any pass is a
         counter moved with no road that moves it (review round 4, extra5-1: the sentence here said the two layers cover every pass,
@@ -2657,9 +2663,13 @@ class _WalkHarness(unittest.TestCase):
                              "against %d fill(s) (%s); recorded shared calls: %s. A second bump past the fills is a "
                              "counter moved with no call through the door; corrupt and unreadable_journal are hand-off keys and not call keys, "
                              "so such a move beside a goal_io loads bump balances the shared and the writer reconciliations and is caught here "
-                             "alone on a pass with no fill (on a pass with fills, one such pair per fill passes this bound and the case's "
-                             "writerLoads element catches it)" % (now, second, sum(second.values()), fills,
-                                        ", ".join("%s %d" % (k, d["shared"].get(k, 0)) for k in SHARED_FILL_KEYS), "; ".join(records) or "none"))
+                             "alone on a pass with no fill (on a pass with fills, one such pair per fill passes this bound and a "
+                             "case's writerLoads element catches it where the case reads one; the raise case and the first row of the "
+                             "case whose records the sweep does not own read none, so such a pair on a road only they reach is caught "
+                             "by nothing)"
+                             % (now, second, sum(second.values()), fills,
+                                ", ".join("%s %d" % (k, d["shared"].get(k, 0)) for k in SHARED_FILL_KEYS),
+                                "; ".join(records) or "none"))
         # the second keys that are neither call keys nor hand-off keys, dup and refuse: no reconciliation reads them and the bound
         # above admits them up to the fills, so they are held to zero here, with the reason zero holds (review round 4, extra5-1)
         spurious = {k: v for k, v in second.items() if k not in SHARED_HANDOFF_KEYS}
@@ -3743,62 +3753,86 @@ class TheCountersOneSite(unittest.TestCase):
         of the store on the same pass, outside both bounds and named with their bounds in the reference's jobs block (the module
         docstring); a load outside the pass's `_auto_nudge_tick` call, outside the window (the module docstring, _pass); a reader below
         the judge's loaders or beside its module, the kernel opening and parsing the store file itself or calling `jd._read_store_json`,
-        outside the recorders and both reconciliations (the module docstring, _pass); a second judge module, reached under another name
-        or under jd by a binding, an attribute store or a constant the birth pin reads, outside both execution witnesses and refused by
-        the birth pin alone (the module docstring); a load through a door of the judge module onto its cache or its counters that no
-        recorder wraps, or through a reference to a door taken before a recorder stood, noticed by the reconciliations and not named
-        (the module docstring, _pass); a load written on a boundary wrapper's hand-off line, named for the kernel caller and counted
-        under that caller's mechanism, since the step-over is line-granular (the module docstring); a loader in the real body of a
-        helper the fixture replaces, seen by the replaced-helpers source census alone and one level deep, so a loader in a callee of
-        that body is outside it (the module docstring, the replaced-helpers case); a wrapper handed to a census in place of the named
-        body, held by the identity check (the wrapper class of _LIMITS); a loader reached through a string constant, outside the site
-        census and refused by the birth pin in the kernel and the judge, and one reached under a name bound outside the scanned body,
-        refused by the same pin (the string and outside classes); a loader name, or jd, completed at run time from constants that spell
-        no door whole after the three transforms _door_text undoes, outside every static pin (the assembled class, _loader_births, the
-        birth case); a loader named in no code (prose, a string annotation, a keyword spelled like one), no site by the census's own
-        rule (the none class); a census form nobody listed, held by nothing, since the enumeration is a sample and its limit texts are
-        read by no assertion (TheCensusOverEveryForm); a stub installed before setUp or on a judge directory or path name the rebind
+        outside the recorders and both reconciliations (the module docstring, _pass); a read by the look or the gate of the other pass
+        session's store, which lands in that session's count and is held by the ceilings, no assertion checking that each reads only the
+        session it looks at (_pass); a second judge module, reached under another name or under jd by a binding, an attribute store or a
+        constant the birth pin reads, outside both execution witnesses and refused by the birth pin alone (the module docstring); a load
+        through a door of the judge module onto its cache or its counters that no recorder wraps, or through a reference to a door taken
+        before a recorder stood, noticed by the reconciliations and not named (the module docstring, _pass); a load written on a
+        boundary wrapper's hand-off line, named for the kernel caller and counted under that caller's mechanism, since the step-over is
+        line-granular (the module docstring); a call through load_goals_or_fault, which no harness case drives, so a wrapper missing
+        from the recorder's boundary is noticed only by the derivation the birth pin reads (the comment above _BOUNDARY_HANDOFFS); a
+        loader in the real body of a helper the fixture replaces, seen by the replaced-helpers source census alone and one level deep,
+        so a loader in a callee of that body is outside it (the module docstring, the replaced-helpers case); a wrapper handed to a
+        census in place of the named body, held by the identity check where a census runs it first, the replaced-helpers census on the
+        fixture's helpers and the walk census and the gate scan on the look and the gate factory (the wrapper class of _LIMITS,
+        _loader_sites, _the_named_def); a loader reached through a string constant, outside the site census and refused by the birth pin
+        in the kernel and the judge where the constant, read through _door_text, spells a door whole or carries the name to a listed
+        lookup, a dict read or a subscript key, and one reached under a name bound outside the scanned body, refused by the same pin
+        (the string and outside classes); a loader name completed at run time from constants that spell no door whole after the three
+        transforms _door_text undoes and either carry the name in one piece to no listed lookup, dict read or subscript key or reach one
+        in a text those transforms do not restore, and jd completed at run time from constants none of which reads as jd, each outside
+        every static pin (the assembled class, _loader_births, the birth case); a loader named in no code (prose, a string annotation, a
+        keyword spelled like one), no site by the census's own rule (the none class); a census form nobody listed, held by nothing,
+        since the enumeration is a sample and its limit texts are read by no assertion, and the class each missed form is filed under, a
+        classification by hand (TheCensusOverEveryForm); a stub installed before setUp or on a judge directory or path name the rebind
         moves, outside setUp's agreement check and the cleanup's check, whose contract cases probe the two regions the check once missed
-        (setUp, _restore, TheAgreementCheckSpansSetUp); a stub in a container the cleanup does not read (a member of a module-level
-        dict, list or set, an instance attribute, an imported module's attribute, a class the module owns and binds in no global) or on
-        a class the module imports or builds under another module's name, which the ownership test does not read, outside the cleanup's
-        check (_restore, _class_attributes); the names the cleanup's check sets aside: a row of the tick allowance, TICK_REBOUND_KM or
-        TICK_REBOUND_JD, empty today, whose rebinding by the tick is not checked, so a row that outlives its rebinding is unseen, and
-        the warnings registry, _INTERPRETER_GLOBALS, set aside by name (_restore, the comments above TICK_REBOUND_KM and
-        _INTERPRETER_GLOBALS); a retry of the whole look, by the gate, by the pass loop or by the look calling itself, which leaves the
-        load a statement of the look's own body and so satisfies the site census, that fires only on a raise or a fault no case drives
-        (a TypeError, a KeyError, an EMFILE or EIO fault), caught by nothing in the module (the raise and fault cases); the fault case's
-        mode-000 road, skipped under root, and goals.loads_shared, asserted nowhere in the raise case (the fault and raise cases); the
-        counter's name completed at run time, a constant carrying the name whole to a callee the contained-name clause does not list
-        (exec bound to another name, a partial of exec), and a spelling in escape sequences alone, in a module whose text holds the name
-        in no letter case, each outside the counter census, and a write that reaches the counter with no spelling of its name, outside
-        any static census, all of them caught only by execution on a driven road, so a write on a road no case drives is caught by
-        nothing (the site case); a second-key bump on a road no drive takes, a compare_miss entering the dup or refuse arm, the hand-off
-        itself raising, or other state no drive arranges (a drive has at most one node, one sid and one call), and one placed in a
-        callee of the door, seen by the counters alone (the door witness, _nested_codes); the constructs the roster pin's clauses do not
-        name, which those clauses pass (the bump-roster pin); an assertion's own weakening, shown by the recorded plants and by nothing
-        in the module, among them the second-bump bound's comprehension with corrupt filtered out and the bound's assertion disabled,
-        which the roster pin, reading the door's source and the constant and not the comprehension, does not see (the consolidation
-        pass's paragraph); a traversal outside the finder's forms (a name read by string, a rebound getattr, an unlisted name, a
-        recursion over ast.iter_fields, node._fields or ast.dump), left to the stranger witness, a form removed from the finder, its
-        samples and its roster at once, unseen, and a road per form with no sample row, which no derivation counts and only the plants
-        the history paragraphs record pin (the finder case); the stranger witness's residue, the roots of the other parse modes, a
-        census that reads a child off the parent the walk yielded, which reds with an exception that is not the refusal, a census whose
-        walk stops before the module body's last statement, which the plant placed first no longer catches, and a census that parses
-        under another road or is handed a pre-parsed tree, outside the roster's floor (the stranger witness, _census_floor); each
-        position's record, its kind, list shape, base and primitive types, bounded by what the hand-kept corpus showed, each stranger
-        deriving from that base (_grammar_positions, the stranger witness); a compatibility class the running interpreter lacks, no red,
-        since that set shrinks by version (_walk); the gate's equality, asserted only where the fixture caches every parse, its bound
-        the general pin (the module docstring); the Bounds pin reading the label and a roster's spelling and not the truth of the
-        sentence, a roster read through a helper the row calls outside it (the stranger witness's Bounds case and its messages); the
-        case-count sweep reading by value no count spelled as a word, no historical clean line, no per-state figure, each riding on its
-        re-take (the current head's paragraph's read for their form alone), and no historical paragraph's figures, read for the head
-        label alone, the figures of a mutation whose words spell 'this head' among them (the Docs count case); every case and helper
-        docstring, the site case's list among them, read for its truth by no case (of this module's docstrings the Docs cases read the
-        module's own alone, and the Bounds pin a roster row's for the label and the spelling), so a false sentence there leaves the
-        module green (the round-7 paragraph); the ledger entry, carried by hand and read by no case (the reference case); and the
-        stranger witness's cost floor, every roster row at every plantable position with a breadth-first first walk (the module
-        docstring)."""
+        (setUp, _restore, TheAgreementCheckSpansSetUp); the contracts over stand-ins, each holding its mechanism over a hand-written
+        stand-in and not over the real one: _caller's step-over, over one stand-in wrapper, the composition of the real boundary set
+        being setUp's guard's, and the trace's reach into code objects nested in the door, over a stand-in alone while the door holds
+        none, the stand-in's shape a contract over the mechanism (TheRecorderNamesTheAsker, the door witness and its coverage case); a
+        stub in a container the cleanup does not read (a member of a module-level dict, list or set, an instance attribute, an imported
+        module's attribute, a class the module owns and binds in no global) or on a class the module imports or builds under another
+        module's name, which the ownership test does not read, outside the cleanup's check (_restore, _class_attributes); the names the
+        cleanup's check sets aside: a row of the tick allowance, TICK_REBOUND_KM or TICK_REBOUND_JD, empty today, whose rebinding by the
+        tick is not checked, so a row that outlives its rebinding is unseen, and the warnings registry, _INTERPRETER_GLOBALS, set aside
+        by name (_restore, the comments above TICK_REBOUND_KM and _INTERPRETER_GLOBALS); a retry of the whole look, by the gate, by the
+        pass loop or by the look calling itself, which leaves the load a statement of the look's own body and so satisfies the site
+        census, that fires only on a raise or a fault no case drives (a TypeError, a KeyError, an EMFILE or EIO fault), caught by
+        nothing in the module (the raise and fault cases); the fault case's mode-000 road, skipped under root, and goals.loads_shared,
+        asserted nowhere in the raise case (the fault and raise cases); the counter's name completed at run time, by a transform
+        _door_text does not undo, from constants none of which reads as it whole or carries it whole into a subscript key, a listed
+        lookup or a dict read, a constant carrying the name whole to a callee the contained-name clause does not list (exec bound to
+        another name, a partial of exec), and a spelling in escape sequences alone, in a module whose text holds the name in no letter
+        case, each outside the counter census, and a write that reaches the counter with no spelling of its name, outside any static
+        census, all of them caught only by execution on a driven road, so a write on a road no case drives is caught by nothing (the
+        site case); the increment's value, which no census reads (a `+= 2` or a `+= 1.0` is a bump), held by the served counter's delta
+        (_bump_sites, the bump forms B03 and B04); a second-key bump on a road no drive takes, a compare_miss entering the dup or refuse
+        arm, the hand-off itself raising, or other state no drive arranges (a drive has at most one node, one sid and one call), and one
+        placed in a callee of the door, seen by the counters alone (the door witness, _nested_codes); a forged pair, a corrupt or
+        unreadable_journal bump beside a goal_io loads bump with no call through the door, one per fill, which passes the second-bump
+        bound and is caught by the writerLoads element of a case that reads one, so a pair beside each fill on a road only the raise
+        case or the first row of the case whose records the sweep does not own reaches, drives that read none, is caught by nothing
+        (_pass, the bound's message, the comment above SHARED_SECOND_KEYS); a tracer already installed on the thread, a coverage tool or
+        a debugger riding on sys.settrace, set aside for each traced block, so it sees no frame entered inside the block, the door's
+        among them (_line_trace); the constructs the roster pin's clauses do not name, which those clauses pass (the bump-roster pin);
+        an assertion's own weakening, shown by the recorded plants and by nothing in the module, among them the second-bump bound's
+        comprehension with corrupt filtered out and the bound's assertion disabled, which the roster pin, reading the door's source and
+        the constant and not the comprehension, does not see (the consolidation pass's paragraph); a traversal outside the finder's
+        forms (a name read by string or assembled at run time, a rebound getattr, an unlisted name, a recursion over ast.iter_fields,
+        node._fields or ast.dump), left to the stranger witness, a form removed from the finder, its samples and its roster at once, and
+        a name removed from _TRAVERSAL with its samples when no exemption row and no reference inside _walk uses it, each unseen, since
+        no count pins either roster, and a road per form with no sample row, which no derivation counts and only the plants the history
+        paragraphs record pin (the finder case, the comment above _FINDER_FORMS); the stranger witness's residue, the roots of the other
+        parse modes, a census that reads a child off the parent the walk yielded, which reds with an exception that is not the refusal,
+        a census whose walk stops before the module body's last statement, which the plant placed first no longer catches, and a census
+        that parses under another road or is handed a pre-parsed tree, outside the roster's floor (the stranger witness, _census_floor);
+        which real source a roster row's drive parses, its drive's, held by the stranger witness only to be real (the stranger witness's
+        accept-side message); the class chains and the module-level statement the roster case pins outside the roster, which the
+        stranger witness does not drive, each outside by a reason that is a judgment, the site case's census of the counter across the
+        kernel by the round-8 ruling that placed it in that case (the roster case, the stranger witness); each position's record, its
+        kind, list shape, base and primitive types, bounded by what the hand-kept corpus showed, each stranger deriving from that base
+        (_grammar_positions, the stranger witness); a compatibility class the running interpreter lacks, no red, since that set shrinks
+        by version (_walk); the gate's equality, asserted only where the fixture caches every parse, its bound the general pin (the
+        module docstring); the Bounds pin reading the label and a roster's spelling and not the truth of the sentence, a roster read
+        through a helper the row calls outside it (the stranger witness's Bounds case and its messages); the case-count sweep reading by
+        value no count spelled as a word, no historical clean line, no per-state figure, each riding on its re-take (the current head's
+        paragraph's read for their form alone), and no historical paragraph's figures, read for the head label alone, the figures of a
+        mutation whose words spell 'this head' among them (the Docs count case); every case and helper docstring, the site case's list
+        among them, read for its truth by no case (of this module's docstrings the Docs cases read the module's own alone, and the
+        Bounds pin a roster row's for the label and the spelling), so a false sentence there leaves the module green (the round-7
+        paragraph); the ledger entry, carried by hand and read by no case (the reference case); and the stranger witness's cost floor,
+        every roster row at every plantable position with a breadth-first first walk (the module docstring)."""
         self._the_named_def("_auto_nudge_session", km._auto_nudge_session, "_auto_nudge_session")
         at = [i for i, _ln in _loader_sites(km._auto_nudge_session, "jd.load_goals_shared")]
         self.assertEqual(len(at), 1, "one shared load in the walk's look, by either spelling of the shared door: a second call site is "
@@ -4851,7 +4885,8 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
         source derivation against the samples alone, and the branch deleted with its rows removed left them agreeing, so the roster
         is the copy that names the loss). Bounds: the names and the forms (the ruling's stop and the finder's policy, two
         rosters: a list of syntax does not converge, and a form removed from the finder, the samples and the roster at once is unseen,
-        since no count pins either roster); the samples and the limits as the independent source, literal rows the
+        as is a name removed from _TRAVERSAL with its samples when no exemption row and no reference inside _walk uses it, since no
+        count pins either roster); the samples and the limits as the independent source, literal rows the
         module cannot compute without spelling the names they test; and the roads per form, which no derivation counts (a road with
         no sample row is pinned by the plants the history paragraphs record alone)."""
         refs = _traversal_references(ast.parse(Path(os.path.realpath(__file__)).read_text(encoding="utf-8")))
