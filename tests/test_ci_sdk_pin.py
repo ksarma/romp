@@ -2978,6 +2978,11 @@ class ChildPytestLaunchers(unittest.TestCase):
         ("subprocess.run by a star import", 'from subprocess import *\nrun("pytest -q", shell=True)\n', "unparsed", "a pytest command in a shell string"),
         ("a name bound twice in one scope, the launcher first",
          'import os, subprocess\nrun = subprocess.run\nrun = os.getcwd\nrun("pytest -q", shell=True)\n', "unparsed", "a pytest command in a shell string"),
+        # a method does not see its class body's names, as Python looks them up: a class attribute of the same name does
+        # not hide the module's launcher from a method
+        ("a class attribute does not hide the module's name from a method",
+         'import os\nfrom subprocess import run\n\nclass T:\n    run = os.getcwd\n\n    def go(self):\n        return run("pytest -q", shell=True)\n',
+         "unparsed", "a pytest command in a shell string"),
     )
     # the argv each positional form reads, its elements joined by spaces (None for an expression): a spawn form's mode
     # and an e form's env are not argv elements. Strings, not lists: a list here would be an argv literal this census reads.
