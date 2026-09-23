@@ -12,7 +12,6 @@ import ast
 import base64
 import contextlib
 import errno
-import functools
 import inspect
 import io
 import json
@@ -20,6 +19,7 @@ import os
 import re
 import socket
 import struct
+import sys
 import tempfile
 import threading
 import time
@@ -33,6 +33,12 @@ from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
+if __package__:                  # under pytest tests/ is a package: THE SAME parse_cache module object every census in
+    from . import parse_cache as PC   # the process shares (one parse per file, one derivation per key)
+else:                            # a direct run, or unittest from inside tests/: no package, the module by name
+    if HERE not in sys.path:
+        sys.path.insert(0, HERE)
+    import parse_cache as PC
 
 # Hermetic state BEFORE the loads -- they resolve their state root at import time, and only
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
@@ -434,11 +440,12 @@ def _kernel_modules():
     return sorted(f for f in os.listdir(_KERNEL_DIR) if f.endswith(".py"))
 
 
-@functools.lru_cache(maxsize=None)
 def _parsed(name):
-    """kernel/<name>, parsed once per process. The trees are only read, never annotated."""
-    with open(os.path.join(_KERNEL_DIR, name), encoding="utf-8") as fh:
-        return ast.parse(fh.read())
+    """kernel/<name>'s tree, through tests/parse_cache.py: parsed once per process and shared with every other census
+    that reads the file, so kernel/kernel.py is one parse between them. READ-ONLY, the cache's contract: no attribute is
+    written on a node and no node is copied (no copy.deepcopy); per-node data a test derives lives in a table keyed by
+    id(node) that the test owns."""
+    return PC.source_and_tree(os.path.join(_KERNEL_DIR, name))[1]
 
 
 def _module_qual(module, name):
@@ -453,11 +460,11 @@ def _short(qual):
     return qual.rsplit(":", 1)[-1].rsplit(".", 1)[-1]
 
 
-@functools.lru_cache(maxsize=None)
 def _source_functions():
     """Every module of the kernel's directory, parsed (_kernel_modules): {qualified name (_module_qual): def} for every
     module-level function and every method of a module-level class, and [(module, statement)] for the other top-level
-    and class-level statements. Read-only: the tests read these, never change them."""
+    and class-level statements. Read-only: the tests read these, never change them. Called once per process, inside the
+    census's one derivation (_flag_census)."""
     fns, rest = {}, []
     for module in _kernel_modules():
         for node in _parsed(module).body:
@@ -689,14 +696,76 @@ def _unwrap_str(node):
     return node
 
 
+_CENSUS_KEY = ("tests/test_obsidian_state_routes.py FlagWriterPopulation", _KERNEL_DIR)
+
+
+def _flag_census():
+    """FlagWriterPopulation's whole derivation behind ONE tests/parse_cache.py key (_CENSUS_KEY): built once per process
+    from the kernel directory's trees (read through the cache, parsed once per process with the other censuses) and this
+    class's sets, and read by every test of the class after. The build must leave no cycle behind, since the cache
+    freezes what is tracked when it returns (tests/parse_cache.py, the rule for a build): its value is plain data
+    (dicts, sets, tuples and the cached trees' own nodes) and it makes no closure or object that refers back to itself.
+    Unpinned, as a measurement: with the collector off, a collection right after this build found nothing unreachable
+    when the cache was adopted here."""
+    return PC.derived(_CENSUS_KEY, lambda: _derive_flag_census(FlagWriterPopulation))
+
+
+def _derive_flag_census(cls):
+    """The census, from the source: every function and statement (_source_functions); the names bound to a module in
+    the kernel and in its judge (the other module that names the store), so a call spells as os.replace, not .replace
+    (_call_spelling; an unknown spelling is outside READS, a write); the functions that name the store in code
+    (namers); the setters of session-flags.json, three ways: the functions that name the file and call a store write
+    (the one door _write_state_json, its _atomic_write, a Path write), the functions that call the clean-write hook
+    every landed write of that store runs (_flags_written), and the functions that hand the store's path to anything
+    outside READS (_store_flow), whatever the call is spelled; every setter any of them finds with WRITERS (setters,
+    and shorts, the names code mentions them by); the functions other than a setter that mention one (callers); and
+    the roads (_derive_roads)."""
+    fns, rest = _source_functions()
+    modules = frozenset(n for m in (km, km.jd) for n, v in vars(m).items() if isinstance(v, type(os)))
+    namers = {q for q, fn in fns.items() if _store_seeds(fn)}
+    writes = {"_write_state_json", "_atomic_write", "write_text", "write_bytes"}
+    by_write = {q for q in namers if {_callee(n) for n in ast.walk(fns[q]) if isinstance(n, ast.Call)} & writes}
+    by_hook = {q for q, fn in fns.items() if "_flags_written" in {_callee(n) for n in ast.walk(fn) if isinstance(n, ast.Call)}}
+    by_flow = {q for q in namers if set(_store_flow(fns[q], modules)) - cls.READS}
+    setters = cls.WRITERS.union(by_write, by_hook, by_flow)
+    shorts = {_short(q) for q in setters}
+    callers = {q for q, fn in fns.items() if q not in setters and _refs(fn) & shorts}
+    return {"fns": fns, "rest": rest, "modules": modules, "namers": namers, "writers": (by_write, by_hook, by_flow),
+            "setters": setters, "shorts": shorts, "callers": callers, "roads": _derive_roads(fns, setters)}
+
+
+def _derive_roads(fns, setters):
+    """{(function, target): mentions} for every function that mentions a setter, then every function that mentions one
+    of those, to a fixpoint, over every module of the kernel's directory (a mention as _mentioned reads it; a function
+    matched by its bare name, so two sharing a name both count, on the safe side). A function's mentions of itself are
+    left out."""
+    on_road = set(setters)
+    frontier, roads = set(on_road), {}
+    while frontier:
+        short = {}
+        for t in frontier:
+            short.setdefault(_short(t), set()).add(t)
+        grown = set()
+        for q, fn in fns.items():
+            for n in _mentions(fn, set(short)):
+                for t in set().union(*(short[m] for m in _mentioned(n) & set(short))) - {q}:
+                    roads[(q, t)] = roads.get((q, t), 0) + 1
+                    if q not in on_road:
+                        grown.add(q)
+        on_road |= grown
+        frontier = grown
+    return roads
+
+
 class FlagWriterPopulation(unittest.TestCase):
     """The doors that write a session flag, derived from the kernel's source and pinned as a set (the reviewer's
     ruling in the round-3 review of fork PR #897): the setSessionFlag socket op and POST /flag, nothing else. Each asks
-    the one predicate, _lane_flag_refusal, before its setter, returns on its answer before any setter runs, and hands
-    each setter the name it asked about. A new door (a socket op arm, a route, or a helper that calls a setter of
-    session-flags.json) reds here until it is added on purpose. An arm is a door when it MENTIONS a setter
-    (_doors_naming), so an arm that calls it by name, binds it to a local, picks it from a table or names it by a string
-    (`globals()["_set_session_flag"]`) is a door. Every road from a request to a setter is pinned (ROADS), derived upward
+    the one predicate, _lane_flag_refusal, before its setter, returns on its answer before any setter runs, hands
+    _set_session_flag as its flag argument the expression it asked the predicate about, with nothing rebinding that
+    expression's root name in between, and calls each setter with exactly its pinned parameters (SIGNATURES). A new
+    door (a socket op arm, a route, or a helper that calls a setter of session-flags.json) reds here until it is added
+    on purpose. An arm is a door when it MENTIONS a setter (_doors_naming), so an arm that calls it by name, binds it to
+    a local, picks it from a table or names it by a string (`globals()["_set_session_flag"]`) is a door. Every road from a request to a setter is pinned (ROADS), derived upward
     from the setters by mention, so a new function or arm that hands a door function a client's input (a socket op
     forwarding to _state_write_route("/flag", ...), a second POST path onto it) reds as well. The setters are found
     without trusting how a function writes: every function that names the store in code is pinned by role (NAMERS),
@@ -709,7 +778,22 @@ class FlagWriterPopulation(unittest.TestCase):
     a path that names no ".py" file. The stdlib's handler enters do_GET and do_POST by a name it builds, which is
     where the roads end. These read WHERE the code lives, so they guard the population and the arms' shape, not the
     behaviour; the behaviour is executed in SocketFlagWhitelist (the socket op, in process and over a real socket) and
-    in FlagRoute.test_an_unknown_flag_key_or_a_missing_id_is_a_400_naming_it (the route)."""
+    in FlagRoute.test_an_unknown_flag_key_or_a_missing_id_is_a_400_naming_it (the route).
+
+    WHAT THE NAME PINS READ, AND WHAT THEY DO NOT (the reviewer's disposition of the fourth re-verify's V4a and V4b:
+    disclosed here, not chased with more rules). test_every_setter_writes_the_name_its_door_asked_about reads, as
+    source text, the one expression each door asks the predicate about, the setter call's flag argument, and, for a
+    rebind between the ask and the setter, that expression's own root name (`msg` for msg["flag"]);
+    test_each_setter_takes_and_is_handed_exactly_its_pinned_parameters reads the setters' parameter lists and each
+    door's setter calls. They do NOT read an alias of the frame (`fr = msg`, then `fr["flag"] = ...` after the gate,
+    V4a), a name built from pieces, or the setters' bodies, so what a setter writes from the parameters it is handed is
+    outside them (V4b's second name parameter is closed by SIGNATURES, which pins the parameters, not by reading the
+    body). The reason: these are text-keyed guards, which can follow only the names the source spells, and each road
+    around them has so far meant another rule. The behaviour is pinned by execution instead, in SocketFlagWhitelist's
+    test_an_unlisted_name_is_refused_on_the_socket_in_the_routes_words_and_writes_nothing,
+    test_every_listed_name_is_accepted_on_the_socket_and_lands and
+    test_a_real_socket_to_the_served_handler_is_refused_the_same_way. Those send the frames a client sends today, so a
+    rewrite keyed on a field they do not send (V4a reads one) is outside them as well."""
 
     WRITERS = {"_set_session_flag", "_set_notify_session"}
     DOORS = {("socket op", "setSessionFlag"), ("route", "/flag")}
@@ -733,6 +817,8 @@ class FlagWriterPopulation(unittest.TestCase):
               "session_backend.py", "logins.py", "credentials.py", "sdk_backend.py", "host_transport.py",
               "session_host.py", "codex_backend.py", "codex_events.py", "codex_runtime.py"}
     SETTER_CALLS = {"_set_session_flag": 1, "_set_notify_session": 1}   # per door: each setter called once
+    # each setter's parameters, exactly: what every door's call of it must bind, and all the setter is handed
+    SIGNATURES = {"_set_session_flag": ("sid", "flag", "value"), "_set_notify_session": ("sid", "value")}
     # every road from a request to a setter, as {(function, a function on the way it mentions): mentions} (_roads): the two
     # door functions mention each setter once, do_POST hands _state_write_route the request, the socket's receive loop
     # (_ws) hands _dispatch_ws each client frame, and do_GET upgrades a request to that loop. The stdlib's handler enters
@@ -745,73 +831,42 @@ class FlagWriterPopulation(unittest.TestCase):
     ROUTE_ARMS = {frozenset({("route", "/flag"), ("route", "/views"), ("route", "/order")})}
 
     def setUp(self):
-        self.fns, self.rest = _source_functions()
-        # the names bound to a module in the kernel and in its judge (the other module that names the store), so a
-        # call spells as os.replace, not .replace (_call_spelling); an unknown spelling is outside READS, a write
-        self.modules = {n for m in (km, km.jd) for n, v in vars(m).items() if isinstance(v, type(os))}
-
-    _derived = {}   # the derivations below, once per process: they read only the parsed source and this class's sets
-
-    def _once(self, key, derive):
-        if key not in FlagWriterPopulation._derived:
-            FlagWriterPopulation._derived[key] = derive()
-        return FlagWriterPopulation._derived[key]
+        self.census = _flag_census()
+        self.fns, self.rest, self.modules = self.census["fns"], self.census["rest"], self.census["modules"]
 
     def _namers(self):
-        return self._once("namers", lambda: {q for q, fn in self.fns.items() if _store_seeds(fn)})
+        return self.census["namers"]
 
     def _writers(self):
-        """The setters of session-flags.json, three ways: the functions that name the file and call a store write
-        (the one door _write_state_json, its _atomic_write, a Path write); the functions that call the clean-write hook
-        every landed write of that store runs (_flags_written); and the functions that hand the store's path to
-        anything outside READS (_store_flow), whatever the call is spelled."""
-        writes = {"_write_state_json", "_atomic_write", "write_text", "write_bytes"}
-
-        def derive():
-            named = self._namers()
-            by_write = {q for q in named if {_callee(n) for n in ast.walk(self.fns[q]) if isinstance(n, ast.Call)} & writes}
-            by_hook = {q for q, fn in self.fns.items()
-                       if "_flags_written" in {_callee(n) for n in ast.walk(fn) if isinstance(n, ast.Call)}}
-            by_flow = {q for q in named if set(_store_flow(self.fns[q], self.modules)) - self.READS}
-            return by_write, by_hook, by_flow
-        return self._once("writers", derive)
+        """The setters of session-flags.json, three ways (_derive_flag_census): by a store write, by the clean-write
+        hook, by where the store's path flows."""
+        return self.census["writers"]
 
     def _setters(self):
         """Every setter any derivation finds, so a new one is also a name the doors below are derived against."""
-        return self.WRITERS.union(*self._writers())
+        return self.census["setters"]
 
     def _shorts(self):
         """The setters as code mentions them (_short): a judge setter is called jd.<name> from the kernel."""
-        return {_short(q) for q in self._setters()}
+        return self.census["shorts"]
 
     def _callers(self):
-        setters, shorts = self._setters(), self._shorts()
-        return self._once("callers", lambda: {q for q, fn in self.fns.items() if q not in setters and _refs(fn) & shorts})
+        return self.census["callers"]
 
     def _roads(self):
-        """{(function, target): mentions} for every function that mentions a setter, then every function that mentions
-        one of those, to a fixpoint, over every module of the kernel's directory (a mention as _mentioned reads it; a
-        function matched by its bare name, so two sharing a name both count, on the safe side). A function's mentions of
-        itself are left out."""
-        return self._once("roads", self._derive_roads)
+        """{(function, target): mentions} for every road from a request to a setter (_derive_roads)."""
+        return self.census["roads"]
 
-    def _derive_roads(self):
-        on_road = set(self._setters())
-        frontier, roads = set(on_road), {}
-        while frontier:
-            short = {}
-            for t in frontier:
-                short.setdefault(_short(t), set()).add(t)
-            grown = set()
-            for q, fn in self.fns.items():
-                for n in _mentions(fn, set(short)):
-                    for t in set().union(*(short[m] for m in _mentioned(n) & set(short))) - {q}:
-                        roads[(q, t)] = roads.get((q, t), 0) + 1
-                        if q not in on_road:
-                            grown.add(q)
-            on_road |= grown
-            frontier = grown
-        return roads
+    def test_the_census_is_one_derivation_over_one_parse_per_module(self):
+        """tests/parse_cache.py's mechanism, read from its counters: the census is built once per process behind its one
+        key (_CENSUS_KEY) however many tests read it, and each module of the kernel's directory is parsed once per
+        process, a parse shared with every other census that reads the file (kernel/kernel.py among them). That the
+        trees stay read-only is checked by the thread-stop census's no-foreign-attribute pin, which walks every tree
+        the cache holds when it runs in the same process."""
+        self.assertTrue(_flag_census() is self.census, "every test reads the one memoised derivation")   # no repr of the census
+        self.assertEqual(PC.builds_of(_CENSUS_KEY), 1, "the census is derived once in this process")
+        self.assertEqual({m: PC.parses_of(os.path.join(_KERNEL_DIR, m)) for m in _kernel_modules()},
+                         {m: 1 for m in _kernel_modules()}, "each module of the kernel's directory, parsed once in this process")
 
     def test_the_census_reads_every_module_the_kernel_loads(self):
         """A writer in the judge, called from a socket op on a client's field, writes a flag as surely as one in
@@ -923,10 +978,14 @@ class FlagWriterPopulation(unittest.TestCase):
         """Asking is not refusing: the answer has to stop the write. In each door the ask is the whole value of an
         assignment to one name (`err = _lane_flag_refusal(flag)`); the very next statement is `if <that name>:`, with no
         else, whose body ends in a return; and every setter call sits in a statement after that `if` in the same block,
-        so only a name the predicate passed reaches a setter. An ask made conditional on a client's field
+        so a setter call runs only once the answer has let the request pass. An ask made conditional on a client's field
         (`... if msg.get("strict", True) else None`), a gate that tests more than the answer, the answer rebound before
-        its gate, a gate nested under another condition, or a refusal that falls through all red here. Read from the
-        source, so it guards the arm's shape; the executed refusal is SocketFlagWhitelist (socket op) and
+        its gate, a gate nested under another condition, or a refusal that falls through all red here. It reads the
+        order of the statements, not which name reaches the setter: that is
+        test_every_setter_writes_the_name_its_door_asked_about's rule, whose limits the class docstring states (an alias
+        of the frame that rewrites the name after the gate, the fourth re-verify's V4a, is outside both, since a
+        text-keyed guard follows only the names the source spells). Read from the source, so it guards the arm's
+        shape; the executed refusal is SocketFlagWhitelist (socket op) and
         FlagRoute.test_an_unknown_flag_key_or_a_missing_id_is_a_400_naming_it (route)."""
         shorts = self._shorts()
         checked = set()
@@ -965,15 +1024,22 @@ class FlagWriterPopulation(unittest.TestCase):
         self.assertEqual(checked, {frozenset({d}) for d in self.DOORS}, "both doors were read")
 
     def test_every_setter_writes_the_name_its_door_asked_about(self):
-        """Asking the predicate proves nothing unless the setter writes the name it was asked about. In each door: one
-        ask, of one expression; a setter mentioned only as the callee of a call by name, since the rules below read calls
-        and a setter bound to a local or picked from a table writes a name they cannot see; each setter called once
-        (SETTER_CALLS); _set_session_flag handed that same expression as its flag (str() of it counts as it);
-        _set_notify_session, which writes the `notify` key, only under an `if` that compares that expression with
-        "notify", a listed name; and nothing between the ask and a setter rebinds the expression or changes the
-        container it is read from. Read from the source, so it guards the arm's shape; the
-        executed refusal is SocketFlagWhitelist (socket op) and
-        FlagRoute.test_an_unknown_flag_key_or_a_missing_id_is_a_400_naming_it (route)."""
+        """Asking the predicate proves nothing unless the setter writes the name it was asked about. What this reads,
+        in each door, all as source text: one ask, of one expression; a setter mentioned only as the callee of a call by
+        name, since the rules below read calls and a setter bound to a local or picked from a table writes a name they
+        cannot see; each setter called once (SETTER_CALLS); _set_session_flag's flag argument, which must be that same
+        expression (str() of it counts as it); _set_notify_session, which writes the `notify` key, only under an `if`
+        that compares that expression with "notify", a listed name; and, between the ask and a setter, no statement
+        that rebinds the expression's own root name (`msg` for msg["flag"]), writes through it, or hands it to a call
+        that may change it. What it does NOT read: an alias of the frame (`fr = msg`, through which the name can be
+        rewritten after the gate: the fourth re-verify's V4a), a name built from pieces, and the setters' bodies and any
+        parameter beyond the flag argument (what a setter writes from what it is handed; the parameters themselves are
+        pinned by test_each_setter_takes_and_is_handed_exactly_its_pinned_parameters). The reason: this is a text-keyed
+        guard, which follows only the names the source spells; the behaviour is executed by SocketFlagWhitelist
+        (test_an_unlisted_name_is_refused_on_the_socket_in_the_routes_words_and_writes_nothing,
+        test_every_listed_name_is_accepted_on_the_socket_and_lands, test_a_real_socket_to_the_served_handler_is_refused_the_same_way)
+        and, for the route, FlagRoute.test_an_unknown_flag_key_or_a_missing_id_is_a_400_naming_it, within the limit the
+        class docstring states."""
         setters, shorts = self._setters(), self._shorts()
         self.assertEqual(set(self.SETTER_CALLS), setters, "every setter has a rule below")
         self.assertIn("notify", km._LANE_FLAGS)
@@ -982,7 +1048,7 @@ class FlagWriterPopulation(unittest.TestCase):
         checked = set()
         for q in sorted(self._callers()):
             fn = self.fns[q]
-            parents = {c: p for p in ast.walk(fn) for c in ast.iter_child_nodes(p)}
+            parents = {id(c): p for p in ast.walk(fn) for c in ast.iter_child_nodes(p)}   # a side table: the cached tree is read-only
             by_door = {}
             for door, node in _door_walk(fn, q):
                 by_door.setdefault(door, []).append(node)
@@ -1018,8 +1084,8 @@ class FlagWriterPopulation(unittest.TestCase):
                                          % (where, c.lineno, ast.unparse(given), ast.unparse(asked)))
                     else:
                         node, guard = c, None
-                        while node in parents and guard is None:
-                            up = parents[node]
+                        while id(node) in parents and guard is None:
+                            up = parents[id(node)]
                             if isinstance(up, ast.If) and node in up.body:
                                 guard = up
                             node = up
@@ -1047,6 +1113,42 @@ class FlagWriterPopulation(unittest.TestCase):
                     self.assertFalse(rebinds, "%s line %d: `%s` rebinds %s, or hands it to a call that may change it, between "
                                      "the ask and the setter, so the setter may write a name the predicate never saw"
                                      % (where, pos[0], ast.unparse(n), root))
+                checked.add(door)
+        self.assertEqual(checked, {frozenset({d}) for d in self.DOORS}, "both doors were read")
+
+    def test_each_setter_takes_and_is_handed_exactly_its_pinned_parameters(self):
+        """What this reads: each setter's parameter list, from the loaded function (inspect.signature, so a default, an
+        annotation, *args or **kwargs shows; the module is loaded from bin/romp-kernel, a link to the kernel/kernel.py
+        the census parses), against SIGNATURES, `(sid, flag, value)` and `(sid, value)`; and, from the source, every
+        setter call in each door, which must bind exactly those parameters, positionally or by keyword, each once, with
+        no * or ** spread. A setter given a second name parameter, or a door handing it one
+        (`_set_session_flag(sid, flag, value, also=msg.get("also"))`, the fourth re-verify's V4b), reds here. What
+        it does NOT read: the setters' bodies, so what a setter writes from the parameters it has is outside it, and an
+        alias of the frame or a name built from pieces in the arguments (the class docstring states both limits). The
+        reason: this is a text-keyed guard over the parameter lists and the calls, and a write traced through a body's
+        logic is past what one can follow; the behaviour is executed by SocketFlagWhitelist
+        (test_an_unlisted_name_is_refused_on_the_socket_in_the_routes_words_and_writes_nothing,
+        test_every_listed_name_is_accepted_on_the_socket_and_lands, test_a_real_socket_to_the_served_handler_is_refused_the_same_way)."""
+        setters, shorts = self._setters(), self._shorts()
+        self.assertEqual(set(self.SIGNATURES), setters, "every setter has a pinned signature")
+        for name, params in sorted(self.SIGNATURES.items()):
+            self.assertEqual(str(inspect.signature(getattr(km, name))), "(%s)" % ", ".join(params),
+                             "%s's parameters: a new one is a new input the doors' checks do not read" % name)
+        checked = set()
+        for q in sorted(self._callers()):
+            by_door = {}
+            for door, node in _door_walk(self.fns[q], q):
+                if isinstance(node, ast.Call) and _callee(node) in shorts:
+                    by_door.setdefault(door, []).append(node)
+            for door, calls in by_door.items():
+                for c in calls:
+                    params = self.SIGNATURES[_callee(c)]
+                    spread = any(isinstance(a, ast.Starred) for a in c.args) or any(k.arg is None for k in c.keywords)
+                    bound = list(params[:len(c.args)]) + ["<extra positional>"] * max(0, len(c.args) - len(params)) + [
+                        k.arg for k in c.keywords if k.arg is not None]
+                    self.assertTrue(not spread and Counter(bound) == Counter(params),
+                                    "%s %s line %d: `%s` does not pass exactly %s's parameters (%s), each once, with no * "
+                                    "or ** spread" % (q, sorted(door), c.lineno, ast.unparse(c), _callee(c), ", ".join(params)))
                 checked.add(door)
         self.assertEqual(checked, {frozenset({d}) for d in self.DOORS}, "both doors were read")
 
