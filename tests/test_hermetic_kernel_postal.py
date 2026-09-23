@@ -1670,6 +1670,12 @@ PLANT_TABLE = (
      "resolves there)", 'caught-by-binding', 5,
      'class T:\n    KERNEL = os.path.join(BIN, "romp-kernel")\n    CMD = [sys.executable, KERNEL]\n'
      '    def test_a(self):\n        subprocess.Popen(self.CMD)'),
+    ('B68 a positional % command over a tuple held in a name (a placeholder the scan cannot place: every argument read)',
+     'caught-by-binding', 2,
+     'ARGS = (os.path.join(BIN, "romp-kernel"), "--serve")\nsubprocess.Popen("exec %s %s" % ARGS, shell=True)'),
+    ('B69 a positional % command over a splatted tuple (a placeholder the scan cannot place: every argument read)',
+     'caught-by-binding', 2,
+     'KERNEL = os.path.join(BIN, "romp-kernel")\nsubprocess.Popen("exec %s %s" % (*[KERNEL], "--serve"), shell=True)'),
     ('A1 the library under an alias', 'caught-by-argv', 2,
      'import subprocess as sp\nsp.Popen([os.path.join(BIN, "romp-kernel")])'),
     ('A2 a from-import of run', 'caught-by-argv', 2,
