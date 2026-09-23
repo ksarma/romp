@@ -73063,6 +73063,20 @@ _LANE_FLAGS = ("hideFromFeed", "postalServiceOff", "notify")   # the per-session
 #                                    (setSessionFlag in ui/webview/render.ts)
 
 
+def _lane_flag_refusal(flag):
+    """The ONE whitelist of the per-session flags a client may write: None when `flag` is one of _LANE_FLAGS, else
+    the refusal, naming the list and a bounded echo of what arrived. Both doors that write a session flag ask it,
+    POST /flag (its 400's error) and the setSessionFlag socket op (its settingRefused frame, which wraps the same
+    sentence), so they cannot disagree on what a client may set. Until the reviewer's ruling in the round-3 review
+    of fork PR #897 the socket op wrote any name it was sent: a client could set `threadMail`, the key that turns a
+    comment thread's mail on, or the legacy `postalOff`, while the route refused both. The kernel and the postal bus
+    read those keys; no dashboard, panel or extension sends them. tests/test_obsidian_state_routes.py pins the doors
+    (FlagWriterPopulation) and executes both refusals."""
+    if flag in _LANE_FLAGS:
+        return None
+    return "flag must be one of %s, got %s" % (", ".join(_LANE_FLAGS), _clip_json(flag))
+
+
 def _unknown_keys_error(b, allowed):
     """A typed body's refusal of keys the route does not read (the /restart helper's rule): a typo key
     must never pass as "not asked" while the caller reads ok:true as its field applying."""
@@ -73106,9 +73120,9 @@ def _state_write_route(path, b):
             return 400, {"ok": False, "error": "id (the session's id) required"}
         sid = sid.strip()
         flag = b.get("flag")
-        if flag not in _LANE_FLAGS:
-            return 400, {"ok": False, "error": "flag must be one of %s, got %s"
-                         % (", ".join(_LANE_FLAGS), _clip_json(flag))}
+        err = _lane_flag_refusal(flag)                 # the whitelist the setSessionFlag socket op asks too
+        if err:
+            return 400, {"ok": False, "error": err}
         if b.get("value") is None:
             return 400, {"ok": False, "error": "value (true or false) required"}
         value, ferr = _as_bool(b.get("value"), "value")
@@ -76592,6 +76606,15 @@ class Handler(BaseHTTPRequestHandler):
             # timeline lane gear → toggle a per-session view flag (e.g. hideFromFeed). Persisted +
             # re-broadcast so the feed drops/restores that session's cards immediately. The notify
             # bell is tri-state (an override on the master default) → its own setter.
+            # The name first, as POST /flag checks it: one of the lane toggles, by the predicate the route asks
+            # (_lane_flag_refusal has the why). Refused on the settingRefused frame like a bad value below, with
+            # `value` null, since no pane paints an unlisted flag; the log names the field's type, never the name
+            nerr = _lane_flag_refusal(msg["flag"])
+            if nerr:
+                _refuse_setting(client, nerr, "that setting", "flag", sid=msg["id"], flag=msg["flag"], value=None,
+                                log="refused %s: 'flag' is %s, not one of %s"
+                                    % (msg["type"], _json_type_name(msg["flag"]), ", ".join(_LANE_FLAGS)))
+                return
             value, ferr = _as_bool(msg.get("value"), "value")
             if ferr:
                 # the lane gear's own refusal frame (settingRefused, which the timeline page renders and

@@ -8,12 +8,17 @@ setter its socket op calls (setSessionFlag / setTimelineViews / reorderTabs in _
 that op's validation, and refuses the way it refuses; the tests here drive the REAL Handler over
 HTTP (the test_tag_route.py pattern) and, where a refusal is claimed to match the socket op's, drive
 the socket op too and compare. Synthetic only."""
+import ast
+import base64
 import contextlib
 import errno
 import inspect
+import io
 import json
 import os
 import re
+import socket
+import struct
 import tempfile
 import threading
 import time
@@ -205,6 +210,372 @@ class FlagRoute(_Routes):
         self.assertEqual(ws[0]["value"], r["value"])
         self.assertEqual(p.read_bytes(), before, "the flags file is byte-for-byte unchanged")
         self.assertEqual(self.dirty, [], "a refused write marks nothing dirty")
+
+
+def _client_frame(text):
+    """One masked client text frame, as a browser sends it (the tests/test_feed_delta.py helper)."""
+    data = text.encode("utf-8"); n = len(data); mask = os.urandom(4)
+    if n < 126:
+        hdr = bytes([0x81, 0x80 | n])
+    elif n < 65536:
+        hdr = bytes([0x81, 0x80 | 126]) + struct.pack(">H", n)
+    else:
+        hdr = bytes([0x81, 0x80 | 127]) + struct.pack(">Q", n)
+    return hdr + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+
+
+def _ping_frame(data):
+    """One masked client ping (the tests/test_feed_delta.py helper). The kernel's reader thread answers it inline
+    after dispatching every message read before it, so its pong says those dispatches are done."""
+    mask = os.urandom(4)
+    return bytes([0x89, 0x80 | len(data)]) + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+
+
+def _read_frame(s, buf):
+    """One server frame (unmasked) -> (opcode, payload, leftover) (the tests/test_feed_delta.py helper)."""
+    def need(n):
+        nonlocal buf
+        while len(buf) < n:
+            chunk = s.recv(1 << 20)
+            if not chunk:
+                raise RuntimeError("socket closed")
+            buf += chunk
+    need(2)
+    ln = buf[1] & 0x7F; off = 2
+    if ln == 126:
+        need(4); ln = struct.unpack(">H", buf[2:4])[0]; off = 4
+    elif ln == 127:
+        need(10); ln = struct.unpack(">Q", buf[2:10])[0]; off = 10
+    need(off + ln)
+    return buf[0] & 0x0F, buf[off:off + ln], buf[off + ln:]
+
+
+class SocketFlagWhitelist(_Routes):
+    """The setSessionFlag socket op applies the SAME whitelist as POST /flag (the reviewer's ruling in the
+    round-3 review of fork PR #897). Before it the arm wrote ANY name an authenticated dashboard client sent,
+    while the route refused an unlisted one with a 400: a client could set `threadMail` on a comment thread
+    (the key that turns its mail on; fork PR #897 discloses what follows, the deadness mirror's roster then
+    omitting comment-thread sids that relay) or the legacy `postalOff`, which the kernel and the bus both
+    read as isolation. Both doors now ask one predicate over the one list (_lane_flag_refusal over
+    _LANE_FLAGS). The socket answers an unlisted name on the settingRefused frame (the lane gear's refusal,
+    which the timeline page repaints from; a `warn` never reaches it) with the route's own sentence inside,
+    `value` null since no pane paints an unlisted flag, and writes nothing. Driven through the real
+    dispatcher, and end to end over a real socket to the served Handler."""
+
+    UNLISTED = ("threadMail", "postalOff", "someFutureFlag", "hideFromFeed ", "HIDEFROMFEED",
+                7, True, ["hideFromFeed"], {"hideFromFeed": True})
+
+    def setUp(self):
+        super().setUp()
+        # this class's state root is minted here, outside the conftest belt: no per-session host from it (T348)
+        (km.jd.STATE / "session-hosts").write_text("off\n")
+
+    def _flags_file(self):
+        p = km.jd.STATE / "session-flags.json"
+        return json.loads(p.read_text()) if p.exists() else None
+
+    def _wrapped(self, route_error):
+        """The socket's refusal text for a sentence the route answers bare: _refuse_setting's wrapping."""
+        return "couldn't save that setting \u2014 %s; try again" % route_error
+
+    def test_an_unlisted_name_is_refused_on_the_socket_in_the_routes_words_and_writes_nothing(self):
+        km._set_session_flag(OTHER, "postalServiceOff", True)     # a populated store: an isolation boundary
+        km._flags_cache.clear()
+        p = km.jd.STATE / "session-flags.json"
+        before = p.read_bytes()
+        for name in self.UNLISTED:
+            ws = self._ws({"type": "setSessionFlag", "id": SID, "flag": name, "value": True})
+            km._flags_cache.clear()
+            self.assertEqual(p.read_bytes(), before, "%r: the socket op wrote the flags store: %s"
+                             % (name, p.read_text()))
+            st, r = self._post("/flag", {"id": SID, "flag": name, "value": True})
+            self.assertEqual(st, 400, (name, r))
+            self.assertEqual(r["error"], "flag must be one of %s, got %s" % (", ".join(km._LANE_FLAGS), json.dumps(name)))
+            self.assertEqual(len(ws), 1, "%r: one answer, on the delivering socket: %r" % (name, ws))
+            fr = ws[0]
+            self.assertEqual((fr["type"], fr["gesture"], fr["sid"], fr["itemId"]), ("settingRefused", "flag", SID, ""), fr)
+            self.assertIsNone(fr["value"], "%r: no pane paints an unlisted flag, so there is no toggle to repaint" % (name,))
+            self.assertEqual(fr["text"], self._wrapped(r["error"]), "%r: the route's sentence, wrapped as the socket's refusals are" % (name,))
+            self.assertIsInstance(fr["flag"], str)
+            if isinstance(name, str):
+                self.assertEqual(fr["flag"], name, "addressed to the name the client sent")
+        st, r = self._post("/flag", {"id": SID, "flag": "threadMail", "value": True})
+        self.assertEqual(r["error"], 'flag must be one of hideFromFeed, postalServiceOff, notify, got "threadMail"')
+        self.assertEqual(self._ws({"type": "setSessionFlag", "id": SID, "flag": "threadMail", "value": True})[0]["text"],
+                         "couldn't save that setting \u2014 flag must be one of hideFromFeed, postalServiceOff, notify, "
+                         'got "threadMail"; try again')
+        self.assertEqual(self._flags_file(), {OTHER: {"postalServiceOff": True}})
+        self.assertEqual(self.dirty, [], "a refused write marks nothing dirty")
+
+    def test_a_bad_value_beside_an_unlisted_name_is_refused_for_the_name(self):
+        # the route checks the name before the value; so does the socket
+        ws = self._ws({"type": "setSessionFlag", "id": SID, "flag": "threadMail", "value": "yes"})
+        st, r = self._post("/flag", {"id": SID, "flag": "threadMail", "value": "yes"})
+        self.assertEqual(st, 400)
+        self.assertEqual(len(ws), 1)
+        self.assertEqual(ws[0]["text"], self._wrapped(r["error"]))
+        self.assertIn("flag must be one of", r["error"])
+        self.assertIsNone(self._flags_file())
+
+    def test_the_log_names_the_field_and_its_type_never_the_name_sent(self):
+        # the kernel's log rule (_flag_type_note): the echo belongs in the frame the sender gets
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            ws = self._ws({"type": "setSessionFlag", "id": SID, "flag": "threadMail-TESTHOST", "value": True})
+        self.assertEqual(len(ws), 1)
+        line = err.getvalue()
+        self.assertIn("romp-kernel: refused setSessionFlag: 'flag' is a string, not one of hideFromFeed, "
+                      "postalServiceOff, notify", line)
+        self.assertNotIn("threadMail-TESTHOST", line, "the client's name stays out of the kernel's log")
+        self.assertIn("threadMail-TESTHOST", ws[0]["text"], "the sender still sees what it sent")
+
+    def test_every_listed_name_is_accepted_on_the_socket_and_lands(self):
+        for flag in km._LANE_FLAGS:
+            ws = self._ws({"type": "setSessionFlag", "id": SID, "flag": flag, "value": True})
+            self.assertEqual(ws, [], "%s: no frame on success -- the next push carries the value" % flag)
+        km._flags_cache.clear()
+        self.assertEqual(self._flags_file(), {SID: {"hideFromFeed": True, "postalServiceOff": True, "notify": True}})
+        self.assertEqual(self.dirty, [1, 1, 1])
+
+    def _dial(self, wid):
+        """A browser-style socket to the served Handler's /ws as the timeline page, announcing READY_GATE_CAP so no
+        push reaches it before a `ready` it never sends: every frame it hears answers what it posted (the
+        tests/test_feed_delta.py handshake)."""
+        key = base64.b64encode(os.urandom(16)).decode()
+        req = ("GET /ws?app=timeline&wid=%s&caps=%s&token=%s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
+               "Origin: http://127.0.0.1:%d\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+               "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n") % (
+                   wid, km.READY_GATE_CAP, km.TOKEN, self.port, self.port, key)
+        s = socket.create_connection(("127.0.0.1", self.port), timeout=10)
+        s.sendall(req.encode())
+        buf = b""
+        while b"\r\n\r\n" not in buf:
+            chunk = s.recv(65536)
+            if not chunk:
+                raise RuntimeError("closed during the handshake")
+            buf += chunk
+        head, buf = buf.split(b"\r\n\r\n", 1)
+        self.assertTrue(head.startswith(b"HTTP/1.1 101"), head[:80])
+        return s, buf
+
+    def _gone(self, wid, deadline_s=5):
+        """Wait until the kernel has torn the client down, so no handler thread writes under this test's root after
+        its cleanup (the event is the client leaving _clients)."""
+        deadline = time.time() + deadline_s
+        while time.time() < deadline:
+            with km._clients_lock:
+                if not any(c.get("wid") == wid for c in km._clients):
+                    return
+            time.sleep(0.005)
+        self.fail("the socket %s was never torn down" % wid)
+
+    def _frames_until(self, s, buf, want):
+        """Text frames off the socket until one satisfies `want`; (frames, leftover). A frame that never comes is
+        the socket's 10 s timeout, raised."""
+        got = []
+        while True:
+            op, payload, buf = _read_frame(s, buf)
+            if op == 0x1:
+                got.append(json.loads(payload.decode("utf-8")))
+                if want(got[-1]):
+                    return got, buf
+
+    def _dispatched(self, s, buf, tag):
+        """Ping, and read to its pong: every message sent before it has been dispatched. The text frames read on
+        the way, and the leftover."""
+        s.sendall(_ping_frame(tag))
+        got = []
+        while True:
+            op, payload, buf = _read_frame(s, buf)
+            if op == 0x1:
+                got.append(json.loads(payload.decode("utf-8")))
+            elif op == 0xA and payload == tag:
+                return got, buf
+
+    def test_a_real_socket_to_the_served_handler_is_refused_the_same_way(self):
+        km._set_session_flag(OTHER, "postalServiceOff", True)
+        km._flags_cache.clear()
+        p = km.jd.STATE / "session-flags.json"
+        before = p.read_bytes()
+        refused = lambda fr: fr.get("type") == "settingRefused" and fr.get("flag") == "threadMail"
+        frame = json.dumps({"type": "setSessionFlag", "id": SID, "flag": "threadMail", "value": True})
+        wid = "w-wsflag"
+        s, buf = self._dial(wid)
+        try:
+            s.sendall(_client_frame(frame))
+            got, buf = self._dispatched(s, buf, b"one")      # the op has run: the store is final
+            self.assertEqual(p.read_bytes(), before, "the socket op wrote the flags store: %s" % p.read_text())
+            if not any(map(refused, got)):                   # the answer is queued; the pong may overtake it
+                later, buf = self._frames_until(s, buf, refused)
+                got += later
+            st, r = self._post("/flag", {"id": SID, "flag": "threadMail", "value": True})
+            self.assertEqual([fr for fr in got if refused(fr)], [{"type": "settingRefused", "gesture": "flag", "sid": SID,
+                             "itemId": "", "flag": "threadMail", "value": None, "text": self._wrapped(r["error"])}])
+            # a listed name lands over the same socket. Its answer, if it drew one, is queued ahead of the next
+            # refusal's (one reader thread dispatches in order, one queue sends in order), so that refusal bounds the wait
+            s.sendall(_client_frame(json.dumps({"type": "setSessionFlag", "id": SID, "flag": "hideFromFeed", "value": True})))
+            s.sendall(_client_frame(frame))
+            got, buf = self._frames_until(s, buf, refused)
+            self.assertEqual([fr for fr in got if fr.get("type") == "settingRefused"], [got[-1]], "hideFromFeed drew no refusal")
+            self.assertEqual(json.loads(p.read_text()), {OTHER: {"postalServiceOff": True}, SID: {"hideFromFeed": True}})
+        finally:
+            s.close()
+            self._gone(wid)
+
+
+def _kernel_functions():
+    """The kernel's source, parsed: {qualified name: def} for every module-level function and every method of a
+    module-level class, plus the module's other top-level statements."""
+    tree = ast.parse(open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py"), encoding="utf-8").read())
+    fns, rest = {}, []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            fns[node.name] = node
+        elif isinstance(node, ast.ClassDef):
+            for sub in node.body:
+                if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    fns["%s.%s" % (node.name, sub.name)] = sub
+                else:
+                    rest.append(sub)
+        else:
+            rest.append(node)
+    return fns, rest
+
+
+def _callee(call):
+    f = call.func
+    return f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
+
+
+def _refs(node):
+    """Every name `node` mentions as code, a call or a bare reference (a setter handed on as a callback counts)."""
+    return ({n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+            | {n.attr for n in ast.walk(node) if isinstance(n, ast.Attribute)})
+
+
+def _door_names(test):
+    """The doors an `if` test selects: ("socket op", name) where it compares the frame's type (msg.get("type") or
+    msg["type"]) and ("route", path) where it compares a request path (`path` or `u.path`), by == a string or by
+    membership in a literal tuple, list or set of strings, anywhere under an and/or."""
+    out = set()
+    for n in ast.walk(test):
+        if not (isinstance(n, ast.Compare) and len(n.ops) == 1 and isinstance(n.ops[0], (ast.Eq, ast.In))):
+            continue
+        left, right = n.left, n.comparators[0]
+        if (isinstance(left, ast.Call) and isinstance(left.func, ast.Attribute) and left.func.attr == "get"
+                and left.args and isinstance(left.args[0], ast.Constant) and left.args[0].value == "type") or (
+                isinstance(left, ast.Subscript) and isinstance(left.slice, ast.Constant) and left.slice.value == "type"):
+            kind = "socket op"
+        elif (isinstance(left, ast.Name) and left.id == "path") or (isinstance(left, ast.Attribute) and left.attr == "path"):
+            kind = "route"
+        else:
+            continue
+        vals = [right] if isinstance(right, ast.Constant) else list(right.elts) if isinstance(right, (ast.Tuple, ast.List, ast.Set)) else []
+        out.update((kind, v.value) for v in vals if isinstance(v, ast.Constant) and isinstance(v.value, str))
+    return out
+
+
+def _doors_reaching(fn, qual, targets):
+    """{door: [line of each call]} for every call in `fn` to a name in `targets`, keyed by the innermost `if` arm whose
+    test selects a door (_door_names), as a frozenset of its (kind, name) pairs; a call under no such arm is keyed
+    {("no door", qual)}, which no expected population holds, so it reds loudly."""
+    found = {}
+
+    def visit(node, door):
+        if isinstance(node, ast.If):
+            names = _door_names(node.test)
+            visit(node.test, door)
+            for st in node.body:
+                visit(st, frozenset(names) if names else door)
+            for st in node.orelse:
+                visit(st, door)
+            return
+        if isinstance(node, ast.Call) and _callee(node) in targets:
+            found.setdefault(door, []).append(node.lineno)
+        for child in ast.iter_child_nodes(node):
+            visit(child, door)
+    for st in fn.body:
+        visit(st, frozenset({("no door", qual)}))
+    return found
+
+
+class FlagWriterPopulation(unittest.TestCase):
+    """The doors that write a session flag, derived from the kernel's source and pinned as a set (the reviewer's
+    ruling in the round-3 review of fork PR #897): the setSessionFlag socket op and POST /flag, nothing else, and
+    each asks the one predicate, _lane_flag_refusal, before its setter. A new door (a socket op arm, a route, or a
+    helper that calls a setter of session-flags.json) reds here until it is added on purpose. These read WHERE the
+    code lives, so they guard the population and the predicate's place, not the behaviour; the behaviour is executed
+    in SocketFlagWhitelist (the socket op, in process and over a real socket) and in
+    FlagRoute.test_an_unknown_flag_key_or_a_missing_id_is_a_400_naming_it (the route)."""
+
+    WRITERS = {"_set_session_flag", "_set_notify_session"}
+    DOORS = {("socket op", "setSessionFlag"), ("route", "/flag")}
+
+    def setUp(self):
+        self.fns, self.rest = _kernel_functions()
+
+    def _writers(self):
+        """The setters of session-flags.json, two ways: the functions that name the file and call a store write
+        (the one door _write_state_json, its _atomic_write, a Path write), and the functions that call the clean-write
+        hook every landed write of that store runs (_flags_written)."""
+        writes = {"_write_state_json", "_atomic_write", "write_text", "write_bytes"}
+        named = {q for q, fn in self.fns.items()
+                 if any(isinstance(n, ast.Constant) and n.value == "session-flags.json" for n in ast.walk(fn))}
+        by_write = {q for q in named if {_callee(n) for n in ast.walk(self.fns[q]) if isinstance(n, ast.Call)} & writes}
+        by_hook = {q for q, fn in self.fns.items()
+                   if "_flags_written" in {_callee(n) for n in ast.walk(fn) if isinstance(n, ast.Call)}}
+        return by_write, by_hook
+
+    def _callers(self):
+        return {q for q, fn in self.fns.items() if q not in self.WRITERS and _refs(fn) & self.WRITERS}
+
+    def test_the_setters_of_the_flags_store_are_the_two_the_doors_call(self):
+        by_write, by_hook = self._writers()
+        self.assertEqual(by_write, self.WRITERS, "the functions that write session-flags.json; a new one is a new "
+                         "setter every door below must be re-derived against")
+        self.assertEqual(by_hook, self.WRITERS, "the functions that run the store's clean-write hook agree")
+
+    def test_the_doors_that_write_a_session_flag_are_the_socket_op_and_the_route(self):
+        callers = self._callers()
+        self.assertEqual(callers, {"Handler._dispatch_ws", "_state_write_route"},
+                         "the functions that call a setter of session-flags.json. A new one is a new way for a client to "
+                         "write a flag: route it through _lane_flag_refusal, prove it refuses threadMail by execution "
+                         "(SocketFlagWhitelist is the model), and add it here")
+        self.assertEqual([getattr(st, "lineno", 0) for st in self.rest if _refs(st) & self.WRITERS], [],
+                         "no module-level table hands a setter on")
+        doors = {}
+        for q in callers:
+            doors.update(_doors_reaching(self.fns[q], q, self.WRITERS))
+        population = set().union(*doors)
+        self.assertEqual(population, self.DOORS,
+                         "the doors whose arm calls a setter of session-flags.json: the setSessionFlag socket op and "
+                         "POST /flag. A new door reds here until it applies the one whitelist (_lane_flag_refusal) and "
+                         "an executed test proves its refusal, as SocketFlagWhitelist does for the socket op")
+        route = set().union(*_doors_reaching(self.fns["Handler.do_POST"], "Handler.do_POST", {"_state_write_route"}))
+        self.assertIn(("route", "/flag"), route, "POST /flag reaches _state_write_route, whose /flag arm is the door")
+
+    def test_every_door_asks_the_one_predicate_before_its_setter(self):
+        for q in self._callers():
+            writes = _doors_reaching(self.fns[q], q, self.WRITERS)
+            asks = _doors_reaching(self.fns[q], q, {"_lane_flag_refusal"})
+            for door, lines in writes.items():
+                self.assertIn(door, asks, "%s: the %s arm calls a setter without asking _lane_flag_refusal; the executed "
+                              "proof that it refuses an unlisted name is SocketFlagWhitelist (socket op) and "
+                              "FlagRoute.test_an_unknown_flag_key_or_a_missing_id_is_a_400_naming_it (route)"
+                              % (q, sorted(door)))
+                self.assertLess(min(asks[door]), min(lines), "%s %s: the predicate is asked before the first setter call"
+                                % (q, sorted(door)))
+
+    def test_the_list_is_a_whitelist_in_one_place(self):
+        # a membership test against _LANE_FLAGS outside the predicate is a second whitelist that can drift from it
+        where = set()
+        for q, fn in list(self.fns.items()) + [("<module>", st) for st in self.rest]:
+            for n in ast.walk(fn):
+                if (isinstance(n, ast.Compare) and any(isinstance(op, (ast.In, ast.NotIn)) for op in n.ops)
+                        and any(isinstance(c, ast.Name) and c.id == "_LANE_FLAGS" for c in n.comparators)):
+                    where.add(q)
+        self.assertEqual(where, {"_lane_flag_refusal"}, "the one predicate both doors ask; the executed proof is "
+                         "SocketFlagWhitelist.test_an_unlisted_name_is_refused_on_the_socket_in_the_routes_words_and_writes_nothing")
 
 
 class ViewsRoute(_Routes):
