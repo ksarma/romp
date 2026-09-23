@@ -95,8 +95,19 @@ UID can read.
   `<style>`, no form controls, no image map, ids and names prefixed
   `user-content-`, an inline `style` reduced to its color declarations, no
   `background` attribute; unlike GitHub it keeps that color-only inline `style`
-  and inline SVG. One renderer writes into that sanitized DOM after DOMPurify
-  has run: KaTeX. The sanitizer keeps only color in an inline `style`, and
+  and inline SVG. An inline SVG's paint and CSS image references to another
+  origin (a `url()` in a `fill`, `stroke`, `mask`, `clip-path`, `filter` or
+  `marker-*` attribute, or in an inline `style` declaration) are removed from
+  the sanitized markup before any node reaches the page, by the sanitizer and
+  again by the file preview card, so none of them makes a request to another
+  host when a chat message or a previewed file renders; a same-document
+  `url(#id)`, a `data:` URL and this origin's own stay, and the file viewer
+  gates the same references behind a click instead (`ui/webview/paint-refs.ts`,
+  checked against the code by `ui/webview/paint-refs-census.test.ts` and, in
+  the browser, by `ui/webview/chat-paint-refs-browser.test.ts` and
+  `tests/test_file_preview_browser.py`). One renderer writes into that
+  sanitized DOM after DOMPurify has run: KaTeX. The sanitizer keeps only color
+  in an inline `style`, and
   KaTeX's layout is inline style, so a formula's TeX passes through DOMPurify
   as the text of an inert placeholder and KaTeX renders it there afterwards,
   under `trust: false` (KaTeX's own safety model: no TeX command writes a link,
