@@ -88,6 +88,17 @@ BIN = os.path.join(ROOT, "bin")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()   # hermetic BEFORE the loads
 os.environ.pop("ROMP_STATE_DIR", None)
 sh = load_source("romp_session_host", os.path.join(ROOT, "kernel", "session_host.py"))
+
+
+def host_dir_0700(root, sid):
+    """hosts/<sid>/ made the way the spawn road's helpers make it, both directories 0700 (pathlib's mkdir(parents=True)
+    makes the parent at the umask, 0775 under the 002 the box runs at): since the round-7 fourth addendum of fork PR
+    #814's review (2026-09-20) the read roads file one host.directory-loose row per loose component they descend
+    through, and a fixture at the umask put that row in front of the rows these pins read (four cases red at the
+    addendum's first cut). The pins are about the rows the served road files from host.log, not about the mode."""
+    hd = ht.host_dir(root, sid); hd.mkdir(parents=True)
+    os.chmod(hd.parent, 0o700); os.chmod(hd, 0o700)
+    return hd
 sb = load_source("romp_sdk_backend", os.path.join(BIN, "romp_sdk_backend.py"))
 # A PRIVATE copy of kernel/host_transport.py for the pure functions this module calls (host_exit_reason, host_dir),
 # never `sb._ht()` at import (round 1 addendum, 2026-09-18). The shared `romp_host_transport` entry is bound once per
@@ -98,6 +109,33 @@ sb = load_source("romp_sdk_backend", os.path.join(BIN, "romp_sdk_backend.py"))
 # one did, through sb._ht()) leaves the pin reading a duck-typed base for the whole run. The one shared binder stays
 # tests/test_host_transport.py; test_spend_rebill.py takes the same private-copy road.
 ht = load_source("romp_host_transport_sdk_pin", os.path.join(ROOT, "kernel", "host_transport.py"))
+
+
+def _with_dirs(d, fn, absent):
+    """The spawn road's host.log readers take the held HostDirs since the round-7 seventh addendum of fork PR #814's
+    review (2026-09-20), the object the spawn road holds across its wait (host_transport.open_host_dirs), so the pure
+    functions these pins drove by (state_dir, sid) are driven through a descent here: the read roads' (open_host_dirs_if_present,
+    which admits the 0700 directories host_dir_0700 makes and the umask-mode ones a few cases make by path), and a root
+    with no hosts/<sid>/ yet answers as the readers do for an absent file. What the readers answer for a file another
+    uid owns is the spawn road's pin in tests/test_host_transport.py (ReadDescent, BackendHostRules); here every file
+    is ours."""
+    dirs = ht.open_host_dirs_if_present(d, SID)
+    if dirs is None:
+        return absent
+    with dirs:
+        return fn(dirs)
+
+
+def _mark(d):
+    return _with_dirs(d, ht.host_log_mark, 0)
+
+
+def _rows(d, since=0):
+    return _with_dirs(d, lambda dirs: ht.host_log_rows(dirs, since=since), [])
+
+
+def _reason(d, since=0):
+    return _with_dirs(d, lambda dirs: ht.host_exit_reason(dirs, since=since), "")
 SDKVENV = Path(os.path.expanduser("~/.local/state/romp/sdkvenv"))
 
 
@@ -290,7 +328,8 @@ class VersionCheck(unittest.TestCase):
         long = ModuleNotFoundError("x" * 1000, name=LEAF)
         text = sh.sdk_mismatch_text(OTHER, LEAF + "." + NAME, cause=long)
         cause_part = text[len(plain):]
-        self.assertLessEqual(len(cause_part), sh.SDK_CAUSE_CAP + 8, "capped as the generic host-crashed row caps its line")
+        self.assertLessEqual(len(cause_part), sh.SDK_CAUSE_CAP + 8, "the host-composed row's cap on the cause text (the generic "
+                             "host-crashed row carries the class, errno and frame, never text, so no cap applies to it)")
         self.assertIn("ModuleNotFoundError: xxx", cause_part)
 
     def test_another_version_whose_internals_resolve_proceeds_with_one_row_saying_newer_or_older(self):
@@ -480,7 +519,7 @@ class HostProcess(unittest.TestCase):
         self.assertIn("(AttributeError: ", crash[len(plain):], "and the import error behind it (fresh-1, round 1)")
         self.assertIn(crash, stderr, "and the host's stderr file says the same")
         # the kernel's side reads that row for its launch error
-        self.assertEqual(ht.host_exit_reason(self.state, SID), crash)
+        self.assertEqual(_reason(self.state), crash)
 
     def test_the_kernels_launch_error_carries_the_hosts_last_word(self):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
@@ -507,13 +546,13 @@ class HostProcess(unittest.TestCase):
 
     def test_host_exit_reason_reads_the_last_crash_or_spawn_row_and_is_empty_otherwise(self):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
-        self.assertEqual(ht.host_exit_reason(d, SID), "", "no log yet")
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        self.assertEqual(_reason(d), "", "no log yet")
+        hd = host_dir_0700(d, SID)
         (hd / "host.log").write_text(json.dumps({"t": 1, "kind": "host-started"}) + "\n")
-        self.assertEqual(ht.host_exit_reason(d, SID), "", "a log with no failing row")
+        self.assertEqual(_reason(d), "", "a log with no failing row")
         with open(hd / "host.log", "a") as f:
             f.write(json.dumps({"t": 2, "kind": "cli-spawn-failed", "error": "FileNotFoundError"}) + "\nnot json\n")
-        self.assertEqual(ht.host_exit_reason(d, SID), "FileNotFoundError")
+        self.assertEqual(_reason(d), "FileNotFoundError")
         # tests-4 (round 3 of the review, 2026-09-19; the mechanism corrected in round 4): a line that parses as JSON
         # but is not an object (null, a list, a number) is skipped by host_log_rows like the unparseable one, so
         # host_exit_reason never sees one at this head; that is what the guard buys. The three lines sit BEFORE the
@@ -526,11 +565,11 @@ class HostProcess(unittest.TestCase):
         # when no row returns at all, or, for a cli-spawn-failed row, in the composer's walk over the rows before it).
         with open(hd / "host.log", "a") as f:
             f.write("null\n[1, 2]\n42\n" + json.dumps({"t": 3, "kind": "host-crashed", "error": "later"}) + "\n")
-        self.assertEqual(ht.host_exit_reason(d, SID), "later", "the last such row wins")
-        self.assertEqual([r["kind"] for r in ht.host_log_rows(d, SID)], ["host-started", "cli-spawn-failed", "host-crashed"],
+        self.assertEqual(_reason(d), "later", "the last such row wins")
+        self.assertEqual([r["kind"] for r in _rows(d)], ["host-started", "cli-spawn-failed", "host-crashed"],
                          "the row reader returns objects only")
         (hd / "host.log").write_text(json.dumps({"t": 1, "kind": "cli-spawn-failed", "error": "OSError"}) + "\nnull\n")
-        self.assertEqual(ht.host_exit_reason(d, SID), "OSError", "a non-object LAST line is skipped by the row reader too")
+        self.assertEqual(_reason(d), "OSError", "a non-object LAST line is skipped by the row reader too")
 
     # The mutation pass after round 3 (2026-09-19): the composer's guard on the error field (`or not row.get("error")`)
     # was held by no case, so with it dropped the suite stayed green. A failing-kind row that carries no error, an
@@ -540,13 +579,13 @@ class HostProcess(unittest.TestCase):
     # around no failure at all.
     def test_a_failing_row_with_no_error_an_empty_one_or_a_null_one_says_nothing_and_is_stepped_over(self):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
         started = {"t": 1, "kind": "host-started"}
         untested = {"t": 2, "kind": "sdk-version-untested", "installed": OTHER, "tested": sh.SDK_TESTED_VERSION, "relation": "newer"}
 
         def reason(rows):
             (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in rows))
-            return ht.host_exit_reason(d, SID)
+            return _reason(d)
         for kind in ("host-crashed", "cli-spawn-failed"):
             for silent in ({"t": 3, "kind": kind}, {"t": 3, "kind": kind, "error": ""}, {"t": 3, "kind": kind, "error": None}):
                 self.assertEqual(reason([started, silent]), "", silent)
@@ -558,7 +597,7 @@ class HostProcess(unittest.TestCase):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True); logs = []
         be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=logs.append)
         sess = types.SimpleNamespace(sid=SID, name="web", _host=None)
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
         (hd / "host.log").write_text(json.dumps({"t": 1, "kind": "host-started"}) + "\n"
                                      + json.dumps({"t": 2, "kind": "sdk-version-untested", "installed": OTHER,
                                                    "tested": sh.SDK_TESTED_VERSION, "relation": "newer"}) + "\n")
@@ -578,7 +617,7 @@ class HostProcess(unittest.TestCase):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True); logs = []
         be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=logs.append)
         sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True, "lastSid": SID})
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
 
         def launch(pid, installed=OTHER, relation="newer"):
             # a new host each time: its own identity (hostLogPos is keyed by it, so its log is read from zero) and a
@@ -640,7 +679,7 @@ class HostProcess(unittest.TestCase):
         self.assertNotIn("cli-spawned", kinds)
         self.assertEqual([r for r in rows if r["kind"] == "cli-spawn-failed"][0]["error"], "TypeError",
                          "the row's error field stays the type name")
-        reason = ht.host_exit_reason(self.state, SID)
+        reason = _reason(self.state)
         self.assertTrue(reason.startswith("TypeError (this host ran "), reason)
         for needle in (OTHER, sh.SDK_TESTED_VERSION, "newer than"):
             self.assertIn(needle, reason)
@@ -660,24 +699,24 @@ class HostProcess(unittest.TestCase):
         kinds = [r["kind"] for r in self._hostlog()]
         self.assertNotIn("sdk-version-untested", kinds)
         self.assertIn("cli-spawn-failed", kinds)
-        self.assertEqual(ht.host_exit_reason(self.state, SID), "FileNotFoundError", "no SDK, no SDK text")
+        self.assertEqual(_reason(self.state), "FileNotFoundError", "no SDK, no SDK text")
 
     def test_host_exit_reason_states_the_version_from_the_untested_row_of_this_run_only(self):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
         rows = [{"t": 1, "kind": "host-started"},
                 {"t": 2, "kind": "sdk-version-untested", "installed": OTHER, "tested": sh.SDK_TESTED_VERSION, "relation": "newer"},
                 {"t": 3, "kind": "cli-spawn-failed", "error": "TypeError"}]
         (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in rows))
-        reason = ht.host_exit_reason(d, SID)
+        reason = _reason(d)
         self.assertEqual(reason, "TypeError (this host ran %s %s, newer than the %s the session host is written against)"
                          % (sh.SDK_DIST, OTHER, sh.SDK_TESTED_VERSION))
         # a later run in the same log with no untested row of its own, read from ITS spawn watermark: the bare type
         # name, never the first run's fact (the closing check, 2026-09-18: the mark, not the marker, is the bound)
-        mark = ht.host_log_mark(d, SID)
+        mark = _mark(d)
         with open(hd / "host.log", "a") as f:
             f.write(json.dumps({"t": 4, "kind": "host-started"}) + "\n" + json.dumps({"t": 5, "kind": "cli-spawn-failed", "error": "FileNotFoundError"}) + "\n")
-        self.assertEqual(ht.host_exit_reason(d, SID, since=mark), "FileNotFoundError")
+        self.assertEqual(_reason(d, since=mark), "FileNotFoundError")
 
     # The mutation pass after round 3 (2026-09-19): the composer's `rows[:i]` was held by no case; with the fact read
     # from every row in the window, an untested row AFTER the failing row counted too, and the suite stayed green. The
@@ -686,13 +725,13 @@ class HostProcess(unittest.TestCase):
     # run's failure and the second run's untested row from a host still running) and is not that failure's version.
     def test_an_untested_row_written_after_the_failing_row_is_not_that_failures_fact(self):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
         failed = {"t": 2, "kind": "cli-spawn-failed", "error": "FileNotFoundError"}
         untested = {"t": 4, "kind": "sdk-version-untested", "installed": OTHER, "tested": sh.SDK_TESTED_VERSION, "relation": "newer"}
 
         def reason(rows):
             (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in rows))
-            return ht.host_exit_reason(d, SID)
+            return _reason(d)
         self.assertEqual(reason([{"t": 1, "kind": "host-started"}, failed, {"t": 3, "kind": "host-started"}, untested]), "FileNotFoundError",
                          "the second run's fact, read over the whole file, is not the first run's")
         self.assertEqual(reason([{"t": 1, "kind": "host-started"}, failed, untested]), "FileNotFoundError",
@@ -708,13 +747,13 @@ class HostProcess(unittest.TestCase):
     # "different than" and "None than"; this case fails on either.
     def test_host_exit_reason_says_other_than_for_a_relation_that_is_not_newer_or_older_or_is_absent(self):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
         for extra in ({"relation": "different"}, {}, {"relation": "same"}):
             rows = [{"t": 1, "kind": "host-started"},
                     dict({"t": 2, "kind": "sdk-version-untested", "installed": "not-a-version", "tested": sh.SDK_TESTED_VERSION}, **extra),
                     {"t": 3, "kind": "cli-spawn-failed", "error": "ValueError"}]
             (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in rows))
-            got = ht.host_exit_reason(d, SID)
+            got = _reason(d)
             self.assertEqual(got, "ValueError (this host ran %s not-a-version, other than the %s the session host is written against)"
                              % (sh.SDK_DIST, sh.SDK_TESTED_VERSION), (extra, got))
             for bad in ("different than", "same than", "None", "newer", "older"):
@@ -722,7 +761,7 @@ class HostProcess(unittest.TestCase):
         for relation in ("newer", "older"):
             rows[1]["relation"] = relation
             (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in rows))
-            self.assertIn(", %s than the %s " % (relation, sh.SDK_TESTED_VERSION), ht.host_exit_reason(d, SID))
+            self.assertIn(", %s than the %s " % (relation, sh.SDK_TESTED_VERSION), _reason(d))
 
     # fresh-1 (round 2 of the review; the closing check's ruling on round 2's fix, 2026-09-18): round 1 attached the
     # version sentence and the repin remedy to every spawn failure after an untested row, so a missing binary was told
@@ -733,7 +772,7 @@ class HostProcess(unittest.TestCase):
     # (host.sdk-untested, filed on the refused road too). No untested row in this run, no fact.
     def test_host_exit_reason_states_the_version_beside_every_spawn_failure_alike_and_never_the_remedy(self):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
 
         def reason(error, causes=None, untested=True):
             row = {"t": 3, "kind": "cli-spawn-failed", "error": error}
@@ -742,7 +781,7 @@ class HostProcess(unittest.TestCase):
             rows = [{"t": 1, "kind": "host-started"}] + ([
                 {"t": 2, "kind": "sdk-version-untested", "installed": OTHER, "tested": sh.SDK_TESTED_VERSION, "relation": "newer"}] if untested else []) + [row]
             (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in rows))
-            return ht.host_exit_reason(d, SID)
+            return _reason(d)
         fact = " (this host ran %s %s, newer than the %s the session host is written against)" % (sh.SDK_DIST, OTHER, sh.SDK_TESTED_VERSION)
         for error, causes in (("FileNotFoundError", None), ("PermissionError", None), ("CLINotFoundError", "FileNotFoundError"),
                               ("CLIConnectionError", "FileNotFoundError"), ("CLIConnectionError", None), ("OSError", None),
@@ -772,7 +811,7 @@ class HostProcess(unittest.TestCase):
         self.assertEqual(len(failed), 1)
         self.assertEqual(failed[0]["error"], "FileNotFoundError")
         self.assertNotIn("causes", failed[0], "a bare exception carries no chain")
-        reason = ht.host_exit_reason(self.state, SID)
+        reason = _reason(self.state)
         self.assertTrue(reason.startswith("FileNotFoundError (this host ran "), reason)
         self.assertIn(OTHER, reason)
         self.assertNotIn(sh.SDK_REPIN_COMMAND, reason, "a missing binary is never told to reinstall the SDK")
@@ -783,7 +822,7 @@ class HostProcess(unittest.TestCase):
         failed = [r for r in self._hostlog() if r["kind"] == "cli-spawn-failed"]
         self.assertEqual((failed[0]["error"], failed[0]["causes"]), ("CLIConnectionError", "TypeError"), "the row records what the wrap hid")
         self.assertNotIn("_build_command", json.dumps(failed), "type names only, never the message")
-        reason = ht.host_exit_reason(self.state, SID)
+        reason = _reason(self.state)
         self.assertTrue(reason.startswith("CLIConnectionError (this host ran "), reason)
         for needle in (OTHER, sh.SDK_TESTED_VERSION, "newer than"):
             self.assertIn(needle, reason)
@@ -815,42 +854,42 @@ class HostProcess(unittest.TestCase):
     # host's run and carried its reason and remedy onto the card and into the ledger. The spawn is the event itself.
     def test_host_exit_reason_reads_past_the_spawn_watermark_never_a_previous_hosts_last_word(self):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
-        self.assertEqual(ht.host_log_mark(d, SID), 0, "no log yet: the mark is the start")
-        self.assertEqual(ht.host_log_rows(d, SID), [])
+        hd = host_dir_0700(d, SID)
+        self.assertEqual(_mark(d), 0, "no log yet: the mark is the start")
+        self.assertEqual(_rows(d), [])
         first = [{"t": 1, "kind": "host-started"},
                  {"t": 2, "kind": "sdk-version-untested", "installed": OTHER, "tested": sh.SDK_TESTED_VERSION, "relation": "newer"},
                  {"t": 3, "kind": "cli-spawn-failed", "error": "TypeError"}]
         (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in first))
-        self.assertIn(OTHER, ht.host_exit_reason(d, SID, since=0), "the first run's reason, read from its own mark")
-        mark = ht.host_log_mark(d, SID)
+        self.assertIn(OTHER, _reason(d, since=0), "the first run's reason, read from its own mark")
+        mark = _mark(d)
         self.assertEqual(mark, (hd / "host.log").stat().st_size, "the mark is the file's size before the next host")
         # the second host wrote NOTHING, the case round 2 left broken: past its mark there is no row, so no reason
-        self.assertEqual(ht.host_exit_reason(d, SID, since=mark), "", "nothing from the first run: the launch error falls back to the log's path")
-        self.assertEqual(ht.host_log_rows(d, SID, since=mark), [])
+        self.assertEqual(_reason(d, since=mark), "", "nothing from the first run: the launch error falls back to the log's path")
+        self.assertEqual(_rows(d, since=mark), [])
         # a second host that wrote only its marker, or rows that are not failures, says nothing either
         with open(hd / "host.log", "a") as f:
             f.write(json.dumps({"t": 4, "kind": "host-started", "hostPid": 4242}) + "\n" + json.dumps({"t": 5, "kind": "attached"}) + "\n")
-        self.assertEqual(ht.host_exit_reason(d, SID, since=mark), "")
-        self.assertEqual([r["kind"] for r in ht.host_log_rows(d, SID, since=mark)], ["host-started", "attached"])
+        self.assertEqual(_reason(d, since=mark), "")
+        self.assertEqual([r["kind"] for r in _rows(d, since=mark)], ["host-started", "attached"])
         # a second host's own failure is read, and the FIRST host's untested row is not its fact
         with open(hd / "host.log", "a") as f:
             f.write(json.dumps({"t": 6, "kind": "cli-spawn-failed", "error": "FileNotFoundError"}) + "\n")
-        self.assertEqual(ht.host_exit_reason(d, SID, since=mark), "FileNotFoundError")
+        self.assertEqual(_reason(d, since=mark), "FileNotFoundError")
         # the same for a crash row: a previous host's whole-text verdict is not this launch's either
         crash = [{"t": 1, "kind": "host-started"}, {"t": 2, "kind": "host-crashed", "error": sh.sdk_mismatch_text(OTHER, LEAF + "." + NAME)}]
         (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in crash))
-        mark = ht.host_log_mark(d, SID)
-        self.assertEqual(ht.host_exit_reason(d, SID, since=mark), "")
-        self.assertIn(OTHER, ht.host_exit_reason(d, SID), "a caller with no mark reads the whole file")
+        mark = _mark(d)
+        self.assertEqual(_reason(d, since=mark), "")
+        self.assertIn(OTHER, _reason(d), "a caller with no mark reads the whole file")
         # the mark is bytes, not lines: a line a dying host left unterminated stays with its run and the next row parses whole
         (hd / "host.log").write_text(json.dumps({"t": 1, "kind": "host-started"}) + "\n" + '{"t": 2, "kind": "host-cra')
-        mark = ht.host_log_mark(d, SID)
+        mark = _mark(d)
         with open(hd / "host.log", "a") as f:
             f.write(json.dumps({"t": 3, "kind": "host-crashed", "error": "OSError: AF_UNIX path too long"}) + "\n")
-        self.assertEqual(ht.host_exit_reason(d, SID, since=mark), "OSError: AF_UNIX path too long")
-        self.assertEqual(ht.host_exit_reason(d, SID), "", "a line count would have merged the fragment into the row")
-        self.assertEqual(ht.host_exit_reason(d, SID, since=10 ** 6), "", "a mark past the end reads nothing and raises nothing")
+        self.assertEqual(_reason(d, since=mark), "OSError: AF_UNIX path too long")
+        self.assertEqual(_reason(d), "", "a line count would have merged the fragment into the row")
+        self.assertEqual(_reason(d, since=10 ** 6), "", "a mark past the end reads nothing and raises nothing")
 
     def test_a_launch_whose_host_wrote_nothing_inherits_no_previous_hosts_reason_through_the_real_spawn_road(self):
         # the checker's reproduction, executed: a stale KERNEL-held lease on disk keeps hosts/<sid> across launches (with
@@ -937,18 +976,19 @@ class HostProcess(unittest.TestCase):
     # The mutation pass after round 3 (2026-09-19): the early return that carries a host-crashed row WHOLE was held by
     # no case, so with it dropped a crash row after an untested row had the version fact composed onto the host's own
     # prose and the suite stayed green. The composed fact is for a cli-spawn-failed row, whose error is a bare type
-    # name; a host-crashed row is the host's own text (the mismatch verdict names both versions itself, a traceback's
-    # last line names its error) and gets nothing appended. The real road for the pair is the `_process` guard at
+    # name; a host-crashed row is carried whole (the mismatch verdict names both versions itself; the generic crash row
+    # carries the exception's class name, its errno and the failing frame, never a traceback's text, since the
+    # socket-mode fix) and gets nothing appended. The real road for the pair is the `_process` guard at
     # another version, whose host writes its untested row and then its crash record in one run.
     def test_a_crash_row_after_an_untested_row_is_carried_whole_with_no_version_fact_composed_onto_it(self):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
         for text in ("OSError: AF_UNIX path too long", sh.sdk_mismatch_text(OTHER, LEAF + "." + NAME + "._process")):
             rows = [{"t": 1, "kind": "host-started"},
                     {"t": 2, "kind": "sdk-version-untested", "installed": OTHER, "tested": sh.SDK_TESTED_VERSION, "relation": "newer"},
                     {"t": 3, "kind": "host-crashed", "error": text}]
             (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in rows))
-            got = ht.host_exit_reason(d, SID)
+            got = _reason(d)
             self.assertEqual(got, text)
             self.assertNotIn("this host ran", got)
         code, _ = self._run_host(_fake_site(self.state, OTHER, with_name=True, body=self._NO_PROCESS))
@@ -957,7 +997,7 @@ class HostProcess(unittest.TestCase):
         kinds = [r["kind"] for r in rows]
         self.assertLess(kinds.index("sdk-version-untested"), kinds.index("host-crashed"), "the pair, in the order the host writes it: %r" % kinds)
         crash = [r for r in rows if r["kind"] == "host-crashed"][0]["error"]
-        self.assertEqual(ht.host_exit_reason(self.state, SID), crash, "the kernel's launch error carries the verdict whole")
+        self.assertEqual(_reason(self.state), crash, "the kernel's launch error carries the verdict whole")
 
     # The mutation pass after round 3 (2026-09-19): the guard's close() before its raise (tests-2, round 1) was held by
     # no case; with it removed the suite stayed green. A transport that connected and exposes no `_process` may have
@@ -1266,7 +1306,7 @@ class HostProcess(unittest.TestCase):
     # untested row survived under the stale lease); this launch's host wedges writing nothing.
     def test_a_wedged_host_that_wrote_nothing_inherits_no_previous_hosts_reason_or_drift_row_at_the_deadline(self):
         d, events = self._stale_lease_root()
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
         previous = [{"t": 1, "kind": "host-started"}, self._UNTESTED, {"t": 3, "kind": "cli-spawn-failed", "error": "TypeError"},
                     {"t": 4, "kind": "host-started"}, {"t": 5, "kind": "host-crashed", "error": sh.sdk_mismatch_text(OTHER, LEAF + "." + NAME)}]
         (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in previous))
@@ -1278,7 +1318,10 @@ class HostProcess(unittest.TestCase):
         text = str(exc)
         rows = events()
         self.assertEqual([r["kind"] for r in rows], ["host.never-served-socket"], "no drift row: the untested row in the file is a previous host's")
-        self.assertTrue(text.endswith("did not serve its socket within 0 s; it was ended; see hosts/%s/host.log" % SID), text)
+        # the deadline arm's no-reason sentence since round 4 of the socket-mode fix (kernel-5, 2026-09-20): the host was
+        # alive and was ended, which leaves no traceback, and host.stderr's watermark says this launch wrote nothing there
+        self.assertTrue(text.endswith("did not serve its socket within 0 s; it was ended, which leaves no traceback; hosts/%s/host.stderr "
+                                      "carries nothing from this launch; see hosts/%s/host.log" % (SID, SID)), text)
         self.assertTrue(rows[0]["text"].endswith("see hosts/%s/host.log" % SID), rows[0]["text"])
         # the recorded launch error, the card's source, ends there too
         real = sb.SdkSession(be, sb.read_reg(Path(d), SID))
@@ -1348,7 +1391,7 @@ class HostProcess(unittest.TestCase):
     def test_the_pinned_residual_a_previous_hosts_unfiled_row_vanishes_after_a_refused_launch(self):
         seed = [{"t": 1, "kind": "host-started"}, {"t": 2, "kind": "reader-behind"}, {"t": 3, "kind": "end-forced", "cliPid": 9}]
         d, events = self._stale_lease_root()
-        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        hd = host_dir_0700(d, SID)
         (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in seed))
         self._launch(self._backend(d, []), self._sess(),
                      self._exiting([{"t": 4, "kind": "host-started"}, {"t": 5, "kind": "cli-spawn-failed", "error": "OSError"}]))
@@ -1370,7 +1413,7 @@ class HostProcess(unittest.TestCase):
         # the control: the same seed and no refused launch before the serving host; the served road files both rows,
         # under the new host's name (the other half of the residual, stated in round 3)
         d2, events2 = self._stale_lease_root()
-        hd2 = ht.host_dir(d2, SID); hd2.mkdir(parents=True)
+        hd2 = host_dir_0700(d2, SID)
         (hd2 / "host.log").write_text("".join(json.dumps(r) + "\n" for r in seed))
         self._backend(d2, [])._file_host_log_rows(served)
         self.assertEqual([r["kind"] for r in events2()], ["host.reader-behind", "host.end-forced"], "without the refusal the rows are filed")
@@ -1389,7 +1432,7 @@ class HostProcess(unittest.TestCase):
         base = be.problem_seq()
         for sid, name, pid in ((SID, "web", 101), (SID2, "api", 202)):
             sb.write_reg(Path(d), sid, {"sid": sid, "name": name, "alive": True, "lastSid": sid})
-            hd = ht.host_dir(d, sid); hd.mkdir(parents=True)
+            hd = host_dir_0700(d, sid)
             (hd / "host.log").write_text(json.dumps({"t": 1, "kind": "host-started"}) + "\n" + json.dumps(self._UNTESTED) + "\n")
             sess = types.SimpleNamespace(sid=sid, name=name, _host=types.SimpleNamespace(hello={"host": {"pid": pid, "start": "s%d" % pid}}))
             be._file_host_log_rows(sess)

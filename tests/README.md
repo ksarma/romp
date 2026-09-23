@@ -247,13 +247,32 @@ directory as its `dir` — by keyword or position, composed (`f"/tmp/{x}"`,
 `os.path.join("/tmp", x)`) or through a name bound to one — and never point
 `mktemp` (`-p`, `--tmpdir`, a `TMPDIR=` prefix) at a path under `/tmp`: that
 bypasses the redirect, and the hygiene test reads every test file for those
-shapes. The tests that must leave the root — `tests/test_host_transport.py`'s
-AF_UNIX socket paths, which would not fit `sun_path` under a nested root — fall
-back to `ROMP_TESTS_SYSTEM_TMPDIR`, the system temp dir the package recorded
+shapes. The tests that must leave the root (`tests/test_host_transport.py`'s
+AF_UNIX socket paths, which would not fit `sun_path` under a long TMPDIR, and
+`tests/test_session_host.py`'s padded socket roots, which `padded_root` builds
+to an exact byte length for the budget cases) fall back to
+`ROMP_TESTS_SYSTEM_TMPDIR`, the system temp dir the package recorded
 once per run before redirecting (an xdist worker inherits the controller's
 record), and remove what they made with an `addCleanup` (a directory outside
 the root is outside the exit sweep's scope, so nothing else removes it; nine
-per run leaked before). A root that cannot be removed at run end (a child
+per run leaked before). Under xdist a worker's root sits BESIDE the
+controller's in that recorded dir, never inside it (2026-09-21): every
+process's paths are one `romp-tests-XXXXXXXX` level (20 bytes) under the
+handed dir whatever the worker count, so the deepest hosts-on lab's socket
+path (`tests/test_session_host_restart.py`, `host-served-XXXXXXXX/xdg/romp/
+hosts/<sid8>.sock`) is TMPDIR + 70 bytes and a run's TMPDIR may be up to 37
+bytes (the nesting before it cost a second level: 107 = `SOCK_PATH_MAX` exactly
+at 17 bytes under `-n`; at 18 that lab's test, ServedRestart, overflowed under
+xdist while it passed alone, and the TMPDIR + 72 shapes — HostProcess, EndToEnd,
+AttachStandDown, a bare mkdtemp root — overflowed from a 36-byte TMPDIR under
+`-n`). A nested process lists its pid and root in
+`<parent root>/romp-tests-children`; the parent removes a dead child's root at
+run end, so a worker killed mid-run leaks nothing. `tests/test_tempdir_hygiene.py`
+`HarnessSocketBudget` derives the bound from the roots the harness makes and
+the tests' own lab shapes, and from the same scan holds the longest directory
+path and the longest single component the harness can produce under xdist
+nesting against `PC_PATH_MAX` and `PC_NAME_MAX` (every shape has its own
+ceiling; the socket is one). A root that cannot be removed at run end (a child
 still writing under it, a 000-mode directory a test left behind) is named on
 stderr: `[tests] not removed at run end: <path>`, instead of the run ending
 green over it. The same conftest gives git no global or system config

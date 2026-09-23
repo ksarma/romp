@@ -67,6 +67,18 @@ class StaggerBoundsConcurrency(unittest.TestCase):
         regs = _cut_regs(d, sb.BOOT_RESUME_CONCURRENCY + 2)
         with mock.patch.object(sb.subprocess, "run", return_value=mock.Mock(stdout="")):
             t = threading.Thread(target=be._boot_reconcile, args=(regs,), daemon=True)
+
+            def end():                     # on every exit path: free every slot the sweep parks on, wait for the sweep
+                for _ in range(len(regs) + 1):                  # (a release fired twice only over-releases this
+                    if not t.is_alive():                        #  test's own plain Semaphore)
+                        break
+                    with rel_lock:
+                        pending = [r for r in releases if r]
+                    for r in pending:
+                        r()
+                    t.join(1)
+                t.join(10)
+            self.addCleanup(end)
             t.start()
             # the first CONCURRENCY spawns happen freely
             first = [calls.get(timeout=10) for _ in range(sb.BOOT_RESUME_CONCURRENCY)]
@@ -475,7 +487,18 @@ class BootAttachesOffTheStagger(unittest.TestCase):
         with mock.patch.dict(sys.modules, {"romp_sdk_backend": sb}), \
              mock.patch.object(sb, "proc_start", lambda p, run=None: alive.get(p)), \
              mock.patch.object(be, "_ensure", fake_ensure):
-            t = threading.Thread(target=be._boot_reconcile, args=(regs,), daemon=True); t.start()
+            t = threading.Thread(target=be._boot_reconcile, args=(regs,), daemon=True)
+
+            def end():                     # on every exit path: settle every parked boot, wait for the sweep (settled()
+                for _ in range(len(regs) + 1):                  #  fires once; a slot release fired twice only
+                    if not t.is_alive():                        #  over-releases this test's own plain Semaphore)
+                        break
+                    for cb in [cb for cb in list(settles.values()) if cb]:
+                        cb()
+                    t.join(1)
+                t.join(10)
+            self.addCleanup(end)
+            t.start()
             seen = [calls.get(timeout=5) for _ in range(6 + sb.BOOT_RESUME_CONCURRENCY)]
         self.assertEqual(seen[:6], attach_sids, "every attach is issued first, none waiting on a spawn slot")
         self.assertEqual(len([s for s in seen if s not in attach_sids]), sb.BOOT_RESUME_CONCURRENCY,

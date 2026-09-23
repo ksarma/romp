@@ -263,6 +263,11 @@ class ConcurrentCreates(_Routes):
         def first():
             out["first"] = self.post("/new", {"name": "web", "dir": self.dir, "backend": "sdk"})
         t = threading.Thread(target=first)
+
+        def end():                          # on every exit path: release the parked create, wait for its thread
+            self.be.gate.set()
+            t.join(timeout=10)
+        self.addCleanup(end)
         t.start()
         self.assertTrue(self.be.entered.wait(timeout=10), "the first create reached its spawn")
         st, second = self.post("/new", {"name": "web", "dir": self.dir, "backend": "sdk"})
@@ -1086,6 +1091,7 @@ class ClaimBeforeSnapshot(_Base):
             self.parked_ident[0] = threading.get_ident()
             out["v"] = fn()
         t = threading.Thread(target=run)
+        self.addCleanup(self.resume, t)          # on every exit path: open the gate and wait for the parked caller
         t.start()
         self.assertTrue(self.entered.wait(timeout=10), "the parked caller reached %s" % at)
         return t, out

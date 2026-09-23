@@ -44,6 +44,7 @@ from pathlib import Path
 from unittest import mock
 from romp_load import load_source
 from unittest import mock
+from tests.thread_ends import join_started
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -5968,7 +5969,8 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
             k_done.set()
 
         lt, kt = threading.Thread(target=run_l, name="L"), threading.Thread(target=run_k, name="K")
-        lt.start()
+        self.addCleanup(join_started, resume, (lt, kt), 5)   # on every exit path (T282): resume the parked loop side (an assertion
+        lt.start()                                           # between the two starts fails with L parked on it), join what started
         self.assertTrue(parked.wait(5), "the loop side never reached the parked read")
         kt.start()
         deadline = time.monotonic() + 5
@@ -11329,15 +11331,104 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.be._reg_lock = _Gate()
         self.addCleanup(setattr, self.be, "_reg_lock", real_lock)
         real_lock.acquire()
+        held = [True]                        # the TEST'S hold on real_lock; cleared by the body's release below
         t = threading.Thread(target=s._mirror_auth_pending, daemon=True)
+
+        def end():                           # on every exit path (T282): a failed assertion below would leave the mirror parked
+            if held[0]:                      # on the lock this test holds; release the test's own hold, then a bounded join.
+                held[0] = False              # Only the test's: locked() cannot say whose hold it is, and on the road where the
+                real_lock.release()          # mirror holds the lock at the failure a release here took the MIRROR's hold and
+            t.join(5)                        # made its __exit__ raise in the daemon thread (round 2 of PR 891's review)
+        self.addCleanup(end)
         t.start()
         self.assertTrue(inside.wait(5), "the writer reached the reg lock")
         with s._hold_write():
             s._auth_pending = ""                                     # the landing clears the ask while the mirror waits
         real_lock.release()
+        held[0] = False
         t.join(5)
         self.assertFalse(t.is_alive())
         self.assertFalse(self._reg(s).get("authPending"), "the mirror recorded the pending as it stood at the write")
+
+    def test_a_body_that_fails_while_the_mirror_holds_the_lock_leaves_the_mirrors_hold_to_the_mirror(self):
+        """The cleanup above, run rather than read on its failure road (all-5 of round 2 of PR 891's review, 2026-09-22). It
+        used to release real_lock whenever locked(), but locked() does not say WHOSE hold it is: where the test has released
+        its hold and the mirror holds the lock inside the reg write when the body fails, that released the MIRROR's hold, and
+        the mirror's `with` then raised RuntimeError("release unlocked lock") in the daemon thread, outside the test's result.
+        The cleanup now tracks the test's own hold. A nested case with the same shape (a lock; a gate that signals when the
+        worker is about to take it; a worker holding it through its write; a body that releases its own hold, waits for the
+        worker to hold, and fails) runs both cleanups. The worker's write lasts until the cleanup has decided (`decided`, the
+        plant's stand-in for the write's duration, set after the release decision and before the join), so the road is
+        deterministic. With the fixed cleanup the run records the planted failure, no error, nothing raised in the worker's
+        thread (threading.excepthook swapped for the run: the hook is process-wide, so it records only an exception whose
+        thread is the plant's worker and hands any other thread's to the hook it replaced) and the lock free once the worker
+        is done; with the old shape the same failure and a RuntimeError from the worker's thread."""
+        def case(track_own_hold):
+            raised, state = [], {}
+
+            class _Case(unittest.TestCase):
+                def test_fails(self):
+                    real_lock = threading.Lock()
+                    state["lock"] = real_lock
+                    inside, holding, decided = threading.Event(), threading.Event(), threading.Event()
+
+                    class _Gate:
+                        def __enter__(self):
+                            inside.set()
+                            return real_lock.__enter__()
+
+                        def __exit__(self, *a):
+                            return real_lock.__exit__(*a)
+
+                    def mirror():
+                        with _Gate():
+                            holding.set()
+                            decided.wait(5)                          # the write in flight until the cleanup has decided
+                    real_lock.acquire()
+                    held = [True]
+                    t = threading.Thread(target=mirror, daemon=True)
+                    state["worker"] = t
+
+                    def end():
+                        if track_own_hold:
+                            if held[0]:
+                                held[0] = False
+                                real_lock.release()
+                        elif real_lock.locked():                     # the old shape: whoever holds it
+                            real_lock.release()
+                        decided.set()
+                        t.join(5)
+                    self.addCleanup(end)
+                    t.start()
+                    self.assertTrue(inside.wait(5), "the worker reached the lock")
+                    real_lock.release()
+                    held[0] = False
+                    self.assertTrue(holding.wait(5), "the worker took the lock")
+                    self.fail("planted: the body fails while the mirror holds the lock")
+
+            saved = threading.excepthook
+
+            def hook(args):                                          # process-wide while the case runs: the plant's worker's
+                if args.thread is state.get("worker"):               # exceptions are recorded, any other thread's go to the
+                    raised.append("%s: %s" % (args.exc_type.__name__, args.exc_value))     # hook that was installed
+                else:
+                    saved(args)
+            threading.excepthook = hook
+            try:
+                res = unittest.TestResult()
+                _Case("test_fails").run(res)
+            finally:
+                threading.excepthook = saved
+            return res, raised, state["lock"]
+
+        res, raised, lock = case(track_own_hold=True)
+        self.assertEqual((len(res.failures), res.errors, raised), (1, [], []), "the planted failure and nothing beside it: %r %r %r" % (res.failures, res.errors, raised))
+        self.assertIn("planted", res.failures[0][1])
+        self.assertFalse(lock.locked(), "the mirror released its own hold once its write was done")
+        res, raised, lock = case(track_own_hold=False)
+        self.assertEqual((len(res.failures), res.errors), (1, []), (res.failures, res.errors))
+        self.assertEqual(raised, ["RuntimeError: release unlocked lock"], "the old cleanup released the mirror's hold; the mirror's __exit__ raised in its thread")
+        self.assertFalse(lock.locked())
 
     def test_the_reference_says_a_default_change_reconnects_its_followers(self):
         doc = " ".join(open(os.path.join(os.path.dirname(HERE), "docs", "reference.md"), encoding="utf-8").read().split())
