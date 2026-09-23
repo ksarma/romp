@@ -2826,7 +2826,10 @@ class TheSweepIsItsOwnBoundedReader(_WalkHarness):
     sweep's and never as a writer call. The third case drives the WEDGE-GATED one: a live record for SID_A, an alive sid
     whose look the walk visits and leaves on a wedge gate (api-error), the reviewer's round-1 refuters probed; past its read
     that sweep reaches the failure stamp, whose real body loads through the writer door, so the case replaces the two
-    writers it can reach with recorders and asserts the stamp was reached (see the case)."""
+    writers it can reach with recorders and asserts the stamp was reached (see the case). The fourth case seeds the records the
+    sweep must skip, one per subTest with no record owned, so the bound holds their sid to zero: on SID_A, a walk-owned record
+    with no journaled gate and one under a transient gate; on SID_C, a record under a journaled muted gate, and a failed, a
+    moot, an answered and a record with no wake flag."""
 
     def _seed_wake_record(self, sid=SID_C, store_file=True):
         """One owned wake record for `sid` in the ledger (the toggle stays off). For SID_C, never alive, its store too:
@@ -2928,6 +2931,47 @@ class TheSweepIsItsOwnBoundedReader(_WalkHarness):
         self.assertEqual({s[-4:]: g.get("gate") for s, g in gates.items()}, {"0001": "api-error", "0002": "api-error"},
                          "the walk journaled the wedge gate for both sids: the class of gate whose records the sweep owns")
         self.assertEqual(self.fb.sent, [], "nothing sent")
+
+    def test_a_record_the_sweep_does_not_own_takes_no_load(self):
+        """Each row seeds one record the sweep must skip, alone in the ledger, with `owned_records` empty, so _pass's sweep bound
+        holds the row's sid to zero on the pass (review round 8, fresh-2: every record this class seeded was one the sweep owns,
+        so the bound never met a record owed zero, and a read hoisted above the ownership filters in _awaiting_wake_outcomes
+        left the module green). Each record is the owned record the cases above seed with one thing changed: on SID_A, which the
+        walk visits, one with no journaled gate and one under a transient gate (`working`, journaled by the walk's own look with
+        _session_working answering true), both the walk's; on SID_C, never alive, one under a journaled muted gate, and one per
+        wake-set exclusion: failed, moot, answered, and no wake flag. After each pass the walk's loads are the row's and the
+        ledger still holds the row's record as seeded and the gate the row names, so the record reached the sweep as the row
+        says."""
+        base = {"wake": True, "at": NOW - 2 * H, "count": 1, "lastTurnId": "t1"}
+        (jd.GOALDIR / (SID_C + ".json")).write_text(json.dumps(   # a hoisted read of SID_C fills, as the owned case's read does
+            {"rompUuid": SID_C, "seq": 1, "placements": {}, "status": {}, "nodes": {}}))
+        rows = (("a walk-owned record with no journaled gate", SID_A, base, {}, None),
+                ("a walk-owned record under a transient gate", SID_A, base, {}, "working"),
+                ("a record under a journaled muted gate", SID_C, base, {SID_C: {"gate": "muted", "at": NOW - H}}, "muted"),
+                ("a failed record", SID_C, dict(base, failed=True, failedAt=NOW - H), {}, None),
+                ("a moot record", SID_C, dict(base, moot=True, mootAt=NOW - H), {}, None),
+                ("an answered record", SID_C, dict(base, answeredAt=NOW - H), {}, None),
+                ("a record with no wake flag", SID_C, {k: v for k, v in base.items() if k != "wake"}, {}, None))
+        self.owned_records = {}
+        real_working = self.saved["_session_working"]
+        now = NOW
+        for row, sid, rec, gates, gate in rows:
+            with self.subTest(row=row):
+                gid = sid + ":g1"
+                (jd.STATE / "auto-nudge.json").write_text(json.dumps({"enabled": False, "nudged": {gid: rec}, "walkGates": gates}))
+                km._autonudge_cache.clear()                # the ledger is a keyed file: every look runs again on this pass
+                km._session_working = (lambda turns: True) if gate == "working" else real_working
+                try:
+                    p = self._pass(now)
+                finally:
+                    km._session_working = real_working
+                now += 5
+                self.assertEqual(p["walk"], {SID_A: 0, SID_B: 0} if gate == "working" else {SID_A: 1, SID_B: 1},
+                                 "%s: the walk ran this pass, its looks reaching the store unless the working gate ends them first" % row)
+                led = km._auto_nudge_data()
+                self.assertEqual(led.get("nudged", {}).get(gid), rec, "%s: the record stands in the ledger as seeded" % row)
+                self.assertEqual(((led.get("walkGates") or {}).get(sid) or {}).get("gate"), gate,
+                                 "%s: the gate journaled for ..%s at the sweep is the row's" % (row, sid[-4:]))
 
 
 class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
