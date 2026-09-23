@@ -5837,8 +5837,11 @@ stdin_loops_running_tools() {   # <bash file>: prints "<first line>-<last line>:
 # fact, a table whose outside rows are swapped (a real read's row dropped, a row for a read the hook does not
 # make added), a duplicated key, a planted outside read with no row, and since round 8b3 a row with no short
 # column, a short column naming a silent case, a short column of none with no reason, a fact that states no
-# end and an end of no known kind. Round 8b matched the outside reads by COUNT, and the swapped table stayed
-# green (the r8b audit, 2026-09-23); each row's key makes the match a bijection, read by read.
+# end and an end of no known kind, and since round 8c an outside row whose short column is none with a reason
+# (a cut of a read made for the report can change what the report says, so every outside row names the case
+# that cuts it; the pcount row's none with a reason stayed green, the r8b5 audit, 2026-09-23). Round 8b
+# matched the outside reads by COUNT, and the swapped table stayed green (the r8b audit, 2026-09-23); each
+# row's key makes the match a bijection, read by read.
 READS_TSV="$ROMP_DIR/tests/pre-push-reads.tsv"
 READS_HEADER_GEN="$ROMP_DIR/tests/pre-push-reads-header.sh"
 READS_BEGIN='# BEGIN generated block (tests/pre-push-reads-header.sh; edit the table)'
@@ -5881,7 +5884,8 @@ reads_table_check() {   # <hook> <tsv> <generator> <dir of the pre-push-*.bats f
     # file its shim appends to, and its class is one its kind and its fact take; its fact states its END after
     # "Its end:", its end column names one of the ways an end is bounded, and its short column names the case
     # that drives the read with its answer cut short (one case title, pushing through the hook and checking
-    # with fired_short that the shim fired with a cut answer) or gives the reason no cut applies (round 8b3)
+    # with fired_short that the shim fired with a cut answer) or gives the reason no cut applies (round 8b3),
+    # the reason on a gate= or own= row alone: an outside row names its case (round 8c)
     while IFS=$'\t' read -r kind read fact caseref key class short end; do
         case "$kind" in gate|own|outside) ;; *) continue ;; esac
         file=${caseref%%:*}; sub=${caseref#*:}
@@ -5898,7 +5902,7 @@ reads_table_check() {   # <hook> <tsv> <generator> <dir of the pre-push-*.bats f
             *) echo "the row of $read carries the end $end, no known kind"; return 1 ;;
         esac
         case "$short" in
-            "none: "?*) ;;
+            "none: "?*) [ "$kind" != outside ] || { echo "the short column of $read gives none: on an outside row, which names its short case"; return 1; } ;;
             none*|'') echo "the short column of $read gives no case and no reason"; return 1 ;;
             *)
                 file=${short%%:*}; sub=${short#*:}
@@ -5989,10 +5993,13 @@ reads_table_check() {   # <hook> <tsv> <generator> <dir of the pre-push-*.bats f
     [ "$output" = "the hook's generated block differs from the generator's output for the table" ]
     # the swapped outside table: the core.bigFileThreshold read's row dropped and a row for a read the hook does not make
     # added, the count unchanged (round 8b's count match stayed green on this table); the added row reuses the dropped
-    # row's case, read from the table
+    # row's case and short case, read from the table (an outside row names its short case since round 8c, so the
+    # added row passes the row checks and meets the key match)
     ref="$(awk -F'\t' '$5 == "git config core.bigFileThreshold" { print $4 }' "$READS_TSV")"
+    sref="$(awk -F'\t' '$5 == "git config core.bigFileThreshold" { print $7 }' "$READS_TSV")"
     [ -n "$ref" ]
-    { grep -v -F "$(printf '\tgit config core.bigFileThreshold\t')" "$READS_TSV"; printf 'outside\tthe PLANTED configuration read\tfor the report alone: planted. Its end: planted\t%s\tgit config core.zzsynthNoSuchKey\treport\tnone: planted\treport\n' "$ref"; } > "$P/tsv-swapped"
+    [ -n "$sref" ]
+    { grep -v -F "$(printf '\tgit config core.bigFileThreshold\t')" "$READS_TSV"; printf 'outside\tthe PLANTED configuration read\tfor the report alone: planted. Its end: planted\t%s\tgit config core.zzsynthNoSuchKey\treport\t%s\treport\n' "$ref" "$sref"; } > "$P/tsv-swapped"
     [ "$(grep -c $'^outside\t' "$P/tsv-swapped")" -eq "$(grep -c $'^outside\t' "$READS_TSV")" ]
     run reads_table_check "$HOOK" "$P/tsv-swapped" "$READS_HEADER_GEN" "$ROMP_DIR/tests"
     [ "$status" -ne 0 ]
@@ -6036,6 +6043,14 @@ zz_planted=$(git config core.zzsynthPlanted 2>/dev/null || true)' "$HOOK" > "$P/
     run reads_table_check "$HOOK" "$P/tsv-end" "$READS_HEADER_GEN" "$ROMP_DIR/tests"
     [ "$status" -ne 0 ]
     [ "$output" = "the row of the EMPTY TREE name carries the end zzsynth, no known kind" ]
+    # round 8c: an outside row whose short column is none with a reason, the pcount row's shape before round 8b5
+    # (a cut applied there all along); a gate= or own= row's none with a reason passes, as eight of the tree's rows show
+    awk -F'\t' -v OFS='\t' '$1 == "outside" && $2 == "the parent count re-read from pcount, for the report" { $7 = "none: the count is read for the report alone (planted)" } { print }' "$READS_TSV" > "$P/tsv-outside-none"
+    run cmp -s "$READS_TSV" "$P/tsv-outside-none"
+    [ "$status" -ne 0 ]                                            # the edit landed
+    run reads_table_check "$HOOK" "$P/tsv-outside-none" "$READS_HEADER_GEN" "$ROMP_DIR/tests"
+    [ "$status" -ne 0 ]
+    [ "$output" = "the short column of the parent count re-read from pcount, for the report gives none: on an outside row, which names its short case" ]
 }
 
 # ── round 8b2 (A.8, completed): every row of tests/pre-push-reads.tsv driven through a real push ──
@@ -7866,6 +7881,8 @@ r8b3_scanner_log_short() {   # <cut bytes>: a gitleaks on ROMP_GITLEAKS that run
     fired_short check-attr "check-attr -z diff -- notes.txt"
     [ "$status" -ne 0 ]
     [[ "$output" == *"romp pre-push: notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that git calls binary although its diff attribute could not be read (git check-attr answered nothing for the path asked), so whether an attribute of its path accounts for the verdict is unknown"* ]]
+    [[ "$output" == *"Where a line names no attribute, a configuration key can be what makes git call the file binary"* ]]   # round 8c: the cut changes the advice too, the key's beside the attribute paragraph (the whole answer printed that paragraph alone)
+    [[ "$output" == *"Remove the diff attribute for each path named"* ]]
     run remote_holds_main
     [ "$status" -ne 0 ]
 }
@@ -7885,6 +7902,8 @@ r8b3_scanner_log_short() {   # <cut bytes>: a gitleaks on ROMP_GITLEAKS that run
     fired_short driver-key "config --type=bool diff.zzdrv.binary"
     [ "$status" -ne 0 ]
     [[ "$output" == *"romp pre-push: notes.txt in commit ${leak:0:10} is text that git calls binary although its diff attribute reads zzdrv, so no attribute of its path accounts for the verdict"* ]]
+    [[ "$output" == *"Where a line names no attribute, a configuration key can be what makes git call the file binary"* ]]   # round 8c: the key's advice in place of the attribute paragraph, which the whole answer printed
+    [[ "$output" != *"Remove the diff attribute for each path named"* ]]
     at_base
 }
 
@@ -7917,6 +7936,8 @@ r8b3_scanner_log_short() {   # <cut bytes>: a gitleaks on ROMP_GITLEAKS that run
     [ "$status" -ne 0 ]
     [[ "$output" == *"romp pre-push: new.txt in commit ${leak:0:10} is text that git calls binary although its diff attribute reads set, so no attribute of its path accounts for the verdict (the diff read it as a rename, so the attribute of the path it came from counted too) (the blob is"* ]]
     [[ "$output" != *"the previous version of the file"* ]]
+    [[ "$output" == *"Where a line names no attribute, a configuration key can be what makes git call the file binary"* ]]   # round 8c: the key's advice in place of the fetch remedy and the attribute line, which the whole answer printed
+    [[ "$output" != *"Where a line names the previous version's bytes as the cause"* ]]
     at_base
 }
 
@@ -7928,6 +7949,8 @@ r8b3_scanner_log_short() {   # <cut bytes>: a gitleaks on ROMP_GITLEAKS that run
     [ "$status" -ne 0 ]
     [[ "$output" == *"romp pre-push: thing in commit ${leak:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict (the blob is"* ]]
     [[ "$output" != *"the previous version of the file"* ]]
+    [[ "$output" == *"Where a line names no attribute, a configuration key can be what makes git call the file binary"* ]]   # round 8c: the key's advice in place of the fetch remedy and the attribute line, which the whole answer printed
+    [[ "$output" != *"Where a line names the previous version's bytes as the cause"* ]]
     at_base
 }
 
@@ -7939,6 +7962,8 @@ r8b3_scanner_log_short() {   # <cut bytes>: a gitleaks on ROMP_GITLEAKS that run
     [ "$status" -ne 0 ]
     [[ "$output" == *"romp pre-push: bin.dat in commit ${merge:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict (the blob is"* ]]
     [[ "$output" != *"the previous version of the file"* ]]
+    [[ "$output" == *"Where a line names no attribute, a configuration key can be what makes git call the file binary"* ]]   # round 8c: the key's advice in place of the fetch remedy and the attribute line, which the whole answer printed
+    [[ "$output" != *"Where a line names the previous version's bytes as the cause"* ]]
     at_base
 }
 

@@ -3033,9 +3033,9 @@ scan_credentials() {
             # with no error, the count beside it the only backstop, and the count
             # is not one: a scanner whose git wrote to stderr logged the error,
             # scanned part of a commit's patch and counted that commit whole, so
-            # an awk silent here passed a credential through a real push (one push
-            # in six; six direct scans in twenty counted the commit with its
-            # credential file unread; round 8b3, 2026-09-23).
+            # an awk silent here passed a credential through a real push (four
+            # pushes in fourteen; six direct scans in twenty counted the commit with
+            # its credential file unread; round 8b3, 2026-09-23).
             plain=""; err=""; reported=""
             if judged_read gate="the COLOUR STRIP of the scanner log" 0 "the CREDENTIAL scan of $local_ref (${local_sha:0:10}) could not be judged: its log could not be read (sed exited {rc})" -- sed $'s/\e\\[[0-9;]*m//g' <<< "$log"; then
                 plain=$read_out
