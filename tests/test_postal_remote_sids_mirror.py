@@ -50,7 +50,10 @@ the hub or the hub never heard (the carry's gate, which every earlier pin reache
 the two name axes of a via key, the hub folded from the hostname it declared under the alias the kernel dials (through the
 real inbound handler and the real fold) and the hub's own fold of the far host under the alias IT dials, the hub's earlier
 word under the old key dropped by identity, its bus heard under another name or its current word naming the far bus under
-another name, so a session that ended across the rename is in no row where rule 5 is due; a PEER_STATE row no exchange produced is not a source; the carry-forward across a restart and its release per host; the kernel's
+another name, so a session that ended across the rename is in no row where rule 5 is due; the two identity drops' negatives
+with the fixture every real bus presents, a bus id on the hub's row (the reviewer's verifier: every carried-hub fixture until
+then had none), a carried hub's word about a host nobody holds standing while its bus is heard under no other name, whatever
+another host vouches, and a second hub's current word about the far bus dropping no other hub's carried row; a PEER_STATE row no exchange produced is not a source; the carry-forward across a restart and its release per host; the kernel's
 seed of a carried host's link up at a restart, which vouches for nothing until the host is heard; the fold
 of a carried row for a bus heard under its other name; the whitespace list of the shape until 2026-09-22
 carried as one legacy source and pruned as heard sources name its sids; a file of neither shape carrying
@@ -204,18 +207,30 @@ class Mirror(unittest.TestCase):
                          "until 2026-09-22 pruned it, the second road of fork PR #897's round 1)")
 
     def test_a_peers_own_rows_under_its_name_and_its_gossip_as_a_via_row_under_the_hub_and_the_far_host(self):
-        self._peer(HUB, [{"id": A, "name": "web"}, {"id": B, "name": "api", "via": FAR, "viaBus": "far-bus"}])
+        self._peer(HUB, [{"id": A, "name": "web"}, {"id": B, "name": "api", "via": FAR, "viaBus": "far-bus"}], bus_id="hub-bus")
         pm._write_remote_sids()
         self.assertEqual(self._rows(), {HUB: (True, False, [A]), VIA_FAR: (True, False, [B])})
         row = self._doc()["hosts"][VIA_FAR]
         self.assertEqual((row["kind"], row["via"], row["host"], row["viaBus"]), ("via", HUB, FAR, "far-bus"),
                          "the hub's word about the far host, keyed by both names under a colon no host name carries (so the "
                          "far host's own row, if any, stands beside it): the hub in via, the far host and its bus id on the row")
-        # a hub that restarted and has not heard the far host yet gossips nothing about it: the via row is carried
-        # from the previous file, unreachable, instead of its sids vanishing (the road one hop out)
-        self._peer(HUB, [{"id": A, "name": "web"}])
+        self.assertEqual(self._doc()["hosts"][HUB].get("busId"), "hub-bus", "the hub's own row carries its bus id, as every real bus's does (BUS_ID)")
+        # the hub, heard again under the SAME name with the SAME bus id, gossips nothing about the far host: its silence is
+        # not a word about the host, so the via row is carried from the previous file, unreachable, instead of its sids
+        # vanishing (the road one hop out). The bus id matters to this pin (round 3 of fork PR #897, the reviewer's verifier:
+        # every carried-hub fixture until then had none, while every real bus stamps one): the carry's drop of a hub's via
+        # rows keys on the hub's bus heard under ANOTHER name, and a carry reading a heard hub's bus id under the same name
+        # as that event drops the row here
+        self._peer(HUB, [{"id": A, "name": "web"}], bus_id="hub-bus")
         pm._write_remote_sids()
-        self.assertEqual(self._rows(), {HUB: (True, False, [A]), VIA_FAR: (False, False, [B])})
+        self.assertEqual(self._rows(), {HUB: (True, False, [A]), VIA_FAR: (False, False, [B])},
+                         "the same bus under the same name, silent about the far host: its earlier word is carried, not dropped "
+                         "(the drop by identity is for a hub heard under another name, whose old rows leave together)")
+        # a RESTARTED hub (a bus id is minted per process) that has not heard the far host yet: carried the same
+        self._peer(HUB, [{"id": A, "name": "web"}], bus_id="hub-bus-restarted")
+        pm._write_remote_sids()
+        self.assertEqual(self._rows(), {HUB: (True, False, [A]), VIA_FAR: (False, False, [B])},
+                         "a restarted hub under its name, silent about the far host it has not heard yet: carried")
 
     def test_a_hubs_word_about_a_directly_held_host_folds_only_while_that_host_is_heard_and_not_held_down(self):
         """The ruled condition (round 3 of fork PR #897, the reviewer's ruling): the gossip folds into the far host's own
@@ -496,6 +511,113 @@ class Mirror(unittest.TestCase):
         self._peer(HUB, gossip(C))                         # the hub heard at last: its word folds, no via row
         pm._write_remote_sids()
         self.assertEqual(sorted(self._rows()), sorted([HUB, FAR]))
+
+    def test_a_carried_hubs_word_about_a_far_host_stands_while_its_bus_is_heard_under_no_other_name(self):
+        """The identity drop's negative, with the fixture every real bus presents (round 3 of fork PR #897, the reviewer's
+        verifier: every carried-hub fixture until this pin had no bus id, while every bus stamps one, BUS_ID, so a carry
+        reading a carried row's bus id ALONE as the hub heard under another name passed both changed modules). A hub, its
+        bus id on its row, names two sessions on a far host nobody holds directly; another host X is heard beside it; this
+        bus restarts; the kernel seeds both links up; X is heard with its link up BEFORE the hub. The hub's row is carried,
+        bus id and all, and its word about the far host with it: C and D are named by the carried via row, so the reader
+        answers cannot-determine for both while X vouches for absence (the carry above drops the via row at the restarted
+        bus's first write, C and D are in no row, and X, vouching, lets rule 5 presume two live sessions closed on the word
+        of a host that never gossiped them). The hub heard at last under the same name, naming C alone, is the event that
+        settles D. The drop that IS ruled follows, after a second restart: the hub's dial landing here from the hostname it
+        declares before ours folds it, the same bus id under ANOTHER name, and its old row and its via row leave together.
+        The composition with the reader's verdicts is tests/test_dead_session_staleness.py ReaderFollowsTheWriter (the two
+        hubs phase)."""
+        X = "TESTHOST-x"
+        gossip = lambda *sids: [{"id": A, "name": "web"}] + [{"id": s, "name": "api", "via": FAR, "viaBus": "far-bus"} for s in sids]
+        self._notify(HUB, up=True)
+        self._peer(HUB, gossip(C, D), bus_id="hub-bus")
+        self._notify(X, up=True)
+        self._peer(X, [{"id": E, "name": "tests"}], bus_id="x-bus")
+        pm._write_remote_sids()
+        self.assertEqual(self._vouch(), {HUB: (True, True, True), X: (True, True, True), VIA_FAR: (True, True, True)},
+                         "the hub and X heard with their links up; the hub's word about the far host follows the hub's link")
+        self.assertEqual(self._doc()["hosts"][HUB].get("busId"), "hub-bus", "the hub's row carries its bus id, as every real bus's does")
+        self._restart()
+        pm.PEERS.clear()
+        self._notify(HUB, up=True)                         # the kernel's seeds: both links up, nothing heard yet (each writes)
+        self._notify(X, up=True)
+        self.assertEqual(self._reach(), {HUB: (False, False, False, False, [A]), X: (False, False, False, False, [E]),
+                                         VIA_FAR: (False, False, False, False, [C, D])},
+                         "THE RULE, at the restarted bus's first write: the hub is carried, its bus id on its row, and its word "
+                         "about the far host with it (a carry reading a carried row's bus id alone as the hub heard under another "
+                         "name drops the via row here, and C and D are in no row)")
+        self.assertEqual(self._doc()["hosts"][HUB].get("busId"), "hub-bus", "the carried row keeps the bus id")
+        self._peer(X, [{"id": E, "name": "tests"}], bus_id="x-bus")   # X heard with its link up: it vouches for absence
+        pm._write_remote_sids()
+        self.assertEqual(self._vouch().get(X), (True, True, True), "X vouches for absence: heard, its link known up")
+        self.assertEqual(self._reach().get(VIA_FAR), (False, False, False, False, [C, D]),
+                         "X vouching and the hub not heard: the hub's carried word still names C and D, so the reader answers "
+                         "cannot-determine for both, named by an unreachable source (with the via row dropped they are in no row "
+                         "while X vouches: rule 5 for two sessions live on the far host, on the word of a host that never gossiped "
+                         "them)")
+        self.assertEqual(self._reach().get(HUB), (False, False, False, False, [A]), "the hub's own row carried too, not heard")
+        self._peer(HUB, gossip(C), bus_id="hub-bus")       # the hub heard at last, under its name: D ended on the far host
+        pm._write_remote_sids()
+        self.assertEqual(self._reach(), {HUB: (True, False, False, True, [A]), X: (True, False, False, True, [E]),
+                                         VIA_FAR: (True, False, False, True, [C])},
+                         "the event: the hub's current word names C alone, so D is in no row while the hub and X vouch, rule 5")
+        # the drop that IS ruled: after a second restart the hub's own dial lands here from the hostname it declares, before
+        # ours folds it under the alias, the same bus id under another name: its row under the old name and its via row leave
+        self._local_listing_answered_empty()
+        self._restart()
+        pm.PEERS.clear()
+        self._notify(HUB, up=True)
+        self._notify(X, up=True)
+        self.assertEqual(sorted(self._rows()), sorted([HUB, X, VIA_FAR]), "carried again, the via row among them")
+        self._far_dials_us(HUB_DECL, gossip(C), "hub-bus")
+        self.assertEqual(self._rows(), {X: (False, False, [E]), HUB_DECL: (True, False, [A]), VIA + HUB_DECL + "/" + FAR: (True, False, [C])},
+                         "the same bus heard under ANOTHER name: the row under the old name is dropped and the hub's earlier word "
+                         "under via:<old name>/<far> with it, by the same test, the bus id among the HEARD rows' (not its presence "
+                         "on a carried row); the hub's current word stands under its new name")
+
+    def test_a_hubs_current_word_about_a_far_bus_drops_its_own_earlier_word_alone_and_no_other_hubs(self):
+        """The pair the carry drops a via row by is (hub, far bus id), not the far bus id alone (round 3 of fork PR #897,
+        the reviewer's verifier: a carry dropping a carried via row on ANY heard hub's word about the far bus passed both
+        changed modules, every fixture having one hub). Two hubs, each with its bus id, name sessions on a far host nobody
+        holds directly; the first names two, the second, whose roster of the far host is older, one. This bus restarts;
+        the second hub is heard again, naming its one, before the first is heard: the first hub's carried word still names
+        the second session, so the reader answers cannot-determine for it (with that row dropped it is in no row while the
+        second hub vouches: rule 5 for a session the second hub never heard of, on that hub's word). The first hub heard
+        at last, naming one, is the event. The composition with the reader's verdicts is
+        tests/test_dead_session_staleness.py ReaderFollowsTheWriter (the two hubs phase)."""
+        HUB2 = "TESTHOST-hub2"
+        via2 = VIA + HUB2 + "/" + FAR
+        gossip = lambda *sids: [{"id": s, "name": "api", "via": FAR, "viaBus": "far-bus"} for s in sids]
+        self._notify(HUB, up=True)
+        self._notify(HUB2, up=True)
+        self._peer(HUB, gossip(C, D), bus_id="hub-bus")
+        self._peer(HUB2, gossip(C), bus_id="hub2-bus")
+        pm._write_remote_sids()
+        self.assertEqual(self._reach(), {HUB: (True, False, False, True, []), HUB2: (True, False, False, True, []),
+                                         VIA_FAR: (True, False, False, True, [C, D]), via2: (True, False, False, True, [C])},
+                         "one via row per hub, each under its own key: two words about the far host, side by side")
+        self._restart()
+        pm.PEERS.clear()
+        self._notify(HUB, up=True)                         # the kernel's seeds: both links up, nothing heard yet
+        self._notify(HUB2, up=True)
+        self.assertEqual(self._reach(), {HUB: (False, False, False, False, []), HUB2: (False, False, False, False, []),
+                                         VIA_FAR: (False, False, False, False, [C, D]), via2: (False, False, False, False, [C])},
+                         "the first write after the restart: every row carried")
+        self._peer(HUB2, gossip(C), bus_id="hub2-bus")     # the second hub heard again, naming C alone; the first hub not heard
+        pm._write_remote_sids()
+        self.assertEqual(self._reach(), {HUB: (False, False, False, False, []), HUB2: (True, False, False, True, []),
+                                         VIA_FAR: (False, False, False, False, [C, D]), via2: (True, False, False, True, [C])},
+                         "THE RULE: the second hub's current word names the far host's bus, and the pair the carry drops by is "
+                         "(hub, bus id), so it supersedes the second hub's own earlier word alone: the FIRST hub's carried word "
+                         "stands and still names D, cannot-determine for D by the reader (a carry dropping a carried via row on "
+                         "any hub's current word about the far bus drops it here, D is in no row, and the second hub, vouching "
+                         "for absence, lets rule 5 presume D closed on the word of a hub that never heard of it)")
+        self.assertEqual(self._vouch().get(HUB2), (True, True, True), "the second hub vouches for absence: heard, its link known up")
+        self._peer(HUB, gossip(C), bus_id="hub-bus")       # the first hub heard at last, naming C alone: D ended
+        pm._write_remote_sids()
+        self.assertEqual(self._reach(), {HUB: (True, False, False, True, []), HUB2: (True, False, False, True, []),
+                                         VIA_FAR: (True, False, False, True, [C]), via2: (True, False, False, True, [C])},
+                         "the event: the first hub's own current word supersedes its earlier one, and D is in no row while both "
+                         "hubs vouch, rule 5")
 
     def test_a_hubs_word_follows_the_hub_to_the_alias_and_its_earlier_word_under_the_declared_name_is_dropped(self):
         """The first name axis of a via key (round 3 of fork PR #897, the reviewer's verifier, by execution through the
