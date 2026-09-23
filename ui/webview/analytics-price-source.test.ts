@@ -74,7 +74,7 @@ test("the last fetch failed: built-in defaults with the reason the kernel record
 
 test("nothing landed yet: built-in defaults, a fetch in flight worded apart from none attempted, and a landed-empty feed by what it left", () => {
   assert.equal(note({ off: false, source: "defaults", reason: "unfetched", fetchedAt: null, rows: 0 }), "prices: built-in defaults; nothing fetched from the feed yet");
-  assert.equal(note({ source: "defaults", reason: "inflight" }), "prices: built-in defaults; fetching the feed now",
+  assert.equal(note({ source: "defaults", reason: "inflight" }), "prices: built-in defaults; the feed was still being fetched when these figures were priced; pick a period to reprice",
     "the first open of the modal: the payload is built before the fetch it started lands, and the next open shows the feed (review round 1: one wording for both states read 'nothing fetched yet' during a re-attempt after a landed or failed fetch)");
   assert.equal(note({ source: "defaults", reason: "empty", rows: 0, matched: 0 }), "prices: built-in defaults; the feed matched no known model",
     "a fetch that landed and named no known model is not 'not fetched yet'");
@@ -215,7 +215,7 @@ test("wired: raRender places the line from the payload's block in both metrics, 
     "the feed branch: the head, the share when the block carries both counts, the age when the block has a number");
   assert.match(GEAR, /pf\.reason === 'off' \? 'live feed off \(ROMP_PRICE_FEED=off\)'/, "the switch is named where the user looks");
   assert.match(GEAR, /pf\.reason === 'failed' \? 'the feed could not be fetched' \+ \(pf\.lastError \? ' \(' \+ pf\.lastError \+ '\)' : ''\)/);
-  assert.match(GEAR, /pf\.reason === 'inflight' \? 'fetching the feed now'/, "a fetch in flight, worded apart from none attempted");
+  assert.match(GEAR, /pf\.reason === 'inflight' \? 'the feed was still being fetched when these figures were priced; pick a period to reprice'/, "a fetch in flight, worded apart from none attempted");
   assert.match(GEAR, /pf\.reason === 'unfetched' \? 'nothing fetched from the feed yet'/);
   assert.match(GEAR, /if \(!pf \|\| typeof pf !== 'object'\) return '';/, "absent: no block, no text");
   // the line wears the footnote's muted 11px (the font-size rule: reuse a size already on the surface)

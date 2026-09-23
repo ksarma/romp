@@ -1,6 +1,6 @@
 {
  "classes": {
-  "browser-computed-url": 9,
+  "browser-computed-url": 10,
   "browser-dom-loads": 103,
   "external-program": 108,
   "runtime-program": 2
@@ -91,12 +91,12 @@
   "postal/postal_service.py:ensure Popen sys.executable": 1
  },
  "kinds": {
-  "js": 107,
+  "js": 112,
   "py": 160,
   "sh": 127
  },
  "local_roads": 5,
- "local_sites": 198,
+ "local_sites": 202,
  "per_key": {
   "bin/romp-codex-setup:pip install": 1,
   "bin/romp-manager:http.get": 3,
@@ -216,7 +216,7 @@
   "kernel/kernel.py:_update_remote": 2,
   "kernel/kernel.py:_watch_run": 1,
   "kernel/kernel.py:clients.openWindow": 1,
-  "kernel/kernel.py:fetch": 36,
+  "kernel/kernel.py:fetch": 41,
   "kernel/kernel.py:main": 1,
   "kernel/kernel.py:window.open": 1,
   "kernel/sdk_backend.py:SdkBackend._boot_reconcile": 1,
@@ -292,7 +292,7 @@
   "judge-cli": 3,
   "local-bus": 13,
   "local-git": 21,
-  "local-kernel": 211,
+  "local-kernel": 215,
   "local-manager": 9,
   "local-program": 36,
   "main-converge": 7,
@@ -310,5 +310,5 @@
   "web-push": 2
  },
  "roads": 32,
- "sites": 394
+ "sites": 399
 }

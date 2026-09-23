@@ -2306,7 +2306,7 @@ function raPriceNote(pf) {
     : pf.reason === 'empty' ? (typeof pf.matched === 'number' && pf.matched > 0
       ? 'the feed\'s rows for ' + pf.matched + ' known model' + (pf.matched === 1 ? '' : 's') + ' could not be read'
       : 'the feed matched no known model')
-    : pf.reason === 'inflight' ? 'fetching the feed now'
+    : pf.reason === 'inflight' ? 'the feed was still being fetched when these figures were priced; pick a period to reprice'
     : pf.reason === 'unfetched' ? 'nothing fetched from the feed yet'
     : '';
   return 'prices: built-in defaults' + (why ? '; ' + why : '') + (unrec ? '; ' + unrec : '') + (ovr ? '; ' + ovr : '')

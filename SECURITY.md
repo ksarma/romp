@@ -45,7 +45,8 @@ subresource load may trigger. A token presented explicitly, as `?token=` or
 need it, and a cross-site page cannot obtain it: the dashboard drops `?token=`
 from its address as it loads, and every page the kernel serves carries
 `Referrer-Policy: same-origin`, so the token never reaches another origin in a
-`Referer`.
+`Referer`, with one exception that Network access below states: an inline
+svg's paint reference on a page whose own address carries `?token=`.
 The token-exempt routes are the no-side-effect liveness probes (`/healthz`,
 `/version` and `/busy` on the kernel, `/ping` on the bus) and the install files:
 `/manifest.webmanifest` and the three home-screen icons under `/media/`
@@ -188,27 +189,71 @@ know and any row of its table that names no site; the test suite runs it
 service worker's script, from its own string constants (the dashboard shell,
 the seven pane pages, the token login page, the too-large page and /sw.js, with
 the shim, the timeline boot and the shell scripts they inline), are read from
-kernel.py's syntax tree, each route's page function followed to the constants
-it returns or inlines, and scanned as browser text keyed kernel/kernel.py plus
-tool, with the DOM loads counted; a route that serves text/html or
-text/javascript from text the extraction cannot read fails the run (SERVED); a
-file the page reads at run time is covered by the walk when it is a scanned
-kind, and a stylesheet is named, not scanned. The shell and browser sides are
-matched by a named list with no completeness gate: a tool or a client the lists
-do not name is no site and no line; the Python side's gate is module-granular:
-an import outside the allow-list fails the run, and a primitive of a known
-module outside NET and SUB is not a site. An echo- or print-led shell line is
-skipped as a printed remedy only when nothing live follows the printed text:
-the text outside quotes and the body of every `$(...)` and backtick
-substitution, wherever it stands, are scanned by the interpreter arm and the
-tool list, so `echo "$body" | curl ...` and `echo "rate: $(curl ...)"` are
-sites and a remedy that names a tool inside quotes is not. On the browser and
-editor side a client the list names is a site however the file binds it, the
-connection family read through its bindings as the child_process family is: a
-`get` or `request` of `http` or `https`, a `connect` or `createConnection` of
-`net` and a `connect` of `tls` through an inline require, a namespace or
-default import, or a bare name the file binds from the module (renamed or not),
-and `ws` by its constructor shape (`new <binding>(`,
+kernel.py's syntax tree and scanned as browser text keyed kernel/kernel.py plus
+tool, with the DOM loads counted. The routes are derived from every `_send`
+call and every Content-Type header written outside `_send`, in every scanned
+Python file. A `_send` call's content type is read through the definition it
+reaches: the kernel's Handler._send writes its `ctype` parameter, so the call's
+third argument or its `ctype=` keyword; the postal bus's writes
+application/json; the session host's and its transport's write a frame to a
+Unix socket and answer no HTTP request (FRAME_WRITERS), and any other
+definition that writes no Content-Type fails the run. The type is read through
+module constants, through a local whose every binding is read and through a
+dict literal's values; the part before any `;`, stripped and lower-cased, is
+compared with the types a browser runs script from (SCRIPT_TYPES: text/html;
+the XML types text/xml, application/xml, text/xsl and any type with a `+xml`
+suffix, image/svg+xml and application/xhtml+xml among them; and text/javascript
+under each name a browser takes for JavaScript, application/javascript among
+them). The page function of each script-running route is followed to the text
+it returns or inlines. In that text the served pass reads a BoolOp's operands,
+a method call's receiver and a subscript's container when they name a module
+constant or a local, the receiver of `.encode` or `.format_map` whatever it is,
+a class attribute the class body binds, a loop, unpacking or with target from
+its source, and a local container's appended or stored values; it passes over a
+base that carries no page text (an import, a builtin, a parameter, an except
+name, or a name the function binds from one of those). The run fails by name
+(SERVED) on a content type the pass cannot read, a script-running type written
+outside `_send`, a function that answers outside `_send` more often than it
+writes a Content-Type header, a container the module writes at run time, any
+other receiver or container, and a route whose text the pass cannot read,
+unless the served allowlist, SERVED_ALLOW, names the place by its function and
+expression, with the number of places the entry covers and the reason (the two
+answers with no body, the CORS preflight's 204 and the websocket upgrade's 101,
+are named there); an entry that names nothing in the run, or covers a different
+number of places, fails the run too. In served text every `fetch(` and
+`import(` on a line is read by its own argument, and no comment skip applies,
+since a joined constant is one line whatever it starts with. A file the page
+reads at run time is covered by the walk when it is a scanned kind, and a
+stylesheet is named, not scanned. The shell and browser sides are matched by a
+named list with no completeness gate: a tool or a client the lists do not name
+is no site and no line; the Python side's gate is module-granular: an import
+outside the allow-list fails the run, and a primitive of a known module outside
+NET and SUB is not a site. Three binding shapes no pattern reads fall under
+that rule: a require assigned after its declaration
+(`let h; h = require("http")`), a `.then()` callback parameter of `import()`,
+and a call through an alias of `require`
+(`const r = require; const h = r("http")`); a call through any of them is no
+site and no line. The import gate reads the literal `require()` and `import()`
+of the first two, so in those shapes an `https`, `net` or `tls` module fails
+the run and the residual reaches `http`, `ws` and `child_process`, the packages
+the list knows; an aliased require spells no literal `require()`, so the gate
+does not read its module either, and that shape reaches every module. An echo-
+or print-led shell line is skipped as a printed remedy only when nothing live
+follows the printed text: the text outside quotes and the body of every
+`$(...)` and backtick substitution, wherever it stands, are scanned by the
+interpreter arm and the tool list, so `echo "$body" | curl ...` and
+`echo "rate: $(curl ...)"` are sites and a remedy that names a tool inside
+quotes is not. On the browser and editor side a client the list names is a site
+through each binding shape the patterns read, the connection family read
+through its bindings as the child_process family is: a `get` or `request` of
+`http` or `https`, a `connect` or `createConnection` of `net` and a `connect`
+of `tls` through an inline require, a name the file keeps the module under (a
+require or an `await import()` assigned whole in its declaration, TypeScript's
+`import X = require()`, a namespace or default import, alone or the two in one
+statement, a default beside a brace list, `import { default as X }`), or a bare
+name the file binds from the module by a brace list, alone or beside a default,
+in an import, a destructured require or a destructured `await import()`
+(renamed or not), and `ws` by its constructor shape (`new <binding>(`,
 `new <namespace>.WebSocket(`, `new (require('ws'))(`), each an added arm beside
 the literal spellings (`http.get(`, `net.connect(`, the bare global
 `new WebSocket(`), a call the literal list already names on a line counted once
@@ -226,7 +271,11 @@ time (a fetch, or a dynamic import of a module); and the loads the browser
 makes on its own for what a page inserts (an image, a frame, a script, a link).
 A fifth is named in the table and not counted, since the scan cannot see it: a
 socket primitive called on a receiver the census cannot resolve (an
-attribute-held or parameter socket) is not a site here.
+attribute-held or parameter socket) is not a site here. Two kinds of browser
+request are also named in the table and not counted, since the content shown,
+not a line of this tree, names what they load: an inline svg's paint references
+in the chat's file preview and in a notice card, and the loads of an .svg
+opened in its own tab.
 
 `ROMP_PRICE_FEED=off` in the kernel's environment (`service.env` for the
 installed service, then a manager restart) stops that fetch: the Token usage
@@ -261,18 +310,38 @@ Also in the browser, with no click and no setting of yours: on the web
 dashboard the chat's rendered markdown (a session's reply, your own message, a
 postal body) loads an image, video, audio, srcset or picture media from the
 host its URL names the moment it renders (a video's poster and an inline svg's
-image load the same way), with whatever cookies that browser sends cross-site
-to that host and no Referer (a SameSite=None cookie, not the fuller set a
-top-level navigation carries; every page the kernel serves carries
-`Referrer-Policy: same-origin`); an inline svg's paint references (a `fill`,
-`mask` or `filter` whose `url()` names another host) load at render too, with
-no click, and are the one case where the request can carry the dashboard's
-address with the serve token in its Referer: the browser does not reliably
-hold them to the page's referrer policy, so the request to that host can carry
-the page's origin or the full chat URL with the serve token (the response is
-blocked as cross-origin; the request, with that header, has reached the host);
-the editor extension's webviews block these loads by their content security
-policy, so this is the web dashboard's alone.
+image load the same way), with whatever cookies that browser sends to that
+host and no Referer to any other origin (every page the kernel serves
+carries `Referrer-Policy: same-origin`). Every other text the chat page renders
+as markdown loads its media the same way: the text a Continue press sends, a
+message romp or another program sent to the session on your behalf, a note or
+notice the harness injected (a command's output, a scheduled task's firing), a
+notice from romp, a compaction summary, a background task's report, a
+subagent's skill text, prompt and report, a peer agent's message and an agent's
+reply in a file comment thread. An inline svg's paint references load with no
+click on three surfaces of the web dashboard: the chat's rendered markdown,
+when it renders; the chat's file preview, the card that opens on a pointer
+dwell of 350 ms or a keyboard focus on a link in the chat to a markdown file
+the kernel allows to preview (one in the session's folder or your home; a
+glossary term links to its section the same way); and a notice card's body on
+the feed page, which a session writes through POST `/notice` (`romp card`),
+when the feed paints the card. The file preview and the notice card strip an
+image, video, audio, a poster and an svg image before the nodes join the page,
+so only the paint references load there. On all three, in Chromium a `fill`,
+`stroke`, `clip-path`, `mask`, `marker-start`, `marker-mid` or `marker-end`
+whose `url()` names another host loads from that host, in Firefox and WebKit at
+least a `mask` does, and a `filter` does in no engine; each such request
+carries no cookie and carries the page's origin (the dashboard's scheme, host
+and port) in its Origin header; in Chromium a `mask` request can also carry
+that origin as its Referer, from any page, framed or bare; and a paint request
+can carry the full page address with the serve token in its Referer, but only
+when the page's own address carries `?token=` (a pane page opened bare, such as
+`/chat?token=`; the shell drops the token from its address before it frames its
+panes, and frames them without it); these paint requests are the one exception
+to the trust model's sentence on `Referrer-Policy: same-origin` (the response
+is blocked as cross-origin; the request, with those headers, has reached the
+host); the editor extension's webviews block these loads by their content
+security policy, so this is the web dashboard's alone.
 
 The other connections open when something sets them up, you or a session you
 are running: an attached machine (ssh commands to it and tunnels to it, and
@@ -317,22 +386,41 @@ gear builds to open in a new tab, opens by document: on the dashboard's
 settings page, which installs no opener, the browser's own open in a new tab,
 no site of this tree running; in the editor's chat panel the chat delegate's
 `openLink` post to the extension; in the editor's feed panel the webview host's
-own link handling, outside this tree. None carries a serve token, a key or a
-login token, and nothing sends until you click; three anchors the chat page's
-click delegate leaves to the default action (one with no scheme that the page
-built; one with no scheme in a message that does not resolve to an http or
-https address; a message's own download anchor, one with no scheme carrying a
-`download` attribute whose href resolves to an http or https address on this
-page's origin, which the browser saves from this origin), and a page-built
-anchor with a scheme in a document that installs no opener (the gear's sign-in
-link on the dashboard's settings page and in the editor's feed panel is one),
-are gestures this tree does not route: on the dashboard the browser's own open
-or download, and what the editor's own webview host does with them is outside
-this tree. Installing by hand (`bootstrap.sh`, `install.sh`) fetches from
-GitHub, PyPI (and bootstrap.pypa.io for get-pip.py when the python lacks
-ensurepip; `ROMP_NO_GET_PIP=1` skips that fetch) and the npm registry, and
-`bin/romp-codex-setup`, run by hand for Codex sessions, fetches the Codex SDK
-from PyPI and the pinned Codex CLI from GitHub.
+own link handling, outside this tree. romp adds no serve token, key or login
+token to a link's URL, and nothing sends until you click; three anchors the
+chat page's click delegate leaves to the default action (one with no scheme
+that the page built; one with no scheme in a message that does not resolve to
+an http or https address; a message's own download anchor, one with no scheme
+carrying a `download` attribute whose href resolves to an http or https address
+on this page's origin, which the browser saves from this origin), and a
+page-built anchor with a scheme in a document that installs no opener (the
+gear's sign-in link on the dashboard's settings page and in the editor's feed
+panel is one), are gestures this tree does not route: on the dashboard the
+browser's own open or download, and what the editor's own webview host does
+with them is outside this tree. Installing by hand (`bootstrap.sh`,
+`install.sh`) fetches from GitHub, PyPI (and bootstrap.pypa.io for get-pip.py
+when the python lacks ensurepip; `ROMP_NO_GET_PIP=1` skips that fetch) and the
+npm registry, and `bin/romp-codex-setup`, run by hand for Codex sessions,
+fetches the Codex SDK from PyPI and the pinned Codex CLI from GitHub.
+
+On the web dashboard, a Cmd, Ctrl or middle click on a path link to an .svg in
+a viewed file opens the file in the browser's own tab from the kernel's `/file`
+route (Cmd or Ctrl with Enter or Space on a focused link does the same; for a
+file of a session on an attached machine the tab opens from the
+`/remote/<host>/file` relay, which sends the same headers), and the tab is an
+svg document, sandboxed so no script runs in it, that loads each resource its
+markup names from that resource's host, whether or not the host is on the
+gear's Pictures from the web in files list: an image, a CSS `@import`, an
+`xml-stylesheet` instruction, an `feImage`, HTML inside a `foreignObject` (an
+`img`, a stylesheet, a frame, a video, audio, an object or an embed), a cursor
+image, a web font, and paint references: in Chromium a `fill`, `stroke`,
+`clip-path`, `mask`, `marker-start`, `marker-mid` or `marker-end` whose `url()`
+names another host loads from that host, in Firefox and WebKit at least a
+`mask` does, and a `filter` does in no engine; a load the browser makes without
+CORS (an image, a stylesheet, a frame, a media element or an embedded object)
+carries whatever cookies that browser sends cross-site to that host, a paint
+reference or a web font (a CORS request) carries none, and none carries a
+Referer or a serve token.
 
 What those programs send is theirs, not the kernel's: a session's own CLI, the
 judges' CLIs, a watch predicate, the API key helper, a login's token program,

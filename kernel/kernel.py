@@ -73769,14 +73769,14 @@ class Handler(BaseHTTPRequestHandler):
         # Phone and tailnet frame the kernel's own origin, which 'self' permits.
         self.send_header("X-Frame-Options", "SAMEORIGIN")
         self.send_header("Content-Security-Policy", "frame-ancestors 'self'")
-        # Referrer policy: a document's URL is what its requests send as Referer, and the shell's URL is
-        # `/?token=` on its first load (the address scrub in _landing's head script drops it; a pane page
-        # opened bare as `/chat?token=` keeps it). same-origin sends the full Referer on requests to this
-        # origin and nothing cross-origin (a transcript's <img> from another host, a link out), whatever
-        # the browser's default, on every page the kernel serves: the SECURITY.md claim that a cross-site
-        # page cannot obtain the token then holds by construction. same-origin and not no-referrer: a
-        # same-origin GET carries no Origin header, so the Referer is the one header that names the page
-        # origin behind it to the kernel, and this keeps it.
+        # Referrer policy: a document's URL is what its requests send as Referer, and the shell's URL is `/?token=` on its
+        # first load (the address scrub in _landing's head script drops it; a pane page opened bare as `/chat?token=`
+        # keeps it). same-origin sends the full Referer on requests to this origin and nothing cross-origin (a
+        # transcript's <img> from another host, a link out), whatever the browser's default, on every page the kernel
+        # serves: the SECURITY.md claim that a cross-site page cannot obtain the token then holds by construction, save
+        # the one exception its Network access section states (an inline svg's paint reference, on a page whose own
+        # address carries ?token=). same-origin and not no-referrer: a same-origin GET carries no Origin header, so the
+        # Referer is the one header that names the page origin behind it to the kernel, and this keeps it.
         self.send_header("Referrer-Policy", "same-origin")
         for k, v in (headers or {}).items():
             self.send_header(k, v)

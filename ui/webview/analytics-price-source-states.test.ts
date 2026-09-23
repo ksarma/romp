@@ -26,7 +26,10 @@
 //   (that round: a copy of the helper here counted hours without end and said just now where the popup says now).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { agoWords } from "./api-health-merge";
+import { nodeFactory } from "../test-dom-shim";
 
 const gear = require("./gear.js");
 const note = (pf: unknown): string => {
@@ -36,17 +39,83 @@ const note = (pf: unknown): string => {
 
 test("a fetch in flight is worded as one, apart from nothing fetched yet, so a re-attempt never says nothing was fetched", () => {
   assert.equal(note({ off: false, source: "defaults", reason: "inflight", fetchedAt: null, ageS: null, lastError: null, rows: 0 }),
-    "prices: built-in defaults; fetching the feed now", "the first open: the payload is built before the fetch it started lands");
+    "prices: built-in defaults; the feed was still being fetched when these figures were priced; pick a period to reprice", "the first open: the payload is built before the fetch it started lands");
   assert.equal(note({ source: "defaults", reason: "unfetched" }), "prices: built-in defaults; nothing fetched from the feed yet",
     "no attempt this kernel life (reachable on /version before the first open)");
   // the kernel's re-attempt after a fetch that landed and matched nothing: fetchedAt set, cache empty, a worker parked
   const afterEmpty = note({ off: false, source: "defaults", reason: "inflight", fetchedAt: 1_781_100_000, ageS: 21_600, lastError: null, rows: 0 });
-  assert.equal(afterEmpty, "prices: built-in defaults; fetching the feed now");
+  assert.equal(afterEmpty, "prices: built-in defaults; the feed was still being fetched when these figures were priced; pick a period to reprice");
   assert.ok(!afterEmpty.includes("nothing fetched"), "a fetch landed six hours ago: 'nothing fetched' would be false");
   // the kernel's re-attempt after a failed fetch: lastError set, a worker parked
   const afterFailed = note({ off: false, source: "defaults", reason: "inflight", fetchedAt: null, ageS: null, lastError: "HTTPError: HTTP 500", rows: 0 });
-  assert.equal(afterFailed, "prices: built-in defaults; fetching the feed now");
+  assert.equal(afterFailed, "prices: built-in defaults; the feed was still being fetched when these figures were priced; pick a period to reprice");
   assert.ok(!afterFailed.includes("nothing fetched"));
+});
+
+// The modal's flow on a first open with the feed in flight (the fifth round of the review of PR 878, ruling M): the payload is
+// built before the fetch it started lands, and the metric and group buttons re-render the payload the modal holds without asking
+// the kernel again, so the line must stay true after the fetch lands: it says the figures were priced while the feed was being
+// fetched and names the gesture that reprices, a period pick (a reopen does too). EXECUTED over the repo's DOM stand-in: the
+// modal's block from raPriceLine through the button handlers (raRender, raFetch, the open and the period, group and metric
+// handlers), lifted from initGear with the closure names it reads passed in as stubs, and fetch stubbed to answer /analytics.
+const ROOT = path.resolve(process.cwd(), "..");
+const INFLIGHT = "prices: built-in defaults; the feed was still being fetched when these figures were priced; pick a period to reprice";
+
+test("the first open with the feed in flight: a Cost ($) or group click after the fetch lands re-renders the same line and asks nothing, and a period pick reprices", async () => {
+  const GEAR = fs.readFileSync(path.join(ROOT, "ui", "webview", "gear.js"), "utf8");
+  const start = GEAR.indexOf("  var raPrice = null;"), end = GEAR.indexOf("  document.addEventListener('keydown'", start);
+  assert.ok(start > 0 && end > start, "raPriceLine, raRender, raFetch and the modal's button handlers sit together ahead of the Escape listener inside initGear; re-anchor if the block moved");
+  const make = nodeFactory();
+  const panel = make("div"), footnote = make("div");
+  panel.appendChild(footnote);
+  Object.defineProperty(footnote, "nextSibling", { get: () => panel.children[panel.children.indexOf(footnote) + 1] || null });
+  const button = (attr: string, value: string, label: string) => {
+    const attrs: Record<string, string> = { [attr]: value };
+    return { textContent: label, className: "", onclick: null as null | (() => void), getAttribute: (k: string) => (k in attrs ? attrs[k] : null) };
+  };
+  const periods = [button("data-w", "86400", "24h"), button("data-w", "604800", "7d")];
+  const groups = [button("data-g", "judge", "By judge"), button("data-g", "tier", "Index vs triage")];
+  const metrics = [button("data-m", "tokens", "Tokens"), button("data-m", "cost", "Cost ($)")];
+  const buttons: Record<string, unknown[]> = { ".ra-periods button": periods, ".ra-group button": groups, ".ra-metric button": metrics };
+  const raState: any = { loading: false, data: null, group: "judge", metric: "tokens", periodLabel: "24h", window: 86400 };
+  const requests: string[] = [], answers: unknown[] = [];
+  const fetchStub = (url: string) => { requests.push(url); const body = answers.shift(); return Promise.resolve({ json: () => Promise.resolve(body) }); };
+  const raOpen: { onclick: null | ((e: unknown) => void) } = { onclick: null };
+  const stubs: Record<string, unknown> = {
+    document: { createElement: make, querySelectorAll: (sel: string) => buttons[sel] || [] },
+    fetch: fetchStub, ku: (u: string) => u, endDrags: () => {}, p: { hidden: false }, raOpen, raClose: null,
+    raBack: { hidden: true, addEventListener: () => {} },
+    raState, raChart: make("div"), raLegend: make("div"), raNote: footnote,
+    raCost: () => raState.metric === "cost", raVal: (s: any) => (s.in || 0) + (s.out || 0), raSegments: () => [], raDate: () => "", raWhen: () => "",
+    raEsc: (s: string) => s, fmtTok: () => "", fmtUsd: () => "", raFmt: () => "", raPriceNote: gear.raPriceNote,
+  };
+  const api = new Function(...Object.keys(stubs), GEAR.slice(start, end) + "\nreturn { node: function () { return raPrice; } };")(...Object.values(stubs)) as { node: () => any };
+  const line = () => { const n = api.node(); return n ? n.textContent : null; };
+  const settle = () => new Promise((r) => setImmediate(r));
+  answers.push({ sessions: { in: 10, out: 5, cost: 0.5 }, priceFeed: { off: false, source: "defaults", reason: "inflight", fetchedAt: null, ageS: null, rows: 0, lastError: null } });
+  assert.equal(typeof raOpen.onclick, "function", "the modal's open handler is wired");
+  raOpen.onclick!({ stopPropagation: () => {} });
+  await settle();
+  assert.equal(requests.length, 1, "the open asks the kernel once");
+  assert.equal(line(), INFLIGHT, "the first open: the payload was built with the feed's fetch in flight");
+  // the kernel's fetch lands here, which the page cannot see; the Cost ($) button re-renders the payload the modal holds
+  metrics[1].onclick!();
+  await settle();
+  assert.equal(raState.metric, "cost", "the Cost ($) button took");
+  assert.equal(requests.length, 1, "the metric button asks the kernel nothing: it re-renders the payload the open fetched");
+  assert.equal(line(), INFLIGHT, "after the fetch landed the line is still true: it says when the figures were priced and names the gesture that reprices");
+  assert.ok(!String(line()).includes("fetching the feed now"), "the line never says a fetch is under way, which stops being true when it lands");
+  groups[1].onclick!();
+  await settle();
+  assert.equal(requests.length, 1, "the group button asks the kernel nothing either");
+  assert.equal(line(), INFLIGHT, "the group button re-renders the same line");
+  // the gesture the line names: a period pick asks the kernel again, and the answer carries the feed
+  answers.push({ sessions: { in: 10, out: 5, cost: 0.5 }, priceFeed: { off: false, source: "feed", reason: null, fetchedAt: 1_700_000_000, ageS: 240, rows: 6, lastError: null } });
+  periods[1].onclick!();
+  await settle();
+  assert.equal(requests.length, 2, "the period pick asks the kernel again");
+  assert.ok(requests[1].includes("window=604800"), "for the period picked: " + requests[1]);
+  assert.equal(line(), "prices: live feed, fetched 4 minutes ago", "the period pick reprices from the feed");
 });
 
 test("the feed's rows under the switch: the line names the feed with its age and says no refresh will come", () => {
@@ -129,7 +198,7 @@ test("a ROMP_PRICE_FEED value that is not off: the feed stays on, and the line s
   assert.equal(note({ off: false, unrecognised: true, source: "feed", reason: null, fetchedAt: 1_700_000_000, ageS: 240, lastError: null, rows: 6, matched: 6, known: 6, overrides: 0 }),
     "prices: live feed, fetched 4 minutes ago; " + UNREC, "the feed line: the rows and their age, then that the switch did not take");
   assert.equal(note({ off: false, unrecognised: true, source: "defaults", reason: "inflight", fetchedAt: null, ageS: null, lastError: null, rows: 0 }),
-    "prices: built-in defaults; fetching the feed now; " + UNREC,
+    "prices: built-in defaults; the feed was still being fetched when these figures were priced; pick a period to reprice; " + UNREC,
     "the first open under a misspelt switch: the fetch is under way, and the line says why the switch did not stop it");
   assert.equal(note({ unrecognised: true, source: "defaults", reason: "unfetched" }), "prices: built-in defaults; nothing fetched from the feed yet; " + UNREC,
     "before the first attempt (reachable on /version): the value is already read, and said");
@@ -146,7 +215,7 @@ test("a ROMP_PRICE_FEED value that is not off: the feed stays on, and the line s
 
 test("the switch's other readings word nothing new: `unrecognised` false or absent is the older line byte for byte, and no value a block might carry is echoed", () => {
   assert.equal(note({ off: false, unrecognised: false, source: "feed", ageS: 240 }), "prices: live feed, fetched 4 minutes ago", "the variable unset or empty: the plain line");
-  assert.equal(note({ off: false, unrecognised: false, source: "defaults", reason: "inflight" }), "prices: built-in defaults; fetching the feed now");
+  assert.equal(note({ off: false, unrecognised: false, source: "defaults", reason: "inflight" }), "prices: built-in defaults; the feed was still being fetched when these figures were priced; pick a period to reprice");
   assert.equal(note({ off: true, unrecognised: false, source: "defaults", reason: "off" }), "prices: built-in defaults; live feed off (ROMP_PRICE_FEED=off)", "off took: that is what is said");
   assert.equal(note({ off: true, unrecognised: false, source: "feed", ageS: 600 }), "prices: live feed, fetched 10 minutes ago; refresh off (ROMP_PRICE_FEED=off)");
   for (const pf of [{ source: "feed", ageS: 240 }, { source: "defaults", reason: "inflight" }, { source: "defaults", reason: "unfetched", overrides: 1 }])

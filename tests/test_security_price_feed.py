@@ -65,7 +65,7 @@ where cell reads not counted) and from the committed counts file, never typed he
 sentences must appear in the section AND in the script's docstring, one source; the install condition is held to the
 script's own gate lines (PACKAGE_ONLY, the editor-CLI list, the exit before npx) and to the table's install-ext and
 self-update cells; the table's label for the external-program class is the section's phrase plus the kind suffix
-every class row carries, read from the script's CLASS_ROWS by importing it in a child interpreter (the table had
+every class row carries, read from the script's CLASS_ROWS binding (by importing it in a child interpreter until the fifth round, from the module the census module loads in this process since) (the table had
 labelled the class a program the kernel starts while the section, widened, said a program started whose far end its
 arguments do not show), so the two wordings cannot drift apart. Over the archive of the round's reviewed head each
 new or rewritten case is red at its first SECURITY.md assertion (the old editor clause; no fifth-class, residual,
@@ -83,7 +83,7 @@ that the inventory owed a row for a link you click, on both hosts: on the web da
 until then under the browser DOM's own loads, whose cell named kernel URLs, object URLs, webview URIs and figure hosts and not
 the clicked URL's host; in the editor extension the one call that hands the URL to the operating system's default browser,
 which the scan did not see. The section now says the road (what is sent, to which host, on your click, with no switch and no
-credential of romp's) and its residual in the script's own sentence, and TheSectionIsTheTables' clicked-link case holds the
+credential romp adds to a link's URL) and its residual in the script's own sentence, and TheSectionIsTheTables' clicked-link case holds the
 sentences to the section, the residual to the script's docstring and the road's trigger cell (one source), the where cell to
 the sites and the code to the openers (the extension's one call inside openLink and its host routes, the router's
 openLinkLocally, the two window.open lines beside their openLink posts); the every-road case is red over the head before the
@@ -92,7 +92,7 @@ copy of the section and with the residual deleted from a scratch copy of the scr
 
 The fourth round (2026-09-23, the landing round again) found a road with no row and three cells that misstated the code. The
 section now says the chat-media road (on the web dashboard a rendered message's media loads from the host its URL names on
-render, with the cookies a cross-site subresource carries and no Referer, save an inline svg's paint references, which the
+render, with whatever cookies that browser sends to that host and no Referer to any other origin, save an inline svg's paint references, which the
 sanitizer keeps and whose request can carry the dashboard's address with the serve token in its Referer, a correction from an
 executed fact check of the media road; the editor webviews' CSP blocks it), the file viewer's
 GitHub button (an address romp composes from the checkout's owner and repository name, its branch or the commit sha when HEAD is
@@ -117,12 +117,15 @@ whole-statement needle red) and target.script re-pointed before the assignment (
 copies of extension.ts.
 
 Text only: the behaviour is pinned in tests/test_price_feed_off.py (the kernel), the reference's prose in
-tests/test_reference_price_feed.py. The documents and the sources are read as files; nothing loads romp
-code. The table cases read tests/test_price_feed_census.py's tree run (since the fifth round, 2026-09-23:
-the census script's one in-process scan of the tree under --table, shared with that module in a serial run;
-a child running the script here before it), and the binding reads import the script in a child interpreter
-as before; the state root minted in this process is the census module's, the state ratchet's floor for its
-in-process load of the script. Every case asserts SECURITY.md's text FIRST, so a run over a tree without the
+tests/test_reference_price_feed.py. The documents and the sources are read as files, and no module
+of romp's runtime is loaded here: the census script is loaded in this process through the census module (its
+script_module), and that module imports tests/romp_load.py, which execs kernel/loadsource.py. The table cases
+read tests/test_price_feed_census.py's tree run (since the fifth round, 2026-09-23: the census script's one
+in-process scan of the tree under --table, shared with that module in a serial run; a child running the script
+here before it), and since the fifth round the three binding reads (the external-program label, the residual
+constant, the clicked-link road's entry) read the same loaded module, where a child interpreter imported the
+script for each before; the state root minted in this process is the census module's, the state ratchet's floor
+for its in-process load of the script. Every case asserts SECURITY.md's text FIRST, so a run over a tree without the
 paragraph fails at that assertion and never at a missing symbol or a script that lacks the flag.
 """
 import json
@@ -273,7 +276,8 @@ OLD_ONLY = "Session text goes only to"
 CLICKED_LABEL = "a link you click (browser)"
 CLICKED_LINK = "A link you click, in the browser showing the dashboard or in one of the editor extension's views"
 CLICKED_HOST = "requests the clicked URL from the host it names with that browser's own cookies"
-CLICKED_NO_TOKEN = "None carries a serve token, a key or a login token, and nothing sends until you click"
+CLICKED_NO_TOKEN = "romp adds no serve token, key or login token to a link's URL, and nothing sends until you click"
+CLICKED_NO_TOKEN_WITHDRAWN = "None carries a serve token, a key or a login token"   # the words the URL-level sentence replaces
 CLICK_RESIDUAL = ("three anchors the chat page's click delegate leaves to the default action (one with no scheme that the page built; one with "
                   "no scheme in a message that does not resolve to an http or https address; a message's own download anchor, one with no scheme "
                   "carrying a `download` attribute whose href resolves to an http or https address on this page's origin, which the browser saves "
@@ -303,17 +307,79 @@ SETTINGS_PAGE = _read("ui", "webview", "settings-page.ts")
 CHAT_MEDIA_LABEL = "a rendered message's media (browser)"
 CHAT_MEDIA = ("on the web dashboard the chat's rendered markdown (a session's reply, your own message, a postal body) loads an image, video, "
               "audio, srcset or picture media from the host its URL names the moment it renders")
-CHAT_MEDIA_COOKIES = "with whatever cookies that browser sends cross-site to that host and no Referer"
-# Corrected from an executed fact check of the media road on a lab kernel: the sanitizer keeps an inline svg's paint references, which
-# load at render like the media above, and their request does not reliably follow the page's referrer policy (the page's origin in one
-# run, the full chat URL with the serve token in another, where every image, video, audio, srcset and picture request carried none).
-# One text in the section's sentence and the table's sent cell; the claim it replaces, that no token rides, is held absent from both.
-CHAT_MEDIA_PAINT = ("an inline svg's paint references (a `fill`, `mask` or `filter` whose `url()` names another host) load at render too, with no "
-                    "click, and are the one case where the request can carry the dashboard's address with the serve token in its Referer: the browser does "
-                    "not reliably hold them to the page's referrer policy, so the request to that host can carry the page's origin or the full chat URL "
-                    "with the serve token (the response is blocked as cross-origin; the request, with that header, has reached the host)")
+CHAT_MEDIA_COOKIES = "with whatever cookies that browser sends to that host and no Referer to any other origin"
+# the section's cookie words CHAT_MEDIA_COOKIES replaces, held absent from the section (the sent cell's are held absent by
+# tests/test_price_feed_census.py TheChatMediaRoadIsRowed; the .svg tab's own clause, SVG_TAB_SENT, keeps its cross-site wording:
+# the tab's sandbox makes every load it makes cross-site)
+CHAT_MEDIA_COOKIES_WITHDRAWN = ("with whatever cookies that browser sends cross-site to that host and no Referer",
+                                "a SameSite=None cookie, not the fuller set a top-level navigation carries")
+# The paint clause (the fifth round of the review, D and E; apd's derivation with the round's rulings), one source with the
+# census module and the script: which of an inline svg's paint references load in each engine, and what those requests carry, the
+# token half conditioned on the page's own address (fresh-2). CHAT_MEDIA_PAINT is the table cell's form ("load at render too, with
+# no click: " + the clause); PAINT_CLAUSE is the section's, embedded in the sentence apd drafted; the claim they replace, that no
+# token rides, is held absent from both.
+PAINT_LIST = census.PAINT_LIST
+PAINT_CLAUSE = census.PAINT_CLAUSE
+CHAT_MEDIA_PAINT = census.CHAT_MEDIA_PAINT
+PAINT_TOKEN_CONDITION = census.PAINT_TOKEN_CONDITION
 CHAT_MEDIA_NO_TOKEN_WITHDRAWN = "no serve token, key or login token rides"
 CHAT_MEDIA_WITNESS = "ui/webview/chat-media-loads-browser.test.ts"
+# extra6-1: the paint references of the chat's file preview and a notice card, a road named and not counted beside browser-dom-loads;
+# apd's drafts (its surface sentences), the caller census that reds a new surface on the strip, and the browser witness's scenes
+PAINT_ROW_LABEL = "an inline svg's paint references in the chat's file preview and a notice card (browser)"
+PAINT_FILE_PREVIEW = ("the chat's file preview, the card that opens on a pointer dwell of 350 ms or a keyboard focus on a link in the chat to a "
+                      "markdown file the kernel allows to preview (one in the session's folder or your home; a glossary term links to its section "
+                      "the same way)")
+PAINT_NOTICE = "a notice card's body on the feed page, which a session writes through POST `/notice` (`romp card`), when the feed paints the card"
+PAINT_STRIPPED = ("The file preview and the notice card strip an image, video, audio, a poster and an svg image before the nodes join the page, so "
+                  "only the paint references load there.")
+PAINT_WITNESS = "ui/webview/chat-media-loads-browser.test.ts"
+# every caller of stripRemoteLoads in ui/ and vscode-extension/src (test files excluded), by (file, enclosing function), found by grep
+# and placed: a caller missing from this map is red by name, an entry that finds no caller is red as stale
+STRIP_CALLERS = {
+    ("ui/webview/render.ts", "previewMdClean"): "the chat's file preview (the paint row)",
+    ("ui/webview/feed.ts", "noticeBodyNodes"): "a notice card's body (the paint row)",
+    ("ui/webview/render.ts", "renderFilePreview"): "the provider slot (c.body.html), filled by no producer at this head: renderFilePreview's "
+                                                   "calls pass only contentFor or textOnlyContent, and neither writes html",
+}
+# renderFilePreview's calls, by content: each passes a content built by contentFor or textOnlyContent (a fifth call, or another builder, is red)
+PREVIEW_CONTENT_CALL = re.compile(r"renderFilePreview\(p, (?:ok \? )?(?:contentFor|textOnlyContent)\(")
+STRIP_REMOTE_LOADS = re.compile(r"(?<!function )\bstripRemoteLoads\(")   # every call, placed by its enclosing function, not the definition
+# the md() and userMd() callers on the web dashboard (the round's ruling 6): every function in render.ts that renders a chat text
+# through md() or userMd(), named in the chat-media trigger cell in backticks, so a new caller is red by name
+MD_CALLERS = ("renderAgentNotif", "renderInjected", "renderEventInner", "renderCompact", "renderQueued", "renderTool", "renderPostalService",
+              "renderTeammate", "commentMsgEl")
+MD_CALL = re.compile(r"(?<![\w.$])(?<!function )(?:md|userMd)\(")   # a md() or userMd() call, not a longer identifier ending in md( and not the definition
+# The .svg tab road (extra6-2 of the fifth round of the review): a modified click on a path link to an .svg opens the file in the
+# browser's own tab from the kernel's /file route or its relay, a sandboxed svg document that loads what its markup names; the
+# section's sentence and the table's row, named and not counted (the loads have no line in the tree; the opener's one site is local by
+# its URL), each phrase one text in both homes, and the population the document-type case below bounds
+SVG_TAB_LABEL = "an .svg opened in its own tab (browser)"
+SVG_TAB = "a Cmd, Ctrl or middle click on a path link to an .svg in a viewed file opens the file in the browser's own tab from the kernel's `/file` route"
+SVG_TAB_RELAY = "the `/remote/<host>/file` relay, which sends the same headers"
+SVG_TAB_PAINT = "paint references: " + PAINT_LIST   # apd's list, one shared constant (b-svgtab, the round's ruling 4)
+SVG_TAB_SENT = ("a load the browser makes without CORS (an image, a stylesheet, a frame, a media element or an embedded object) carries whatever "
+                "cookies that browser sends cross-site to that host, a paint reference or a web font (a CORS request) carries none, and none "
+                "carries a Referer or a serve token")
+SVG_TAB_WITNESS = "ui/webview/svg-tab-loads-browser.test.ts"
+# what a /file success for an .svg carries, in wire order, per-response headers (Content-Length, Last-Modified, X-Romp-Mtime-Ns)
+# aside: the witness serves exactly these (its SVG_FILE_HEADERS, read there from _send and _media_policy_headers), and the case
+# below reads them off the kernel's own Handler on both arms, /file and the /remote/<host>/file relay
+SVG_FILE_HEADERS = [("Content-Type", "image/svg+xml"), ("X-Content-Type-Options", "nosniff"), ("X-Frame-Options", "SAMEORIGIN"),
+                    ("Content-Security-Policy", "frame-ancestors 'self'"), ("Referrer-Policy", "same-origin"),
+                    ("Content-Security-Policy", "sandbox"), ("Cache-Control", "no-cache")]
+# the population (extra6-2): image/svg+xml is the one document type /file serves a file's bytes under, the sentence of the
+# _media_policy_headers docstring; a type is a document when a browser tab parses it as a page that loads what its content names:
+# HTML, the XML family, and the few named here (the rule, not a list of the types served: a new served type is judged by it)
+SVG_TYPE = "image/svg+xml"
+ONE_DOCUMENT = "An SVG is the one type on the allowlist that is ALSO a document."
+DOCUMENT_ESSENCES = ("text/html", "text/xsl", "multipart/x-mixed-replace", "multipart/related", "application/x-mimearchive", "message/rfc822")
+XML_FAMILY = re.compile(r"^[a-z]+/(?:[a-z0-9.+-]+\+)?xml$")
+# The served pages, the connection family's binding arm and the shapes no pattern reads (F, G, H, I of the fifth round): one source
+# with the census module and the script's docstring (census carries SERVED_PAGES and UNREAD_BINDINGS; BINDING_ARM is SECURITY.md's
+# clause, held to the script docstring here). SERVED_PAGES replaces the fourth round's served sentence in place.
+SERVED_PAGES = census.SERVED_PAGES
+UNREAD_BINDINGS = census.UNREAD_BINDINGS
 # The GitHub button (extra7-1): the clicked-link row's sent cell names the address romp composes, held to the URL shapes
 # tests/test_file_github.py executes; the trigger cell names the button's mechanics per document; the section carries both
 CLICKED_GITHUB_SENT = "the file viewer's GitHub button carries an address romp composes (`_file_github_link` in kernel/kernel.py"
@@ -335,7 +401,7 @@ GITHUB_BLOB = re.compile(r'"(https://github\.com/[^"\s]+/blob/[^"\s]*)"')
 DETACHED_SHAPE = '"https://github.com/TESTORG/notes-api/blob/%s/src/app.py" % sha'   # the detached-HEAD case fills the template with the commit sha
 FILE_VIEW = _read("ui", "webview", "file-view.ts")
 ANCHOR_BUILD = re.compile(r'el\("a", "([^"]*)"\)')
-TARGET_BLANK = re.compile(r"\.target = ['\"]_blank['\"]")
+TARGET_BLANK = re.compile(r"\.target\s*=\s*['\"]_blank['\"]|setAttribute\(\s*['\"]target['\"]\s*,\s*['\"]_blank['\"]")   # a new-tab target, by property or attribute
 OPENER_CLASS_SOURCES = {("ui/webview/file-view-links.ts", "URL_LINK_CLASS"): "fv-url", ("ui/webview/file-view-links.ts", "FRAG_LINK_CLASS"): "fv-frag",
                         ("ui/webview/pr-links.ts", "PR_LINK_CLASS"): "pr-link", ("ui/webview/url-links.ts", "URL_LINK_CLASS"): "url-link"}
 SELECTOR_LINES = (("ui/webview/file-view.ts", "t.closest('[data-act=\"openpath\"], a.' + URL_LINK_CLASS + \", a.\" + FRAG_LINK_CLASS)"),
@@ -344,14 +410,19 @@ SELECTOR_LINES = (("ui/webview/file-view.ts", "t.closest('[data-act=\"openpath\"
                   ("ui/webview/url-links.ts", "anchorHrefAt(t, \"a.\" + URL_LINK_CLASS + \"[href]\", isWebUrl);"),
                   ("ui/webview/file-view.ts", "if (n) fileGroup.appendChild(n);"),
                   ("ui/webview/file-view.ts", "acts.appendChild(viewGroup); acts.appendChild(fileGroup); acts.appendChild(close);"))
-# the page-built anchors with a scheme and a new-tab target, by (file, statement), each classified: the residual's witness, the
-# button the cells name, an excluded same-origin link-out, and the anchors an opener serves (a seventh build is red until it is placed)
+# the anchors given a new-tab target under ui/webview, by property or attribute, by (file, statement), each classified: the residual's
+# witness, the button the cells name, an excluded same-origin link-out, the anchors an opener serves, and a viewed file's document
+# anchors, which the trigger cell's viewed-file clause rows (a tenth build is red until it is placed)
 BLANK_ANCHOR_BUILDS = {
     ("ui/webview/gear.js", GEAR_SIGNIN_BUILD): "the residual's witness: the sign-in link, in documents that install no opener (/settings, the editor's feed panel)",
     ("ui/webview/file-view.ts", 'a.href = url; a.target = "_blank"; a.rel = "noopener";'): "the GitHub button, named in the road's trigger and sent cells",
     ("ui/webview/file-view.ts", 'a.href = href; a.target = "_blank"; a.rel = "noopener";'): "excluded: the URL viewer's Open link-out, a same-origin href the chat delegate opens (data-new-tab)",
     ("ui/webview/url-links.ts", 'a.target = "_blank";'): "served: a URL link (url-link), by the URL opener on the Waiting-on-you pane and the chat delegate",
     ("ui/webview/pr-links.ts", 'a.target = "_blank";'): "served: a pull-request link (pr-link), by the shared opener and the chat delegate",
+    ("ui/webview/file-view-links.ts", 'a.setAttribute("target", "_blank");'): "a document anchor, not page-built: the file viewer's markdown body stamps "
+    "a link with a scheme or a protocol-relative one, and a link with no path (a query alone, no scheme); rowed by the trigger cell's viewed-file clause",
+    ("ui/webview/file-view.ts", 'a.setAttribute("target", "_blank");'): "a document anchor, not page-built: a URL document's links (every link element "
+    "but an in-document fragment), stamped by the viewer; rowed by the trigger cell's viewed-file clause",
 }
 # The echo rule and the served pages (correctness-1, regression-2, fresh-1): two sentences the section and the script's docstring
 # share, one source, held here as DISCLOSURE is (tests/test_price_feed_census.py holds them in the docstring beside the executed plants)
@@ -359,19 +430,16 @@ ECHO_RULE = ("An echo- or print-led shell line is skipped as a printed remedy on
              "outside quotes and the body of every `$(...)` and backtick substitution, wherever it stands, are scanned by the interpreter arm "
              "and the tool list, so `echo \"$body\" | curl ...` and `echo \"rate: $(curl ...)\"` are sites and a remedy that names a tool "
              "inside quotes is not.")
-SERVED_PAGES = ("The pages the kernel serves and its service worker's script, from its own string constants (the dashboard shell, the seven "
-                "pane pages, the token login page, the too-large page and /sw.js, with the shim, the timeline boot and the shell scripts they "
-                "inline), are read from kernel.py's syntax tree, each route's page function followed to the constants it returns or inlines, "
-                "and scanned as browser text keyed kernel/kernel.py plus tool, with the DOM loads counted; a route that serves text/html or "
-                "text/javascript from text the extraction cannot read fails the run (SERVED); a file the page reads at run time is covered "
-                "by the walk when it is a scanned kind, and a stylesheet is named, not scanned.")
-# The connection family through its bindings (extra6-1): the docstring's clause, which the section carries after its own lead-in
-# (the child_process family's treatment extended to http, https, net, tls and ws); tests/test_price_feed_census.py plants the shapes
+# The connection family through its bindings (correctness-3 of the fifth round): the docstring's clause, which the section carries
+# after its own lead-in (the child_process family's treatment extended to http, https, net, tls and ws, through the shapes the patterns
+# read); tests/test_price_feed_census.py plants each shape (TheAddedBindingShapesAreRead). One text with the script's docstring.
 BINDING_ARM = ("a `get` or `request` of `http` or `https`, a `connect` or `createConnection` of `net` and a `connect` of `tls` through an "
-               "inline require, a namespace or default import, or a bare name the file binds from the module (renamed or not), and `ws` by "
-               "its constructor shape (`new <binding>(`, `new <namespace>.WebSocket(`, `new (require('ws'))(`), each an added arm beside "
-               "the literal spellings (`http.get(`, `net.connect(`, the bare global `new WebSocket(`), a call the literal list already "
-               "names on a line counted once under the same tool")
+               "inline require, a name the file keeps the module under (a require or an `await import()` assigned whole in its declaration, "
+               "TypeScript's `import X = require()`, a namespace or default import, alone or the two in one statement, a default beside a brace "
+               "list, `import { default as X }`), or a bare name the file binds from the module by a brace list, alone or beside a default, in "
+               "an import, a destructured require or a destructured `await import()` (renamed or not), and `ws` by its constructor shape (`new "
+               "<binding>(`, `new <namespace>.WebSocket(`, `new (require('ws'))(`), each an added arm beside the literal spellings (`http.get(`, "
+               "`net.connect(`, the bare global `new WebSocket(`), a call the literal list already names on a line counted once under the same tool")
 # the dashboard's headers, as Handler._send writes them on every page: the browser witness pins them by value from the same lines
 DASHBOARD_HEADERS = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "SAMEORIGIN", "Content-Security-Policy": "frame-ancestors 'self'",
                      "Referrer-Policy": "same-origin"}
@@ -408,7 +476,9 @@ ROAD_PHRASES = {
     "the judges' CLI (session-or-judge-cli)": ("the judge CLIs",),
     "the postal bus to peer buses (bus-request)": ("the postal mail between the two machines' buses",),
     "a viewed file's pictures from the web (browser)": (IN_THE_BROWSER, PICTURES_DEFAULT),
-    CHAT_MEDIA_LABEL: (CHAT_MEDIA, CHAT_MEDIA_COOKIES, CHAT_MEDIA_PAINT),
+    CHAT_MEDIA_LABEL: (CHAT_MEDIA, CHAT_MEDIA_COOKIES, PAINT_CLAUSE),
+    PAINT_ROW_LABEL: (PAINT_FILE_PREVIEW, PAINT_NOTICE, PAINT_STRIPPED, PAINT_CLAUSE),
+    SVG_TAB_LABEL: (SVG_TAB, SVG_TAB_RELAY, SVG_TAB_PAINT, SVG_TAB_SENT),
     CLICKED_LABEL: (CLICKED_LINK, CLICKED_HOST, CLICKED_SIGNIN),
     "bootstrap.sh (install-time-by-hand)": ("Installing by hand (`bootstrap.sh`, `install.sh`) fetches from GitHub",),
     "bin/romp-sdk-setup (install-time-by-hand; also run by the kernel's self-update through install.sh)": (GET_PIP,),
@@ -416,7 +486,7 @@ ROAD_PHRASES = {
     "update prompt)": ("and the npm registry", EDITOR_PROMPT, EDITOR_NOT_ROOT, EXT_CONDITION),
     "bin/romp-codex-setup (install-time-by-hand)": (
         "`bin/romp-codex-setup`, run by hand for Codex sessions, fetches the Codex SDK from PyPI and the pinned Codex CLI from GitHub",),
-    "local, set aside and counted (local)": (),          # nothing leaves the machine: no sentence owed
+    "local, set aside and counted (local)": (),          # nothing is sent to another host: no sentence owed
     EXTERNAL_PROGRAM_LABEL: (EXTERNAL_PROGRAM,),   # one text: the label is the phrase with the kind suffix (the label pin)
     "a program supplied at run time (not derivable by this scan)": ("a program whose text is supplied at run time",),
     "a browser request whose URL is computed at run time (not derivable by this scan)": (
@@ -463,31 +533,24 @@ def _row(rows, label):
     return None
 
 
-def _class_label(cls):
-    """The label the script prints for the class row `cls`, CLASS_ROWS[cls][0], read from the script's own binding by
-    importing it in a child interpreter, never from its text; a child and not this process because
-    tests/test_state_isolation_order.py reads every in-process load call as a load of romp code, and this module loads none."""
-    prog = ("import importlib.util, json, sys\n"
-            "spec = importlib.util.spec_from_file_location('network_inventory', sys.argv[1])\n"
-            "mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)\n"
-            "print(json.dumps(mod.CLASS_ROWS[sys.argv[2]][0]))\n")
-    p = subprocess.run([sys.executable, "-c", prog, os.path.join(ROOT, INVENTORY), cls], capture_output=True, text=True, timeout=60)
-    if p.returncode != 0:
-        raise AssertionError("%s could not be imported to read CLASS_ROWS[%r]: %s" % (INVENTORY, cls, p.stderr[-800:]))
-    return json.loads(p.stdout)
-
-
 def _script_binding(name):
-    """The script's own value of a module constant (ROADS, CLICK_RESIDUAL), read by importing it in a child interpreter as
-    _class_label does: never from its text, and never in this process."""
-    prog = ("import importlib.util, json, sys\n"
-            "spec = importlib.util.spec_from_file_location('network_inventory', sys.argv[1])\n"
-            "mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)\n"
-            "print(json.dumps(getattr(mod, sys.argv[2])))\n")
-    p = subprocess.run([sys.executable, "-c", prog, os.path.join(ROOT, INVENTORY), name], capture_output=True, text=True, timeout=60)
-    if p.returncode != 0:
-        raise AssertionError("%s could not be imported to read %s: %s" % (INVENTORY, name, p.stderr[-800:]))
-    return json.loads(p.stdout)
+    """The script's own value of a module constant (ROADS, CLICK_RESIDUAL, CLASS_ROWS), read from its binding, never from its
+    text: census.script_module(ROOT), the module object the census module's tree run loads in this process (the fifth round of
+    the review, 2026-09-23; a child interpreter imported the script for each read before, a load this process had already made).
+    A binding the script lacks is a failure naming it, never an error."""
+    mod = census.script_module(ROOT)
+    if not hasattr(mod, name):
+        raise AssertionError("%s has no binding %s" % (INVENTORY, name))
+    return getattr(mod, name)
+
+
+def _class_label(cls):
+    """The label the script prints for the class row `cls`, CLASS_ROWS[cls][0], read from the script's own binding
+    (_script_binding), never from its text."""
+    rows = _script_binding("CLASS_ROWS")
+    if cls not in rows:
+        raise AssertionError("%s's CLASS_ROWS has no row %r" % (INVENTORY, cls))
+    return rows[cls][0]
 
 
 def _road(road):
@@ -499,8 +562,10 @@ def _road(road):
 
 
 def _blank_anchor_builds():
-    """Every `.target = '_blank'` statement over ui/webview's non-test .ts and .js files, as (file, stripped line): the page-built
-    anchors with a scheme the residual's class is derived from, by grep, never listed by hand."""
+    """Every statement over ui/webview's non-test .ts and .js files that gives an anchor a new-tab target, by property
+    (`.target = '_blank'`) or by attribute (`setAttribute("target", "_blank")`), with or without the spaces, as (file, stripped
+    line): the page-built anchors with a scheme the residual's class is derived from and a viewed file's document anchors, by
+    grep, never listed by hand."""
     out = []
     d = os.path.join(ROOT, "ui", "webview")
     for name in sorted(os.listdir(d)):
@@ -954,7 +1019,8 @@ class TheSectionIsTheTables(_Pins):
         self.assertQuoted("`vscode.env.openExternal`", flat, self.DOC, "the editor leg's opener, named")
         self.assertQuoted("the session's repository name and the number, on github.com", flat, self.DOC, "the private strings a pull-request link carries")
         self.assertQuoted("the CLI's own sign-in request to claude.com or claude.ai", flat, self.DOC, "the sign-in link's host")
-        self.assertQuoted(CLICKED_NO_TOKEN, flat, self.DOC, "no credential of romp's rides a link, and no switch: the click is the occasion")
+        self.assertQuoted(CLICKED_NO_TOKEN, flat, self.DOC, "romp adds no credential to a link's URL, and no switch: the click is the occasion")
+        self.assertNotIn(CLICKED_NO_TOKEN_WITHDRAWN, flat, "the withdrawn words are absent: the section says what romp adds to a link's URL")
         self.assertQuoted(CLICK_RESIDUAL, flat, self.DOC, "the residual: a gesture the tree does not route")
         # one source: the residual is the script's sentence, in its docstring and in the road's own trigger cell
         self.assertTrue(INVENTORY_SRC, "%s exists: the derivation the section names" % INVENTORY)
@@ -1044,11 +1110,11 @@ class TheSectionIsTheTables(_Pins):
         witness = _read(*SIGNIN_WITNESS.split("/"))
         for needle in ("#rs-login-url a[href]", "__opens", "openLink", 'waitForEvent("page"'):
             self.assertQuoted(needle, witness, SIGNIN_WITNESS, "the leg clicks the sign-in anchor, counts window.open and the posts, and waits on the browser's own open")
-        # the residual's class, derived by grep and not listed by hand: every page-built anchor with a scheme and a new-tab target under
-        # ui/webview, by (file, statement), each placed (the witness, the button the cells name, an excluded same-origin link-out, the
-        # anchors an opener serves); a build the map does not name is red until it is classified
+        # the residual's class, derived by grep and not listed by hand: every anchor given a new-tab target under ui/webview, by property
+        # or attribute, by (file, statement), each placed (the witness, the button the cells name, an excluded same-origin link-out, the
+        # anchors an opener serves, a viewed file's document anchors); a build the map does not name is red until it is classified
         builds = _blank_anchor_builds()
-        self.assertEqual(len(builds), 6, "the new-tab anchor builds under ui/webview: %r" % builds)
+        self.assertEqual(len(builds), 9, "the new-tab anchor builds under ui/webview: %r" % builds)
         self.assertEqual(sorted(set(builds)), sorted(BLANK_ANCHOR_BUILDS), "every build is classified and every classification names a build")
 
     def test_the_github_button_is_said_and_its_mechanics_are_the_codes(self):
@@ -1128,9 +1194,13 @@ class TheSectionIsTheTables(_Pins):
         self.assertNetwork()
         flat = _flat(NETWORK)
         self.assertQuoted(CHAT_MEDIA, flat, self.DOC, "the road: the chat's rendered markdown loads its media on render, on the web dashboard")
-        self.assertQuoted(CHAT_MEDIA_COOKIES, flat, self.DOC, "what rides: the cookies a cross-site subresource carries, and no Referer")
-        self.assertQuoted(CHAT_MEDIA_PAINT, flat, self.DOC, "the one case whose request can carry the dashboard's address with the serve token in its "
-                          "Referer: an inline svg's paint references, kept by the sanitizer, loading at render with no click")
+        self.assertQuoted(CHAT_MEDIA_COOKIES, flat, self.DOC, "what rides: whatever cookies that browser sends to that host, and no Referer to any other origin")
+        for words in CHAT_MEDIA_COOKIES_WITHDRAWN:
+            self.assertNotIn(words, flat, "the withdrawn cookie words are absent from the section: %r" % words)
+        self.assertQuoted(PAINT_CLAUSE, flat, self.DOC, "the paint clause: which of an inline svg's paint references load in each engine, what they "
+                          "carry, and the token half conditioned on the page's own address (D and E of the fifth round)")
+        self.assertQuoted(PAINT_TOKEN_CONDITION, flat, self.DOC, "the token half is conditioned: the full page address with the serve token only when "
+                          "the page's own address carries ?token= (fresh-2)")
         self.assertNotIn(CHAT_MEDIA_NO_TOKEN_WITHDRAWN, flat, "the section no longer claims that no token rides a rendered message's media request: "
                          "a paint reference's Referer can carry the serve token")
         self.assertQuoted("the editor extension's webviews block these loads by their content security policy", flat, self.DOC, "the editor's negative")
@@ -1140,7 +1210,7 @@ class TheSectionIsTheTables(_Pins):
         self.assertTrue(cells, "the table has the road as a row: %r" % CHAT_MEDIA_LABEL)
         self.assertEqual(cells[0], "ui/webview/render.ts (`mdImgPostPass`)", "the where cell: the pipeline's post-pass on a message's pictures")
         self.assertQuoted("the render of a message on the web dashboard, and nothing else: no click, no gate, no setting", cells[1], "the road's trigger cell")
-        for phrase in ("with the cross-site cookies that browser sends to that host", "no Referer", CHAT_MEDIA_PAINT):
+        for phrase in (CHAT_MEDIA_COOKIES, "no Referer", CHAT_MEDIA_PAINT):
             self.assertQuoted(phrase, cells[2], "the road's sent cell", "the same fact the section states")
         self.assertNotIn(CHAT_MEDIA_NO_TOKEN_WITHDRAWN, cells[2], "the sent cell no longer claims that no token rides: the same fact the section states")
         self.assertQuoted("none: no setting gates a message's media", cells[3], "the road's off-switch cell")
@@ -1159,13 +1229,16 @@ class TheSectionIsTheTables(_Pins):
         self.assertQuoted(ECHO_RULE, flat, self.DOC, "the echo rule, beside the disclosure sentence")
         self.assertQuoted(SERVED_PAGES, flat, self.DOC, "the served pages, beside the walk's claim")
         self.assertQuoted(BINDING_ARM, flat, self.DOC, "the connection family through its bindings, beside the disclosure")
-        self.assertLess(flat.index(DISCLOSURE), flat.index(ECHO_RULE), "%s: the echo rule follows the disclosure it narrows" % self.DOC)
+        self.assertQuoted(UNREAD_BINDINGS, flat, self.DOC, "the three binding shapes no pattern reads, beside the disclosure (correctness-3 of the fifth round)")
+        self.assertLess(flat.index(DISCLOSURE), flat.index(UNREAD_BINDINGS), "%s: the unread shapes follow the rule they fall under" % self.DOC)
+        self.assertLess(flat.index(UNREAD_BINDINGS), flat.index(ECHO_RULE), "%s: the echo rule follows, as in the docstring" % self.DOC)
         doc = re.match(r'(?s)\A(?:#[^\n]*\n)*"""(.*?)"""', INVENTORY_SRC)
         self.assertTrue(doc, "%s opens with a module docstring" % INVENTORY)
         docstring = _flat(doc.group(1))
         self.assertQuoted(ECHO_RULE, docstring, "%s's docstring" % INVENTORY, "one source: the section's sentence is the script's")
         self.assertQuoted(SERVED_PAGES, docstring, "%s's docstring" % INVENTORY, "one source: the section's sentence is the script's")
         self.assertQuoted(BINDING_ARM, docstring, "%s's docstring" % INVENTORY, "one source: the section's sentence is the script's")
+        self.assertQuoted(UNREAD_BINDINGS, docstring, "%s's docstring" % INVENTORY, "one source: the section's sentence is the script's")
 
 
 class TheChatMediaRoadIsWitnessed(_Pins):
@@ -1187,7 +1260,7 @@ class TheChatMediaRoadIsWitnessed(_Pins):
         m = SEND_HEADERS.search(KERNEL)
         self.assertTrue(m, "kernel/kernel.py Handler._send up to its caller-supplied headers loop")
         self.assertEqual(dict(HEADER_LINE.findall(m.group(1))), DASHBOARD_HEADERS, "the unconditional send_header lines of _send, the four the witness serves")
-        # the wire: the kernel's Handler answers GET /chat in a child interpreter (nothing loads romp code in this process); the
+        # the wire: the kernel's Handler answers GET /chat in a child interpreter (no module of romp's runtime is loaded in this process); the
         # child's source stands inline as literal lines, the shape tests/test_tempdir_hygiene.py's ledger reads a child source in:
         # tests/test_kernel_auth_hardening.py's import sets a hermetic XDG_STATE_HOME before the loads and loads the kernel under a
         # private name; the child floors its root's session-hosts off (T348) before the Handler runs
@@ -1316,6 +1389,278 @@ class TheEditorPromptRunsTheExtensionsOwnInstallScript(_Pins):
                         % self.SH)
         self.assertIn("exit 0", EXT_INSTALL[gate:npx], "%s: the gate exits before npx, so with neither condition nothing after npm "
                       "install is sent (the section's 'exits after the build and sends nothing more')" % self.SH)
+
+
+def _enclosing_callers(call_re):
+    """Every call of `call_re` under ui/webview and vscode-extension/src (non-test .ts and .js), as (relpath, enclosing top-level
+    function name), the enclosing function the nearest preceding `function NAME(` (comment lines and trailing `//` comments
+    stripped, so a call in prose is not counted): the population a caller census is derived from, by grep, never listed by hand."""
+    out = set()
+    for base in ("ui/webview", "vscode-extension/src"):
+        d = os.path.join(ROOT, base)
+        for name in sorted(os.listdir(d)):
+            if not name.endswith((".ts", ".js")) or ".test." in name:
+                continue
+            rel = base + "/" + name
+            lines = _read(*rel.split("/")).splitlines()
+            headers = [(i, m.group(1)) for i, ln in enumerate(lines)
+                       for m in [re.match(r"^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_]+)\s*\(", ln)] if m]
+            for i, ln in enumerate(lines):
+                s = ln.lstrip()
+                if s.startswith(("//", "*", "/*")):
+                    continue
+                mc = re.search(r"(?:^|(?<=\s))//", ln)
+                code = ln[:mc.start()] if mc else ln
+                if call_re.search(code):
+                    fn = None
+                    for hi, hn in headers:
+                        if hi <= i:
+                            fn = hn
+                        else:
+                            break
+                    out.add((rel, fn))
+    return out
+
+
+class TheStripAndMdCallersArePlaced(_Pins):
+    """The paint road's caller census (extra6-1 of the fifth round, the round's ruling 6): the paint references of the chat's file
+    preview and a notice card have no attribute line, so the row is named and not counted and a pin over the callers of
+    stripRemoteLoads is what reds a new surface on the strip. Every caller of stripRemoteLoads under ui/webview and
+    vscode-extension/src is placed in STRIP_CALLERS (the two rowed surfaces and the provider slot, filled by no producer: every
+    renderFilePreview call passes a content built by contentFor or textOnlyContent, PREVIEW_CONTENT_CALL); and every md() or
+    userMd() caller in render.ts (the chat texts the road covers) is named in the chat-media trigger cell in backticks, so a new
+    caller reds by name. Derived by grep, never listed by hand."""
+
+    def test_every_stripRemoteLoads_caller_is_placed(self):
+        callers = _enclosing_callers(STRIP_REMOTE_LOADS)
+        self.assertEqual(callers, set(STRIP_CALLERS), "every caller of stripRemoteLoads is classified and every classification names a caller "
+                         "(a new surface on the strip is red here): %r" % sorted(callers ^ set(STRIP_CALLERS)))
+        n_calls = len(re.findall(r"(?<!function )renderFilePreview\(", RENDER))   # the calls, not the definition
+        n_content = len(PREVIEW_CONTENT_CALL.findall(RENDER))
+        self.assertTrue(n_calls >= 4 and n_content == n_calls, "every renderFilePreview call passes a contentFor or textOnlyContent content, so the "
+                        "provider slot (c.body.html) is filled by no producer at this head: %d calls, %d content builds" % (n_calls, n_content))
+
+    def test_the_md_callers_are_placed_in_the_chat_media_trigger_cell(self):
+        callers = {fn for rel, fn in _enclosing_callers(MD_CALL) if rel == "ui/webview/render.ts"}
+        self.assertEqual(callers, set(MD_CALLERS), "every md() or userMd() caller in render.ts is named (the round's ruling 6; a new caller is red "
+                         "here): %r" % sorted(callers ^ set(MD_CALLERS)))
+        rows, rc, err = _table()
+        self.assertTrue(rows, "%s --table printed no table (exit %s): %s" % (INVENTORY, rc, err))
+        cells = _row(rows, CHAT_MEDIA_LABEL)
+        self.assertTrue(cells, "the table has the chat-media row")
+        for fn in MD_CALLERS:
+            self.assertQuoted("`%s`" % fn, cells[1], "the chat-media trigger cell", "the md()/userMd() caller named in backticks (a new caller reds here)")
+
+
+class TheChatFilePreviewAndNoticePaintRoadIsNamed(_Pins):
+    """The paint references of the chat's file preview and a notice card, a road named and not counted (extra6-1 of the fifth
+    round): the section says it in one sentence, the table names it in a row it does not count, and the executed proof of the loads
+    is the browser leg PAINT_WITNESS (the file preview and notice scenes). The caller census (above) reds a new surface on the
+    strip; this case holds the row and the section's prose."""
+
+    def test_the_paint_road_is_said_and_is_a_row_named_and_not_counted(self):
+        self.assertNetwork()
+        flat = _flat(NETWORK)
+        for phrase in (PAINT_FILE_PREVIEW, PAINT_NOTICE, PAINT_STRIPPED, PAINT_CLAUSE):
+            self.assertQuoted(phrase, flat, self.DOC, "the paint road, in the section")
+        self.assertQuoted(PAINT_TOKEN_CONDITION, flat, self.DOC, "the token half's condition (fresh-2)")
+        rows, rc, err = _table()
+        self.assertTrue(rows, "%s --table printed no table (exit %s): %s" % (INVENTORY, rc, err))
+        cells = _row(rows, PAINT_ROW_LABEL)
+        self.assertTrue(cells, "the table names the road as a row: %r" % PAINT_ROW_LABEL)
+        self.assertTrue(cells[0].startswith(NOT_COUNTED), "the row is named and not counted: %r" % cells[0][:120])
+        self.assertQuoted("`stripRemoteLoads`", cells[0], "the row's where cell", "the strip the caller census guards")
+        self.assertQuoted("`previewMdClean`", cells[0], "the row's where cell", "the chat's file preview")
+        self.assertQuoted("`noticeBodyNodes`", cells[0], "the row's where cell", "the notice card's body")
+        self.assertQuoted(PAINT_CLAUSE, cells[2], "the row's sent cell", "one text with the section")
+        self.assertTrue(cells[3].startswith("none"), "the row's off-switch cell: no setting gates it: %r" % cells[3])
+        self.assertTrue(os.path.isfile(os.path.join(ROOT, PAINT_WITNESS)), "the executed witness is in the tree: " + PAINT_WITNESS)
+
+
+
+def _is_document(ctype):
+    """A Content-Type a browser tab parses as a page that loads what its content names: its essence (split on ';', stripped,
+    lower-cased) in DOCUMENT_ESSENCES or of the XML family."""
+    essence = ctype.split(";")[0].strip().lower()
+    return essence in DOCUMENT_ESSENCES or bool(XML_FAMILY.match(essence))
+
+
+class TheSvgTabRoadIsNamedAndItsPopulationBounded(_Pins):
+    """The .svg tab road (extra6-2 of the fifth round of the review of PR 878). On the web dashboard a Cmd, Ctrl or middle click on a
+    path link to an .svg in a viewed file reaches preview.ts's openFileTab, which opens the kernel's /file URL (a remote session's:
+    the /remote/<host>/file relay) in the browser's own tab with no kind check; the tab is an svg document, sandboxed, that loads what
+    its markup names. The section says so in one sentence and the table names the road in a row it does not count (the loads are the
+    document's own; the opener's one site is local by its URL). The population is the .svg because image/svg+xml is the one document
+    type the route serves a file's bytes under: read here by execution, every extension the route serves (the kernel's own tables) is
+    served once by the real Handler in a child (tests/test_kernel_auth_hardening.py's harness, session-hosts off) and its Content-Type
+    read off the wire, so a second document type (an .html served as text/html, an .xml as application/xml, the text branch's type
+    changed) is red here, and a type that is not a document (an .avif) is not. The executed witness of the loads is the browser leg
+    SVG_TAB_WITNESS (the seven requests with their cookies and Referer, under the /file headers the case below reads on the wire)."""
+
+    def test_the_svg_tab_road_is_said_and_is_a_row_named_and_not_counted(self):
+        self.assertNetwork()
+        flat = _flat(NETWORK)
+        for phrase in (SVG_TAB, SVG_TAB_RELAY, SVG_TAB_PAINT, SVG_TAB_SENT):
+            self.assertQuoted(phrase, flat, self.DOC, "the .svg tab road, in the section's one sentence")
+        rows, rc, err = _table()
+        self.assertTrue(rows, "%s --table printed no table (exit %s): %s" % (INVENTORY, rc, err))
+        cells = _row(rows, SVG_TAB_LABEL)
+        self.assertTrue(cells, "the table names the road as a row: %r" % SVG_TAB_LABEL)
+        self.assertTrue(cells[0].startswith(NOT_COUNTED), "the row is named and not counted: %r" % cells[0][:120])
+        self.assertQuoted("`openFileTab`", cells[0], "the row's where cell", "the one site on the road's way, counted local by its URL")
+        self.assertQuoted("Cmd, Ctrl or middle click on a path link to an .svg", cells[1], "the row's trigger cell")
+        self.assertQuoted(SVG_TAB_RELAY, cells[1], "the row's trigger cell", "the relay arm, reached by the same click")
+        for phrase in (SVG_TAB_PAINT, SVG_TAB_SENT):
+            self.assertQuoted(phrase, cells[2], "the row's sent cell", "one text with the section")
+        self.assertTrue(cells[3].startswith("none"), "the row's off-switch cell: no setting gates it: %r" % cells[3])
+        self.assertTrue(os.path.isfile(os.path.join(ROOT, SVG_TAB_WITNESS)), "the executed witness is in the tree: " + SVG_TAB_WITNESS)
+        witness = _read(*SVG_TAB_WITNESS.split("/"))
+        for needle in ("openFileTab", "cross_site=1", "Referrer-Policy", "sandbox", "-mask.svg"):
+            self.assertQuoted(needle, witness, SVG_TAB_WITNESS, "the executed proof is that browser leg; it skips without a playwright browser")
+
+    def test_image_svg_xml_is_the_one_document_type_the_file_route_serves(self):
+        self.assertNetwork()
+        self.assertQuoted(SVG_TAB, _flat(NETWORK), self.DOC, "the road whose population this bounds")
+        self.assertQuoted(ONE_DOCUMENT, _flat(KERNEL), "kernel/kernel.py (the _media_policy_headers docstring)", "the sentence this case keeps true")
+        p = subprocess.run([sys.executable, "-c", "\n".join([
+            "import io, json, os, sys, tempfile",
+            "from urllib.parse import quote",
+            "sys.path.insert(0, sys.argv[1])",
+            "import test_kernel_auth_hardening as A",
+            'root = os.path.join(os.environ["XDG_STATE_HOME"], "romp")',
+            "os.makedirs(root, exist_ok=True)",
+            'with open(os.path.join(root, "session-hosts"), "w") as fh: fh.write("off\\n")',
+            "km, d = A.km, tempfile.mkdtemp()",
+            "exts = sorted(set(km._PREVIEW_MIME) | {'.' + e for e in km._TEXT_EXT})",
+            "names = [('x' + e, e) for e in exts] + [(n, n) for n in sorted(km._TEXT_NAMES)]",
+            "out = {}",
+            "for fname, n in names:",
+            "    fp = os.path.join(d, fname)",
+            "    with open(fp, 'wb') as fh: fh.write(b'<p>x</p>\\n')",
+            "    h = km.Handler.__new__(km.Handler)",
+            "    h.client_address, h.headers = ('127.0.0.1', 0), {'X-Romp-Token': A.TOK}",
+            "    h.path, h.command, h.request_version = '/file?path=' + quote(fp), 'GET', 'HTTP/1.1'",
+            "    h.wfile, h.rfile, h.close_connection = io.BytesIO(), io.BytesIO(), True",
+            "    cap = {'status': None, 'headers': []}",
+            "    h.send_response = lambda code, *a: cap.__setitem__('status', code)",
+            "    h.send_header = lambda k, v: cap['headers'].append([k, v])",
+            "    h.end_headers = lambda: None",
+            "    h.log_message = lambda *a: None",
+            "    h.do_GET()",
+            "    out[n] = cap",
+            "print(json.dumps(out))",
+        ]), HERE], capture_output=True, text=True, timeout=120)
+        self.assertEqual(p.returncode, 0, "the kernel's Handler could not be driven: " + p.stderr[-1500:])
+        wire = json.loads(p.stdout.strip().splitlines()[-1])
+        self.assertEqual({n: c["status"] for n, c in wire.items() if c["status"] != 200}, {}, "every extension the route serves answers 200 for a file it names")
+        ctype = {n: [v for k, v in c["headers"] if k.lower() == "content-type"] for n, c in wire.items()}
+        self.assertFalse([n for n, v in ctype.items() if len(v) != 1], "one Content-Type per success")
+        documents = sorted({v[0].split(";")[0].strip().lower() for v in ctype.values() if _is_document(v[0])})
+        self.assertEqual(documents, [SVG_TYPE], "image/svg+xml is the one document type /file serves a file's bytes under; another widens the "
+                         ".svg tab road's population and its sentence (extensions served as documents: %r)"
+                         % sorted(n for n, v in ctype.items() if _is_document(v[0])))
+        for n, v in sorted(ctype.items()):
+            if _is_document(v[0]):
+                self.assertIn("sandbox", [val for k, val in wire[n]["headers"] if k.lower() == "content-security-policy"],
+                              "a document type rides the bare sandbox policy on the wire: %s %s" % (n, v[0]))
+
+    def test_the_witness_serves_the_svg_file_headers_and_the_kernel_writes_them_on_both_arms(self):
+        # the tie to the wire, as TheChatMediaRoadIsWitnessed's: the witness pins the headers by value from the kernel's source; the
+        # kernel's own Handler, driven in a child through the auth-hardening harness, writes exactly those on a GET /file of an .svg
+        # and on the same GET through the /remote/<host>/file relay (a second Handler on the loopback standing in for the attached
+        # host's kernel, registered in _remotes), so the tab the witness opens is the kernel's in this respect on both arms
+        self.assertNetwork()
+        self.assertQuoted(SVG_TAB, _flat(NETWORK), self.DOC, "the road the witness executes")
+        self.assertTrue(os.path.isfile(os.path.join(ROOT, SVG_TAB_WITNESS)), "the .svg tab road's executed witness is in the tree: " + SVG_TAB_WITNESS)
+        witness = _read(*SVG_TAB_WITNESS.split("/"))
+        for name, value in SVG_FILE_HEADERS:
+            self.assertQuoted('["%s", "%s"]' % (name, value), witness, SVG_TAB_WITNESS, "the header pinned by value in the witness")
+        p = subprocess.run([sys.executable, "-c", "\n".join([
+            "import io, json, os, sys, tempfile, threading",
+            "from http.server import ThreadingHTTPServer",
+            "from urllib.parse import quote",
+            "sys.path.insert(0, sys.argv[1])",
+            "import test_kernel_auth_hardening as A",
+            'root = os.path.join(os.environ["XDG_STATE_HOME"], "romp")',
+            "os.makedirs(root, exist_ok=True)",
+            'with open(os.path.join(root, "session-hosts"), "w") as fh: fh.write("off\\n")',
+            "km, d = A.km, tempfile.mkdtemp()",
+            "fp = os.path.join(d, 'diagram.svg')",
+            "with open(fp, 'wb') as fh: fh.write(b'<svg xmlns=\"http://www.w3.org/2000/svg\"/>')",
+            "remote = ThreadingHTTPServer(('127.0.0.1', 0), km.Handler)",
+            "threading.Thread(target=remote.serve_forever, daemon=True).start()",
+            "km._remotes['labhost'] = {'local_port': remote.server_address[1], 'token': A.TOK}",
+            "def get(path):",
+            "    h = km.Handler.__new__(km.Handler)",
+            "    h.client_address, h.headers = ('127.0.0.1', 0), {'X-Romp-Token': A.TOK}",
+            "    h.path, h.command, h.request_version = path, 'GET', 'HTTP/1.1'",
+            "    h.wfile, h.rfile, h.close_connection = io.BytesIO(), io.BytesIO(), True",
+            "    cap = {'status': None, 'headers': []}",
+            "    h.send_response = lambda code, *a: cap.__setitem__('status', code)",
+            "    h.send_header = lambda k, v: cap['headers'].append([k, v])",
+            "    h.end_headers = lambda: None",
+            "    h.log_message = lambda *a: None",
+            "    h.do_GET()",
+            "    return cap",
+            "out = {'/file': get('/file?path=' + quote(fp)),",
+            "       '/remote/labhost/file': get('/remote/labhost/file?path=' + quote(fp) + '&sid=11111111-2222-3333-4444-555555555555')}",
+            "remote.shutdown()",
+            "print(json.dumps(out))",
+        ]), HERE], capture_output=True, text=True, timeout=120)
+        self.assertEqual(p.returncode, 0, "the kernel's Handler could not be driven: " + p.stderr[-1500:])
+        wire = json.loads(p.stdout.strip().splitlines()[-1])
+        for arm, cap in sorted(wire.items()):
+            self.assertEqual(cap["status"], 200, "%s answers the .svg: %r" % (arm, cap))
+            got = [tuple(h) for h in cap["headers"] if h[0] not in ("Content-Length", "Last-Modified", "X-Romp-Mtime-Ns")]
+            self.assertEqual(got, SVG_FILE_HEADERS, "%s writes the headers the witness serves, in order, and no other: %r" % (arm, got))
+
+
+# The trust model's Referrer-Policy sentence and the kernel's comment above the header write, each with the paint exception the
+# Network access section states (the fifth round, E), and two sentences of the section with no other pin: the two kinds of browser
+# request the table names and does not count (A and B), and every other text the chat page renders as markdown (A's ruling 6).
+TRUST = _section(SECURITY, "Trust model: token-gated, same-user by file permission")
+TRUST_EXCEPTION = ("`Referrer-Policy: same-origin`, so the token never reaches another origin in a `Referer`, with one exception that "
+                   "Network access below states: an inline svg's paint reference on a page whose own address carries `?token=`.")
+KERNEL_COMMENT_EXCEPTION = ("the SECURITY.md claim that a cross-site page cannot obtain the token then holds by construction, save the one "
+                            "exception its Network access section states (an inline svg's paint reference, on a page whose own address carries ?token=)")
+REFERRER_WRITE = re.compile(r"((?:\n        #[^\n]*)+)\n        self\.send_header\(\"Referrer-Policy\", \"same-origin\"\)")
+NAMED_NOT_COUNTED_KINDS = ("Two kinds of browser request are also named in the table and not counted, since the content shown, not a line of "
+                           "this tree, names what they load: an inline svg's paint references in the chat's file preview and in a notice card, "
+                           "and the loads of an .svg opened in its own tab.")
+CHAT_MEDIA_KINDS = ("Every other text the chat page renders as markdown loads its media the same way: the text a Continue press sends, a "
+                    "message romp or another program sent to the session on your behalf, a note or notice the harness injected (a "
+                    "command's output, a scheduled task's firing), a notice from romp, a compaction summary, a background task's report, a "
+                    "subagent's skill text, prompt and report, a peer agent's message and an agent's reply in a file comment thread.")
+
+
+class TheTokenSentencesNameThePaintException(_Pins):
+    """The fifth round (fresh-2, extra6-4): an inline svg's paint reference on a page whose own address carries `?token=` can carry
+    that address in its Referer, so the two sentences that said the token never reaches another origin now name that one exception:
+    the trust model's Referrer-Policy sentence and the comment above Handler._send's Referrer-Policy header write (the comment block
+    directly above the write, each line's `#` stripped and the lines joined). Beside them, two sentences of the Network access section
+    that no other case reads: the two kinds of browser request the table names and does not count (the rows whose where cells open
+    `not counted:`), and the texts the chat page renders as markdown beyond the three the chat-media sentence names (the md() and
+    userMd() callers TheStripAndMdCallersArePlaced places in the trigger cell). Each is red over the reviewed head's text, where none
+    of the four sentences stands."""
+
+    def test_the_trust_model_sentence_names_the_paint_exception(self):
+        self.assertTrue(TRUST, "SECURITY.md has its trust-model section")
+        self.assertQuoted(TRUST_EXCEPTION, _flat(TRUST), "SECURITY.md (Trust model)", "the Referrer-Policy sentence names its one exception")
+
+    def test_the_kernel_comment_on_the_referrer_policy_write_names_the_exception(self):
+        m = REFERRER_WRITE.search(KERNEL)
+        self.assertTrue(m, "kernel/kernel.py has a comment block directly above Handler._send's Referrer-Policy header write")
+        comment = _flat(" ".join(ln.strip()[1:] for ln in m.group(1).strip("\n").split("\n")))
+        self.assertQuoted(KERNEL_COMMENT_EXCEPTION, comment, "kernel/kernel.py (the comment above the Referrer-Policy write)",
+                          "the comment's by-construction claim names the exception the section states")
+
+    def test_the_section_says_two_kinds_of_request_are_named_and_not_counted(self):
+        self.assertNetwork()
+        self.assertQuoted(NAMED_NOT_COUNTED_KINDS, _flat(NETWORK), self.DOC, "the paint references of the file preview and a notice card, and the .svg tab")
+
+    def test_the_section_names_every_other_text_the_chat_renders_as_markdown(self):
+        self.assertNetwork()
+        self.assertQuoted(CHAT_MEDIA_KINDS, _flat(NETWORK), self.DOC, "the chat texts beyond a session's reply, your own message and a postal body")
 
 
 class TheNewProse(_Pins):
