@@ -2739,6 +2739,11 @@ class PopulationCheckReds(unittest.TestCase):
                  "  setter:\n" + sw_job + "    steps:\n      - name: Env anchor\n        env:\n          &zeroenv\n"
                  '          %s: "0"\n        run: echo anchor\n      - name: Env alias (pytest)\n        env: *zeroenv\n' % SWITCH + run_ok,
                  ((8, "an anchor (&zeroenv)"), (12, "an alias (*zeroenv)"))),
+                # a tag is a node property like an anchor, so an anchor after it is read (the first verify pass's Y26: the
+                # anchor after a tag had no case, and the scan reading a tag as a plain scalar missed it)
+                ("an anchor after a tag on a name: value, aliased by a run (Y26)", "first",
+                 "      - name: !!str &tn python -m pytest tests/test_a.py -q\n        run: *tn\n",
+                 ((1, "an anchor (&tn)"), (2, "an alias (*tn)"))),
                 ("a merge key bringing a run into a step", "first",
                  "      - &base\n        name: Base\n        run: echo base\n      - <<: *base\n        name: Merged\n",
                  ((1, "an anchor (&base)"), (4, "a merge key (<<)"), (4, "an alias (*base)"))),
@@ -2880,6 +2885,11 @@ class PopulationCheckReds(unittest.TestCase):
         # opening with `&` is not also an anchor
         src, first = self._with_first_step_in_shell_job('      - name: "Build\n          &x and *y test"\n        run: echo hi\n')
         self.assertEqual(unread_yaml_forms(src), [(first, '- name: "Build', quote)])
+        # a double-quoted scalar's escaped quote does not close it, so the text after the escape is its text: the value
+        # below is refused once, for the escape, and its `*y` is not an alias (the first verify pass's Y27: the escape
+        # rule had no case)
+        src, first = self._with_first_step_in_shell_job('      - uses: ./a\n        with: {a: "x\\", *y"}\n')
+        self.assertEqual(unread_yaml_forms(src), [(first + 1, 'with: {a: "x\\", *y"}', escape)])
         # the controls: quoted scalars closed on their line, a single-quoted one holding `''`, and a double-quoted one
         # without a backslash, in a run, a name and an action's inputs
         for label, text in (("closed quoted scalars", '      - name: "Quoted (x)"\n        run: \'echo \'\'a\'\' "b"\'\n'),
