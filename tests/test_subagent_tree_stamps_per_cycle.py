@@ -2565,7 +2565,8 @@ class EvictionTableLock(_World):
     def _run(self, name, fn):
         """`fn` on a new thread named `name`: its thread, its result, its errors and the Event set when it queues behind
         the lock or ends. The thread's stop is registered as a cleanup before its start (tests/thread_ends.py's
-        join_started: it sets the gate a paused thread waits on, then joins the thread, bounded at 30 s), so a failed
+        join_started: it sets the gate a paused thread waits on, then joins the thread if it started, bounded at 30 s; a
+        thread whose start never ran is skipped, not joined, which lets the registration come first), so a failed
         assertion anywhere in the case still releases and joins it before the patches of _eviction_world stop."""
         run = SimpleNamespace(out={}, errs=[], ev=self.events.setdefault(name, threading.Event()))
 
