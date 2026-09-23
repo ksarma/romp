@@ -102,8 +102,11 @@
 # line) whose swallowed failure costs that line alone and is pinned as such
 # (the chosen-addresses read joined the helper in round 7b: its failure had
 # been swallowed as the strict side, and the address line then named a
-# false cause); the ref list on stdin, read by the shell's own builtin with
-# no tool between git and the scans; the scanner's own exit, judged from its
+# false cause); the ref list on stdin, read by the shell's own builtin FIRST,
+# before any tool runs (a git that drained stdin on the configuration read
+# that ran ahead of it emptied the list, both loops ran zero times, and every
+# ref of the push published with nothing printed; the round 7 refuters,
+# 2026-09-23); the scanner's own exit, judged from its
 # log. The STATUS-KEYED class: a read whose failure returns a
 # non-zero status (or prints an error line), refused by the set. The EXIT-0
 # EMPTY-OR-SHORT-ANSWER class: a read that exits 0 with an empty or a short
@@ -124,9 +127,22 @@
 # the tag object and the ref list are read by the shell with no tool at all
 # (round 6 found five own= reads and the ref list publishing under a tool
 # that exited 0 printing nothing, each shown by a real push; 2026-09-22).
+# The bound of each sibling fact, stated once: a marker AHEAD of an answer
+# bounds its start alone and says nothing of its end, so wholeness needs a
+# TAIL marker (the message log asks for one after the message, since round
+# 8), a count (the diff's awk records the lines it printed) or a byte count
+# (a tag capture against the object's size); the diff's git stage holds a
+# head marker alone (the commit's own sha, asked for by --always in place of
+# --no-commit-id), since git prints no tail for a diff, and its awk's count
+# bounds the awk's stage (a log answering the marker and part of the message
+# passed the rest unread; the round 7 refuter, 2026-09-23).
 # What stays own=, and why a tool silent there publishes nothing by itself:
-# three greps whose answer is their status alone (-q: exit 0 is the hit, so
-# no line is no answer withheld); the replace-ref listing, a git read alone
+# two greps whose answer is their status alone (-q: exit 0 is the hit, so no
+# line is no answer withheld; the chosen-address MATCH was a third until round
+# 8 and runs no tool now, since there exit 0 was the PERMISSIVE verdict and a
+# grep silent with exit 0 made every stamped address chosen, publishing a
+# banned-domain stamp through a real push; the round 7 refuter, 2026-09-23);
+# the replace-ref listing, a git read alone
 # whose empty answer is a clone with no replace ref; the chosen-addresses
 # read (git config --get-all user.email), a git read alone whose empty
 # answer is a clone with no user.email, the strict side (every stamped
@@ -150,6 +166,7 @@
 # Reads gated by a sibling fact (gate=):
 #   the CONTENT grep of the tip
 #   the SYMLINK listing of the tip
+#   the SIZE of the tip's tree
 #   the TYPE of the object the tip peels to
 #   the SYMLINK TARGET of a link at the tip
 #   the SIZE of a symlink target blob
@@ -167,6 +184,7 @@
 #   the TYPE of a pushed object
 #   the OBJECT of a tag
 #   the SIZE of a tag object
+#   the BYTE COUNT of a tag capture
 #   the -z listing of the tip
 #   the READ LIST of the grep of the tip
 #   the ENTRY COUNT of the -z listing
@@ -192,7 +210,6 @@
 #   the COMMIT COUNT line of the scanner log
 # Reads whose empty answer is the object's own (own=):
 #   the ADDRESS DOMAIN grep
-#   the CHOSEN ADDRESS match
 #   the CHOSEN ADDRESSES of this clone
 #   the SYMLINK TARGET grep
 #   the REPLACE REFS listing
@@ -335,10 +352,20 @@
 # execution, the round 5 refuter, 2026-09-22): the advice names that line
 # ahead of the bypass, which publishes the new text unread.
 # The check's NUL-delimited listings live in a scratch directory under TMPDIR
-# (mktemp -d, prefix romp-pre-push.), removed by its exact minted path when the
-# identifier scan ends: a hard kill between the minting and the removal leaves
-# it behind, bounded by its living under TMPDIR with that prefix, so a reader
-# can find and remove it. The listings are joined line by line, so a path
+# (mktemp -d, prefix romp-pre-push.), removed by its exact minted path from an
+# EXIT trap when the hook ends, a refused push and a bash line ending the hook
+# under set -e included (until round 8 the removal ran at the end of the
+# identifier scan, and a hook ended by bash left the directory behind; the
+# round 7 refuter, 2026-09-23): a hard kill between the minting and the
+# removal leaves it behind, bounded by its living under TMPDIR with that
+# prefix, so a reader can find and remove it. The directory's WRITERS (the
+# truncations and appends the check makes there) stay outside judged_read's
+# guard on purpose: a scratch directory the hook cannot write into ends the
+# hook at the first write under set -e, with bash's own line and no romp
+# line, in default mode and under POSIXLY_CORRECT alike, and the push is
+# refused (six probes, every arm refusing; the round 7 refuter, 2026-09-23),
+# so no guarded writer is added and that shape is recorded here beside the
+# hard-kill residual. The listings are joined line by line, so a path
 # holding a newline byte (legal to git, seen nowhere) refuses the push as
 # unscanned rather than be judged by nothing; since round 5 every changed
 # path is rewritten and checked against the commit's verdicts, so a commit
@@ -435,22 +462,15 @@ set -euo pipefail
 # Replacement off for every git below, gitleaks' own included (the header's
 # premise): the scans read the objects the push transfers, never a substitute.
 export GIT_NO_REPLACE_OBJECTS=1
-# The value this clone's configuration gives log.showRoot, for the refusal arm
-# in scan_credentials (the header): a plain read, so the arm can name the key
-# when a short count meets it false. The key itself is neutralised on the
-# scanner's command line (--root, in gitleaks_args), not here: beyond the
-# replacement switch above, the hook sets nothing for the gits it runs.
-# outside judged_read: a configuration read for the report alone, never a
-# verdict; a failure reads as the key unset and costs the key line, the
-# shape tests/pre-push-hook.bats pins (a failed read of log.showRoot), and
-# the helper is defined below this line in any case.
-showroot_configured=$(git config --type=bool log.showRoot 2>/dev/null || true)
-
 # git feeds the ref list on stdin and both scans need it, so read it once,
-# with the shell's own read builtin: no tool on PATH stands between git and
-# the two loops (a cat that exited 0 printing nothing left refs empty, both
-# loops ran zero times, and every ref of the push was published unscanned
-# with nothing printed; the round 6 refuters, 2026-09-22). The
+# with the shell's own read builtin, and FIRST: no tool runs before the list
+# is read, neither on PATH between git and the two loops (a cat that exited 0
+# printing nothing left refs empty, both loops ran zero times, and every ref
+# of the push was published unscanned with nothing printed; the round 6
+# refuters, 2026-09-22) nor ahead of the read as a child that inherits the
+# hook's stdin (the configuration read below ran here until round 8, and a
+# git that drained stdin on it, exit 0 and nothing printed, emptied the list
+# the same way through a real push; the round 7 refuters, 2026-09-23). The
 # `|| [ -n "$line" ]` keeps a last line git wrote without a newline. line is
 # UNSET on purpose (the unset below guards against a name the environment
 # exported): read returns 1 at the end of the input and on a read error
@@ -466,6 +486,19 @@ while IFS= read -r line || [ -n "$line" ]; do
     refs="$refs$line"$'\n'
 done
 refs=${refs%$'\n'}
+
+# The value this clone's configuration gives log.showRoot, for the refusal arm
+# in scan_credentials (the header): a plain read, so the arm can name the key
+# when a short count meets it false. The key itself is neutralised on the
+# scanner's command line (--root, in gitleaks_args), not here: beyond the
+# replacement switch above, the hook sets nothing for the gits it runs. It
+# runs after the ref list is read (above), so a git that drains stdin here
+# empties nothing.
+# outside judged_read: a configuration read for the report alone, never a
+# verdict; a failure reads as the key unset and costs the key line, the
+# shape tests/pre-push-hook.bats pins (a failed read of log.showRoot), and
+# the helper is defined below this line in any case.
+showroot_configured=$(git config --type=bool log.showRoot 2>/dev/null || true)
 zero=0000000000000000000000000000000000000000
 blocked_ids=0
 blocked_addresses=0     # a subset of blocked_ids, with a remedy of its own
@@ -478,9 +511,17 @@ hidden_paths=0          # a subset of failed_scan: git calls a text file binary 
 hidden_unnamed=0        # a subset of hidden_paths: no diff attribute accounts for the verdict, so the advice names the configuration key too
 hidden_attr=0           # a subset of hidden_paths: a refused line named the path's diff attribute as the cause, or could not read it, so the advice names the attribute's remedy
 hidden_prior=0          # a subset of hidden_paths: a changed file whose previous version (in the commit's parent, at the path a rename came from, or in any parent of a merge) is binary by its bytes, with the fetch remedy and the attribute line for the previous version's path
-scratch=""              # a directory for the added-lines capture (scan_identifiers) and the NUL-delimited listings the binary-verdict check reads (refuse_hidden_paths); made on first use (make_scratch), removed by scan_identifiers
+scratch=""              # a directory for the added-lines capture (scan_identifiers) and the NUL-delimited listings the binary-verdict check reads (refuse_hidden_paths); made on first use (make_scratch), removed by the EXIT trap below
 read_rc=0               # judged_read's two answers for the read just made: its status, and its output when no file took it
 read_out=""
+# The scratch directory is removed from here, on EXIT, by its exact minted
+# path and never a glob (the header's scratch paragraph): a clean pass, a
+# refused push and a bash line ending the hook under set -e (a scratch
+# directory that cannot be written into) leave nothing under TMPDIR alike,
+# where the removal at the end of the identifier scan ran on the roads that
+# reached it and a hook ended by bash left the directory behind (the round 7
+# refuter, 2026-09-23).
+trap '[ -z "$scratch" ] || rm -rf -- "$scratch"' EXIT
 
 # The commits THIS push publishes for one ref: what no remote already has.
 # "Already has" means reachable from the remote ref's current value or from ANY
@@ -527,24 +568,35 @@ rev_range() {   # <local_sha> <remote_sha> → a rev-list argument list
 # or a short answer leaves n empty, which awk reads as 1, so a merge's
 # combined diff is read in one column: over-scan, but a read refused all the
 # same) and the diff (added_lines, a pipeline passed to judged_read whole,
-# whose status is the diff-tree's or the awk's through pipefail). The awk
-# RECORDS the count of lines it printed, at its end, in the file the caller
-# names (through the environment, never a -v operand: awk escape-processes a
-# -v value, and a path may carry a backslash pair), the sibling fact for the
-# capture (the header's second class): the caller compares it with the
-# capture's line count and refuses a difference, or no count at all, where an
-# awk exiting 0 and printing nothing was read as a commit adding no line and
-# published its banned line through a real push (the round 6 refuters,
-# 2026-09-22).
-added_lines() {   # <rev> <parent count> <count file: the count of lines printed, written at the end>
-    git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" | ROMP_COUNT_FILE=$3 awk -v n="$2" '
+# whose status is the diff-tree's or the awk's through pipefail). Each stage
+# has a sibling fact of its own (the header's second class). The git stage:
+# --always (in place of --no-commit-id) makes diff-tree print the commit's
+# own sha as its FIRST line whatever the diff holds, a root commit, an empty
+# commit and a merge with no line of its own included, so a git that exits 0
+# printing nothing is told apart from a commit adding nothing: the awk
+# records its count only after that marker line, and records the word
+# unmarked otherwise, which the caller refuses naming the git read (a
+# diff-tree exiting 0 and printing nothing was read as a commit adding no
+# line, and a banned line in a one-parent middle commit published through a
+# real push; the round 7 refuters, 2026-09-23); the marker bounds the
+# answer's start alone (the header). The awk stage: the awk RECORDS the
+# count of lines it printed, at its end, in the file the caller names
+# (through the environment, never a -v operand: awk escape-processes a -v
+# value, and a path may carry a backslash pair; the sha is hex and travels
+# by -v): the caller compares it with the capture's line count and refuses a
+# difference, or no count at all, where an awk exiting 0 and printing
+# nothing was read as a commit adding no line and published its banned line
+# through a real push (the round 6 refuters, 2026-09-22).
+added_lines() {   # <rev> <parent count> <count file: the count of lines printed, written at the end; the word unmarked when the diff never printed the commit's sha>
+    git diff-tree -p -r -M -c --root --always --no-color "$1" | ROMP_COUNT_FILE=$3 awk -v n="$2" -v sha="$1" '
         BEGIN { if (n < 1) n = 1; for (i = 0; i < n; i++) plus = plus "+"; count_file = ENVIRON["ROMP_COUNT_FILE"] }
+        NR == 1 && $0 == sha             { marker = 1; next }
         /^diff --(git|combined) /        { hdr = 1; next }
         hdr && /^\+\+\+ b\//             { f = substr($0, 7); next }
         hdr && /^\+\+\+ /                { f = $0; next }
         /^@@/                            { hdr = 0; next }
         !hdr && substr($0, 1, n) == plus { print f "\t" substr($0, n + 1); printed++ }
-        END { print printed + 0 > count_file }'
+        END { if (marker) print printed + 0 > count_file; else print "unmarked" > count_file }'
 }
 
 # The addresses this clone publishes under BY CHOICE: user.email from any config
@@ -570,20 +622,32 @@ chosen_emails() {
     chosen=$read_out$'\n'$(printf '%s\n' "${GIT_AUTHOR_EMAIL:-}" "${GIT_COMMITTER_EMAIL:-}" "${EMAIL:-}")
 }
 
-# Whether an address is one this clone chose: matched whole, case-insensitively.
-# The grep's status is read through judged_read (0 chosen, 1 not, anything
-# else refused as unscanned with the caller's clause, the address then judged
-# as one the clone did not choose: the strict side). Called as a condition,
-# never in a substitution, so the refusal's flag is kept.
-is_chosen() {   # <address> <chosen addresses, one per line> <clause for a grep that failed, {rc} its status>
-    judged_read own="the CHOSEN ADDRESS match" 0,1 "$3" -- grep -qixF -e "$1" <<< "$2" || return 1
-    [ "$read_rc" -eq 0 ]
+# Whether an address is one this clone chose: matched whole and
+# case-insensitively by the shell alone, a case statement under nocasematch
+# (bash 3.1 and later; set for the comparison and put back as it was). No
+# tool runs here on purpose: the match's PERMISSIVE verdict is the exit-0
+# side, the one answer the helper's gates cannot judge, and a grep -q here
+# that exited 0 printing nothing made every stamped address chosen, so a
+# commit and a tag stamped under a banned domain published through real
+# pushes with nothing printed (the round 7 refuter, 2026-09-23). A blank line
+# among the chosen addresses matches no address, since both callers skip an
+# empty address before asking. Called as a condition.
+is_chosen() {   # <address> <chosen addresses, one per line>
+    local c was=0
+    if shopt -q nocasematch; then was=1; fi
+    shopt -s nocasematch
+    while IFS= read -r c; do
+        case "$1" in "$c") [ "$was" -ne 0 ] || shopt -u nocasematch; return 0 ;; esac
+    done <<< "$2"
+    [ "$was" -ne 0 ] || shopt -u nocasematch
+    return 1
 }
 
 # An annotated tag's header fields (`object`, `tagger`) and its message are
 # read from ONE capture of the tag object and parsed by the shell in
-# scan_identifiers (the header ends at the first empty line and the message is
-# the rest, a signed tag's signature included; it is text like any other): no
+# scan_identifiers (the header ends at the first BLANK line, one with no
+# non-blank byte, and the message is the rest, a signed tag's signature
+# included; it is text like any other): no
 # awk stands between the object and the three checks (round 7; the two awk
 # readers this replaced exited 0 printing nothing under a shim and published a
 # banned tagger and a banned message through real pushes, the round 6
@@ -791,8 +855,8 @@ refuse_replace_refs() {
 
 # The scratch directory: for the added-lines capture (scan_identifiers) and
 # the NUL-delimited listings of the binary-verdict check (refuse_hidden_paths),
-# made once, under TMPDIR, by whichever read comes first, and removed by
-# scan_identifiers once every ref is read. Status 1 when mktemp failed, scratch
+# made once, under TMPDIR, by whichever read comes first, and removed by the
+# EXIT trap when the hook ends. Status 1 when mktemp failed, scratch
 # left empty, so each caller refuses its own read as unscanned naming mktemp
 # and a later caller tries again rather than writing under an empty name.
 make_scratch() {
@@ -1841,9 +1905,19 @@ scan_identifiers() {
         # object that peels to a blob ("not a tree object"), which has no tree to
         # list, and the peeled type then decides whether that is the case; any
         # other status is refused here, and whatever was listed is still read. An
-        # empty listing under exit 0 is gated in refuse_hidden_paths, where the -z
-        # listing of the same tree must agree with its entry count and with the
-        # grep's read list.
+        # empty listing under exit 0 is judged here against the SIZE of the tip's
+        # tree (cat-file -s on the tree the pushed object peels to), the header's
+        # second class: the empty tree, size 0, is the one tree with no entry, so
+        # any other size is a listing that answered short, refused naming the
+        # read and the size, and a size that is not a digit run is refused too
+        # (a git silent on ls-tree in both its shapes over a tip whose tree held
+        # a symlink alone, inherited from a commit the remote holds, passed the
+        # tip through a real push: the -z listing of refuse_hidden_paths agreed
+        # with this one on zero entries, and the grep's read list, empty for a
+        # tree with no regular file with bytes, gated nothing; the round 7
+        # refuter, 2026-09-23). Where the -z listing disagrees instead, its
+        # entry count refuses there, so both listings at zero is the one road
+        # that reaches this read.
         judged_read gate="the SYMLINK listing of the tip" 0,128 "the SYMLINKS of the tip of $local_ref (${local_sha:0:10}) could not be listed" -q -- git ls-tree -r "$local_sha" || :
         listing=$read_out
         if [ "$read_rc" -eq 128 ]; then
@@ -1856,6 +1930,15 @@ scan_identifiers() {
             fi
         elif [ "$read_rc" -ne 0 ]; then
             tip_listed=0
+        elif [ -z "$listing" ]; then
+            if judged_read gate="the SIZE of the tip's tree" 0 "the TREE of the tip of $local_ref (${local_sha:0:10}) was listed as empty while its SIZE could not be read (git cat-file -s exited {rc}), so whether the listing is whole is unknown" -q -- git cat-file -s "$local_sha^{tree}"; then
+                size=$read_out
+                if [ -z "$size" ] || [ -n "${size//[0-9]/}" ]; then
+                    unscanned "the TREE of the tip of $local_ref (${local_sha:0:10}) was listed as empty while its SIZE reads \"$size\" (git cat-file -s), not a size, so whether the listing is whole is unknown"
+                elif [ "$size" -ne 0 ]; then
+                    unscanned "the TREE of the tip of $local_ref (${local_sha:0:10}) was listed as empty (git ls-tree -r exited 0 and printed no entry) while git cat-file -s gives its tree's size as $size bytes, so the listing answered short"
+                fi
+            fi
         fi
         # Its entry count, for the -z listing refuse_hidden_paths makes of the same
         # tree to agree with (the header's second class): the non-empty lines,
@@ -1997,20 +2080,26 @@ scan_identifiers() {
             rev_counts="$rev_counts$rev $n"$'\n'
             if make_scratch; then
                 # The diff's awk records the count of lines it printed, in a file
-                # emptied here first (the header's second class): after a read that
-                # exited 0, no count (an awk that never ran its program) or a count
-                # other than the capture's line count (a stage that wrote less) is
-                # refused as unscanned naming the read and both numbers, where an awk
-                # exiting 0 and printing nothing was read as a commit adding no line
-                # and published its banned line through a real push (the round 6
-                # refuters, 2026-09-22). The capture's line count is read by wc
-                # through the helper, and both counts are runs of digits before the
-                # comparison reads them; whatever the diff printed is grepped below
-                # either way, so a hit ahead of a failure is still named.
+                # emptied here first (the header's second class), and only after
+                # the diff's first line named the commit (--always, added_lines):
+                # after a read that exited 0, the word unmarked (a git that printed
+                # no marker: silent, or answering for no commit) is refused naming
+                # the git read, no count (an awk that never ran its program) or a
+                # count other than the capture's line count (a stage that wrote
+                # less) is refused naming the awk and both numbers, where a git and
+                # an awk each exiting 0 and printing nothing were read as a commit
+                # adding no line and published its banned line through a real push
+                # (the round 7 refuters, 2026-09-23; the round 6 refuters,
+                # 2026-09-22). The capture's line count is read by wc through the
+                # helper, and both counts are runs of digits before the comparison
+                # reads them; whatever the diff printed is grepped below either
+                # way, so a hit ahead of a failure is still named.
                 : > "$scratch/added.count"
                 if judged_read gate="the ADDED LINES diff of a commit" 0 "the ADDED LINES of commit ${rev:0:10} could not be read (git diff-tree exited {rc})" -o "$scratch/added" -- added_lines "$rev" "$n" "$scratch/added.count"; then
                     count=""; { IFS= read -r count || :; } < "$scratch/added.count"
-                    if [ -z "$count" ] || [ -n "${count//[0-9]/}" ]; then
+                    if [ "$count" = unmarked ]; then
+                        unscanned "the ADDED LINES of commit ${rev:0:10} could not be read (git diff-tree exited 0 and printed no line naming the commit, the marker --always asks for ahead of the diff, so the read answered short)"
+                    elif [ -z "$count" ] || [ -n "${count//[0-9]/}" ]; then
                         unscanned "the ADDED LINES of commit ${rev:0:10} could not be read (the diff's awk exited 0 and recorded \"$count\" as the count of lines it printed, not a count)"
                     elif judged_read gate="the LINE COUNT of the added lines" 0 "the ADDED LINES of commit ${rev:0:10} could not be counted (wc exited {rc})" -- wc -l < "$scratch/added"; then
                         linecount=${read_out//[[:space:]]/}
@@ -2083,7 +2172,7 @@ scan_identifiers() {
             fi
             while IFS=$'\t' read -r role email; do
                 [ -n "$email" ] || continue
-                is_chosen "$email" "$chosen" "the ADDRESS <$email> of commit ${rev:0:10} could not be compared with the addresses this clone is configured to use (grep exited {rc})" && continue
+                is_chosen "$email" "$chosen" && continue
                 if judged_read own="the ADDRESS DOMAIN grep" 0,1 "the ADDRESS <$email> of commit ${rev:0:10} could not be grepped (grep exited {rc})" -- grep -qi -F "${grep_args[@]}" <<< "${email##*@}" && [ "$read_rc" -eq 0 ]; then
                     # The cause that leads is the one the reads established: with
                     # the chosen-addresses read failed (chosen_unread, refused
@@ -2104,22 +2193,34 @@ scan_identifiers() {
             # --no-show-signature so the message is all it reads (above). Captured
             # first; a substitution drops trailing newlines only, so the numbering
             # from the subject is the grep's (message_hit_lines). The format asks
-            # for a MARKER line ahead of the message (the word message, a tab and
-            # the commit's own name; %B after a newline), the sibling fact for the
-            # log's answer (the header's second class), as the addresses log asks
-            # for its two role lines: an exit-0 answer not beginning with that line
-            # is short, refused as unscanned naming the read and its first line,
-            # while the marker alone is a commit whose message is empty, the
-            # object's own answer (a git log exiting 0 and printing nothing was read
-            # as an empty message and published a banned subject through a real
-            # push; the round 6 refuters, 2026-09-22). The commit object's size
-            # cannot stand as that fact: a commit object always has bytes, and an
-            # empty message is legitimate. Whatever the read printed is grepped
-            # either way, so a hit ahead of a failure is still named.
-            judged_read gate="the MESSAGE log of a commit" 0 "the MESSAGE of commit ${rev:0:10} could not be read (git log exited {rc})" -- git log -1 --no-show-signature --format='message%x09%H%n%B' "$rev" || :
+            # for TWO MARKER lines, one ahead of the message (the word message, a
+            # tab and the commit's own name; %B after a newline) and one after it
+            # (a newline, the word end, a tab and the name), the sibling facts for
+            # the log's answer (the header's second class), as the addresses log
+            # asks for its two role lines: an exit-0 answer not beginning with the
+            # head marker is short, refused as unscanned naming the read and its
+            # first line (a git log exiting 0 and printing nothing was read as an
+            # empty message and published a banned subject through a real push;
+            # the round 6 refuters, 2026-09-22), and one that begins with it and
+            # does not END with the tail marker is short too, refused naming its
+            # last line, since a head marker bounds the answer's start alone (a
+            # log answering the marker and the subject, exit 0, passed the body
+            # unread through a real push; the round 7 refuter, 2026-09-23). The
+            # message is the text between the markers, its trailing newlines
+            # dropped as the substitution dropped them (%B keeps the message's
+            # own), so a commit whose message is empty reads as empty, the
+            # object's own answer. The commit object's size cannot stand as the
+            # fact: a commit object always has bytes, and an empty message is
+            # legitimate. Whatever the read printed is grepped either way, so a
+            # hit ahead of a failure is still named, numbered from the subject.
+            judged_read gate="the MESSAGE log of a commit" 0 "the MESSAGE of commit ${rev:0:10} could not be read (git log exited {rc})" -- git log -1 --no-show-signature --format='message%x09%H%n%B%nend%x09%H' "$rev" || :
             case "$read_out" in
-                message$'\t'"$rev") msg="" ;;                                   # the marker alone: an empty message
-                message$'\t'"$rev"$'\n'*) msg=${read_out#*$'\n'} ;;
+                message$'\t'"$rev"$'\n'*$'\n'end$'\t'"$rev")
+                    msg=${read_out#message$'\t'"$rev"$'\n'}; msg=${msg%$'\n'end$'\t'"$rev"}
+                    while [ "${msg%$'\n'}" != "$msg" ]; do msg=${msg%$'\n'}; done ;;
+                message$'\t'"$rev"|message$'\t'"$rev"$'\n'*)                   # the head marker with no tail: a short answer
+                    msg=${read_out#message$'\t'"$rev"}; msg=${msg#$'\n'}
+                    [ "$read_rc" -ne 0 ] || unscanned "the MESSAGE of commit ${rev:0:10} was read short (git log exited 0 and answered \"${read_out##*$'\n'}\" on its last line, not the tail marker line the format asks for after the message)" ;;
                 *) msg=$read_out
                    [ "$read_rc" -ne 0 ] || unscanned "the MESSAGE of commit ${rev:0:10} could not be read (git log exited 0 and answered \"${read_out%%$'\n'*}\" on its first line, not the marker line the format asks for ahead of the message)" ;;
             esac
@@ -2150,33 +2251,39 @@ scan_identifiers() {
         object_type "$local_ref" "$obj"
         while [ "$kind" = tag ]; do
             # The tag OBJECT, read ONCE (cat-file -p prints a tag object as it is
-            # stored) into a scratch file and parsed here by the shell: the header
-            # to the first empty line (the object and tagger lines among it, the
-            # first of each kept), the message the rest, its trailing newlines
-            # dropped as a substitution's are. No awk or tr stands between the
-            # object and the three checks (an awk exiting 0 printing nothing for a
-            # field read as an absent tagger and an absent message, and published
-            # both through real pushes; the round 6 refuters, 2026-09-22). The
-            # read's EMPTY answer is judged against the object's SIZE (cat-file -s),
-            # the header's second class: an empty capture for an object with bytes
-            # is a short read, refused naming the read and the size (a cat-file -p
-            # exiting 0 printing nothing read every field as absent); a failed read
-            # is refused by the helper naming the three fields it carries. Either
-            # refusal ends the peel.
+            # stored, byte for byte) into a scratch file and parsed here by the
+            # shell: the header to the first BLANK line (the object and tagger
+            # lines among it, the first of each kept), the message the rest, its
+            # trailing newlines dropped as a substitution's are. No awk or tr
+            # stands between the object and the three checks (an awk exiting 0
+            # printing nothing for a field read as an absent tagger and an absent
+            # message, and published both through real pushes; the round 6
+            # refuters, 2026-09-22). EVERY capture is judged against the object's
+            # SIZE (cat-file -s) by its own BYTE COUNT (wc -c, through the helper),
+            # the header's second class: cat-file -p prints a tag object as its
+            # raw bytes, so the two numbers agree for every whole read, an empty
+            # message's included, and a capture of fewer bytes is a short read,
+            # refused naming both numbers (until round 8 the size was asked only
+            # for an EMPTY capture, and a cat-file -p exiting 0 after the header
+            # and the blank line alone was parsed as a tag with no message and
+            # published through a real push; the round 7 refuters, 2026-09-23); a
+            # failed read is refused by the helper naming the three fields it
+            # carries. Either refusal ends the peel.
             tagger=""; msg=""; inner=""; tag_read=0
             if ! make_scratch; then
                 unscanned "the OBJECT of tag $local_ref (${obj:0:10}), its tagger and its message could not be read (no scratch directory for the capture: mktemp failed), which ends the peel here"
             elif judged_read gate="the OBJECT of a tag" 0 "the OBJECT of tag $local_ref (${obj:0:10}), its tagger and its message could not be read (git cat-file -p exited {rc}), which ends the peel here" -q -o "$scratch/tag" -- git cat-file -p "$obj"; then
-                if [ -s "$scratch/tag" ]; then
-                    tag_read=1
-                elif judged_read gate="the SIZE of a tag object" 0 "the OBJECT of tag $local_ref (${obj:0:10}) was read as empty while its SIZE could not be read (git cat-file -s exited {rc}), so whether the read is whole is unknown, which ends the peel here" -q -- git cat-file -s "$obj"; then
+                if judged_read gate="the SIZE of a tag object" 0 "the OBJECT of tag $local_ref (${obj:0:10}) was captured while its SIZE could not be read (git cat-file -s exited {rc}), so whether the read is whole is unknown, which ends the peel here" -q -- git cat-file -s "$obj"; then
                     size=$read_out
-                    if [ -z "$size" ] || [ -n "${size//[0-9]/}" ]; then
-                        unscanned "the OBJECT of tag $local_ref (${obj:0:10}) was read as empty while its SIZE reads \"$size\" (git cat-file -s), not a size, so whether the read is whole is unknown, which ends the peel here"
-                    elif [ "$size" -ne 0 ]; then
-                        unscanned "the OBJECT of tag $local_ref (${obj:0:10}) was read as empty (git cat-file -p exited 0) while git cat-file -s gives its size as $size bytes, so the read answered short, which ends the peel here"
-                    else
-                        tag_read=1          # an object of no bytes (none git would call a tag): parsed below, where the absent object line ends the peel
+                    if judged_read gate="the BYTE COUNT of a tag capture" 0 "the OBJECT of tag $local_ref (${obj:0:10}) was captured while the capture's BYTE COUNT could not be read (wc exited {rc}), so whether the read is whole is unknown, which ends the peel here" -- wc -c < "$scratch/tag"; then
+                        count=${read_out//[[:space:]]/}
+                        if [ -z "$size" ] || [ -n "${size//[0-9]/}" ] || [ -z "$count" ] || [ -n "${count//[0-9]/}" ]; then
+                            unscanned "the OBJECT of tag $local_ref (${obj:0:10}) was captured while its SIZE reads \"$size\" (git cat-file -s) and the capture's BYTE COUNT \"$count\" (wc -c), not two counts, so whether the read is whole is unknown, which ends the peel here"
+                        elif [ "$count" -ne "$size" ]; then
+                            unscanned "the OBJECT of tag $local_ref (${obj:0:10}) was read short (git cat-file -p exited 0 and its capture holds $count bytes where git cat-file -s gives the object's size as $size), which ends the peel here"
+                        else
+                            tag_read=1          # whole, an object of no bytes (none git would call a tag) included: parsed below, where an absent object line ends the peel
+                        fi
                     fi
                 fi
             fi
@@ -2184,7 +2291,13 @@ scan_identifiers() {
                 hdr=1
                 while IFS= read -r line || [ -n "$line" ]; do
                     if [ "$hdr" -ne 0 ]; then
-                        if [ -z "$line" ]; then hdr=0; continue; fi
+                        # The header ends at the first BLANK line, one with no non-blank
+                        # byte (the awk this parse replaced ended it at !NF; an empty-line
+                        # test here read a hand-built tag's whitespace-only terminator as
+                        # a header line and its message as more of them, and published a
+                        # banned message through a real push; the round 7 refuter,
+                        # 2026-09-23).
+                        case "$line" in *[![:blank:]]*) ;; *) hdr=0; continue ;; esac
                         case "$line" in
                             "object "*) [ -n "$inner" ] || inner=${line#object } ;;
                             "tagger "*) [ -n "$tagger" ] || tagger=${line#tagger } ;;
@@ -2197,7 +2310,7 @@ scan_identifiers() {
             fi
             email=""
             case "$tagger" in *"<"*">"*) email="${tagger#*<}"; email="${email%%>*}";; esac
-            if [ -n "$email" ] && ! is_chosen "$email" "$chosen" "the TAGGER ADDRESS <$email> of tag $local_ref (${obj:0:10}) could not be compared with the addresses this clone is configured to use (grep exited {rc})" \
+            if [ -n "$email" ] && ! is_chosen "$email" "$chosen" \
                 && judged_read own="the ADDRESS DOMAIN grep" 0,1 "the TAGGER ADDRESS <$email> of tag $local_ref (${obj:0:10}) could not be grepped (grep exited {rc})" -- grep -qi -F "${grep_args[@]}" <<< "${email##*@}" && [ "$read_rc" -eq 0 ]; then
                 if [ "$chosen_unread" -ne 0 ]; then
                     echo "romp pre-push: tag $local_ref (${obj:0:10}) is tagged as <$email>: whether this clone is configured to use that address could not be read (git config --get-all user.email exited $chosen_unread, refused above), and its domain carries a personal identifier" >&2
@@ -2227,7 +2340,6 @@ scan_identifiers() {
             object_type "$local_ref" "$obj"
         done
     done <<< "$refs"
-    [ -z "$scratch" ] || rm -rf -- "$scratch"      # the exact minted path, never a glob (the header's residual)
 
     if [ "$hidden_paths" -ne 0 ]; then
         # Each remedy prints only where a refused line named its cause (or, for

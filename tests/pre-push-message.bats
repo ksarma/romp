@@ -310,11 +310,11 @@ git_refusing() {   # <bash test over the shim's "$@"> <exit status> <stderr line
     export PATH="$TEST_DIR/shim:$PATH"
 }
 fail_log_message() {   # [<sha whose message log fails; every commit's when omitted>]
-    # the one `git log` format the hook reads a commit's message with (the marker line, then %B; round 7); the addresses log is another format
+    # the one `git log` format the hook reads a commit's message with (the marker line, then %B, then the tail marker; rounds 7 and 8); the addresses log is another format
     if [ -n "${1:-}" ]; then
-        git_refusing "[ \"\${1:-}\" = log ] && [ \"\${4:-}\" = --format=message%x09%H%n%B ] && [ \"\${!#}\" = $1 ]" 128 "fatal: shim: log (the message) refused for $1"
+        git_refusing "[ \"\${1:-}\" = log ] && [ \"\${4:-}\" = --format=message%x09%H%n%B%nend%x09%H ] && [ \"\${!#}\" = $1 ]" 128 "fatal: shim: log (the message) refused for $1"
     else
-        git_refusing '[ "${1:-}" = log ] && [ "${4:-}" = --format=message%x09%H%n%B ]' 128 "fatal: shim: log (the message) refused"
+        git_refusing '[ "${1:-}" = log ] && [ "${4:-}" = --format=message%x09%H%n%B%nend%x09%H ]' 128 "fatal: shim: log (the message) refused"
     fi
 }
 
@@ -323,7 +323,7 @@ fail_log_message() {   # [<sha whose message log fails; every commit's when omit
     sha="$(git -C "$REPO" rev-parse HEAD)"
     fail_log_message
     # the fault as the hook meets it, from the repo's top level: the message log fails, the addresses log and the diff work
-    run _hook_in "$REPO" -c 'git log -1 --no-show-signature --format=message%x09%H%n%B "$1"' _ "$sha"
+    run _hook_in "$REPO" -c 'git log -1 --no-show-signature --format=message%x09%H%n%B%nend%x09%H "$1"' _ "$sha"
     [ "$status" -eq 128 ]
     run _hook_in "$REPO" -c 'git log -1 --no-show-signature --format=authored%x09%ae "$1" >/dev/null && git diff-tree -p -r --root --no-commit-id "$1" >/dev/null' _ "$sha"
     [ "$status" -eq 0 ]
@@ -550,7 +550,7 @@ tag_over_clean_commit_on_remote() {   # <tag message paragraphs...>: a clean com
     commit_msg web.txt "fix the crash on TESTHOST"
     sha="$(git -C "$REPO" rev-parse HEAD)"
     git_refusing '[ "${1:-}" = log ] && [[ "${4:-}" == --format=*%B* ]]' 0 ""
-    run _hook_in "$REPO" -c 'git log -1 --no-show-signature --format=message%x09%H%n%B "$1"' _ "$sha"
+    run _hook_in "$REPO" -c 'git log -1 --no-show-signature --format=message%x09%H%n%B%nend%x09%H "$1"' _ "$sha"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
     push_ref_through_hook_with_shim main
@@ -562,7 +562,7 @@ tag_over_clean_commit_on_remote() {   # <tag message paragraphs...>: a clean com
     [ "$status" -ne 0 ]
 }
 
-@test "a tag OBJECT that reads as NOTHING (cat-file -p exiting 0 with no output) over a tag whose message names a banned host is refused as unscanned naming the read and the object's size, through a real push: an empty capture of an object with bytes is a short read, the tag's fields are parsed from that one capture, and the remote never gets the tag" {
+@test "a tag OBJECT that reads as NOTHING (cat-file -p exiting 0 with no output) over a tag whose message names a banned host is refused as unscanned naming the capture's byte count and the object's size, through a real push: every capture is judged against the size (round 8), so an empty capture of an object with bytes is a short read of 0 bytes, the tag's fields are parsed from that one capture, and the remote never gets the tag" {
     tag_over_clean_commit_on_remote "release one" "cut on TESTHOST"
     size="$(git -C "$REPO" cat-file -s "$sha")"
     [ "$size" -gt 0 ]
@@ -572,7 +572,7 @@ tag_over_clean_commit_on_remote() {   # <tag message paragraphs...>: a clean com
     [ -z "$output" ]
     push_ref_through_hook_with_shim refs/tags/v1
     [ "$status" -ne 0 ]
-    [[ "$output" == *"the OBJECT of tag refs/tags/v1 (${sha:0:10}) was read as empty (git cat-file -p exited 0) while git cat-file -s gives its size as $size bytes, so the read answered short, which ends the peel here"* ]]
+    [[ "$output" == *"the OBJECT of tag refs/tags/v1 (${sha:0:10}) was read short (git cat-file -p exited 0 and its capture holds 0 bytes where git cat-file -s gives the object's size as $size), which ends the peel here"* ]]
     [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
     [[ "$output" != *"carries a personal identifier"* ]]
     [[ "$output" != *"while its type read as tag"* ]]
@@ -590,5 +590,110 @@ tag_over_clean_commit_on_remote() {   # <tag message paragraphs...>: a clean com
     [[ "$output" == *"the MESSAGE of tag refs/tags/v1 (${sha:0:10}) carries a personal identifier on line 3"* ]]
     [[ "$output" != *"the scan is incomplete"* ]]
     run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
+}
+
+# ── round 8: an answer cut SHORT after the sibling fact, and a blank header terminator ──
+# Round 7's refuters (2026-09-23) found the two message reads bounded at one
+# end: the commit's log asked for a marker AHEAD of the message, which
+# witnesses that the read began and not that it ended, so a log answering the
+# marker and the subject alone passed the body unread; and the tag OBJECT
+# capture was judged against the object's size only when EMPTY, so a
+# cat-file -p answering the header and the blank line alone was parsed as a
+# tag with no message. Each published a banned message through a real push
+# with nothing printed. The log asks for a TAIL marker after the message now
+# (the message is the text between the markers; a head marker with no tail is
+# refused as short), and every tag capture's byte count is judged against the
+# object's size (cat-file -p prints a tag object as its raw bytes, so the two
+# agree for every whole read, an empty message's included). The same refuter
+# found the shell parse of round 7 ending a tag's header at an EMPTY line where
+# the awk it replaced ended it at a BLANK one: a hand-built tag whose
+# terminator was a space alone had its message read as header lines. The
+# header ends at the first blank line now, the awk's !NF exactly.
+git_answering_head_lines_on() {   # <bash test over the shim's "$@"> <N>: for that shape the real git runs and only the first N lines of its answer are printed, exit 0 (an answer cut short after the marker); the real git for every other shape
+    local real_git
+    real_git="$(command -v git)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if %s; then %q "$@" | head -n %d; exit 0; fi\n' "$1" "$real_git" "$2"
+        printf 'exec %q "$@"\n' "$real_git"
+    } > "$TEST_DIR/shim/git"
+    chmod 755 "$TEST_DIR/shim/git"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+git_answering_header_only_on_cat_file_p() {   # <sha>: a git whose `cat-file -p <sha>` prints the object's header lines and the blank line after them, exit 0, and nothing more (the round 7 refuters' header-only shim); the real git for every other command
+    local real_git
+    real_git="$(command -v git)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [ "${1:-}" = cat-file ] && [ "${2:-}" = -p ] && [ "${3:-}" = %q ]; then %q "$@" | sed "/^$/q"; exit 0; fi\n' "$1" "$real_git"
+        printf 'exec %q "$@"\n' "$real_git"
+    } > "$TEST_DIR/shim/git"
+    chmod 755 "$TEST_DIR/shim/git"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+
+@test "a MESSAGE log answering the marker line and the subject alone (git log exiting 0, the body and the tail marker cut off) over a commit whose BODY names a banned host is refused as unscanned naming the read and its last line, through a real push: a marker ahead of the message bounds its start alone, so the format asks for a tail marker too and an answer without it is short, and the remote holds nothing (the round 7 text grepped the subject alone and published the commit)" {
+    add_remote
+    commit_msg web.txt "fix: a subject" "seen on TESTHOST"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    git_answering_head_lines_on '[ "${1:-}" = log ] && [[ "${4:-}" == --format=message* ]]' 2
+    run _hook_in "$REPO" -c 'git log -1 --no-show-signature --format=message%x09%H%n%B%nend%x09%H "$1"' _ "$sha"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(printf 'message\t%s\nfix: a subject' "$sha")" ]   # the head marker and the subject: no body, no tail marker
+    push_ref_through_hook_with_shim main
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the MESSAGE of commit ${sha:0:10} was read short (git log exited 0 and answered \"fix: a subject\" on its last line, not the tail marker line the format asks for after the message)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"carries a personal identifier"* ]]
+    [[ "$output" != *"not the marker line the format asks for ahead of the message"* ]]   # the head marker was there: the other arm's cause
+    run remote_holds_ref refs/heads/main
+    [ "$status" -ne 0 ]
+}
+
+@test "a tag OBJECT capture cut short after the HEADER and the blank line (cat-file -p exiting 0, the message cut off) over a tag whose message names a banned host is refused as unscanned naming the capture's byte count and the object's size, through a real push: every capture is judged against the size now, not only an empty one, so a header-only answer is not a tag with no message, and the remote never gets the tag (the round 7 text parsed it as one and published the tag)" {
+    tag_over_clean_commit_on_remote "release one" "cut on TESTHOST"
+    size="$(git -C "$REPO" cat-file -s "$sha")"
+    git_answering_header_only_on_cat_file_p "$sha"
+    run _hook_in "$REPO" -c 'git cat-file -p "$1"' _ "$sha"
+    [ "$status" -eq 0 ]
+    [[ "$output" == "object "*"tagger "* ]]
+    [[ "$output" != *"release one"* ]]                          # the header alone: the message is cut off
+    bytes="$(_hook_in "$REPO" -c 'git cat-file -p "$1" | wc -c' _ "$sha")"
+    bytes="${bytes//[[:space:]]/}"
+    [ "$bytes" -gt 0 ] && [ "$bytes" -lt "$size" ]
+    push_ref_through_hook_with_shim refs/tags/v1
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the OBJECT of tag refs/tags/v1 (${sha:0:10}) was read short (git cat-file -p exited 0 and its capture holds $bytes bytes where git cat-file -s gives the object's size as $size), which ends the peel here"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"carries a personal identifier"* ]]
+    run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
+}
+
+@test "a hand-built tag whose header ends at a WHITESPACE-ONLY line (a space alone, and a tab alone; git hash-object -t tag -w --literally) with a message naming a banned host is refused naming the tag and the message line, through a real push of each, and the remote never gets either: the header ends at the first BLANK line, as the awk the shell parse replaced ended it (the round 7 text ended it at an EMPTY line, read the message as header lines and published both)" {
+    add_remote
+    commit_msg ok.txt "clean"
+    git -C "$REPO" push -q origin main
+    commit="$(git -C "$REPO" rev-parse HEAD)"
+    sp="$(printf 'object %s\ntype commit\ntag sp\ntagger Tester <tests@example.invalid> 1700000000 +0000\n \nrelease one\ncut on TESTHOST\n' "$commit" | git -C "$REPO" hash-object -t tag -w --stdin --literally)"
+    tab="$(printf 'object %s\ntype commit\ntag tab\ntagger Tester <tests@example.invalid> 1700000000 +0000\n\t\nrelease one\ncut on TESTHOST\n' "$commit" | git -C "$REPO" hash-object -t tag -w --stdin --literally)"
+    git -C "$REPO" update-ref refs/tags/sp "$sp"
+    git -C "$REPO" update-ref refs/tags/tab "$tab"
+    [ "$(git -C "$REPO" cat-file -t "$sp")" = tag ]
+    [ "$(git -C "$REPO" cat-file -p "$sp" | sed -n 5p)" = " " ]            # the terminator: a space alone
+    [ "$(git -C "$REPO" cat-file -p "$tab" | sed -n 5p)" = "$(printf '\t')" ]   # a tab alone
+    push_ref_through_hook refs/tags/sp
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the MESSAGE of tag refs/tags/sp (${sp:0:10}) carries a personal identifier on line 2"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    run remote_holds_ref refs/tags/sp
+    [ "$status" -ne 0 ]
+    push_ref_through_hook refs/tags/tab
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the MESSAGE of tag refs/tags/tab (${tab:0:10}) carries a personal identifier on line 2"* ]]
+    run remote_holds_ref refs/tags/tab
     [ "$status" -ne 0 ]
 }

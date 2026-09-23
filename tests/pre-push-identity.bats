@@ -523,7 +523,7 @@ fail_log_addresses() {   # [<sha whose addresses log fails; every commit's when 
     # the fault as the hook meets it, from the repo's top level: the addresses log fails, the message log and the diff work
     run _hook_in "$REPO" -c 'git log -1 --no-show-signature --format=authored%x09%ae "$1"' _ "$sha"
     [ "$status" -eq 128 ]
-    run _hook_in "$REPO" -c 'git log -1 --no-show-signature --format=message%x09%H%n%B "$1" >/dev/null && git diff-tree -p -r --root --no-commit-id "$1" >/dev/null' _ "$sha"
+    run _hook_in "$REPO" -c 'git log -1 --no-show-signature --format=message%x09%H%n%B%nend%x09%H "$1" >/dev/null && git diff-tree -p -r --root --always "$1" >/dev/null' _ "$sha"
     [ "$status" -eq 0 ]
     run_hook
     [ "$status" -eq 1 ]
@@ -646,7 +646,7 @@ clean_commit_on_remote() {
     [ "$status" -ne 0 ]
 }
 
-@test "a tag OBJECT that reads as NOTHING (cat-file -p exiting 0 with no output) over a banned tagger is refused on the object's SIZE, through a real push: the tag's fields are parsed from that one capture (round 7), an empty capture of an object with bytes is a short read, and the remote never gets the tag" {
+@test "a tag OBJECT that reads as NOTHING (cat-file -p exiting 0 with no output) over a banned tagger is refused on the object's SIZE against the capture's BYTE COUNT, through a real push: the tag's fields are parsed from that one capture (round 7), every capture is judged against the size (round 8), so an empty capture of an object with bytes is a short read of 0 bytes, and the remote never gets the tag" {
     clean_commit_on_remote
     GIT_COMMITTER_EMAIL="$STAMPED" git -C "$REPO" tag -a v1 -m "release one"
     sha="$(git -C "$REPO" rev-parse refs/tags/v1)"
@@ -660,8 +660,8 @@ clean_commit_on_remote() {
     [ "$(git -C "$REPO" cat-file -s "$sha")" = "$size" ]         # and so is the size read, the sibling fact
     push_ref_through_hook_with_shim refs/tags/v1
     [ "$status" -ne 0 ]
-    # until round 6 the line was the OBJECT field's, read as empty while the type read as tag; that line now stands for an object read whole with no object line
-    [[ "$output" == *"the OBJECT of tag refs/tags/v1 (${sha:0:10}) was read as empty (git cat-file -p exited 0) while git cat-file -s gives its size as $size bytes, so the read answered short, which ends the peel here"* ]]
+    # until round 6 the line was the OBJECT field's, read as empty while the type read as tag (that line now stands for an object read whole with no object line); until round 8 it said "read as empty", the size asked for an empty capture alone
+    [[ "$output" == *"the OBJECT of tag refs/tags/v1 (${sha:0:10}) was read short (git cat-file -p exited 0 and its capture holds 0 bytes where git cat-file -s gives the object's size as $size), which ends the peel here"* ]]
     [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
     [[ "$output" != *"could not be read"* ]]           # a short read, not a failed one
     [[ "$output" != *"while its type read as tag"* ]]
@@ -717,16 +717,18 @@ clean_commit_on_remote() {
     [ "$status" -ne 0 ]
 }
 
-@test "the CHOSEN ADDRESS match exiting 2 is refused as unscanned naming the comparison, and the address is then judged as one the clone did not choose (the strict side): a configured address with a banned domain is refused on both lines through a real push" {
+@test "the CHOSEN ADDRESS match runs no tool (round 8): a commit stamped under a banned domain while the clone is configured to use ANOTHER address is refused on the true cause, an address this clone is not configured to use, through a real push, with no comparison line and no unscanned line, and the remote holds nothing (until round 8 this case drove the match's grep -qixF to exit 2 and pinned the refused comparison beside a false-cause address line; the grep is gone, so that shim is retired and the two silent-grep cases at the end witness that no tool runs)" {
     add_remote
-    git -C "$REPO" config user.email dev@zzsynthuser.example
-    commit_as dev@zzsynthuser.example dev@zzsynthuser.example web.txt "the configured address"
+    git -C "$REPO" config user.email other@example.invalid
+    commit_as dev@zzsynthuser.example dev@zzsynthuser.example web.txt "an address the clone did not choose"
     sha="$(git -C "$REPO" rev-parse HEAD)"
-    grep_refusing '[ "${1:-}" = -qixF ]'               # the chosen-address match alone
+    mkdir -p "$TEST_DIR/shim"                          # no shim: every tool the real one
     push_ref_through_hook_with_shim main
     [ "$status" -ne 0 ]
-    [[ "$output" == *"the ADDRESS <dev@zzsynthuser.example> of commit ${sha:0:10} could not be compared with the addresses this clone is configured to use (grep exited 2)"* ]]
-    [[ "$output" == *"commit ${sha:0:10} is authored as <dev@zzsynthuser.example>, an address this clone is not configured to use"* ]]
+    [[ "$output" == *"commit ${sha:0:10} is authored as <dev@zzsynthuser.example>, an address this clone is not configured to use, whose domain carries a personal identifier"* ]]
+    [[ "$output" != *"could not be compared"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    [[ "$output" == *"BLOCKED"* ]]
     run remote_holds_ref refs/heads/main
     [ "$status" -ne 0 ]
 }
@@ -765,6 +767,60 @@ SHIM
     [ "$status" -ne 0 ]
     [[ "$output" == *"tag refs/tags/v1 (${sha:0:10}) is tagged as <$STAMPED>, an address this clone is not configured to use, whose domain carries a personal identifier"* ]]
     [[ "$output" != *"the scan is incomplete"* ]]
+    run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
+}
+
+# ── round 8: the CHOSEN ADDRESS match with no tool in the comparison ──
+# Round 7's refuter drove the match (a grep -qixF through the helper) with a
+# grep exiting 0 and printing nothing: there exit 0 was the PERMISSIVE verdict
+# (the address chosen, so skipped), the one answer the helper's gates cannot
+# judge, and a commit and a tag stamped under a banned domain were published
+# through real pushes with nothing printed. The match is a case statement in
+# the shell now, under nocasematch, and no grep runs for it: the shim below
+# RECORDS every call of the match's shape, so each case witnesses that none
+# was made, beside the refusal the real domain grep then makes.
+grep_silent_recording() {   # <bash test over the shim's "$@"> <record file>: for that shape a grep that appends its arguments to the record file, reads its input and exits 0 printing nothing (the round 7 refuter's shim); the real grep for every other shape
+    local real_grep
+    real_grep="$(command -v grep)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if %s; then printf "%%s\\n" "$*" >> %q; cat > /dev/null; exit 0; fi\n' "$1" "$2"
+        printf 'exec %q "$@"\n' "$real_grep"
+    } > "$TEST_DIR/shim/grep"
+    chmod 755 "$TEST_DIR/shim/grep"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+
+@test "the CHOSEN ADDRESS match under a grep exiting 0 and printing nothing for the -qixF shape (the round 7 text's match, whose exit 0 was the permissive verdict) changes nothing now: no grep runs for the match (the shim records no call), a commit stamped under a banned domain the clone did not choose is refused on its address line through a real push, and the remote holds nothing (the round 7 text read the silent grep as chosen and published the commit)" {
+    add_remote
+    commit_as "$STAMPED" "$STAMPED" web.txt "stamped by an unset user.email"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    grep_silent_recording '[ "${1:-}" = -qixF ]' "$TEST_DIR/match-calls"
+    run _hook_in "$REPO" -c 'printf "x\n" | grep -qixF -e y; echo "status $?"'
+    [ "$output" = "status 0" ]                                # the shim: a no-match answered as a match
+    [ "$(cat "$TEST_DIR/match-calls")" = "-qixF -e y" ]      # and recorded
+    rm -f "$TEST_DIR/match-calls"
+    push_ref_through_hook_with_shim main
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"commit ${sha:0:10} is authored as <$STAMPED>, an address this clone is not configured to use, whose domain carries a personal identifier"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    [ ! -e "$TEST_DIR/match-calls" ]                          # no grep ran on the match's shape: the comparison is the shell's own
+    run remote_holds_ref refs/heads/main
+    [ "$status" -ne 0 ]
+}
+
+@test "the same silent grep over an annotated TAG's tagger (the twin of the round 7 tagger case above): the tag stamped under a banned domain is refused on its address line through a real push, no grep ran on the match's shape, and the remote never gets the tag (the round 7 text published it)" {
+    clean_commit_on_remote
+    GIT_COMMITTER_EMAIL="$STAMPED" git -C "$REPO" tag -a v1 -m "release one"
+    sha="$(git -C "$REPO" rev-parse refs/tags/v1)"
+    grep_silent_recording '[ "${1:-}" = -qixF ]' "$TEST_DIR/match-calls"
+    push_ref_through_hook_with_shim refs/tags/v1
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"tag refs/tags/v1 (${sha:0:10}) is tagged as <$STAMPED>, an address this clone is not configured to use, whose domain carries a personal identifier"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    [ ! -e "$TEST_DIR/match-calls" ]
     run remote_holds_ref refs/tags/v1
     [ "$status" -ne 0 ]
 }

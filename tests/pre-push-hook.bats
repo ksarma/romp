@@ -3447,16 +3447,17 @@ merge_with_hidden_link() {   # a merge whose own change is a symlink at a -diff 
     [[ "$output" != *"is text that"* ]]
 }
 
-@test "a merge whose combined patch prints NOTHING (diff-tree -p -c exiting 0 with no output) is a short read, refused as unscanned naming the path: no section is not a verdict of text, and the hidden link is not called hidden either" {
+@test "a merge whose combined patch prints NOTHING (diff-tree -p -c exiting 0 with no output) is a short read, refused as unscanned naming the path: no section is not a verdict of text, and the hidden link is not called hidden either; the ADDED LINES diff of the same merge, silent under the same shim, is refused at its marker (round 8)" {
     merge_with_hidden_link
     empty_combined_patch
-    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1"' _ "$sha"
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --always --no-color "$1"' _ "$sha"
     [ "$status" -eq 0 ]
-    [ -z "$output" ]
+    [ -z "$output" ]                                             # the shim silences both -p -c reads: the combined patch and the added-lines diff (not even the marker line)
     run_hook "$BASE"
     [ "$status" -eq 1 ]
     [[ "$output" == *"the BINARY VERDICTS of commit ${sha:0:10} could not be read (git diff-tree -p -c, the merge's combined patch, printed no verdict for link, a path the merge changes)"* ]]
-    [[ "$output" != *"exited"* ]]
+    [[ "$output" != *"the merge's combined patch, exited"* ]]    # the patch read's own failed-status arm is not claimed: the read exited 0 (until round 8 no "exited" at all, before the added-lines diff's git stage had a marker to miss)
+    [[ "$output" == *"the ADDED LINES of commit ${sha:0:10} could not be read (git diff-tree exited 0 and printed no line naming the commit, the marker --always asks for ahead of the diff, so the read answered short)"* ]]
     [[ "$output" != *"is text that"* ]]
     [[ "$output" != *"against the empty tree"* ]]
 }
@@ -5152,4 +5153,183 @@ grep_answering_then_failing() {   # <bash test over the shim's "$@">: for that s
     [[ "$output" == *"An annotated TAG's tagger and message are the tag object's own"* ]]
     run remote_holds_ref refs/tags/v1
     [ "$status" -ne 0 ]
+}
+
+# ── round 8: the exit-0 empty-or-short answer at the reads round 7 found open ──
+# Round 7's refuters (2026-09-23) drove five more reads with a git exiting 0
+# and printing nothing, or answering short, each through a real push that
+# published: the ADDED LINES diff's git stage (a silent diff-tree -p read as a
+# commit adding no line, where case 199's shim silenced the awk: a banned line
+# in a one-parent middle commit published), the log.showRoot configuration
+# read (it ran before the ref list was read and inherited the hook's stdin,
+# so a git draining stdin there emptied the list and every ref published), the
+# SYMLINK listing (a git silent on ls-tree in both its shapes over a tip whose
+# tree held a symlink alone passed the tip, both listings agreeing on zero
+# entries and the grep's read list empty for a tree with no regular file with
+# bytes), the tag OBJECT capture (a header-only answer parsed as a tag with no
+# message: pre-push-message.bats) and the CHOSEN ADDRESS match (a grep -q
+# silent with exit 0 made every stamped address chosen: pre-push-identity.bats).
+# Each read holds a sibling fact now: the diff leads with the commit's own sha
+# (--always) and its awk records a count only after that line; the ref list is
+# read by the shell before any tool runs; an empty listing under exit 0 is
+# judged against the tree's size (the empty tree, size 0, is the one tree with
+# no entry). The scratch directory is removed from an EXIT trap, so a hook
+# ended by bash (a scratch directory it cannot write into: the header's scratch
+# paragraph records that every such arm refuses with bash's own line) leaves
+# nothing under TMPDIR, where the removal at the end of the identifier scan
+# never ran on that road. Cases 208 to 212 below; 208 stands beside 199 in
+# purpose (the same read, the other stage).
+git_silent_on() {   # <bash test over the shim's "$@">: a git exiting 0 and printing nothing, on either stream, for that argument shape; the real git for every other command
+    local real_git
+    real_git="$(command -v git)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if %s; then exit 0; fi\n' "$1"
+        printf 'exec %q "$@"\n' "$real_git"
+    } > "$TEST_DIR/shim/git"
+    chmod 755 "$TEST_DIR/shim/git"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+git_draining_stdin_on() {   # <bash test over the shim's "$@">: for that shape a git that reads its stdin (the hook's, inherited) to the end, prints nothing and exits 0 (the round 7 refuters' shim); the real git for every other command
+    local real_git
+    real_git="$(command -v git)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if %s; then cat > /dev/null; exit 0; fi\n' "$1"
+        printf 'exec %q "$@"\n' "$real_git"
+    } > "$TEST_DIR/shim/git"
+    chmod 755 "$TEST_DIR/shim/git"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+mktemp_making_scratch_unwritable() {   # a mktemp that makes the scratch directory as the real one does and takes its write bit away (mode 500), so the hook's first write there fails with bash's own line
+    local real_mktemp
+    real_mktemp="$(command -v mktemp)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'real_mktemp=%q\n' "$real_mktemp"
+        cat <<'SHIM'
+d=$("$real_mktemp" "$@") || exit $?
+chmod 500 "$d"
+printf '%s\n' "$d"
+SHIM
+    } > "$TEST_DIR/shim/mktemp"
+    chmod 755 "$TEST_DIR/shim/mktemp"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+
+@test "the ADDED LINES diff under a git exiting 0 and printing nothing for diff-tree -p (the read's GIT stage; case 199's shim silenced its awk) is refused as unscanned naming the git read and the marker, through a real push of a one-parent middle commit's leak: the diff leads with the commit's own sha (--always) and its awk records a count only after that line, so a silent git is not a commit adding nothing, the awk's own arm is not the cause named, and the remote stays at the base (the round 7 text published the leak with nothing printed)" {
+    leak_in_middle_commit_after_base
+    git_silent_on 'case " $* " in " diff-tree -p "*) true ;; *) false ;; esac'   # the added-lines diff's shape (diff-tree -p first): the changed-paths listing and the numstats carry -r first, and this push has no merge for the combined-patch read
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --always --no-color "$1"; echo "status $?"' _ "$leak"
+    [ "$output" = "status 0" ]                                # nothing printed, not even the marker line the real git prints first
+    run _hook_in "$REPO" -c 'git diff-tree -r --numstat --root --no-commit-id "$1"' _ "$leak"
+    [[ "$output" == *"leak.txt"* ]]                            # the other diff-tree shapes reach the real git
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the ADDED LINES of commit ${leak:0:10} could not be read (git diff-tree exited 0 and printed no line naming the commit, the marker --always asks for ahead of the diff, so the read answered short); the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"recorded \"\""* ]]                        # the awk ran and recorded the missing marker: case 199's arm (the awk that never ran) is not the cause named
+    [[ "$output" != *"ADDS a personal identifier"* ]]
+    [[ "$output" != *"could not be grepped"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
+@test "the controls for the marker: an EMPTY commit and a merge with no line of its own pass with nothing printed (the real diff prints the commit's sha alone, so the marker is seen and the count is zero, where --no-commit-id printed nothing for either), and a one-parent commit's added line is still named past the marker" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" commit -q --allow-empty -m "an empty commit"
+    empty="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" checkout -q -b side "$BASE"
+    commit_file side.txt "the side's work" "side"
+    git -C "$REPO" checkout -q main
+    git -C "$REPO" merge -q --no-ff -m "merge side" side
+    merge="$(git -C "$REPO" rev-parse HEAD)"
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --always --no-color "$1"' _ "$empty"
+    [ "$output" = "$empty" ]                                  # the sha alone
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --always --no-color "$1"' _ "$merge"
+    [ "$output" = "$merge" ]                                  # a merge with no line of its own: the sha alone too
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1"' _ "$merge"
+    [ -z "$output" ]                                          # the round 7 text's command printed nothing here, the same as a silent git
+    run_hook "$BASE"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    commit_file leak.txt "home is /home/zzsynthuser/code" "leak"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    run_hook "$BASE"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"commit ${leak:0:10} ADDS a personal identifier in:"* ]]
+    [[ "$output" == *"leak.txt"* ]]
+    [[ "$output" != *"could not be read"* ]]
+}
+
+@test "the log.showRoot configuration read under a git that DRAINS the hook's stdin for that one read (exit 0, nothing printed, the ref list read to its end) changes nothing now: the ref list is read by the shell before any tool runs, so a tip carrying a banned string is refused through a real push and the remote holds nothing (the round 7 text ran that read first, and every ref of the push published with nothing printed)" {
+    add_remote
+    commit_file leak.txt "home is /home/zzsynthuser/code" "leak"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    git_draining_stdin_on '[ "${1:-}" = config ] && [ "${2:-}" = --type=bool ] && [ "${3:-}" = log.showRoot ]'   # the hook's one read of the key; the chosen-addresses read carries --get-all
+    run _hook_in "$REPO" -c 'printf "a line for whoever reads next\n" | { git config --type=bool log.showRoot; echo "status $?"; cat; }'
+    [ "$output" = "status 0" ]                                # the shim took the line, printed nothing and exited 0: the cat after it found stdin empty
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the tip of refs/heads/main (${sha:0:10}) would publish a personal identifier in:"* ]]
+    [[ "$output" == *"leak.txt"* ]]
+    [[ "$output" == *"BLOCKED"* ]]
+    run remote_holds_main
+    [ "$status" -ne 0 ]
+}
+
+@test "a git silent on ls-tree in BOTH its shapes (the symlink pass's plain listing and the verdict check's -z listing) over a tip whose tree holds a symlink alone, inherited from a commit the remote holds, is refused as unscanned naming the listing and the tree's SIZE, through a real push: both listings agreed on zero entries and the grep's read list was empty for a tree with no regular file with bytes, so the tree's size is the fact that shows the listing short, and the remote never gets the branch (the round 7 text published it with nothing printed); an EMPTY-TREE tip, size 0, passes under the same shim" {
+    add_remote
+    ln -s /home/zzsynthuser/code/romp/vscode-extension/node_modules "$REPO/node_modules"
+    git -C "$REPO" add node_modules
+    git -C "$REPO" commit -qm "a symlink alone"
+    git -C "$REPO" push -q origin main                        # the remote holds the link: the tip half alone can name it
+    git -C "$REPO" checkout -q -b feature
+    : > "$REPO/empty.txt"
+    git -C "$REPO" add empty.txt
+    git -C "$REPO" commit -qm "an empty file"                 # the tip's tree: the link and a regular file of no bytes, which the grep never lists as read
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    size="$(git -C "$REPO" cat-file -s "$sha^{tree}")"
+    [ "$size" -gt 0 ]
+    run _hook_in "$REPO" -c 'git grep --no-color -I -l -z -e "" "$1" --; echo "status $?"' _ "$sha"
+    [ "$output" = "status 1" ]                                # the read list is empty (nothing printed, exit 1): no regular file with bytes
+    git_silent_on '[ "${1:-}" = ls-tree ]'
+    run _hook_in "$REPO" -c 'git ls-tree -r "$1"; echo "status $?"; git ls-tree -r -z -l "$1"; echo "status $?"' _ "$sha"
+    [ "$output" = "status 0"$'\n'"status 0" ]                 # both shapes silent
+    push_ref_through_hook_with_shim refs/heads/feature
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the TREE of the tip of refs/heads/feature (${sha:0:10}) was listed as empty (git ls-tree -r exited 0 and printed no entry) while git cat-file -s gives its tree's size as $size bytes, so the listing answered short; the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"SYMLINK TARGET"* ]]                     # no link was listed, so none was read
+    [[ "$output" != *"listed short or long"* ]]               # the two listings agreed on zero: the entry count refuses nothing here
+    run remote_holds_ref refs/heads/feature
+    [ "$status" -ne 0 ]
+    # the control: a tip over the EMPTY tree (size 0) passes under the same silent shim, since an empty listing is that tree's own answer
+    git -C "$REPO" checkout -q --orphan bare
+    git -C "$REPO" rm -rq --cached .
+    rm -f "$REPO/node_modules" "$REPO/empty.txt"
+    git -C "$REPO" commit -q --allow-empty -m "the empty tree"
+    bare="$(git -C "$REPO" rev-parse HEAD)"
+    [ "$(git -C "$REPO" cat-file -s "$bare^{tree}")" = 0 ]
+    run _hook_in "$REPO" "$HOOK" origin git@example.invalid:x/y.git <<< "refs/heads/bare $bare refs/heads/bare $ZERO"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "a scratch directory the hook cannot WRITE into (mode 500, from a mktemp shim) ends the hook at its first write under set -e with bash's own line and no romp line, the push refused and the remote at the base (the shape the header's scratch paragraph records), and the directory is GONE afterwards: the removal runs from an EXIT trap, where the round 7 text's removal at the end of the identifier scan never ran on that road and left the directory under TMPDIR" {
+    leak_in_middle_commit_after_base
+    export TMPDIR="$TEST_DIR/tmp"
+    mkdir -p "$TMPDIR"
+    mktemp_making_scratch_unwritable
+    run _hook_in "$REPO" -c 'd=$(mktemp -d "${TMPDIR:-/tmp}/romp-pre-push.XXXXXX") && { ( : > "$d/x" ) 2>/dev/null && echo writable || echo unwritable; rmdir "$d"; }'
+    [ "$output" = unwritable ]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"/added.count: Permission denied"* ]]     # bash's own line for the first write (the added-lines count file, emptied before the diff runs), naming the hook's line
+    [[ "$output" != *"romp pre-push"* ]]                      # no romp line: the writers stay outside the helper's guard, every arm refusing (the header)
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+    [ "$(ls -1 "$TMPDIR" | grep -c '^romp-pre-push\.')" -eq 0 ]   # the EXIT trap removed the minted directory (the round 7 text left it)
 }
