@@ -1002,9 +1002,9 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
 const pkgRequire = createRequire(path.resolve(process.cwd(), "package.json"));   // vscode-extension/: esbuild.js and its esbuild, as editor-lazy.test.ts requires them
 const ROOT = path.resolve(process.cwd(), "..");
 const MODULE_SUFFIX = /\.(ts|mts|cts|tsx|js|mjs|cjs|jsx)$/;   // the partitions' module class: every suffix the compiler parses (a .tsx or .jsx under its own ScriptKind)
-const TEST_OR_TYPES = /\.(test|d)\.([mc]?ts|tsx)$/;             // the listing's tests-and-types class: a `.test.` or `.d.` file of a TypeScript suffix (`.ts`, `.mts`, `.cts`, `.tsx`); a test of a JavaScript suffix is listed as a module and reds the unloaded equality below by name
+const TEST_OR_TYPES = /\.test\.([mc]?[tj]s|[tj]sx)$|\.d\.([mc]?ts|tsx)$/;   // the listing's tests-and-types class: a `.test.` file of any module suffix (`.ts`, `.mts`, `.cts`, `.tsx`, `.js`, `.mjs`, `.cjs`, `.jsx`) or a `.d.` file of a TypeScript one (`.d.ts`, `.d.mts`, `.d.cts`, `.d.tsx`), so a test of a JavaScript suffix is a test, not a module the unloaded equality below names (the maintainer's round 8 ruling, correctness-1); a disclosed residual: vscode-extension/esbuild.js's testBuild bundles `.test.ts` alone, so a test of any other suffix under ui/webview is a test no leg runs
 const STYLE_SUFFIX = /\.css$/;                                   // the styles class: the page stylesheets among the bundles' inputs, not modules
-const FIXTURE_DIR = /^ui\/webview\/anchor-map-fixtures\//;      // the listing's one non-module directory, the anchor map's fixtures (.md, .json, .py, .html, .csv, .svg and a .gitattributes today)
+const FIXTURE_DIR = /^ui\/webview\/anchor-map-fixtures\//;      // the listing's one non-module directory, the anchor map's fixtures (.md, .json, .py, .html, .csv, .svg, .css and a .gitattributes today); the listing tries it before every suffix class, so a file of a module or a stylesheet suffix under it is a fixture (the maintainer's round 8 ruling, correctness-1)
 /** A PARTITION, never a filter (the maintainer's round 7 ruling, extra7-1): every file goes to the first class whose test matches it, and a
  *  file no class takes is a red naming it and its suffix, so a file of a kind the census has not named (a `.tsx` module a page bundle loads,
  *  a stylesheet of a new suffix, a stray file in the directory) is loud where a suffix filter dropped it in silence. */
@@ -1119,14 +1119,14 @@ test("every module the page bundles load, read with the compiler: the only write
   // `.jsx`; a .tsx or .jsx parsed under its own ScriptKind), and styles (the `.css` inputs), the remainder asserted empty naming any other
   // suffix (the maintainer's round 7 ruling, extra7-1), so it reaches the two `.js` modules in ui/webview and the five modules outside it named
   // below, which tsconfig's file list (no allowJs; the test helpers under ui/ included) misses, and it leaves out the seven modules in the
-  // directory no page loads, which a listing counts. The directory is read too, recursively and through the same partition (tests and types,
-  // modules, styles and the anchor map's fixture directory, the remainder asserted empty), and the two are tied by EQUALITY both ways,
+  // directory no page loads, which a listing counts. The directory is read too, recursively and through the same partition (the anchor map's
+  // fixture directory first, then tests and types, modules and styles, the remainder asserted empty), and the two are tied by EQUALITY both ways,
   // never a floor: the directory's modules no page bundle loads are exactly the seven named below (reached from tests, from one another and
   // from the viewer bench under tools/, never from a page entry), and the loaded modules outside the directory are exactly the five named
   // below (the timeline panel's prebuilt bundle and four vendored track-changents modules, display.js reached from track-logic.js through
   // the vendored package's own exports map), so a module that starts or stops being loaded, appears outside the directory or leaves it, is
-  // named here or reds, and a module in the directory that a page bundle loads but the listing's partition files under tests and types (a
-  // test, a `.d.ts`) reds too.
+  // named here or reds, and a module in the directory that a page bundle loads but the listing's partition files under the anchor map's
+  // fixtures or under tests and types (a module-suffix file under the fixture directory, a test of any module suffix, a `.d.ts`) reds too.
   // The walk is the loaded set: a module no page runs mints nothing the kernel receives. The tests are excluded because a test's literal is
   // not a minter the page runs (the bundles are built from the production modules alone), and because this census's own reverse plants and
   // the fixture rows in this file would red it.
@@ -1154,9 +1154,12 @@ test("every module the page bundles load, read with the compiler: the only write
   // loads, is named or reds.
   const loaded = await bundledModules();
   const loadedSet = new Set(loaded);
-  // the directory's listing through the same partition: tests and types first (a `.test.ts` is a module by suffix and is not listed), then
-  // modules, styles and the anchor map's fixture directory; a file in none of the four reds naming its suffix
-  const parts = partition(filesUnder(path.resolve(ROOT, "ui", "webview")), [["tests and types", TEST_OR_TYPES], ["modules", MODULE_SUFFIX], ["styles", STYLE_SUFFIX], ["the anchor map's fixtures", FIXTURE_DIR]], "the files under ui/webview (recursive)");
+  // the directory's listing through the same partition, the classes tried in this order: the anchor map's fixture directory first (a file
+  // under it is a fixture whatever its suffix: a module-suffix file there is not a module and its stylesheet is not a page stylesheet), then
+  // tests and types (a `.test.ts` is a module by suffix and is not listed), then modules, then styles; a file in none of the four reds naming
+  // its suffix. The fixture directory came after modules before the maintainer's round 8 ruling (correctness-1), which filed a `.ts` under it
+  // as an unloaded module.
+  const parts = partition(filesUnder(path.resolve(ROOT, "ui", "webview")), [["the anchor map's fixtures", FIXTURE_DIR], ["tests and types", TEST_OR_TYPES], ["modules", MODULE_SUFFIX], ["styles", STYLE_SUFFIX]], "the files under ui/webview (recursive)");
   const listed = parts.modules;
   const UNLOADED = [   // under ui/webview, loaded by no page bundle: reached from tests, from one another and from the viewer bench under tools/, never from a page entry
     "ui/webview/feed-flip.ts",                   // the feed's FLIP-pass predicate, executed by feed-flip.test.ts
@@ -1174,10 +1177,10 @@ test("every module the page bundles load, read with the compiler: the only write
     "vendor/track-changents/obsidian/src/track-cm.js",       // imported by editor-chunk.ts and track-decorations.ts
     "vendor/track-changents/obsidian/src/track-logic.js",    // imported by track-decorations.ts
   ];
-  assert.deepEqual(listed.filter((m) => !loadedSet.has(m)), UNLOADED, "the modules under ui/webview (recursive; the listing's module class, every suffix the compiler parses, tests and types apart) that no page bundle loads are exactly the seven named, reached from tests, from one another and from the viewer bench under tools/ and never from a page entry: a module that stops being loaded, or a named one that starts, or leaves the directory, is named here or reds (" + listed.length + " listed, " + loaded.length + " loaded)");
+  assert.deepEqual(listed.filter((m) => !loadedSet.has(m)), UNLOADED, "the modules under ui/webview (recursive; the listing's module class, every suffix the compiler parses, the anchor map's fixture directory and tests and types apart) that no page bundle loads are exactly the seven named, reached from tests, from one another and from the viewer bench under tools/ and never from a page entry: a module that stops being loaded, or a named one that starts, or leaves the directory, is named here or reds (" + listed.length + " listed, " + loaded.length + " loaded)");
   assert.deepEqual(loaded.filter((m) => !m.startsWith("ui/webview/")), OUTSIDE, "the modules a page bundle loads from outside ui/webview are exactly the five named: a sixth, or one gone from the bundles, reds here");
   const listedSet = new Set(listed);
-  assert.deepEqual(loaded.filter((m) => m.startsWith("ui/webview/") && !listedSet.has(m)), [], "a module under ui/webview that a page bundle loads and the listing's partition files under tests and types (a `.test.ts`, a `.test.tsx`, a `.d.ts`): the two equalities above compare the listed modules with the loaded ones, so a production import of a test module is named here or reds (the author's fixer pass over the pass after the maintainer's round 6, its verifier (a))");
+  assert.deepEqual(loaded.filter((m) => m.startsWith("ui/webview/") && !listedSet.has(m)), [], "a module under ui/webview that a page bundle loads and the listing's partition files under the anchor map's fixtures or under tests and types (a module-suffix file under the fixture directory, a `.test.ts`, a `.test.tsx`, a `.test.js`, a `.d.ts`): the two equalities above compare the listed modules with the loaded ones, so a production import of a test module or of a fixture is named here or reds (the author's fixer pass over the pass after the maintainer's round 6, its verifier (a))");
   assert.ok(loadedSet.has("ui/webview/render.ts") && loadedSet.has("ui/webview/scroll-write.ts"), "render.ts and scroll-write.ts are among the loaded modules");
   const modules = loaded;   // the walk IS the derived set
   const c = newViewCensus();
