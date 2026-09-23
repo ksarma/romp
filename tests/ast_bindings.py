@@ -16,8 +16,9 @@ one, and what a call is handed is held to that declaration, never to the text.
     bindings = Bindings.of(tree, statements=module_statements)   # module-scope bindings from those statements alone
     scope = bindings.scope_of(node)                  # the scope a Name, Call or any expression is read in
     declarations, where = scope.resolve("KERNEL")    # the nearest enclosing scope's declarations, and that scope
-    declarations, road = scope.resolve_target(attr)  # self.X through the class and its bases; other dotted targets
-                                                     # by their spelling (road "instance" or "spelled")
+    readings, road = scope.resolve_target(attr)      # one declaration list per value: self.X per concrete class, the
+                                                     # method's and each module subclass's (road "instance"); other
+                                                     # dotted targets one list, by their spelling (road "spelled")
     bindings.declarations("KERNEL")                  # the module scope's
 
 A Declaration has the name, the kind (assign, augassign, unpack, def, class, import, parameter, loop, with,
@@ -146,7 +147,7 @@ class Scope:
         return [], None
 
     def resolve_target(self, node):
-        """(declarations, road) for an ast.Attribute or ast.Subscript read here: see Bindings.resolve_target."""
+        """(readings, road) for an ast.Attribute or ast.Subscript read here: see Bindings.resolve_target."""
         return self.bindings.resolve_target(node, self)
 
 
@@ -162,6 +163,7 @@ class Bindings:
         self.owner = {}
         self.scopes = {}
         self._deferred = []
+        self._mro = {}   # id(class scope) -> its mro (Bindings.mro), filled on first read
 
     @classmethod
     def of(cls, tree, statements=None):
@@ -189,18 +191,61 @@ class Bindings:
                                  "built over)" % (type(node).__name__, getattr(node, "lineno", "?"))) from None
 
     def class_chain(self, klass):
-        """A class scope and the scopes of its bases defined in the module, transitively, nearest first."""
+        """A class scope and the scopes of its bases defined in the module, transitively, breadth first."""
         chain, todo = [], [klass]
         while todo:
             scope = todo.pop(0)
             if any(scope is c for c in chain):
                 continue
             chain.append(scope)
-            for base in scope.node.bases:
-                if isinstance(base, ast.Name) and scope.parent is not None:
-                    decls, _ = scope.parent.resolve(base.id)
-                    todo.extend(self.scopes[id(d.node)] for d in decls if d.kind == "class" and id(d.node) in self.scopes)
+            todo.extend(c for classes in self._module_bases(scope) for c in classes)
         return chain
+
+    def _module_bases(self, klass):
+        """One list per base of klass that names a class the module defines, in the order the bases are written: the
+        class scopes the base's name resolves to from the scope the class statement is in (more than one for a name
+        bound to two classes)."""
+        found = []
+        for base in klass.node.bases:
+            if isinstance(base, ast.Name) and klass.parent is not None:
+                decls, _ = klass.parent.resolve(base.id)
+                classes = [self.scopes[id(d.node)] for d in decls if d.kind == "class" and id(d.node) in self.scopes]
+                if classes:
+                    found.append(classes)
+        return found
+
+    def mro(self, klass, _below=()):
+        """klass and its bases defined in the module, in the order an instance's attribute lookup reads them: the C3
+        linearization the interpreter computes, over the bases _module_bases reads (a base defined elsewhere, such as
+        unittest.TestCase, holds no binding of this module and is left out). For a base name bound to more than one
+        class, a cycle, or bases C3 cannot order (a class statement the interpreter refuses), the order is
+        class_chain's, breadth first. Memoized per class."""
+        memo = self._mro.get(id(klass))
+        if memo is not None:
+            return memo
+        per_base = self._module_bases(klass)
+        bases = [classes[0] for classes in per_base]
+        order = [klass]
+        if any(len(classes) > 1 for classes in per_base) or any(b is c for b in bases for c in _below + (klass,)):
+            order = self.class_chain(klass)
+        else:
+            tails = [list(self.mro(b, _below + (klass,))) for b in bases] + [bases]
+            while any(tails):
+                tails = [t for t in tails if t]
+                head = next((t[0] for t in tails if not any(t[0] is c for u in tails for c in u[1:])), None)
+                if head is None:
+                    order = self.class_chain(klass)
+                    break
+                order.append(head)
+                tails = [t[1:] if t[0] is head else t for t in tails]
+        self._mro[id(klass)] = order
+        return order
+
+    def concrete_classes(self, klass):
+        """klass and every class of the module whose mro holds it (klass first, the rest in the order the walk met
+        them): the classes whose instances can run a method klass defines."""
+        return [klass] + [c for c in self.scopes.values() if c.kind == "class" and c is not klass
+                          and any(k is klass for k in self.mro(c))]
 
     def instance_class(self, node, scope):
         """The class scope whose instance `node`, an ast.Attribute, is read on: the receiver resolves, from `scope`, to
@@ -214,21 +259,30 @@ class Bindings:
         return None
 
     def resolve_target(self, node, scope):
-        """(declarations, road) for a dotted or subscripted target read in `scope`. An attribute of a method's own
-        receiver (`self.X`, `cls.X`) resolves through the class: the writes `<receiver>.X = ...` made in any method of
-        the class or of a base defined in the module, and the class body's own bindings of X (road "instance"; the
-        receiver is resolved to the method's parameter, so a function outside a class whose parameter happens to be
-        called self reads nothing here). Any other attribute or subscript target (`PATHS['kernel']`, `mod.KERNEL`,
-        `obj.attr`) resolves by its SPELLING, ast.unparse of the target, to the writes made to that spelling anywhere
-        in the module (road "spelled"): the receiver is not resolved on that road, which its callers state."""
+        """(readings, road) for a dotted or subscripted target read in `scope`, `readings` a list of declaration lists,
+        one per value the target can hold at run time, each for the caller to decide on its own. An attribute of a
+        method's own receiver (`self.X`, `cls.X`) resolves per concrete class (road "instance"; the receiver is
+        resolved to the method's parameter, so a function outside a class whose parameter happens to be called self
+        reads nothing here): for the method's class and every class of the module whose mro holds it
+        (concrete_classes), one reading, the writes `<receiver>.X = ...` made in any method of that class's mro plus the
+        class-body bindings of X in the first class of its mro that binds X, the one an instance of that class reads.
+        So a base's method reading self.SCRIPT reads the base's binding for the base and a subclass's own binding for
+        the subclass, never both as one; readings that are equal are returned once. Any other attribute or subscript
+        target (`PATHS['kernel']`, `mod.KERNEL`, `obj.attr`) resolves by its SPELLING, ast.unparse of the target, to
+        one reading, the writes made to that spelling anywhere in the module (road "spelled"): the receiver is not
+        resolved on that road, which its callers state."""
         klass = self.instance_class(node, scope)
         if klass is not None:
-            found = []
-            for c in self.class_chain(klass):
-                found.extend(c.attrs.get(node.attr, []))
-                found.extend(c.names.get(node.attr, []))
-            return found, "instance"
-        return list(self.dotted.get(ast.unparse(node), [])), "spelled"
+            readings, known = [], set()
+            for concrete in self.concrete_classes(klass):
+                order = self.mro(concrete)
+                found = [d for c in order for d in c.attrs.get(node.attr, [])]
+                found.extend(next((c.names[node.attr] for c in order if c.names.get(node.attr)), []))
+                if tuple(map(id, found)) not in known:
+                    known.add(tuple(map(id, found)))
+                    readings.append(found)
+            return readings, "instance"
+        return [list(self.dotted.get(ast.unparse(node), []))], "spelled"
 
     # -- the walk -----------------------------------------------------------------------------------------------------
 

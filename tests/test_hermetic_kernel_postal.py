@@ -28,7 +28,10 @@ env-override lookup (`os.environ.get(key, KERNEL)`, `os.getenv(key, KERNEL)`), t
 of a comprehension argv (its own targets never resolved), the element a subscript takes from a literal dict by key
 or from a literal list or tuple by index, or a name or self.X target bound to any of those in the scope the call reads, the
 name resolved to its declaration by tests/ast_bindings.py (the function the call is in, its enclosing functions,
-then the module; a class body encloses no method; self.X through the class and the bases it defines in the module).
+then the module; a class body encloses no method; self.X per concrete class, the method's class and every class of
+the module below it, each reading the self.X writes of its method resolution order and the class-body binding of X
+nearest in that order, each class's reading decided as a name's is, a path for any class being the path and two
+classes that read it differently no refusal).
 The reads that key on a SPELLING, each because the binding cannot reach it: any other dotted target (`cfg.kernel`,
 `Lab.KERNEL`) by the target's text, which ast_bindings.Bindings.resolve_target says; a name no scope binds (a
 snippet's `subprocess`, a star import's `join`) by its own spelling; a method (.resolve(), .format(), .strip()) by
@@ -309,29 +312,40 @@ class _SpawnScan:
         return {ast.Call: "a call's value", ast.Attribute: "an attribute", ast.Subscript: "a subscript",
                 ast.Dict: "a dict literal"}.get(type(node), type(node).__name__)
 
-    def _decide(self, decls, node, key, seen, evaluate):
-        """The verdict on a name or target from its declarations: each with a value is read in the scope its value is
-        read in; one with none (a parameter, an import, a loop, with or except target, an unpacking the scan cannot
-        split, a del) or bound to None says nothing. Path and not-path together: loud. Any path: the path (and the
-        binding road). Nothing said at all: no path, listed as unresolved."""
-        said = []
-        for d in decls:
-            if d.value is None or (isinstance(d.value, ast.Constant) and d.value.value is None):
-                continue
-            said.append((d, evaluate(d.value, self.bindings.scope_of(d.value), seen | {key})))
-        paths = [d for d, v in said if v]
-        others = [d for d, v in said if not v]
-        if paths and others:
-            raise UnreadableSpawn("%s line %d: %s is bound twice in the scope the call reads, once to the kernel's path (line %d: "
-                                  "%s) and once to something else (line %d: %s), so the census cannot say which the call runs: "
-                                  "bind it once, or under two names" % (self.filename, self._line, ast.unparse(node), paths[0].lineno,
-                                                                        ast.unparse(paths[0].node), others[0].lineno,
-                                                                        ast.unparse(others[0].node)))
-        if paths:
+    def _decide(self, readings, node, key, seen, evaluate, scope):
+        """The verdict on a name or target from its declarations, `readings` one declaration list per value it can hold
+        (a name one; self.X one per concrete class, ast_bindings.Bindings.resolve_target), each decided on its own: each
+        declaration with a value is read in the scope its value is read in; one with none (a parameter, an import, a
+        loop, with or except target, an unpacking the scan cannot split, a del) or bound to None says nothing. Path and
+        not-path together inside one reading: loud. A path in any reading: the path (and the binding road), so two
+        classes reading self.X differently are no refusal. A reading in which nothing says anything, while none holds
+        the path: no path, listed as unresolved."""
+        verdicts, path, silent = {}, False, []
+        for decls in readings:
+            said = []
+            for d in decls:
+                if d.value is None or (isinstance(d.value, ast.Constant) and d.value.value is None):
+                    continue
+                if id(d) not in verdicts:
+                    verdicts[id(d)] = evaluate(d.value, self.bindings.scope_of(d.value), seen | {key})
+                said.append((d, verdicts[id(d)]))
+            paths = [d for d, v in said if v]
+            others = [d for d, v in said if not v]
+            if paths and others:
+                raise UnreadableSpawn("%s line %d: %s is bound twice in the scope the call reads, once to the kernel's path (line %d: "
+                                      "%s) and once to something else (line %d: %s), so the census cannot say which the call runs: "
+                                      "bind it once, or under two names" % (self.filename, self._line, ast.unparse(node), paths[0].lineno,
+                                                                            ast.unparse(paths[0].node), others[0].lineno,
+                                                                            ast.unparse(others[0].node)))
+            path = path or bool(paths)
+            if not said:
+                silent.append(decls)
+        if path:
             self._bound_paths += 1
             return True
-        if not said:
-            self._note_unresolved(node, "+".join(sorted({d.kind for d in decls})) if decls else self._receiver_kind(node, None))
+        if silent:
+            kinds = {d.kind for decls in silent for d in decls}
+            self._note_unresolved(node, "+".join(sorted(kinds)) if kinds else self._receiver_kind(node, scope))
         return False
 
     def _note_unresolved(self, node, kind, value=None):
@@ -365,16 +379,16 @@ class _SpawnScan:
         if isinstance(node, ast.Name):
             decls, where = scope.resolve(node.id)
             key = (id(where), node.id)
-            return key not in seen and self._decide(decls, node, key, seen, evaluate)
-        decls, road = scope.resolve_target(node)
+            return key not in seen and self._decide([decls], node, key, seen, evaluate, scope)
+        readings, road = scope.resolve_target(node)
         key = ("target", ast.unparse(node), id(self.bindings.instance_class(node, scope)) if road == "instance" else 0)
         if key in seen:
             return False
-        if not decls:
+        if not any(readings):
             if isinstance(node, ast.Attribute):   # a subscript with no binding is read through its container instead
                 self._note_unresolved(node, self._receiver_kind(node, scope))
             return False
-        return self._decide(decls, node, key, seen, evaluate)
+        return self._decide(readings, node, key, seen, evaluate, scope)
 
     def is_kernel_path(self, node, scope, seen=frozenset(), cli=False):
         """Does `node`, read in `scope`, evaluate to the kernel script's path (with `cli`, to the CLI's)? A string, an
@@ -1438,6 +1452,22 @@ PLANT_TABLE = (
      'KERNEL = os.path.join(BIN, "romp-kernel")\nARGS = {"k": KERNEL}\nsubprocess.Popen("%(k)s --serve" % ARGS, shell=True)'),
     ('B49 a .format template handed a splat (every argument read)', 'caught-by-binding', 2,
      'KERNEL = os.path.join(BIN, "romp-kernel")\nsubprocess.run(["exec {}".format(*[KERNEL])])'),
+    ("B50 a base's method reading self.SCRIPT, the base's own binding another script, a subclass's the kernel", 'caught-by-binding', 4,
+     'class Base:\n    SCRIPT = os.path.join(BIN, "romp-judge")\n    def setUp(self):\n        subprocess.Popen([sys.executable, self.SCRIPT])\n'
+     'class T(Base):\n    SCRIPT = os.path.join(BIN, "romp-kernel")'),
+    ("B51 a base's method reading self.SCRIPT, the base's own binding the kernel, a subclass's another script", 'caught-by-binding', 4,
+     'class Base:\n    SCRIPT = os.path.join(BIN, "romp-kernel")\n    def setUp(self):\n        subprocess.Popen([sys.executable, self.SCRIPT])\n'
+     'class T(Base):\n    SCRIPT = os.path.join(BIN, "romp-judge")'),
+    ("B52 a subclass's own method reading an attribute it overrides with the kernel", 'caught-by-binding', 6,
+     'class Base:\n    SCRIPT = os.path.join(BIN, "romp-judge")\nclass T(Base):\n    SCRIPT = os.path.join(BIN, "romp-kernel")\n'
+     '    def test_a(self):\n        subprocess.Popen([sys.executable, self.SCRIPT])'),
+    ("B53 a base's method reading self.SCRIPT, the kernel bound two classes below it", 'caught-by-binding', 4,
+     'class Base:\n    SCRIPT = os.path.join(BIN, "romp-judge")\n    def setUp(self):\n        subprocess.Popen([sys.executable, self.SCRIPT])\n'
+     'class Mid(Base):\n    pass\nclass T(Mid):\n    SCRIPT = os.path.join(BIN, "romp-kernel")'),
+    ("B54 a base's method reading self.SCRIPT, the kernel first in a subclass's C3 order and last breadth first", 'caught-by-binding', 4,
+     'class Base:\n    SCRIPT = os.path.join(BIN, "romp-judge")\n    def setUp(self):\n        subprocess.Popen([sys.executable, self.SCRIPT])\n'
+     'class KernelRoot:\n    SCRIPT = os.path.join(BIN, "romp-kernel")\nclass KernelMixin(KernelRoot):\n    pass\n'
+     'class T(KernelMixin, Base):\n    pass'),
     ('A1 the library under an alias', 'caught-by-argv', 2,
      'import subprocess as sp\nsp.Popen([os.path.join(BIN, "romp-kernel")])'),
     ('A2 a from-import of run', 'caught-by-argv', 2,
@@ -1556,6 +1586,9 @@ PLANT_TABLE = (
      'def start(**kw):\n    return subprocess.run(**kw)'),
     ('N37 a class attribute read through the class name (the stated residual, listed)', 'no-spawn', None,
      'class Lab:\n    K = os.path.join(BIN, "romp-kernel")\nsubprocess.run([Lab.K])'),
+    ("N38 a subclass's own method reading an attribute it overrides with another script, the base's the kernel", 'no-spawn', None,
+     'class Base:\n    SCRIPT = os.path.join(BIN, "romp-kernel")\nclass T(Base):\n    SCRIPT = os.path.join(BIN, "romp-judge")\n'
+     '    def test_a(self):\n        subprocess.Popen([sys.executable, self.SCRIPT])'),
     ('R1 a rebinding in one function', 'refused-loud', (4, 2, 3),
      'def t():\n    k = os.path.join(BIN, "romp-kernel")\n    k = [sys.executable, "-m", "pytest", "-k", "boot"]\n    subprocess.run(k)'),
     ('R2 two module-level bindings that disagree', 'refused-loud', (3, 1, 2),
