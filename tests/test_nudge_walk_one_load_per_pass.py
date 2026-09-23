@@ -3668,8 +3668,12 @@ class TheCountersOneSite(unittest.TestCase):
         toggle on reaches left the module green): kernel/kernel.py parsed and walked with _walk, every reference to the Name
         _NUDGE_WALK_STATS is one of the admitted forms (the one module-level assignment of its dict display with "loads" among
         its keys, a plain or augmented store to a constant key, `.get` with a constant key, a `dict(...)` copy), any other form
-        named by line, and exactly one of them writes the "loads" key: the look's bump. The value that write adds is the served
-        delta's to hold, on every driven road that reaches the read."""
+        named by line, and exactly one of them writes the "loads" key: the look's bump. The counter's name has no other spelling
+        in kernel/kernel.py or kernel/judge.py: no node names it in an identifier field its class declares (_IDENTIFIER_FIELDS),
+        the kernel's Names excepted, and no string constant reads as it through _door_text (a verifier of the round-9 fixes: a
+        write through the kernel module object or through globals(), in the kernel or in the judge, left no Name for the census
+        to classify and passed on a road no case drives). The value that write adds is the served delta's to hold, on every
+        driven road that reaches the read."""
         self._the_named_def("_auto_nudge_session", km._auto_nudge_session, "_auto_nudge_session")
         at = [i for i, _ln in _loader_sites(km._auto_nudge_session, "jd.load_goals_shared")]
         self.assertEqual(len(at), 1, "one shared load in the walk's look, by either spelling of the shared door: a second call site is "
@@ -3726,16 +3730,35 @@ class TheCountersOneSite(unittest.TestCase):
         self.assertTrue(refs and displays, "the kernel refers to %s and defines it by a module-level dict display (a derived population "
                                            "fails on empty): %d references, %d displays" % (name, len(refs), len(displays)))
         outside = ["line %d: %s" % (n.lineno, lines[n.lineno - 1].strip()) for n in refs if id(n) not in admitted]
-        self.assertEqual(outside, [], "every reference to %s in kernel/kernel.py is one of the admitted forms: the one module-level "
+        self.assertEqual(outside, [], "every reference to %s by Name in kernel/kernel.py is one of the admitted forms: the one module-level "
                                       "assignment of its dict display, a plain or augmented store to a constant key, `.get` with a constant "
                                       "key, or a `dict(...)` copy; any other form (an alias, a key that is not a constant, a method that "
                                       "writes, a second definition) could write the counter where this census does not read: %s"
                                       % (name, "; ".join(outside)))
+        # every other spelling of the counter's name, in the kernel and in the judge: a node naming it in an identifier field its class
+        # declares (in the kernel a Name is classified above) and a constant reading as it through _door_text, wherever either appears
+        jsrc = Path(os.path.realpath(jd.__file__)).read_text(encoding="utf-8")
+        spellings = []
+        for fname, flines, fnodes, names_too in ((KERNEL_FILE, lines, nodes, False),
+                                                 (JUDGE_FILE, jsrc.splitlines(), list(_walk(ast.parse(jsrc))), True)):
+            for n in fnodes:
+                fields = [f for f in _IDENTIFIER_FIELDS.get(type(n), ())
+                          if name in (getattr(n, f) if isinstance(getattr(n, f), list) else [getattr(n, f)])]
+                what = ("%s.%s" % (type(n).__name__, fields[0]) if fields and (names_too or not isinstance(n, ast.Name))
+                        else "a constant %r" % (n.value,) if _door_text(n) == name.lower() else None)
+                if what is not None:
+                    ln = getattr(n, "lineno", 0)
+                    spellings.append("%s line %d, %s: %s" % (fname, ln, what, flines[ln - 1].strip() if ln else ""))
+        self.assertEqual(spellings, [], "no other spelling of %s in %s or %s: no node naming it in an identifier field (an attribute on "
+                                        "any receiver, a keyword, a parameter, an import alias, a global declaration, a def; in the judge a "
+                                        "Name as well) and no str or bytes constant whose text reads as it through _door_text; a write "
+                                        "through the kernel module object, globals(), vars(), setattr or getattr leaves no Name for the "
+                                        "census above to classify: %s" % (name, KERNEL_FILE, JUDGE_FILE, "; ".join(spellings)))
         writes = ["line %d: %s" % (t.lineno, lines[t.lineno - 1].strip()) for t in loads_writes]
         self.assertEqual([t.lineno for t in loads_writes], [first + bump[0]],
-                         "exactly one write of the \"loads\" key in kernel/kernel.py, the look's bump at line %d: a second write anywhere "
-                         "in the kernel moves memos.nudgeWalk.loads on a road that is not the look's read, whether or not the harness "
-                         "drives it; writes of the key: %s" % (first + bump[0], "; ".join(writes) or "none"))
+                         "exactly one write of the \"loads\" key through the Name in kernel/kernel.py, the look's bump at line %d: a "
+                         "second write anywhere in the kernel moves memos.nudgeWalk.loads on a road that is not the look's read, whether "
+                         "or not the harness drives it; writes of the key: %s" % (first + bump[0], "; ".join(writes) or "none"))
 
     def test_the_shared_doors_bump_roster_is_the_reconciliations_and_its_second_bumps_sit_below_the_fills(self):
         """The second-bump bound in _pass is derived from load_goals_shared's body; this pin reads that body (the AST of the
