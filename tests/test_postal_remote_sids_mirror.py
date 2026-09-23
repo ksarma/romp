@@ -123,6 +123,7 @@ one link, no longer hears in no row once the mark clears, the rows a first start
 tests/test_dead_session_staleness.py ReaderFollowsTheWriter
 runs this writer and the judge's reader together over one root; tests/test_postal_bus_lifetime.py
 MonitorTick pins the poll's write. SYNTHETIC fixtures only: private synthetic sids, hostname TESTHOST."""
+import builtins
 import contextlib
 import io
 import json
@@ -186,16 +187,35 @@ def _nested_parse_raises(data):
     derived. That the product catches both classes is pinned once, by tests/test_dead_session_staleness.py
     ReaderFollowsTheWriter test_the_writers_previous_read_and_the_reader_catch_both_classes_a_nested_parse_can_raise. The
     same function, the same shape, stands in that module's child as nested_parse_raises.
-    The check that the parse raised requires a class name, an identifier, and the cause assertion requires the derived class
-    in the slot the product fills from the exception it caught, "(<class>: " (the reviewer's verifier at the twenty-fifth
-    commit, the twenty-sixth): with this function made to return the empty name for a parse that returns, the check read
-    only "not None" and the empty name is found in every cause, so the cases passed with the parse stubbed to return."""
+    The check that the parse raised requires a class name, and the cause assertion requires the derived class in the slot
+    the product fills from the exception it caught, "(<class>: " (the reviewer's verifier at the twenty-fifth commit, the
+    twenty-sixth): with this function made to return the empty name for a parse that returns, the check read only "not
+    None" and the empty name is found in every cause, so the cases passed with the parse stubbed to return. The class name
+    is the name of an exception class since the twenty-seventh (_names_an_exception_class, which says why an identifier was
+    not enough)."""
     depth = len(data) - len(data.lstrip(b"["))
     try:
         json.loads(data.decode("utf-8-sig"))
     except Exception as e:
         return type(e).__name__, depth
     return None, depth
+
+
+def _names_an_exception_class(name):
+    """True when `name`, the class _nested_parse_raises derived, names an exception class json.loads can raise, one of
+    builtins (RecursionError, ValueError, MemoryError) or of the json module (JSONDecodeError). The check that the
+    nested document's parse raised requires it (the reviewer's verifier at the twenty-sixth commit, the twenty-seventh).
+    The twenty-sixth commit's check required an identifier, and a derivation made to return the name of the type of what
+    a parse that returns produced passed it: a parse that returns None derived "NoneType". The writer fills the cause's
+    "(<class>: " slot with the class of the exception its parse caught, and when the parse returns None and the text is
+    not read as the whitespace list it fills the slot with the class of None, "(NoneType: None)", so both cases here
+    passed with the parse stubbed to return None. NoneType is no exception class, so the check fails there, naming the
+    interpreter and the depth. Any name that passes this check is refused at the cause when the parse returns: the
+    writer's cause then carries "(NoneType: ", or no such slot, or there is no mark. The staleness case keeps the
+    identifier check in its child: it also reads the reader's line, which says "(ValueError: not a JSON object)" for a
+    parse that returns None, so a derived "NoneType" fails there."""
+    cls = (getattr(builtins, name, None) or getattr(json, name, None)) if isinstance(name, str) else None
+    return isinstance(cls, type) and issubclass(cls, BaseException)
 
 
 class Mirror(unittest.TestCase):
@@ -1365,9 +1385,9 @@ class Mirror(unittest.TestCase):
             with self.subTest(file=name):
                 if error is None:                  # the nested document: the class this interpreter's parse of these bytes raises
                     error, depth = _nested_parse_raises(data)
-                    self.assertTrue(isinstance(error, str) and error.isidentifier(), "json.loads returned on the document "
-                                    "nested %d deep on %s (derived %r, not a class name): the case's premise, a file the parse "
-                                    "cannot read, is gone" % (depth, sys.version, error))
+                    self.assertTrue(_names_an_exception_class(error), "json.loads returned on the document nested %d deep "
+                                    "on %s (derived %r, not the name of an exception class in builtins or json): the case's "
+                                    "premise, a file the parse cannot read, is gone" % (depth, sys.version, error))
                     error = "(%s: " % error        # the class in the slot the product fills from the exception it caught
                 self.path.write_bytes(data)
                 pm.HEARTBEATS.clear()
@@ -1433,13 +1453,14 @@ class Mirror(unittest.TestCase):
         pass and every write failed, the file never replaced. The parse catches it, the write rewrites the file from memory, and
         since the twenty-second commit the document is marked, the rows it may have held being lost. The class in the cause is
         the one this interpreter's parse of the same bytes raises (_nested_parse_raises; the reviewer's ruling of 17:47Z, the
-        twenty-fifth commit), a class name, in the cause's "(<class>: " slot (the twenty-sixth)."""
+        twenty-fifth commit), a class name, in the cause's "(<class>: " slot (the twenty-sixth), the name of an exception class
+        (_names_an_exception_class, the twenty-seventh)."""
         deep = "[" * 100000 + "\n"
         self.path.write_text(deep)
         raised, depth = _nested_parse_raises(self.path.read_bytes())
-        self.assertTrue(isinstance(raised, str) and raised.isidentifier(), "json.loads returned on the document nested %d deep "
-                        "on %s (derived %r, not a class name): the case's premise, a file the parse cannot read, is gone"
-                        % (depth, sys.version, raised))
+        self.assertTrue(_names_an_exception_class(raised), "json.loads returned on the document nested %d deep on %s (derived "
+                        "%r, not the name of an exception class in builtins or json): the case's premise, a file the parse "
+                        "cannot read, is gone" % (depth, sys.version, raised))
         pm.HEARTBEATS[A] = ("web", self.now)
         lines = self._write_saying()
         self.assertNotEqual(self.path.read_text(), deep,
