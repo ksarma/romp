@@ -50,6 +50,7 @@ test("every input the strip renders is in the signature", () => {
     'surfaceLens(effViews(), "chat")', "unions",
     "snapView",   // the section the pane shows at a glance: a header's mark, its way-back act and its words derive from it
     "m?.name", "m?.color?.bg", "m?.color?.fg", "m?.emoji",
+    "openUserTodo(m?.userTodos)",   // the roster row's user-todo count through the ONE open predicate (tab-state.ts openUserTodo; correctness-1, review round 1), the flag's input in the skeleton AND placeholder rows (2026-09-22); one includes over the whole signature, so this reads red only when the term leaves both rows; `sig` is a raw slice, so a spelling only in a comment keeps it green and is the census's catch, not this test's: the census below and tab-usertodo-skeleton.test.ts's row pins read the rows with comments stripped, its one-spelling census holds the predicate, and tab-strip-skip-exec.test.ts executes both rows on -1 (review round 2)
     "s.name", "s.color?.bg", "s.color?.fg", "s.emoji ?? tabMeta.get(id)?.emoji", "st.state", "tabStateClass(st)", "!!st.faded",
     "st.ctx", "st.ctxColor", "st.ctxTone", "!!s.sub", "!!(s.userTodos && s.userTodos.length)", "hostIsDown(id)", "hostDownNote(id)",
     "ledgers.get(id)?.needsInput === true",   // the feed's needs-you verdict: a header's stand-in pip over its hidden members reads it (tab-snapshot.ts standInPip)
@@ -76,7 +77,7 @@ test("every input the strip renders is in the signature", () => {
   const tabStateImport = RENDER.match(/^import \{([^}]*)\} from "\.\/tab-state";/m);
   assert.ok(tabStateImport, "render.ts imports from tab-state");
   const tabStateNames = tabStateImport![1].split(",").map((s) => s.trim());
-  for (const name of ["tabStateClass", "sectionPipTitle"]) assert.ok(tabStateNames.includes(name), "the tab-state import carries " + name);
+  for (const name of ["tabStateClass", "sectionPipTitle", "openUserTodo"]) assert.ok(tabStateNames.includes(name), "the tab-state import carries " + name);   // openUserTodo: the signature rows' open predicate (correctness-1, review round 1)
   for (const name of ["tabDotClass", "tabDotTitle"]) assert.ok(!tabStateNames.includes(name), "the dot rule moved into the dot widget (T379): render.ts no longer imports " + name);
   assert.match(RENDER, /^import \{ composeTabWidgets, composeTabRing, ringSwitch, tabHotkey, miniChord \} from "\.\/tab-widgets";/m, "the widgets the strip composes (the rings too, one class at a time), the ring switches the folded pip reads, and the hot-key chord the signature reads");
 });
@@ -139,3 +140,64 @@ test("a skeleton tab is an input of its own: the kind, the strip meta and the st
   assert.ok(sig.indexOf('=== "skeleton"') < sig.indexOf('return ["p", m?.name'), "the skeleton branch precedes the placeholder branch, as in the render loop");
 });
 
+
+test("census: every s.-sourced glyph input of the loaded row has an m?. or kst?. counterpart in the skeleton AND placeholder rows, or an exemption named here and checked against the builder", () => {
+  // THE RULE (the user 2026-09-22, whose flagged sessions wore no flag until their tab was clicked): a glyph the strip
+  // paints for a LISTED tab rides a frame every chat client receives for every listed tab, whatever kind the tab is drawn
+  // as. The loaded row reads the session payload (s., st.); the skeleton diet and the cold-tab gate withhold that payload
+  // for a tab nobody has opened, so the skeleton and placeholder rows read the strip meta (m?., the tabOrder row) and the
+  // kernel's status frames (kst?.). An input the loaded row reads with NO counterpart in those rows is a glyph that never
+  // draws before a click: the user-todo flag was one, folded in after the two rows were written, and this census at that
+  // head listed it as missing from both rows. Rather than pin the one input, the census derives the loaded row's s.- and st.-sourced inputs
+  // and demands each one's counterpart, or an exemption NAMED below and checked against the builder's source, so a
+  // builder that starts painting an exempt input turns its exemption stale and the census demands the term.
+  // the rows' comments, block and trailing, name other rows' reads: read the code alone (a term spelled only in a comment is
+  // not a read, and the census must miss it; the block form is stripped first, so a `//` inside one cannot eat a line of code)
+  const comments = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const rowAt = (start: number, label: string): string => {
+    assert.ok(start >= 0, `the ${label} row is in the signature`);
+    const a = sig.indexOf("return [", start), b = sig.indexOf("];", start);
+    assert.ok(a >= start && b > a, `the ${label} row opens and closes`);
+    return comments(sig.slice(a, b));
+  };
+  const skeleton = rowAt(sig.indexOf('return ["k",'), "skeleton"), placeholder = rowAt(sig.indexOf('return ["p",'), "placeholder");
+  const loadedAt = sig.indexOf("const st = s.status;");
+  assert.ok(loadedAt > sig.indexOf('return ["p",'), "the loaded row follows the placeholder branch, as in the render loop");
+  const loaded = rowAt(loadedAt, "loaded");
+  const fields = (row: string, re: RegExp): string[] => [...new Set([...row.matchAll(re)].map((m) => m[1]))];
+  const sFields = fields(loaded, /\bs\.(\w+)/g);     // the session payload's own fields the loaded row paints from
+  const stFields = fields(loaded, /\bst\.(\w+)/g);   // its status's fields (st = s.status)
+  assert.ok(sFields.length >= 3 && stFields.length >= 3, `the derivation read the loaded row (an empty set would pass every check): s.${sFields.join(", s.")}; st.${stFields.join(", st.")}`);
+  assert.ok(sFields.includes("userTodos"), "the loaded row paints the user-todo flag from s.userTodos (tab-usertodo.test.ts): the input this census was written for");
+  assert.ok(loaded.includes("tabStateClass(st)"), "the loaded row's state class derives from st too");
+  // the builders, for the exemption checks (each slice ends at its function's own close)
+  const builder = (name: string): string => { const i = RENDER.indexOf(`function ${name}(`); assert.ok(i >= 0, name + " is in render.ts"); return RENDER.slice(i, RENDER.indexOf("\n}\n", i) + 3); };
+  const skBuilder = builder("makeSkeletonTab"), phBuilder = builder("makePlaceholderTab");
+  // EXEMPTIONS: an input a builder does not paint has no counterpart to demand. Each names the row and the field and
+  // states what the builder's source must show for it to hold.
+  const exempt: Array<[row: "skeleton" | "placeholder", field: string, holds: () => void]> = [
+    ["skeleton", "emoji", () => assert.doesNotMatch(skBuilder, /tabEmojiNode\(/,
+      "makeSkeletonTab paints no emoji today (the loaded and placeholder tabs do); once it does, the skeleton row owes m?.emoji")],
+    ["skeleton", "sub", () => assert.doesNotMatch(skBuilder, /\bsub\b/,
+      "a sub-agent viewer is client-only (the kernel never lists it on the roster), so it is never drawn as a skeleton; the builder reads no sub flag")],
+    ["placeholder", "sub", () => assert.doesNotMatch(phBuilder, /\bsub\b/,
+      "a sub-agent viewer is client-only, so it is never drawn as a placeholder; the builder reads no sub flag")],
+  ];
+  const placeholderReadsNoStatus = () => assert.doesNotMatch(phBuilder, /skeletonTabs\.status|applyTabStatus\(|appendTabAfterWidgets\(|\.status\b/,
+    "makePlaceholderTab reads no status frame (a placeholder's session is still being built; a held status is a skeleton's), so every st. input is exempt for its row while that holds");
+  const misses: string[] = [];
+  for (const f of sFields) {
+    for (const [row, text] of [["skeleton", skeleton], ["placeholder", placeholder]] as const) {
+      const ex = exempt.find((e) => e[0] === row && e[1] === f);
+      if (ex) { ex[2](); continue; }
+      if (!text.includes(`m?.${f}`)) misses.push(`${row} row: no m?.${f} for the loaded row's s.${f}`);
+    }
+  }
+  for (const f of stFields) {
+    if (!skeleton.includes(`kst?.${f}`)) misses.push(`skeleton row: no kst?.${f} for the loaded row's st.${f}`);
+    placeholderReadsNoStatus();
+  }
+  if (!skeleton.includes("tabStateClass(kst)")) misses.push("skeleton row: no tabStateClass(kst) for the loaded row's tabStateClass(st)");
+  assert.deepEqual(misses, [],
+    "a glyph input the loaded row paints and a skeleton or placeholder row does not carry never repaints for a listed tab whose payload this page has not been served: add the meta term to that row (and the glyph to its builder), or an exemption above that names why the builder cannot paint it");
+});
