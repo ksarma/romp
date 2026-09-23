@@ -34,8 +34,9 @@ recorded key the next signature's re-stat differs from once the fault clears, wh
 component for an unreadable root with no entry standing is the unreadable marker; and ENOTDIR at a root is absence (a
 boundary guard); (13) what a reader that passes no faults list shows while the tree the agent's file lies under cannot
 be read, with no resolution standing (ViewerUnderAnUnreadableTree): the viewer's missing-transcript frame, equal to a
-removed tree's and keyed as it is, and an Agent head with no steps, both gone once the fault clears (a characterization,
-the witness of the texts that state it); (14) a lookup that could not be made answers the memo's standing resolution
+removed tree's and keyed as it is, and an Agent head with no steps, both gone once the fault clears: the lookup then
+resolves the file, the head carries its step, and the frame cache's key moves, so the frame cached under the fault is
+rebuilt (a characterization, the witness of the texts that state it); (14) a lookup that could not be made answers the memo's standing resolution
 only when that path lies under what the walk could not read (StandingResolutionUnderAFault): a standing path under a
 tree the walk read in full, a sibling's or the own tree before a listing that faults, is not answered, and one under
 the tree that faults, or under a sibling the listing could not name, is; (15) a place below a tree's root that cannot
@@ -1338,7 +1339,9 @@ class ViewerUnderAnUnreadableTree(_Walk):
     the viewer (build_subagent) says the agent's transcript is missing, the frame equal to the one a removed tree gives
     and _subagent_frame_cached keyed as it is, and the chat's Agent head (_stamp_agents) carries no steps. A caller that
     passes a faults list (_awaiting_nest) is told the reason; these are not. Transient: nothing is memoized under the
-    fault, so the first lookup after it clears resolves the file and the head carries its steps again. This case is the
+    fault, so the first lookup after it clears resolves the file and the head carries its steps again, and
+    _subagent_frame_cached's key moves with the resolved file, so the frame it cached under the fault is rebuilt rather
+    than served (asserted without clearing the frame cache). This case is the
     named witness of the texts that state it (_subagent_tree's and _SubagentTreeUnreadable's docstrings and
     docs/reference.md's memos paragraph), which until this change said no reader answers an absent-shaped tree under a
     fault. Green before the change too, by design: it characterizes what the code does (the base kernel showed the same
@@ -1393,6 +1396,14 @@ class ViewerUnderAnUnreadableTree(_Walk):
             self.assertNotIn(self.wf_key, km._SUBAGENT_FILE_CACHE, "nothing is memoized under the fault, so the answer is transient")
         self.assertEqual(km._subagent_file(path, AID_WF), self.agent_file, "the fault cleared: the next lookup resolves the file")
         self.assertTrue(self._head_steps(), "and the Agent head carries the file's step again")
+        _fr, pre_after = km._subagent_frame_cached(SID, AID_WF, 0, live_map={})   # no pop: the frame cached under the fault stands
+        key_after = km._SUBAGENT_FRAMES[(SID, AID_WF)][0]
+        self.assertNotEqual(key_after, key,
+                            "the fault cleared: _subagent_frame_cached's key moves with the resolved file (its stat and its "
+                            "sidecar), so the frame it cached under the fault is rebuilt, not served (%r, then %r)"
+                            % (key[1:], key_after[1:]))
+        self.assertNotIn(self.MISSING % AID_WF, pre_after,
+                         "and the rebuilt viewer frame no longer says the transcript is missing")
         shutil.rmtree(str(self.subdir))                        # the tree removed: the absent answer the fault's views equal
         fr0, key0, pre0, steps0 = self._views()
         self.assertTrue(str(fr0.get("error", "")).startswith(self.MISSING % AID_WF),
