@@ -316,8 +316,15 @@ class ServedFilePreview(unittest.TestCase):
         # the second server, another origin to the page (http.server binds IPv4, where this box's `localhost` resolves; the
         # logger's control in the driver is the check that the browser reaches it there)
         cls.remote_log = []
-        cls.remote_srv = ThreadingHTTPServer(("localhost", 0), type("Logger", (_Logger,), {"log": cls.remote_log}))
-        threading.Thread(target=cls.remote_srv.serve_forever, daemon=True).start()
+        cls.remote_srv = srv = ThreadingHTTPServer(("localhost", 0), type("Logger", (_Logger,), {"log": cls.remote_log}))
+        thread = threading.Thread(target=srv.serve_forever, daemon=True)
+
+        def end_remote():   # registered before the start, so it runs on every exit path (a failed boot included)
+            if thread.ident is not None:   # shutdown() waits for serve_forever to return, which a thread never started never does
+                srv.shutdown()
+            srv.server_close()
+        cls.addClassCleanup(end_remote)
+        thread.start()
         cls.remote = "http://localhost:%d" % cls.remote_srv.server_address[1]
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
@@ -378,9 +385,6 @@ class ServedFilePreview(unittest.TestCase):
         k = getattr(cls, "kernel", None)
         if k:
             k.kill(); k.wait()
-        srv = getattr(cls, "remote_srv", None)
-        if srv:
-            srv.shutdown(); srv.server_close()
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def test_a_hover_previews_the_file_or_its_section_after_the_dwell_and_a_refused_path_is_text_with_no_request(self):
