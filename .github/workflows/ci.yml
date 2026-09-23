@@ -72,11 +72,12 @@ jobs:
     # per-cell spread, which in main's pytest step alone is 147 to 235 s per cell over its eleven runs
     # through 35518469298. An earlier version of this
     # comment priced the phases at 160 to 300 s (25 min = 300 + 600 + setup). That pricing was wrong;
-    # the cap stands. At the measured phases the invariant above would need about 30 min, but the
-    # worst cell finishes 4 to 5 minutes under 25, this fork's binding constraint is the runner queue,
-    # and a higher cap holds a runner that much longer on every stuck cell; a genuine slowdown is
-    # caught here first, and a stall that begins after minute 15 of the worst cell, its last five
-    # minutes or so, is ended by this cap, named by the job's timeout rather than the test's. The
+    # the cap stands. At the measured phases the invariant above would need about 30 min, but on that
+    # pair of runs (35513531701 and 35516364698) the worst cell finished 4 to 5 minutes under 25, this
+    # fork's binding constraint is the runner queue, and a higher cap holds a runner that much longer
+    # on every stuck cell; a genuine slowdown is caught here first, and a stall that begins after
+    # minute 15 of a cell is ended by this cap, named by the job's timeout rather than the test's (on
+    # that pair, the worst cell's last five minutes or so). The
     # macOS cells (a manual dispatch) run the same suite in
     # 17 to 25 minutes on the image's slower runners: the 3.10 cell took 24 min 43 s on one dispatch
     # and was cancelled at 25 min 27 s on the next (2026-09-16), a one-minute margin that can kill the
