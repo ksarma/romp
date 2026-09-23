@@ -36,9 +36,13 @@
 // and 5 say in their holds field what else they hold, and the same test holds the table to that statement. Of the round-5 rows (p156
 // onward: the eleven silent forms the round-4 review named and the tagged-template loader its verifiers found, each planted with THE
 // SAFETY NET's refusal as its outcome until a fold reads the form, the fold's sentence or class once one does, with one net-only row
-// per kind of mention the net names so every arm of the net keeps a plant, and the controls and pin rows the folds bring), every one
+// per kind of mention the net names so every arm of the net keeps a plant, and the controls and pin rows the folds bring; then the
+// string-typed parameter passed back to its own function, under which the census before round 5 died whole with a bare RangeError, so
+// those rows red as census(PLANTS) throwing rather than as a row mismatch, beside its non-cyclic control), every one
 // is red under the census before round 5 (the module at
-// the round-4 head) unless the table names it held with its reason, and the same test holds the table to that statement. Population figures are derived from the run and printed as
+// the round-4 head) unless the table names it held with its reason, and the same test holds the table to that statement. A module
+// whose classification throws for any other reason is refused by name and the census goes on, executed over a synthetic root by a
+// test of its own (a directory named like a test module, a nesting generated to overflow whatever stack is in effect). Population figures are derived from the run and printed as
 // diagnostics, never asserted as constants. Synthetic: the fixtures' invented modules and a stub launcher.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -594,6 +598,22 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p200-n11a-callee-computed-require.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], playwright: ["playwright"], refused: "p200-n11a-callee-computed-require.test.ts:2: " + COMPUTED_REFUSAL, holds: "a pin of an arm no plant carried: the computed member on a playwright load in callee position (the load of the package where it stands, indexed by a name from the environment and called), refused at the round-4 head by the call arm's own copy of the computed-member refusal and since round 5 through pwChain alone; no earlier row held the callee position of a playwright load, so this row is green under the census before round 5 and pins the one home" }, // n11a: the playwright-callee twin of p65
   { dir: W, file: "p201-n11b-callee-computed-binding.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], playwright: ["playwright"], refused: "p201-n11b-callee-computed-binding.test.ts:4: " + COMPUTED_REFUSAL, holds: "a pin of an arm no plant carried: the computed member on a playwright BINDING in callee position, pw[k]() with k bound to a value from the environment, refused at the round-4 head by the call arm's copy and since round 5 through pwChain alone; green under the census before round 5, a pin of the one home" }, // n11b: import pw from playwright, const k = process.env.K, pw[k]()
   { dir: W, file: "p202-n11c-callee-computed-await-import.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], playwright: ["playwright"], refused: "p202-n11c-callee-computed-await-import.test.ts:2: " + COMPUTED_REFUSAL, holds: "a pin of an arm no plant carried: the computed member on an awaited dynamic import of playwright in callee position (the awaited import indexed by a name from the environment and called), refused at the round-4 head by the call arm's copy and since round 5 through pwChain alone; green under the census before round 5, a pin of the one home" }, // n11c: the await import twin
+  // correctness-1 (round 5): a string-typed parameter passed back to its own function's call, directly or through another function,
+  // re-entered foldIdentifier's parameter arm without bound, and the census over ANY tree holding such a module died with a bare
+  // RangeError (exit 1, zero rows, no file, no line: a silent pass for every module of the tree). The fold now keeps the parameter
+  // declarations whose call-site fold is in progress and returns null on re-entry, so the caller's refusal names the line. The red
+  // before round 5 for p203 to p206 is NOT a row mismatch: with any one of them in the fixtures, census(PLANTS) under the census
+  // before round 5 throws before judging a single row (the round's records: exit 1, stdout empty, stderr the bare message), so every
+  // plant test of this file is red under it, not these rows alone. p207 is the non-cyclic control, whose fold is keyed on the
+  // declaration and still reads the literal through two calls. The other half of correctness-1, a module whose classification throws
+  // for any other reason (a read error, an overflow the guard does not cover), is refused by name at census()'s and own()'s catches
+  // and is executed over a synthetic root by its own test below (a directory named like a test module, a generated nesting), since a
+  // directory cannot sensibly live under the fixtures and an overflow's threshold is the stack's
+  { dir: W, file: "p203-qc1a-self-call-computed.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], playwright: ["playwright"], refused: "p203-qc1a-self-call-computed.test.ts:3: " + COMPUTED_REFUSAL }, // qc1a: async function go(engine: string, again: boolean) { if (again) return go(engine, false); pw[engine].launch() }, go("chromium", true): the self call passes engine back, the re-entered fold returns null, the computed member is refused (before round 5: the census whole threw, unnamed)
+  { dir: W, file: "p204-qc1b-self-call-inbrowser.test.ts", leg: true, cls: "shared", gap: null, engines: [], refused: "p204-qc1b-self-call-inbrowser.test.ts:3: an engine argument to the shared launcher the walker cannot fold" }, // qc1b: the inBrowser twin, go(t, engine, false) inside go and inBrowser(t, body, engine as any): the engine argument's fold returns null on re-entry and the engine refusal names the line, as p78's does (before: the census whole threw)
+  { dir: W, file: "p205-qc1c-mutual-recursion.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], playwright: ["playwright"], refused: "p205-qc1c-mutual-recursion.test.ts:4: " + COMPUTED_REFUSAL }, // qc1c: a(e) calls b(e), b(e) calls a(e) and reads pw[e]: the fold of b's e reaches a's e, which reaches b's e again, the re-entry keyed on b's declaration, refused at the computed member (before: the census whole threw)
+  { dir: W, file: "p206-qc1d-p28-plus-self-call.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], playwright: ["playwright"], refused: "p206-qc1d-p28-plus-self-call.test.ts:3: " + COMPUTED_REFUSAL }, // qc1d: p28's inEngine(t, name, retry = 1) with a retry call inEngine(t, name, retry - 1) inside it: the two literal call sites no longer fold, since the third passes name back (before: the census whole threw; p28 itself, with no self call, still folds to chromium and webkit)
+  { dir: W, file: "p207-qc1e-two-level-chain-control.test.ts", leg: true, cls: "shared", gap: null, engines: ["firefox"], holds: "the no-refusal half of a pair whose partner reds: p203 to p206 (a string-typed parameter passed back to its own function, which ended the census before round 5 whole and unnamed, so those rows red as census(PLANTS) throwing, not as a row mismatch) beside this non-cyclic chain, outer(t, e) to go(t, e) to inBrowser(t, body, e), which the census before round 5 folded to firefox in a root of its own as the census does now: class shared, gap null, engines [firefox], no refusal (the guard is keyed on the parameter's declaration, not a flag, so a fold through another function's parameter is no re-entry)" }, // qc1e: the control
 ];
 const bundleOf = (p: Plant): string => "out-tests/" + p.dir + "/" + p.file.replace(/\.test\.ts$/, ".test.js");
 
@@ -912,12 +932,13 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   assert.equal(r4.length - held4.length, R4_LAST - 88 - R4_HELD.length, (R4_LAST - 88 - R4_HELD.length) + " round-4 rows red under the census before round 4 (" + (R4_LAST - 88) + " rows, " + R4_HELD.length + " with holds)" + NOT_RERUN4);
   // the round-5 rows, the same statement against the census before round 5 (the module at the round-4 head): THE SAFETY NET's plants
   // and the rows the round's folds add after them, p156 to R5_LAST, one row each, every one red under that census (class none with no
-  // refusal, or a reach with engines [] and launches [] and no refusal, where the row expects a refusal) unless R5_HELD names it with
+  // refusal, or a reach with engines [] and launches [] and no refusal, where the row expects a refusal; for p203 to p206, the census
+  // over the plants throwing whole before it judges a row, the shape correctness-1 named) unless R5_HELD names it with
   // holds set (a control, a pin of an arm no plant carried, a stated boundary); a round-5 builder who adds a row moves R5_LAST to it
   // and, when the row stays green under that census, adds it to R5_HELD with holds set (the round-4 population above is closed)
   const NOT_RERUN5 = " (the discrimination was established by running the census before round 5, the module at the round-4 head, over the plants, recorded in the PR's notes, and is not re-run here, since that census is not in the tree at test time: this assertion holds the table's statement, not the fact)";
-  const R5_FIRST = R4_LAST + 1, R5_LAST = 202;
-  const R5_HELD = ["p197", "p198", "p200", "p201", "p202"];
+  const R5_FIRST = R4_LAST + 1, R5_LAST = 207;
+  const R5_HELD = ["p197", "p198", "p200", "p201", "p202", "p207"];
   const R5_CARRIED: string[] = [];
   const inRound5 = (p: Plant) => num(p) >= R5_FIRST && num(p) <= R5_LAST;
   const r5 = PLANT_TABLE.filter(inRound5);
@@ -979,6 +1000,63 @@ test("the relative node_modules road (n09, extra5-3), over a synthetic root whos
   for (const r of [helperRow, netRow]) assert.ok(c.refusals.includes(r.refusals[0]), r.rel + ": the refusal reaches the census's own list (the CLI exits 2 on it)");
   assert.equal(c.refusals.length, 2, "two refusals on the census's list, n09c's and n09d's");
   assert.deepEqual(c.legs, own.map(([f]) => bundle(f)).sort(), "the legs are the two direct loads");
+});
+
+test("the census never dies unnamed (correctness-1, round 5): a module whose classification throws is refused by name with the exception's name and message, as the thrown record (refusals alone, class refused, no TSV row), and every other module is judged, at both homes of the catch, executed over a synthetic root: a DIRECTORY named like a test module beside a plain shared leg (a read error, EISDIR, deterministic with no fixture bytes) is refused at census()'s catch and the neighbour is judged; a test module that loads a helper whose expression nesting overflows the walker (a binary chain generated here, sized from this thread's own recursion limit so it overflows whatever stack is in effect, which is why it is no fixture) is refused at its import line through localRefusals' own() catch with the helper's thrown record in the chain, and a test module holding such a chain itself is refused at census()'s catch; the CLI over the root exits 2 with the thrown refusal on stderr, the neighbour's row on stdout and a summary line saying each refusal names its file, since a thrown record has no line; before round 5 the census over such a root threw unnamed, exit 1 and zero rows, a silent pass for every module of the tree", async (t) => {
+  const { census, classOf } = await load();
+  const { root } = syntheticRoot(t, []);
+  const web = path.join(root, "ui", "webview");
+  const DIR = "qc1h-directory-named-as-a-module.test.ts", NEIGHBOUR = "qc1i-neighbour.test.ts", DEEP = "qc1f-deep-binary-chain.test.ts", IMPORTER = "qc1g-imports-deep-helper.test.ts", HELPER = "deep-helper.ts";
+  const bundle = (f: string) => "out-tests/ui/webview/" + f.replace(/\.test\.ts$/, ".test.js");
+  const THREW = ": the census threw while classifying this module, so it is refused rather than left unjudged";
+  fs.mkdirSync(path.join(web, DIR));
+  fs.writeFileSync(path.join(web, NEIGHBOUR), 'import { test } from "node:test";\nimport { inBrowser } from "./real-viewer-leg";\ntest("qc1i", (t) => inBrowser(t, async () => {}));\n');
+  // the recursion limit of THIS thread (census() below runs in it), measured by a trivial recursion; the chain holds four times that
+  // many terms, and the walker spends more than one frame per term of a left-deep chain (the round's records: the overflow at well under
+  // half the trivial limit on the default stack), so it overflows here under any --stack-size, and a larger stack grows the chain with it
+  const limit = (() => { let d = 0; const f = (): void => { d++; f(); }; try { f(); } catch { /* the RangeError is the measurement */ } return d; })();
+  const chain = "export const depth = (" + Array.from({ length: 4 * limit }, () => "1").join(" + ") + ");\n";
+  fs.writeFileSync(path.join(web, HELPER), '// a helper whose expression nesting overflows the walker (generated by the census test)\nimport { inBrowser } from "./real-viewer-leg";\n' + chain + 'export function go(t: any, body: (b: any) => Promise<void>): Promise<void> { return inBrowser(t, body); }\n');
+  fs.writeFileSync(path.join(web, IMPORTER), 'import { test } from "node:test";\nimport { inBrowser } from "./real-viewer-leg";\nimport { go } from "./deep-helper";\ntest("qc1g-own", (t) => inBrowser(t, async () => {}));\ntest("qc1g-helper", (t) => go(t, async () => {}));\n');
+  fs.writeFileSync(path.join(web, DEEP), 'import { test } from "node:test";\nimport { inBrowser } from "./real-viewer-leg";\n' + chain + 'test("qc1f", (t) => inBrowser(t, async () => {}));\n');
+  const c = census(root);
+  assert.equal(c.byBundle.size, 4, "the census read the four entries (a directory named like a test module is an entry the read finds) and judged or refused each; before round 5 it threw at the first of them and judged none: " + JSON.stringify([...c.byBundle.keys()]));
+  // census()'s catch, the read error: refused by name with the exception, the record the parse-diagnostic shape, the neighbour judged
+  const dirRow = c.byBundle.get(bundle(DIR)) as Rec;
+  assert.equal(dirRow.refusals.length, 1, DIR + ": one refusal, the thrown record's: " + JSON.stringify(dirRow.refusals));
+  assert.ok(dirRow.refusals[0].startsWith("ui/webview/" + DIR + THREW), DIR + ": refused by name at census()'s catch, the refusal opening with the file (no line: the module was never read) and the thrown sentence (holds the SENTENCE: a reword of thrown() moves this pin); got " + JSON.stringify(dirRow.refusals[0]));
+  assert.ok(dirRow.refusals[0].includes("EISDIR"), DIR + ": the exception's text is in the refusal (the read error's code), so the reader knows what the census could not read: " + dirRow.refusals[0]);
+  assert.equal(dirRow.sharedCalls, undefined, DIR + ": the thrown record judges nothing else (the parse-diagnostic record's shape, refusals alone)");
+  assert.equal(classOf(dirRow), "refused", DIR + ": class refused");
+  assert.ok(!c.legs.includes(bundle(DIR)), DIR + ": not a leg");
+  const nb = c.byBundle.get(bundle(NEIGHBOUR)) as Rec;
+  assert.deepEqual(nb.refusals, [], NEIGHBOUR + ": the neighbour is judged, no refusal (the census went on past the directory)");
+  assert.equal(classOf(nb), "shared", NEIGHBOUR + ": the neighbour is judged, class shared");
+  assert.ok(c.legs.includes(bundle(NEIGHBOUR)), NEIGHBOUR + ": the neighbour is a leg");
+  // own()'s catch: the helper's thrown record reaches the importer through the cannot-classify arm, the exception in the chain, and the
+  // importer's own call is still read
+  const imp = c.byBundle.get(bundle(IMPORTER)) as Rec;
+  const want = "ui/webview/" + IMPORTER + ":3: loads ui/webview/" + HELPER + ", which the census cannot classify (ui/webview/" + HELPER + THREW;
+  assert.equal(imp.refusals.length, 1, IMPORTER + ": one refusal, the importer's through the helper's thrown record: " + JSON.stringify(imp.refusals));
+  assert.ok(imp.refusals[0].startsWith(want), IMPORTER + ": refused at the import line with the helper's thrown record in the chain (own()'s catch); expected a refusal opening with " + JSON.stringify(want) + ", got " + JSON.stringify(imp.refusals[0]));
+  assert.ok(imp.refusals[0].includes("RangeError"), IMPORTER + ": the exception's name is in the chain (the walker's or the compiler's recursion overflowing): " + imp.refusals[0]);
+  assert.equal(classOf(imp), "shared", IMPORTER + ": the importer's own inBrowser call is read beside the refusal, class shared");
+  // census()'s catch, the walker's own overflow on a test module
+  const deep = c.byBundle.get(bundle(DEEP)) as Rec;
+  assert.equal(deep.refusals.length, 1, DEEP + ": one refusal, the thrown record's: " + JSON.stringify(deep.refusals));
+  assert.ok(deep.refusals[0].startsWith("ui/webview/" + DEEP + THREW) && deep.refusals[0].includes("RangeError"), DEEP + ": refused by name at census()'s catch with the RangeError (before round 5 the census died here, unnamed); got " + JSON.stringify(deep.refusals[0]));
+  assert.equal(classOf(deep), "refused", DEEP + ": class refused, nothing else judged of it");
+  assert.equal(c.refusals.length, 3, "three refusals on the census's list (the directory's, the importer's, the deep module's), each reaching the CLI: " + JSON.stringify(c.refusals));
+  assert.deepEqual(c.legs, [bundle(IMPORTER), bundle(NEIGHBOUR)].sort(), "the legs are the neighbour and the importer, judged on either side of the modules that threw");
+  // the CLI over the same root, the chain files removed first (the child process's stack is not this thread's, and the directory's read
+  // error is the deterministic witness there): exit 2, the thrown refusal on stderr, the neighbour's row on stdout, the summary reworded
+  for (const f of [DEEP, IMPORTER, HELPER]) fs.rmSync(path.join(web, f));
+  const r = spawnSync(process.execPath, [path.join(root, "vscode-extension", "scripts", "browser-legs-census.mjs"), "--tsv", root], { cwd: path.join(root, "vscode-extension"), encoding: "utf8" });
+  assert.equal(r.status, 2, "the CLI exits 2 on the thrown refusal (before round 5: exit 1 with the bare message and no row); stderr:\n" + r.stderr);
+  assert.ok(r.stderr.includes("browser-legs-census: REFUSED ui/webview/" + DIR + THREW), "the CLI prints the thrown refusal by name; stderr:\n" + r.stderr);
+  assert.ok(r.stderr.includes(" refusal(s) above, each naming its file"), "the CLI's summary line says each refusal names its file, since a thrown record has no line and the earlier wording (each with file and line) would be false for it; stderr:\n" + r.stderr);
+  assert.ok(r.stdout.includes(bundle(NEIGHBOUR) + "\t1\t-\t-\tshared"), "the neighbour's row is on stdout: the census went on past the directory; stdout:\n" + r.stdout);
+  assert.ok(!r.stdout.includes(bundle(DIR)), "the thrown record has no TSV row (it carries no class fields); stdout:\n" + r.stdout);
 });
 
 test("THE INVARIANT is armed: one mutation of the walker per clause, over the plants, is refused by the invariant naming what the mutation silenced (a playwright package resolved and not recorded; a launcher load the walker stopped reading; a launcher binding handed on that the value-use arm stopped refusing; a computed member on the binding that rootOf stopped seeing), and each mutation's anchor is found once, so a rewrite of the walker re-anchors this test rather than passing it empty", async (t) => {

@@ -69,7 +69,9 @@
 //              an initializer), a for-of over an array
 //              literal, a parameter
 //              typed as a union of string literals, a string-typed parameter whose every direct call site in the module passes a
-//              literal; and two the launcher's own exports supply, read from its source by resolved path: a for-of over a name
+//              literal (a call site that passes the parameter back to its own function, directly or through another function, is no
+//              closed form: the fold, re-entered for that declaration, returns null and the caller's refusal names the line, where an
+//              unguarded fold recursed without bound); and two the launcher's own exports supply, read from its source by resolved path: a for-of over a name
 //              imported from the launcher whose export is a const array literal of literals, and a parameter typed by a type
 //              alias the launcher exports as a union of string literals); a launch of its own (launch, launchPersistentContext, launchServer, connect, connectOverCDP on a
 //              playwright-derived expression, by property, bracket, destructuring or .call/.apply). Derivation stops at a call
@@ -134,8 +136,13 @@
 //              the walker does not follow which branch the value takes, so the engines and launches read through it, or where
 //              inBrowser is called from, are unread); a local declaration
 //              shadowing a launcher or playwright binding; a parse diagnostic; a loaded module of the tree as the `loaded`
-//              clause states, or a relative specifier that names no file, or two; THE INVARIANT's refusal, below; and THE SAFETY
-//              NET's, below it. The CLI exits 2 on any refusal.
+//              clause states, or a relative specifier that names no file, or two; THE INVARIANT's refusal, below; THE SAFETY
+//              NET's, below it; and a module whose classification THREW (the compiler's or the walker's recursion overflowing on a
+//              deeply nested module, a path under a leg directory that is no readable file, a form that trips the walker), refused
+//              by name with the exception's name and message as the thrown record (rel and refusals alone, the parse-diagnostic
+//              record's shape; a loaded module's reaches its importer through the loaded clause's cannot-classify arm with the
+//              exception in the chain), so one such module never ends the census unnamed with the modules after it unjudged (the
+//              census test executes both homes of the catch over a synthetic root). The CLI exits 2 on any refusal.
 // THE INVARIANT (the parse's own state against its record; run at the end of every classify, so census() holds it over every
 // module it reads, test modules and the modules they load alike, whatever the class): the census may not resolve a tracked
 // specifier or a launcher binding and return a record that carries nothing of it. Three clauses. (1) A playwright package the
@@ -382,6 +389,13 @@ export function classify(ts, file, src, opts = {}) {
     useDecl.set(id, d);
     return d;
   };
+  // the parameter declarations whose call-site fold is in progress (correctness-1, round 5): a fold re-entered for the SAME
+  // declaration (the function passing the parameter to its own call, directly or through another function, `go(engine, false)`
+  // inside go) folds through no closed form and returns null, so the caller's refusal (the computed member, the engine argument)
+  // names the line, where the unguarded fold recursed without bound and ended the whole census unnamed. Keyed on the declaration,
+  // not a boolean, so a non-cyclic chain of calls (outer(t, e) to go(t, e) to inBrowser(t, body, e)) still folds to its literal,
+  // and declared per classify call, as useDecl is
+  const folding = new Set();
   const foldIdentifier = (id) => {
     const name = id.text;
     const decl = declOfUse(id);
@@ -414,7 +428,9 @@ export function classify(ts, file, src, opts = {}) {
       const at = fn.parameters.indexOf(decl);
       const vals = []; let calls = 0, bad = false;
       const seek = (n) => { if (ts.isCallExpression(n) && ts.isIdentifier(unwrap(n.expression)) && unwrap(n.expression).text === fname) { calls++; const a = n.arguments[at]; const v = a && literalName(unwrap(a)); if (v === null || v === undefined) { const inner = a && ts.isIdentifier(unwrap(a)) ? foldIdentifier(unwrap(a)) : null; if (inner) vals.push(...inner); else bad = true; } else vals.push(v); } if (ts.isIdentifier(n) && n !== fn.name && n.text === fname && !(n.parent && ts.isCallExpression(n.parent) && unwrap(n.parent.expression) === n)) bad = true; ts.forEachChild(n, seek); };
-      seek(sf);
+      if (folding.has(decl)) return null;   // re-entered for this parameter: the function passes it to its own call, no closed form
+      folding.add(decl);
+      try { seek(sf); } finally { folding.delete(decl); }
       if (bad || calls === 0) return null;
       return [...new Set(vals)];
     }
@@ -1282,6 +1298,13 @@ export function resolveLocal(fromFile, spec, root) {
   return null;
 }
 const isPackagePath = (abs) => abs.split(path.sep).includes("node_modules");
+/** The record of a module whose classification THREW (correctness-1, round 5: the compiler's or the walker's recursion overflowing
+ *  on a deeply nested module, a path under a leg directory that is no readable file, a form that trips the walker): refused by name
+ *  with the exception's name and its first message line, so one such module never ends the census unnamed with every module after it
+ *  unjudged (a census that dies with a stack trace is a silent pass for all of them). The record's shape is the parse-diagnostic
+ *  record's, rel and refusals alone: sharedCalls is undefined, classOf gives "refused", the TSV skips the row, the CLI exits 2. The
+ *  remedy is worded for any exception, since the census cannot know whether the module or the path is at fault. */
+const thrown = (rel, e) => ({ rel, refusals: [rel + ": the census threw while classifying this module, so it is refused rather than left unjudged, and the modules after it are judged (" + (e && e.name ? e.name + ": " : "") + String(e && e.message !== undefined ? e.message : e).split("\n")[0].slice(0, 200) + "): the exception names what the census could not read (a nesting too deep for the walker or the compiler, a path that is no readable file, a form that trips the walker): simplify or rename it, or teach scripts/browser-legs-census.mjs the form"] });
 
 /** The refusals a test module owes to the modules of the tree it loads, read transitively (a cache of own records per module,
  *  a walk over the import graph per test import, so a cycle is visited once): a test whose import reaches a module that binds
@@ -1291,7 +1314,11 @@ const isPackagePath = (abs) => abs.split(path.sep).includes("node_modules");
 export function localRefusals(ts, r, file, root, opts, ownCache) {
   const own = (abs) => {
     if (!ownCache.has(abs)) {
-      const rec = classify(ts, abs, fs.readFileSync(abs, "utf8"), { ...opts, root });
+      let rec;
+      // a loaded module whose classification throws is the thrown record (correctness-1), so its importer is refused through the
+      // cannot-classify arm below with the exception in the chain, and the census goes on
+      try { rec = classify(ts, abs, fs.readFileSync(abs, "utf8"), { ...opts, root }); }
+      catch (e) { rec = thrown(path.relative(root, abs), e); }
       ownCache.set(abs, { rec, next: rec.refusals.length ? [] : rec.localImports.map((li) => ({ li, to: resolveLocal(abs, li.spec, root) })) });
     }
     return ownCache.get(abs);
@@ -1343,8 +1370,13 @@ export function census(root = REPO, opts = {}) {
     if (!fs.existsSync(abs)) continue;
     for (const f of fs.readdirSync(abs).filter((f) => f.endsWith(".test.ts")).sort()) {
       const file = path.join(abs, f);
-      const { net, ...r } = classify(ts, file, fs.readFileSync(file, "utf8"), { ...opts, root, testModule: true });
-      if (r.localImports) r.refusals.push(...localRefusals(ts, r, file, root, opts, ownCache));
+      let r, net;
+      // one module's classification throwing (the read, the parse, the walk, a loaded module's walk) is that module's thrown record
+      // (correctness-1, round 5), refused by name with the exception, and the census goes on to the next: it never dies unnamed
+      try {
+        ({ net, ...r } = classify(ts, file, fs.readFileSync(file, "utf8"), { ...opts, root, testModule: true }));
+        if (r.localImports) r.refusals.push(...localRefusals(ts, r, file, root, opts, ownCache));
+      } catch (e) { r = thrown(path.relative(root, file), e); net = undefined; }
       // THE SAFETY NET's verdict on a test module, applied after the modules it loads have had their say: the net stands down when
       // any refusal already names the module (its own fold's, or a loaded module's carried by localRefusals), so a module carries
       // one refusal; `net` is classify's hand-off to this line and no reader's (a parse-diagnostic record carries none)
@@ -1414,5 +1446,5 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     for (const l of c.legs) process.stdout.write(l + "\n");
   }
   for (const r of c.refusals) process.stderr.write("browser-legs-census: REFUSED " + r + "\n");
-  if (c.refusals.length) { process.stderr.write("browser-legs-census: " + c.refusals.length + " refusal(s) above, each with file and line: the census judges no tree it cannot classify\n"); process.exit(2); }
+  if (c.refusals.length) { process.stderr.write("browser-legs-census: " + c.refusals.length + " refusal(s) above, each naming its file (and its line, for a module the census read): the census judges no tree it cannot classify\n"); process.exit(2); }
 }
