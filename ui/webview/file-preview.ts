@@ -7,6 +7,7 @@
 // the card itself: the element, the fetch, the rendering per kind, the placement.
 
 import { hostOf, bareId } from "./host-prefix";   // pure: a remote session's sid carries its host (T364)
+import { dropRemoteRefs } from "./paint-refs";   // pure: the url() references in an attribute or a style (import-free)
 
 export const PREVIEW_DWELL_MS = 350;   // a hover shorter than this is a pass-through, not a question
 export const PREVIEW_GRACE_MS = 150;   // leaving the link toward the card must not close it on the way
@@ -116,10 +117,16 @@ export function remoteLoad(value: string, origin: string, base: string, srcset =
   return false;
 }
 
-/** Strip every element of `root` that would load off `origin` when it joins a live document: an <img> becomes its alt
- *  text; anything else (a <picture>'s <source>, a <video> with a poster or a src, an <audio>, a <track>, an SVG
- *  <image>) goes. Runs on the sanitizer's INERT DOM before the nodes are adopted into the page, so no request ever
- *  starts (the review: a strip after innerHTML raced the browser's fetch and lost). Returns how many it stripped. */
+/** Strip everything under `root` that would load off `origin` when it joins a live document. The element walk: an <img>
+ *  becomes its alt text; any other loader (a <picture>'s <source>, a <video> with a poster or a src, an <audio>, a
+ *  <track>, an SVG <image>) goes. The paint arm, after it: a url() naming another origin in an inline svg's paint
+ *  attribute (`fill`, `stroke`, `mask`, `clip-path`, `filter`, a `marker-*`) or in a style declaration is removed from the
+ *  element that carries it, which stays (paint-refs.ts dropRemoteRefs, judged against `origin` and resolved against
+ *  `base`; a `url(#id)`, a `data:` URL and this origin's own stay). The sanitizer has already run the same arm on the
+ *  bodies the preview hands here, so on those it finds nothing left; it is here so this function's contract holds for any
+ *  root it is given. Runs on the sanitizer's INERT DOM before the nodes are adopted into the page, so no request ever
+ *  starts (the review: a strip after innerHTML raced the browser's fetch and lost). Returns how many it stripped: the
+ *  elements the walk replaced or removed plus the attributes and declarations the paint arm removed. */
 export function stripRemoteLoads(root: ParentNode, origin: string, base: string): number {
   let n = 0;
   for (const el of Array.from(root.querySelectorAll("*"))) {
@@ -140,7 +147,7 @@ export function stripRemoteLoads(root: ParentNode, origin: string, base: string)
     if (name === "img") el.replaceWith(el.ownerDocument.createTextNode(el.getAttribute("alt") || ""));
     else el.remove();
   }
-  return n;
+  return n + dropRemoteRefs(root, [origin], base);
 }
 
 /** The text-only card: the path as words and the way to the full view, nothing fetched. */
