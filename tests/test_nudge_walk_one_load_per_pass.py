@@ -3716,7 +3716,11 @@ class TheCountersOneSite(unittest.TestCase):
         identifier field its class declares (_IDENTIFIER_FIELDS), the kernel's Names excepted; no str or bytes constant reads as
         it whole through _door_text, wherever it appears; and none whose text so read contains it reaches a subscript key or a
         call of a name in _DYNAMIC_LOOKUPS or _DICT_READS, the slice, the arguments and the keyword values walked (the consumer
-        clause of _loader_births, copied). A verifier of the round-9 fixes: a write through the kernel module object or through
+        clause of _loader_births, copied). That clause fails closed: a constant that only contains the name, in any case, fails
+        the case at one of those receivers even when it reaches no counter (os.environ.get of a variable named
+        ROMP_NUDGE_WALK_STATS_TRACE, say; a verifier of the clause planted it in the kernel and this case failed naming the line),
+        and a legitimate one would need an exemption row with its reason, the shape _loader_births states for its whole-spelling
+        constants; this census has no exemption rows. A verifier of the round-9 fixes: a write through the kernel module object or through
         globals(), in the kernel or in the judge, left no Name for the census to classify and passed on a road no case drives; a
         second verifier of those fixes: an exec of a statement naming the counter, in the kernel or in the judge against the
         kernel's globals, a globals() key sliced from a longer constant and a write from another kernel module each passed again,
@@ -3844,7 +3848,8 @@ class TheCountersOneSite(unittest.TestCase):
                                         "declaration, a def; outside the kernel a Name as well), no str or bytes constant whose text reads "
                                         "as it whole through _door_text, and none whose text so read contains it reaching a subscript key "
                                         "or a call of a name in _DYNAMIC_LOOKUPS or _DICT_READS (an exec of a statement naming it, a key "
-                                        "sliced from a longer constant); a write through the kernel module object, globals(), vars(), "
+                                        "sliced from a longer constant; a string there that only contains the name, an environment "
+                                        "variable's name say, is refused as well); a write through the kernel module object, globals(), vars(), "
                                         "setattr, getattr or exec leaves no Name for the census above to classify: %s"
                                         % (name, ", ".join(population), "; ".join(spellings)))
         writes = ["line %d: %s" % (t.lineno, lines[t.lineno - 1].strip()) for t in loads_writes]
