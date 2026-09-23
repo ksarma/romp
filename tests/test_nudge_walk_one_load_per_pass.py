@@ -3658,7 +3658,10 @@ class TheCountersOneSite(unittest.TestCase):
         before the load, the statement directly before the load's own in the statement list holding it, so a look that reaches
         the read counts once whatever the read does (review round 8, correctness-1 and kernel-1: the bump sat on the line after
         the read and missed a read that raised out of the look; extra5-1: a one-line `if` around the bump passed the line
-        check); and the gate around the look reads no store (a skipped look needs no data), scanned by the same rule. The bump
+        check); the load the call a statement of the look's own body evaluates, so the read runs at most once per call of the
+        look (a verifier of the round-9 fixes: a retry loop or a try around the bump and the read, on a raise or a fault no case
+        drives, kept the one site and the bump's adjacency and took two loads per look with the module green); and the gate
+        around the look reads no store (a skipped look needs no data), scanned by the same rule. The bump
         is read as a statement too, an augmented `+= 1` on `_NUDGE_WALK_STATS["loads"]`, never as a line of text (review round
         2, correctness-3: a comment quoting the statement counted as a second bump). Each object is first checked to be the
         named def (_the_named_def; review round 4, correctness-3): the look behind its gate decorator, whose wraps dropped red the
@@ -3699,6 +3702,18 @@ class TheCountersOneSite(unittest.TestCase):
                          "and the bump is an unconditional statement of the load's own statement list, the statement directly before "
                          "the load's: a bump under a one-line `if` or `for`, or in another statement list, counts looks the read does not "
                          "match; the bump at %s" % kline(bump[0]))
+        # the load is the call a statement of the look's own body evaluates, and such a statement runs at most once per call of the look
+        holders = [st for st in looks[0].body if isinstance(st, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Expr, ast.Return))
+                   and isinstance(st.value, ast.Call) and isinstance(st.value.func, (ast.Attribute, ast.Name))
+                   and "jd.load_goals_shared" in _spelled(st.value.func)]
+        self.assertEqual([st.value.lineno for st in holders], [first + at[0]],
+                         "the look's one shared load is the call a statement of the look's own body evaluates (an assignment, an "
+                         "expression statement or a return), and such a statement runs at most once per call of the look; a load under "
+                         "a loop, try, with, if or match of the look, or held in a comprehension, lambda or conditional expression, is "
+                         "refused, since a retry around the read on a raise or a fault no case drives took two loads per look with the "
+                         "site count and the bump's adjacency holding: the load at %s; statements of the look's body whose value calls "
+                         "the shared door: %s" % (kline(at[0]), "; ".join("line %d: %s" % (st.lineno, lines[st.lineno - 1].strip())
+                                                                           for st in holders) or "none"))
         self._the_named_def("_nudge_look_gated", km._nudge_look_gated, "_nudge_look_gated")
         gated = [ln.strip() for _i, ln in _loader_sites(km._nudge_look_gated, "load_goals")]
         self.assertEqual(gated, [], "the gate around the look reads no store: a skipped look loads through neither mechanism: %s" % "; ".join(gated))
