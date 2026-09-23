@@ -968,8 +968,14 @@ fail_diff_tree_stdin() { git_refusing '[ "${1:-}" = diff-tree ] && [ "${2:-}" = 
 # agreed with an emptied scan under colour, a textconv driver, a -diff attribute,
 # format.pretty, log.date and log.showSignature (six found in two rounds,
 # 2026-09-21; the first three published a credential). Two conditions, because
-# either alone has a hole: the shorter log writes no ERR line, and a discarded
-# scan can still report the whole count.
+# either alone has a hole: a log shortened before it wrote any ERR line is
+# caught by the count read alone (a silent ERR-line awk over such a log is
+# vacuous, its answer the real one's), and a scan that logged an ERR line yet
+# reported a count the hook's own matches (its git wrote the line after a whole
+# scan) is caught by the ERR-line read alone; the two witnesses below drive
+# each read silent past the other (round 8b corrected this from "a discarded
+# scan can still report the whole count", which read as the shortened scan's
+# count, the count read's own case).
 #
 # These cases run the REAL scanner, as tests/gitleaks-config.bats does (skipped,
 # out loud, where none is installed; CI installs it). The credential-shaped
@@ -4016,7 +4022,7 @@ commit_stamped_as() {   # <address> <path> <message>: one clean file, author and
     GIT_AUTHOR_EMAIL="$1" GIT_COMMITTER_EMAIL="$1" git -C "$REPO" commit -qm "$3"
 }
 
-@test "a chosen-addresses read that FAILS (git config --get-all user.email exiting 128) is refused as unscanned naming the read, through a real push, and a commit stamped under a banned domain is refused beside it with the address line leading with the failed read, not with a cause the read could not establish: the remote holds nothing, and configuring the clone to use that address changes nothing while the read fails, the line saying why" {
+@test "a chosen-addresses read that FAILS (git config --get-all user.email exiting 128) is refused as unscanned naming the read, through a real push, and a commit stamped under a banned domain is refused beside it with the address line leading with the failed read, not with a cause the read could not establish: the remote holds nothing, and configuring the clone to use that address changes nothing while the read fails, the line saying why; the remedy paragraph leads with the failed read and its repair, and its say-so line and bullets, whose causes the failed read leaves unknown, are absent (round 8b)" {
     add_remote
     commit_stamped_as dev@zzsynthuser.example web.txt "stamped under a banned domain the clone did not choose"
     sha="$(git -C "$REPO" rev-parse HEAD)"
@@ -4033,8 +4039,14 @@ commit_stamped_as() {   # <address> <path> <message>: one clean file, author and
     [[ "$output" == *"romp pre-push: commit ${sha:0:10} is authored as <dev@zzsynthuser.example>: whether this clone is configured to use that address could not be read (git config --get-all user.email exited 128, refused above), and its domain carries a personal identifier"* ]]
     [[ "$output" == *"commit ${sha:0:10} is committed as <dev@zzsynthuser.example>: whether this clone is configured to use that address could not be read"* ]]
     [[ "$output" != *"not configured to use, whose domain"* ]]   # the round 7 text's cause, which the failed read cannot establish (the remedy paragraph's general sentence stays)
-    [[ "$output" == *"if it is yours, say so (git config --global user.email <address>)"* ]]
     [[ "$output" == *"BLOCKED"* ]]
+    # the remedy paragraph under BLOCKED (round 8b, flag 80): the failed read and its repair lead, the general rule
+    # stays, and the say-so line and the two bullets, remedies for causes the failed read leaves unknown, are absent
+    # (the round 8 text printed the say-so line beside the failed read, a remedy that changes nothing while it fails)
+    [[ "$output" == *"  The addresses this clone is configured to use could not be read (git config --get-all user.email exited 128, refused above), so whether it chose each address named is unknown: run git config --get-all user.email yourself to see git's own error, repair that read and push again; configuring an address changes nothing until then."$'\n'"  An address this clone is not configured to use, with a banned string in its domain, is refused on every commit it stamps."$'\n'* ]]
+    [[ "$output" != *"say so (git config --global user.email"* ]]
+    [[ "$output" != *"if git filled it from the hostname"* ]]
+    [[ "$output" != *"--reset-author"* ]]
     [[ "$output" != *"shim:"* ]]                        # the shim's own line went to the -q the helper puts on the read
     run remote_holds_main                             # the checked form (tests/test_bats_bare_negation.py): a bare ! mid-test checks nothing under bats
     [ "$status" -ne 0 ]
@@ -4915,6 +4927,19 @@ CENSUS_TOOLS='git|grep|egrep|fgrep|awk|gawk|mawk|sed|tr|wc|od|cat|cut|sort|uniq|
 # made with a tool outside the list is not counted, and this line is where the list is widened. Outside on purpose:
 # mktemp (make_scratch, a writer whose failure its callers refuse) and the scanner binary (run through a variable, its
 # exit judged under a marker); command -v resolves the scanner's path and runs nothing.
+# What the census reads (round 8b, the round 7 rulings' B): the command word by its basename with a leading backslash
+# dropped (/usr/bin/git and \git run git), past the keywords, the command prefixes and their option words (a word
+# starting with -, and the operand of nice -n and env -u: env -i git, nice -n 19 git and command -p git run git), the
+# assignments and the redirections; command -v and -V are lookups that run nothing, never reads. Code inside a $( ) or a
+# backtick substitution is read wherever bash runs it, inside double quotes too, and so is the text after a judged_read
+# call's -- past its first simple command, the tagged read the tags judge (the same splitter over that text, its first
+# segment alone dropped, so a second command past an operator and a substitution inside the tagged command's arguments
+# are read). Two shapes stay UNREAD, and census_unread_shapes pins each ABSENT from the hook's comment-stripped raw text
+# (the raw text, since the masked text hides what double quotes hold): a command word held in a variable whose value
+# names a reading tool (a default such as ${GIT:-git}, or a bare tool name assigned to a variable), and a read inside an
+# eval'd string (no eval at all). The hook's own variable command words are three, each outside this bound by design:
+# the tagged command judged_read runs ("$@"), its -d rider ("$detail", which prints and reads nothing) and the scanner
+# ("$gl", above).
 CENSUS_PREFIX='^(if|then|else|elif|fi|while|until|do|done|case|esac|in|for|select|function|!|time|exec|env|nice|local|export|readonly|declare|typeset|command|builtin)$'
 CENSUS_BUILTIN='^(read|printf|echo|eval|trap|wait|true|false|:|return|exit|break|continue|shift|set|unset|test|\[|\[\[)$'
 masked_text() {   # <bash file>: the text with quoted bytes and comments masked quote-aware (the section comment), one output line per input line
@@ -4925,15 +4950,16 @@ BEGIN { depth = 0; st[0] = "code"; par[0] = 0 }
     line = $0; out = ""; n = length(line); i = 1; prev = " "
     while (i <= n) {
         c = substr(line, i, 1); c2 = substr(line, i, 2); s = st[depth]
-        if (s == "code") {
+        if (s == "code" || s == "bq") {
             if (c == "\\") { out = out c substr(line, i + 1, 1); i += 2; prev = "x"; continue }
             if (c == "#" && (i == 1 || prev ~ /[ \t;]/)) { out = out sprintf("%" (n - i + 1) "s", ""); break }
+            if (c == "`") { if (s == "bq") depth--; else { depth++; st[depth] = "bq"; par[depth] = 0 }; out = out c; i++; prev = c; continue }
             if (c2 == "$'") { depth++; st[depth] = "ansi"; out = out c2; i += 2; prev = "'"; continue }
             if (c == "'") { depth++; st[depth] = "sq"; out = out c; i++; prev = c; continue }
             if (c == "\"") { depth++; st[depth] = "dq"; out = out c; i++; prev = c; continue }
             if (c2 == "$(") { depth++; st[depth] = "code"; par[depth] = 0; out = out c2; i += 2; prev = "("; continue }
             if (c == "(") { par[depth]++; out = out c; i++; prev = c; continue }
-            if (c == ")") { if (par[depth] > 0) par[depth]--; else if (depth > 0) depth--; out = out c; i++; prev = c; continue }
+            if (c == ")") { if (par[depth] > 0) par[depth]--; else if (depth > 0 && s == "code") depth--; out = out c; i++; prev = c; continue }
             out = out c; prev = c; i++; continue
         }
         if (s == "sq") { if (c == "'") { depth--; out = out c } else out = out "."; i++; prev = c; continue }
@@ -4946,6 +4972,7 @@ BEGIN { depth = 0; st[0] = "code"; par[0] = 0 }
             if (c == "\\") { out = out ".."; i += 2; continue }
             if (c == "\"") { depth--; out = out c; i++; prev = c; continue }
             if (c2 == "$(") { depth++; st[depth] = "code"; par[depth] = 0; out = out c2; i += 2; prev = "("; continue }
+            if (c == "`") { depth++; st[depth] = "bq"; par[depth] = 0; out = out c; i++; prev = c; continue }
             out = out "."; i++; prev = c; continue
         }
     }
@@ -4955,10 +4982,38 @@ AWK
     fi
     awk -f "$TEST_DIR/mask.awk" "$1"
 }
-undeclared_reads() {   # <hook text>: prints "undeclared: <line>:<text>" per command line the census finds declared by nothing, "swallowed: ..." per `|| true` or `|| :` inside a body passed whole, and one "census: ..." line of counts; run under `run`
+census_segments() {   # <masked text>: its simple commands, one per line, split at the operators, the substitutions' and subshells' parentheses, the backtick, and a brace that opens no ${
+    printf '%s' "$1" | sed -E 's/\|\||&&|\||;|`|\$\(\(|\$\(|<\(|>\(|\(|\)/\n/g; s/(^|[^$])[{}]/\1\n/g'
+}
+census_command() {   # <simple command>: sets cmd, the caller's, to the reading tool it runs (one of CENSUS_TOOLS), or empty
+    local t p o
+    cmd=""
+    # shellcheck disable=SC2086  # the segment is split into its words on purpose
+    set -- $1
+    while [ $# -gt 0 ]; do                                      # past the keywords, the command prefixes and their option words, the assignments and the redirections
+        t=$1
+        if [[ "$t" =~ $CENSUS_PREFIX ]]; then
+            p=$t; shift
+            if [ "$p" = command ] && [[ "${1:-}" =~ ^-[pvV]*[vV][pvV]*$ ]]; then return 0; fi   # command -v or -V: a lookup that runs nothing
+            while [ $# -gt 0 ] && [[ "$1" == -* ]]; do          # a prefix's option words (env -i, command -p, nice -n 19): the operand of nice -n and env -u goes with its option
+                o=$1; shift
+                if { [ "$p" = nice ] && [ "$o" = -n ]; } || { [ "$p" = env ] && [ "$o" = -u ]; }; then [ $# -eq 0 ] || shift; fi
+            done
+            continue
+        fi
+        if [[ "$t" =~ ^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?= ]] || [[ "$t" =~ ^[0-9]*[\<\>] ]] || [[ "$t" =~ ^\&\> ]]; then shift; continue; fi
+        break
+    done
+    [ $# -gt 0 ] || return 0
+    t=${1#\\}; t=${t##*/}                                       # the command word by its basename, a leading backslash dropped: /usr/bin/git and \git run git
+    [[ "$t" =~ $CENSUS_BUILTIN ]] && return 0                   # a builtin's arguments are not commands
+    [[ "$t" =~ ^($CENSUS_TOOLS)$ ]] && cmd=$t
+    return 0
+}
+undeclared_reads() {   # <hook text>: prints "undeclared: <line>:<text>" per command line the census finds declared by nothing, "declared: <body|array|marker> <line> <function or ->: <tools>" per command line it finds declared outside a judged_read call, "swallowed: ..." per `|| true` or `|| :` inside a body passed whole, and one "census: ..." line of counts; run under `run`
     local -a orig masked
     local -A fstart fend passed inpassed
-    local i j name m rest after w f s t seg sgm found text calls=0 total=0 body=0 array=0 marker=0 undeclared=0 swallowed=0
+    local i j name m rest after w f s t sgm found text tail cmd calls=0 total=0 body=0 array=0 marker=0 undeclared=0 swallowed=0
     mapfile -t orig < "$1"
     mapfile -t masked < <(masked_text "$1")
     [ "${#orig[@]}" -eq "${#masked[@]}" ] || { echo "census: the masking changed the line count"; return 1; }
@@ -4987,31 +5042,30 @@ undeclared_reads() {   # <hook text>: prints "undeclared: <line>:<text>" per com
     for ((i = 0; i < ${#orig[@]}; i++)); do
         m=${masked[i]}
         [[ "$m" =~ (^|[^A-Za-z0-9_.-])($CENSUS_TOOLS)([^A-Za-z0-9_.-]|$) ]] || continue     # a tool word somewhere in the masked line: the cheap pre-check
-        text=$m
-        if [[ "$m" =~ (^|[[:space:]!\&\|\;\(])judged_read[[:space:]] ]]; then text=${m%% -- *}; fi   # a call: the read after the -- is the tagged one; what runs before it is censused
-        seg=$(printf '%s' "$text" | sed -E 's/\|\||&&|\||;|\$\(\(|\$\(|<\(|>\(|\(|\)/\n/g; s/(^|[^$])[{}]/\1\n/g')   # the simple commands
+        text=$m; tail=""
+        # A call: its tagged command, the first simple command after the --, is the read the tags judge. What runs
+        # before the --, and every other simple command after it (a second command past an operator, a substitution
+        # or a backtick inside the tagged command's own arguments), is censused: the SAME splitter over the text
+        # after the --, its first segment alone dropped.
+        if [[ "$m" =~ (^|[[:space:]!\&\|\;\(])judged_read[[:space:]] ]]; then
+            text=${m%% -- *}
+            if [[ "$m" == *" -- "* ]]; then tail=$(census_segments "${m#* -- }" | sed 1d); fi
+        fi
         found=""
         while IFS= read -r sgm; do
-            # shellcheck disable=SC2086  # the segment is split into its words on purpose
-            set -- $sgm
-            while [ $# -gt 0 ]; do                              # past the keywords, the command prefixes, the assignments and the redirections
-                t=$1
-                if [[ "$t" =~ $CENSUS_PREFIX ]] || [[ "$t" =~ ^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?= ]] || [[ "$t" =~ ^[0-9]*[\<\>] ]] || [[ "$t" =~ ^\&\> ]]; then shift; continue; fi
-                break
-            done
-            [ $# -gt 0 ] || continue
-            [[ "$1" =~ $CENSUS_BUILTIN ]] && continue           # a builtin's arguments are not commands
-            [[ "$1" =~ ^($CENSUS_TOOLS)$ ]] && found="$found $1"
-        done <<< "$seg"
+            census_command "$sgm"
+            [ -z "$cmd" ] || found="$found $cmd"
+        done <<< "$(census_segments "$text")"$'\n'"$tail"
         [ -n "$found" ] || continue
+        found=${found# }
         total=$((total + 1))
-        if [ -n "${inpassed[$i]:-}" ]; then body=$((body + 1)); continue; fi
-        if [[ "$m" =~ ^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*\+?=\( ]]; then array=$((array + 1)); continue; fi
-        if [[ "${orig[i]}" == *"#"*"outside judged_read"* ]]; then marker=$((marker + 1)); continue; fi
-        s=$i; while [ "$s" -gt 0 ] && [[ "${orig[s - 1]}" == *\\ ]]; do s=$((s - 1)); done          # the statement's first line
-        if census_block_above_has_marker "$s"; then marker=$((marker + 1)); continue; fi
         f=""; for name in "${!fstart[@]}"; do if [ "$i" -ge "${fstart[$name]}" ] && [ "$i" -le "${fend[$name]}" ]; then f=$name; break; fi; done
-        if [ -n "$f" ] && { census_block_above_has_marker "${fstart[$f]}" || [[ "${orig[fstart[$f]]}" == *"#"*"outside judged_read"* ]]; }; then marker=$((marker + 1)); continue; fi
+        if [ -n "${inpassed[$i]:-}" ]; then body=$((body + 1)); echo "declared: body $((i + 1)) ${inpassed[$i]}: $found"; continue; fi
+        if [[ "$m" =~ ^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*\+?=\( ]]; then array=$((array + 1)); echo "declared: array $((i + 1)) ${f:--}: $found"; continue; fi
+        if [[ "${orig[i]}" == *"#"*"outside judged_read"* ]]; then marker=$((marker + 1)); echo "declared: marker $((i + 1)) ${f:--}: $found"; continue; fi
+        s=$i; while [ "$s" -gt 0 ] && [[ "${orig[s - 1]}" == *\\ ]]; do s=$((s - 1)); done          # the statement's first line
+        if census_block_above_has_marker "$s"; then marker=$((marker + 1)); echo "declared: marker $((i + 1)) ${f:--}: $found"; continue; fi
+        if [ -n "$f" ] && { census_block_above_has_marker "${fstart[$f]}" || [[ "${orig[fstart[$f]]}" == *"#"*"outside judged_read"* ]]; }; then marker=$((marker + 1)); echo "declared: marker $((i + 1)) $f: $found"; continue; fi
         undeclared=$((undeclared + 1))
         echo "undeclared: $((i + 1)):${orig[i]}"
     done
@@ -5026,6 +5080,10 @@ census_block_above_has_marker() {   # <index>: the contiguous comment lines dire
         [[ "${orig[i]}" == *"outside judged_read"* ]] && return 0
     done
     return 1
+}
+census_unread_shapes() {   # <bash file>: prints "<line>:<text>" for each line of the comment-stripped RAW text holding a shape the census cannot read (the bound above): an eval, a parameter expansion defaulting to a reading tool, a reading tool's bare name assigned to a variable
+    sed -E 's/[[:space:]]+#.*$//' "$1" | grep -nvE '^[[:space:]]*#' \
+        | grep -E "(^|[^A-Za-z0-9_-])eval([^A-Za-z0-9_-]|\$)|\\\$\{[A-Za-z_][A-Za-z0-9_]*:?[-=+?]($CENSUS_TOOLS)([^A-Za-z0-9_.-]|\$)|(^|[^A-Za-z0-9_\$])[A-Za-z_][A-Za-z0-9_]*=[\"']?($CENSUS_TOOLS)[\"']?([[:space:];)&|]|\$)" || true
 }
 
 @test "every read of the hook is DECLARED (the population half of case 174's guarantee): a census over the hook's text finds no command line running a reading tool that is not a judged_read call, inside a function the helper is handed whole, an array literal or under an outside-judged_read marker; the census flags a planted read in a copy, the double-quoted substitution spelling and a grep over captured content included, and passes a planted marker, an array literal and tool words inside a string" {
@@ -5068,6 +5126,53 @@ census_block_above_has_marker() {   # <index>: the contiguous comment lines dire
     { sed -n '1p' "$HOOK"; echo 'msg="run git fsck and grep the log"'; echo 'PROBE_ARGS=(git log -1)'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-e.sh"   # tool words inside a string, and an array-literal assignment line (the exempt form: the assignment starts the line, as the scanner's argument list does), are not commands
     run undeclared_reads "$TEST_DIR/plant-e.sh"
     [[ "$output" != *"undeclared: "* ]]
+    # round 8b (the round 7 rulings' B): the shapes the census read nothing of until then, each planted alone and
+    # flagged ONCE: a backtick substitution, bare and inside double quotes (bash runs both); a read past a call's --
+    # after || and after ;; a substitution and a backtick nested inside the tagged command's own arguments; a
+    # path-qualified and a backslash-escaped command word; the prefixes with option words (env -i, env -u NAME,
+    # nice -n 19, command -p). Each was undeclared=0 under the round 8 census.
+    local -a plants=(
+        'x=`git rev-parse HEAD`'
+        'x="`git rev-parse HEAD`"'
+        'judged_read own="the PROBE read" 0 "the PROBE of x could not be read (probe exited {rc})" -- true || git rev-parse HEAD'
+        'judged_read own="the PROBE read" 0 "the PROBE of x could not be read (probe exited {rc})" -- true; git rev-parse HEAD'
+        'judged_read own="the PROBE read" 0 "the PROBE of x could not be read (probe exited {rc})" -- printf "%s\n" "$(git rev-parse HEAD)"'
+        'judged_read own="the PROBE read" 0 "the PROBE of x could not be read (probe exited {rc})" -- printf "%s\n" "`git rev-parse HEAD`"'
+        '/usr/bin/git rev-parse HEAD'
+        '\git rev-parse HEAD'
+        'env -i git rev-parse HEAD'
+        'env -u HOME git rev-parse HEAD'
+        'nice -n 19 git rev-parse HEAD'
+        'command -p git rev-parse HEAD'
+    )
+    local plant k=0
+    for plant in "${plants[@]}"; do
+        k=$((k + 1))
+        { sed -n '1p' "$HOOK"; printf '%s\n' "$plant"; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-b$k.sh"
+        run undeclared_reads "$TEST_DIR/plant-b$k.sh"
+        [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 1 ]
+        [[ "$output" == *"undeclared: 2:$plant"* ]]
+    done
+    # the backtick a double-quoted string opens is closed by the code branch's backtick, so a read on the next line
+    # is still read (a masker that opened it and never closed it hid the rest of the line's string and the lines after)
+    { sed -n '1p' "$HOOK"; printf '%s\n' 'x="`git rev-parse HEAD`"' 'git rev-parse HEAD'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-h.sh"
+    run undeclared_reads "$TEST_DIR/plant-h.sh"
+    [ "$(grep -c '^undeclared: ' <<< "$output")" -eq 2 ]
+    [[ "$output" == *"undeclared: 3:git rev-parse HEAD"* ]]
+    # command -v and -V are lookups that run nothing (the hook's own command -v gitleaks among them): no read
+    { sed -n '1p' "$HOOK"; echo 'command -v git >/dev/null'; echo 'command -V git'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-f.sh"
+    run undeclared_reads "$TEST_DIR/plant-f.sh"
+    [[ "$output" != *"undeclared: "* ]]
+    # the two shapes the census cannot read, pinned ABSENT from the hook's comment-stripped raw text: none in the hook,
+    # and each spelling found in a planted copy, so the pin is shown to red
+    run census_unread_shapes "$HOOK"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    for plant in 'x=$(${GIT:-git} rev-parse HEAD)' 'r=${ROMP_GIT-git}' 'GIT=git; "$GIT" rev-parse HEAD' "tool='grep'" 'eval "git rev-parse HEAD"' 'x=$(eval "$probe")'; do
+        { sed -n '1p' "$HOOK"; printf '%s\n' "$plant"; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/plant-g.sh"
+        run census_unread_shapes "$TEST_DIR/plant-g.sh"
+        [ "$output" = "2:$plant" ]
+    done
 }
 
 @test "the join's fourth arm prints a recorded path holding an ampersand, a backslash-ampersand and the text {rc} byte for byte: {rc} is substituted first and the -d rider's answer is spliced by a QUOTED replacement, so patsub_replacement rewrites no & and the answer is not re-scanned for the status (the round 7 text printed a{detail}b&1.txt)" {
@@ -5150,7 +5255,13 @@ grep_answering_then_failing() {   # <bash test over the shim's "$@">: for that s
     [[ "$output" == *"romp pre-push: the ADDRESSES this clone is configured to use could not be read (git config --get-all user.email exited 128), so whether a stamped address is one it chose is unknown; the scan is incomplete, so the push is refused"* ]]
     [[ "$output" == *"romp pre-push: tag refs/tags/v1 (${sha:0:10}) is tagged as <dev@zzsynthuser.example>: whether this clone is configured to use that address could not be read (git config --get-all user.email exited 128, refused above), and its domain carries a personal identifier"* ]]
     [[ "$output" != *"not configured to use, whose domain"* ]]  # the round 7 text's cause, which the failed read cannot establish
-    [[ "$output" == *"An annotated TAG's tagger and message are the tag object's own"* ]]
+    # the remedy paragraphs (round 8b, flag 80, the tag's arm): the failed read and its repair lead, each paragraph's
+    # general rule stays, and the remedies whose causes the failed read leaves unknown (the say-so line, the bullets,
+    # re-creating the tag under the configured address) are absent
+    [[ "$output" == *"  The addresses this clone is configured to use could not be read (git config --get-all user.email exited 128, refused above), so whether it chose each address named is unknown: run git config --get-all user.email yourself to see git's own error, repair that read and push again; configuring an address changes nothing until then."* ]]
+    [[ "$output" == *"  An annotated TAG's tagger and message are the tag object's own."$'\n'* ]]
+    [[ "$output" != *"say so (git config --global user.email"* ]]
+    [[ "$output" != *"re-create it under your configured address"* ]]
     run remote_holds_ref refs/tags/v1
     [ "$status" -ne 0 ]
 }
@@ -5332,4 +5443,431 @@ SHIM
     [[ "$output" != *"romp pre-push"* ]]                      # no romp line: the writers stay outside the helper's guard, every arm refusing (the header)
     [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
     [ "$(ls -1 "$TMPDIR" | grep -c '^romp-pre-push\.')" -eq 0 ]   # the EXIT trap removed the minted directory (the round 7 text left it)
+}
+
+# ── round 8b: every read has a row in tests/pre-push-reads.tsv, and every row is driven through a real push ──
+# Round 7's rulings made the population the predicate (A.8): tests/pre-push-reads.tsv holds one row per read
+# of the hook, every judged_read call site and every command line the census above finds reading outside
+# the helper, each with the sibling fact that shows its answer whole or the reason an empty or cut-short
+# exit-0 answer there refuses or publishes nothing, and the case that drives the read with a silent or a
+# short tool through a real push. The cases below are the rows no earlier case drove that way: each puts a
+# tool first on the hook's PATH that, for ONE read's shape, exits 0 printing nothing (reading its stdin, as
+# the round 7 refuters' shims did) or answers short, pushes for real, and asserts the refusal the row names
+# and the remote unchanged. D of the same rulings adds one case per refusal arm the round 7 delta added
+# (the FILE COUNT and LINE COUNT greps, the added-lines wc, the three SIZE reads), each shaped like the
+# ENTRY COUNT case above and red when that read's expected set is widened, and the witnesses for the three
+# own= joins and the scanner log's ERR line. Four cases drive the road found while the rows were written:
+# a tool that reads its stdin inside a loop that read its list on stdin took the rest of the list, and a
+# second ref, a hidden file and a credential each published through a real push; the loops read on a
+# descriptor of their own now, and a census case holds every loop that runs a tool to that. The table case
+# at the end derives the reads from the hook's tags and census and fails on a read without a row, a row
+# without a read, a row whose case names none, and a header block the generator does not print.
+tool_silent_on() {   # <tool> <bash test over the shim's "$@">: for that shape a <tool> that reads its stdin, prints nothing and exits 0 (the class's silent tool); the real one for every other shape
+    local real real_cat
+    real="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v "$1")"      # the shim directory stripped: a shim written before this one is not the real tool
+    real_cat="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v cat)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if %s; then %q > /dev/null; exit 0; fi\n' "$2" "$real_cat"
+        printf 'exec %q "$@"\n' "$real"
+    } > "$TEST_DIR/shim/$1"
+    chmod 755 "$TEST_DIR/shim/$1"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+tool_answering_then_exiting() {   # <tool> <bash test over the shim's "$@"> <status>: for that shape the real <tool> runs and prints its answer, then the shim exits with the status in its place; the real one for every other shape
+    local real
+    real="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v "$1")"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if %s; then %q "$@"; exit %d; fi\n' "$2" "$real" "$3"
+        printf 'exec %q "$@"\n' "$real"
+    } > "$TEST_DIR/shim/$1"
+    chmod 755 "$TEST_DIR/shim/$1"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+git_shim() {   # <bash lines, run first with the git's arguments in "$@" and the real git in $real_git>: a git of the case's own; the real git for every command the lines do not end
+    local real_git
+    real_git="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v git)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\nreal_git=%q\n' "$real_git"
+        printf '%s\n' "$1"
+        printf 'exec "$real_git" "$@"\n'
+    } > "$TEST_DIR/shim/git"
+    chmod 755 "$TEST_DIR/shim/git"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+push_refs_through_hook_with_shim() {   # <refspec>...: the hook installed for one real push of every refspec named, behind the wrapper that puts the shim directory first on the hook's PATH
+    mkdir -p "$TEST_DIR/hooks"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'export PATH=%q:"$PATH"\n' "$TEST_DIR/shim"
+        printf 'exec %q "$@"\n' "$HOOK"
+    } > "$TEST_DIR/hooks/pre-push"
+    chmod 755 "$TEST_DIR/hooks/pre-push"
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/hooks"
+    run git -C "$REPO" push origin "$@"
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/no-hooks"
+}
+clean_tip_after_base() {   # a base on the remote (BASE), then one clean commit (sha): the tip holds two regular files with bytes, both read by the tip's grep
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file clean.txt "nothing to see" "clean"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+}
+at_base() { [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]; }
+
+@test "the FILE COUNT grep -c over the tip's rewritten -z listing, answering the FULL count and exiting 2, is refused as unscanned naming the read and its status through a real push of a clean tip, the remote at the base (a set widened to 2 publishes with nothing printed); the same read exiting 0 and answering NOTHING is refused on its digit check, naming both answers (round 8b: the round 7 rulings' D, and A.8's row)" {
+    clean_tip_after_base
+    grep_answering_then_failing '[ "${1:-}" = -c ] && [ "${2:-}" = -E ] && [[ "${4:-}" == *"/listing.nl" ]]'   # the FILE COUNT's shape alone (grep -c -E <pattern> <scratch>/listing.nl): the ENTRY COUNT and the LINE COUNT carry no -E
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the TREE of the tip of refs/heads/main (${sha:0:10}) could not be counted for the BINARY VERDICT check (grep -c over the -z listing exited 2); the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"not two counts"* ]]
+    [[ "$output" != *"joined short"* ]]
+    at_base
+    tool_silent_on grep '[ "${1:-}" = -c ] && [ "${2:-}" = -E ] && [[ "${4:-}" == *"/listing.nl" ]]'
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the TREE of the tip of refs/heads/main (${sha:0:10}) could not be counted for the BINARY VERDICT check (grep -c counted the -z listing's regular files with bytes as \"\" and the grep's read list as \"2\", not two counts); the scan is incomplete"* ]]
+    at_base
+}
+
+@test "the LINE COUNT grep -c over the grep's rewritten read list, answering the FULL count and exiting 2, is refused as unscanned naming the read and its status through a real push of a clean tip, the remote at the base (a set widened to 2 publishes with nothing printed); the same read exiting 0 and answering NOTHING is refused on its digit check (round 8b: the round 7 rulings' D, and A.8's row)" {
+    clean_tip_after_base
+    grep_answering_then_failing '[ "${1:-}" = -c ] && [ "${2:-}" = . ] && [[ "${3:-}" == *"/read.nl" ]]'   # the LINE COUNT's shape alone: the ENTRY COUNT reads listing.nl
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the TREE of the tip of refs/heads/main (${sha:0:10}) could not be counted for the BINARY VERDICT check (grep -c over the grep's read list exited 2); the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"not two counts"* ]]
+    at_base
+    tool_silent_on grep '[ "${1:-}" = -c ] && [ "${2:-}" = . ] && [[ "${3:-}" == *"/read.nl" ]]'
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"(grep -c counted the -z listing's regular files with bytes as \"2\" and the grep's read list as \"\", not two counts)"* ]]
+    at_base
+}
+
+@test "the added lines' LINE COUNT under a wc -l that prints the real count and exits 1 is refused as unscanned naming wc and its status, through a real push of a clean commit, the remote at the base (a set widened to 1 publishes with nothing printed); a wc -l exiting 0 and answering NOTHING is refused on its digit check (round 8b: the round 7 rulings' D, and A.8's row)" {
+    clean_tip_after_base
+    tool_answering_then_exiting wc '[ "${1:-}" = -l ]' 1          # the added lines' count alone: every other wc of the hook is -c
+    run _hook_in "$REPO" -c 'printf "a\nb\n" | wc -l; echo "status $?"'
+    [[ "$output" == *"2"$'\n'"status 1" ]]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the ADDED LINES of commit ${sha:0:10} could not be counted (wc exited 1); the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"not a count"* ]]
+    at_base
+    tool_silent_on wc '[ "${1:-}" = -l ]'
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the ADDED LINES of commit ${sha:0:10} could not be counted (wc answered \"\", not a count); the scan is incomplete"* ]]
+    at_base
+}
+
+@test "a hidden blob's SIZE read FAILING (cat-file -s exiting 128) behind a content read that answers nothing (cat-file blob exiting 0, a hand-written two-shape git) is refused naming the size read and its status, through a real push, the remote at the base (a set widened to 128 refuses on the digit check instead, the line naming no status); the size read exiting 0 and answering NOTHING is refused on that digit check (round 8b: the round 7 rulings' D, and A.8's row)" {
+    hidden_file_in_middle_commit_after_base
+    git_shim "if [ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = blob ] && [ \"\${3:-}\" = $blob ]; then cat > /dev/null; exit 0; fi
+if [ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = -s ] && [ \"\${3:-}\" = $blob ]; then echo 'fatal: shim: cat-file -s refused' >&2; exit 128; fi"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CONTENT of notes.txt in commit ${leak:0:10}, which git calls binary and the identifier scan therefore skipped, was read as 0 bytes while its SIZE could not be read (git cat-file -s exited 128), so whether the blob is empty is unknown; the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"not a size"* ]]
+    at_base
+    git_shim "if [ \"\${1:-}\" = cat-file ] && { [ \"\${2:-}\" = blob ] || [ \"\${2:-}\" = -s ]; } && [ \"\${3:-}\" = $blob ]; then cat > /dev/null; exit 0; fi"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CONTENT of notes.txt in commit ${leak:0:10}, which git calls binary and the identifier scan therefore skipped, was read as 0 bytes while its SIZE reads \"\" (git cat-file -s), not a size, so whether the blob is empty is unknown"* ]]
+    at_base
+}
+
+@test "a symlink target's SIZE read FAILING (cat-file -s exiting 128) behind a target read that answers nothing (cat-file -p exiting 0, a hand-written two-shape git) over a link the remote holds is refused naming the size read and its status, through a real push, and the remote never gets the branch (a set widened to 128 refuses on the digit check instead); the size read exiting 0 and answering NOTHING is refused on that digit check (round 8b: the round 7 rulings' D, and A.8's row)" {
+    branch_inheriting_mains_symlink_leak
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    blob="$(git -C "$REPO" rev-parse "$sha:node_modules")"
+    git_shim "if [ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = -p ] && [ \"\${3:-}\" = $blob ]; then cat > /dev/null; exit 0; fi
+if [ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = -s ] && [ \"\${3:-}\" = $blob ]; then echo 'fatal: shim: cat-file -s refused' >&2; exit 128; fi"
+    push_ref_through_hook_with_shim feature
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the SYMLINK TARGET of node_modules at the tip of refs/heads/feature (${sha:0:10}) was read as empty while its SIZE could not be read (git cat-file -s exited 128), so whether the target is empty is unknown; the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"not a size"* ]]
+    run remote_holds_ref refs/heads/feature
+    [ "$status" -ne 0 ]
+    git_shim "if [ \"\${1:-}\" = cat-file ] && { [ \"\${2:-}\" = -p ] || [ \"\${2:-}\" = -s ]; } && [ \"\${3:-}\" = $blob ]; then cat > /dev/null; exit 0; fi"
+    push_ref_through_hook_with_shim feature
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the SYMLINK TARGET of node_modules at the tip of refs/heads/feature (${sha:0:10}) was read as empty while its SIZE reads \"\" (git cat-file -s), not a size, so whether the target is empty is unknown"* ]]
+    run remote_holds_ref refs/heads/feature
+    [ "$status" -ne 0 ]
+}
+
+@test "the TIP LISTING join (the -z listing against the grep's read list, an own= read) under an awk exiting 0 and printing nothing changes nothing by itself: the hidden text file the remote already holds is still named at the tip through a real push, and the remote stays at the base (the round 7 rulings' D: the join's gate is disarmed, the reads it gates stand)" {
+    hidden_file_on_remote_then_clean_commit
+    awk_silent_on_program 'listed[substr($0, i + 1)] = 1'       # tip_unlisted_read_file's program alone
+    run _hook_in "$REPO" -c 'printf "a\tb\n" > "$1/l"; printf "s:b\n" > "$1/r"; awk -v sha=s "FILENAME == ARGV[1] { i = index(\$0, \"\\t\"); listed[substr(\$0, i + 1)] = 1; next }" "$1/l" "$1/r"; echo "status $?"' _ "$TEST_DIR"
+    [ "$output" = "status 0" ]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that its diff attribute (unset) hides from the identifier scan, so the push is refused rather than scanned"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    at_base
+}
+
+@test "the TIP BLOBS read (the blob set of the tip, an own= read) under an awk exiting 0 and printing nothing changes nothing by itself: emptied, it sends every per-commit candidate to the byte judge, so the hidden file added in the pushed commit and kept at the tip is named at the tip AND in its commit through a real push, the safe side, and the remote stays at the base (the round 7 rulings' D)" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'notes.txt -diff\n' > "$REPO/.git/info/attributes"
+    commit_file notes.txt "seen on TESTHOST" "a banned string in a -diff file, kept at the tip"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    push_main_through_hook_with_shim                                 # no shim: the tip half alone names the blob the tip holds
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that its diff attribute (unset) hides"* ]]
+    [[ "$output" != *"notes.txt in commit ${sha:0:10}"* ]]
+    awk_silent_on_program 'f[1] == "120000") print f[3]'           # tip_blobs' program alone
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that its diff attribute (unset) hides"* ]]
+    [[ "$output" == *"romp pre-push: notes.txt in commit ${sha:0:10} is text that its diff attribute (unset) hides from the identifier scan, so the push is refused rather than scanned"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    at_base
+}
+
+@test "the LISTING join of a commit (its changed-path listing against its verdicts, an own= read) under an awk exiting 0 and printing nothing changes nothing by itself: the hidden text file in the middle commit, gone at the tip, is still named in its commit through a real push, and the remote stays at the base (the round 7 rulings' D)" {
+    hidden_file_in_middle_commit_after_base
+    awk_silent_on_program 'p = substr($0, 4); if (!(p in listed))'   # unlisted_verdict_path's program alone (the tip's listing join names listed[substr(...)])
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: notes.txt in commit ${leak:0:10} is text that its diff attribute (unset) hides from the identifier scan, so the push is refused rather than scanned"* ]]
+    [[ "$output" != *"listed short"* ]]
+    at_base
+}
+
+@test "the scanner log's ERR line (an own= read) under an awk exiting 0 and printing nothing, beside a scanner git that writes a line to stderr (so gitleaks does log an ERR line and drops the rest of the scan), is still refused through a real push: the count line is judged apart and the scan came up short, and the remote holds nothing (the round 7 rulings' D; a silent awk over a log with no ERR line would witness nothing)" {
+    real_gitleaks
+    add_remote
+    commit_file probe.py "token = \"$(probe_token)\"" "a credential"
+    commit_file slack.txt "slack = \"$(probe_slack)\"" "another credential"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    gitleaks_git_noisy
+    scan_direct "$sha"
+    [[ "$output" == *"ERR"* ]]                                       # the fixture's premise: the log carries an ERR line for the awk to miss (colour codes wrap it, so no surrounding spaces)
+    [[ "$output" == *"no leaks found"* ]]                            # and gitleaks reports the scan clean, so the ERR line and the count are the only two facts that catch it
+    awk_silent_on_program '$2 == "ERR"'
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" != *"gitleaks logged an error"* ]]                  # the ERR line went unread: the own= read is silent
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan of refs/heads/main (${sha:0:10}) covered "*" of the 2 commits with content to scan"* ]]   # the count gate backstops it, so the push is still refused
+    [[ "$output" == *"gitleaks could not scan"* ]]
+    run remote_holds_main
+    [ "$status" -ne 0 ]
+}
+
+# The road found while the rows above were written (round 8b): every tool a loop runs inherits the loop's
+# stdin, and four loops that run tools read their list on stdin, so a tool that reads its stdin (the
+# silent shape the shims here share) took the rest of the list. A two-ref push published its second ref
+# (an awk so silent on any of the three own= joins, during the first ref), a hidden file went unjudged (a
+# git so silent on an empty blob's read, the blob's own answer), a second ref's credential was never
+# scanned (a git so silent on the range probe), and the symlink loop's drain was caught only by its own
+# entry count. The loops read on a descriptor of their own now (the refs on 5, the links and the byte
+# judge's entries on 6), so such a tool meets the end of the hook's stdin; the census case at the end of
+# this block holds every loop that runs a tool to that.
+two_refs_second_leaking() {   # a base on the remote (BASE); main one clean commit ahead of it; feature, from the base, adding a banned line (fsha); main is pushed first
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" checkout -q -b feature
+    commit_file leak.txt "home is /home/zzsynthuser/code" "leak"
+    fsha="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" checkout -q main
+    commit_file more.txt "nothing to see" "more"
+}
+
+@test "a two-ref push whose FIRST ref meets an awk that exits 0, prints nothing and reads its stdin, on each of the three own= joins in turn (the tip's listing against the read list, the tip's blob set, a commit's listing against its verdicts), still scans the SECOND ref: its banned line is named and the remote never gets it (the round 8 text read the refs on stdin, the awk took the rest of them, and the second ref published with nothing printed; round 8b)" {
+    two_refs_second_leaking
+    for program in 'listed[substr($0, i + 1)] = 1' 'f[1] == "120000") print f[3]' 'p = substr($0, 4); if (!(p in listed))'; do
+        rm -rf "$TEST_DIR/shim"
+        awk_silent_on_program "$program"
+        push_refs_through_hook_with_shim main feature
+        [ "$status" -ne 0 ]
+        [[ "$output" == *"romp pre-push: the tip of refs/heads/feature (${fsha:0:10}) would publish a personal identifier in:"* ]]
+        [[ "$output" == *"romp pre-push: commit ${fsha:0:10} ADDS a personal identifier in:"* ]]
+        run remote_holds_ref refs/heads/feature
+        [ "$status" -ne 0 ]
+        at_base
+    done
+}
+
+@test "a byte judge that meets an EMPTY hidden blob first (its content read exiting 0 and printing nothing, the blob's own answer, while the git reads its stdin) still judges the hidden text file after it: the file is named in its commit through a real push and the remote stays at the base (the round 8 text read the entries on stdin, the git took the rest of them, and the push published with nothing printed; round 8b)" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'a-empty.txt -diff\nb-notes.txt -diff\n' > "$REPO/.git/info/attributes"
+    : > "$REPO/a-empty.txt"
+    printf 'seen on TESTHOST\n' > "$REPO/b-notes.txt"
+    git -C "$REPO" add a-empty.txt b-notes.txt
+    git -C "$REPO" commit -qm "an empty file and a banned one, both under -diff"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" rm -q a-empty.txt b-notes.txt
+    git -C "$REPO" commit -qm "remove them"
+    empty="$(git -C "$REPO" hash-object --stdin < /dev/null)"
+    git_shim "if [ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = blob ] && [ \"\${3:-}\" = $empty ]; then cat > /dev/null; exit 0; fi"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: b-notes.txt in commit ${leak:0:10} is text that its diff attribute (unset) hides from the identifier scan, so the push is refused rather than scanned"* ]]
+    [[ "$output" != *"a-empty.txt"* ]]                           # the empty file passes as empty, its size agreeing
+    at_base
+}
+
+@test "a symlink loop that meets a link over the EMPTY blob first (its target read exiting 0 and printing nothing, the blob's own answer, while the git reads its stdin) still reads the link after it: its banned target is named through a real push, and the remote never gets the branch (the round 8 text read the links on stdin, the git took the rest of them, and only the entry count refused, the banned target unread; round 8b)" {
+    add_remote
+    empty="$(git -C "$REPO" hash-object -w --stdin < /dev/null)"
+    target="$(printf '/home/zzsynthuser/code' | git -C "$REPO" hash-object -w --stdin)"
+    git -C "$REPO" update-index --add --cacheinfo "120000,$empty,a-empty" --cacheinfo "120000,$target,b-link"
+    git -C "$REPO" commit -qm "two links"
+    git -C "$REPO" push -q origin main                        # the remote holds both: the tip half alone reads them
+    git -C "$REPO" checkout -q -b feature
+    commit_file c.txt "nothing to see" "clean"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    git_shim "if [ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = -p ] && [ \"\${3:-}\" = $empty ]; then cat > /dev/null; exit 0; fi"
+    push_ref_through_hook_with_shim feature
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the tip of refs/heads/feature (${sha:0:10}) would publish a personal identifier"$'\n'"  in the SYMLINK TARGET of b-link -> /home/zzsynthuser/code"* ]]
+    [[ "$output" != *"listed short or long"* ]]
+    run remote_holds_ref refs/heads/feature
+    [ "$status" -ne 0 ]
+}
+
+@test "a two-ref push whose FIRST ref meets a range probe that exits 0, prints nothing and reads its stdin still credential-scans the SECOND ref: the real scanner names its credential through a real push and the remote never gets it (the round 8 text read the refs on stdin, the git took the rest of them, and the second ref's credential published with nothing printed; round 8b)" {
+    real_gitleaks
+    export ROMP_PRIVATE_STRINGS="$TEST_DIR/no-denylist"           # the credential scan alone: the identifier scan's range listing has the probe's shape
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    git -C "$REPO" checkout -q -b feature
+    commit_file probe.py "token = \"$(probe_token)\"" "a credential"
+    git -C "$REPO" checkout -q main
+    commit_file more.txt "nothing to see" "more"
+    tool_silent_on git '[ "${1:-}" = rev-list ] && [ "${3:-}" = --not ]'   # the range probe (rev-list <sha> --not --remotes ...), its answer discarded
+    push_refs_through_hook_with_shim main feature
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"github-pat"* ]]
+    [[ "$output" == *"gitleaks found a credential"* ]]
+    run remote_holds_ref refs/heads/feature
+    [ "$status" -ne 0 ]
+}
+
+stdin_loops_running_tools() {   # <bash file>: prints "<first line>-<last line>: <tools>" for each while-read loop that reads its list on stdin (a read with no -u) and runs a reading tool in its body; reads the census's helpers
+    local -a masked toks
+    local i j k depth seen tok sgm tools cmd
+    mapfile -t masked < <(masked_text "$1")
+    for ((i = 0; i < ${#masked[@]}; i++)); do
+        [[ "${masked[i]}" =~ (^|[[:space:]\;])while[[:space:]] ]] || continue
+        [[ "${masked[i]}" =~ (^|[[:space:]\;])read[[:space:]] ]] || continue
+        [[ "${masked[i]}" =~ read[[:space:]]+(-[^[:space:]]+[[:space:]]+)*-u[[:space:]]*[0-9] ]] && continue    # read -u N: the list on a descriptor of its own
+        depth=0; seen=0; j=$i
+        for ((k = i; k < ${#masked[@]}; k++)); do                # the loop's done: its do and done words counted from the while line
+            read -r -a toks <<< "${masked[k]//[;&|()]/ }"
+            for tok in ${toks[@]+"${toks[@]}"}; do
+                case "$tok" in do) depth=$((depth + 1)); seen=1 ;; done) depth=$((depth - 1)) ;; esac
+            done
+            if [ "$seen" -ne 0 ] && [ "$depth" -le 0 ]; then j=$k; break; fi
+        done
+        tools=""
+        for ((k = i; k <= j; k++)); do
+            while IFS= read -r sgm; do census_command "$sgm"; [ -z "$cmd" ] || tools="$tools $cmd"; done <<< "$(census_segments "${masked[k]}")"
+        done
+        [ -z "$tools" ] || echo "$((i + 1))-$((j + 1)):$tools"
+    done
+}
+
+@test "no loop that runs a reading tool reads its list on stdin (round 8b): every while-read loop whose body runs one reads with -u from a descriptor of its own, so a tool that reads its stdin empties no list; the census flags a planted loop that reads a herestring on stdin around a git, and passes the same loop on a descriptor and a loop of builtins" {
+    run stdin_loops_running_tools "$HOOK"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    # the loops that run tools read on a descriptor: five in the hook (the two ref loops, the symlink loop, the commit loop and the byte judge's)
+    [ "$(grep -cE 'while (IFS= )?read -r -u [0-9]' "$HOOK")" -eq 5 ]
+    { sed -n '1p' "$HOOK"; printf '%s\n' 'while read -r x; do' '    git cat-file -t "$x"' 'done <<< "$refs"'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/loop-a.sh"
+    run stdin_loops_running_tools "$TEST_DIR/loop-a.sh"
+    [ "$output" = "2-4: git" ]
+    { sed -n '1p' "$HOOK"; printf '%s\n' 'while read -r -u 5 x; do' '    git cat-file -t "$x"' 'done 5<<< "$refs"' 'while read -r x; do echo "$x"; done <<< "$refs"'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/loop-b.sh"
+    run stdin_loops_running_tools "$TEST_DIR/loop-b.sh"
+    [ -z "$output" ]
+}
+
+# ── round 8b (A.8): the population as the predicate, a table of every read ──
+# tests/pre-push-reads.tsv holds one row per tool read of the hook: every judged_read tag (gate= and own=)
+# and every read the census finds outside judged_read (its marker and array classes), each with the sibling
+# fact that shows a whole answer or the reason an empty or short exit-0 answer is the safe side there, and
+# the bats case that drives it (a silent or short shim through a real push, or, for a safe-side read, the
+# case that shows it refuses or stands down). The header's two lists are generated from the table
+# (tests/pre-push-reads-header.sh), never typed. The case below derives the read set from the hook's text
+# (the tags and the census) and reds on a read with no row, a row whose read is no read of the hook, a row
+# whose case names no case, and a hand edit of the generated header. The three named reds are executed here
+# over planted copies, so the pin's own sensitivity is shown, not assumed.
+READS_TSV="$ROMP_DIR/tests/pre-push-reads.tsv"
+READS_HEADER_GEN="$ROMP_DIR/tests/pre-push-reads-header.sh"
+hook_header_block() {   # <hook file>: the header's gate= and own= list block, the lines the generator emits
+    awk '/^# Reads gated by a sibling fact \(gate=\):$/ { p = 1 }
+         p && (/^# Reads gated by a sibling fact \(gate=\):$/ || /^# Reads whose empty answer is the object.s own \(own=\):$/ || /^#   /) { print; next }
+         p && /^#   / { print; next }
+         p { exit }' "$1"
+}
+tsv_rows() { grep -vE '^#' "$READS_TSV"; }   # the data rows alone
+
+@test "every read of the hook has a row in tests/pre-push-reads.tsv and every row names a real read and an existing case (A.8, round 8b): the gate= and own= tags equal the table's gate and own reads, the census's outside reads are as many as the table's outside rows, and the hook's header block is the table's generated output byte for byte" {
+    [ -f "$READS_TSV" ]
+    [ -x "$READS_HEADER_GEN" ]
+    # the header is generated, not typed: the hook's block equals the generator's output byte for byte
+    run bash "$READS_HEADER_GEN" "$READS_TSV"
+    [ "$status" -eq 0 ]
+    gen="$output"
+    [ "$(hook_header_block "$HOOK")" = "$gen" ]
+    # the tags the hook carries, one per distinct gate=/own= name
+    tags_gate="$(grep -oE 'judged_read gate="[^"]*"' "$HOOK" | sed -E 's/^judged_read gate="//; s/"$//' | sort -u)"
+    tags_own="$(grep -oE 'judged_read own="[^"]*"' "$HOOK" | sed -E 's/^judged_read own="//; s/"$//' | sort -u)"
+    [ -n "$tags_gate" ] && [ -n "$tags_own" ]
+    rows_gate="$(tsv_rows | awk -F'\t' '$1 == "gate" { print $2 }' | sort -u)"
+    rows_own="$(tsv_rows | awk -F'\t' '$1 == "own" { print $2 }' | sort -u)"
+    # a read with no row, or a row whose read is no read of the hook: the set equality reds on either
+    [ "$tags_gate" = "$rows_gate" ]
+    [ "$tags_own" = "$rows_own" ]
+    # the outside reads: the census's marker and array declared lines, as many as the table's outside rows
+    run undeclared_reads "$HOOK"
+    [ "$status" -eq 0 ]
+    census_outside="$(grep -cE '^declared: (marker|array) ' <<< "$output")"
+    rows_outside="$(tsv_rows | awk -F'\t' '$1 == "outside"' | grep -c .)"
+    [ "$census_outside" -eq "$rows_outside" ]
+    [ "$rows_outside" -gt 0 ]
+    # every row's case names exactly one @test in the named file (a row whose case names no case reds)
+    while IFS=$'\t' read -r kind read fact caseref; do
+        case "$kind" in gate|own|outside) ;; *) continue ;; esac
+        file="${caseref%%:*}"; sub="${caseref#*:}"
+        [ "$file" != "$caseref" ]                          # the ref carries a file and a title
+        [ -f "$ROMP_DIR/tests/pre-push-$file.bats" ]
+        [ "$(grep -F -c -- "$sub" "$ROMP_DIR/tests/pre-push-$file.bats")" -eq 1 ]
+        [ "$(grep -F -- "$sub" "$ROMP_DIR/tests/pre-push-$file.bats" | grep -c '^@test ')" -eq 1 ]   # and that line is a case's title: a row naming a comment or an assertion names no case
+    done < "$READS_TSV"
+    # every data row has a case column (four tab fields)
+    while IFS= read -r row; do [ "$(awk -F'\t' '{print NF}' <<< "$row")" -eq 4 ]; done < <(tsv_rows)
+
+    # the pin's own sensitivity, executed: a read with no row, a row naming no case, and a hand edit of the header
+    # (1) a planted judged_read tag with no row reds the tag set-equality
+    sed '1a judged_read gate="the PLANTED read with no row" 0 "the PLANTED read could not be made (a probe exited {rc})" -- git rev-parse HEAD' "$HOOK" > "$TEST_DIR/hook-plant-read.sh"
+    planted="$(grep -oE 'judged_read gate="[^"]*"' "$TEST_DIR/hook-plant-read.sh" | sed -E 's/^judged_read gate="//; s/"$//' | sort -u)"
+    [ "$planted" != "$tags_gate" ]                         # the plant is a tag the table lacks: the set-equality above would red
+    [[ "$planted" == *"the PLANTED read with no row"* ]]
+    # (2) a row whose case names no case: the resolver (the per-row grep above) finds zero matches for a title no case carries
+    local missing="zzsynth-no-such-case-$$-$RANDOM"
+    [ "$(grep -F -c -- "$missing" "$ROMP_DIR/tests/pre-push-hook.bats")" -eq 0 ]
+    # (3) a hand edit of the header: the generated block no longer equals the edited one
+    hook_header_block "$HOOK" | sed 's/the CONTENT grep of the tip/the CONTENT grep of the TIP hand-edited/' > "$TEST_DIR/header-edited.txt"
+    [ "$(cat "$TEST_DIR/header-edited.txt")" != "$gen" ]
 }

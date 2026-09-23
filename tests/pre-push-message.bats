@@ -697,3 +697,42 @@ git_answering_header_only_on_cat_file_p() {   # <sha>: a git whose `cat-file -p 
     run remote_holds_ref refs/tags/tab
     [ "$status" -ne 0 ]
 }
+
+# round 8b (the round 7 rulings' D): the tag SIZE read's refusal arms, driven as tests/pre-push-hook.bats drives
+# the hidden-blob and symlink-target SIZE arms, by a hand-written two-shape git over the one tag: its cat-file -p
+# reads its stdin and exits 0 printing nothing, and its cat-file -s runs the case's body (the round 8b audit added
+# this case, which the fixer's five D cases left out).
+git_silent_p_and_size() {   # <bash body for cat-file -s of $sha>: that git; the real git for every other command
+    local real_git
+    real_git="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v git)"      # the shim directory stripped: a shim written before this one is not the real git
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [ "${1:-}" = cat-file ] && [ "${2:-}" = -p ] && [ "${3:-}" = %q ]; then cat > /dev/null; exit 0; fi\n' "$sha"
+        printf 'if [ "${1:-}" = cat-file ] && [ "${2:-}" = -s ] && [ "${3:-}" = %q ]; then %s; fi\n' "$sha" "$1"
+        printf 'exec %q "$@"\n' "$real_git"
+    } > "$TEST_DIR/shim/git"
+    chmod 755 "$TEST_DIR/shim/git"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+
+@test "a tag object's SIZE read FAILING (cat-file -s exiting 128) behind a capture that answers nothing (cat-file -p exiting 0, a hand-written two-shape git) over a tag whose message names a banned host is refused naming the size read and its status, through a real push, and the remote never gets the tag (a set widened to 128 refuses on the digit check instead, the line naming no status); the size read exiting 0 and answering NOTHING is refused on that digit check (round 8b: the round 7 rulings' D, and A.8's row)" {
+    tag_over_clean_commit_on_remote "release one" "cut on TESTHOST"
+    git_silent_p_and_size 'echo "fatal: shim: cat-file -s refused" >&2; exit 128'
+    run _hook_in "$REPO" -c 'git cat-file -p "$1" < /dev/null; echo "status $?"; git cat-file -s "$1"; echo "status $?"' _ "$sha"
+    [ "$output" = "status 0"$'\n'"fatal: shim: cat-file -s refused"$'\n'"status 128" ]
+    push_ref_through_hook_with_shim refs/tags/v1
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the OBJECT of tag refs/tags/v1 (${sha:0:10}) was captured while its SIZE could not be read (git cat-file -s exited 128), so whether the read is whole is unknown, which ends the peel here"* ]]
+    [[ "$output" != *"not two counts"* ]]
+    [[ "$output" != *"carries a personal identifier"* ]]    # the capture was never parsed: refused for the read, not as a finding
+    [[ "$output" != *"shim:"* ]]                            # the shim's line went to the -q the helper puts on the read
+    run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
+    git_silent_p_and_size 'cat > /dev/null; exit 0'
+    push_ref_through_hook_with_shim refs/tags/v1
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the OBJECT of tag refs/tags/v1 (${sha:0:10}) was captured while its SIZE reads \"\" (git cat-file -s) and the capture's BYTE COUNT \"0\" (wc -c), not two counts, so whether the read is whole is unknown, which ends the peel here"* ]]
+    run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
+}

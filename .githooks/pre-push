@@ -106,7 +106,16 @@
 # before any tool runs (a git that drained stdin on the configuration read
 # that ran ahead of it emptied the list, both loops ran zero times, and every
 # ref of the push published with nothing printed; the round 7 refuters,
-# 2026-09-23); the scanner's own exit, judged from its
+# 2026-09-23), and never handed to a tool after it: no loop whose body runs
+# a tool reads its list on stdin (the ref loops, the symlink loop and the
+# byte judge's loop read theirs on a descriptor of their own, so a tool
+# that reads its stdin meets the end of the hook's, and empties nothing; an
+# awk silent with exit 0 that read its stdin during the first ref of a
+# two-ref push left the second ref unscanned and published it, a git so
+# silent on the credential scan's range probe did the same to a credential,
+# and one on the byte judge's read of an empty blob left a hidden file
+# unjudged, each through a real push; found in round 8b, 2026-09-23); the
+# scanner's own exit, judged from its
 # log. The STATUS-KEYED class: a read whose failure returns a
 # non-zero status (or prints an error line), refused by the set. The EXIT-0
 # EMPTY-OR-SHORT-ANSWER class: a read that exits 0 with an empty or a short
@@ -504,6 +513,7 @@ blocked_ids=0
 blocked_addresses=0     # a subset of blocked_ids, with a remedy of its own
 blocked_messages=0      # likewise a subset of blocked_ids, with a remedy of its own
 blocked_tags=0          # an annotated tag's own tagger or message: one of the two above, with a remedy of its own
+blocked_tag_addresses=0 # a subset of blocked_tags: a tag's own tagger address, whose remedy waits on the chosen-addresses read
 blocked_creds=0
 failed_scan=0           # a read or scan that could not complete: refused as unscanned (unscanned, the gitleaks arm)
 failed_creds=0          # a subset of failed_scan: gitleaks itself could not scan, with advice of its own
@@ -1567,7 +1577,13 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
         fi
     done 3<<< "$revs"
     [ -s "$scratch/entries" ] || return 0
-    while IFS= read -r -d '' entry; do
+    # The entries are read on descriptor 6, never stdin: every tool the loop
+    # runs (the byte judge, the report's reads) inherits stdin, and one that
+    # read it would take the entries after its own, which no verdict would
+    # then judge (the header: a git silent on an empty blob's read, the blob's
+    # own answer, that read its stdin left a hidden file unjudged and
+    # published it; round 8b).
+    while IFS= read -r -u 6 -d '' entry; do
         place=${entry%%$'\t'*}; blob=${entry#*$'\t'}; blob=${blob%%$'\t'*}; path=${entry#*$'\t'*$'\t'}
         typed=0; case "$place" in *+typed) place=${place%+typed}; typed=1 ;; esac
         islink=0; case "$place" in *+link) place=${place%+link}; islink=1 ;; esac
@@ -1739,7 +1755,7 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
         fi
         hidden_paths=1
         failed_scan=1
-    done < "$scratch/entries"
+    done 6< "$scratch/entries"
 }
 
 # ── identifiers ───────────────────────────────────────────────────────────
@@ -1830,7 +1846,12 @@ scan_identifiers() {
     [ ${#grep_args[@]} -gt 0 ] || return 0
     chosen_emails                  # the same for every commit in the push: read once, in the shell (it sets chosen and chosen_unread)
 
-    while read -r local_ref local_sha _remote_ref remote_sha; do
+    # The refs on descriptor 5, never stdin, and the links below on 6: every
+    # tool the loop runs inherits stdin, and one that read it would take the
+    # refs after the current one, which no scan would then read (the header:
+    # an awk silent with exit 0 that read its stdin during the first ref of a
+    # two-ref push published the second; round 8b).
+    while read -r -u 5 local_ref local_sha _remote_ref remote_sha; do
         [ -n "${local_sha:-}" ] || continue
         [ "$local_sha" = "$zero" ] && continue          # deleting a remote ref pushes nothing
 
@@ -1945,7 +1966,7 @@ scan_identifiers() {
         # counted by the loop that reads each 120000 entry (an empty listing is
         # one empty line to the herestring, counted as nothing).
         tip_entries=0
-        while IFS= read -r link; do
+        while IFS= read -r -u 6 link; do
             [ -n "$link" ] || continue
             tip_entries=$((tip_entries + 1))
             case "$link" in "120000 "*) ;; *) continue ;; esac
@@ -1983,7 +2004,7 @@ scan_identifiers() {
                 echo "  in the SYMLINK TARGET of $link_path -> $target" >&2
                 blocked_ids=1
             fi
-        done <<< "$listing"
+        done 6<<< "$listing"
 
         # The lines each commit new to the remote adds. Each per-commit read below
         # (the parent count and the diff, the addresses, the message) is captured with its status before
@@ -2320,6 +2341,7 @@ scan_identifiers() {
                 blocked_ids=1
                 blocked_addresses=1
                 blocked_tags=1
+                blocked_tag_addresses=1
             fi
             # The message, parsed from the same capture above, like a commit's.
             if message_hit_lines "the MESSAGE of tag $local_ref (${obj:0:10})" "$msg"; then
@@ -2339,7 +2361,7 @@ scan_identifiers() {
             [ -n "$obj" ] || break      # the OBJECT read failed, answered short or carries no object line, reported above: nothing to peel to
             object_type "$local_ref" "$obj"
         done
-    done <<< "$refs"
+    done 5<<< "$refs"
 
     if [ "$hidden_paths" -ne 0 ]; then
         # Each remedy prints only where a refused line named its cause (or, for
@@ -2390,17 +2412,34 @@ scan_identifiers() {
         echo "  If the string is only in an INTERMEDIATE commit, squash or rewrite the branch." >&2
         echo "  If the tip only INHERITS a string an older commit added, merge the main that has since redacted it." >&2
         echo "  If the named commit is already on some remote, this clone has not fetched it: fetch, then push again." >&2
+        # The address remedies name causes the chosen-addresses read establishes
+        # (the address is the pusher's own; git filled it from the hostname), so
+        # with that read failed (chosen_unread) they are unknown and none prints:
+        # the paragraph leads with the failed read and its remedy, and keeps its
+        # general rule, and the tag's remedy below waits the same way for a tag
+        # refused on its tagger's address (until round 8b the say-so line and
+        # the bullets printed beside a failed read, whose repair they could not
+        # replace; the round 7 refuters, 2026-09-23).
         if [ "$blocked_addresses" -ne 0 ]; then
-            echo "  An address this clone is not configured to use, with a banned string in its domain, is refused on every commit it stamps:" >&2
-            echo "    if it is yours, say so (git config --global user.email <address>) and push again;" >&2
-            echo "    if git filled it from the hostname (an unset user.email gets <login>@<hostname>), set yours, add user.useConfigOnly true" >&2
-            echo "    so git never fills it again, and rewrite the named commits, e.g. git rebase <base> --exec 'git commit --amend --no-edit --reset-author'." >&2
+            if [ "$chosen_unread" -ne 0 ]; then
+                echo "  The addresses this clone is configured to use could not be read (git config --get-all user.email exited $chosen_unread, refused above), so whether it chose each address named is unknown: run git config --get-all user.email yourself to see git's own error, repair that read and push again; configuring an address changes nothing until then." >&2
+                echo "  An address this clone is not configured to use, with a banned string in its domain, is refused on every commit it stamps." >&2
+            else
+                echo "  An address this clone is not configured to use, with a banned string in its domain, is refused on every commit it stamps:" >&2
+                echo "    if it is yours, say so (git config --global user.email <address>) and push again;" >&2
+                echo "    if git filled it from the hostname (an unset user.email gets <login>@<hostname>), set yours, add user.useConfigOnly true" >&2
+                echo "    so git never fills it again, and rewrite the named commits, e.g. git rebase <base> --exec 'git commit --amend --no-edit --reset-author'." >&2
+            fi
         fi
         if [ "$blocked_messages" -ne 0 ]; then
             echo "  A commit MESSAGE is never redacted forward: rewrite the named commit (git commit --amend for the tip, a reword rebase with git rebase -i <base> for an older one) and push again." >&2
         fi
         if [ "$blocked_tags" -ne 0 ]; then
-            echo "  An annotated TAG's tagger and message are the tag object's own: re-create it under your configured address, with a clean message (git tag -f -a <name> <commit>), and push it again." >&2
+            if [ "$chosen_unread" -ne 0 ] && [ "$blocked_tag_addresses" -ne 0 ]; then
+                echo "  An annotated TAG's tagger and message are the tag object's own." >&2
+            else
+                echo "  An annotated TAG's tagger and message are the tag object's own: re-create it under your configured address, with a clean message (git tag -f -a <name> <commit>), and push it again." >&2
+            fi
         fi
     fi
 }
@@ -2527,7 +2566,12 @@ scan_credentials() {
     cfg=()
     [ -f "$root/.gitleaks.toml" ] && cfg=(--config "$root/.gitleaks.toml")
 
-    while read -r local_ref local_sha _remote_ref remote_sha; do
+    # The refs on descriptor 5, never stdin, as in scan_identifiers: a tool
+    # the loop runs that read its stdin would take the refs after the current
+    # one, and no scan would read them (a git silent with exit 0 on the range
+    # probe below that read its stdin published a second ref's credential
+    # through a real push; round 8b).
+    while read -r -u 5 local_ref local_sha _remote_ref remote_sha; do
         [ -n "${local_sha:-}" ] || continue
         [ "$local_sha" = "$zero" ] && continue      # deleting a remote ref pushes nothing
         # The range has to RESOLVE in this clone before gitleaks sees it: handed
@@ -2640,7 +2684,7 @@ scan_credentials() {
                 fi
             fi
         fi
-    done <<< "${root:+$refs}"
+    done 5<<< "${root:+$refs}"
 
     if [ "$blocked_creds" -ne 0 ]; then
         echo "" >&2

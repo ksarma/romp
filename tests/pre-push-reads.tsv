@@ -1,0 +1,69 @@
+# A.8 (round 8b): every tool read of .githooks/pre-push, one row per read. Columns TAB-separated: kind, read, fact, case.
+# kind: gate= or own= (a judged_read tag) or outside (a read declared outside judged_read, the census's marker/array class).
+# fact: the sibling fact that shows a whole answer, or the reason an empty/short exit-0 answer is the safe side there.
+# case: <file>:<@test title substring>, one match in tests/pre-push-<file>.bats, the case that drives the read (a silent or short shim through a real push, or, for a safe-side read, the case showing it refuses or stands down).
+# The header's gate= and own= lists are GENERATED from this file (tests/pre-push-reads-header.sh); do not hand-edit them or this table's read column.
+gate	the CONTENT grep of the tip	the grep's own status: exit 0 is a match, so a match printing no hit line is short (refused naming the read)	hook:a tip content grep that exits 0 (a match) and prints NO hit line
+gate	the SYMLINK listing of the tip	the tip tree's SIZE, read apart (a non-zero size for an empty listing is short)	hook:a git silent on ls-tree in BOTH its shapes
+gate	the SIZE of the tip's tree	a digit run compared with an empty listing (size 0 is the one empty tree)	hook:a git silent on ls-tree in BOTH its shapes
+gate	the TYPE of the object the tip peels to	safe: an empty or unreadable type leaves peeled empty, read as not-a-blob, so the symlink listing's 128 refuses	hook:a tag of a BLOB passes through a real push
+gate	the SYMLINK TARGET of a link at the tip	the blob's SIZE, read apart (a non-zero size for an empty target is short)	hook:a symlink TARGET read that answers NOTHING
+gate	the SIZE of a symlink target blob	a digit run compared with an empty target	hook:a symlink target's SIZE read FAILING
+gate	the COMMIT listing of a pushed ref	the peeled type, a remote-tracking ref containing the commit, or the ancestry (an empty listing while none holds is short)	hook:a commit listing that answers NOTHING (rev-list exiting 0 with no commit) on a NEW branch
+gate	the REMOTE REFS containing the pushed commit	safe: a non-answer keeps agreed 0, so the empty listing is judged short by the OR of this and the ancestry	hook:a commit listing that answers NOTHING (rev-list exiting 0 with no commit) on a NEW branch
+gate	the ANCESTRY of the pushed commit over the remote commit	safe: a non-answer keeps agreed 0, so the empty listing is judged short	hook:the same empty listing on a REF UPDATE
+gate	the PARENT COUNT of a commit	the commit named first in the answer (a short answer leaves the count empty, refused)	hook:a parent count that answers NOTHING beside a combined listing that answers nothing
+gate	the ADDED LINES diff of a commit	the marker line (--always: the commit's own sha, ahead of the diff), then the awk's recorded count	hook:the ADDED LINES diff under a git exiting 0 and printing nothing for diff-tree -p
+gate	the LINE COUNT of the added lines	a digit run compared with the awk's recorded count	hook:the added lines' LINE COUNT under a wc -l that prints the real count and exits 1
+gate	the ADDED LINES grep	the grep's own status: a match printing no hit line is short	hook:the ADDED LINES grep exiting 0 (a match) and printing NO line
+gate	the SORT of the paths a grep named	safe: an empty sort of named paths is refused as short	hook:the ADDED LINES grep exiting 0 (a match) and printing NO line
+gate	the ADDRESSES log of a commit	the two role lines the format asks for (any other shape is short)	identity:an ADDRESSES log that answers NOTHING
+gate	the MESSAGE log of a commit	the head marker and the tail marker the format asks for around the message	message:a MESSAGE log answering the marker line and the subject alone
+gate	the MESSAGE grep	the grep's own status: a match printing no line is short	message:the MESSAGE grep exiting 0 (a match) and printing NO line over a commit
+gate	the TYPE of a pushed object	the four object types (an answer outside them, or an empty one, refused)	identity:a TYPE read that answers NOTHING (cat-file -t exiting 0 with no output) over a tag
+gate	the OBJECT of a tag	the object's SIZE against the capture's BYTE COUNT	identity:a tag OBJECT that reads as NOTHING (cat-file -p exiting 0 with no output) over a banned tagger
+gate	the SIZE of a tag object	a digit run compared with the capture's byte count	message:a tag object's SIZE read FAILING
+gate	the BYTE COUNT of a tag capture	a digit run compared with the object's size	message:a tag OBJECT capture cut short after the HEADER
+gate	the -z listing of the tip	the symlink pass's entry count and the grep's read list (a short listing disagrees)	hook:a tip listing that DROPS a record the grep READ
+gate	the READ LIST of the grep of the tip	safe: an empty read list sends every regular file with bytes to the byte judge; the candidate join is its gate	hook:a tip listing that DROPS one record, the hidden file's
+gate	the ENTRY COUNT of the -z listing	the symlink pass's entry count (a different number is short)	hook:the ENTRY COUNT grep -c over the tip's rewritten listing answering the FULL count and exiting 2
+gate	the TIP CANDIDATES join	the -z listing's regular files with bytes less the grep's read list (the count the join must equal)	hook:the TIP CANDIDATES join under an awk exiting 0 and printing nothing
+gate	the FILE COUNT of the -z listing	a digit run in the candidate-count arithmetic (a non-count or a wrong count is short)	hook:the FILE COUNT grep -c over the tip's rewritten -z listing
+gate	the LINE COUNT of the read list	a digit run in the candidate-count arithmetic	hook:the LINE COUNT grep -c over the grep's rewritten read list
+gate	the NEWLINE COUNT of a scratch listing	a digit run before the newline test (a non-count is refused)	hook:a wc that answers NOTHING (exit 0, no count) is not a newline count of zero
+gate	the REWRITE of a scratch listing	the rewrite's byte count against its input's	hook:a tip listing whose rewrite answers NOTHING
+gate	the BYTE COUNT of a scratch listing	a digit run, the input's against the rewrite's	hook:a tip listing whose rewrite answers NOTHING
+gate	the CHANGED PATHS listing of a commit	the paths its numstats or combined patch name (a path missing is short)	hook:a commit whose changed-path listing answers NOTHING
+gate	the COMBINED PATCH of a merge	the join against its sections (a path with no section is short)	hook:a merge whose combined patch prints NOTHING
+gate	the SECTION ROWS of a combined patch	safe: an empty rows file leaves every merge path a short read at the join	hook:a merge whose combined patch prints NOTHING
+gate	the PER-PARENT listing of a merge	safe: an empty per-parent listing leaves a candidate a short read at the join	hook:a merge whose listing against each parent answers NOTHING
+gate	the RENAME CANDIDATES of a merge	safe: an empty candidates file leaves the join to judge each post-image against the sections	hook:a MERGE's listing whose rewrite for its rename candidates answers NOTHING
+gate	the NUMSTAT of a commit	the join against the listing's paths (a path with no numstat row is short)	hook:a numstat that exits 0 and answers for FEWER paths than the commit changes
+gate	the EMPTY TREE name	a non-empty answer (an empty one is refused naming the read)	hook:a type change whose addition verdict cannot be read (git hash-object
+gate	the JOIN of the verdicts of a commit	the count the join's awk records against the rows appended	hook:the JOIN of a commit's verdicts under an awk exiting 0 and printing nothing
+gate	the BYTE COUNTS of a hidden blob	the blob's SIZE, read apart (a count of zero for a blob with bytes is short)	hook:a hidden blob whose content read answers NOTHING
+gate	the SIZE of a hidden blob	a digit run compared with a zero byte count	hook:a hidden blob's SIZE read FAILING
+gate	the REPOSITORY ROOT	a non-empty answer (an empty one leaves no root to scan, refused)	hook:a scanner that exits 0 and reports NO commit count
+gate	the COUNT of commits with content to scan	a digit run compared with the count gitleaks reports	hook:the hook's own commit count answering NOTHING
+gate	the COLOUR STRIP of the scanner log	safe: an empty answer is judged by the count arm, which refuses a log with no count line	hook:a scanner that exits 0 and reports NO commit count
+gate	the COMMIT COUNT line of the scanner log	the hook's own count (a missing or short count refuses)	hook:a scan whose reported count falls short of the commits with content to scan
+own	the ADDRESS DOMAIN grep	safe: exit 0 is the hit and no line is no answer withheld (the grep's status alone)	identity:the ADDRESS DOMAIN grep exiting 2
+own	the CHOSEN ADDRESSES of this clone	safe: an empty answer is a clone with no user.email, the strict side (every stamped address judged)	hook:a chosen-addresses read that FAILS
+own	the SYMLINK TARGET grep	safe: the grep's status alone (exit 0 is the hit)	hook:the SYMLINK TARGET grep exiting 2
+own	the REPLACE REFS listing	safe: an empty answer is a clone with no replace ref	hook:a replace-ref listing that fails
+own	the TIP LISTING join against the read list	safe: a tool silent here disarms this gate while the read it gates stands under its status and its other gates	hook:the TIP LISTING join (the -z listing against the grep's read list, an own= read) under an awk
+own	the TIP BLOBS of the -z listing	safe: emptied, it sends every per-commit candidate to the byte judge	hook:the TIP BLOBS read (the blob set of the tip, an own= read) under an awk
+own	the LISTING join of a commit against its verdicts	safe: a tool silent here disarms this gate while the reads it gates stand	hook:the LISTING join of a commit (its changed-path listing against its verdicts, an own= read) under an awk
+own	the ERR line of the scanner log	safe: an empty answer is a log with no error; the count line beside it is gate=	hook:the scanner log's ERR line (an own= read) under an awk
+own	the RANGE probe of the credential scan	safe: its status alone decides (an unresolved range sends the scan over everything the tip reaches)	hook:a two-ref push whose FIRST ref meets a range probe
+outside	the log.showRoot configuration read	for the report alone: a failure reads as the key unset and costs the key line	hook:a failed read of log.showRoot
+outside	the diff attribute of a hidden path (check-attr)	for the report alone: an unread attribute leaves the refused line's tail open, both remedies printed	hook:a check-attr that answers NOTHING (a truncated read)
+outside	the diff driver's binary key	for the report alone: an unread driver key leaves the label at the two facts	hook:a MERGE moving a text file carrying the string onto a path a parent holds a BINARY file at
+outside	the SIZE of a hidden blob, for the report	for the report alone: a size read for the two-fact line, echo unknown on failure	hook:a MERGE moving a text file carrying the string onto a path a parent holds a BINARY file at
+outside	the core.bigFileThreshold read, for the report	for the report alone: an unread threshold leaves the line with its other facts	hook:a MERGE moving a text file carrying the string onto a path a parent holds a BINARY file at
+outside	the parent count re-read from pcount, for the report	for the report alone: an unreadable count leaves the previous-version read unmade	hook:a MERGE moving a text file carrying the string onto a path a parent holds a BINARY file at
+outside	the rename source, for the report	for the report alone: an unread rename source leaves the previous version unnamed	hook:the rename twin: an explicit diff attribute on the NEW path alone
+outside	the previous version's bytes, one-parent, for the report	for the report alone: an unread previous version leaves the two-fact line	hook:a one-parent commit turning a NUL-carrying file into a text file (the disclosed shape) whose check-attr FAILS
+outside	the previous version's bytes, a merge parent, for the report	for the report alone: an unread parent version leaves the two-fact line	hook:a MERGE moving a text file carrying the string onto a path a parent holds a BINARY file at
+outside	the root-commit probe, for the advice line	for the advice line alone: a candidate cause on a push refused already by the count	hook:a failed read of log.showRoot
+outside	the scanner's argument list (gitleaks_args)	no read: the array is built here and run as the scanner, its exit judged from its log	hook:a scan gitleaks reports as clean after its own git wrote to stderr
