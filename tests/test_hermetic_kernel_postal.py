@@ -80,7 +80,10 @@ line per module the trio test reads, then the unresolved names, then a summary l
 kernel spawn is found by the argv road (an element that is the path as written), the binding road (a name or target
 resolved to a declaration bound to it), or neither, and a module the scan can read neither way is labelled refused.
 The guard test holds the two lab modules on the argv road and no module refused, and reports the counts at whatever
-size the tree has.
+size the tree has. The table over the tree is ONE derivation per process (tests/parse_cache.py's derived, under
+ROADS_KEY), each module parsed once (its source_and_tree, the parse every census in the process shares): the trio
+test, the guard test, the comparison case and the --roads arm read that one table, and the peers test's walk reads the
+same parses (PR #850's ninth review round, after each had scanned or parsed the tree on its own).
 The residual, as a rule: whatever the scan does not read is no path. What it LISTS, under `# unresolved:` with its
 kind: a name or target in an argv that resolves to a declaration with no readable value (a parameter, an import, a
 loop or with target, an unpacking the scan cannot split) or to none at all (an attribute of an imported module,
@@ -137,7 +140,9 @@ the spawn site, naming the file.
 """
 import ast
 import builtins
+import collections
 import contextlib
+import gc
 import glob
 import io
 import json
@@ -155,6 +160,10 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environment (the module, not its classes)
 import ast_bindings   # noqa: E402  names resolved to their declarations by scope (tests/ast_bindings.py)
+if __package__:   # under pytest tests/ is a package: the one parse_cache module object every census in the process shares
+    from . import parse_cache   # noqa: E402  (`import parse_cache` through the path inserted above would be a second one)
+else:             # `python tests/test_hermetic_kernel_postal.py --roads`: a script, the module by name from HERE
+    import parse_cache   # noqa: E402
 
 TRIO = ("ROMP_POSTAL_PORT", "ROMP_POSTAL_PEERS", "ROMP_POSTAL_CLIENT_ONLY")
 
@@ -798,50 +807,98 @@ def _hermetic(src):
 
 
 def _census_modules(directory, skip=()):
-    """The (name, source) of the test modules a census reads: the .py files of `directory` by name, `skip` left out."""
+    """(name, path, text, tree) of the test modules a census reads: the .py files of `directory` by name, `skip` left
+    out, each read and parsed through tests/parse_cache.py's source_and_tree, one parse per file per process, shared
+    with every census in the process that reads the same file (the peers test's walk below, the thread-stop census)."""
     for name in sorted(os.listdir(directory)):
         if name.endswith(".py") and name not in skip:
-            with open(os.path.join(directory, name), encoding="utf-8", errors="replace") as f:
-                yield name, f.read()
+            path = os.path.join(directory, name)
+            yield (name, path) + parse_cache.source_and_tree(path, name)
+
+
+# the roads table over the real tree (HERE, TREE_SKIP) is ONE derivation per process: parse_cache.derived's key, HERE appended
+ROADS_KEY = ("tests/test_hermetic_kernel_postal.py", "the roads table")
+TREE_SKIP = (os.path.basename(__file__),)   # the trio test's population: every module under tests/ but this one
+_RoadsTable = collections.namedtuple("_RoadsTable", "roads hermetic compared verbs_hold paths")
+
+
+def _roads_build(directory, skip=()):
+    """THE BUILD of the roads table over `directory`: every module scanned ONCE and read by every reader of the table
+    (_roads_table). `roads` {name: (road, sites, unresolved)} (spawn_roads says what each holds); `hermetic` the names
+    of the modules that carry the trio (_hermetic over the module's text); `compared` {name: _regex_scan_comparison's
+    four values} for every module the round-8 regex census flags a call in or that has a spawn site, read with the
+    same scan, so the comparison case scans no module again; `verbs_hold` the KERNEL_VERBS verdict that comparison
+    read (_verbs_bin_romp_lacks over bin/romp); `paths` the files read. The table holds tuples, strings, numbers and
+    the dicts that index them, no scan and no bindings, and each module's bindings are released (Bindings.release)
+    before the next is read: parse_cache.derived holds the collector off for a build and freezes whatever is tracked
+    when it returns, so a bindings graph (cyclic: a scope holds its declarations and each declaration its scope) left
+    to the collector would be frozen dead for the process (the rule for a build in tests/parse_cache.py's docstring;
+    test_the_roads_build_drops_no_cycle_so_the_freeze_pins_nothing_dead)."""
+    verbs_hold = not _verbs_bin_romp_lacks(KERNEL_VERBS, _bin_romp_text())
+    roads, hermetic, compared, paths = {}, set(), {}, []
+    for name, path, src, tree in _census_modules(directory, skip):
+        paths.append(path)
+        if _hermetic(src):
+            hermetic.add(name)
+        scan = _SpawnScan(tree, name)
+        try:
+            try:
+                sites, refused = tuple(scan.sites()), False
+            except UnreadableSpawn as e:
+                sites, refused = ((0, str(e), "refused"),), True
+            unresolved = tuple(scan.unresolved)
+            dropped, missed, not_calls, flagged = _regex_scan_comparison(src, name, verbs_hold, scan_all=bool(sites) and not refused,
+                                                                         scanned=(tree, scan, [] if refused else sites, refused))
+            if flagged or missed or not_calls:
+                compared[name] = (tuple(dropped), tuple(missed), tuple(not_calls), flagged)
+        finally:
+            scan.bindings.release()
+        road = ("refused" if refused else "neither" if not sites else "binding" if any(r == "binding" for _, _, r in sites)
+                else "argv")
+        roads[name] = (road, sites, unresolved)
+    return _RoadsTable(roads, frozenset(hermetic), compared, verbs_hold, tuple(paths))
+
+
+def _roads_table(directory, skip=()):
+    """The roads table over `directory` (_roads_build). Over the real tree, `directory` HERE and `skip` TREE_SKIP, the
+    table is built once per process behind parse_cache.derived under ROADS_KEY, so the trio test, the guard test, the
+    comparison case and the --roads arm read one derivation; any other directory, a plant under a fresh temporary
+    path among them, is built directly and cached under no key."""
+    if os.path.realpath(directory) == HERE and tuple(skip) == TREE_SKIP:
+        return parse_cache.derived(ROADS_KEY + (HERE,), lambda: _roads_build(HERE, TREE_SKIP))
+    return _roads_build(directory, skip)
 
 
 def _kernel_spawn_offenders(directory, skip=()):
     """The test modules in `directory` that start a kernel process without the postal trio: (file name, line, argv text)
-    for every such spawn. Loud (UnreadableSpawn, naming the module) for a module whose argv the scan can read neither
-    way; never a silent verdict on it."""
-    offenders = []
-    for name, src in _census_modules(directory, skip):
-        sites = _kernel_spawn_sites(src, name)
-        if sites and not _hermetic(src):
-            offenders.extend((name, line, argv) for line, argv, _ in sites)
-    return offenders
+    for every such spawn, read from the roads table (_roads_table). Loud (UnreadableSpawn) on any module the table
+    labels refused, raised with the message the table stored, which names the module, the call's line and both
+    declarations; never a silent verdict on it."""
+    table = _roads_table(directory, skip)
+    refused = [sites[0][1] for road, sites, _ in table.roads.values() if road == "refused"]
+    if refused:
+        raise UnreadableSpawn("\n".join(refused))
+    return [(name, line, argv) for name, (road, sites, _) in table.roads.items() if road in ("argv", "binding")
+            and name not in table.hermetic for line, argv, _ in sites]
 
 
 def spawn_roads(directory, skip=()):
-    """Per module of `directory`: (road, sites, unresolved). The road is "neither" for a module with no kernel spawn,
-    "binding" when any of its spawn sites needed a name or target resolved to a declaration bound to the path, else
-    "argv" (every site an element that is the path as written). `sites` is _SpawnScan.sites; `unresolved` the names,
-    targets and calls met in ANY subprocess argv of the module that the scan reads no value or no function for, (line,
-    text, kind). A module
+    """Per module of `directory`: (road, sites, unresolved), the roads table's `roads` (_roads_table: over the real tree
+    the one derivation of the process). The road is "neither" for a module with no kernel spawn, "binding" when any of
+    its spawn sites needed a name or target resolved to a declaration bound to the path, else "argv" (every site an
+    element that is the path as written). `sites` is _SpawnScan.sites; `unresolved` the names, targets and calls met
+    in ANY subprocess argv of the module that the scan reads no value or no function for, (line, text, kind). A module
     the scan can read neither way is reported with the road "refused" and the message as its one site."""
-    roads = {}
-    for name, src in _census_modules(directory, skip):
-        scan = _SpawnScan(ast.parse(src, filename=name), name)
-        try:
-            sites = scan.sites()
-        except UnreadableSpawn as e:
-            roads[name] = ("refused", [(0, str(e), "refused")], scan.unresolved)
-            continue
-        road = "neither" if not sites else "binding" if any(r == "binding" for _, _, r in sites) else "argv"
-        roads[name] = (road, sites, scan.unresolved)
-    return roads
+    return _roads_table(directory, skip).roads
 
 
 def _print_roads(directory, skip=()):
     """The --roads arm: one line per module (`<module> <road> [<line>:<road>:<argv> ...]`), the unresolved names,
     targets and calls under `# unresolved:`, and a summary line with every count, so the census's population is derived
-    by one command rather than stated."""
-    roads = spawn_roads(directory, skip)
+    by one command rather than stated. It prints the roads table (_roads_table), over the real tree the one derivation
+    the tests read."""
+    table = _roads_table(directory, skip)
+    roads = table.roads
     for name, (road, sites, _) in roads.items():
         print("%s %s%s" % (name, road, "".join(" %d:%s:%s" % (line, r, argv.replace("\n", " ")) for line, argv, r in sites)))
     print("# unresolved: names, targets and calls met in a subprocess argv that the scan reads no value or no function for (line, text, kind)")
@@ -855,7 +912,7 @@ def _print_roads(directory, skip=()):
     count = {r: sum(1 for road, _, _ in roads.values() if road == r) for r in ("argv", "binding", "neither", "refused")}
     sites = [(r, name) for name, (_, s, _) in roads.items() for _, _, r in s]
     offenders = [(name, line, argv) for name, (road, s, _) in roads.items() if road in ("argv", "binding") and
-                 not _hermetic(open(os.path.join(directory, name), encoding="utf-8", errors="replace").read()) for line, argv, _ in s]
+                 name not in table.hermetic for line, argv, _ in s]
     print("# summary: modules %d; argv %d; binding %d; neither %d; refused %d; spawn sites %d (argv %d, binding %d); offenders %d; "
           "unresolved names %d in %d calls of %d modules by kind %s; sys.executable %d of them"
           % (len(roads), count["argv"], count["binding"], count["neither"], count["refused"], len(sites),
@@ -953,7 +1010,7 @@ def _bin_romp_text():
         return f.read()
 
 
-def _regex_scan_comparison(src, name, verbs_hold=True, scan_all=False):
+def _regex_scan_comparison(src, name, verbs_hold=True, scan_all=False, scanned=None):
     """Every call the round-8 regex census (_round8_regex_census) flags in `src`, held against the spawn scan over the
     same source. Returns (dropped, regex_missed, not_calls, flagged): `dropped` the (line, matched text, call text) of every
     match the scan accounts for in none of these ways: a site at the call's line (the module then owes the trio); an
@@ -967,16 +1024,21 @@ def _regex_scan_comparison(src, name, verbs_hold=True, scan_all=False):
     not excuses nothing). `regex_missed` the lines of the sites the regex census did not flag, reported and asserting
     nothing; `not_calls` the lines of regex matches at no call of the module's ast (a comment, a docstring, a string
     holding a snippet); `flagged` the number of calls of the ast the regex flags. A source the regex flags nowhere is
-    not scanned unless `scan_all`, so its `regex_missed` is empty."""
+    not scanned unless `scan_all`, so its `regex_missed` is empty. `scanned` is (tree, scan, sites, refused) from a scan
+    of `src` its caller already ran (_roads_build, so the tree is scanned once), else the source is parsed and scanned
+    here (a planted row's text)."""
     hits = _round8_regex_census(src)
     if not hits and not scan_all:
         return [], [], [], 0
-    tree = ast.parse(src, filename=name)
-    scan = _SpawnScan(tree, name)
-    try:
-        sites, refused = scan.sites(), False
-    except UnreadableSpawn:
-        sites, refused = [], True
+    if scanned is None:
+        tree = ast.parse(src, filename=name)
+        scan = _SpawnScan(tree, name)
+        try:
+            sites, refused = scan.sites(), False
+        except UnreadableSpawn:
+            sites, refused = [], True
+    else:
+        tree, scan, sites, refused = scanned
     listed = list(scan.unresolved_nodes)
     at = _source_offsets(src)
 
@@ -1232,6 +1294,23 @@ def _module_level_env_writes(tree, where="<module>"):
     return keys
 
 
+def _tree_module_paths():
+    """Every .py under tests/, walked recursively, fixtures/ included: the peers test's population."""
+    return sorted(glob.glob(os.path.join(HERE, "**", "*.py"), recursive=True))
+
+
+def _peers_writers(paths):
+    """The files of `paths` (under tests/) that write ROMP_POSTAL_PEERS at import (_module_level_env_writes), by their
+    path under tests/, each read through parse_cache.source_and_tree: the parse the roads table's derivation holds for
+    a module it read, one parse per file per process."""
+    writers = []
+    for path in paths:
+        rel = os.path.relpath(path, HERE)
+        if "ROMP_POSTAL_PEERS" in _module_level_env_writes(parse_cache.source_and_tree(path, rel)[1], rel):
+            writers.append(rel)
+    return writers
+
+
 def _cleanup_restores(funcs, cls, classes, tree, names, where):
     """The environment keys the cleanups registered under `funcs` (`self.addCleanup(callee, ...)`) write or pop: the
     callee resolved to a method of `cls` (`self.<name>`, its own or a base's through the module's classes) or to a
@@ -1302,8 +1381,12 @@ def _placement_faults(tree, where="test_kernel_tunnels.py"):
     return faults
 
 
+def _tunnels_path():
+    return os.path.join(HERE, "test_kernel_tunnels.py")
+
+
 def _tunnels_source():
-    return open(os.path.join(HERE, "test_kernel_tunnels.py"), encoding="utf-8", errors="replace").read()
+    return parse_cache.source_and_tree(_tunnels_path())[0]
 
 
 _PLANT_ANCHOR = 'os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1"\n'
@@ -1723,7 +1806,7 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual(env.get("ROMP_POSTAL_HERMETIC"), "1", "…marked as the run's own, so the bus honours it under a test (2026-09-11)")
 
     def test_the_runner_pops_an_inherited_bus_port_and_marks_the_runs_own(self):
-        src = open(os.path.join(HERE, "conftest.py"), encoding="utf-8", errors="replace").read()
+        src = parse_cache.source_and_tree(os.path.join(HERE, "conftest.py"))[0]
         self.assertIn('os.environ.pop("ROMP_POSTAL_PORT", None)', src, "a machine's named bus port never reaches a lab or an in-process kernel")
         self.assertIn('os.environ["ROMP_POSTAL_HERMETIC"] = "1"', src)
         floor = src.index('os.environ.pop("ROMP_STATE_DIR", None)')
@@ -1734,8 +1817,9 @@ class HermeticKernelPostal(unittest.TestCase):
         """Keyed on the spawn's argv read from each module's ast, every name resolved to its binding (_SpawnScan over
         ast_bindings), and on the trio's presence in the module's text (_hermetic); a module the scan can read neither
         way is loud here (UnreadableSpawn), never passed over. The offender is named with the file, the line and the
-        argv."""
-        offenders = _kernel_spawn_offenders(HERE, skip=(os.path.basename(__file__),))
+        argv. Read from the roads table over the tree (_roads_table), the one derivation of the process, which the guard
+        test, the comparison case and the --roads arm read too."""
+        offenders = _kernel_spawn_offenders(HERE, skip=TREE_SKIP)
         self.assertEqual(offenders, [], "these tests start a kernel process without the postal trio (use kernel_env, or set "
                                         "ROMP_POSTAL_PORT to a free port, ROMP_POSTAL_PEERS=0 and ROMP_POSTAL_CLIENT_ONLY=1), "
                                         "(file, line, argv): %r" % offenders)
@@ -1755,7 +1839,7 @@ class HermeticKernelPostal(unittest.TestCase):
         a staticmethod's attribute read through a parameter named self (row N42) are no site and each is under
         `unresolved` with its line, text and kind; a comprehension's own target is not, and neither is a builtin's
         call, a consumer."""
-        roads = spawn_roads(HERE, skip=(os.path.basename(__file__),))
+        roads = spawn_roads(HERE, skip=TREE_SKIP)
         counts = {r: sum(1 for road, _, _ in roads.values() if road == r) for r in ("argv", "binding", "neither", "refused")}
         report = ("the roads table over %d modules under tests/ (python tests/test_hermetic_kernel_postal.py --roads): argv %d, "
                   "binding %d, neither %d, refused %d; PLANT_TABLE %d rows"
@@ -1847,6 +1931,7 @@ class HermeticKernelPostal(unittest.TestCase):
         for name, text in planted.items():
             with open(os.path.join(d, name), "w", encoding="utf-8") as f:
                 f.write(text)
+            self.addCleanup(parse_cache.clear, os.path.join(d, name))   # the plant's parses leave the cache with the case
         text = planted["test_launch_no_trio.py"]
         planted_line = text[:text.index("subprocess.Popen")].count("\n") + 1
         self.assertEqual(_kernel_spawn_offenders(d), [("test_launch_no_trio.py", planted_line, "[KERNEL]")],
@@ -1896,6 +1981,7 @@ class HermeticKernelPostal(unittest.TestCase):
                      + '        subprocess.run(k)\n')
         with open(os.path.join(loud_dir, "test_rebinding.py"), "w", encoding="utf-8") as f:
             f.write(rebinding)
+        self.addCleanup(parse_cache.clear, os.path.join(loud_dir, "test_rebinding.py"))
         with self.assertRaises(UnreadableSpawn, msg="a name bound to the path and to a pytest argv in one function is refused loudly by the census") as loud:
             _kernel_spawn_offenders(loud_dir)
         for needle in ("test_rebinding.py line 8:", "(line 6:", "(line 7:"):
@@ -1912,19 +1998,23 @@ class HermeticKernelPostal(unittest.TestCase):
         path at the call, a match inside a -c program, the CLI with a verb outside KERNEL_VERBS). A match in none of
         these reds the case, naming the module or row, the line and the match. The tree has no instance of a shape the
         scan once dropped, so the rows are where such a shape reds. The rows whose label says the regex missed them
-        too are held to carrying no call it flags. Reported and asserting nothing: the rows whose sites
+        too are held to carrying no call it flags. Reported and asserting nothing: the rows and the modules whose sites
         the regex missed (B1 and the rest of round 8's silent half) and the rows whose regex match lies at no call of
-        the ast (N11, N12). Over the tree the scan runs only on the modules the regex flags a call in, so the sites
-        the regex missed are reported for the rows alone. Then the comparison is run against two plants it must red:
-        a consumer call the regex flags (os.path.relpath of a name bound to the path, beside a listed sys.executable
-        that does not cover it), and the refresh row with KERNEL_VERBS taken to name a verb bin/romp lacks."""
+        the ast (N11, N12). The tree half is read from the roads table (_roads_table), whose one derivation compared
+        each module with the scan it ran for the roads, so this case scans no module of the tree again. Then the
+        comparison is run against two plants it must red: a consumer call the regex flags (os.path.relpath of a name
+        bound to the path, beside a listed sys.executable that does not cover it), and the refresh row with
+        KERNEL_VERBS taken to name a verb bin/romp lacks."""
         text = _bin_romp_text()
         verbs_hold = not _verbs_bin_romp_lacks(KERNEL_VERBS, text)
-        dropped, tree_flagged, rows_flagged, missed, not_calls = [], 0, 0, [], []
-        for name, src in _census_modules(HERE, skip=(os.path.basename(__file__),)):
-            d, _, _, flagged = _regex_scan_comparison(src, name, verbs_hold)
+        table = _roads_table(HERE, TREE_SKIP)
+        self.assertEqual(table.verbs_hold, verbs_hold, "the roads table's derivation compared the tree under the KERNEL_VERBS "
+                         "verdict this case reads for the rows")
+        dropped, tree_flagged, rows_flagged, missed, not_calls, tree_missed = [], 0, 0, [], [], []
+        for name, (d, rm, _, flagged) in sorted(table.compared.items()):
             dropped += [(name,) + x for x in d]
             tree_flagged += flagged
+            tree_missed += ["%s:%s" % (name, ",".join(map(str, rm)))] if rm else []
         for label, _, _, src in PLANT_TABLE:
             d, rm, nc, flagged = _regex_scan_comparison(src, "planted.py", verbs_hold, scan_all=True)
             dropped += [(label,) + x for x in d]
@@ -1940,8 +2030,8 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual(dropped, [], "calls the round-8 regex census flagged that the scan neither reads as a site nor lists, "
                          "and that no exclusion covers ((module or row, line, match, call); KERNEL_VERBS held to bin/romp: %s): "
                          "%r. Over %d flagged calls of the tree and %d of the rows; the rows whose sites the regex missed: %s; "
-                         "the rows whose regex match lies at no call: %s" % (verbs_hold, dropped, tree_flagged, rows_flagged,
-                                                                             missed, not_calls))
+                         "the modules whose sites it missed (module:lines): %s; the rows whose regex match lies at no call: %s"
+                         % (verbs_hold, dropped, tree_flagged, rows_flagged, missed, tree_missed, not_calls))
         consumer = 'KERNEL = os.path.join(BIN, "romp-kernel")\nsubprocess.run([sys.executable, os.path.relpath(KERNEL)])'
         scan = _SpawnScan(ast.parse(consumer), "planted.py")
         self.assertEqual((scan.sites(), [text for line, text, _ in scan.unresolved if line == 2]), ([], ["sys.executable"]),
@@ -1976,13 +2066,99 @@ class HermeticKernelPostal(unittest.TestCase):
                          ["-x", "inner", "omega"], "the reader takes the == and =~ tests of the first word and the top-level "
                          "arms, and neither a nested case's arm, a test of another word nor a catch-all arm")
 
+    def test_the_tree_is_parsed_once_per_module_and_its_roads_table_derived_once_per_process(self):
+        """THE MECHANISM, not the seconds (review round 9: the rewrite tripled this module's serial time, the trio test
+        and the guard test each scanning the whole tree and the peers test parsing it again). The roads table over the
+        real tree sits behind one parse_cache.derived key (_roads_table: ROADS_KEY with HERE), and every module source
+        this module reads goes through parse_cache.source_and_tree, one parse per file per process. Held through the
+        helper's counters: after the trio test's read (_kernel_spawn_offenders, which builds the table when no test of
+        this process has), the guard test's read (spawn_roads), the --roads arm's (_print_roads) and the comparison
+        case's (_roads_table) answer the object the first read built, build and parse nothing, and are counted as hits;
+        the key was built once in the process; every module the table read was parsed once; and the peers test's walk
+        (_peers_writers over _tree_module_paths) reads each file of its population through the cache, one call per
+        file, each file then parsed once, the modules the table read among them. The red is the round's mutant run,
+        not a plant here (clearing the key here would make the next test of the process derive again): a
+        parse_cache.clear of the key between the trio test's read and the guard test's shows a second build, since the
+        counters are cumulative and clear() leaves them."""
+        key = ROADS_KEY + (HERE,)
+        _kernel_spawn_offenders(HERE, skip=TREE_SKIP)                  # the trio test's read
+        table = _roads_table(HERE, TREE_SKIP)
+        before = parse_cache.stats()
+        roads = spawn_roads(HERE, skip=TREE_SKIP)                      # the guard test's read
+        with contextlib.redirect_stdout(io.StringIO()):
+            _print_roads(HERE, skip=TREE_SKIP)                          # the --roads arm's
+        again = _roads_table(HERE, TREE_SKIP)                          # the comparison case's
+        after = parse_cache.stats()
+        self.assertEqual(parse_cache.builds_of(key), 1, "the roads table over the tree was built %d times in this process, "
+                         "not once (parse_cache.builds_of)" % parse_cache.builds_of(key))
+        self.assertIs(roads, table.roads, "the guard test reads the table the trio test's read built")
+        self.assertIs(again, table, "the comparison case reads the same table")
+        moved = {k: after[k] - before[k] for k in ("derivations", "parses", "derived_hits")}
+        self.assertEqual(moved, {"derivations": 0, "parses": 0, "derived_hits": 3}, "the guard test's, the --roads arm's and the "
+                         "comparison case's reads built and parsed nothing and were answered from the memo")
+        self.assertTrue(table.paths and len(table.paths) == len(table.roads), "the table read no module, or its paths and "
+                        "its rows disagree: %d paths, %d rows" % (len(table.paths), len(table.roads)))
+        self.assertEqual([os.path.relpath(p, HERE) for p in table.paths if parse_cache.parses_of(p) != 1], [],
+                         "a module the roads table read was parsed other than once in this process (parse_cache.parses_of)")
+        paths = _tree_module_paths()
+        self.assertTrue(set(table.paths) <= set(paths), "the peers test's population holds every module the table read")
+        before = parse_cache.stats()
+        _peers_writers(paths)
+        after = parse_cache.stats()
+        self.assertEqual(after["parses"] - before["parses"] + after["parse_hits"] - before["parse_hits"], len(paths),
+                         "the peers test's walk reads every file of its population through parse_cache, one call per file")
+        self.assertEqual([os.path.relpath(p, HERE) for p in paths if parse_cache.parses_of(p) != 1], [],
+                         "a file the peers test's walk reads was parsed other than once in this process")
+
+    def test_the_roads_build_drops_no_cycle_so_the_freeze_pins_nothing_dead(self):
+        """THE RULE FOR A BUILD (tests/parse_cache.py's docstring): derived() holds the collector off for the whole build
+        and freezes whatever is tracked when it returns, so a cycle the build dropped is frozen with the table for the
+        rest of the process, never reclaimed. Each module's scan holds its bindings, which are cyclic (a scope holds its
+        declarations and each declaration its scope), and _roads_build releases them (ast_bindings' Bindings.release)
+        before it reads the next module, keeping tuples, strings and numbers in the table. Pinned by mechanism, the way
+        the thread-stop census pins its tree: a plant directory holding every PLANT_TABLE row as a module, every road
+        and the refusal among them, built by _roads_build DIRECTLY (never through derived(), whose freeze would hide
+        the garbage) with the collector off, twice: the first build warms what a first use imports or fills, a
+        gc.collect() takes the baseline, and after the second build, the table alive, gc.collect() finds no
+        unreachable object (DEBUG_SAVEALL for that one collection, so a red names the types found). The round's
+        mutant that drops the release reds it with the plant's bindings graphs."""
+        self.assertTrue(gc.isenabled(), "the case plants the collector's off state from the on state pytest runs in")
+        self.addCleanup(gc.enable)                                     # registered BEFORE the disable below
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        for i, (_label, _kind, _site, src) in enumerate(PLANT_TABLE):
+            path = os.path.join(d, "test_row_%03d.py" % i)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(src + "\n")
+            self.addCleanup(parse_cache.clear, path)                  # the plant's parses leave the cache with the case
+        gc.disable()                                                   # the state derived() holds a build in; planted, as the build runs directly
+        warm = _roads_build(d)
+        self.assertEqual(len(warm.roads), len(PLANT_TABLE), "the plant's build reads a module per row")
+        self.assertEqual(sorted({road for road, _, _ in warm.roads.values()}), ["argv", "binding", "neither", "refused"],
+                         "the plant reads every road, the refusal among them")
+        del warm
+        gc.collect()                                                   # the baseline: nothing unreachable before the build under the pin
+        flags = gc.get_debug()
+        self.addCleanup(gc.set_debug, flags)                           # BEFORE the flag is set
+        start = len(gc.garbage)
+        gc.set_debug(gc.DEBUG_SAVEALL)
+        table = _roads_build(d)
+        unreachable = gc.collect()                                     # with `table` alive: what the build dropped in a cycle
+        gc.set_debug(flags)
+        kinds = collections.Counter(type(o).__name__ for o in gc.garbage[start:])
+        del gc.garbage[start:]
+        self.assertTrue(table.roads)
+        self.assertEqual(unreachable, 0, "the roads build dropped %d objects only the collector could reclaim (%s): a cycle the "
+                                         "build made and did not break before returning, which derived()'s freeze would keep for "
+                                         "the process" % (unreachable, ", ".join("%s %d" % kv for kv in kinds.most_common(8))))
+
     def test_the_module_that_loads_the_kernel_in_process_and_attaches_places_each_leg_of_the_trio_where_it_is_read(self):
         """Read by position from the module's ast, not by text (_placement_faults): the port is assigned at module level
         before the kernel loads (the kernel reads it at import); client-only is assigned before the load or in the setUp
         of every class that attaches or detaches; peers is assigned in each of those setUps and put back by a cleanup
         that setUp registers, and NEVER at module level. A module-level peers assignment is the leak of 2026-09-18 (the
         header); a tearDown-only restore is the hole of review round 1 (a subclass setUp that raises skips it)."""
-        self.assertEqual(_placement_faults(ast.parse(_tunnels_source())), [])
+        self.assertEqual(_placement_faults(parse_cache.source_and_tree(_tunnels_path())[1]), [])
 
     def test_the_placement_check_reds_on_a_planted_module_level_write_and_on_a_teardown_only_restore(self):
         """The check is run over synthetic copies of the real module so it is known to be able to fail (review round 1,
@@ -2027,16 +2203,11 @@ class HermeticKernelPostal(unittest.TestCase):
         os.environ or any name bound to it), and a write whose keys the scan cannot read fails here naming the file
         and line rather than passing unread. The per-test half (set in setUp, put back by a cleanup) is a convention,
         checked above for the tunnels module alone; tests/README.md says so."""
-        paths = sorted(glob.glob(os.path.join(HERE, "**", "*.py"), recursive=True))
+        paths = _tree_module_paths()
         walked = sorted(os.path.join(d, f) for d, _, fs in os.walk(HERE) for f in fs if f.endswith(".py"))
         self.assertEqual(paths, walked, "the glob walks every .py under tests/, subdirectories included: the set an os.walk finds")
         self.assertGreater(len(paths), 900, "the scan walks the whole tree, recursively: %d files (941 on 2026-09-18)" % len(paths))
-        writers = []
-        for path in paths:
-            rel = os.path.relpath(path, HERE)
-            tree = ast.parse(open(path, encoding="utf-8", errors="replace").read(), filename=path)
-            if "ROMP_POSTAL_PEERS" in _module_level_env_writes(tree, rel):
-                writers.append(rel)
+        writers = _peers_writers(paths)
         self.assertEqual(writers, [], "these modules write ROMP_POSTAL_PEERS at import; the kernel and the postal service "
                                       "read it at call time, and under xdist every worker imports every collected module")
         # the scan itself is known to see a planted write in every shape, bare and in an if body, and to ignore one inside a def
@@ -2059,7 +2230,7 @@ class HermeticKernelPostal(unittest.TestCase):
         # the one module-level update in the tree today reads its mapping through a name bound to a dict literal
         # (tests/test_update_banner_confirm_served.py's DEAD_PORTS): the scan reads the keys, and the module stays clean
         banner = "test_update_banner_confirm_served.py"
-        seen = _module_level_env_writes(ast.parse(open(os.path.join(HERE, banner), encoding="utf-8", errors="replace").read()), banner)
+        seen = _module_level_env_writes(parse_cache.source_and_tree(os.path.join(HERE, banner))[1], banner)
         self.assertTrue({"ROMP_MANAGER_PORT", "ROMP_KERNEL_PORT", "ROMP_SERVE_PORT"} <= seen,
                         "%s updates os.environ from DEAD_PORTS at import; the scan reads the keys through the name: %r" % (banner, sorted(seen)))
         # a write the scan cannot read is loud, with the file and the line, never a clean pass
@@ -2114,7 +2285,7 @@ class HermeticKernelPostal(unittest.TestCase):
             self.assertEqual(out["after_cleanups"], "1", "%s: the planted copy's own cleanup still restores the shell's value" % label)
 
     def test_the_peer_notify_guard_test_carries_the_trio_around_the_call_it_forces_to_fail(self):
-        src = open(os.path.join(HERE, "test_kernel.py"), encoding="utf-8", errors="replace").read()
+        src = parse_cache.source_and_tree(os.path.join(HERE, "test_kernel.py"))[0]
         body = src[src.index("def test_notify_bus_peer_is_guarded"):src.index("class CheckinMechanics")]
         self.assertIn('os.environ.update(ROMP_POSTAL_CLIENT_ONLY="1", ROMP_POSTAL_PEERS="0", ROMP_POSTAL_PORT="1")', body,
                       "client-only with peers off and a port nothing can bind, for the call the refusal revives the bus from")
@@ -2126,6 +2297,6 @@ if __name__ == "__main__":
     if sys.argv[1:2] == ["--roads"]:
         # `python tests/test_hermetic_kernel_postal.py --roads [directory]`: the per-module roads table, the unresolved
         # names and the summary counts (the census's population, derived by this one command)
-        _print_roads(sys.argv[2] if len(sys.argv) > 2 else HERE, skip=(os.path.basename(__file__),))
+        _print_roads(sys.argv[2] if len(sys.argv) > 2 else HERE, skip=TREE_SKIP)
     else:
         unittest.main()

@@ -20,6 +20,7 @@ one, and what a call is handed is held to that declaration, never to the text.
                                                      # method's and each module subclass's (road "instance"); other
                                                      # dotted targets one list, by their spelling (road "spelled")
     bindings.declarations("KERNEL")                  # the module scope's
+    bindings.release()                               # break the index's cycles once read (a build under parse_cache)
 
 A Declaration has the name, the kind (assign, augassign, unpack, def, class, import, parameter, loop, with,
 except, match, del), the statement (`node`), the bound expression (`value`: the right side, the matching element
@@ -195,6 +196,20 @@ class Bindings:
         except KeyError:
             raise AssertionError("the node %s at line %s was not read by these bindings (not a node of the tree they were "
                                  "built over)" % (type(node).__name__, getattr(node, "lineno", "?"))) from None
+
+    def release(self):
+        """Break the index's reference cycles, so reference counting frees it once the caller drops it: a scope holds
+        these bindings and its declarations, and each declaration holds its scope. For a caller that builds under
+        tests/parse_cache.py's derived(), whose collector is off for the build and whose freeze afterwards keeps any
+        cycle the build dropped (the rule for a build in that module's docstring). No scope or declaration is usable
+        after this. The tree is not touched."""
+        scopes = {id(s): s for s in list(self.owner.values()) + list(self.scopes.values()) + [self.module] if s is not None}
+        for scope in scopes.values():
+            scope.names, scope.attrs, scope.parent, scope.bindings = {}, {}, None, None
+        self.module = None
+        for table in (self.dotted, self.owner, self.scopes, self._mro, self._concrete):
+            table.clear()
+        self._deferred = []
 
     def class_chain(self, klass):
         """A class scope and the scopes of its bases defined in the module, transitively, breadth first."""
