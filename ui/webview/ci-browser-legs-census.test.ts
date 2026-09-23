@@ -38,7 +38,10 @@
 // and 5 say in their holds field what else they hold, and the same test holds the table to that statement. Of the round-5 rows (p156
 // to R5_LAST: the eleven silent forms the round-4 review named and the tagged-template loader its verifiers found, each planted with THE
 // SAFETY NET's refusal as its outcome until a fold reads the form, the fold's sentence or class once one does, with one net-only row
-// per kind of mention the net names so every arm of the net keeps a plant, and the controls and pin rows the folds bring; then the
+// per kind of mention the net names and, since round 6, one per position specHolder reads and per spelling of the createRequire hit
+// that had none (p246 to p248: the package's name in an array literal that is a call's argument, as a new expression's argument, and
+// the member createRequire with a const specifier, each refused by the net before round 6 and silenced by the deletion of its arm
+// alone, which no fixture row caught), so every arm of the net keeps a plant, and the controls and pin rows the folds bring; then the
 // string-typed parameter passed back to its own function, under which the census before round 5 died whole with a bare RangeError, so
 // those rows red as census(PLANTS) throwing rather than as a row mismatch, beside its non-cyclic control; then a helper's own engine,
 // skip or swallow, dropped before round 5 from the record of a test that calls inBrowser itself and folded into it since, beside the
@@ -607,9 +610,10 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p184-n10b-driver-subpath.test.ts", leg: true, cls: "embedded", gap: "drives playwright from a child process whose source is held in a string (line 2)" }, // n10b: require("playwright/test") in the text, a subpath the regex's closing quote excludes and isPwPackage reads (before: class none, no refusal; net alone: the subpath inside the text)
   { dir: W, file: "p185-n10c-driver-bound-loader.test.ts", leg: true, cls: "embedded", gap: "drives playwright from a child process whose source is held in a string (line 2)" }, // n10c: const req = createRequire(import.meta.url), req("playwright") in the text: the bound loader read by the same walk1 rule the module's own code is (before: class none, no refusal; net alone: the specifier inside the text)
   { dir: W, file: "p186-n12-tagged-template-loader.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p186-n12-tagged-template-loader.test.ts:2: " + NET_HEAD + NET_PW + NET_NO_REACH }, // n12 (the round-5 verifiers' twelfth form): require`playwright`.firefox.launch(), a tagged template the walker reads as no call: the template's text is a specifier-capable position to the net, no fold reads the form, and the net's refusal is its outcome (before round 5: class none, no refusal)
-  // net-only rows (round 5's folds): one row per KIND of mention the net names whose planted forms the folds now read, so every arm of
-  // the net keeps a plant that reds when it is silenced; each is a form no fold reads, and each is a stated false refusal of the p74
-  // class (the walker reaches no browser through it) or a silent form the round's rulings fold nowhere
+  // net-only rows (round 5's folds): one row per kind of mention the net names whose planted forms the folds now read, and, since round
+  // 6, one per position specHolder reads and per spelling of the createRequire hit (p246 to p248, at the round-5 range's end), so every
+  // arm of the net keeps a plant that reds when it is silenced; each is a form no fold reads, and each is a stated false refusal of the
+  // p74 class (the walker reaches no browser through it) or a silent form the round's rulings fold nowhere
   { dir: W, file: "p187-n02f-module-require-handed.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p187-n02f-module-require-handed.test.ts:2: " + NET_HEAD + NET_MODREQ + MORE(1) + NET_NO_REACH }, // n02f: const r = module.require, then r("playwright"): module.require is a loader callee when called (p164) and handed on here, which no fold reads (the loaders twin keys on identifiers); the net names it first, the package second (before round 5: class none, no refusal)
   { dir: W, file: "p188-n03f-createrequire-identifier-aliased.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p188-n03f-createrequire-identifier-aliased.test.ts:3: " + NET_HEAD + NET_CR("createRequire") + MORE(1) + NET_NO_REACH }, // n03f: const make = createRequire, const req = make(__filename), req("playwright"): the createRequire IDENTIFIER handed on uncalled (the fold refuses the CALL in an unfolded position, p167 to p169), which the net alone reads (before: class none, no refusal)
   { dir: W, file: "p189-n02g-launcher-name-unknown-callee.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p189-n02g-launcher-name-unknown-callee.test.ts:3: " + NET_HEAD + NET_LAUNCHER + NET_NO_REACH }, // n02g: import { load } from a companion (plain-loader-helper.ts) whose load returns its argument, then load(the launcher).inBrowser(t, ...): the launcher's name as the argument of a call the walker knows no loader for, the p74 class with the launcher's name (before: class none, launcherImported false, no refusal)
@@ -723,6 +727,13 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p243-w07-let-specifier-rewritten-to-launcher.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p243-w07-let-specifier-rewritten-to-launcher.test.ts:4: " + SPEC_NO_CLOSED_FORM }, // spec = "./real-viewer-leg"; require(spec).inBrowser(t, ...): the launcher loaded and called through the rebound name, unread (before: class none, launcherImported false, no refusal)
   { dir: W, file: "p244-w08-let-specifier-rewritten-to-relative-node-modules.test.ts", leg: false, cls: "none", gap: null, refused: "p244-w08-let-specifier-rewritten-to-relative-node-modules.test.ts:4: " + SPEC_NO_CLOSED_FORM }, // spec = a relative path into node_modules naming the package (before: class none, no refusal)
   { dir: W, file: "p245-w09-let-specifier-never-written-control.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["firefox"], launches: [".launch("], playwright: ["playwright"], holds: "the no-refusal half of a pair whose partner reds: p237 to p244 (a loader's specifier bound by a let or var written after its declaration, folded to the declaration's text before the closing pass after round 5 and loading the package or the launcher silently) beside this let no statement writes to, which folds to its initializer before and after: class own, engines [firefox], the launch read, no refusal" }, // let spec = "playwright"; require(spec).firefox.launch(): the control
+  // the net's arms no plant carried (tests-1, round 5, planted in round 6 into the round-5 range): deleting any one of the three left
+  // every fixture row green while a module in its form went silent, so no row pinned the arm; each row holds the net's SENTENCE at its
+  // line, refused by the census before round 6 and red under the census before round 5 (class none, no refusal) and under the
+  // deletion of its arm alone (executed at round 6, recorded in the PR's notes)
+  { dir: W, file: "p246-r6e-e1-array-literal-in-call-argument.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p246-r6e-e1-array-literal-in-call-argument.test.ts:3: " + NET_HEAD + NET_PW + NET_NO_REACH }, // e1: load(["playwright"]).firefox.launch() through function load(a: string[]) { return a[0] }: the package's name in an array literal that is a call's argument, specHolder's array-in-call position (before round 5: class none, no refusal; the position deleted: silent)
+  { dir: W, file: "p247-r6e-e2-new-expression-argument.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p247-r6e-e2-new-expression-argument.test.ts:3: " + NET_HEAD + NET_PW + NET_NO_REACH }, // e2: new Loader("playwright").get().firefox.launch(): the package's name as a new expression's argument, specHolder's new-argument position (before round 5: class none, no refusal; the position deleted: silent)
+  { dir: W, file: "p248-r6e-e3-member-createrequire-const-specifier.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p248-r6e-e3-member-createrequire-const-specifier.test.ts:3: " + NET_HEAD + NET_CR("mod.createRequire") + NET_NO_REACH }, // e3: import * as mod from "node:module"; const make = mod.createRequire; const req = make(__filename); const spec = "playwright"; req(spec).firefox.launch(): the MEMBER createRequire handed on uncalled, the net's member arm (p188 is the identifier's), with a const specifier so the line carries one mention (a literal specifier is a second hit on its own line that survives the arm's deletion and pins nothing) (before round 5: class none, no refusal; the arm deleted: silent)
   // round 6, A (correctness-1): a name is not a binding. constInitializer read a loader's or a driver template's identifier by NAME over
   // the whole module before round 6 (the one variable declaration so named, wherever it stood), so a function parameter sharing a
   // module const's name was read as that const: `const spec = "./decoy-helper"; function load(spec: string) { return require(spec); }
@@ -1186,18 +1197,19 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // skip or swallow missing from the test's record, the field fresh-1's fold reads; for p215 to p229, a refusal the row does not
   // expect, the value-use arm's false refusal of a name position or a peeled satisfies or type assertion, the shape extra5-5 named;
   // for p232 and p233, the sentence of a refusal the row holds, which that census spelled by the node kind; for p237 to p244, class none with no refusal where the row expects
-  // the specifier refusal, the closing pass's written let or var) unless R5_HELD names it with
+  // the specifier refusal, the closing pass's written let or var; for p246 to p248, class none with no refusal where the row expects
+  // the net's sentence, the three arms of THE SAFETY NET no plant carried, planted at round 6) unless R5_HELD names it with
   // holds set (a control, a pin of an arm no plant carried, a stated boundary); a round-5 builder who adds a row moves R5_LAST to it
   // and, when the row stays green under that census, adds it to R5_HELD with holds set (the round-4 population above is closed)
   const NOT_RERUN5 = " (the discrimination was established by running the census before round 5, the module at the round-4 head, over the plants, recorded in the PR's notes, and is not re-run here, since that census is not in the tree at test time: this assertion holds the table's statement, not the fact)";
-  const R5_FIRST = R4_LAST + 1, R5_LAST = 245;
+  const R5_FIRST = R4_LAST + 1, R5_LAST = 248;
   const R5_HELD = ["p197", "p198", "p200", "p201", "p202", "p207", "p212", "p213", "p214", "p230", "p231", "p234", "p235", "p236", "p245"];
   const R5_CARRIED: string[] = [];
   const inRound5 = (p: Plant) => num(p) >= R5_FIRST && num(p) <= R5_LAST;
-  // the round-6 rows: R6_FIRST to R6_LAST, one row each, the statement below. R6_FIRST is 249, not R5_LAST + 1: p246 to p248 are the
-  // round-5 range's, the three plants of THE SAFETY NET's arms that had none (tests-1, round 5), which join the round-5 population
-  // and move R5_LAST to 248, so the round-6 range begins past them, and a row numbered between R5_LAST and R6_FIRST is in no
-  // population and red in the round-5 assertion below until R5_LAST moves to it
+  // the round-6 rows: R6_FIRST to R6_LAST, one row each, the statement below. R6_FIRST is a literal, not R5_LAST + 1, and the two
+  // ranges are held to abut: p246 to p248, the three plants of THE SAFETY NET's arms that had none, are the round-5 range's (refused
+  // by the census before round 6, red under the census before round 5), so a moved R5_LAST alone cannot slide them into the round-6
+  // population, whose statement (red under the census before round 6) would be false for them and which this test cannot re-run
   const R6_FIRST = 249, R6_LAST = 279;
   const R6_HELD = ["p252", "p260", "p261", "p266", "p275", "p276", "p277", "p278", "p279"];
   const R6_CARRIED: string[] = [];
@@ -1232,6 +1244,7 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // controls); a round-6 builder who adds a row moves R6_LAST to it and, when the row stays green under that census, adds it to
   // R6_HELD with holds set (the round-5 population above is closed)
   const NOT_RERUN6 = " (the discrimination was established by running the census before round 6, the module at the round-5 head, over the plants, recorded in the PR's notes, and is not re-run here, since that census is not in the tree at test time: this assertion holds the table's statement, not the fact)";
+  assert.equal(R6_FIRST, R5_LAST + 1, "the round-5 range (to p" + R5_LAST + ") and the round-6 range (from p" + R6_FIRST + ") abut: a builder who moves R5_LAST moves R6_FIRST with it, and a row added to one range is not slid into the other, whose statement is about a different census" + NOT_RERUN6);
   const r6 = PLANT_TABLE.filter(inRound6);
   assert.deepEqual(PLANT_TABLE.filter((p) => num(p) > R6_LAST).map(idOf), [], "every row past p" + R5_LAST + " is a round-6 row and takes a verdict below: a row numbered past R6_LAST (p" + R6_LAST + ") is outside the statement, so a builder who adds a row moves R6_LAST to it" + NOT_RERUN6);
   assert.deepEqual(r6.map(idOf).sort(byNum), Array.from({ length: R6_LAST - R6_FIRST + 1 }, (_, i) => "p" + (R6_FIRST + i)), "the round-6 rows are p" + R6_FIRST + " to p" + R6_LAST + ", " + (R6_LAST - R6_FIRST + 1) + " of them, one row each, so every one takes a verdict below: red under the census before round 6 (no holds field) or green with holds set" + NOT_RERUN6);
