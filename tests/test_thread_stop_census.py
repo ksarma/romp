@@ -4961,7 +4961,8 @@ _MODULE_COUNT = re.compile(r"\b\d{3,}\s+(?:test\s+)?modules\b|(?P<of>\bof\s+(?:t
                            r"|\bmodules\s*\(\d{3,}\b")
 _SENTENCE_END = re.compile(r"""[.!?][)\]'"`]*(?=\s|$)|\n[ \t]*\n""")   # a stop (brackets or quotes after it) then whitespace or the end; a blank line
 _MODULES_WORD = re.compile(r"\bmodules\b")
-_NAMED_HEAD = re.compile(r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")   # a commit's sha, abbreviated or whole: a digit and a letter among its hex digits
+_NAMED_HEAD = re.compile(r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")   # a commit's sha, abbreviated or whole: a digit and a letter among its hex digits;
+# an abbreviated sha whose digits are all decimal is not recognised either, the safe side (the count then counts): name such a head with more of its digits
 
 
 def _sentences(text):
@@ -4990,10 +4991,12 @@ def _literal_module_counts(text):
     digit after the point or the comma ends the `of` shape), a date, a time and a quantity with a unit (`the probe of
     2026-09-22`, `a sleep of 3600 s`: the shape's own tail refuses what follows), a figure of one or two digits, and a count
     whose sentence names its head, a commit's sha of seven or more hex digits (_NAMED_HEAD: a digit and a letter among them,
-    so neither a decimal run id nor a word spelt in a to f names one): a count at a named head is a measurement record of
-    that head, not a claim about the tree's count, which is what the pin holds empty. The population has one home, the
-    table; a tree test pins this empty over the prose's three homes: this module's docstring, the liveness module's
-    docstring and the ledger entry. Returns the matched shapes in text order, for the failure message to print."""
+    so neither a decimal run id nor a word spelt in a to f names one, and an abbreviated sha whose digits are all decimal is
+    not recognised either, the safe side, since the count then counts: name such a head with more of its digits): a count at
+    a named head is a measurement record of that head, not a claim about the tree's count, which is what the pin holds
+    empty. The population has one home, the table; a tree test pins this empty over the prose's three homes: this module's
+    docstring, the liveness module's docstring and the ledger entry. Returns the matched shapes in text order, for the
+    failure message to print."""
     found, spans = [], _sentences(text)
     for m in _MODULE_COUNT.finditer(text):
         start, end = next(span for span in spans if span[0] <= m.start() < span[1])
