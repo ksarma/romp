@@ -3652,9 +3652,20 @@ document stands on its own, each with the reasoning it was given.
     handed to `sh`, `dash` or `ksh` (dash reads a literal dollar), and `$"..."` stays one the hook cannot read; a
     bare, escaped or quoted `$` is a literal dollar, so a folder or a project whose name holds one is judged by that
     name (round 3: every dollar in a word read as an expansion, with a false refusal one way and an allowed write
-    into a tracked folder the other); `bash -O extglob -c '...'` and an option cluster holding `o` or `O` take their
-    word, so the script is read (round 3; it was taken as the operand); a command nested past 64 substitutions or
-    brace lists is marked opaque rather than followed, so it cannot overflow the stack, which evaluate read as allow
+    into a tracked folder the other); `bash -O extglob -c '...'` and an `o` or `O` anywhere in bash's option cluster
+    (an `o` in dash's) take their word, so the script is read (round 3; it was taken as the operand), while zsh reads
+    the letters after a cluster's first `o` as that option's name and takes the next word after `--emulate`; the names
+    `sh` and `ksh` are read under all three grammars, and an option's value word that may become no word or several is
+    an option word the hook reads or refuses; a `c` counts with either sign and so does bash's `s`, a lone `+` or `+-`
+    ends zsh's options, zsh reads a digit in a cluster as a letter, a blank as the end of the word, a trailing `-` as
+    the end of the options and `+-emulate` as `--emulate`, an option that reads the script from the standard input by
+    name (dash's `stdin`, zsh's SHIN_STDIN or STDIN, in any spelling zsh takes) counts as `s`, an option name dash or
+    zsh may read so is an option word, and dash's `-sc` is read as its `-c` text and then its standard input (round 7:
+    round 3's count, applied to zsh too, allowed `zsh -oextendedglob -c '...'`, which the base refused, and the mode
+    word of `--emulate` was read as the script file, while every shell ran zsh onto the tracked file; `bash +c '...'`,
+    `dash -o stdin` and `dash -sc` were allowed at every head while every shell wrote, as were `zsh -1c`, `zsh -c-`
+    and `zsh '-c '`); a command nested past 64 substitutions or brace lists is marked opaque rather than followed, so
+    it cannot overflow the stack, which evaluate read as allow
     (round 3); the hook reads no variable of the ENVIRONMENT named in the command to
     resolve the word, which would read names shaped like secrets and guess at the cwd (of the environment it
     reads HOME, for `~` and a leading `$HOME` as the shell does, TRACKCHANGES_ROOT, which stands in for the root

@@ -3614,17 +3614,68 @@ const INTERPRETER_OPERANDS = {
 // (-lc, -ec; null when no operand follows), { stdin: true } when no -c and no script file is
 // given (bash <<EOF, bash -s <<EOF, bash - <<EOF, a pipe) or the script operand names the standard
 // input (STDIN_NAMES, the third fix-up), and { file } for a script file, whose
-// contents are not in the command. Each `o` in an option cluster takes the next word (`-euo
+// contents are not in the command; { perGrammar } when the shell's name stands for shells that read the words differently (below),
+// each reading one of these. Under bash and dash each `o` in an option cluster takes the next word (`-euo
 // pipefail`, `-ox errexit`), and under bash each `O` too (`-O extglob`, `-iO extglob`, `-Oc extglob
 // '...'`): zsh takes no word after -O and dash rejects it (round 3: `bash -O extglob -c '<script>'`
 // read extglob as the operand, the script was never scanned, and a literal tracked target in it
 // passed).
+// THE OPTION GRAMMAR (round 7's twenty-fourth commit, 2026-09-23; the reviewer's round-6 ruling on extra6-1): where the script is depends on how
+// the shell reads its option words, and the shells differ, measured on this box (bash 5.2.21, zsh 5.9, dash 0.5.12): bash and dash take the NEXT
+// word for every `o` in a cluster wherever it sits, bash for every `O` too (`bash -oc errexit '..'`, `bash -oe errexit -c '..'`, `dash -ooc errexit
+// nounset '..'` run the script; a glued `-oerrexit` is an invalid option name in bash and an illegal option in dash, which then run nothing); zsh
+// reads the letters after a cluster's first `o` as that option's name and takes the next word only for an `o` that ends the word (`zsh
+// -oextendedglob -c '..'`, `-xoextendedglob`, `-ocorrect -c`, `-oshwordsplit -c` and `+oextendedglob -c` run the script, `zsh -oc extendedglob
+// '..'` is "no such option: c"), so a `c` or an `s` counts only before that `o` (`echo '..' | zsh -ocorrect` reads the standard input, `zsh
+// -coextendedglob '..'` runs the next word); and zsh's `--emulate MODE` takes the next word, any mode (zsh runs nothing when it follows another
+// option). Before, round 3's count (every `o` takes a word) was applied to zsh too, so the glued spellings refused before round 3's commit (the
+// rule there and on the PR's base took a word for an `o` ending the cluster only) were allowed from that commit on while bash, zsh and dash each
+// ran zsh onto the tracked file, a regression round 3 made, not a hole the PR's base had; and `--emulate` was
+// a long option taking nothing, so its mode word became the script file and the `-c` text, the piped text, the here-string and the here-document
+// were never read. The names `sh` and `ksh` stand for whichever shell the machine installs under them (this box's sh is dash; ksh is not
+// installed; bash, zsh, pdksh and ksh93 are sh on other systems), so their words are read under all three grammars and every reading is judged, the
+// restricted side, as lex reads `sh` under both test grammars. A value word the shell fills in (after `-o`, `+o`, bash's `-O` and `+O`,
+// `--rcfile`, `--init-file` and zsh's `--emulate`, or taken by a cluster's letter) that the guard cannot prove one word (dqSingleField) may stand
+// for no word or several, which moves where the script is (`e=; zsh -o $e extendedglob -c '..'`, `x='errexit -c'; bash -o $x '..'` ran the script
+// in the shells that split it while the parse read the script as a file): it is THE SHELL'S OPTION WORD too, its texts read in its place or refused.
+// The rest of the class, measured the same way and allowed at the round-5 head while every shell wrote: a `c` is the script's letter with either
+// sign (`bash +c '..'`, `bash +oc errexit '..'`, `dash +oc errexit '..'`, `zsh +co NAME '..'`); `s` is taken with either sign by bash and turned
+// off by `+` in dash and zsh, the last one deciding (`zsh -s +s <(..)` and `zsh -s -o noshinstdin <(..)` read the file); a lone `+` is a cluster
+// of no letters in bash and dash and ends zsh's options, as `+-` does; zsh's cluster follows its option parser, a digit a letter (`zsh -1c
+// '..'`), a blank the end of the word (`zsh '-c ' '..'`), a `-` ending the word the end of the options (`zsh -c- '..'`), `+-NAME` a long option
+// turned off and `+-emulate` the same as `--emulate`; an option set by NAME can read the script from the standard input as `-s` does, dash's
+// `-o stdin` and zsh's SHIN_STDIN or its alias STDIN in any spelling (`-o shinstdin`, `-oSHIN_STDIN`, `--shin-stdin`, `-o stdin`, `+o noshinstdin`), so in dash and zsh an
+// option name the guard does not read is the option word even when it is one word; and dash given both `-s` and `-c` runs the `-c` text and then
+// the standard input (`echo '..' | dash -sc true`). A reading of zsh's glued `-oshinstdin` as a name alone would drop the `s` round 3's count
+// read in it (a new allow while every shell wrote, measured on this commit's draft): the name rule reads it.
+const SHELL_GRAMMARS = { bash: ['bash'], dash: ['dash'], zsh: ['zsh'] };   // every other name in SHELLS (sh, ksh): all three
 function shellScript(args, shell) {
+  const parses = [];   // not `readings`, the property THE RESOLVER'S CONTRACT keeps for a word's texts
+  const seen = new Set();
+  const keyOf = (r) => JSON.stringify(Object.keys(r).sort().map((k) => [k, Array.isArray(r[k]) ? r[k].map((w) => args.indexOf(w)) : r[k] !== null && typeof r[k] === 'object' ? args.indexOf(r[k]) : r[k]]));
+  for (const g of SHELL_GRAMMARS[shell] || ['bash', 'dash', 'zsh']) { const r = shellScriptIn(args, g); const key = keyOf(r); if (!seen.has(key)) { seen.add(key); parses.push(r); } }
+  return parses.length === 1 ? parses[0] : { perGrammar: parses };
+}
+// One shell's reading of its words (THE OPTION GRAMMAR above): `shell` is the grammar, bash, dash or zsh.
+function shellScriptIn(args, shell) {
   let c = false;
   let s = false;
   let operand;
   const rc = [];   // bash's `--rcfile FILE` and `--init-file FILE`: a startup file the shell reads when interactive (round 6's third commit: `bash --rcfile <(echo 'cp a b') -i` copied in bash and zsh while the word was skipped as an option's value); read whether or not `-i` is spelled, the safe side
   const done = (r) => (rc.length ? { ...r, rc } : r);
+  const valueMoves = (w) => !!w && !w.literal && procsubOf(w) == null && !dqSingleField(w.raw);   // a taken value word that may become no word or several
+  // a value word that is an option's NAME (`-o`'s, `+o`'s, a cluster's `o`) in dash or zsh, which the guard does not read, may name the option that
+  // reads the script from the standard input (byName), so it is the option word even when it is one word
+  const nameUnread = (w) => (shell === 'dash' || shell === 'zsh') && !!w && !w.literal && procsubOf(w) == null;
+  // `s` as the shell reads it: bash takes the letter with either sign, dash and zsh turn it on with `-` and off with `+`, the last one deciding
+  const takeS = (sign) => { s = shell === 'bash' || sign === '-'; };
+  // an option set by name that reads the script from the standard input as `-s` does: dash's `stdin` (spelled so; `set -o` lists it), zsh's
+  // SHIN_STDIN and its alias STDIN (`${(k)options}` lists both) in any case, with underscores or hyphens, a `no` in front or a `+` turning it off
+  // (both, back on)
+  const byName = (name, sign) => {
+    if (shell === 'dash' && name === 'stdin') s = sign === '-';
+    if (shell === 'zsh') { const n = name.toLowerCase().replace(/[_-]/g, ''); if (n === 'shinstdin' || n === 'stdin') s = sign === '-'; else if (n === 'noshinstdin' || n === 'nostdin') s = sign !== '-'; }
+  };
   for (let k = 0; k < args.length; k++) {
     if (!args[k].literal && procsubOf(args[k]) == null) {
       // THE SHELL'S OPTION WORD (round 6's sixth commit): a word the shell fills in where an option or the operand stands, with words after it that
@@ -3635,22 +3686,49 @@ function shellScript(args, shell) {
       break;
     }
     const t = args[k].text;
-    if (t === '--' || t === '-') { operand = args[k + 1]; break; }
-    if (t === '--rcfile' || t === '--init-file') { if (args[k + 1]) rc.push(args[k + 1]); k++; continue; }
-    if (t === '-o' || t === '+o' || (shell === 'bash' && (t === '-O' || t === '+O'))) { k++; continue; }
-    if (/^[-+][A-Za-z]+$/.test(t)) {
-      if (t[0] === '-' && t.includes('c')) c = true;
-      if (t[0] === '-' && t.includes('s')) s = true;
-      let takes = (t.match(/o/g) || []).length;
-      if (shell === 'bash') takes += (t.match(/O/g) || []).length;
-      k += takes;
-      continue;
+    if (t === '--' || t === '-' || (shell === 'zsh' && (t === '+' || t === '+-'))) { operand = args[k + 1]; break; }   // zsh ends its options at a lone `+` and at `+-` too
+    if (t === '+') continue;   // bash and dash: a cluster of no letters
+    const values = [];   // the words after this one that are its values: [index, whether the value is an option's name]
+    let next = k + 1;
+    let endAfter = false;   // zsh: a cluster ending in `-` ends the options, so the next word is the operand whatever it spells
+    const take = (isName) => { values.push([next, isName]); next++; };
+    if (t === '--rcfile' || t === '--init-file') { if (args[k + 1]) rc.push(args[k + 1]); take(false); }
+    else if (t === '-o' || t === '+o') take(true);
+    else if ((shell === 'bash' && (t === '-O' || t === '+O')) || (shell === 'zsh' && (t === '--emulate' || t === '+-emulate'))) take(false);
+    else if (shell === 'zsh' && /^[-+]-/.test(t)) { byName(t.slice(2), t[0]); continue; }   // zsh's long option by name, `--NAME` or `+-NAME` (the `+` turns it off)
+    else if (shell === 'zsh' && /^[-+]./.test(t)) {
+      // zsh's cluster, as its option parser reads it: `c` is the script's letter with either sign (`zsh +c '..'`, `zsh +co NAME '..'`), the
+      // first `o` takes the rest of the word as its option's name, or the next word when it ends the word, a blank ends the word (`zsh '-c '
+      // '..'`), a `-` ending the word ends the options (`zsh -c- '..'`), and any other character is a letter, digits among them (`zsh -1c '..'`)
+      const sign = t[0];
+      for (let i = 1; i < t.length; i++) {
+        const ch = t[i];
+        if (ch === 'c') c = true;
+        else if (ch === 's') takeS(sign);
+        else if (ch === 'o') { if (i === t.length - 1) take(true); else byName(t.slice(i + 1), sign); break; }
+        else if (/[ \t\n]/.test(ch)) break;
+        else if (ch === '-' && i === t.length - 1) endAfter = true;
+      }
+    } else if (/^[-+][A-Za-z]+$/.test(t)) {
+      const sign = t[0];   // bash and dash: a `c` is the script's letter with either sign too (`bash +c '..'`, `dash +oc errexit '..'`)
+      for (const ch of t.slice(1)) {
+        if (ch === 'c') c = true;
+        else if (ch === 's') takeS(sign);
+        else if (ch === 'o') take(true);
+        else if (ch === 'O' && shell === 'bash') take(false);
+      }
+    } else if (t.startsWith('--')) continue;
+    else { operand = args[k]; break; }
+    for (const [j, isName] of values) {
+      const w = args[j];
+      if (j < args.length - 1 && (valueMoves(w) || (isName && nameUnread(w)))) return done({ optionWord: w, at: j, takenBy: t, name: isName && !valueMoves(w) });   // `takenBy`, never `valueOf`, which every object inherits
+      if (isName && w && w.literal) byName(w.text, t[0]);
     }
-    if (t.startsWith('--')) continue;
-    operand = args[k];
-    break;
+    if (endAfter) { operand = args[next]; break; }
+    k = next - 1;
   }
-  if (c) return done({ script: operand || null });
+  // dash given both `-s` and `-c` runs the `-c` text and then the standard input (`echo '..' | dash -sc true`); bash and zsh run the `-c` text alone
+  if (c) return done(shell === 'dash' && s ? { script: operand || null, stdin: true, fd: null } : { script: operand || null });
   if (s || !operand || (operand.literal && isStdinName(operand.text))) return done({ stdin: true, fd: operand && operand.literal ? fdOfName(operand.text) : null });   // a script operand naming the standard input, or a descriptor fed by this command, reads it (the third fix-up: `bash /dev/stdin`, `sh /dev/fd/0` ran the piped script in bash, zsh and dash; round 6's third commit: `bash /dev/fd/3 3<<'EOF'`); `fd`: the numbered descriptor it names, so a `<` on that descriptor is read too (THE DESCRIPTOR FEED, round 6's fourth commit: `bash /dev/fd/3 3< <(echo '..')`)
   return done({ file: operand });   // a script file, whose contents are not in the command, unless it is a process substitution printing text the guard can read (extract, `bash <(echo '..')`)
 }
@@ -7552,19 +7630,21 @@ function extractIn(command, ctx) {
           // blanks where the word is unquoted) and, when it stands for none, is refused on the side WRAPPER_OPT takes for an option a wrapper's
           // table does not know: the word and every later word a target the hook cannot read. A process substitution there is an operand (a path).
           // THE CALLED BODY's replay reads `bash "$@"` and `bash -c "$1"` through THE POSITIONAL VALUE, which put the call's operands in the words.
-          const readShell = (argv, budget) => {
-          const sh = shellScript(argv, name);
+          // THE OPTION GRAMMAR (round 7's twenty-fourth commit): a name that stands for shells reading the words differently (`sh`, `ksh`) has a reading per
+          // grammar, and every one is read
+          const readShell = (argv, budget) => { const parsed = shellScript(argv, name); for (const sh of parsed.perGrammar || [parsed]) readReading(argv, budget, sh); };
+          const readReading = (argv, budget, sh) => {
           if (sh.optionWord) {
             const { optionWord: ow, at } = sh;
             const before = unresolved.length;
             const ts = scriptTexts(ow, `\`${name}\` option or operand`, 'option');
             if (!ts.length) {
-              if (unresolved.length === before) { const why = { kind: 'shellOptionWord', option: ow.raw, shell: name }; cannotRead(ow, name, why); for (const r of argv.slice(at + 1)) cannotRead(r, name, why); }
+              if (unresolved.length === before) { const why = { kind: 'shellOptionWord', option: ow.raw, shell: name, takenBy: sh.takenBy || null, name: !!sh.name }; cannotRead(ow, name, why); for (const r of argv.slice(at + 1)) cannotRead(r, name, why); }
               return;
             }
             const lit = (t) => word(t, true, ow.raw, { marks: 'q'.repeat(t.length) });
             for (const t of ts.slice(0, budget)) {
-              const pieces = /^"/.test(ow.raw) || !/[ \t\n]/.test(t) ? [lit(t)] : t.split(/[ \t\n]+/).filter(Boolean).map(lit);   // unquoted, the shell splits the text at blanks (bash and dash; zsh's whole word is read too where it is one)
+              const pieces = /^"/.test(ow.raw) ? [lit(t)] : t.split(/[ \t\n]+/).filter(Boolean).map(lit);   // unquoted, the shell splits the text at blanks (bash and dash; zsh's whole word is read too where it is one), and an empty text is no word in any shell (round 7's twenty-fourth commit: `e=; bash $e -c '..'` and `e=; zsh -o $e extendedglob -c '..'` ran the script in bash, zsh and dash while the empty text stood as an empty word, the script FILE operand or the option's name)
               readShell([...argv.slice(0, at), ...pieces, ...argv.slice(at + 1)], Math.max(1, Math.floor(budget / ts.length)));
             }
             return;
@@ -7579,7 +7659,8 @@ function extractIn(command, ctx) {
           for (const nm of STARTUP_FILE_NAMES) for (const v of candidates.get(nm) || []) if (isStdinName(v)) for (const body of stdinBodies(idx, fdOfName(v))) recurse(body, name, undefined, ` through \`${nm}\``, []);
           if ('script' in sh) {
             for (const t of scriptTexts(sh.script, `\`${name} -c\` script`)) recurse(t, name, undefined, sh.script.literal ? '' : READING_VIA(sh.script.raw));   // the texts the word can stand for, each a script (THE RESOLVED SUBSTITUTION, THE DEFAULT WORD; THE RESOLVER'S CONTRACT)
-          } else if (sh.stdin) {
+          }
+          if (sh.stdin) {   // after a `-c` text too where the shell runs both (THE OPTION GRAMMAR: dash's `-sc`)
             for (const body of stdinBodies(idx, sh.fd)) recurse(body, name, undefined, '', []);   // bash <<'EOF' ... EOF, a pipe, `bash /dev/stdin`: the body is the script, and the shell has consumed it (nothing passes on); `bash /dev/fd/3 3< <(..)` reads the descriptor named (THE DESCRIPTOR FEED)
           } else if (sh.file) {
             // `bash <(echo 'cp a b')`, zsh's `=(...)`: the file the shell reads is the text a literal echo or printf prints (the third fix-up;
@@ -8327,6 +8408,14 @@ function judge(command, cwd) {
     if (u.why && u.why.kind === 'shellOptionWord') {
       // THE SHELL'S OPTION WORD (round 6's sixth commit): a word the shell fills in where the shell's option or script operand stands, standing
       // for no text the guard could read, so whether it is `-c` and which text the shell runs is not known
+      // (THE OPTION GRAMMAR, round 7's twenty-fourth commit: a value word, the one an option such as `-o` takes, may become no word or several)
+      // (and a value word that is an option's name, in dash or zsh, may name the option that reads the script from the standard input)
+      if (u.why.takenBy) return `This command is blocked here: its \`${u.why.shell}\` takes the word ${u.why.option} as the value of \`${u.why.takenBy}\`, `
+        + (u.why.name
+          ? `a word the shell fills in when the command runs, which may name the option that makes the shell read its script from the standard input, so I cannot tell which text the shell would run, and `
+          : `a word the shell fills in when the command runs, which may become no word or several, so I cannot tell which word is \`-c\` and which text the shell would run, and `)
+        + `${where} tracks files whose changes are recorded for me to accept or reject. Spell the option and the script out: outside that `
+        + `project the command then runs as usual, and a tracked file takes its change through track-edit instead:\n${TRACK_EDIT}`;
       return `This command is blocked here: its \`${u.why.shell}\` takes the word ${u.why.option} where an option or the script operand stands, `
         + `a word the shell fills in when the command runs, so I cannot tell whether it is \`-c\` and which text the shell would run, and `
         + `${where} tracks files whose changes are recorded for me to accept or reject. Spell the option and the script out: outside that `

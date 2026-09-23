@@ -11736,3 +11736,519 @@ test("round 7, twenty-third commit, the rows: THE UNHELD ROAD by construction: e
     assert.ok(hook.includes("const hashed = hw && hw.literal && !hw.text.includes('/') && !hw.text.includes('\\0') ? hw.text : null;") && hook.includes("if (hashRoad && hashed != null && hashes.has(hashed)) {") && hook.includes("if (name != null && a && !a.suffix && a.line < here && !aliasChain.has(name)) {"), 'THE RESOLVED NAME: the hash road reads the head\'s text, the alias roads the plain word (behaviour: G11-hash-p-glued-positional-head, T06-hash-zsh-eq-splice-name, P5-ctl-alias-resolved-head)');
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
+
+// ── round 7, twenty-fourth commit: THE OPTION GRAMMAR (the reviewer's round-6 ruling on extra6-1) ──
+// Where a shell's script is depends on how the shell reads its option words, and the shells differ (measured on this box, bash
+// 5.2.21, zsh 5.9, dash 0.5.12): bash and dash take the NEXT word for every `o` in a cluster wherever it sits, bash for every `O`
+// too; zsh reads the letters after a cluster's first `o` as that option's name, taking the next word only for an `o` that ends the
+// word, so a `c` or an `s` counts only before it; zsh's `--emulate MODE` takes the next word. Before, shellScript applied round 3's
+// count (every `o` takes a word) to zsh too, so `zsh -oextendedglob -c '..'`, `-xoextendedglob`, `-ocorrect`, `-oshwordsplit`,
+// `+oextendedglob`, `-oerrexit` and their kin, refused before round 3's commit (the rule there and on the PR's base took a word for an
+// `o` ending the cluster only), were allowed from round 3's commit on while bash, zsh and dash each ran zsh onto the tracked file: a
+// regression round 3 made, not a hole the PR's base had; and `--emulate` was a long option taking nothing, so its mode word became
+// the script file and the `-c` text, the piped text, the here-string and the here-document went unread (on the PR's base too). `sh` and
+// `ksh` may be any of the three shells elsewhere, so they are read under all three grammars (a cost on this box, whose sh is dash and
+// which has no ksh: no shell writes those rows here). A value word the shell fills in may become no word or several, and an empty
+// text in option position is no word in any shell: both are THE SHELL'S OPTION WORD's, read in place or refused. The rest of the
+// class (group X), measured the same way and allowed at the round-5 head while every shell wrote: a `c` with either sign, bash's `s`
+// with either sign, a lone `+`, the standard input's option by name (dash's `stdin`, zsh's SHIN_STDIN and STDIN in every spelling, a
+// name the guard does not read in dash or zsh), dash running both its `-c` text and its standard input, and an `s` a later word turns
+// off; `echo '..' | zsh -oshinstdin foo`, refused at the round-5 head through round 3's count, is among them; and (group Z) zsh's
+// cluster as its option parser reads it, digits, blanks, a `-` ending the word, `+-NAME`, `+-emulate` and `+-`. Rows: [id, cwd,
+// command, the shells that write (measured), the verdict ('allow', 'name', or ['text', a substring of the reason]), the verdict from a
+// cwd in no project ('allow' unless given; null: the row's paths are absolute or its own cwd is that cwd)]. The population and its
+// measurement at the PR's base, before and at round 3's commit, at the round-5 head, at the twenty-third commit and at this tree: the
+// notes' r7-e61-b-measure-final.log (392 rows).
+const E61_VALUE_WORD = ['text', 'as the value of `-o`, a word the shell fills in when the command runs, which may become no word or several'];
+const E61_NAME_WORD = ['text', 'as the value of `-o`, a word the shell fills in when the command runs, which may name the option that makes the shell read its script from the standard input'];
+const E61_ROWS = (() => {
+  const A = ['bash', 'zsh', 'dash'];
+  const BZ = ['bash', 'zsh'];
+  const BD = ['bash', 'dash'];
+  const Z = ['zsh'];
+  const D = ['dash'];
+  const N = [];
+  const VALUE_WORD = E61_VALUE_WORD;
+  const NAME_WORD = E61_NAME_WORD;
+  return {
+    C: [   // 106
+      ["C-emu-sh-nad", "nad", "zsh --emulate sh -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-emu-sh-na", "na", "zsh --emulate sh -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["C-emu-sh-nan", "nan", "zsh --emulate sh -c 'cp ../base/report.md n1.md'", A, 'name'],
+      ["C-emu-sh-out", "out", "zsh --emulate sh -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["C-emu-ksh-nad", "nad", "zsh --emulate ksh -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-emu-ksh-na", "na", "zsh --emulate ksh -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["C-emu-ksh-nan", "nan", "zsh --emulate ksh -c 'cp ../base/report.md n1.md'", A, 'name'],
+      ["C-emu-ksh-out", "out", "zsh --emulate ksh -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["C-emu-zsh-nad", "nad", "zsh --emulate zsh -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-emu-zsh-na", "na", "zsh --emulate zsh -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["C-emu-zsh-nan", "nan", "zsh --emulate zsh -c 'cp ../base/report.md n1.md'", A, 'name'],
+      ["C-emu-zsh-out", "out", "zsh --emulate zsh -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["C-emu-csh-nad", "nad", "zsh --emulate csh -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-emu-csh-na", "na", "zsh --emulate csh -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["C-emu-csh-nan", "nan", "zsh --emulate csh -c 'cp ../base/report.md n1.md'", A, 'name'],
+      ["C-emu-csh-out", "out", "zsh --emulate csh -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["C-emu-bogus-nad", "nad", "zsh --emulate bogus -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-emu-bogus-na", "na", "zsh --emulate bogus -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["C-emu-bogus-nan", "nan", "zsh --emulate bogus -c 'cp ../base/report.md n1.md'", A, 'name'],
+      ["C-emu-bogus-out", "out", "zsh --emulate bogus -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["C-emu-sh-f-nad", "nad", "zsh --emulate sh -f -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-emu-sh-f-na", "na", "zsh --emulate sh -f -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["C-emu-sh-f-nan", "nan", "zsh --emulate sh -f -c 'cp ../base/report.md n1.md'", A, 'name'],
+      ["C-emu-sh-f-out", "out", "zsh --emulate sh -f -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["C-emu-sh-o-sep-nad", "nad", "zsh --emulate sh -o extendedglob -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-emu-sh-o-sep-na", "na", "zsh --emulate sh -o extendedglob -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["C-emu-sh-o-sep-nan", "nan", "zsh --emulate sh -o extendedglob -c 'cp ../base/report.md n1.md'", A, 'name'],
+      ["C-emu-sh-o-sep-out", "out", "zsh --emulate sh -o extendedglob -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["C-emu-sh-o-glued-nad", "nad", "zsh --emulate sh -oextendedglob -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-emu-sh-o-glued-na", "na", "zsh --emulate sh -oextendedglob -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["C-emu-sh-o-glued-nan", "nan", "zsh --emulate sh -oextendedglob -c 'cp ../base/report.md n1.md'", A, 'name'],
+      ["C-emu-sh-o-glued-out", "out", "zsh --emulate sh -oextendedglob -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["C-emu-twice-nad", "nad", "zsh --emulate sh --emulate ksh -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-emu-twice-na", "na", "zsh --emulate sh --emulate ksh -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["C-emu-twice-nan", "nan", "zsh --emulate sh --emulate ksh -c 'cp ../base/report.md n1.md'", A, 'name'],
+      ["C-emu-twice-out", "out", "zsh --emulate sh --emulate ksh -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["C-o-glued-nad", "nad", "zsh -oextendedglob -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-o-glued-na", "na", "zsh -oextendedglob -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["C-o-glued-nan", "nan", "zsh -oextendedglob -c 'cp ../base/report.md n1.md'", A, 'name'],
+      ["C-o-glued-out", "out", "zsh -oextendedglob -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["C-xo-glued-nad", "nad", "zsh -xoextendedglob -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-xo-glued-na", "na", "zsh -xoextendedglob -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["C-xo-glued-nan", "nan", "zsh -xoextendedglob -c 'cp ../base/report.md n1.md'", A, 'name'],
+      ["C-xo-glued-out", "out", "zsh -xoextendedglob -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["C-fo-glued-nad", "nad", "zsh -foextendedglob -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-fo-glued-na", "na", "zsh -foextendedglob -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["C-fo-glued-nan", "nan", "zsh -foextendedglob -c 'cp ../base/report.md n1.md'", A, 'name'],
+      ["C-fo-glued-out", "out", "zsh -foextendedglob -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["C-o-glued-twice-nad", "nad", "zsh -oextendedglob -onullglob -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-o-glued-twice-na", "na", "zsh -oextendedglob -onullglob -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["C-o-glued-twice-nan", "nan", "zsh -oextendedglob -onullglob -c 'cp ../base/report.md n1.md'", A, 'name'],
+      ["C-o-glued-twice-out", "out", "zsh -oextendedglob -onullglob -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["C-o-glued-f-nad", "nad", "zsh -oextendedglob -f -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-o-glued-f-na", "na", "zsh -oextendedglob -f -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["C-o-glued-f-nan", "nan", "zsh -oextendedglob -f -c 'cp ../base/report.md n1.md'", A, 'name'],
+      ["C-o-glued-f-out", "out", "zsh -oextendedglob -f -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["C-o-c-in-name-nad", "nad", "zsh -ocorrect -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-o-c-in-name-na", "na", "zsh -ocorrect -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["C-o-c-in-name-nan", "nan", "zsh -ocorrect -c 'cp ../base/report.md n1.md'", A, 'name'],
+      ["C-o-c-in-name-out", "out", "zsh -ocorrect -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["C-o-s-in-name-nad", "nad", "zsh -oshwordsplit -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-o-s-in-name-na", "na", "zsh -oshwordsplit -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["C-o-s-in-name-nan", "nan", "zsh -oshwordsplit -c 'cp ../base/report.md n1.md'", A, 'name'],
+      ["C-o-s-in-name-out", "out", "zsh -oshwordsplit -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["C-o-cs-in-name-nad", "nad", "zsh -ocshnullglob -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-o-cs-in-name-na", "na", "zsh -ocshnullglob -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["C-o-cs-in-name-nan", "nan", "zsh -ocshnullglob -c 'cp ../base/report.md n1.md'", A, 'name'],
+      ["C-o-cs-in-name-out", "out", "zsh -ocshnullglob -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["C-plus-o-glued-nad", "nad", "zsh +oextendedglob -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-plus-o-glued-na", "na", "zsh +oextendedglob -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["C-plus-o-glued-nan", "nan", "zsh +oextendedglob -c 'cp ../base/report.md n1.md'", A, 'name'],
+      ["C-plus-o-glued-out", "out", "zsh +oextendedglob -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["C-o-errexit-nad", "nad", "zsh -oerrexit -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-o-errexit-na", "na", "zsh -oerrexit -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["C-o-errexit-nan", "nan", "zsh -oerrexit -c 'cp ../base/report.md n1.md'", A, 'name'],
+      ["C-o-errexit-out", "out", "zsh -oerrexit -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["C-o-glued-emu-after-error-nad", "nad", "zsh -oextendedglob --emulate sh -c 'cp ../base/report.md report.md'", N, 'name'],
+      ["C-o-glued-emu-after-error-na", "na", "zsh -oextendedglob --emulate sh -c 'cp base/report.md docs/report.md'", N, 'name'],
+      ["C-o-glued-emu-after-error-nan", "nan", "zsh -oextendedglob --emulate sh -c 'cp ../base/report.md n1.md'", N, 'name'],
+      ["C-o-glued-emu-after-error-out", "out", "zsh -oextendedglob --emulate sh -c 'cp {NA}/base/report.md {NA}/docs/report.md'", N, 'name', null],
+      ["C-co-glued-nad", "nad", "zsh -coextendedglob 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-cxo-glued-nad", "nad", "zsh -cxoextendedglob 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-co-glued-na", "na", "zsh -coextendedglob 'cp base/report.md docs/report.md'", A, 'name'],
+      ["C-emu-co-glued-nad", "nad", "zsh --emulate sh -coextendedglob 'cp ../base/report.md report.md'", A, 'name'],
+      ["C-path-zsh-emu-nad", "nad", "/usr/bin/zsh --emulate sh -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["F-emu-sh-mv", "nad", "zsh --emulate sh -c 'mv ../base/report.md report.md'", A, 'name'],
+      ["F-emu-sh-redirect", "nad", "zsh --emulate sh -c 'echo x > report.md'", A, 'name'],
+      ["F-emu-sh-tee", "nad", "zsh --emulate sh -c 'echo x | tee report.md'", A, 'name'],
+      ["F-emu-sh-install", "nad", "zsh --emulate sh -c 'install ../base/report.md report.md'", A, 'name'],
+      ["F-emu-sh-sedi", "nad", "zsh --emulate sh -c 'sed -i s/NA/XX/ report.md'", A, 'name'],
+      ["F-emu-sh-lnf", "nad", "zsh --emulate sh -c 'ln -f ../base/report.md report.md'", A, 'name'],
+      ["F-emu-sh-append", "nad", "zsh --emulate sh -c 'echo x >> report.md'", A, 'name'],
+      ["F-o-glued-mv", "nad", "zsh -oextendedglob -c 'mv ../base/report.md report.md'", A, 'name'],
+      ["F-o-glued-redirect", "nad", "zsh -oextendedglob -c 'echo x > report.md'", A, 'name'],
+      ["F-o-glued-tee", "nad", "zsh -oextendedglob -c 'echo x | tee report.md'", A, 'name'],
+      ["F-o-glued-install", "nad", "zsh -oextendedglob -c 'install ../base/report.md report.md'", A, 'name'],
+      ["F-o-glued-sedi", "nad", "zsh -oextendedglob -c 'sed -i s/NA/XX/ report.md'", A, 'name'],
+      ["F-o-glued-lnf", "nad", "zsh -oextendedglob -c 'ln -f ../base/report.md report.md'", A, 'name'],
+      ["F-o-glued-append", "nad", "zsh -oextendedglob -c 'echo x >> report.md'", A, 'name'],
+      ["F-o-c-in-name-mv", "nad", "zsh -ocorrect -c 'mv ../base/report.md report.md'", A, 'name'],
+      ["F-o-c-in-name-redirect", "nad", "zsh -ocorrect -c 'echo x > report.md'", A, 'name'],
+      ["F-o-c-in-name-tee", "nad", "zsh -ocorrect -c 'echo x | tee report.md'", A, 'name'],
+      ["F-o-c-in-name-install", "nad", "zsh -ocorrect -c 'install ../base/report.md report.md'", A, 'name'],
+      ["F-o-c-in-name-sedi", "nad", "zsh -ocorrect -c 'sed -i s/NA/XX/ report.md'", A, 'name'],
+      ["F-o-c-in-name-lnf", "nad", "zsh -ocorrect -c 'ln -f ../base/report.md report.md'", A, 'name'],
+      ["F-o-c-in-name-append", "nad", "zsh -ocorrect -c 'echo x >> report.md'", A, 'name'],
+    ],
+    P: [   // 34
+      ["P-emu-sh-nad", "nad", "echo 'cp ../base/report.md report.md' | zsh --emulate sh", A, 'name'],
+      ["H-emu-sh-nad", "nad", "zsh --emulate sh <<< 'cp ../base/report.md report.md'", BZ, 'name'],
+      ["P-emu-sh-s-nad", "nad", "echo 'cp ../base/report.md report.md' | zsh --emulate sh -s", A, 'name'],
+      ["H-emu-sh-s-nad", "nad", "zsh --emulate sh -s <<< 'cp ../base/report.md report.md'", BZ, 'name'],
+      ["P-emu-sh-devstdin-nad", "nad", "echo 'cp ../base/report.md report.md' | zsh --emulate sh /dev/stdin", A, 'name'],
+      ["H-emu-sh-devstdin-nad", "nad", "zsh --emulate sh /dev/stdin <<< 'cp ../base/report.md report.md'", BZ, 'name'],
+      ["P-emu-sh-dash-nad", "nad", "echo 'cp ../base/report.md report.md' | zsh --emulate sh -", A, 'name'],
+      ["H-emu-sh-dash-nad", "nad", "zsh --emulate sh - <<< 'cp ../base/report.md report.md'", BZ, 'name'],
+      ["P-emu-sh-f-nad", "nad", "echo 'cp ../base/report.md report.md' | zsh --emulate sh -f", A, 'name'],
+      ["H-emu-sh-f-nad", "nad", "zsh --emulate sh -f <<< 'cp ../base/report.md report.md'", BZ, 'name'],
+      ["P-o-c-in-name-nad", "nad", "echo 'cp ../base/report.md report.md' | zsh -ocorrect", A, 'name'],
+      ["H-o-c-in-name-nad", "nad", "zsh -ocorrect <<< 'cp ../base/report.md report.md'", BZ, 'name'],
+      ["P-o-c-in-name-s-nad", "nad", "echo 'cp ../base/report.md report.md' | zsh -ocorrect -s", A, 'name'],
+      ["H-o-c-in-name-s-nad", "nad", "zsh -ocorrect -s <<< 'cp ../base/report.md report.md'", BZ, 'name'],
+      ["P-o-cs-in-name-nad", "nad", "echo 'cp ../base/report.md report.md' | zsh -ocshnullglob", A, 'name'],
+      ["H-o-cs-in-name-nad", "nad", "zsh -ocshnullglob <<< 'cp ../base/report.md report.md'", BZ, 'name'],
+      ["P-o-c-in-name-devstdin-nad", "nad", "echo 'cp ../base/report.md report.md' | zsh -ocorrect /dev/stdin", A, 'name'],
+      ["H-o-c-in-name-devstdin-nad", "nad", "zsh -ocorrect /dev/stdin <<< 'cp ../base/report.md report.md'", BZ, 'name'],
+      ["P-co-glued-s-nad", "nad", "echo 'cp ../base/report.md report.md' | zsh -scoextendedglob", N, 'allow'],
+      ["H-co-glued-s-nad", "nad", "zsh -scoextendedglob <<< 'cp ../base/report.md report.md'", N, 'allow'],
+      ["P-emu-sh-na", "na", "echo 'cp base/report.md docs/report.md' | zsh --emulate sh", A, 'name'],
+      ["P-o-c-in-name-na", "na", "echo 'cp base/report.md docs/report.md' | zsh -ocorrect", A, 'name'],
+      ["P-emu-sh-nan", "nan", "echo 'cp ../base/report.md n1.md' | zsh --emulate sh", A, 'name'],
+      ["P-o-c-in-name-nan", "nan", "echo 'cp ../base/report.md n1.md' | zsh -ocorrect", A, 'name'],
+      ["P-emu-sh-out", "out", "echo 'cp {NA}/base/report.md {NA}/docs/report.md' | zsh --emulate sh", A, 'name', null],
+      ["P-o-c-in-name-out", "out", "echo 'cp {NA}/base/report.md {NA}/docs/report.md' | zsh -ocorrect", A, 'name', null],
+      ["D-emu-sh-heredoc-nad", "nad", "zsh --emulate sh <<'EOF'\ncp ../base/report.md report.md\nEOF", A, 'name'],
+      ["D-o-c-in-name-heredoc-nad", "nad", "zsh -ocorrect <<'EOF'\ncp ../base/report.md report.md\nEOF", A, 'name'],
+      ["D-emu-sh-heredoc-unquoted-nad", "nad", "zsh --emulate sh <<EOF\ncp ../base/report.md report.md\nEOF", A, 'name'],
+      ["R-emu-sh-procsub-nad", "nad", "zsh --emulate sh <(echo 'cp ../base/report.md report.md')", BZ, 'name'],
+      ["R-o-c-in-name-procsub-nad", "nad", "zsh -ocorrect <(echo 'cp ../base/report.md report.md')", BZ, 'name'],
+      ["R-o-glued-procsub-nad", "nad", "zsh -oextendedglob <(echo 'cp ../base/report.md report.md')", BZ, 'name'],
+      ["R-emu-sh-eqsub-nad", "nad", "zsh --emulate sh =(echo 'cp ../base/report.md report.md')", Z, 'name'],
+      ["R-printf-pipe-emu-nad", "nad", "printf '%s\\n' 'cp ../base/report.md report.md' | zsh --emulate sh", A, 'name'],
+    ],
+    W: [   // 21
+      ["W-env-nad", "nad", "env zsh --emulate sh -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["W-command-nad", "nad", "command zsh --emulate sh -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["W-nice-nad", "nad", "nice zsh -oextendedglob -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["W-exec-nad", "nad", "exec zsh --emulate sh -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["W-time-nad", "nad", "time zsh -ocorrect -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["W-nohup-nad", "nad", "nohup zsh --emulate sh -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["W-timeout-nad", "nad", "timeout 5 zsh -oerrexit -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["W-under-bash-c-nad", "nad", "bash -c \"zsh --emulate sh -c 'cp ../base/report.md report.md'\"", A, 'name'],
+      ["W-under-dash-c-nad", "nad", "dash -c \"zsh -oextendedglob -c 'cp ../base/report.md report.md'\"", A, 'name'],
+      ["W-under-zsh-c-nad", "nad", "zsh -c \"zsh -ocorrect -c 'cp ../base/report.md report.md'\"", A, 'name'],
+      ["W-eval-nad", "nad", "eval \"zsh --emulate sh -c 'cp ../base/report.md report.md'\"", A, 'name'],
+      ["W-subshell-nad", "nad", "(zsh --emulate sh -c 'cp ../base/report.md report.md')", A, 'name'],
+      ["W-csub-nad", "nad", "x=$(zsh -oextendedglob -c 'cp ../base/report.md report.md')", A, 'name'],
+      ["W-and-nad", "nad", "true && zsh --emulate sh -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["W-fn-nad", "nad", "f() { zsh --emulate sh -c 'cp ../base/report.md report.md'; }; f", A, 'name'],
+      ["W-bg-nad", "nad", "zsh -oextendedglob -c 'cp ../base/report.md report.md' & wait", A, 'name'],
+      ["W-pipe-member-nad", "nad", "zsh --emulate sh -c 'cp ../base/report.md report.md' | cat", A, 'name'],
+      ["W-if-nad", "nad", "if true; then zsh -ocorrect -c 'cp ../base/report.md report.md'; fi", A, 'name'],
+      ["W-alias-nad", "nad", "alias z='zsh --emulate sh'\nz -c 'cp ../base/report.md report.md'", D, 'name'],
+      ["W-headvar-nad", "nad", "z=zsh; $z --emulate sh -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["W-shell-in-procsub-nad", "nad", "cat <(zsh --emulate sh -c 'cp ../base/report.md report.md')", BZ, 'name'],
+    ],
+    B: [   // 46
+      ["B-bash-oc-nad", "nad", "bash -oc errexit 'cp ../base/report.md report.md'", A, 'name'],
+      ["B-bash-oc-na", "na", "bash -oc errexit 'cp base/report.md docs/report.md'", A, 'name'],
+      ["B-bash-oc-out", "out", "bash -oc errexit 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["B-bash-Oc-nad", "nad", "bash -Oc extglob 'cp ../base/report.md report.md'", A, 'name'],
+      ["B-bash-Oc-na", "na", "bash -Oc extglob 'cp base/report.md docs/report.md'", A, 'name'],
+      ["B-bash-Oc-out", "out", "bash -Oc extglob 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["B-bash-oe-c-nad", "nad", "bash -oe errexit -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["B-bash-oe-c-na", "na", "bash -oe errexit -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["B-bash-oe-c-out", "out", "bash -oe errexit -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["B-bash-eo-c-nad", "nad", "bash -eo errexit -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["B-bash-eo-c-na", "na", "bash -eo errexit -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["B-bash-eo-c-out", "out", "bash -eo errexit -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["B-bash-ooc-nad", "nad", "bash -ooc errexit nounset 'cp ../base/report.md report.md'", A, 'name'],
+      ["B-bash-ooc-na", "na", "bash -ooc errexit nounset 'cp base/report.md docs/report.md'", A, 'name'],
+      ["B-bash-ooc-out", "out", "bash -ooc errexit nounset 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["B-bash-ox-c-nad", "nad", "bash -ox errexit -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["B-bash-ox-c-na", "na", "bash -ox errexit -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["B-bash-ox-c-out", "out", "bash -ox errexit -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["B-dash-oc-nad", "nad", "dash -oc errexit 'cp ../base/report.md report.md'", A, 'name'],
+      ["B-dash-oc-na", "na", "dash -oc errexit 'cp base/report.md docs/report.md'", A, 'name'],
+      ["B-dash-oc-out", "out", "dash -oc errexit 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["B-dash-oe-c-nad", "nad", "dash -oe errexit -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["B-dash-oe-c-na", "na", "dash -oe errexit -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["B-dash-oe-c-out", "out", "dash -oe errexit -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["B-dash-eo-c-nad", "nad", "dash -eo errexit -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["B-dash-eo-c-na", "na", "dash -eo errexit -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["B-dash-eo-c-out", "out", "dash -eo errexit -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["B-dash-ooc-nad", "nad", "dash -ooc errexit nounset 'cp ../base/report.md report.md'", A, 'name'],
+      ["B-dash-ooc-na", "na", "dash -ooc errexit nounset 'cp base/report.md docs/report.md'", A, 'name'],
+      ["B-dash-ooc-out", "out", "dash -ooc errexit nounset 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["B-sh-oc-nad", "nad", "sh -oc errexit 'cp ../base/report.md report.md'", A, 'name'],
+      ["B-sh-oc-na", "na", "sh -oc errexit 'cp base/report.md docs/report.md'", A, 'name'],
+      ["B-sh-oc-out", "out", "sh -oc errexit 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["B-sh-oe-c-nad", "nad", "sh -oe errexit -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["B-sh-oe-c-na", "na", "sh -oe errexit -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["B-sh-oe-c-out", "out", "sh -oe errexit -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["B-bash-O-c-nad", "nad", "bash -O extglob -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["B-bash-O-c-na", "na", "bash -O extglob -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["B-bash-O-c-out", "out", "bash -O extglob -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["B-bash-iO-c-nad", "nad", "bash -iO extglob -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["B-bash-iO-c-na", "na", "bash -iO extglob -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["B-bash-iO-c-out", "out", "bash -iO extglob -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["B-pipe-bash-oe", "nad", "echo 'cp ../base/report.md report.md' | bash -oe errexit", A, 'name'],
+      ["B-pipe-dash-oe", "nad", "echo 'cp ../base/report.md report.md' | dash -oe errexit", A, 'name'],
+      ["B-herestring-bash-oe", "nad", "bash -oe errexit <<< 'cp ../base/report.md report.md'", BZ, 'name'],
+      ["B-pipe-sh-o", "nad", "echo 'cp ../base/report.md report.md' | sh -o errexit", A, 'name'],
+    ],
+    V: [   // 26
+      ["V-zsh-o-empty-nad", "nad", "e=; zsh -o $e extendedglob -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["V-zsh-o-split-nad", "nad", "x='extendedglob -c'; zsh -o $x 'cp ../base/report.md report.md'", BD, 'name'],
+      ["V-zsh-emu-split-nad", "nad", "x='sh -c'; zsh --emulate $x 'cp ../base/report.md report.md'", BD, 'name'],
+      ["V-zsh-emu-empty-nad", "nad", "e=; zsh --emulate $e sh -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["V-bash-o-empty-nad", "nad", "e=; bash -o $e errexit -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["V-bash-o-split-nad", "nad", "x='errexit -c'; bash -o $x 'cp ../base/report.md report.md'", BD, 'name'],
+      ["V-dash-o-split-nad", "nad", "x='errexit -c'; dash -o $x 'cp ../base/report.md report.md'", BD, 'name'],
+      ["V-bash-eo-split-nad", "nad", "x='errexit -c'; bash -eo $x 'cp ../base/report.md report.md'", BD, 'name'],
+      ["V-bash-rcfile-split-nad", "nad", "x='/dev/null -c'; bash --rcfile $x 'cp ../base/report.md report.md'", BD, 'name'],
+      ["V-bash-O-split-nad", "nad", "x='extglob -c'; bash -O $x 'cp ../base/report.md report.md'", BD, 'name'],
+      ["V-bash-o-positional-nad", "nad", "set -- errexit -c; bash -o \"$@\" 'cp ../base/report.md report.md'", A, 'name'],
+      ["V-bash-o-unknown-nad", "nad", "bash -o $Q780_NEVER errexit -c 'cp ../base/report.md report.md'", A, VALUE_WORD],
+      ["V-ctl-bash-o-quoted-read-nad", "nad", "x=errexit; bash -o \"$x\" -c 'cp ../base/report.md ../scratch/y.md'", N, 'allow'],
+      ["V-ctl-bash-o-read-tracked-nad", "nad", "x=errexit; bash -o \"$x\" -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["E-bash-empty-option-nad", "nad", "e=; bash $e -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["E-zsh-empty-option-nad", "nad", "e=; zsh $e -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["E-dash-empty-option-nad", "nad", "e=; dash $e -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["E-sh-empty-option-nad", "nad", "e=; sh $e -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["E-zsh-emu-empty-after-nad", "nad", "e=; zsh --emulate sh $e -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["E-bash-o-then-empty-nad", "nad", "e=; bash -o errexit $e -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["E-bash-empty-option-na", "na", "e=; bash $e -c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["E-bash-empty-option-out", "out", "e=; bash $e -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["E-bash-empty-option-pipe-nad", "nad", "e=; echo 'cp ../base/report.md report.md' | bash $e -s", A, 'name'],
+      ["E-ctl-bash-quoted-empty-option-nad", "nad", "e=; bash \"$e\" -c 'cp ../base/report.md report.md'", N, 'allow'],
+      ["E-ctl-bash-empty-option-untracked-nad", "nad", "e=; bash $e -c 'cp ../base/report.md ../scratch/y.md'", N, 'allow'],
+      ["E-bash-blank-option-nad", "nad", "e=' '; bash $e -c 'cp ../base/report.md report.md'", BD, 'name'],
+    ],
+    S: [   // 9
+      ["S-sh-oglued", "nad", "sh -oerrexit -c 'cp ../base/report.md report.md'", N, 'name'],
+      ["S-sh-O", "nad", "sh -O extglob -c 'cp ../base/report.md report.md'", N, 'name'],
+      ["S-sh-emu", "nad", "sh --emulate sh -c 'cp ../base/report.md report.md'", N, 'name'],
+      ["S-ksh-oglued", "nad", "ksh -oerrexit -c 'cp ../base/report.md report.md'", N, 'name'],
+      ["S-ksh-oc", "nad", "ksh -oc errexit 'cp ../base/report.md report.md'", N, 'name'],
+      ["S-ksh-O", "nad", "ksh -O extglob -c 'cp ../base/report.md report.md'", N, 'name'],
+      ["S-ctl-sh-euo", "nad", "sh -euo pipefail -c 'cp ../base/report.md ../scratch/y.md'", N, 'allow'],
+      ["S-ctl-sh-ec", "nad", "sh -ec 'cp ../base/report.md ../scratch/y.md'", N, 'allow'],
+      ["S-sh-euo-tracked", "nad", "sh -euo pipefail -c 'cp ../base/report.md report.md'", N, 'name'],
+    ],
+    K: [   // 22
+      ["K-untracked-emu-sh", "nad", "zsh --emulate sh -c 'cp ../base/report.md ../scratch/y.md'", N, 'allow'],
+      ["K-untracked-o-glued", "nad", "zsh -oextendedglob -c 'cp ../base/report.md ../scratch/y.md'", N, 'allow'],
+      ["K-untracked-o-c-in-name", "nad", "zsh -ocorrect -c 'cp ../base/report.md ../scratch/y.md'", N, 'allow'],
+      ["K-untracked-bash-oc", "nad", "bash -oc errexit 'cp ../base/report.md ../scratch/y.md'", N, 'allow'],
+      ["K-untracked-dash-oc", "nad", "dash -oc errexit 'cp ../base/report.md ../scratch/y.md'", N, 'allow'],
+      ["K-untracked-bash-Oc", "nad", "bash -Oc extglob 'cp ../base/report.md ../scratch/y.md'", N, 'allow'],
+      ["K-untracked-pipe-emu", "nad", "echo 'cp ../base/report.md ../scratch/y.md' | zsh --emulate sh", N, 'allow'],
+      ["K-reject-zsh-oc-sep", "nad", "zsh -oc extendedglob 'cp ../base/report.md report.md'", N, 'allow'],
+      ["K-reject-zsh-oe-sep", "nad", "zsh -oe errexit -c 'cp ../base/report.md report.md'", N, 'allow'],
+      ["K-reject-zsh-emu-eq", "nad", "zsh --emulate=sh -c 'cp ../base/report.md report.md'", N, 'name'],
+      ["K-reject-zsh-emu-late", "nad", "zsh -f --emulate sh -c 'cp ../base/report.md report.md'", N, 'name'],
+      ["K-reject-zsh-emu-noarg", "nad", "zsh --emulate -c 'cp ../base/report.md report.md'", N, 'allow'],
+      ["K-reject-bash-oglued", "nad", "bash -oerrexit -c 'cp ../base/report.md report.md'", N, 'allow'],
+      ["K-reject-dash-oglued", "nad", "dash -oerrexit -c 'cp ../base/report.md report.md'", N, 'allow'],
+      ["K-reject-bash-emu", "nad", "bash --emulate sh -c 'cp ../base/report.md report.md'", N, 'allow'],
+      ["K-reject-dash-emu", "nad", "dash --emulate sh -c 'cp ../base/report.md report.md'", N, 'allow'],
+      ["K-zsh-O-c", "nad", "zsh -O -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["K-zsh-o-sep", "nad", "zsh -o extendedglob -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["K-zsh-co-sep", "nad", "zsh -co extendedglob 'cp ../base/report.md report.md'", A, 'name'],
+      ["K-zsh-b", "nad", "zsh -b -c 'cp ../base/report.md report.md'", N, 'name'],
+      ["K-pipe-zsh-o-glued", "nad", "echo 'cp ../base/report.md report.md' | zsh -oextendedglob", A, 'name'],
+      ["K-pipe-zsh-o-s-in-name", "nad", "echo 'cp ../base/report.md report.md' | zsh -oshwordsplit", A, 'name'],
+    ],
+    X: [   // 100
+      ["X-bash-plus-c-nad", "nad", "bash +c 'cp ../base/report.md report.md'", A, 'name'],
+      ["X-bash-plus-c-na", "na", "bash +c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["X-bash-plus-c-nan", "nan", "bash +c 'cp ../base/report.md n1.md'", A, 'name'],
+      ["X-bash-plus-c-out", "out", "bash +c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["X-dash-plus-c-nad", "nad", "dash +c 'cp ../base/report.md report.md'", A, 'name'],
+      ["X-zsh-plus-c-nad", "nad", "zsh +c 'cp ../base/report.md report.md'", A, 'name'],
+      ["X-sh-plus-c-nad", "nad", "sh +c 'cp ../base/report.md report.md'", A, 'name'],
+      ["X-bash-plus-xc-nad", "nad", "bash +xc 'cp ../base/report.md report.md'", A, 'name'],
+      ["X-bash-plus-cx-nad", "nad", "bash +cx 'cp ../base/report.md report.md'", A, 'name'],
+      ["X-bash-plus-oc-nad", "nad", "bash +oc errexit 'cp ../base/report.md report.md'", A, 'name'],
+      ["X-bash-plus-Oc-nad", "nad", "bash +Oc extglob 'cp ../base/report.md report.md'", A, 'name'],
+      ["X-dash-plus-oc-nad", "nad", "dash +oc errexit 'cp ../base/report.md report.md'", A, 'name'],
+      ["X-dash-plus-ec-nad", "nad", "dash +ec 'cp ../base/report.md report.md'", A, 'name'],
+      ["X-zsh-plus-co-nad", "nad", "zsh +co extendedglob 'cp ../base/report.md report.md'", A, 'name'],
+      ["X-zsh-plus-xc-nad", "nad", "zsh +xc 'cp ../base/report.md report.md'", A, 'name'],
+      ["X-bash-plus-c-mv", "nad", "bash +c 'mv ../base/report.md report.md'", A, 'name'],
+      ["X-zsh-plus-c-redirect", "nad", "zsh +c 'echo x > report.md'", A, 'name'],
+      ["X-dash-plus-c-append", "nad", "dash +c 'echo x >> report.md'", A, 'name'],
+      ["X-bash-plus-s-pipe", "nad", "echo 'cp ../base/report.md report.md' | bash +s foo", A, 'name'],
+      ["X-bash-plus-s-herestring", "nad", "bash +s foo <<< 'cp ../base/report.md report.md'", BZ, 'name'],
+      ["X-bash-s-then-plus-s-pipe", "nad", "echo 'cp ../base/report.md report.md' | bash -s +s foo", A, 'name'],
+      ["X-ctl-dash-plus-s-pipe", "nad", "echo 'cp ../base/report.md report.md' | dash +s foo", N, 'allow'],
+      ["X-ctl-zsh-plus-s-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh +s foo", N, 'allow'],
+      ["X-bash-lone-plus-c-nad", "nad", "bash + -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["X-bash-lone-plus-c-out", "out", "bash + -c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["X-dash-lone-plus-c-nad", "nad", "dash + -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["X-sh-lone-plus-c-nad", "nad", "sh + -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["X-bash-lone-plus-pipe", "nad", "echo 'cp ../base/report.md report.md' | bash +", A, 'name'],
+      ["X-dash-lone-plus-pipe", "nad", "echo 'cp ../base/report.md report.md' | dash +", A, 'name'],
+      ["X-zsh-lone-plus-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh +", A, 'name'],
+      ["X-zsh-lone-plus-devstdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh + /dev/stdin", A, 'name'],
+      ["X-zsh-lone-plus-herestring", "nad", "zsh + <<< 'cp ../base/report.md report.md'", BZ, 'name'],
+      ["X-ctl-zsh-lone-plus-c", "nad", "zsh + -c 'cp ../base/report.md report.md'", N, 'allow'],
+      ["X-dash-o-stdin-pipe-nad", "nad", "echo 'cp ../base/report.md report.md' | dash -o stdin foo", A, 'name'],
+      ["X-dash-o-stdin-pipe-na", "na", "echo 'cp base/report.md docs/report.md' | dash -o stdin foo", A, 'name'],
+      ["X-dash-o-stdin-pipe-nan", "nan", "echo 'cp ../base/report.md n1.md' | dash -o stdin foo", A, 'name'],
+      ["X-dash-o-stdin-pipe-out", "out", "echo 'cp {NA}/base/report.md {NA}/docs/report.md' | dash -o stdin foo", A, 'name', null],
+      ["X-sh-o-stdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | sh -o stdin foo", A, 'name'],
+      ["X-dash-eo-stdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | dash -eo stdin foo", A, 'name'],
+      ["X-dash-o-stdin-herestring", "nad", "dash -o stdin foo <<< 'cp ../base/report.md report.md'", BZ, 'name'],
+      ["X-dash-o-stdin-heredoc", "nad", "dash -o stdin foo <<'EOF'\ncp ../base/report.md report.md\nEOF", A, 'name'],
+      ["X-dash-o-var-stdin-pipe", "nad", "x=stdin; echo 'cp ../base/report.md report.md' | dash -o \"$x\" foo", A, 'name'],
+      ["X-ctl-dash-plus-o-stdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | dash +o stdin foo", N, 'allow'],
+      ["X-ctl-dash-o-stdin-then-plus-pipe", "nad", "echo 'cp ../base/report.md report.md' | dash -o stdin +o stdin foo", N, 'allow'],
+      ["X-zsh-o-shinstdin-pipe-nad", "nad", "echo 'cp ../base/report.md report.md' | zsh -o shinstdin foo", A, 'name'],
+      ["X-zsh-o-shinstdin-pipe-na", "na", "echo 'cp base/report.md docs/report.md' | zsh -o shinstdin foo", A, 'name'],
+      ["X-zsh-o-shinstdin-pipe-nan", "nan", "echo 'cp ../base/report.md n1.md' | zsh -o shinstdin foo", A, 'name'],
+      ["X-zsh-o-shinstdin-pipe-out", "out", "echo 'cp {NA}/base/report.md {NA}/docs/report.md' | zsh -o shinstdin foo", A, 'name', null],
+      ["X-zsh-oglued-shinstdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh -oshinstdin foo", A, 'name'],
+      ["X-zsh-long-shinstdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh --shinstdin foo", A, 'name'],
+      ["X-zsh-long-shin-stdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh --shin-stdin foo", A, 'name'],
+      ["X-zsh-plus-o-noshinstdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh +o noshinstdin foo", A, 'name'],
+      ["X-zsh-plus-oglued-noshinstdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh +onoshinstdin foo", A, 'name'],
+      ["X-zsh-o-SHIN_STDIN-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh -o SHIN_STDIN foo", A, 'name'],
+      ["X-zsh-emu-long-shinstdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh --emulate sh --shinstdin foo", A, 'name'],
+      ["X-zsh-o-stdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh -o stdin foo", A, 'name'],
+      ["X-zsh-oglued-stdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh -oStdIn foo", A, 'name'],
+      ["X-zsh-long-stdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh --stdin foo", A, 'name'],
+      ["X-zsh-plus-o-nostdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh +o nostdin foo", A, 'name'],
+      ["X-zsh-xo-shinstdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh -xo shinstdin foo", A, 'name'],
+      ["X-zsh-o-shinstdin-herestring", "nad", "zsh -o shinstdin foo <<< 'cp ../base/report.md report.md'", BZ, 'name'],
+      ["X-zsh-o-shinstdin-heredoc", "nad", "zsh -o shinstdin foo <<'EOF'\ncp ../base/report.md report.md\nEOF", A, 'name'],
+      ["X-zsh-o-var-shinstdin-pipe", "nad", "x=shinstdin; echo 'cp ../base/report.md report.md' | zsh -o \"$x\" foo", A, 'name'],
+      ["X-zsh-o-unread-name-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh -o \"$Q780_NEVER\" foo", N, NAME_WORD],
+      ["X-dash-o-unread-name-writes", "nad", "x=$(echo stdin | tr a a); echo 'cp ../base/report.md report.md' | dash -o \"$x\" foo", A, ['text', '`dash` option or operand is filled in from "$x"']],
+      ["X-zsh-o-unread-name-writes", "nad", "x=$(echo shinstdin | tr a a); echo 'cp ../base/report.md report.md' | zsh -o \"$x\" foo", A, ['text', '`zsh` option or operand is filled in from "$x"']],
+      ["X-zsh-oglued-unread-name-writes", "nad", "x=$(echo shinstdin | tr a a); echo 'cp ../base/report.md report.md' | zsh -o$x foo", A, ['text', '`zsh` option or operand is filled in from -o$x']],
+      ["X-ctl-bash-o-unread-name", "nad", "x=$(echo errexit | tr a a); bash -o \"$x\" -c 'cp ../base/report.md ../scratch/y.md'", N, 'allow'],
+      ["X-ctl-zsh-o-noshinstdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh -o noshinstdin foo", N, 'allow'],
+      ["X-ctl-zsh-plus-o-shinstdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh +o shinstdin foo", N, 'allow'],
+      ["X-ctl-zsh-o-nostdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh -o nostdin foo", N, 'allow'],
+      ["X-ctl-zsh-shinstdin-procsub", "nad", "zsh -o shinstdin <(echo 'cp ../base/report.md report.md')", N, 'allow'],
+      ["X-zsh-o-shin-stdin-hyphen-rejected-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh -o shin-stdin foo", N, 'name'],
+      ["X-dash-sc-pipe-nad", "nad", "echo 'cp ../base/report.md report.md' | dash -sc true", A, 'name'],
+      ["X-dash-sc-pipe-na", "na", "echo 'cp base/report.md docs/report.md' | dash -sc true", A, 'name'],
+      ["X-dash-sc-pipe-nan", "nan", "echo 'cp ../base/report.md n1.md' | dash -sc true", A, 'name'],
+      ["X-dash-sc-pipe-out", "out", "echo 'cp {NA}/base/report.md {NA}/docs/report.md' | dash -sc true", A, 'name', null],
+      ["X-dash-s-c-pipe", "nad", "echo 'cp ../base/report.md report.md' | dash -s -c true", A, 'name'],
+      ["X-dash-c-s-pipe", "nad", "echo 'cp ../base/report.md report.md' | dash -c -s true", A, 'name'],
+      ["X-sh-sc-pipe", "nad", "echo 'cp ../base/report.md report.md' | sh -sc true", A, 'name'],
+      ["X-dash-ostdin-c-pipe", "nad", "echo 'cp ../base/report.md report.md' | dash -o stdin -c true", A, 'name'],
+      ["X-dash-sc-herestring", "nad", "dash -sc true <<< 'cp ../base/report.md report.md'", BZ, 'name'],
+      ["X-dash-sc-heredoc", "nad", "dash -sc true <<'EOF'\ncp ../base/report.md report.md\nEOF", A, 'name'],
+      ["X-dash-sc-both-write", "nad", "echo 'echo y > report.md' | dash -sc 'echo x > n2.md'", A, 'name'],
+      ["X-ctl-bash-sc-pipe", "nad", "echo 'cp ../base/report.md report.md' | bash -sc true", N, 'allow'],
+      ["X-ctl-zsh-sc-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh -sc true", N, 'allow'],
+      ["X-ctl-dash-plus-s-c-pipe", "nad", "echo 'cp ../base/report.md report.md' | dash +s -c true", N, 'allow'],
+      ["X-ctl-dash-sc-untracked-pipe", "nad", "echo 'cp ../base/report.md ../scratch/y.md' | dash -sc true", N, 'allow'],
+      ["X-zsh-s-then-plus-s-procsub", "nad", "zsh -s +s <(echo 'cp ../base/report.md report.md')", BZ, 'name'],
+      ["X-dash-s-then-plus-s-procsub", "nad", "dash -s +s <(echo 'cp ../base/report.md report.md')", BZ, 'name'],
+      ["X-zsh-s-then-noshinstdin-procsub", "nad", "zsh -s -o noshinstdin <(echo 'cp ../base/report.md report.md')", BZ, 'name'],
+      ["X-zsh-so-noshinstdin-procsub", "nad", "zsh -so noshinstdin <(echo 'cp ../base/report.md report.md')", BZ, 'name'],
+      ["X-zsh-s-then-nostdin-procsub", "nad", "zsh -s -o nostdin <(echo 'cp ../base/report.md report.md')", BZ, 'name'],
+      ["X-ctl-zsh-plus-s-then-s-procsub", "nad", "zsh +s -s <(echo 'cp ../base/report.md report.md')", N, 'allow'],
+      ["X-wrap-env-bash-plus-c", "nad", "env bash +c 'cp ../base/report.md report.md'", A, 'name'],
+      ["X-wrap-nice-dash-o-stdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | nice dash -o stdin foo", A, 'name'],
+      ["X-wrap-bash-c-dash-sc", "nad", "bash -c \"echo 'cp ../base/report.md report.md' | dash -sc true\"", A, 'name'],
+      ["X-lt-procsub-dash-o-stdin", "nad", "dash -o stdin foo < <(echo 'cp ../base/report.md report.md')", BZ, 'name'],
+      ["X-lt-procsub-zsh-emu", "nad", "zsh --emulate sh < <(echo 'cp ../base/report.md report.md')", BZ, 'name'],
+      ["X-lt-procsub-zsh-shinstdin", "nad", "zsh -o shinstdin foo < <(echo 'cp ../base/report.md report.md')", BZ, 'name'],
+    ],
+    Z: [   // 28
+      ["Z-zsh-digit-c-nad", "nad", "zsh -1c 'cp ../base/report.md report.md'", A, 'name'],
+      ["Z-zsh-digit-c-nan", "nan", "zsh -1c 'cp ../base/report.md n1.md'", A, 'name'],
+      ["Z-zsh-digit-c-out", "out", "zsh -1c 'cp {NA}/base/report.md {NA}/docs/report.md'", A, 'name', null],
+      ["Z-zsh-c-digit-nad", "nad", "zsh -c0 'cp ../base/report.md report.md'", A, 'name'],
+      ["Z-zsh-9c-na", "na", "zsh -9c 'cp base/report.md docs/report.md'", A, 'name'],
+      ["Z-zsh-c-blank-nad", "nad", "zsh '-c ' 'cp ../base/report.md report.md'", A, 'name'],
+      ["Z-zsh-c-tab-nad", "nad", "zsh '-c\t' 'cp ../base/report.md report.md'", A, 'name'],
+      ["Z-zsh-plus-c-blank-nad", "nad", "zsh '+c ' 'cp ../base/report.md report.md'", A, 'name'],
+      ["Z-zsh-s-blank-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh '-s ' foo", A, 'name'],
+      ["Z-zsh-blank-word-c-nad", "nad", "zsh '-  ' -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["Z-zsh-c-dash-nad", "nad", "zsh -c- 'cp ../base/report.md report.md'", A, 'name'],
+      ["Z-zsh-fc-dash-nad", "nad", "zsh -fc- 'cp ../base/report.md report.md'", A, 'name'],
+      ["Z-zsh-c-dash-redirect", "nad", "zsh -c- 'echo x > report.md'", A, 'name'],
+      ["Z-zsh-s-dash-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh -s- foo", A, 'name'],
+      ["Z-zsh-1s-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh -1s foo", A, 'name'],
+      ["Z-zsh-plusdash-emulate-nad", "nad", "zsh +-emulate sh -c 'cp ../base/report.md report.md'", A, 'name'],
+      ["Z-zsh-plusdash-emulate-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh +-emulate sh", A, 'name'],
+      ["Z-zsh-plusdash-noshinstdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh +-noshinstdin foo", A, 'name'],
+      ["Z-zsh-plusdash-lone-devstdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh +- /dev/stdin", A, 'name'],
+      ["Z-zsh-plusdash-lone-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh +-", A, 'name'],
+      ["Z-zsh-digit-c-wrap-env", "nad", "env zsh -1c 'cp ../base/report.md report.md'", A, 'name'],
+      ["Z-sh-digit-c", "nad", "sh -1c 'cp ../base/report.md report.md'", N, 'name'],
+      ["Z-ctl-zsh-c-dash-option-operand", "nad", "zsh -c- -x 'cp ../base/report.md report.md'", N, 'allow'],
+      ["Z-ctl-zsh-plusdash-shinstdin-pipe", "nad", "echo 'cp ../base/report.md report.md' | zsh +-shinstdin foo", N, 'allow'],
+      ["Z-ctl-zsh-plusdash-lone-c", "nad", "zsh +- -c 'cp ../base/report.md report.md'", N, 'allow'],
+      ["Z-ctl-zsh-e-dash-c", "nad", "zsh -e- -c 'cp ../base/report.md report.md'", N, 'allow'],
+      ["Z-ctl-zsh-blank-then-letters", "nad", "zsh '-e -c' 'cp ../base/report.md report.md'", N, 'allow'],
+      ["Z-ctl-zsh-digit-c-untracked", "nad", "zsh -1c 'cp ../base/report.md ../scratch/y.md'", N, 'allow'],
+    ],
+  };
+})();
+const E61_COUNTS = { C: 106, P: 34, W: 21, B: 46, V: 26, S: 9, K: 22, X: 100, Z: 28 };
+const E61_GROUPS = [
+  ['C', "zsh's `-c` road: `--emulate MODE` takes the next word and a cluster's first `o` takes the rest of its word as the option's name (a `c` or an `s` counts only before it), in every spelling, write form and cwd"],
+  ['P', "zsh's standard-input roads (a pipe, a here-string, a here-document, `-s`, `/dev/stdin`, `-`, a process-substitution file) under `--emulate` and a glued `-oNAME`"],
+  ['W', 'the same spellings behind a wrapper, inside `bash -c`, `dash -c` and `zsh -c`, eval, a subshell, a substitution, a list, a body, a pipeline, a background job, an alias and a head splice'],
+  ['B', "bash's and dash's clusters: every `o` (bash: `O`) takes the next word wherever it sits, so `-oc errexit '..'`, `-oe errexit -c '..'` and `-ooc errexit nounset '..'` stay refused (a trailing-o-only rule applied to every shell would allow them while every shell writes)"],
+  ['V', "an option's value word the shell fills in (after `-o`, `-O`, `--rcfile`, `--emulate`, a cluster's `o`) that may become no word or several, and an empty text in option position, which is no word in any shell"],
+  ['S', 'the names `sh` and `ksh`, read under all three grammars'],
+  ['K', 'the controls: an untracked target in every spelling, a spelling each shell rejects (judged as that shell reads it), the separate `-o NAME`, zsh\'s `-O` and `-b`'],
+  ['X', "the rest of the class: a `c` with either sign (`bash +c '..'`, `dash +oc errexit '..'`, `zsh +co NAME '..'`), bash's `s` with either sign, a lone `+` (no letters in bash and dash, the end of zsh's options), the standard input's option by name (dash's `-o stdin`, zsh's SHIN_STDIN and STDIN in every spelling, a name the guard does not read), dash running its `-c` text and then its standard input (`-sc`), and an `s` a later word turns off, behind a wrapper and fed by a `<`, with the controls"],
+  ['Z', "zsh's cluster as its option parser reads it: a digit is a letter (`zsh -1c '..'`), a blank ends the word (`zsh '-c ' '..'`), a `-` ending the word ends the options (`zsh -c- '..'`), `+-NAME` turns a long option off, `+-emulate` is `--emulate` and `+-` ends the options, with the controls"],
+];
+test("round 7, twenty-fourth commit, the row census: every row of THE OPTION GRAMMAR's population stands in exactly one group, the counts as measured", () => {
+  const ids = Object.values(E61_ROWS).flat().map((r) => r[0]);
+  assert.equal(ids.length, 392);
+  assert.equal(new Set(ids).size, ids.length, 'no id twice');
+  assert.deepEqual(Object.fromEntries(Object.entries(E61_ROWS).map(([g, rs]) => [g, rs.length])), E61_COUNTS);
+  assert.deepEqual(E61_GROUPS.map(([g]) => g).sort(), Object.keys(E61_ROWS).sort());
+});
+for (const [group, what] of E61_GROUPS) {
+  test(`round 7, twenty-fourth commit, the rows (${group}): THE OPTION GRAMMAR, ${what}`, () => {
+    const w = sixthPassWorld();
+    const savedHome = process.env.HOME;
+    process.env.HOME = w.HOME;
+    try {
+      const judge = (id, cwd, raw, writers, expect, outside = 'allow') => {
+        const cmd = w.fill(raw);
+        const at = w.cwds[cwd];
+        w.build();
+        const h = w.hook(cmd, at);
+        assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error: ${h.reason.split('\n')[0]}`);
+        if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+        else {
+          assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+          assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+          if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+          else assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+        }
+        if (outside != null) {
+          w.build();
+          const o = w.hook(cmd, w.cwds.out);
+          assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
+        }
+        if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(['bash', 'zsh', 'dash'], id)) {
+          const r = w.run(cmd, at, shell);
+          assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+        }
+      };
+      let n = 0;
+      for (const [id, cwd, raw, writers, expect, outside] of E61_ROWS[group]) { judge(id, cwd, raw, writers, expect, outside); n++; }
+      assert.equal(n, E61_COUNTS[group]);
+    } finally { process.env.HOME = savedHome; w.rm(); }
+  });
+}
+test("round 7, twenty-fourth commit: where THE OPTION GRAMMAR lives (the rows above prove what it does; each pin names the rows that red without it)", () => {
+  const hook = fs.readFileSync(HOOK, 'utf8');
+  assert.ok(hook.includes("const SHELL_GRAMMARS = { bash: ['bash'], dash: ['dash'], zsh: ['zsh'] };") && hook.includes("for (const g of SHELL_GRAMMARS[shell] || ['bash', 'dash', 'zsh']) { const r = shellScriptIn(args, g);") && hook.includes('return parses.length === 1 ? parses[0] : { perGrammar: parses };'), 'shellScript reads the words under the grammar of the shell named, all three for `sh` and `ksh`, and hands back every distinct reading (behaviour: S-sh-oglued, S-sh-O, S-sh-emu, S-ksh-oglued)');
+  assert.ok(hook.includes("else if ((shell === 'bash' && (t === '-O' || t === '+O')) || (shell === 'zsh' && (t === '--emulate' || t === '+-emulate'))) take(false);"), "zsh's `--emulate` and `+-emulate` take the next word, bash's `-O` too (behaviour: C-emu-sh-nad, P-emu-sh-nad, H-emu-sh-nad, D-emu-sh-heredoc-nad, Z-zsh-plusdash-emulate-nad, B-bash-O-c-nad)");
+  assert.ok(hook.includes("else if (shell === 'zsh' && /^[-+]./.test(t)) {") && hook.includes("else if (ch === 'o') { if (i === t.length - 1) take(true); else byName(t.slice(i + 1), sign); break; }") && hook.includes("else if (/[ \\t\\n]/.test(ch)) break;") && hook.includes("else if (ch === '-' && i === t.length - 1) endAfter = true;") && hook.includes('if (endAfter) { operand = args[next]; break; }'), "zsh's cluster as its parser reads it: the letters after the first `o` are its name, a `c` or an `s` counts only before it, a digit is a letter, a blank ends the word, a `-` ending it ends the options (behaviour: C-o-glued-nad, C-o-c-in-name-nad, P-o-c-in-name-nad, C-co-glued-nad, X-zsh-oglued-shinstdin-pipe, Z-zsh-digit-c-nad, Z-zsh-c-blank-nad, Z-zsh-c-dash-nad; K-reject-zsh-oc-sep and Z-ctl-zsh-e-dash-c stay allowed)");
+  assert.ok(hook.includes("for (const ch of t.slice(1)) {\n        if (ch === 'c') c = true;\n        else if (ch === 's') takeS(sign);\n        else if (ch === 'o') take(true);\n        else if (ch === 'O' && shell === 'bash') take(false);"), "bash's and dash's cluster: every `o` takes a word, bash's `O` too, a `c` with either sign (behaviour: B-bash-oc-nad, B-dash-ooc-nad, B-bash-Oc-nad, X-bash-plus-c-nad, X-dash-plus-oc-nad)");
+  assert.ok(hook.includes("const takeS = (sign) => { s = shell === 'bash' || sign === '-'; };"), "`s` with either sign in bash, turned off by `+` in dash and zsh (behaviour: X-bash-plus-s-pipe, X-zsh-s-then-plus-s-procsub, X-dash-s-then-plus-s-procsub; X-ctl-dash-plus-s-pipe stays allowed)");
+  assert.ok(hook.includes("if (t === '--' || t === '-' || (shell === 'zsh' && (t === '+' || t === '+-'))) { operand = args[k + 1]; break; }") && hook.includes("if (t === '+') continue;   // bash and dash: a cluster of no letters"), 'a lone `+` and `+-` end zsh\'s options and a lone `+` is no letters in bash and dash (behaviour: X-bash-lone-plus-c-nad, X-bash-lone-plus-pipe, X-zsh-lone-plus-devstdin-pipe, Z-zsh-plusdash-lone-devstdin-pipe; X-ctl-zsh-lone-plus-c and Z-ctl-zsh-plusdash-lone-c stay allowed)');
+  assert.ok(hook.includes("if (shell === 'dash' && name === 'stdin') s = sign === '-';") && hook.includes("if (shell === 'zsh') { const n = name.toLowerCase().replace(/[_-]/g, ''); if (n === 'shinstdin' || n === 'stdin') s = sign === '-'; else if (n === 'noshinstdin' || n === 'nostdin') s = sign !== '-'; }"), "the standard input's option by name (behaviour: X-dash-o-stdin-pipe-nad, X-zsh-o-shinstdin-pipe-nad, X-zsh-o-stdin-pipe, X-zsh-plus-o-noshinstdin-pipe; X-ctl-zsh-o-noshinstdin-pipe stays allowed)");
+  assert.ok(hook.includes("else if (shell === 'zsh' && /^[-+]-/.test(t)) { byName(t.slice(2), t[0]); continue; }"), "zsh's long option names, `+-NAME` turning one off (behaviour: X-zsh-long-shinstdin-pipe, X-zsh-long-shin-stdin-pipe, X-zsh-long-stdin-pipe, Z-zsh-plusdash-noshinstdin-pipe; Z-ctl-zsh-plusdash-shinstdin-pipe stays allowed)");
+  assert.ok(hook.includes('const valueMoves = (w) => !!w && !w.literal && procsubOf(w) == null && !dqSingleField(w.raw);') && hook.includes("const nameUnread = (w) => (shell === 'dash' || shell === 'zsh') && !!w && !w.literal && procsubOf(w) == null;") && hook.includes('if (j < args.length - 1 && (valueMoves(w) || (isName && nameUnread(w)))) return done({ optionWord: w, at: j, takenBy: t, name: isName && !valueMoves(w) });') && hook.includes('if (isName && w && w.literal) byName(w.text, t[0]);'), 'a value word that may become no word or several, or an option name dash or zsh may read as the standard input\'s, is the option word, and a literal name is read (behaviour: V-zsh-o-empty-nad, V-bash-o-split-nad, V-bash-o-unknown-nad, X-zsh-o-var-shinstdin-pipe, X-zsh-o-unread-name-pipe, X-dash-o-stdin-pipe-nad; V-ctl-bash-o-quoted-read-nad stays allowed)');
+  assert.ok(hook.includes("if (c) return done(shell === 'dash' && s ? { script: operand || null, stdin: true, fd: null } : { script: operand || null });") && hook.includes("if (sh.stdin) {   // after a `-c` text too where the shell runs both (THE OPTION GRAMMAR: dash's `-sc`)"), "dash runs its `-c` text and then its standard input (behaviour: X-dash-sc-pipe-nad, X-dash-ostdin-c-pipe; X-ctl-bash-sc-pipe and X-ctl-zsh-sc-pipe stay allowed)");
+  assert.ok(hook.includes("const readShell = (argv, budget) => { const parsed = shellScript(argv, name); for (const sh of parsed.perGrammar || [parsed]) readReading(argv, budget, sh); };"), 'every reading is read (behaviour: S-sh-oglued, S-ksh-O)');
+  assert.ok(hook.includes("const pieces = /^\"/.test(ow.raw) ? [lit(t)] : t.split(/[ \\t\\n]+/).filter(Boolean).map(lit);"), 'an empty unquoted text in option position is no word (behaviour: E-bash-empty-option-nad, E-zsh-emu-empty-after-nad; E-ctl-bash-quoted-empty-option-nad stays allowed)');
+});
