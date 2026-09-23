@@ -2431,7 +2431,9 @@ class EscalationFloorWiring(_StoreSandbox):
 
     def test_the_ended_gate_is_build_sessions_exact_gate(self):
         src = inspect.getsource(km._feed_session_key)   # the ended read is a KEY component (todos, by value)
-        self.assertIn("_user_todo_session_ended(fsid)", src)
+        self.assertIn("not _user_todos_shown(fsid)", src,
+                      "the key asks the ONE ended gate, _user_todos_shown (build_session asks the same name; "
+                      "tests/test_user_todos_roster.py holds the census over every surface that asks it)")
 
     def test_a_goal_less_session_gets_the_needs_input_placeholder(self):
         src = inspect.getsource(km._feed_session_entry)

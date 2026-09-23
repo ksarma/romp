@@ -32,27 +32,37 @@ from _pytest._code.code import ReprExceptionInfo, ReprFileLocation, ReprTracebac
 # is gettempdir() and so the inside of the root; pytest_unconfigure then removes the root whole
 # (whatever the sweep could not see), the package's romp-tests-state-* dir included, which sits
 # inside it. Under pytest-xdist both hooks run in the controller and in every worker: each imported
-# the package and this file and so owns a root of its own (a worker's sits inside the controller's,
-# since it inherits that TMPDIR; the package records the system temp dir the run was handed with a
-# setdefault, so a worker keeps the controller's record — ROMP_TESTS_SYSTEM_TMPDIR — rather than
-# naming the controller's root, one level too deep for a socket path under a long TMPDIR).
+# the package and this file and so owns a root of its own, and a worker's sits BESIDE the controller's
+# in the system temp dir the package recorded (ROMP_TESTS_SYSTEM_TMPDIR, a setdefault the worker
+# inherits), never inside it: beside whenever that recorded dir exists, differs from the handed dir and
+# is its parent; otherwise inside the handed dir, as before, and the PrivateTempRoot pin in
+# tests/test_tempdir_hygiene.py reds on that shape (2026-09-21; nested until then, and each level cost 20 bytes of the AF_UNIX
+# socket path budget, which put the deepest hosts-on lab's socket at the budget exactly under a 17-byte
+# TMPDIR under -n: the package's comment has the arithmetic). Each process removes its own root; the
+# controller's removal below also takes the root of any worker that died without its hooks (the
+# package lists each child's pid and root in `romp-tests-children` inside the parent's root, and xdist
+# tears the workers down before the controller's unconfigure runs), so a killed worker leaks nothing.
 # The atexit registrations (the package's and this file's) are silent fallbacks for a normal exit
 # that skipped the hooks, each a no-op on what the other removed; nothing runs after an os._exit
-# (pytest-timeout's thread method ends a hung run that way), so a hang leaves ONE top-level entry
-# in the system temp dir, the root with its marker, for the kernel's sweep.
+# (pytest-timeout's thread method ends a hung run that way), so a hang leaves its root, marked, as a
+# top-level entry in the system temp dir, for the kernel's sweep.
 import tests as _tests  # noqa: E402  the package; its import is what minted the root this file removes
 _TMP_ROOT = _tests.TMP_ROOT
 TEST_ROOT_OWNER_MARKER = _tests.TEST_ROOT_OWNER_MARKER   # tests/test_test_root_sweep.py pins it against the kernel's
 
 
 def _remove_run_dirs(report=False):
-    """Remove the root (the package state dir is inside it). A survivor is named on stderr when asked:
-    rmtree with ignore_errors swallows a child still writing under the root or a 000-mode directory a
-    test left behind, and the run would otherwise end green with the root standing. Only unconfigure
-    asks; the atexit fallback stays silent so it neither repeats the notice nor contradicts it."""
+    """Remove the root (the package state dir is inside it), after the roots of its DEAD children (an xdist worker
+    that died without its own removal; the package lists them inside this root). A survivor is named on stderr when
+    asked, a dead child's as much as this root: rmtree with ignore_errors swallows a child still writing under the
+    root or a 000-mode directory a test left behind, and the run would otherwise end green with the root standing.
+    Only unconfigure asks; the atexit fallback stays silent so it neither repeats the notice nor contradicts it."""
+    survivors = _tests.remove_dead_children(_TMP_ROOT)
     shutil.rmtree(_TMP_ROOT, ignore_errors=True)
-    if report and os.path.isdir(_TMP_ROOT):
-        print("[tests] not removed at run end: %s" % _TMP_ROOT, file=sys.stderr)
+    if report:
+        for root in [_TMP_ROOT] + survivors:
+            if os.path.isdir(root):
+                print("[tests] not removed at run end: %s" % root, file=sys.stderr)
 
 
 atexit.register(_remove_run_dirs)
