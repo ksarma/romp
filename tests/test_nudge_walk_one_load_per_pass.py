@@ -863,17 +863,18 @@ against 1, and the birth pin, the door witness's cases green under it (6 failed,
 round-8 fixes: 40 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t.
 
 Review round 9 (2026-09-23; the reviewer's rulings on round 8, which the round-9 fixes answer, among them correctness-1, the counter
-bumped on the line before the look's read so a read that raises is counted, and tests-1, a case on the look's store-fault road). The
-bypass plants and the alias control, re-taken at this head, the head of the round-9 fixes, over its 43 cases, each landed on
+bumped on the line before the look's read so a read that raises is counted, and tests-1, a case on the look's store-fault road;
+before the push the fixes also answer a verifier's findings on the counter census and on a raise road and a fault road no case
+drove). The bypass plants and the alias control, re-taken at this head, the head of the round-9 fixes, over its 43 cases, each landed on
 kernel/kernel.py and reverted, with the kernel, the judge and this module hashed before the plant and after the revert and found
 equal, the module run single-process on 3.12 through the clean runner: the kernel opening and parsing the store file itself and the
 kernel calling jd._read_store_json, per session in the pass loop, each guarded so that its own raise on a faulted store cannot end
 the look, leave every case green with no file changed across a run (43 passed each; unguarded, each reds the store-fault case on
-both of its roads, the look never reached); a second judge module loaded under another name reds the birth pin alone, naming
+each of its roads, the look never reached); a second judge module loaded under another name reds the birth pin alone, naming
 `_PJ.load_goals_shared` (1 failed, 42 passed); the alias control, the shared door bound at kernel import and called per session,
-reds the shared reconciliation on each harness case and subTest that drives a pass, 2 against 0 three times, 3 against 2 twice, 3
-against 1, 4 against 2 six times, 6 against 4 twice and 7 against 5 twice, and the birth pin, the door witness's cases green under
-it (17 failed, 37 passed, each failed subTest counted as a failure). The clean module at this head, the head of the round-9 fixes:
+reds the shared reconciliation on each harness case and subTest that drives a pass, 2 against 0 four times, 3 against 2 three
+times, 3 against 1, 4 against 2 six times, 6 against 4 twice and 7 against 5 twice, and the birth pin, the door witness's cases
+green under it (19 failed, 37 passed, each failed subTest counted as a failure). The clean module at this head, the head of the round-9 fixes:
 43 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
