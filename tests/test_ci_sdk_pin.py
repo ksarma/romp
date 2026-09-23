@@ -621,6 +621,10 @@ class RequireSwitch(unittest.TestCase):
         rc, out = self._run_installed_version(require=True)
         self.assertNotEqual(rc, 0, "ROMP_SDK_REQUIRE=1 on an interpreter without the SDK must fail the run, not warn: " + out[-3000:])
         self.assertIn("ROMP_SDK_REQUIRE=1: this run requires the SDK", out, "the red must carry the switch's own message: " + out[-3000:])
+        # the refusal names the interpreter (review round 4, 2026-09-23: ci.yml, the docstring, tests/README.md and the
+        # ledger say so, and with sys.executable dropped from the fail text this module stayed green). The child runs as
+        # sys.executable -m pytest, so its sys.executable is this process's
+        self.assertIn("(%s)" % sys.executable, out, "the refusal must name the interpreter running pytest: " + out[-3000:])
         self.assertIn("FAILED %s::" % self.node, out, "the red must be InstalledVersion's own test: " + out[-3000:])
         self.assertIn("1 failed", out, "one test, failed, nothing skipped: " + out[-3000:])
 
