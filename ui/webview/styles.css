@@ -4981,7 +4981,7 @@ body.filebrowse-open { overflow: hidden; }
    the tree) while the Comments panel is open; the page's background under the glyph, since it stands on a picture, and the
    family's hover wash over that background. Transparent at rest and revealed by the pointer over the figure (the sibling before
    it: `:hover +`), by the pointer over itself and by a keyboard focus (.code-copy's reveal); a touch device with no hover, or any
-   device with a coarse pointer beside a hovering one, keeps it visible (.code-copy's and .snap-act's precedents); every reveal is
+   device with a coarse pointer beside a hovering one, keeps it visible (.code-copy's and the section snapshot action's precedents); every reveal is
    under `screen`, so a print, where hover is none, shows none of it and the
    print block needs no line for it. A figure floated by its align attribute stacks sideways: the control floats with it, a left
    float's at the figure's top-right corner as before, a right float's at its top-LEFT corner (a later right float sits left of
@@ -4998,8 +4998,8 @@ body.filebrowse-open { overflow: hidden; }
    round 13, ui-1 with extra6-1), the one the control's dashed border wears at rest (`:not(:hover)`, so the family's accent hover border
    still wins on the control), so the two dresses are one colour. Both at-rest rules key on `(hover: none)` OR `(any-pointer: coarse)`,
    `screen` written on both queries (css-rules' underScreen reads a list member by member): `hover` describes the PRIMARY pointer, and a
-   touchscreen laptop's is a hovering trackpad, so neither dress stood there at rest while a finger's tap opened the tab (.snap-act's
-   precedent; the file review's round 13, extra7-2). Byte-equal in both sheets (fileview-parity.test.ts); laid out in
+   touchscreen laptop's is a hovering trackpad, so neither dress stood there at rest while a finger's tap opened the tab (the section
+   snapshot action's precedent; the file review's round 13, extra7-2). Byte-equal in both sheets (fileview-parity.test.ts); laid out in
    file-figure-open-browser.test.ts. */
 .fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }
 .fileview-md .fv-figopen:hover { background: var(--bg) linear-gradient(var(--accent-wash), var(--accent-wash)); }
