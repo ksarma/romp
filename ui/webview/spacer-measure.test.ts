@@ -1006,7 +1006,9 @@ const TEST_OR_TYPES = /\.(test|d)\.[mc]?ts$/;
 /** The modules the page bundles load: esbuild's metafile of the shipped `webview` config (vscode-extension/esbuild.js exports the config and
  *  emits no metafile of its own) built in memory, nothing written, the shape ui/webview/editor-lazy.test.ts builds the editor chunk with;
  *  every input keyed by its path relative to vscode-extension/, made repo-relative here with forward slashes. Inputs under node_modules are
- *  third-party and left out; the `.css` inputs are not modules. Built once and shared by the census and its witness. */
+ *  third-party and left out; the `.css` inputs are not modules. Built once, in the census cell, its one caller (the memo below holds that
+ *  build, so a failed build rejects the promise the census awaits and reds that cell with esbuild's message); the witness cell runs
+ *  synthetic sources through the walker (censusViewWrites) and needs no build. */
 let bundledP: Promise<string[]> | null = null;
 function bundledModules(): Promise<string[]> {
   if (!bundledP) bundledP = (async () => {
