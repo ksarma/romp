@@ -216,9 +216,11 @@ jobs:
           # pytest here sets the switch in the env Actions merges for it (workflow, job, step, or a prefix
           # on the command) or is listed there by job and step name with a reason the test checks (the
           # served-page step alone today, whose job installs no SDK), and each passes -p no:anyio with no
-          # listing. The check reads this file's text: a pytest run by a script or action a step calls is
-          # outside it, and a run line that spells pytest in a form the check does not read as a command
-          # is red until it is read.
+          # listing. The check reads this file's text: every line here that spells pytest, outside a
+          # comment or a name: key and other than a pip install, is read as a command or is red until it
+          # is read, whatever its layout (its line census), and so is a job key it does not read; a run
+          # line that never spells pytest, a pytest run by a script or action a step calls, and the other
+          # workflow files are outside it.
           ROMP_SDK_REQUIRE: "1"
           # The free-threaded cell runs with the GIL off, stated rather than defaulted (a 't'
           # build disables it by default, and an extension that lacks free-threading support

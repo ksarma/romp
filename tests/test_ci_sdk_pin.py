@@ -23,9 +23,10 @@ This module holds five things, and it never skips: a pin that skips reports gree
    checks over every pytest line of the step; an invocation that does neither is named with its job, step and file
    line, and so is one whose step name another pytest-running step of the job shares (`ambiguous`: the key would name
    two steps, and GitHub Actions does not require unique names). The population is derived from
-   the file's text by pytest_invocations (its docstring is the rule: `python -m pytest`, a bare `pytest` or `py.test`
-   at command position, in a named or unnamed step, in a single-line, quoted, continued, `run: |` or `run: >` scalar,
-   backslash continuations joined, comment and pip lines excluded), and the two invocations the file is known to
+   the file's text by pytest_invocations (its docstring is the rule: `python -m pytest`, `python -mpytest`, a bare
+   `pytest` or `py.test` at command position, in a named or unnamed step in the file's own layout, in a single-line,
+   quoted, continued, `run: |` or `run: >` scalar, backslash continuations joined, comment lines and pip installs
+   excluded), and the two invocations the file is known to
    hold, the Python matrix step's Run pytest (the switch and the flag) and the vscode-extension job's served-page
    step (the flag; listed for the switch, since its job installs no SDK), are asserted present, so an empty read is
    red. The flag has no list: the constant pins the SDK alone, its dependency closure resolves fresh on every run (26
@@ -36,10 +37,18 @@ This module holds five things, and it never skips: a pin that skips reports gree
    decision, why, and the measurement behind it); pytest accepts the flag where anyio is absent, so an invocation
    whose interpreter has no anyio today (the served-page step: pip, pytest, pytest-timeout, cryptography) passes it
    too rather than carrying a reason about a pip line that a later package on that line would silently make false.
-   The check reads ci.yml's text, and that is its residual: a pytest run by a script or action the workflow calls is
-   outside it, as is a run line that never spells pytest; a run line that spells pytest in a form the parser does not
-   read as a command (a wrapper such as `uvx pytest`, a `$PYTEST` variable, an indentation indicator on a block, a
-   more-indented line in a folded block) is red as `unparsed` until the parser reads it, never green. The flag half
+   The check reads ci.yml's text, and that is its residual. Every line of ci.yml that spells pytest (the word in any
+   case ending at a word boundary, py.test, or a `$PYTEST` expansion), outside a comment or a name: key and other than
+   a pip install, is read as an invocation or is red, whatever its layout (round 4's ruling, 2026-09-23): the line
+   census in PytestPopulation holds each such line to the span of lines the parser read for a row, so a step in a
+   layout the parser does not read (steps at indent 4 or 8, `-   name:`, a flow mapping, a quoted or spaced `run` key)
+   is red at its pytest line; a mention the parser reads but not as a command (a wrapper such as `uvx pytest`, a
+   `$PYTEST` variable, an option cluster such as `python -Impytest`, an indentation indicator on a block, a
+   more-indented line in a folded block) is red as `unparsed` until the parser reads it; and a line where a job key
+   goes that the parser does not read as one (a quoted key) is red, so no step is read under the job above it. Outside
+   the check: a run line that never spells pytest (a `$RUNNER` set elsewhere, `make test`, a YAML alias such as
+   `run: *cmd` whose anchor another line carries), a pytest run by a script or action a step calls, and every other
+   workflow file under .github/workflows/. The flag half
    keys on the spelling `-p no:anyio` with one space, the switch half on the merged value reading 1, and their
    messages say so. The pin below does not
    catch a bad transitive release: a red that no commit explains is one, and the comment says so.
@@ -615,31 +624,47 @@ class RequireSwitch(unittest.TestCase):
 # rule now: every command that runs pytest in ci.yml passes -p no:anyio (no list: pytest accepts the flag where anyio
 # is absent, so there is no interpreter on which a pytest line has a reason to lack it), and either sets
 # ROMP_SDK_REQUIRE=1 or is in SWITCH_LISTED with a reason whose premises ListedInvocations checks.
-# What the parser reads, and its limits, are stated in pytest_invocations' docstring; a form it does not read is red.
+# What the parser reads, and its limits, are stated in pytest_invocations' docstring. A pytest mention it reads but not
+# as a command is red as `unparsed`; a pytest mention in a layout it does not read at all gives no row, and the line
+# census (pytest_line_census, run in PytestPopulation) reds it: every line of the file that spells pytest, outside a
+# comment or a name: key, lies in the span of lines the parser read for a row, or the census names it. A line at the
+# jobs' indent that is not a job the parser reads is red too (unread_job_keys), so no step is read under the job above
+# it. Until 2026-09-23 the parser's limits were claimed red and a step in YAML's compact list style gave no row at all.
 # ---------------------------------------------------------------------------------------------------------------------
 TOP_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):", re.M)                # a column-0 key of the workflow's mapping
-JOB_RE = re.compile(r"^  ([A-Za-z0-9_-]+):[ \t]*(?:#.*)?\n", re.M)           # a job: a key at indent 2 under jobs:
+JOB_RE = re.compile(r"^  ([A-Za-z0-9_-]+):[ \t]*(?:#.*)?\n", re.M)           # a job: a bare key at indent 2 under jobs:
 STEP_START_RE = re.compile(r"^      - ", re.M)                                # a step: a list item at indent 6
 STEP_KEY_PAD = "        "                                                     # step keys sit at indent 8 once `- ` is spaced
 RUN_RE = re.compile(r"^        run:(.*)$", re.M)
 BLOCK_INDICATOR_RE = re.compile(r"^[ \t]*([|>])([+-]?)([0-9]?)[ \t]*(#.*)?$")
 UNNAMED = "(unnamed step)"
-# a command that runs pytest: `python -m pytest`, `python3.12 -m pytest`, a bare `pytest` or `py.test`, at the START of a
-# command (the run line is split into its commands first, _shell_commands: at `&&`, `||`, `;`, `|`, `&`, a subshell's
-# parentheses, whatever the spacing, and cut at a comment), after any inline VAR=value prefixes (read into the
-# invocation's env); the command's own arguments are the rest of that command and nothing after it. Until 2026-09-21 the
-# regex took the rest of the LINE as the arguments and the split cut only at an operator with whitespace before it, so a
-# second `python -m pytest` on the line was never read, and its flag, or one in a trailing comment, read as the first
-# command's. A `$PYTEST` variable, `uvx pytest`, `tox`, `uv run pytest` or a wrapper script is NOT read as a command; a
-# command that mentions pytest and is neither a match nor a pip install line is reported as `unparsed` and reds the
-# population test until the parser reads it (a mention in a comment is cut with the comment), so the parser's limits
-# fail loud rather than green.
+# a command that runs pytest: `python -m pytest`, `python3.12 -m pytest`, `python -mpytest` (one token), a bare `pytest`
+# or `py.test`, at the START of a command (the run line is split into its commands first, _shell_commands: at `&&`,
+# `||`, `;`, `|`, `&`, a subshell's parentheses, whatever the spacing, and cut at a comment), after any inline VAR=value
+# prefixes (read into the invocation's env); the command's own arguments are the rest of that command and nothing after
+# it. Until 2026-09-21 the regex took the rest of the LINE as the arguments and the split cut only at an operator with
+# whitespace before it, so a second `python -m pytest` on the line was never read, and its flag, or one in a trailing
+# comment, read as the first command's. A `$PYTEST` variable, `uvx pytest`, `uv run pytest`, an option cluster before
+# the module (`python -Impytest`, `python -I -m pytest`) or a wrapper script that spells pytest is NOT read as a
+# command; a command that mentions pytest and is neither a match nor a pip install is reported as `unparsed` and reds
+# the population test until the parser reads it (a mention in a comment is cut with the comment), so the parser's
+# limits fail loud rather than green. A command that never spells pytest (`tox`, `make test`) is no mention at all.
 PYTEST_CMD_RE = re.compile(r"^(?P<env>(?:[A-Za-z_][A-Za-z0-9_]*=\S*[ \t]+)*)"
-                           r"(?:\S*/)?(?:python[0-9.]*[ \t]+-m[ \t]+pytest|pytest|py\.test)(?=\s|$)(?P<args>.*)$")
-# a mention: the word in any case (so `$PYTEST` and `${PYTEST_CMD}` count), or py.test; a mention that is not a command
-# hit and not a pip line is `unparsed`
-PYTEST_WORD_RE = re.compile(r"\bpytest\b|\bpy\.test\b|\$\{?pytest", re.I)
+                           r"(?:\S*/)?(?:python[0-9.]*[ \t]+-m[ \t]*pytest|pytest|py\.test)(?=\s|$)(?P<args>.*)$")
+# a mention: the word in any case, ending at a word boundary, or py.test, or `$PYTEST...`/`${PYTEST...}`; no boundary
+# BEFORE the word, so `-mpytest` and an option cluster such as `-Impytest` count (until 2026-09-23 a leading `\b` kept
+# both out: `python -mpytest`, which runs pytest, was neither read nor reported; PYTEST_TEXT_RE below had dropped it on
+# 2026-09-21). An identifier that runs on past the word (an env: key PYTEST_ADDOPTS, pytest_args) is no mention unless
+# a `$` expands it. A mention that is not a command hit and not a pip install is `unparsed`.
+PYTEST_WORD_RE = re.compile(r"pytest\b|\bpy\.test\b|\$\{?pytest", re.I)
 PIP_INSTALL_RE = re.compile(r"\bpipx?\b.*\binstall\b")
+# a line whose key is `name` (`name:` or `- name:`, the value after a space or nothing): the census's first exclusion. A
+# line that merely contains "name:" (a flow mapping `- {name: ..., run: ...}`) is not one.
+NAME_KEY_RE = re.compile(r"^[ \t]*(?:-[ \t]+)?name:(?:[ \t]|$)")
+# the census's split of a line the parser did not read, for the pip exclusion: at every operator character whatever the
+# quoting, so the commands of a YAML-quoted scalar are judged one by one (a split finer than the shell's never hides a
+# mention: it can only stand a piece of a pip command alone)
+CENSUS_SPLIT_RE = re.compile(r"&&|\|\||[;|&()]")
 INLINE_ENV_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(\S*)")
 SWITCH = "ROMP_SDK_REQUIRE"
 FLAG_SPELLING = "-p no:anyio"
@@ -756,7 +781,8 @@ def _shell_commands(text):
 
 def _paragraphs(raw):
     """Fold [(offset, line)] the way YAML folds a plain or `>` scalar: consecutive non-blank lines join with one
-    space, a blank line ends the paragraph. Returns [(offset of the first line, joined text)]."""
+    space, a blank line ends the paragraph. Returns [(offset of the first line, joined text, offset of the last line)]:
+    the last line bounds the span the line census counts as read for a row."""
     out, cur = [], None
     for off, line in raw:
         if line.strip() == "":
@@ -764,21 +790,23 @@ def _paragraphs(raw):
                 out.append(cur)
             cur = None
         elif cur is None:
-            cur = (off, line.strip())
+            cur = (off, line.strip(), off)
         else:
-            cur = (cur[0], cur[1] + " " + line.strip())
+            cur = (cur[0], cur[1] + " " + line.strip(), off)
     if cur:
         out.append(cur)
     return out
 
 
 def _step_run(stext):
-    """The step's `run:` scalar as shell lines [(offset in stext, text)] and an `unreadable` reason (None when the
-    form is one this parser reads). Read: a single-line plain or quoted scalar, with continuation lines indented past
-    the key folded onto it; a `run: |` literal (with a `-` or `+` chomping indicator: the indicator changes trailing
-    newlines only); a `run: >` folded block, each paragraph one command. Not read, and reported so an invocation in
-    the block is `unparsed`: an indentation indicator on the block (`|2`), or a line indented deeper than the block's
-    first line inside a folded block (YAML keeps its line breaks, which this fold would not). No `run:`: (None, None)."""
+    """The step's `run:` scalar as shell lines [(offset in stext, text, offset of its last line)] and an `unreadable`
+    reason (None when the form is one this parser reads); the last line differs from the first for a folded paragraph
+    or a plain scalar continued on later lines. Read: a single-line plain or quoted scalar, with continuation lines
+    indented past the key folded onto it; a `run: |` literal (with a `-` or `+` chomping indicator: the indicator
+    changes trailing newlines only); a `run: >` folded block, each paragraph one command. Not read, and reported so an
+    invocation in the block is `unparsed`: an indentation indicator on the block (`|2`), or a line indented deeper than
+    the block's first line inside a folded block (YAML keeps its line breaks, which this fold would not). No `run:`:
+    (None, None)."""
     m = RUN_RE.search(stext)
     if not m:
         return None, None
@@ -800,24 +828,26 @@ def _step_run(stext):
         if not content:
             return [], None
         if indent_indicator:
-            return [(o, l.strip()) for o, l in content], "an indentation indicator (%s) on the block" % bm.group(0).strip()
+            return [(o, l.strip(), o) for o, l in content], "an indentation indicator (%s) on the block" % bm.group(0).strip()
         indent = len(content[0][1]) - len(content[0][1].lstrip(" "))
         if style == "|":
-            return [(o, l[indent:].rstrip("\n")) for o, l in raw], None
+            return [(o, l[indent:].rstrip("\n"), o) for o, l in raw], None
         if any(len(l) - len(l.lstrip(" ")) > indent for o, l in content):
-            return [(o, l.strip()) for o, l in content], "a line indented deeper than the block's first line in a folded block"
+            return [(o, l.strip(), o) for o, l in content], "a line indented deeper than the block's first line in a folded block"
         return _paragraphs(raw), None
     first = rest.strip()
     first_off = m.start(1) + (len(rest) - len(rest.lstrip()))
     paras = _paragraphs([(first_off, first)] + raw) if first else _paragraphs(raw)
     if paras and len(paras[0][1]) >= 2 and paras[0][1][0] in "\"'" and paras[0][1][-1] == paras[0][1][0]:
-        paras[0] = (paras[0][0], paras[0][1][1:-1])
+        paras[0] = (paras[0][0], paras[0][1][1:-1], paras[0][2])
     return paras, None
 
 
-def pytest_invocations(src):
+def pytest_invocations(src, read=None):
     """Every pytest invocation in a workflow's text, as dicts: job, step (the `name:`, else "(unnamed step)"), line (in
-    the file), env (the workflow's env updated by the job's, by the step's, then by VAR=value prefixes on the command
+    the file) and last_line (the last file line of the command as read: its last backslash continuation, or the last
+    line of its folded paragraph; the span line..last_line is what the line census counts as read), env (the
+    workflow's env updated by the job's, by the step's, then by VAR=value prefixes on the command
     itself: the scopes GitHub Actions merges, later overriding earlier), args (the command's own arguments: the rest
     of ITS command, the line split into commands at its operators and cut at a comment first by _shell_commands, so a
     line running two pytest commands is two invocations at one line and a flag in the next command or in a comment is
@@ -826,13 +856,17 @@ def pytest_invocations(src):
     OTHER steps of the same job that carry this step's name: GitHub Actions does not require unique step names, and
     the listing and every report here key on (job, step name), so a shared name is `ambiguous` in verdict and red
     until one step is renamed; empty for a unique name and for an unnamed step, which cannot be listed); plus, for a
-    command that mentions pytest without being one the parser reads or a pip install line, a dict with `unparsed` set
-    to the reason and args None.
+    command that mentions pytest without being one the parser reads or a pip install, a dict with `unparsed` set
+    to the reason and args None. `read`, when a list is given, receives {first, last, text} for every command line the
+    parser read in a step's run, row or not (pytest_line_census judges the pip exclusion on that text).
     A text parse over the file's own indentation (top-level keys at column 0, jobs at 2, job keys at 4, steps at 6,
     step keys at 8, env keys and run block lines at 10), the way this file's other pins and tests/test_ci_bats_bound.py
-    read it: no YAML library in the test deps. The run forms read are _step_run's; comment lines are skipped; a line
-    ending in a backslash is joined with the next. Outside this parser by construction: a pytest run by a script or
-    action the workflow calls, and a run line that never spells pytest (a `$PYTEST` variable set elsewhere)."""
+    read it: no YAML library in the test deps. A step in any other layout (steps at indent 4 or 8, `-   name:`, a flow
+    mapping, a quoted or spaced `run` key) gives no row here; pytest_line_census reds its pytest line, and
+    unread_job_keys a job key this parser does not read. The run forms read are _step_run's; comment lines are skipped;
+    a line ending in a backslash is joined with the next. Outside this parser by construction: a pytest run by a script
+    or action the workflow calls, and a run line that never spells pytest (a `$RUNNER` variable set elsewhere, or
+    `make test`)."""
     sections = _top_sections(src)
     assert "jobs" in sections, "ci.yml has no jobs: mapping at column 0: re-anchor this parser"
     wf_env = {}
@@ -868,23 +902,30 @@ def pytest_invocations(src):
             lines, unreadable = _step_run(stext)
             if lines is None:
                 continue
-            run_text = "".join(t + "\n" for _o, t in lines)
+            run_text = "".join(t + "\n" for _o, t, _e in lines)
             job_runs.append(run_text)
             j = 0
             while j < len(lines):
-                off, cmd = lines[j]
+                off, cmd, last = lines[j]
                 while cmd.rstrip().endswith("\\") and j + 1 < len(lines):
                     j += 1
                     cmd = cmd.rstrip()[:-1].rstrip() + " " + lines[j][1].strip()
+                    last = lines[j][2]
                 j += 1
                 at = _line_of(src, sbase + off)
+                last_at = _line_of(src, sbase + last)
+                if read is not None:
+                    read.append({"first": at, "last": last_at, "text": cmd})
                 if cmd.lstrip().startswith("#"):
                     continue
                 if not PYTEST_WORD_RE.search(cmd):
                     continue
-                base = {"job": job, "step": step, "line": at, "run": run_text, "cwd": cwd, "cmd": cmd, "step_index": k}
+                base = {"job": job, "step": step, "line": at, "last_line": last_at, "run": run_text, "cwd": cwd, "cmd": cmd,
+                        "step_index": k}
                 if unreadable:
-                    if not PIP_INSTALL_RE.search(cmd):
+                    # the pip exclusion per command, never per line: `pip install pytest && pytest` in such a block is a
+                    # pytest command after a pip one (until 2026-09-23 the whole line was excused by its pip half)
+                    if any(PYTEST_WORD_RE.search(c) and not PIP_INSTALL_RE.search(c) for c in _shell_commands(cmd)):
                         parsed.append(dict(base, env=dict(env), args=None, unparsed=unreadable))
                     continue
                 for command in _shell_commands(cmd):
@@ -903,6 +944,106 @@ def pytest_invocations(src):
                                       and inv["step"] != UNNAMED)
         found.extend(parsed)
     return found
+
+
+def _comment_cut(line):
+    """The line up to an unquoted `#` at its start or after whitespace: the comment rule _shell_commands applies (a
+    quoted span and a backslash-escaped character hold no comment). Quote-aware, so it only ever keeps more text than
+    a blind cut would, the safe side for a census that reds on what remains."""
+    quote, i, n = None, 0, len(line)
+    while i < n:
+        ch = line[i]
+        if quote:
+            if ch == "\\" and quote == '"' and i + 1 < n:
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "\\" and i + 1 < n:
+            i += 2
+            continue
+        elif ch == "#" and (i == 0 or line[i - 1] in " \t"):
+            return line[:i]
+        i += 1
+    return line
+
+
+def pytest_line_census(src):
+    """The line census (round 4's ruling A, 2026-09-23): (the lines that spell pytest and count, [(line, text) of the
+    counted lines no row covers]), file lines 1-based. A line counts when PYTEST_WORD_RE matches it with a trailing
+    comment cut as _shell_commands cuts one (_comment_cut; a comment line is then empty and never counts), unless one
+    of two exclusions, and no others, applies: its key is `name` (NAME_KEY_RE: `name:` or `- name:`; never a line that
+    merely contains "name:", so a flow mapping carrying a run counts); or it is a pip install, judged per shell
+    command and never per line: the line is excused only when every command it belongs to that spells pytest is a pip
+    install, so a line that installs pytest and then runs it counts. The commands a line belongs to are the text the
+    parser read for it when the parser read it (pytest_invocations' `read`: a pip install continued over two lines is
+    one command), else the line itself with its backslash continuations joined, split at every operator character
+    (CENSUS_SPLIT_RE). A counted line is covered when it lies in the span of lines the parser read for a row, parsed
+    or unparsed: the row's first line through its last joined continuation (line..last_line). Keyed on the span, never
+    the first line alone, which would red a compliant command whose pytest word sits on a continuation line. The
+    census keys on the spelling over the whole file, not on YAML structure, so a line outside any run that spells
+    pytest (an artifact path, an action's input) counts and reds too: the census cannot tell it from a command."""
+    read = []
+    found = pytest_invocations(src, read)
+    covered = set()
+    for inv in found:
+        covered.update(range(inv["line"], inv["last_line"] + 1))
+    read_text = {}
+    for entry in read:
+        for n in range(entry["first"], entry["last"] + 1):
+            read_text[n] = entry["text"]
+    lines = src.splitlines()
+    cut = [_comment_cut(line) for line in lines]
+    counted, uncovered = [], []
+    for idx, line in enumerate(lines):
+        if not PYTEST_WORD_RE.search(cut[idx]) or NAME_KEY_RE.match(line):
+            continue
+        if idx + 1 in read_text:
+            commands = _shell_commands(read_text[idx + 1])
+        else:
+            lo = hi = idx
+            while lo > 0 and cut[lo - 1].rstrip().endswith("\\"):
+                lo -= 1
+            while hi + 1 < len(lines) and cut[hi].rstrip().endswith("\\"):
+                hi += 1
+            joined = " ".join(c.rstrip().rstrip("\\") for c in cut[lo:hi + 1])
+            commands = [c.strip() for c in CENSUS_SPLIT_RE.split(joined) if c.strip()]
+        mentions = [c for c in commands if PYTEST_WORD_RE.search(c)]
+        if mentions and all(PIP_INSTALL_RE.search(c) for c in mentions):
+            continue
+        counted.append(idx + 1)
+        if idx + 1 not in covered:
+            uncovered.append((idx + 1, line.strip()))
+    return counted, uncovered
+
+
+def unread_job_keys(src):
+    """(the job keys JOB_RE reads, [(line, text) of the lines where a job key goes that JOB_RE does not read]), file
+    lines 1-based. Every line of the first jobs: mapping indented less than four spaces, other than a blank or comment
+    line, must be a bare job key at indent 2 with nothing after its colon but a comment (round 4's ruling A (3): the
+    ruling's keys at indent 2, and a line at indent 0 to 3 that no column-0 key ends the section at). A quoted key
+    (`"build":`), a key carrying its value or an anchor on its line, or a job at another indent is no job to JOB_RE,
+    and pytest_invocations reads its steps as the job above's, under that job's name and env: after a job whose env
+    sets the switch, a flagged step with no switch of its own read ok (probed, 2026-09-23). Keyed on the line's
+    indentation and JOB_RE, not on YAML structure, so a scalar continued at indent 3 or less inside the mapping reds
+    too."""
+    jobs_at, body = _top_sections(src)["jobs"][0]
+    read, unread, pos = [], [], 0
+    for k, line in enumerate(body.splitlines(keepends=True)):
+        off, pos = pos, pos + len(line)
+        text = line.rstrip("\n")
+        if k == 0 or not text.strip() or text.lstrip().startswith("#"):
+            continue
+        if len(text) - len(text.lstrip(" ")) >= 4:
+            continue
+        jm = JOB_RE.match(text + "\n")
+        if jm:
+            read.append(jm.group(1))
+        else:
+            unread.append((_line_of(src, jobs_at + off), text))
+    return read, unread
 
 
 def invocations_by_key(found):
@@ -1016,8 +1157,12 @@ class PytestPopulation(unittest.TestCase):
     the two invocations the file is known to hold, the Python matrix step and the vscode-extension job's served-page
     step, are asserted present, so an empty or partial derivation is red, not green. A pin on one step's text let the
     other set neither the switch nor the flag without a word, and a third step added tomorrow would have opted out the
-    same way. The check reads the file's text: a pytest run by a script or action the workflow calls is outside it,
-    and a run line that spells pytest in a form the parser does not read is red as unparsed until it is read."""
+    same way. The check reads the file's text, and proves it read all of it (round 4's ruling A, 2026-09-23): every
+    line that spells pytest (PYTEST_WORD_RE), outside a comment or a name: key and other than a pip install, lies in
+    the span of lines the parser read for a row, parsed or unparsed, whatever its layout, or the line census names it;
+    a mention the parser reads but not as a command is red as unparsed until it is read; and every line where a job key
+    goes is a job the parser reads, so no step is read under the job above it. Outside the check: a run line that
+    never spells pytest, a pytest run by a script or action a step calls, and any other workflow file."""
     def setUp(self):
         self.src = open(WF).read()
         self.found = pytest_invocations(self.src)
@@ -1028,6 +1173,36 @@ class PytestPopulation(unittest.TestCase):
                       "indent 2 and the step's name: line): %r" % keys)
         self.assertIn(SERVED_STEP, keys, "the served-page step's pytest line was not found (keyed on the job key at "
                       "indent 2 and the step's name: line): %r" % keys)
+
+    def test_every_line_that_spells_pytest_lies_in_a_row_the_parser_read(self):
+        # the line census (round 4's ruling A, 2026-09-23): the check proves it read the file, not the layouts it knows.
+        # Until then a pytest step in a layout the parser does not read (steps at indent 4, YAML's compact list style
+        # and GitHub's starter layout; steps at indent 8; `-   name:`; a flow mapping; a quoted or spaced run key) gave
+        # no row, parsed or unparsed, and this module read green with it in the file (probed at the round-4 head).
+        # The census's population is derived from the file and must hold the two known invocations' lines, so a census
+        # that counts nothing is red, not green.
+        counted, uncovered = pytest_line_census(self.src)
+        known = sorted(i["line"] for i in self.found if (i["job"], i["step"]) in (MATRIX_STEP, SERVED_STEP))
+        self.assertTrue(known and set(known) <= set(counted), "the census does not count the known invocations' lines %r "
+                        "among the lines it counts %r: an empty or partial census is red, not green" % (known, counted))
+        self.assertEqual(uncovered, [], "lines of ci.yml that spell pytest (keyed on the spelling, PYTEST_WORD_RE, with a "
+                         "trailing comment cut) outside every span of lines the parser read for a row, parsed or "
+                         "unparsed; only a name: key and a line whose every pytest-spelling command is a pip install are "
+                         "excused. Such a line is in a layout the parser does not read (steps at another indent, a flow "
+                         "mapping, a quoted or spaced run key) or outside any run (an artifact path, an action input): "
+                         "red until the parser reads it or the line is reworded:\n  "
+                         + "\n  ".join("line %d: %s" % u for u in uncovered))
+
+    def test_every_line_where_a_job_key_goes_is_a_job_the_parser_reads(self):
+        # round 4's ruling A (3): a quoted job key, a key carrying its value or an anchor, or a job at another indent is
+        # no job to JOB_RE, and the parser read its steps under the job above, with that job's name and env
+        read, unread = unread_job_keys(self.src)
+        self.assertTrue({MATRIX_STEP[0], SERVED_STEP[0]} <= set(read), "the job-key check read no job for the known "
+                        "invocations' jobs: %r" % read)
+        self.assertEqual(unread, [], "lines of ci.yml's jobs: mapping indented less than four spaces that are not a bare "
+                         "job key at indent 2 (keyed on the indentation and JOB_RE): the parser reads the steps under "
+                         "such a line as the job above's, with that job's name and env. Rewrite the key bare:\n  "
+                         + "\n  ".join("line %d: %s" % u for u in unread))
 
     def test_every_invocation_passes_the_flag_and_sets_the_switch_or_is_listed_with_its_reason(self):
         bad = [_describe(i) for i in self.found if verdict(i) in ("unlisted", "unparsed", "ambiguous")]
@@ -1143,8 +1318,37 @@ READ_FORMS = (
      1, "tests/test_a.py -q -p no:anyio"),
     ("py.test spelling", "      - name: Form (pytest)\n        run: py.test tests/test_a.py -q -p no:anyio\n",
      1, "tests/test_a.py -q -p no:anyio"),
+    ("python -mpytest, one token", "      - name: Form (pytest)\n        run: python -mpytest tests/test_a.py -q -p no:anyio\n",
+     1, "tests/test_a.py -q -p no:anyio"),
     ("backslash continuation in a literal block", "      - name: Form (pytest)\n        run: |\n          python -m pytest tests/test_a.py \\\n            -q -p no:anyio\n",
      2, "tests/test_a.py -q -p no:anyio"),
+)
+# layouts the parser does not read (round 4's ruling A, 2026-09-23), each a step or a job that PyYAML and actionlint read
+# as a pytest step (the round's refuters' runs): (label, where, text, the offset of the line the census must name from
+# the plant's first line). "job" plants go between the python and shell jobs, "step" plants open the shell job's steps:
+# away from the `  secrets:` anchor the other cases splice at and from the last job, so none reds for another reason.
+# The findings named overlapping shapes: correctness-1's template-style job is tests-1's compact style, and its
+# three-space dash is tests-1's `-   name:`; each label is carried here in a shape of its own.
+UNREAD_LAYOUTS = (
+    ("steps at indent 4, YAML's compact list style", "job",
+     "  compact:\n    runs-on: ubuntu-latest\n    steps:\n    - uses: actions/checkout@v4\n"
+     "    - name: Compact (pytest)\n      run: python -m pytest tests/test_a.py -q\n", 5),
+    ("a template-style job, GitHub's starter layout", "job",
+     "  template:\n\n    runs-on: ubuntu-latest\n\n    steps:\n    - uses: actions/checkout@v4\n"
+     "    - name: Test with pytest\n      run: |\n        pytest tests/test_a.py -q\n", 8),
+    ("a job with steps at indent 8", "job",
+     "  deep:\n    runs-on: ubuntu-latest\n    steps:\n        - name: Deep (pytest)\n"
+     "          run: python -m pytest tests/test_a.py -q\n", 4),
+    ("`-   name:`, keys at indent 10", "step",
+     "      -   name: Wide dash (pytest)\n          run: python -m pytest tests/test_a.py -q\n", 1),
+    ("a three-space dash, the step opening with run:", "step",
+     "      -   run: python -m pytest tests/test_a.py -q\n", 0),
+    ("a flow-mapping step", "step",
+     "      - {name: Flow step, run: python -m pytest tests/test_a.py -q}\n", 0),
+    ("a quoted run key", "step",
+     "      - name: Quoted run key (pytest)\n        \"run\": python -m pytest tests/test_a.py -q\n", 1),
+    ("run : with a space before the colon", "step",
+     "      - name: Spaced run key (pytest)\n        run : python -m pytest tests/test_a.py -q\n", 1),
 )
 
 
@@ -1165,6 +1369,18 @@ class PopulationCheckReds(unittest.TestCase):
         # appended as the shell job's last step: before the `  secrets:` job line
         src = self.src if src is None else src
         at = src.index("\n  secrets:\n") + 1
+        return src[:at] + step_text + src[at:], _line_of(src, at)
+
+    def _with_job_before_shell(self, job_text, src=None):
+        # a whole job spliced between the python and shell jobs: away from the `  secrets:` anchor and from the last job
+        src = self.src if src is None else src
+        at = src.index("\n  shell:\n") + 1
+        return src[:at] + job_text + src[at:], _line_of(src, at)
+
+    def _with_first_step_in_shell_job(self, step_text, src=None):
+        # a step spliced as the shell job's first step: away from the `  secrets:` anchor the other cases append at
+        src = self.src if src is None else src
+        at = src.index("\n    steps:\n", src.index("\n  shell:\n")) + len("\n    steps:\n")
         return src[:at] + step_text + src[at:], _line_of(src, at)
 
     def _with_shell_job_env(self, src, value='"1"'):
@@ -1220,6 +1436,8 @@ class PopulationCheckReds(unittest.TestCase):
                 self.assertIn("lacks ROMP_SDK_REQUIRE=1", _describe(inv))
                 with_env = self._new(self._with_shell_job_env(src))
                 self.assertEqual([verdict(i) for i in with_env], ["ok"], "%s: a job-level env must supply the switch: %r" % (label, [_describe(i) for i in with_env]))
+                # a form the parser reads is covered by the line census: no false red on any read form
+                self.assertEqual(pytest_line_census(src)[1], [], "%s: the line census reds a form the parser reads" % label)
 
     def test_an_inline_env_prefix_on_the_command_sets_the_switch_for_that_command(self):
         # `ROMP_SDK_REQUIRE=1 python -m pytest ...` sets the variable for that process, as an env: block would
@@ -1440,7 +1658,10 @@ class PopulationCheckReds(unittest.TestCase):
                 ("an indentation indicator", "      - name: Indented (pytest)\n        run: |2\n            python -m pytest tests/ -q -p no:anyio\n",
                  "an indentation indicator (|2) on the block"),
                 ("a more-indented line in a folded block", "      - name: Folded (pytest)\n        run: >\n          echo start\n            python -m pytest tests/ -q -p no:anyio\n",
-                 "a line indented deeper than the block's first line in a folded block")):
+                 "a line indented deeper than the block's first line in a folded block"),
+                # the pip exclusion is per command in such a block too: until 2026-09-23 the pip half excused the line
+                ("pip then pytest in an indentation-indicator block", "      - name: Indented pip (pytest)\n        run: |2\n            python -m pip install pytest && python -m pytest tests/ -q -p no:anyio\n",
+                 "an indentation indicator (|2) on the block")):
             with self.subTest(form=label):
                 bad = self._new_bad(self._with_step_in_shell_job(step)[0])
                 self.assertEqual([verdict(i) for i in bad], ["unparsed"], "%s: %r" % (label, [_describe(i) for i in bad]))
@@ -1448,6 +1669,98 @@ class PopulationCheckReds(unittest.TestCase):
         # a pip line that names the package is not a mention the parser owes: the live file has two
         pip = "      - name: Pip (pytest)\n        run: python -m pip install --upgrade pip pytest pytest-timeout\n"
         self.assertEqual(self._new_bad(self._with_step_in_shell_job(pip)[0]), [])
+
+    def test_a_pytest_step_in_a_layout_the_parser_does_not_read_is_named_by_the_line_census(self):
+        # round 4's ruling A: each layout gave no row, parsed or unparsed, and the module read green with it in the file
+        # (probed at the round-4 head); the census names the step's pytest line, the one red, since the job key is read
+        for label, where, text, offset in UNREAD_LAYOUTS:
+            with self.subTest(layout=label):
+                src, first = (self._with_job_before_shell if where == "job" else self._with_first_step_in_shell_job)(text)
+                self.assertEqual(self._new(src), [], "%s: the parser now reads this layout; move the case to READ_FORMS" % label)
+                line = first + offset
+                self.assertEqual(pytest_line_census(src)[1], [(line, src.splitlines()[line - 1].strip())], label)
+                self.assertEqual(unread_job_keys(src)[1], [], "%s: reds for the census's reason alone" % label)
+
+    def test_a_quoted_job_key_after_a_switch_setting_job_is_red_at_its_line(self):
+        # round 4's extra4-2: a quoted job key is no job to JOB_RE, so the parser reads its step as the job above's,
+        # under that job's name and with its env; after a job whose env sets the switch, a flagged step with no switch
+        # of its own reads ok and nothing is red (probed at the round-4 head). The job-key check names the key's line.
+        envjob = ('  envjob:\n    runs-on: ubuntu-latest\n    env:\n      %s: "1"\n    steps:\n'
+                  '      - uses: actions/checkout@v4\n' % SWITCH)
+        for key in ('  "quoted-job":', "  'quoted-job':"):
+            with self.subTest(key=key):
+                quoted = ("%s\n    runs-on: ubuntu-latest\n    steps:\n      - name: Quoted job (pytest)\n"
+                          "        run: python -m pytest tests/test_a.py -q -p no:anyio\n" % key)
+                src, first = self._with_job_before_shell(envjob + quoted)
+                self.assertEqual([(i["job"], i["step"], verdict(i)) for i in self._new(src)], [("envjob", "Quoted job (pytest)", "ok")],
+                                 "the parser alone reads the step as the job above's, with its switch: the misread this check exists for")
+                self.assertEqual(unread_job_keys(src)[1], [(first + envjob.count("\n"), key)])
+                self.assertEqual(pytest_line_census(src)[1], [], "the step's line is in a row's span: the job-key check is the red")
+        # a key carrying an anchor, or its value on the line, is no job to JOB_RE either
+        for key in ("  anchored: &job", "  inline: {runs-on: ubuntu-latest}"):
+            with self.subTest(key=key):
+                src, first = self._with_job_before_shell(key + "\n")
+                self.assertEqual(unread_job_keys(src)[1], [(first, key)])
+
+    def test_python_mpytest_is_read_as_a_command_and_an_option_cluster_is_unparsed(self):
+        # round 4's extra4-1: `python -mpytest` runs pytest; until 2026-09-23 PYTEST_WORD_RE's leading word boundary kept
+        # it, and an option cluster such as `-Impytest`, out of every read (no row, module green; probed)
+        src, first = self._with_first_step_in_shell_job("      - name: One token (pytest)\n        run: python -mpytest tests/test_a.py -q\n")
+        bad = self._new_bad(src)
+        self.assertEqual([(i["step"], i["line"], verdict(i)) for i in bad], [("One token (pytest)", first + 1, "unlisted")],
+                         [_describe(i) for i in bad])
+        self.assertEqual(bad[0]["args"].strip(), "tests/test_a.py -q")
+        self.assertIn("lacks -p no:anyio", _describe(bad[0]))
+        self.assertIn("and ROMP_SDK_REQUIRE=1", _describe(bad[0]))
+        src, first = self._with_first_step_in_shell_job("      - name: Cluster (pytest)\n        run: python -Impytest tests/test_a.py -q\n")
+        bad = self._new_bad(src)
+        self.assertEqual([(i["step"], i["line"], verdict(i)) for i in bad], [("Cluster (pytest)", first + 1, "unparsed")],
+                         [_describe(i) for i in bad])
+        self.assertIn("does not read as a command (a form the parser does not read as a command)", _describe(bad[0]))
+
+    def test_a_compliant_command_whose_pytest_word_sits_on_a_continuation_line_is_covered(self):
+        # the census keys on the span the parser read for a row, line through last_line: keyed on the first line alone
+        # it reds these compliant steps at their continuation lines (round 4's tests-1 refuters, probed)
+        env = '        env:\n          %s: "1"\n' % SWITCH
+        for label, run, offset in (
+                ("backslash continuations", "        run: |\n          python -m \\\n            pytest tests/test_a.py -q -p no:anyio \\\n"
+                                            "            --junitxml=pytest-report.xml\n", 4),
+                ("a folded paragraph", "        run: >\n          python -m\n          pytest tests/test_a.py -q -p no:anyio\n", 4),
+                ("a plain scalar continued", "        run: python -m\n          pytest tests/test_a.py -q -p no:anyio\n", 3)):
+            with self.subTest(form=label):
+                src, first = self._with_first_step_in_shell_job("      - name: Continued\n" + env + run)
+                new = self._new(src)
+                self.assertEqual([(i["line"], verdict(i)) for i in new], [(first + offset, "ok")], [_describe(i) for i in new])
+                self.assertGreater(new[0]["last_line"], new[0]["line"], "%s: the row's span runs past its first line" % label)
+                self.assertEqual(pytest_line_census(src)[1], [], "%s: a compliant command's continuation line is read" % label)
+
+    def test_a_flow_mapping_step_whose_name_half_spells_pytest_is_red(self):
+        # the name exclusion is a line whose KEY is name (`name:` or `- name:`), never a line that merely contains
+        # "name:": a flow mapping carries a run on the same line, and the census cannot read what runs
+        src, first = self._with_first_step_in_shell_job("      - {name: Flow (pytest), run: make test}\n")
+        self.assertEqual(pytest_line_census(src)[1], [(first, "- {name: Flow (pytest), run: make test}")])
+        # a true name key in a layout the parser does not read is excused, its run line judged on its own
+        src, first = self._with_first_step_in_shell_job("      -   name: Wide name only (pytest)\n          run: make test\n")
+        self.assertEqual(pytest_line_census(src)[1], [])
+
+    def test_an_unread_line_that_installs_pytest_and_then_runs_it_is_red(self):
+        # the pip exclusion is judged per shell command, never per line: in a layout the parser does not read, a line
+        # whose commands install pytest and then run it counts; one that only installs it is excused
+        for label, step, red in (
+                ("run : , pip then pytest", "      - name: Pip then run\n        run : python -m pip install pytest && python -m pytest tests/test_a.py -q\n", True),
+                ("quoted run key and scalar, pip then pytest",
+                 '      - name: Pip then run\n        "run": "python -m pip install pytest && python -m pytest tests/test_a.py -q"\n', True),
+                ("run : , pip alone", "      - name: Pip only\n        run : python -m pip install --upgrade pip pytest pytest-timeout\n", False),
+                ("run : , pip alone over a backslash continuation",
+                 "      - name: Pip only\n        run : python -m pip install --upgrade pip \\\n          pytest-timeout\n", False)):
+            with self.subTest(form=label):
+                src, first = self._with_first_step_in_shell_job(step)
+                want = [(first + 1, src.splitlines()[first].strip())] if red else []
+                self.assertEqual(pytest_line_census(src)[1], want, label)
+        # in a step the parser reads, a pip install continued over lines is one command, judged on the text it read
+        src, first = self._with_first_step_in_shell_job("      - name: Pip over two lines\n        run: |\n"
+                                                         "          python -m pip install --upgrade pip pytest \\\n            pytest-timeout\n")
+        self.assertEqual(pytest_line_census(src)[1], [])
 
 
 # ---------------------------------------------------------------------------------------------------------------------
