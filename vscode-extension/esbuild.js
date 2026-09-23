@@ -114,6 +114,14 @@ const webview = {
   logLevel: "info",
 };
 
+// The suffixes the test build tries, in order, for a relative specifier: the spelled path first, then that path with each suffix
+// below, then a .js, .jsx, .cjs or .mjs spelling's TypeScript rewrite, then a directory's index with each suffix. The list is
+// esbuild's own default (its --help: default ".tsx,.ts,.jsx,.js,.css,.json"; spelling it changes no byte of the test build),
+// spelled here so it has one home the browser-legs census can read: scripts/browser-legs-census.mjs takes it from testBuild() by
+// execution and resolves the modules a test loads in this order, so a reorder here moves the census with the bundle
+// (ui/webview/ci-browser-legs-census.test.ts holds the two to the same file for every planted specifier the bundler resolves).
+const testResolveExtensions = [".tsx", ".ts", ".jsx", ".js", ".css", ".json"];
+
 // Unit tests for the pure modules (src/*.test.ts): bundled to out-tests/ and
 // run with the built-in `node --test` runner — no extra test framework.
 function testBuild() {
@@ -132,6 +140,7 @@ function testBuild() {
     entryPoints: entries,
     nodePaths: [path.join(__dirname, "node_modules")],
     alias: oneCodeMirror,
+    resolveExtensions: testResolveExtensions,
     bundle: true,
     // the compiler stays a runtime require: the writer census (ui/webview/writer-census.ts) parses render.ts with it, and
     // bundling it would add its whole source to every test file that imports the census

@@ -10,19 +10,20 @@
 // the list's one home, which ui/webview/ci-browser-legs-census.test.ts holds equal to the directories esbuild.js testBuild
 // compiles by building that config's entry points with a metafile and comparing, in both directions, with what census() read)
 // it derives:
-//   launcher:  the module imports ui/webview/real-viewer-leg.ts by RESOLVED path (relative to the module, by the bundler's mapping
-//              for a script spelling: the file that stands at that path when one does, and otherwise the bundler's rewrite of it,
-//              a .js or .jsx as the .ts, then the .tsx beside it, a .cjs as the .cts and a .mjs as the .mts, never as the .ts, so
-//              a real-viewer-leg.cjs or .js beside the launcher, which the bundler loads for that spelling, is read by its own
-//              content and not as the launcher (p348, p349, p376), and so is the .cts or the .mts a .cjs or .mjs spelling reaches
-//              when no such file stands (p370, p371); the census test's parity pin bundles each relative literal specifier a plant
-//              loads by a form the bundler resolves (an import or export that is not type-only, import =, a require or import() of
-//              a literal) and holds the file the local road resolves (resolveLocal) equal to the one the bundler loads, while this
-//              road's own reading, resolveSpec's, is held by the rows p370, p371, p373 and p376; a spelling with NO script
-//              extension is read by a hand-kept order, not the bundler's: resolveSpec adds the .ts and candidatesOf tries the .ts
-//              first, where the bundler tries the path itself and then the .tsx before the .ts, so a .tsx beside a .ts of the same
-//              name, the file the bundler loads, is not the file this census reads, a divergence stated here and not yet closed,
-//              which no plant carries (the parity pin finds none over the plants); a specifier FOLDED
+//   launcher:  the module imports ui/webview/real-viewer-leg.ts by RESOLVED path (relative to the module, in the bundler's order,
+//              the suffix list esbuild.js testBuild() hands the bundler as resolveExtensions, read from that config by execution
+//              and kept nowhere here (bundlerOrder): the file that stands at the spelled path when one does, then that path with
+//              each suffix in turn, then a script spelling's rewrite, a .js or .jsx as the .ts, then the .tsx beside it, a .cjs as
+//              the .cts and a .mjs as the .mts, never as the .ts, then a directory's index with each suffix; so a real-viewer-leg.cjs
+//              or .js beside the launcher, which the bundler loads for that spelling, is read by its own content and not as the
+//              launcher (p348, p349, p376), and so is the .cts or the .mts a .cjs or .mjs spelling reaches when no such file stands
+//              (p370, p371) and the .tsx a spelling with no suffix reaches before the .ts of the same name (p386, p387); the census
+//              test's parity pin bundles each relative literal specifier a plant loads by a form the bundler resolves (an import or
+//              export that is not type-only, import =, a require or import() of a literal) and holds the file the local road
+//              resolves (resolveLocal) equal to the one the bundler loads, while this road's own reading, resolveSpec's, is held by
+//              the rows p370, p371, p373, p376 and p387; a load node resolves when the test runs (a path call, a createRequire-bound
+//              loader) is read in the same order, which is not node's, since node tries a .js and never a .ts, the bound the
+//              parity pin names with its held witness, p392; a specifier FOLDED
 //              from pieces resolves by the same rule, a concatenation of literals through resolveSpec and a chain that crossed a
 //              path call or carries a placeholder piece through resolveLocal, beside the module and under the repo root and
 //              vscode-extension/, and binds the launcher only when it lands on the launcher's file, never because its text spells
@@ -419,12 +420,13 @@ export function classify(ts, file, src, opts = {}) {
     // one home of the road; THE SAFETY NET keys its relative-path mention on this reader, so the two agree by construction)
     const segs = abs.split(path.sep), nm = segs.lastIndexOf("node_modules");
     if (nm >= 0 && isPwPackage(segs.slice(nm + 1).join("/").replace(/\.[cm]?[jt]s$/, "").replace(/\/index$/, ""))) return { kind: "playwright", spec, abs };
-    // a script spelling names the file the bundler loads for it, by the bundler's mapping (rewritesOf, the one table candidatesOf
-    // reads too): the file that stands at the spelled path when one does, else the first of its rewrites that does (a .js or .jsx
-    // as the .ts, then the .tsx; a .cjs as the .cts; a .mjs as the .mts), else the first rewrite's path, which names no file and
-    // the local road refuses; a spelling with no script suffix takes .ts
+    // every spelling names the file the bundler loads for it, in the bundler's order (candidatesOf, the one list the local road
+    // reads too): the first candidate that stands as a file, the spelled path, then that path with each suffix of the test build's
+    // resolveExtensions in turn, then a .js or .jsx spelling's .ts and .tsx, a .cjs spelling's .cts or a .mjs spelling's .mts
+    // (rewritesOf), then a directory's index with each suffix; when none stands, the first rewrite's path, a .ts, .cts or .mts
+    // spelling as spelled, and any other spelling with .ts added, a path that names no file, which the local road refuses
     const rw = rewritesOf(abs);
-    if (rw) abs = fileAt(abs) || rw.find(fileAt) || rw[0]; else if (!/\.[cm]?ts$/.test(abs)) abs += ".ts";
+    abs = candidatesOf(abs).find(fileAt) || (rw ? rw[0] : /\.[cm]?ts$/.test(abs) ? abs : abs + ".ts");
     return { kind: abs === launcherAbs ? "launcher" : "local", spec, abs };
   };
 
@@ -1668,26 +1670,47 @@ export function classify(ts, file, src, opts = {}) {
 // round 7, when the bundler's mapping below first reached a .tsx; before it a .tsx or .jsx a test loaded was skipped as no script)
 const MODULE_EXT = /\.(d\.ts|[cm]?ts|[cm]?js|tsx|jsx)$/;
 const fileAt = (p) => { try { return fs.statSync(p).isFile() ? p : null; } catch { return null; } };
-/** The bundler's mapping of a script spelling that names no file, one table: a .js or a .jsx is tried as the .ts, then the .tsx
- *  beside it, a .cjs as the .cts, a .mjs as the .mts, and no other spelling is rewritten (the rewrite the installed bundler's
- *  resolver applies, read from its own resolution of each spelling: a .cjs never reaches a .ts, nor a .mjs). resolveSpec (the
- *  launcher's road) and candidatesOf (the local road) both read it, after the file that stands at the spelled path, and the census
- *  test's parity pin bundles each relative literal specifier a plant loads by a form the bundler resolves and holds the file the
- *  local road resolves (resolveLocal, through candidatesOf) equal to the one the bundler loads, the rows p370, p371, p373 and p376
- *  holding resolveSpec's reading. A spelling with no script extension is not rewritten here: resolveSpec and candidatesOf read it
- *  by their own order, which is not the bundler's (the header's launcher clause states the divergence).
+/** The bundler's rewrite of a script spelling, one table: a .js or a .jsx is tried as the .ts, then the .tsx beside it, a .cjs as
+ *  the .cts, a .mjs as the .mts, and no other spelling is rewritten (the rewrite the installed bundler's resolver applies, read
+ *  from its own resolution of each spelling: a .cjs never reaches a .ts, nor a .mjs). candidatesOf places it in the bundler's
+ *  order, after the spelled path and that path with each suffix of the test build's resolveExtensions, and resolveSpec (the
+ *  launcher's road) and resolveLocal (the local road) both read candidatesOf; the census test's parity pin bundles each relative
+ *  literal specifier a plant loads by a form the bundler resolves and holds the file the local road resolves equal to the one the
+ *  bundler loads, the rows p370, p371, p373, p376 and p387 holding resolveSpec's reading.
  *  Returns the rewritten paths in order, or null for a spelling the bundler does not rewrite. */
 const BUNDLER_REWRITES = [[/\.jsx?$/, [".ts", ".tsx"]], [/\.cjs$/, [".cts"]], [/\.mjs$/, [".mts"]]];
 const rewritesOf = (raw) => { const hit = BUNDLER_REWRITES.find(([re]) => re.test(raw)); return hit ? hit[1].map((ext) => raw.replace(hit[0], ext)) : null; };
-/** The files a path names, tried in order: for a spelling the bundler rewrites (a .js, .jsx, .cjs or .mjs) the path itself first,
- *  the bundler's order (a file that stands at the spelled path is the one it loads), then its rewrites (rewritesOf); for a .ts, .cts
- *  or .mts spelling the path; for a path with no script extension the .ts, a .d.ts, a .js, a .mjs, a .cjs, a directory's index, the
- *  path itself. Before the review's round 7 the .ts came first for every script spelling, so a real-viewer-leg.cjs beside the
- *  launcher, loaded by that spelling, was read as the launcher while the bundler loads the .cjs; the round's first build put the
- *  spelled path first and still read a .cjs or .mjs that names no file as the .ts beside it (the bundler reads the .cts or the .mts,
- *  never the .ts), a .js as the .d.ts beside it (which the bundler never loads) and a .jsx as a path with no extension, and never
- *  reached a .tsx. */
-const candidatesOf = (raw) => { const rw = rewritesOf(raw); return rw ? [raw, ...rw] : /\.[cm]?ts$/.test(raw) ? [raw] : [raw + ".ts", raw + ".d.ts", raw + ".js", raw + ".mjs", raw + ".cjs", path.join(raw, "index.ts"), path.join(raw, "index.js"), raw]; };
+/** The suffixes the bundler tries, in order, for a relative specifier (the list candidatesOf reads): the resolveExtensions of the
+ *  config esbuild.js testBuild() returns, the build that bundles every module this census reads, READ from that config by
+ *  execution and kept nowhere here (the maintainer's answer on the order, after the review's round 7), so a reorder or a new suffix
+ *  there moves the census with the bundle. Execution rather than a parse of the file: it reads the value the build hands the
+ *  bundler, however the config computes it, where a parse reads one spelling of it. Read once per process, from the extension this
+ *  module belongs to (EXT, the directory above scripts/), never from the root census() is given, so a synthetic root needs no build
+ *  file and nothing falls back: a build file that cannot be run, or a testBuild() whose resolveExtensions is not a non-empty list of
+ *  suffixes, is a named error census() and the CLI stop on (exit 1), since an order the build does not use reads files no test
+ *  loads. */
+let bundlerSuffixes = null;
+export function bundlerOrder() {
+  if (bundlerSuffixes !== null) return bundlerSuffixes;
+  const build = path.relative(REPO, path.join(EXT, "esbuild.js"));
+  let list;
+  // a literal specifier through createRequire applied where it stands, a form the walker reads (this module is itself a module
+  // of the tree, which the census test loads): resolved beside EXT's package.json, it names EXT's esbuild.js
+  try { list = createRequire(path.join(EXT, "package.json"))("./esbuild.js").testBuild().resolveExtensions; }
+  catch (e) { throw new Error("browser-legs-census: the extension's build file " + build + " could not be run for testBuild()'s resolveExtensions, the order the census resolves a load in (the census runs the build file beside its own scripts/ directory, which loads the bundler's package that npm ci installs in vscode-extension/): " + String(e && e.message).split("\n")[0]); }
+  if (!Array.isArray(list) || list.length === 0 || !list.every((x) => typeof x === "string" && /^\.[^/\\]+$/.test(x))) throw new Error("browser-legs-census: " + build + " testBuild() carries no resolveExtensions list of suffixes (got " + JSON.stringify(list) + "): the census resolves a load in the order the test build does and keeps no default of its own, so spell the list in testBuild()");
+  return (bundlerSuffixes = Object.freeze([...list]));
+}
+/** The files a path names, in the bundler's order, for every spelling alike: the path as spelled, then that path with each suffix
+ *  of the test build's resolveExtensions in turn (bundlerOrder), then a .js, .jsx, .cjs or .mjs spelling's rewrites (rewritesOf),
+ *  then the directory's index with each suffix in the same order, the order the installed bundler's resolver tries them in. So a
+ *  spelling with no suffix reaches a .tsx before the .ts of the same name (p386, and the launcher's name, p387), a .jsx (p388,
+ *  p389) and a directory's index.tsx before its index.ts (p390), and a .js spelling reaches that path with a suffix added before
+ *  its rewrite (p391). Before the order was read from the build, a spelling with no script suffix took a list kept here (the .ts, a
+ *  .d.ts, a .js, a .mjs, a .cjs, the index's .ts and .js, the path itself last) and a script spelling its path and rewrites alone;
+ *  before the review's round 7 the .ts came first for every script spelling, so a real-viewer-leg.cjs beside the launcher, loaded
+ *  by that spelling, was read as the launcher while the bundler loads the .cjs. */
+const candidatesOf = (raw) => { const order = bundlerOrder(); return [raw, ...order.map((ext) => raw + ext), ...(rewritesOf(raw) || []), ...order.map((ext) => path.join(raw, "index" + ext))]; };
 /** The file a local specifier names. A relative specifier resolves against the loading module's directory; a specifier that
  *  names no file there (a loader bound elsewhere by createRequire, a path expression folded to its literal pieces with the
  *  non-literal pieces dropped) resolves against the two bases loaders in this tree are anchored to, the repo root and
@@ -1804,6 +1827,9 @@ const bundleOf = (dir, f) => "out-tests/" + dir + "/" + f.replace(/\.test\.ts$/,
 export function census(root = REPO, opts = {}) {
   root = path.resolve(root);
   const ts = loadTypescript();
+  // the bundler's order, read before any module: a build file that cannot be run stops the census whole (the CLI exits 1), where a
+  // failure inside the first module's walk would be that module's thrown record and every module after it refused the same way
+  bundlerOrder();
   const legs = [], byBundle = new Map(), refusals = [];
   const ownCache = new Map();   // the modules of the tree the test modules load, each read once
   for (const dir of LEG_DIRS) {
