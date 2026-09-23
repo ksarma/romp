@@ -35379,12 +35379,9 @@ def _subagent_tree_charge(kind, t0):
 # re-taken after any eviction; a table clear (_SUBAGENT_ROOT_EVICTED at its cap) drops every held entry once. The walk memo
 # made a call cost one lstat per known directory instead of a
 # listing, and _subagent_file's hit path re-stats every directory its walk read, which for a nested or missing agent's file is
-# the whole tree; so one _session_awaiting over A such agents paid (A+1) x D directory stats with nothing changed: the tree's D
-# lstats plus D stats per agent whose launches() is consulted, which is every agent when there are two or more (each is
-# excluded from its own owner lookup, so a single agent with no command row paid D alone and folded nothing) or when a
-# command row's owner is read from the agents' transcripts; and it runs up to five times per session per pusher cycle (the
-# chat, feed and timeline builds and the chips) and once per jobs pass (the nudge look). The cost with the scope, road by
-# road with the case that pins each term: _subagent_tree_memo_report's docstring. Motivation, a
+# the whole tree, for each agent whose launches() a _session_awaiting consults, on every such read of the session in a cycle
+# (the chat, feed and timeline builds and the chips) and in a jobs pass (the nudge look). The cost before the scope and with
+# it, road by road with the case that pins each term: _subagent_tree_memo_report's docstring. Motivation, a
 # dated reading and not the law's evidence: on two deployed kernels (2026-09-19), on one _dir_stamp's one os.stat was the top
 # self frame of a 20 s py-spy profile, 28% of the samples by that profile's reading, and on the other the memo's own counters
 # showed 24.5 million validation lstats in 6.8 hours over 1,294 directories (the user 2026-09-05, who wanted the one-core
