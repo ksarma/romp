@@ -186,7 +186,7 @@ class Bindings:
         return bindings
 
     def declarations(self, name):
-        """The module scope's declarations of `name`, in source order; [] when it binds none."""
+        """The module scope's declarations of `name`; [] when it binds none."""
         return list(self.module.names.get(name, []))
 
     def scope_of(self, node):

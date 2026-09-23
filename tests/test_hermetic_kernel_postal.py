@@ -87,7 +87,7 @@ Roads and residual, derived by one command (`python tests/test_hermetic_kernel_p
 line per module the trio test reads, then the unresolved names, then a summary line with every count): a module's
 kernel spawn is found by the argv road (an element that is the path as written), the binding road (a name or target
 resolved to a declaration bound to it), or neither, and a module the scan can read neither way is labelled refused.
-The guard test holds the two lab modules on the argv road and no module refused, and reports the counts at whatever
+The guard test holds the lab modules on the argv road and no module refused, and reports the counts at whatever
 size the tree has. The table over the tree is ONE derivation per process (tests/parse_cache.py's derived, under
 ROADS_KEY), each module parsed once (its source_and_tree, the parse every census in the process shares): the trio
 test, the guard test, the comparison case and the --roads arm read that one table, and the peers test's walk reads the
@@ -241,6 +241,7 @@ PROCESS_FUNCTIONS = (SPAWN_FUNCTIONS | {"subprocess.getoutput", "subprocess.gets
                                             "execve", "execvp", "execvpe", "spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve",
                                             "spawnvp", "spawnvpe", "fork", "forkpty")})
 PROCESS_SPELLINGS = {f.rsplit(".", 1)[-1] for f in PROCESS_FUNCTIONS} | {"subprocess_exec", "subprocess_shell"}
+PROGRAM_TEXTS_LIMIT = 8   # the texts _program_texts assembles for one -c program at most (a join or a + multiplies them)
 
 
 class UnreadableSpawn(AssertionError):
@@ -702,7 +703,7 @@ class _SpawnScan:
         name), a text per value the program can hold, or (None, ...) for a program that is no string the scan can
         assemble (a call's value, a parameter). Assembled from a string, an f-string, a % or a .format template; a name,
         through the declarations it resolves to; a str.join over a literal list or tuple of those; either operand of +
-        of those (at most eight texts). A placeholder converted by repr (%r, !r) is a string literal in the text, its
+        of those (at most PROGRAM_TEXTS_LIMIT texts). A placeholder converted by repr (%r, !r) is a string literal in the text, its
         text ending in /romp-kernel or /bin/romp when the scan reads the value filling it as that path; any other
         placeholder is a name of its own in the text, among the opaque names, since the text filling it is unread."""
         pieces = _template_pieces(node)
@@ -733,7 +734,7 @@ class _SpawnScan:
                 if found is None:
                     return None, True
                 texts += found
-            return (texts, True) if len(texts) <= 8 else (None, True)
+            return (texts, True) if len(texts) <= PROGRAM_TEXTS_LIMIT else (None, True)
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "join" and not node.keywords
                 and isinstance(node.func.value, ast.Constant) and isinstance(node.func.value.value, str)
                 and len(node.args) == 1 and isinstance(node.args[0], (ast.List, ast.Tuple))):
@@ -744,13 +745,13 @@ class _SpawnScan:
                 if found is None:
                     return None, named
                 combos = [(a + (node.func.value.value if i else "") + b, x | y) for a, x in combos for b, y in found]
-                if len(combos) > 8:
+                if len(combos) > PROGRAM_TEXTS_LIMIT:
                     return None, named
             return combos, named
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
             left, by_left = self._program_texts(node.left, scope, seen)
             right, by_right = self._program_texts(node.right, scope, seen)
-            if left is None or right is None or len(left) * len(right) > 8:
+            if left is None or right is None or len(left) * len(right) > PROGRAM_TEXTS_LIMIT:
                 return None, by_left or by_right
             return [(a + b, x | y) for a, x in left for b, y in right], by_left or by_right
         return None, False
@@ -1097,13 +1098,13 @@ def _roads_build(directory, skip=()):
     """THE BUILD of the roads table over `directory`: every module scanned ONCE and read by every reader of the table
     (_roads_table). `roads` {name: (road, sites, unresolved)} (spawn_roads says what each holds); `hermetic` the names
     of the modules that carry the trio (_hermetic over the module's text); `compared` {name: _regex_scan_comparison's
-    four values} for every module the round-8 regex census flags a call in or that has a spawn site, read with the
-    same scan, so the comparison case scans no module again; `verbs_hold` the KERNEL_VERBS verdict that comparison
-    read (_verbs_bin_romp_lacks over bin/romp); `paths` the files read. The table holds tuples, strings, numbers and
-    the dicts that index them, no scan and no bindings, and each module's bindings are released (Bindings.release)
-    before the next is read: parse_cache.derived holds the collector off for a build and freezes whatever is tracked
-    when it returns, so a bindings graph (cyclic: a scope holds its declarations and each declaration its scope) left
-    to the collector would be frozen dead for the process (the rule for a build in tests/parse_cache.py's docstring;
+    values} for every module the round-8 regex census flags a call in or that has a spawn site, read with the same scan,
+    so the comparison case scans no module again; `verbs_hold` the KERNEL_VERBS verdict that comparison read
+    (_verbs_bin_romp_lacks over bin/romp); `paths` the files read. The table holds tuples, strings, numbers and the
+    dicts that index them, no scan and no bindings, and each module's bindings are released (Bindings.release) before
+    the next is read: parse_cache.derived holds the collector off for a build and freezes whatever is tracked when it
+    returns, so a bindings graph (cyclic: a scope holds its declarations and each declaration its scope) left to the
+    collector would be frozen dead for the process (the rule for a build in tests/parse_cache.py's docstring;
     test_the_roads_build_drops_no_cycle_so_the_freeze_pins_nothing_dead)."""
     verbs_hold = not _verbs_bin_romp_lacks(KERNEL_VERBS, _bin_romp_text())
     roads, hermetic, compared, paths = {}, set(), {}, []
@@ -2578,7 +2579,7 @@ class HermeticKernelPostal(unittest.TestCase):
         gc.set_debug(flags)
         kinds = collections.Counter(type(o).__name__ for o in gc.garbage[start:])
         del gc.garbage[start:]
-        self.assertTrue(table.roads)
+        self.assertTrue(table.roads, "the second build read no module")
         self.assertEqual(unreachable, 0, "the roads build dropped %d objects only the collector could reclaim (%s): a cycle the "
                                          "build made and did not break before returning, which derived()'s freeze would keep for "
                                          "the process" % (unreachable, ", ".join("%s %d" % kv for kv in kinds.most_common(8))))

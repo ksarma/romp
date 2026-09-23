@@ -3294,8 +3294,9 @@ def refusal_text_names(conftest_source=None, module_source=None):
     def strings(node):
         """Every str constant under `node`, and every text of every declaration a Name read under it resolves to, in the
         scope the Name is read in (a renderer's own local first, else the conftest's module scope within
-        module_statements' reach, a module-scope binding recorded only from a statement it yields): a name bound twice, under the arms of a version gate say, yields both texts, the
-        union, so the arm that runs is never the one dropped (a raise here would break unrelated conftest edits)."""
+        module_statements' reach, a module-scope binding recorded only from a statement it yields): a name bound twice,
+        under the arms of a version gate say, yields both texts, the union, so the arm that runs is never the one
+        dropped (a raise here would break unrelated conftest edits)."""
         for n in ast.walk(node):
             if isinstance(n, ast.Constant) and isinstance(n.value, str):
                 yield n.value
@@ -3326,8 +3327,7 @@ def refusal_text_names(conftest_source=None, module_source=None):
         """The texts `value` can be: a str constant is one text; a Name is every text of every declaration it resolves to
         from where it is read (the module scope within module_statements' reach, a module-scope binding recorded only
         from a statement it yields; a name bound in both arms of a gate folds to both, the union); a + of two is every
-        pairwise concatenation; any other shape is no text. The empty text, a piece of every text, is dropped from what
-        a constant folds to before the pieces are read."""
+        pairwise concatenation; any other shape is no text."""
         if isinstance(value, ast.Constant) and isinstance(value.value, str):
             return [value.value]
         if isinstance(value, ast.Name) and value.id not in seen:
@@ -3510,38 +3510,39 @@ def conftest_roster_ids(text):
 class TheCaseRostersNameEveryCase(unittest.TestCase):
     """The two rosters of cases are derived from the classes, never kept by hand beside them. The module docstring's
     case list names every case id a class binds as its SCRATCH and no other (case_population, by AST; the id is the
-    SCRATCH_<id> name's tail, the mapping derive() prints), and the conftest's roster of the refusal's cases names
-    every case whose class references one of this module's copies of the refusal's texts and no other; each pair is
-    held equal both ways and the failure names the missing and the extra ids, so a derivation that comes back short
-    reds on the roster's extras and no floor is kept. Until round 7 both rosters were hand-kept: the delta that
-    extended them for two cases left the two it added after them off, with the module green (the round-6 review's C).
-    What the conftest half keys on: a reference, in the case class or a module-defined base other than _NestedRun,
-    whose helpers every case inherits (a reference there would put every case on the roster's side, so the chain
-    excludes it, and the third test holds the exclusion; the round-7 review found this sentence and case_population's
-    naming the base without it), to a str constant of this module, bound by a statement of the module or under a
-    module-level if or try (module_statements), whose value is a piece of a text the conftest renders for the refusal
-    or for a link to it, or to a function defined as a statement of the module, at its own level or under a
-    module-level if or try, whose body references such a constant or another such function, transitively, a reference
-    being a name resolved in the scope it is read in to the module's declaration (tests/ast_bindings.py), so a local
-    spelled like one is none (case_population; the author's pass before round 8 found a module-level helper reading the
-    refusal's line, called from a case, leaving the case off the population with the module green, so the third test
-    plants one called through a second function) (refusal_text_names, derived from the conftest's texts, the renderers
-    and the constants they name read from its statements the same way: the author's pass before round 7 found the first
-    form a hand-kept list of four names that omitted REFUSED_FOUND_TAIL, the clause's last words, so a case reading the
-    clause through its tail alone was off the population with the module green); a class reading those lines through a
-    literal copy of the text is outside the population, and the pin reads no literal. The third test runs the
-    derivations and both readers over synthetic texts; the fourth holds the reach refusal_text_names reads both sources
-    through (Bindings.of with module_statements). derive() deselects the conftest test (DERIVE_DESELECT): it reads
-    the texts the conftest renders, which a plant can change, so under a plant that stops rendering one text the cases
-    reading that text's copy alone leave the derived population while the roster, which the plant does not touch, still
-    names them, and the test reds on a roster entry that lost no class. That red is the plant's, not a case's, and this
-    class is no cell's set. The case-list test's verdict does not depend on the conftest's texts (it holds the module
-    docstring's list to the classes' SCRATCH bindings; the names case_population derives on the way are unused by it),
-    though its derivation reads them through case_population's names default and raises under a conftest that renders
-    no refusal text, a red the plant's, which derive prints with no case id (the round-7 review found this sentence
-    saying the test reads no conftest text); the third test reads synthetic texts only, under a HERE pointed at a
-    directory with no conftest, so a call of its that falls to a default read is a loud FileNotFoundError (the round-7
-    review found its SCRATCH-shape call reading the real conftest through the names default); both stay selected."""
+    SCRATCH_<id> name's tail, the mapping derive() prints), and the conftest's roster of the refusal's cases names every
+    case whose class references one of this module's copies of the refusal's texts and no other; each pair is held equal
+    both ways and the failure names the missing and the extra ids, so a derivation that comes back short reds on the
+    roster's extras and no floor is kept. Until round 7 both rosters were hand-kept: the delta that extended them for
+    two cases left the two it added after them off, with the module green (the round-6 review's C). What the conftest
+    half keys on: a reference, in the case class or a module-defined base other than _NestedRun, whose helpers every
+    case inherits (a reference there would put every case on the roster's side, so the chain excludes it, and the third
+    test holds the exclusion; the round-7 review found this sentence and case_population's naming the base without it),
+    to a str constant of this module, bound by a statement of the module or under a module-level if or try
+    (module_statements), whose value is a piece of a text the conftest renders for the refusal or for a link to it, or
+    to a function defined as a statement of the module, at its own level or under a module-level if or try, whose body
+    references such a constant or another such function, transitively, a reference being a name resolved in the scope it
+    is read in to the module's declaration (tests/ast_bindings.py), so a local spelled like one is none
+    (case_population; the author's pass before round 8 found a module-level helper reading the refusal's line, called
+    from a case, leaving the case off the population with the module green, so the third test plants one called through
+    a second function) (refusal_text_names, derived from the conftest's texts, the renderers and the constants they name
+    read from its statements the same way: the author's pass before round 7 found the first form a hand-kept list of
+    four names that omitted REFUSED_FOUND_TAIL, the clause's last words, so a case reading the clause through its tail
+    alone was off the population with the module green); a class reading those lines through a literal copy of the text
+    is outside the population, and the pin reads no literal. The third test runs the derivations and both readers over
+    synthetic texts; test_the_reach_records_a_module_scope_binding_only_from_a_statement_it_yields holds the reach
+    refusal_text_names reads both sources through (Bindings.of with module_statements). derive() deselects the conftest
+    test (DERIVE_DESELECT): it reads the texts the conftest renders, which a plant can change, so under a plant that
+    stops rendering one text the cases reading that text's copy alone leave the derived population while the roster,
+    which the plant does not touch, still names them, and the test reds on a roster entry that lost no class. That red
+    is the plant's, not a case's, and this class is no cell's set. The case-list test's verdict does not depend on the
+    conftest's texts (it holds the module docstring's list to the classes' SCRATCH bindings; the names case_population
+    derives on the way are unused by it), though its derivation reads them through case_population's names default and
+    raises under a conftest that renders no refusal text, a red the plant's, which derive prints with no case id (the
+    round-7 review found this sentence saying the test reads no conftest text); the third test reads synthetic texts
+    only, under a HERE pointed at a directory with no conftest, so a call of its that falls to a default read is a loud
+    FileNotFoundError (the round-7 review found its SCRATCH-shape call reading the real conftest through the names
+    default); both stay selected."""
 
     def _assert_same(self, what, derived, named):
         self.assertEqual(len(named), len(set(named)), "%s names an id twice: %r" % (what, sorted(named)))
@@ -3564,35 +3565,34 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
                           % ", ".join(names), readers, conftest_roster_ids(ratchet_comment_text()))
 
     def test_the_derivation_reads_the_classes_by_shape_and_the_rosters_by_their_openers(self):
-        """A case inherits its id from a base that binds SCRATCH; a subclass binding its own has its own; a reference
-        to a refusal text in a base puts the subclass on the readers' side, and one in _NestedRun, the base every
-        case shares, puts no case there; a reference to a module-level function that reads a text through a second
-        module-level function puts the class there, while such a function referenced from _NestedRun alone, or from
-        no class, puts none; a method's local spelled like the reading function and one spelled like the name are no
-        references (the key is the binding, tests/ast_bindings.py, not the spelling); two module-level defs of one
-        name raise naming the name and both lines; a class under a module-level conditional
-        is a case; a class outside _NestedRun's tree is no case; a SCRATCH bound in another shape raises, and so do
-        two classes of one name; both roster readers accept joined openers and refuse a
-        mis-shaped entry. The names are derived from the texts: a constant equal to a head the refusal renders, one
-        that is a piece of the boundary's clause through a name the renderer uses, and one folded from a literal and
-        a name into a piece of the gone report's link are the copies, and so is a constant bound under a module-level
-        if whose value is a piece a renderer reaches through a constant bound under a try, and so are constants bound,
-        on both sides, under a try's except handler, its else and its finally, whose texts a renderer uses
-        (module_statements' reach on each side: the round-8 review found those three arms pinned by no test, the
-        module green with each dropped); a conftest constant bound in
-        BOTH arms of a version gate gives both texts, so the module's copy of either arm is derived (before 2026-09-21
-        the dead arm's text overwrote the live one's), a module constant bound in both arms is derived when either
-        text is a piece, and a constant folded through such a name folds to both concatenations (the same union, in
-        the fold's own Name arm); a piece of the gone report's
-        own head, of a renderer's docstring, or of a text outside those sites is not; a constant bound under a
-        module-level for or with, on either side, is outside the reach (a renderer naming one reads no text from it); an
-        empty constant, and one gated to a text no renderer uses in the live arm and to the empty text in the dead
-        arm, are no copies, since the empty text is a piece of every text, and a module whose one constant is empty
-        raises (review round 9 found the fold passing the empty text); a conftest with no such text raises, and so does
-        a source whose _NestedRun has no subclass (the round-8 review found that raise executed by no test). The conftest's design comment is read from a passed text too (ratchet_comment_text: the block from
-        the opener to the first line that is not a comment, a later comment outside it; a text without the opener
-        raises naming the text given). The whole test runs with HERE pointed at a directory holding no conftest, so
-        every call here passes its texts and a call that fell to a default read of the real files would red as a
+        """A case inherits its id from a base that binds SCRATCH; a subclass binding its own has its own; a reference to
+        a refusal text in a base puts the subclass on the readers' side, and one in _NestedRun, the base every case
+        shares, puts no case there; a reference to a module-level function that reads a text through a second
+        module-level function puts the class there, while such a function referenced from _NestedRun alone, or from no
+        class, puts none; a method's local spelled like the reading function and one spelled like the name are no
+        references (the key is the binding, tests/ast_bindings.py, not the spelling); two module-level defs of one name
+        raise naming the name and both lines; a class under a module-level conditional is a case; a class outside
+        _NestedRun's tree is no case; a SCRATCH bound in another shape raises, and so do two classes of one name; both
+        roster readers accept joined openers and refuse a mis-shaped entry. The names are derived from the texts: a
+        constant equal to a head the refusal renders, one that is a piece of the boundary's clause through a name the
+        renderer uses, and one folded from a literal and a name into a piece of the gone report's link are the copies,
+        and so is a constant bound under a module-level if whose value is a piece a renderer reaches through a constant
+        bound under a try, and so are constants bound, on both sides, under a try's except handler, its else and its
+        finally, whose texts a renderer uses (module_statements' reach on each side: the round-8 review found those
+        three arms pinned by no test, the module green with each dropped); a conftest constant bound in BOTH arms of a
+        version gate gives both texts, so the module's copy of either arm is derived (before 2026-09-21 the dead arm's
+        text overwrote the live one's), a module constant bound in both arms is derived when either text is a piece, and
+        a constant folded through such a name folds to both concatenations (the same union, in the fold's own Name arm);
+        a piece of the gone report's own head, of a renderer's docstring, or of a text outside those sites is not; a
+        constant bound under a module-level for or with, on either side, is outside the reach (a renderer naming one
+        reads no text from it); an empty constant, and one gated to a text no renderer uses in the live arm and to the
+        empty text in the dead arm, are no copies, since the empty text is a piece of every text, and a module whose one
+        constant is empty raises (review round 9 found the fold passing the empty text); a conftest with no such text
+        raises, and so does a source whose _NestedRun has no subclass (the round-8 review found that raise executed by
+        no test). The conftest's design comment is read from a passed text too (ratchet_comment_text: the block from the
+        opener to the first line that is not a comment, a later comment outside it; a text without the opener raises
+        naming the text given). The whole test runs with HERE pointed at a directory holding no conftest, so every call
+        here passes its texts and a call that fell to a default read of the real files would red as a
         FileNotFoundError."""
         empty = tempfile.mkdtemp()                        # no conftest here: a default read of the real texts is loud
         self.addCleanup(shutil.rmtree, empty)
@@ -3788,7 +3788,7 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
         tests/ast_bindings.py): a binding that lands in the module scope is recorded only from a statement
         module_statements yields. Planted, each of these is a module-scope declaration without the reach and none with
         it: a global binding made in a def, in a class body and in a def under a module-level while, a comprehension
-        walrus under a module-level with (the four review round 9 found recorded under the reach), and constants under
+        walrus under a module-level with (the ones review round 9 found recorded under the reach), and constants under
         a module-level for and a module-level with. A comprehension walrus in a module-level statement is recorded
         either way, and so are a def's local and a class attribute in their own scopes; a dotted write a module-level
         for makes is recorded without the reach alone, and one a def makes either way."""
