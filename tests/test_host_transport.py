@@ -4300,6 +4300,10 @@ class AttachStandDown(unittest.TestCase):
 
     def _sweep(self):
         self._beating = False
+        beater = getattr(self, "beater", None)     # this cleanup is registered before the beater exists: setUp may fail first
+        if beater is not None:
+            beater.join(3)                         # the beat sleeps 1 s between leases and reads the flag after it: it ends within
+        #                                            that, before the lease is removed below (T282: a stop the census reads)
         try:
             self.be.drain(timeout=3)
         except Exception:
