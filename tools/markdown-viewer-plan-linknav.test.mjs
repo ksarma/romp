@@ -523,6 +523,21 @@ test('hostSheets: a helper adding a page-specific <style> block in its own liter
     try { assert.throws(() => hostSheets(d), /_spin.*outside the run/, second); } finally { fs.rmSync(d, { recursive: true, force: true }); }
   }
 });
+// The letter case (the author's closing pass that followed the fixes for the file review's round 13): the tag name is case-insensitive to the
+// browser, so `<STYLE>` serves a block too, and both reads had matched the lower-case spelling alone, so an upper-case second block
+// after the run decoded to the first block alone and a helper whose only block was upper-case returned no entry, each silently.
+test('hostSheets: a helper writing a second <STYLE> block in upper case in its own literal after its run fails by name in any letter case rather than dropping the block from the population (a property pin over a synthetic tree, red before the check read the case, at the module the file review\'s round 13 read and at the one that refused the lower-case second block)', () => {
+  const d = tempTree(pySrc('def _spin(cid):', '    return "<style>a{b:c}</style>" + cid + "<STYLE>d{e:f}</STYLE>"', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.throws(() => hostSheets(d), /_spin.*outside the run/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+test('hostSheets: a helper whose only <STYLE> block is in upper case fails by name rather than standing outside the population with no entry (a property pin over a synthetic tree, red before the check read the case, at the module the file review\'s round 13 read and at the one that refused the lower-case second block)', () => {
+  const d = tempTree(pySrc('def _spin(cid):', '    return "<STYLE>a{b:c}</STYLE>" + cid', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.throws(() => hostSheets(d), /_spin/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+test('hostSheets control: a .__mod__ call on some other value standing before the run (n = "%d".__mod__(3)) formats nothing of the run, so the run decodes as before, while str.__mod__ with the run as its first argument stays refused (the before-the-run arm anchored on str in the author\'s closing pass that followed the fixes for the file review\'s round 13; a property pin over a synthetic tree, green at the module the file review\'s round 13 read, which scanned nothing before the run, and red at the module that first scanned it, whose arm was unanchored)', () => {
+  const d = tempTree(pySrc('def _spin(cid):', '    n = "%d".__mod__(3)', '    return ("<style>a{b:c}</style>"', '            "<div>" + cid + "</div>" + str(n))', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.deepEqual(hostSheets(d).map((x) => [x.name, x.css]), [['kernel/kernel.py _spin', 'a{b:c}']]); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
 test('hostSheets: a helper <style> literal with a prefix letter (an f-string) fails by name, since its text is not what Python serves (the file review\'s round 11, extra7-1; a property pin over a synthetic tree, red before the refusal)', () => {
   const d = tempTree(pySrc('def _spin(cid):', '    return f"<style>a{{b:c}}</style>"', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
   try { assert.throws(() => hostSheets(d), /_spin/); } finally { fs.rmSync(d, { recursive: true, force: true }); }

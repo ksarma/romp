@@ -95,7 +95,7 @@ body.scheme-solarized-dark {
      button family wears the feed's exact rest treatment; the chat page cannot import feed.css) */
   --card-border: rgba(255, 255, 255, 0.10);
   /* the outbound dress's line (the viewer's web control's dashed border at rest and the under-floor web picture's dashed outline,
-     the figure rules): a grey of its own, not the family's 10 percent hairline (1.35:1 here: no sign at all on a 20 px badge) and not
+     the figure rules): a grey of its own, not the family's 10 percent hairline (1.35:1 here, a faint ring under the 3:1 floor on a 20 px badge) and not
      --dim (a text token that follows the editor's description colour); 4.83:1 on --bg, over the 3:1 floor for a line that is the only
      sign of a state (WCAG 1.4.11) with room for a darker editor ground, under the text tokens so the line does not compete with the
      words. theme-parity.test.ts holds the pair; mirrored in feed.css (own :root). The file review's round 13, ui-1 with extra6-1. */
@@ -4994,7 +4994,7 @@ body.filebrowse-open { overflow: hidden; }
    on hover, and at rest on a device with no hover, where its tooltip cannot show (the file review's round 12, fresh-1); an outline and
    not a border, since a border on the img widens its box, and in the outbound dress's own token (var(--outbound-line), declared in both
    theme blocks: a grey clearing 3:1 over the page in each theme, theme-parity.test.ts holds the pair, where the button family's rest
-   hairline, var(--card-border) at 10 percent, read at 1.35:1 dark and 1.25:1 light, no sign at all on a 20 px badge; the file review's
+   hairline, var(--card-border) at 10 percent, read at 1.35:1 dark and 1.25:1 light, a faint ring under the floor on a 20 px badge; the file review's
    round 13, ui-1 with extra6-1), the one the control's dashed border wears at rest (`:not(:hover)`, so the family's accent hover border
    still wins on the control), so the two dresses are one colour. Both at-rest rules key on `(hover: none)` OR `(any-pointer: coarse)`,
    `screen` written on both queries (css-rules' underScreen reads a list member by member): `hover` describes the PRIMARY pointer, and a

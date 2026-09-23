@@ -8675,13 +8675,14 @@ the contract said the same; the claim was false, and the follow-on is a privacy 
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools,
 upstream or tests alone (51 files, the ledger entry's where line; run 2026-09-23 at the head that carries the fixes ruled in the
-file review's round 13, where the merge-base is de06b8718, the fork's main the branch merged before that round, and the listing is
-the branch's whole delta over
-it; under ui the listing lies in ui/webview but for ui/test-code-only.ts, the comment stripper, which the case fixes brought
+file review's round 13 and the merge of the fork's main after them, where the merge-base is 6cf6839ba, the fork's main the branch
+merged after those fixes, its tip the merge of the fork's batch PR 906, and the listing is the branch's whole delta over it; under ui the listing lies in ui/webview but for ui/test-code-only.ts, the comment stripper, which the case fixes brought
 into the delta (its header's reader roster names file-figure-open.test.ts as its sixth reader; the file review's round 13,
-extra7-1), so the run at the head that carries the dress fixes alone among them, from the same merge-base, listed 50; the run at the
+extra7-1), so the run at the head that carries the dress fixes alone among them, from the merge-base de06b8718, the fork's main the
+branch merged before the file review's round 13, listed 50; the run at the
 head
-that carries the fixes ruled in the file review's round 12, from the same merge-base de06b8718, listed 48, before
+that carries the fixes ruled in the file review's round 12, from the merge-base de06b8718, the fork's main the branch merged before the file
+review's round 13, listed 48, before
 ui/webview/theme-parity.test.ts and
 ui/webview/real-viewer-leg.ts joined the delta in those dress fixes (the outbound line's contrast pair, and the launch options the
 open leg's hybrid twin hands the shared launcher); the run at the head that carries the fixes ruled in

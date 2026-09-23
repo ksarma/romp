@@ -677,7 +677,7 @@ function contrastOver(fg: string, ground: string): number {
 const tokenColour = (page: any, token: string): Promise<string> => page.evaluate((tok: string) => { const el = document.createElement("span"); el.style.color = "var(" + tok + ")"; document.querySelector(".fileview-md")!.appendChild(el); const c = getComputedStyle(el).color; el.remove(); return c; }, token);
 /** The mark's outline and the control's border, one colour, and that colour at least 3:1 over the first opaque ground (the legibility
  *  floor for a line that is the only sign of a state, WCAG 1.4.11): the file review's round 13, ui-1 with extra6-1, where the family's
- *  10 percent hairline read 1.35:1 dark and 1.25:1 light, present in the DOM and no sign at all on a 20 px badge. */
+ *  10 percent hairline read 1.35:1 dark and 1.25:1 light, present in the DOM as a faint ring under the floor on a 20 px badge. */
 async function oneLegibleColour(page: any, r: { imgs: Under[] }, theme: string): Promise<void> {
   assert.equal(r.imgs[1].outlineColor, r.imgs[2].controlBorder, theme + " theme: the mark's outline colour is the control's border colour, one token (" + r.imgs[1].outlineColor + ")");
   const ground = await groundOf(page);

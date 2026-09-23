@@ -2,7 +2,9 @@
 // it wrong on, driven through the REAL viewer in headless Chromium (real-viewer-leg.ts: the chat modal, file-view.ts bundled
 // from this tree, styles.css, the /file fetch stub, a route for the figures' own requests). The source pins are in
 // file-view-figure-shapes.test.ts. Read off the DOM, the layout and the trail: (1) a figure inside a link that holds more than
-// the figure (text beside it, in markdown or in an author's <a>) wears NO control, and no control stands inside any link;
+// the figure (text beside it, in markdown or in an author's <a>) wears NO control, and no control stands inside a link a
+// click can follow (a dead link or a named anchor is not one, and a picture inside it keeps its control, since the fixes
+// for the file review's round 12, correctness-1 with ui-1);
 // the figure's plain click is the author's link, one open and one entry on the trail (before: the control went inside the
 // link and one click opened the link's target AND the picture, so Back landed on a file the reader never asked for); (2) a
 // figure alone in a link to a web address: the control stands after the link and the figure's plain click is the browser's
