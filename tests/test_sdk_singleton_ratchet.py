@@ -3016,12 +3016,12 @@ class TheStatedLimitIsWorded(unittest.TestCase):
         table by the binding, sits inside number_word, so no count is spelled past the ceiling check (the round-8
         review found the three tree-count sites indexing the table bare). The derivation is proven over a synthetic
         module first: the helper's own site, a bare site in another def, a site through two aliases, a module-level
-        site, and a site inside a comprehension, a lambda and a class body, each in a def and attributed to that def
-        (the walk up from the scope the subscript is read in to the enclosing def, which review round 9 found executed
-        by no test), are the sites; a local of the same spelling, another table's subscript and a subscript of a
-        cyclic alias pair (walked once by the seen set; with the guard gone the walk's step bound raises, naming the
-        names, so this pin reds instead of hanging, the gap this pass found) are not; a module with no NUMBER_WORDS
-        raises."""
+        site, and a site inside a comprehension, a lambda and a class body, each in a def and attributed to that def,
+        and one in a comprehension inside a lambda, two scopes below its def (the walk up from the scope the subscript
+        is read in to the enclosing def, which review round 9 found executed by no test), are the sites; a local of the
+        same spelling, another table's subscript and a subscript of a cyclic alias pair (walked once by the seen set;
+        with the guard gone the walk's step bound raises, naming the names, so this pin reds instead of hanging, the
+        gap this pass found) are not; a module with no NUMBER_WORDS raises."""
         synthetic = textwrap.dedent('''\
             NUMBER_WORDS = ("zero", "one")
             WORDS = NUMBER_WORDS
@@ -3071,13 +3071,18 @@ class TheStatedLimitIsWorded(unittest.TestCase):
                 class Inner:
                     WORD = NUMBER_WORDS[0]
                 return Inner
+
+
+            def nested(n):
+                return (lambda: [NUMBER_WORDS[i] for i in range(n)])()
             ''')
         self.assertEqual(number_word_sites(synthetic), [(6, "number_word"), (10, "bare"), (15, "aliased"), (33, None),
-                                                        (37, "comprehended"), (41, "lambdaed"), (47, "outer")],
+                                                        (37, "comprehended"), (41, "lambdaed"), (47, "outer"), (52, "nested")],
                          "number_word_sites does not key on the binding: the helper's own site, the bare site, the site "
                          "through two aliases and the module-level one are the sites, as (line, enclosing def), and so are "
                          "the sites inside a comprehension, a lambda and a class body, each attributed to the def that "
-                         "holds it (the walk up to the enclosing def); the local of the same spelling, the other table "
+                         "holds it, and the one in a comprehension inside a lambda, two scopes below its def (the walk up "
+                         "to the enclosing def); the local of the same spelling, the other table "
                          "and the cyclic alias pair (walked once, by the seen set; a walk past the tree's name count "
                          "raises instead) are not")
         with self.assertRaisesRegex(AssertionError, "binds no NUMBER_WORDS"):
