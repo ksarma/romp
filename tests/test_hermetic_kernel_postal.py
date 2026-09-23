@@ -1834,7 +1834,8 @@ class HermeticKernelPostal(unittest.TestCase):
         of population is visible here and fails nothing by itself. The head's positives and negatives: snippets with
         no import of subprocess, so the library is read by its spelling as an unbound name (the stated fallback).
         PLANT_TABLE: every row run and held to its label, the site's LINE held to the planted call's, the road held to
-        the label's, the refusal's message held to name the call's line and both declarations. The listed residual: a
+        the label's, the refusal's message held to name the call's line and both declarations, and every row off its
+        label named in the one failure (a refusal of a row labelled otherwise among them). The listed residual: a
         helper's call, a passthrough's splatted parameter, a star import's name, a class attribute read through the
         class name, a comprehension's parameter iterable, a keywords splat handed alone, a parameter extended in place
         and a staticmethod's attribute read through a parameter named self (row N42) are no site and each is under
@@ -1862,22 +1863,31 @@ class HermeticKernelPostal(unittest.TestCase):
                     'subprocess.run([os.path.join(BIN, "romp-judge"), "--once"])',
                     'load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))'):
             self.assertFalse(_spawns_kernel(src), "not a kernel spawn (a build, the other scripts, an in-process load): " + src)
-        # the labelled table
+        # the labelled table: every row read, and each row off its label named in the one failure, a refusal included
         roads_by_label = {"caught-by-argv": "argv", "caught-by-binding": "binding"}
+        off = []
         for label, kind, site, src in PLANT_TABLE:
+            try:
+                sites, refusal = _kernel_spawn_sites(src, "planted.py"), None
+            except UnreadableSpawn as e:
+                sites, refusal = None, str(e)
             if kind == "refused-loud":
                 call, path, other = site
-                with self.assertRaises(UnreadableSpawn, msg="%s: two declarations that disagree are refused loudly, never read either way" % label) as loud:
-                    _kernel_spawn_sites(src, "planted.py")
-                for needle in ("planted.py line %d:" % call, "(line %d:" % path, "(line %d:" % other):
-                    self.assertIn(needle, str(loud.exception), "%s: the refusal names the call's line and both declarations: %s" % (label, loud.exception))
+                if refusal is None:
+                    off.append("%s: two declarations that disagree are refused loudly, never read either way; read as %r" % (label, sites))
+                    continue
+                absent = [n for n in ("planted.py line %d:" % call, "(line %d:" % path, "(line %d:" % other) if n not in refusal]
+                if absent:
+                    off.append("%s: the refusal names the call's line and both declarations; %r not in: %s" % (label, absent, refusal))
+            elif refusal is not None:
+                off.append("%s: labelled %s and refused: %s" % (label, kind, refusal))
             elif kind == "no-spawn":
-                self.assertEqual(_kernel_spawn_sites(src, "planted.py"), [], "%s: no kernel spawn (keyed on the argv's elements resolved "
-                                 "to their bindings, never on a word of the argv's text)" % label)
-            else:
-                sites = _kernel_spawn_sites(src, "planted.py")
-                self.assertEqual([(line, road) for line, _, road in sites], [(site, roads_by_label[kind])],
-                                 "%s: one site, at the planted call's line %d, by the %s road: %r (%s)" % (label, site, roads_by_label[kind], sites, report))
+                if sites:
+                    off.append("%s: no kernel spawn (keyed on the argv's elements resolved to their bindings, never on a word of the "
+                               "argv's text); read %r" % (label, sites))
+            elif [(line, road) for line, _, road in sites] != [(site, roads_by_label[kind])]:
+                off.append("%s: one site, at the planted call's line %d, by the %s road; read %r" % (label, site, roads_by_label[kind], sites))
+        self.assertEqual(off, [], "PLANT_TABLE rows off their label (%s):\n%s" % (report, "\n".join(off)))
         self.assertEqual(sorted({kind for _, kind, _, _ in PLANT_TABLE}), ["caught-by-argv", "caught-by-binding", "no-spawn", "refused-loud"],
                          "the table carries every label at least once")
         # the residual, listed (keyed on the callee's or the name's declarations: none readable, or none at all and no builtin)
