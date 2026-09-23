@@ -1906,9 +1906,8 @@ class Guards(_World):
 
     def test_a_root_removed_mid_cycle_is_popped_by_a_thread_with_no_hold_and_the_holder_drops_its_pair(self):
         """The missing-root twin of the case above, the same shape through the other pop path, so the two records are told
-        apart: a kernel whose missing-root pop records nothing reds this case (and the same-thread guard above, and the
-        cached-agent-file case) and leaves the replaced one green, and a kernel whose replaced-root pop records nothing does
-        the reverse. The pop answers (), ()."""
+        apart: a kernel whose missing-root pop records nothing reds this case and leaves the replaced one green, and a
+        kernel whose replaced-root pop records nothing does the reverse. The pop answers (), ()."""
         other, dirs = self._sibling_tree()
         self._holder_drops_its_pair_after_another_threads_pop(other, dirs, "missing")
 
