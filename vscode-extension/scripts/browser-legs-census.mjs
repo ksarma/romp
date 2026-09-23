@@ -40,9 +40,15 @@
 //              ambiguity; a relative path INTO node_modules naming a playwright package is that package to resolveSpec, not a
 //              local module, so a test that spells it is class own and a helper that spells it is refused at its importer as
 //              naming the package) is read by this same
-//              walker, transitively, for what it BINDS OR CALLS: a module that binds the launcher's inBrowser (imports it,
-//              imports the launcher whole, or re-exports it) or calls it (on a binding, or on a load where it stands) while the
-//              test itself never calls inBrowser, names a playwright package, holds a driver string, holds a form the walker
+//              walker, transitively, for what it BINDS OR CALLS: a module that binds the launcher's inBrowser (imports it, or
+//              imports the launcher whole) or calls it (on a binding, or on a load where it stands) while the test itself never
+//              calls inBrowser, RE-EXPORTS the launcher's inBrowser (a non-type-only named or renamed re-export of it, or export *
+//              or export * as from the launcher: launcherReexport, read whether or not the test calls inBrowser itself, since a
+//              call the test makes through the barrel's export, and the engine it passes, resolves to no launcher binding the
+//              walker counts; before the review's round 6 this arm was gated on the test's own shared calls being zero, so a test
+//              calling inBrowser directly AND through the barrel was class shared with the barrel's engine lost; the arm
+//              over-approximates a barrel imported for another export beside a direct call, on the safe side, and the remedy is
+//              the same, import the launcher directly), names a playwright package, holds a driver string, holds a form the walker
 //              refuses, or HANDS ON the launcher's requireCjs loader (a non-type-only named or renamed re-export of it, or export *
 //              or export * as from the launcher: loaderReexport, read whether or not the test calls inBrowser itself, since a load
 //              the test makes through the barrel's export resolves to no loader the walker knows), REFUSES the test at its import
@@ -627,14 +633,22 @@ export function classify(ts, file, src, opts = {}) {
    *  declOfUse: a parameter or an inner declaration sharing a const's name is not that const), to a const, or to a let or var no
    *  statement of the module writes to (one level down, recursively; a written let or var is no closed form), a
    *  path.resolve/path.join/pathToFileURL(...).href/new URL(...) call or a `+`/template concatenation whose literal pieces are
-   *  read: such an expression is a filesystem path, which names a playwright package or the launcher only when one of its
-   *  literal pieces does (over-inclusive, on the safe side); otherwise a local file. Anything else: null (refuse). */
+   *  read. A chain that crossed NO path call is a string concatenation, not a path: its pieces are joined as written and read by
+   *  resolveSpec, the literal's own road, so "play" + "wright" names the package and "./play" + "wright" the module ./playwright
+   *  (before the review's round 6 every chain was joined with "/", a path-join reading: "play" + "wright" was refused as loading
+   *  play/wright, a file that names nothing, the wrong reason, and when a file stood at that path the chain resolved to it
+   *  SILENTLY, the module ./playwright it loads unread); a chain with a piece the fold cannot take (a placeholder, `<name>`) is
+   *  tested as a substring of the same concatenation, over-inclusive, on the safe side (the "/" join is not tested beside it:
+   *  every needle holds the slash-free playwright or real-viewer-leg, so a match in the "/" join lies inside a piece and is a match
+   *  in the concatenation too); a chain that DID cross a path call is a path and keeps the "/" join, path.join's own reading,
+   *  which names a playwright package or the launcher only when one of its literal pieces does. Anything else: null (refuse). */
   const foldSpecifier = (e, depth) => {
     if (depth > 4) return null;
     e = unwrap(e);
     const lit = literalName(e);
     if (lit !== null) return resolveSpec(lit);
     const pieces = [];
+    let pathCall = false;   // the chain crossed a path call (path.resolve/join/normalize/dirname, pathToFileURL, fileURLToPath, resolve, join, process.cwd(), new URL): its pieces are path segments
     const collect = (x) => {
       x = unwrap(x);
       const l = literalName(x); if (l !== null) { pieces.push(l); return true; }
@@ -647,14 +661,18 @@ export function classify(ts, file, src, opts = {}) {
         const c = unwrap(x.expression);
         const isPath = (ts.isPropertyAccessExpression(c) && ts.isIdentifier(c.expression) && c.expression.text === "path" && ["resolve", "join", "normalize", "dirname"].includes(c.name.text)) || (ts.isIdentifier(c) && ["pathToFileURL", "fileURLToPath", "resolve", "join"].includes(c.text)) || (ts.isPropertyAccessExpression(c) && ts.isIdentifier(c.expression) && c.expression.text === "process" && c.name.text === "cwd");
         if (!isPath) return false;
+        pathCall = true;
         for (const a of x.arguments) if (!collect(a)) return false;
         return true;
       }
-      if (ts.isNewExpression(x) && ts.isIdentifier(x.expression) && x.expression.text === "URL") { for (const a of x.arguments || []) if (!collect(a)) return false; return true; }
+      if (ts.isNewExpression(x) && ts.isIdentifier(x.expression) && x.expression.text === "URL") { pathCall = true; for (const a of x.arguments || []) if (!collect(a)) return false; return true; }
       return false;
     };
     if (!collect(e)) return null;
-    const text = pieces.join("/");
+    // a chain that crossed no path call is a string concatenation, not a path: its pieces are joined as written; one that did is a
+    // path and its pieces are path segments, joined with "/" (path.join's own reading)
+    const text = pathCall ? pieces.join("/") : pieces.join("");
+    if (!pathCall && !pieces.some((p) => /^<[^>]*>$/.test(p))) return resolveSpec(text);   // a concatenation of literals: the literal's own road
     if (PW_PACKAGES.some((p) => text.includes(p))) return { kind: "playwright", spec: text };
     if (text.includes("real-viewer-leg")) return { kind: "launcher", spec: text };
     return { kind: "local", spec: text };
@@ -1381,9 +1399,9 @@ export function classify(ts, file, src, opts = {}) {
   const net = netVerdict();
   if (net !== null && !opts.testModule) refusals.push(net);   // a loaded module: refused here, so localRefusals carries it to the importer
   const seenI = new Set(); const localU = localImports.filter((l) => { const k = l.line + "|" + l.spec; if (seenI.has(k)) return false; seenI.add(k); return true; });
-  // loaderReexport is carried when set (a barrel of the launcher's loader, which no test module is), so the record of every other
-  // module keeps its shape
-  return { rel, refusals, launcherImported: launcherImported.length > 0, typeOnly, launcherBinds, ...(loaderReexport ? { loaderReexport } : {}), sharedCalls, embedded, playwright: [...playwright].sort(), engines: [...engines].sort(), launches, skipTodo, swallow, reaches, localImports: localU, ...(opts.testModule ? { net } : {}) };
+  // loaderReexport and launcherReexport are carried when set (a barrel of the launcher's loader or of its inBrowser, which no test
+  // module is), so the record of every other module keeps its shape
+  return { rel, refusals, launcherImported: launcherImported.length > 0, typeOnly, launcherBinds, ...(loaderReexport ? { loaderReexport } : {}), ...(launcherReexport ? { launcherReexport } : {}), sharedCalls, embedded, playwright: [...playwright].sort(), engines: [...engines].sort(), launches, skipTodo, swallow, reaches, localImports: localU, ...(opts.testModule ? { net } : {}) };
 }
 
 const MODULE_EXT = /\.(d\.ts|[cm]?ts|[cm]?js)$/;
@@ -1464,6 +1482,14 @@ export function localRefusals(ts, r, file, root, opts, ownCache) {
       // unread, which is the silent form the round-4 review found)
       if (rec.loaderReexport) { at(li, link + ", which hands on the shared launcher's requireCjs loader (a re-export of it, or of the launcher whole), so a playwright load or a launch this module makes through it is unread"); refused = true; break; }
       if (rec.launcherBinds && r.sharedCalls === 0) { at(li, link + ", which binds or calls the shared launcher's inBrowser, so this module may launch through it without the census seeing a call"); refused = true; break; }
+      // the launcher's inBrowser re-exported (named, renamed, export * or export * as from the launcher: launcherReexport): a call the
+      // test makes through the barrel's export, and the engine it passes, resolves to no launcher binding the walker counts, and the
+      // fold of the barrel's record below carries no engine, so the refusal is NOT gated on the test's own shared calls (a test that
+      // calls inBrowser directly AND through the barrel was class shared, gap null, engines [], the launch through the barrel unread:
+      // the both-calls twin of the loaderReexport arm above, the round-5 review's correctness-2); after the launcherBinds arm, so a
+      // test with no shared call of its own keeps that arm's sentence; over-approximates a barrel that re-exports inBrowser and is
+      // imported for another export beside a direct call, on the safe side (the walker reads no import list against the exports)
+      if (rec.launcherReexport) { at(li, link + ", which re-exports the shared launcher's inBrowser, so a call this module makes through that export, and the engine it passes, is unread"); refused = true; break; }
       passed.push({ li, rec, rel });
       for (const n of next) {
         if (n.to === null || n.to.ambiguous) { at(li, link + ", which " + unresolved(n.li, n.to, rel) + " (" + rel + ":" + n.li.line + ")"); refused = true; break; }

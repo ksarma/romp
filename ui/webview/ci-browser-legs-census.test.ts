@@ -63,9 +63,14 @@
 // argument-position controls; and a playwright load in a position the walker does not read, a class field, an object property, a
 // promise callback, an argument or a return, unread beside a read engine before round 6 since the read-through clause is per module
 // and refused by name now through a position predicate over every unread position, beside the read-position controls, with the
-// three round-3 rows for the field, the property and .then re-aimed in place to its sentence), every one is red under the census
-// before round 6 (the module at the round-5 head) unless the table names it held with its reason, and the same test holds the
-// table to that statement. A module
+// three round-3 rows for the field, the property and .then re-aimed in place to its sentence; a test calling inBrowser directly and
+// through a barrel that re-exports it with an engine, class shared with the barrel's engine lost before round 6 and refused at the
+// barrel's import since, whatever the test's own calls, beside the barrel-only control p32, which keeps the launcherBinds sentence;
+// and a specifier assembled from literals, joined with a slash before round 6 as if a path, so the package or the launcher so spelled
+// was refused for the wrong reason and a relative chain resolved to a decoy at the slash-joined path silently, folded since by
+// concatenation when the chain crossed no path call, beside the literal control and the path-call control), every one is red under
+// the census before round 6 (the module at the round-5 head) unless the table names it held with its reason, and the same test holds
+// the table to that statement. A module
 // whose classification throws for any other reason is refused by name and the census goes on, executed over a synthetic root by a
 // test of its own (a directory named like a test module, a nesting generated to overflow whatever stack is in effect). Population figures are derived from the run and printed as
 // diagnostics, never asserted as constants. Synthetic: the fixtures' invented modules and a stub launcher.
@@ -378,6 +383,19 @@ const HOW_CLASS_FIELD = "held in a class field";
 const PW_LOAD_HANDED = ", so the engines and launches reached through the load are unread by the walker: bind the load to a name in a statement of its own and launch on that name";
 const PW_LOAD_HANDOFF = (how: string) => "a playwright package loaded where it stands and handed on (" + how + ")" + PW_LOAD_HANDED;
 const PW_LOAD_THEN = "a playwright package loaded where it stands and handed to a promise callback through .then" + PW_LOAD_HANDED;
+/** The barrel arm's sentence after "<file>:<line>: " (round 6, D, correctness-2), as the census emits it (read from a run of the CLI
+ *  over the plants, not guessed): a loaded module that re-exports the launcher's inBrowser (named, renamed or export * from the
+ *  launcher: launcherReexport, carried in its record since round 6) refuses the importer at the import line WHATEVER the importer's
+ *  own calls, since a call made through the re-export, and the engine it passes, resolves to no launcher binding the walker counts.
+ *  Before round 6 the only arm for such a module was launcherBinds, gated on the importer's shared calls being zero, so a test calling
+ *  inBrowser directly AND through the barrel was class shared, gap null, engines [], the barrel's engine lost. p280 to p284 hold the
+ *  SENTENCE through this constant; p32, the barrel-only control, keeps the launcherBinds arm's sentence, which fires first. */
+const BARREL_REEXPORT = (chain: string) => "loads " + chain + ", which re-exports the shared launcher's inBrowser, so a call this module makes through that export, and the engine it passes, is unread";
+/** The launcherBinds arm's WHOLE sentence after "<file>:<line>: ", as the census emits it (read from a run of the CLI over the plants):
+ *  a loaded module that binds or calls the launcher's inBrowser, imported by a test that never calls inBrowser itself. p288 to p290
+ *  (round 6, F) hold the SENTENCE through this constant at the module their folded chain names; p32's row holds the sentence's head as
+ *  a literal of its own. */
+const LAUNCHER_BINDS = (chain: string) => "loads " + chain + ", which binds or calls the shared launcher's inBrowser, so this module may launch through it without the census seeing a call";
 const WHAT_NO_LOAD = "a value that is no load the walker reads";
 const WHAT_PW_LOAD = "a load of a playwright package";
 const PLANT_TABLE: Plant[] = [
@@ -801,6 +819,38 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p277-r6c-a36j-assignment-through-chain-in-try-control.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["chromium"], launches: [".launch("], playwright: ["playwright"], launcherImported: false, holds: "the no-refusal half of a pair whose partner reds: p268 to p274 (a load in a position the walker does not read) beside the live tree's own form, try { chromium = require(the package).chromium; } catch { chromium = null; }: an assignment's right side reached through a member chain is a read position (bindLoaded binds the target), class own, engines [chromium], no refusal before and after round 6, the exemption that keeps the tree's --tsv byte-identical" }, // the tree's form, an assignment's right side through a chain
   { dir: W, file: "p278-r6c-a36k-await-import-member-launch-control.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["firefox"], launches: [".launch("], playwright: ["playwright"], launcherImported: false, holds: "the no-refusal half of a pair whose partner reds: p270 (the load handed to a promise callback through .then) beside (await import(the package)).firefox.launch(): the await and the parentheses are wrappers the walk reads through and the member chain ends at the call, class own, engines [firefox], the launch read, no refusal before and after round 6" }, // an awaited import's member launch is read
   { dir: W, file: "p279-r6c-a36l-computed-member-on-load-control.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], launches: [], playwright: ["playwright"], launcherImported: false, refused: "p279-r6c-a36l-computed-member-on-load-control.test.ts:3: " + COMPUTED_REFUSAL, holds: "a shape another plant carries: p112 (a computed member with a name the walker cannot fold on a load) beside p272's argument position: use(require(the package)[k]) ends the walk at the computed member, which pwChain refuses by name, and the load-position arm stands down, so the line carries one refusal before and after round 6" }, // the computed member on the load: pwChain's refusal, one per line
+  // round 6, D (correctness-2): the barrel that re-exports the launcher's inBrowser. localRefusals refused a loaded module that binds or
+  // calls inBrowser (launcherBinds) only while the test's own shared calls were zero, so a test calling inBrowser directly AND through
+  // the barrel's export with an engine was class shared, gap null, engines [], the barrel call and its engine unread (a call through
+  // the re-export resolves to no launcher binding the walker counts, and the fold of the barrel's record carries no engine): the
+  // both-calls twin of the round-4 requireCjs re-export finding, for the launcher's own re-export. Since round 6 classify's record
+  // carries launcherReexport and localRefusals refuses the importer on it whatever its own calls, after the launcherBinds arm (so p32,
+  // the barrel-only control, keeps that arm's sentence); the arm over-approximates a barrel imported for another export beside a
+  // direct call (p284), on the safe side, with the same remedy. The five rows hold the arm's SENTENCE through BARREL_REEXPORT at the
+  // barrel's import line; engines [] states the unread engine as a property.
+  { dir: W, file: "p280-r6d-d1-both-calls-named-reexport.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true, engines: [], refused: "p280-r6d-d1-both-calls-named-reexport.test.ts:3: " + BARREL_REEXPORT("ui/webview/leg-barrel.ts") }, // d1: import { inBrowser } from the launcher and { inBrowser as ib2 } from leg-barrel (export { inBrowser } from the launcher), inBrowser(t, body) then ib2(t, body, "firefox") (before round 6: class shared, gap null, engines [], no refusal, rosterable with the Firefox engine lost)
+  { dir: W, file: "p281-r6d-d2-both-calls-renamed-reexport.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true, engines: [], refused: "p281-r6d-d2-both-calls-renamed-reexport.test.ts:3: " + BARREL_REEXPORT("ui/webview/leg-barrel-renamed.ts") }, // d2: the renamed twin, export { inBrowser as open } from the launcher, open(t, body, "firefox") beside the direct call (before: as p280)
+  { dir: W, file: "p282-r6d-d3-both-calls-namespace-import.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true, engines: [], refused: "p282-r6d-d3-both-calls-namespace-import.test.ts:3: " + BARREL_REEXPORT("ui/webview/leg-barrel.ts") }, // d3: the namespace twin, import * as B from leg-barrel, B.inBrowser(t, body, "webkit") beside the direct call (before: as p280, the WebKit engine lost)
+  { dir: W, file: "p283-r6d-d4-both-calls-barrel-chain.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true, engines: [], refused: "p283-r6d-d4-both-calls-barrel-chain.test.ts:3: " + BARREL_REEXPORT("ui/webview/leg-barrel2.ts, which loads ui/webview/leg-barrel.ts") }, // d4: a barrel of the barrel (leg-barrel2 re-exports leg-barrel's inBrowser), the two-link chain in the sentence, the walk's BFS reaching the re-export one link down (before: as p280)
+  { dir: W, file: "p284-r6d-d7-other-export-beside-direct-call.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true, engines: [], refused: "p284-r6d-d7-other-export-beside-direct-call.test.ts:3: " + BARREL_REEXPORT("ui/webview/leg-barrel-plus.ts") }, // d7: the over-approximation's witness, import { helper } from a barrel that re-exports inBrowser beside its own export, helper() and a direct inBrowser call, nothing launched through the barrel (before round 6: class shared, gap null, engines [], no refusal; refused now on the safe side, since the walker reads no import list against the barrel's exports, the remedy the same import of the launcher directly)
+  // round 6, F (tests-2, extra5-4): a specifier assembled from literals. foldSpecifier joined a `+` chain's or a template's literal pieces
+  // with "/" whatever the chain, a path-join reading, so `require("play" + "wright")` loaded play/wright: refused as naming no file (the
+  // wrong reason, on the safe side) when no file stood there, refused by the net's clause 1 when the fixture's decoy play/wright.ts stood
+  // there (the flat text names the package), and for a RELATIVE chain, "./play" + "wright", resolved to the decoy with NO refusal, the
+  // module ./playwright it loads unread: the silent shape. Since round 6 a chain that crossed no path call is a string concatenation and
+  // its pieces are joined as written before resolveSpec, the literal's own road (the package for p285 and p286, the launcher for p287,
+  // the module ./playwright for p288 and p289, refused at the importer as p290, the literal control, is), and a chain that did cross a
+  // path call keeps the "/" join (p291, the path-call control, still resolves to the decoy: class none, no refusal). The fix line's own
+  // shape, substring tests over both joins with the "/" join kept as the specifier, was executed and refuted at round 6: it read p291's
+  // ./play/wright as a package and refused it falsely. p288 to p290 hold the launcherBinds arm's SENTENCE through LAUNCHER_BINDS; p285
+  // to p287 hold the class, the package or the launcher import, and the engine as PROPERTIES.
+  { dir: W, file: "p285-r6f-a01-package-from-plus-literals.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["webkit"], launches: [".launch("], playwright: ["playwright"], launcherImported: false }, // a01: const pw = require("play" + "wright"), pw.webkit.launch() (before round 6, the decoy in the fixture: class none, refused by the net's clause 1 at line 2; with no file at play/wright: refused as loading play/wright, which names no file)
+  { dir: W, file: "p286-r6f-a04-package-from-template-const-tail.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["firefox"], launches: [".launch("], playwright: ["playwright"], launcherImported: false }, // a04: const tail = "wright", await import(`play${tail}`), .firefox.launch(): the template's const read through its closed form (before: as p285, at line 3)
+  { dir: W, file: "p287-r6f-a26-launcher-from-plus-literals.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true, engines: [] }, // a26: const leg = require("./real-" + "viewer-leg"), leg.inBrowser(t, body): the launcher's name from two literals, a shared call on the load (before round 6: class none, launcherImported false, refused as loading ./real-/viewer-leg, which names no file)
+  { dir: W, file: "p288-r6f-a34-relative-plus-literals-decoy.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p288-r6f-a34-relative-plus-literals-decoy.test.ts:2: " + LAUNCHER_BINDS("ui/webview/playwright.ts") }, // a34: const m = require("./play" + "wright"), m.run(t), the decoy play/wright.ts beside the module ./playwright that binds and calls inBrowser (before round 6: class none, no refusal, the load resolved to the decoy: the silent shape)
+  { dir: W, file: "p289-r6f-a35-relative-template-decoy.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p289-r6f-a35-relative-template-decoy.test.ts:3: " + LAUNCHER_BINDS("ui/webview/playwright.ts") }, // a35: the template twin, const tail = "wright", require(`./play${tail}`), m.run(t) (before: silent, as p288)
+  { dir: W, file: "p290-r6f-a36-literal-relative-control.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p290-r6f-a36-literal-relative-control.test.ts:2: " + LAUNCHER_BINDS("ui/webview/playwright.ts"), holds: "a shape another plant carries: p32 (a literal relative specifier naming a module that binds or calls the launcher's inBrowser, refused at the importer by the launcherBinds arm); the literal control for p288 and p289, whose chains fold to this literal's road since round 6, refused with this row's sentence before and after" }, // a36: const m = require("./playwright"), m.run(t)
+  { dir: W, file: "p291-r6f-a32-path-join-control.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, holds: "the no-refusal half of a pair whose partner reds: p288 and p289 (the same pieces with no path call, folded by concatenation to ./playwright since round 6 and refused there); a chain that crossed path.join is a path and keeps the slash join, so it resolves to the clean decoy play/wright.ts, class none with no refusal before and after round 6; the row that refutes the fix line's own shape, under which ./play/wright was read as a package and refused falsely" }, // a32: import path from "node:path", const m = require(path.join("./play", "wright")), void m.nothing
 ];
 const bundleOf = (p: Plant): string => "out-tests/" + p.dir + "/" + p.file.replace(/\.test\.ts$/, ".test.js");
 
@@ -1210,8 +1260,8 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // ranges are held to abut: p246 to p248, the three plants of THE SAFETY NET's arms that had none, are the round-5 range's (refused
   // by the census before round 6, red under the census before round 5), so a moved R5_LAST alone cannot slide them into the round-6
   // population, whose statement (red under the census before round 6) would be false for them and which this test cannot re-run
-  const R6_FIRST = 249, R6_LAST = 279;
-  const R6_HELD = ["p252", "p260", "p261", "p266", "p275", "p276", "p277", "p278", "p279"];
+  const R6_FIRST = 249, R6_LAST = 291;
+  const R6_HELD = ["p252", "p260", "p261", "p266", "p275", "p276", "p277", "p278", "p279", "p290", "p291"];
   const R6_CARRIED: string[] = [];
   const inRound6 = (p: Plant) => num(p) >= R6_FIRST && num(p) <= R6_LAST;
   const r5 = PLANT_TABLE.filter(inRound5);
@@ -1239,9 +1289,15 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // way to the arm's), and a playwright load in a position the walker does not read (a class field, an object property, a promise
   // callback, an argument, a return: class own with engines [firefox] and no refusal before round 6, the read-through clause being
   // per module, where the row expects the load-position arm's refusal; p271 red on the sentence, the net's read-through giving way
-  // to the arm's, as the round-3 rows p50, p51 and p57 re-aimed in place do, outside this population), unless R6_HELD names it with
+  // to the arm's, as the round-3 rows p50, p51 and p57 re-aimed in place do, outside this population), a test calling inBrowser
+  // directly and through a barrel that re-exports it (class shared, gap null, engines [] and no refusal before round 6, the barrel
+  // call's engine unread, where the row expects the barrel arm's refusal at the import line), and a specifier assembled from literals
+  // with no path call (the package or the launcher so spelled refused as naming no file, or by the net's clause 1 with a file at the
+  // slash-joined path, where the row expects class own or shared; the relative chain resolved to the decoy with no refusal, where the
+  // row expects the launcherBinds sentence at the module ./playwright), unless R6_HELD names it with
   // holds set (the renamed-parameter control, the two name-position controls, the argument-position control, the five read-position
-  // controls); a round-6 builder who adds a row moves R6_LAST to it and, when the row stays green under that census, adds it to
+  // controls, the literal control and the path-call control of the literal chain); a round-6 builder who adds a row moves R6_LAST to
+  // it and, when the row stays green under that census, adds it to
   // R6_HELD with holds set (the round-5 population above is closed)
   const NOT_RERUN6 = " (the discrimination was established by running the census before round 6, the module at the round-5 head, over the plants, recorded in the PR's notes, and is not re-run here, since that census is not in the tree at test time: this assertion holds the table's statement, not the fact)";
   assert.equal(R6_FIRST, R5_LAST + 1, "the round-5 range (to p" + R5_LAST + ") and the round-6 range (from p" + R6_FIRST + ") abut: a builder who moves R5_LAST moves R6_FIRST with it, and a row added to one range is not slid into the other, whose statement is about a different census" + NOT_RERUN6);
