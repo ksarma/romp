@@ -883,8 +883,11 @@ def _fail_skipped_report(rep, longrepr) -> None:
     the one report shape the shared _skip_reason has a branch for. Callers compute the skip's reason BEFORE this
     call: _skip_reason reads wasxfail. A caller's exemption (the served switch's `optional:` skips) returns before
     reaching here, so an exempt skip keeps its report untouched. Pinned by execution, each on an xfail that is a
-    file's ONLY skip, so the exit status is the assertion and no sibling skip carries it: the xfail-alone case in
-    tests/test_served_tests_require.py and NeverSkips' xfail-only case in tests/test_ci_sdk_pin.py."""
+    file's ONLY skip, so the exit status is the assertion and no sibling skip carries it: in
+    tests/test_served_tests_require.py the xfail-alone case and its bare twin, in tests/test_ci_sdk_pin.py NeverSkips'
+    xfail-only case and its bare twin (BARE_XFAIL_ONLY). The bare twins pin the hasattr: a bare xfail's wasxfail is
+    empty, so a delete by truthiness kept it and the run printed FAILED and exited 0, while both reasoned cases passed
+    (review round 4, 2026-09-23)."""
     if hasattr(rep, "wasxfail"):
         del rep.wasxfail
     rep.outcome = "failed"

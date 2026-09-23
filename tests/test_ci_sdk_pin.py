@@ -95,9 +95,10 @@ This module holds five things, and it never skips: a pin that skips reports gree
    carrying the skip's own reason, always, with no switch. NeverSkips proves that belt by execution, running pytest in
    a child over scratch files: a file of this name whose tests skip by every spelling (pytest.mark.skipif,
    unittest.skipIf, self.skipTest, SkipTest in setUpClass, an xfail) reds on each; one whose module level runs
-   pytest.importorskip reds as a collection error; one whose ONLY skip is an xfail fails the run by its exit status
-   (a flipped xfail prints FAILED either way and counts toward the exit status only once the report's wasxfail is
-   removed, which the flip in tests/conftest.py does; alone, so no other skip carries that exit for it); a
+   pytest.importorskip reds as a collection error; one whose ONLY skip is an xfail, with a reason or bare, fails the
+   run by its exit status (a flipped xfail prints FAILED either way and counts toward the exit status only once the
+   report's wasxfail is removed, which the flip in tests/conftest.py does by hasattr, since a bare xfail's is empty;
+   alone, so no other skip carries that exit for it); a
    plain-named twin of the first keeps skipping. Until 2026-09-20 the
    guard was a five-name list of unittest spellings read from this file's AST, which pytest.mark.skipif passed, and
    which a module-level importorskip removed from the run along with the rest of the module. What a report cannot
@@ -452,6 +453,16 @@ class OnlyXfail(unittest.TestCase):
     def test_xfail(self):
         self.fail("an xfail absorbs this")
 '''
+# Its bare twin: @pytest.mark.xfail with no reason sets the report's wasxfail to "", which a truthiness test reads as
+# absent. The case over it is what makes the flip's hasattr load-bearing (review round 4, 2026-09-23).
+BARE_XFAIL_ONLY = '''
+import unittest
+import pytest
+class OnlyBareXfail(unittest.TestCase):
+    @pytest.mark.xfail
+    def test_xfail(self):
+        self.fail("a bare xfail absorbs this, synthetic")
+'''
 
 
 class NeverSkips(unittest.TestCase):
@@ -465,7 +476,8 @@ class NeverSkips(unittest.TestCase):
     status the assertion (pytest prints FAILED for a flipped xfail either way and counts it toward the exit status
     only once the report's wasxfail attribute is removed, which the flip shared with the served switch does; bundled
     with the other spellings that exit was carried for it, so removing the delete red nothing until this case,
-    2026-09-21). Synthetic files only; no SDK, no network. Two cases are in-process. The census, two cases: the belt
+    2026-09-21), and so does its bare twin, whose wasxfail is empty (a delete by truthiness kept it, and only the bare
+    case reds on that, 2026-09-23). Synthetic files only; no SDK, no network. Two cases are in-process. The census, two cases: the belt
     reads reports, and a test that is never collected files none, so the one test the belt exists for is pinned in
     a child `pytest --collect-only -q` over this real module, pytest's own collector, whose listing must hold the
     test's node id (present, never a count), and in process by name against unittest's loader over the class. The
@@ -531,6 +543,18 @@ class NeverSkips(unittest.TestCase):
         self.assertIn("1 failed", out, "the xfail is reported as the one failure: " + out[-3000:])
         self.assertIn("never-skips: test_ci_sdk_pin.py skipped (at call)", out, "the red names the belt and the file: " + out[-3000:])
         self.assertIn("xfail: synthetic xfail, the file's only skip", out, "...and carries the xfail's own reason: " + out[-3000:])
+
+    def test_a_bare_xfail_that_is_the_files_only_skip_fails_the_run(self):
+        # The case above with no reason on the xfail (review round 4, 2026-09-23). A bare @pytest.mark.xfail sets the
+        # report's wasxfail to "", so a flip that deleted it by truthiness kept it, and the run printed FAILED and exited
+        # 0 while the reasoned case above, whose wasxfail is non-empty, passed. The exit status is the assertion. With
+        # wasxfail empty, _skip_reason falls back to str(longrepr), so the red carries the failure the xfail absorbed.
+        rc, out = self._run(self._write("test_ci_sdk_pin.py", BARE_XFAIL_ONLY))
+        self.assertNotEqual(rc, 0, "a flipped bare xfail must fail the RUN, not only print FAILED: " + out[-3000:])
+        self.assertIn("1 failed", out, "the bare xfail is reported as the one failure: " + out[-3000:])
+        self.assertIn("never-skips: test_ci_sdk_pin.py skipped (at call)", out, "the red names the belt and the file: " + out[-3000:])
+        self.assertIn("a bare xfail absorbs this, synthetic", out, "...and carries the failure the xfail absorbed, read off "
+                      "the longrepr: " + out[-3000:])
 
     def test_a_module_level_importorskip_under_a_plain_name_still_skips_the_module(self):
         rc, out = self._run(self._write("test_fake_plain.py", MODULE_LEVEL_SKIP))

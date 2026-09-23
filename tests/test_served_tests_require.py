@@ -7,20 +7,21 @@ red on main for a day while CI stayed green). The extension job installs that br
 switch set, the stance the pane bench takes with ROMP_UI_BENCH_REQUIRE: a runner that cannot run them fails, loudly,
 with the skip's own reason, rather than passing with the coverage gone.
 
-Pinned here by running pytest in a child on three synthetic files outside tests/ (tests/conftest.py loaded as a
+Pinned here by running pytest in a child on synthetic files outside tests/ (tests/conftest.py loaded as a
 plugin with -p, the way it would load for files under tests/): a served-named file whose class skips in setUpClass
-and a plain-named file that skips the same way, run together; and a second served-named file whose ONLY skip is an
-xfail, run alone. Off, the pair's four skips stay skips. On, the served file's two skips become red, each with its
+and a plain-named file that skips the same way, run together; and two more served-named files whose ONLY skip is an
+xfail, one with a reason and one bare, each run alone. Off, the pair's four skips stay skips. On, the served file's two skips become red, each with its
 reason quoted (a skip raised in setUpClass is a setup-phase report, which pytest counts as an error; one raised in
 the test body counts as a failure; both turn the run red), a skip whose reason begins with "optional:" stays a skip
 (a leg the runner declared it does not carry), and the plain file's still skips: the switch reaches only the files
-it names. The xfail-only file runs alone because the exit STATUS is its assertion: pytest records an xfail as a
+it names. Each xfail-only file runs alone because the exit STATUS is its assertion: pytest records an xfail as a
 skipped report carrying a `wasxfail` attribute, prints FAILED for the flipped report either way, and counts it
 toward the exit status only once that attribute is gone (tests/conftest.py, _fail_skipped_report, the flip the
 served switch and the never-skips belt share); beside the pair's other skips, whose flips already make the run
 non-zero, that exit would be carried for it and the case would prove nothing. Red before the flip was shared: the
-switch flipped the outcome and left the attribute, so the child printed "1 failed" and exited 0 (2026-09-21). Off,
-the same file is one xfailed test and exit 0. Synthetic fixtures only; no browser, no kernel, no network.
+switch flipped the outcome and left the attribute, so the child printed "1 failed" and exited 0 (2026-09-21). The
+bare file pins how the flip removes it: a bare xfail's `wasxfail` is empty, and a removal by truthiness left it in
+place with the reasoned file still passing (2026-09-23). Off, the reasoned file is one xfailed test and exit 0. Synthetic fixtures only; no browser, no kernel, no network.
 
 This module also holds the existence half of the never-skips belt's subject check (tests/conftest.py,
 _NEVER_SKIP_FILES; NeverSkipFilesExist below), placed here because it must live OUTSIDE the module that belt guards:
@@ -70,12 +71,23 @@ class ServedXfail(unittest.TestCase):
     def test_xfail(self):
         self.fail("an xfail absorbs this")
 '''
+# Its bare twin, also run alone: a bare @pytest.mark.xfail sets the report's wasxfail to "", which a truthiness test
+# reads as absent (review round 4, 2026-09-23).
+SERVED_BARE_XFAIL_ONLY = '''
+import unittest
+import pytest
+class ServedBareXfail(unittest.TestCase):
+    @pytest.mark.xfail
+    def test_xfail(self):
+        self.fail("a bare xfail absorbs this, synthetic")
+'''
 
 
 class ServedTestsRequire(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp(prefix="served-require-")
-        for name, body in (("test_fake_served.py", SERVED), ("test_fake_plain.py", PLAIN), ("test_fake_xfail_served.py", SERVED_XFAIL_ONLY)):
+        for name, body in (("test_fake_served.py", SERVED), ("test_fake_plain.py", PLAIN), ("test_fake_xfail_served.py", SERVED_XFAIL_ONLY),
+                           ("test_fake_bare_xfail_served.py", SERVED_BARE_XFAIL_ONLY)):
             with open(os.path.join(self.d, name), "w") as f:
                 f.write(body)
 
@@ -121,6 +133,18 @@ class ServedTestsRequire(unittest.TestCase):
         self.assertIn("1 failed", out, "the xfail is reported as the one failure: " + out[-2000:])
         self.assertIn("ROMP_SERVED_TESTS_REQUIRE=1", out, "the red names the switch: " + out[-2000:])
         self.assertIn("xfail: synthetic xfail, the file's only skip", out, "...and carries the xfail's own reason: " + out[-2000:])
+
+    def test_on_a_bare_xfail_that_is_the_served_files_only_skip_fails_the_run(self):
+        # The case above with no reason on the xfail (review round 4, 2026-09-23): a bare @pytest.mark.xfail sets the
+        # report's wasxfail to "", so a flip that deleted it by truthiness kept it and the child printed FAILED and exited
+        # 0, with the reasoned case above passing. The exit code is the assertion. With wasxfail empty, _skip_reason falls
+        # back to str(longrepr), so the red carries the failure the xfail absorbed.
+        rc, out = self._run(require=True, names=("test_fake_bare_xfail_served.py",))
+        self.assertNotEqual(rc, 0, "a flipped bare xfail must fail the RUN, not only print FAILED: " + out[-2000:])
+        self.assertIn("1 failed", out, "the bare xfail is reported as the one failure: " + out[-2000:])
+        self.assertIn("ROMP_SERVED_TESTS_REQUIRE=1", out, "the red names the switch: " + out[-2000:])
+        self.assertIn("a bare xfail absorbs this, synthetic", out, "...and carries the failure the xfail absorbed, read off "
+                      "the longrepr: " + out[-2000:])
 
     def test_off_the_served_files_only_xfail_stays_an_xfail(self):
         rc, out = self._run(require=False, names=("test_fake_xfail_served.py",))
