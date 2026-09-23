@@ -317,6 +317,8 @@ class TheLiveTailLock(unittest.TestCase):
                 iters[1] = i
             stop.set()
         ts = threading.Thread(target=session, name="session"), threading.Thread(target=kernel, name="kernel")
+        self.addCleanup(stop.set)          # the session thread ends on every exit path (T282): its loop reads this event, which the
+        #                                    kernel thread sets at its own end and this cleanup sets on any other road out
         for t in ts:
             t.start()
         for t in ts:
