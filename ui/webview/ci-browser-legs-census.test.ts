@@ -80,7 +80,13 @@
 // each read as no swallow before round 6, when the read was the same-function try alone, beside the .finally and bare .then controls,
 // the Promise.all control, the wrapper-in-try residual the census header states and the never-awaited try, which reads as a swallow
 // before and after, and the two spellings the closing pass stated as residuals beside the wrapper's, a .catch on a name the promise
-// was bound to and on a Promise.all over the call, swallow [] before and after), every one is red under
+// was bound to and on a Promise.all over the call, swallow [] before and after; and, from the review's round 7, in the same range, a
+// const or var declared in a switch's case block, a namespace body or a class static block that shares a module const's name, read
+// as the module const at the round-6 head (a silent Firefox leg, the package or the launcher loaded through it class none with no
+// refusal), beside the two var stop controls, a var in a namespace body or a static block hoisted to the module and refused
+// falsely there, and a declaration with no initializer (a for-of or for-in head's const, a for-of let, an ambient declare const, a
+// let never written) refused as loading a placeholder that names no file, the wrong reason, beside the catch variable, the
+// class's control), every one is red under
 // the census before round 6 (the module at the round-5 head) unless the table names it held with its reason, and the same test holds
 // the table to that statement. A module
 // whose classification throws for any other reason is refused by name and the census goes on, executed over a synthetic root by a
@@ -119,6 +125,8 @@ type Census = {
   ENGINE_PHRASE: string;
   LEG_DIRS: string[];
   loadTypescript(): any;   // the census's own compiler load (vscode-extension/node_modules/typescript), read by the identifier census over the net block
+  isLexicalScope(ts: any, n: any): boolean;   // classify's isScope, the lexical read's scope set (round 7), pinned against the binder below
+  holdsVarScope(ts: any, n: any): boolean;    // classify's holdsVarsOf, the scopes that hold a var (round 7)
 };
 const load = (): Promise<Census> => import(pathToFileURL(MODULE).href) as Promise<Census>;
 const read = (p: string): string => fs.readFileSync(p, "utf8");
@@ -911,10 +919,37 @@ const PLANT_TABLE: Plant[] = [
   // boundary foldSpecifier's docstring states, refused as naming no file at both, held.
   { dir: W, file: "p306-r6a-q7-param-shadows-unwritten-let.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p306-r6a-q7-param-shadows-unwritten-let.test.ts:4: " + SPEC_NO_CLOSED_FORM }, // let spec = "./decoy-helper" never written; function load(spec: string) { return require(spec); } load(PW): the parameter shadows a let (before: class none, no refusal, folded to the decoy)
   { dir: W, file: "p307-r6a-q8-destructured-param-shares-const-name.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p307-r6a-q8-destructured-param-shares-const-name.test.ts:4: " + SPEC_NO_CLOSED_FORM }, // function load({ spec }: { spec: string }) { return require(spec); } load({ spec: PW }): the binding element shares the const's name (before: class none, no refusal, folded to the decoy)
-  { dir: W, file: "p308-r6a-q9-catch-variable-shares-const-name.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p308-r6a-q9-catch-variable-shares-const-name.test.ts:4: " + SPEC_NO_CLOSED_FORM, holds: "a pin of an arm no plant carried: constInitializer's catch-variable arm, added by the closing pass after round 6's verification. A catch clause's variable is a VariableDeclaration whose parent is the CatchClause, not a VariableDeclarationList, so the round-6 module's lexical read reached it, found no initializer and took the null road: the fold pushed the placeholder <spec> and the loader was refused as loading <spec>, which names no file in the tree, the wrong reason, where the census before round 6 refused this row through no closed form by another road, its by-name read finding two declarations so named. Green under the census before round 6 on the same sentence, red under the round-6 module before the closing pass, executed and recorded in the PR's notes" }, // try { throw PW; } catch (spec) { return require(spec as string); } beside const spec = "./decoy-helper"
+  { dir: W, file: "p308-r6a-q9-catch-variable-shares-const-name.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p308-r6a-q9-catch-variable-shares-const-name.test.ts:4: " + SPEC_NO_CLOSED_FORM, holds: "a pin of an arm no plant carried: constInitializer's no-initializer close, whose first member, the catch variable, the closing pass after round 6's verification repaired alone through a catch-clause arm, which the review's round 7 folds into the class rule (every declaration with no initializer is bound to no text, p318 to p322 the rest of the class). A catch clause's variable is a VariableDeclaration whose parent is the CatchClause, not a VariableDeclarationList, so the round-6 module's lexical read reached it, found no initializer and took the null road: the fold pushed the placeholder <spec> and the loader was refused as loading <spec>, which names no file in the tree, the wrong reason, where the census before round 6 refused this row through no closed form by another road, its by-name read finding two declarations so named. Green under the census before round 6 on the same sentence, red under the round-6 module before the closing pass and under the round-7 module with the null road restored, executed and recorded in the PR's notes" }, // try { throw PW; } catch (spec) { return require(spec as string); } beside const spec = "./decoy-helper"
   { dir: W, file: "p309-r6g-s17-bound-promise-catch-residual.test.ts", leg: true, cls: "shared", gap: null, swallow: [], holds: "a stated residual boundary: the swallow read follows the chain on the call itself, so a .catch on a name the call's promise was bound to, const p = inBrowser(t, body); await p.catch(() => {}), is not read, swallow [] before and after round 6 while the rejection is swallowed at run time, the first of the two residuals the closing pass after round 6's verification stated in the census header's swallow clause beside the wrapper's" }, // s17: the promise bound, then caught on the name
   { dir: W, file: "p310-r6g-s18-promise-all-catch-residual.test.ts", leg: true, cls: "shared", gap: null, swallow: [], holds: "a stated residual boundary: a .catch on the result of Promise.all over an array holding the call, await Promise.all([inBrowser(t, body)]).catch(() => {}), is not read either (the chain is followed on the call, not on a combinator's result; p303 holds Promise.all alone rejecting through), swallow [] before and after round 6 while the rejection is swallowed at run time, the second residual the closing pass stated in the census header's swallow clause" }, // s18: the combinator's result caught
   { dir: W, file: "p311-r6f-a37-plus-inside-path-join-boundary.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p311-r6f-a37-plus-inside-path-join-boundary.test.ts:3: loads ./play/wr/ight, which names no file in the tree", holds: "a stated residual boundary: pathCall is per chain, not per argument, so a + chain standing as one argument of a path call is joined with the call's other arguments piece by piece, require(path.join(\"./play\", \"wr\" + \"ight\")) folding to ./play/wr/ight, not ./play/wright, refused as naming no file before and after round 6 (the safe side, and silent only were a module to stand at the misjoined path), the boundary foldSpecifier's docstring states since the closing pass after round 6's verification" }, // a37: the chain inside path.join's second argument
+  // the review's round 7, in the round-6 range (the round-6 rulings place them there, R6_LAST moved), every row red under the census
+  // before round 6 and under the round-6 head, executed and recorded in the PR's notes. A (extra5-1): the lexical read's scopes are
+  // the compiler's grammar, not the shapes a round found. A const declared in a switch's case block or a namespace body, or a var
+  // declared in a class static block (a const there was read at the static block's body, a block), that shares a module const's
+  // name read as the module const at the round-6 head, so the package or the launcher loaded through it was class none with no refusal under the census and
+  // the net alike, a silent Firefox leg (p312 to p315; the census before round 6 refused each through no closed form by its by-name
+  // read's two declarations). p312 and p315 read own Firefox now, p313 the launcher twin shared Firefox with gap null, and p314,
+  // whose namespace exports the load for a launch through N.pw that the walker does not read, the net's read-through clause at the
+  // load. p316 and p317, a var in a namespace body or a static block beside a module const of the same name, are the stop controls:
+  // the walk hoisted that var to the module, so the round-6 head refused the module const's load through no closed form, falsely,
+  // and they read own Firefox with no refusal now that the walk stops at a namespace body and a static block as at a function. The
+  // census test's scope-set case pins the predicates against the binder; these rows pin the readers and the stop, which it cannot
+  // see. E (extra5-2): the no-initializer class, a for-of const, a for-in const, a for-of let, an ambient declare const and a let
+  // never written, each refused at the round-6 head (and before round 6, with no module const of the same name) as loading the
+  // placeholder <spec> (<SPEC>), which names no file in the tree, the wrong reason, and through no closed form now, the rows holding
+  // the SENTENCE through SPEC_NO_CLOSED_FORM; p308 above, the catch variable, is the class's control.
+  { dir: W, file: "p312-r7a-a01-case-clause-package.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["firefox"], playwright: ["playwright"], launches: [".launch("], launcherImported: false }, // a01: const spec = "./decoy-helper"; switch (k) { default: const spec = "playwright"; pw = require(spec); } then pw.firefox.launch() (before round 7: class none, no refusal, folded to the decoy)
+  { dir: W, file: "p313-r7a-a02-case-clause-launcher-twin.test.ts", leg: true, cls: "shared", gap: null, engines: ["firefox"], launcherImported: true }, // a02: the launcher twin, const spec = "./real-viewer-leg" in the case clause, leg.inBrowser(t, body, "firefox") (before round 7: class none, launcherImported false, no refusal)
+  { dir: W, file: "p314-r7a-a03-namespace-package-export.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], playwright: ["playwright"], launcherImported: false, refused: "p314-r7a-a03-namespace-package-export.test.ts:3: " + NET_READ_THROUGH }, // a03: namespace N { const spec = "playwright"; export const pw = require(spec); } then N.pw.firefox.launch() (before round 7: class none, no refusal, folded to the decoy)
+  { dir: W, file: "p315-r7a-a05-static-block-var-package.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["firefox"], playwright: ["playwright"], launches: [".launch("], launcherImported: false }, // a05: class C { static { var spec = "playwright"; pw = require(spec); } } beside const spec = "./decoy-helper" (before round 7: class none, no refusal, folded to the decoy)
+  { dir: W, file: "p316-r7a-a07-namespace-var-stop-control.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["firefox"], playwright: ["playwright"], launches: [".launch("], launcherImported: false }, // a07: namespace N { var spec = "./decoy-helper"; } beside const spec = "playwright"; require(spec) (before round 7: refused through no closed form at line 4, the namespace's var hoisted to the module)
+  { dir: W, file: "p317-r7a-a12-static-block-var-stop-control.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["firefox"], playwright: ["playwright"], launches: [".launch("], launcherImported: false }, // a12: class C { static { var spec = "./decoy-helper"; } } beside const spec = "playwright"; require(spec) (before round 7: refused through no closed form at line 5, the static block's var hoisted to the module)
+  { dir: W, file: "p318-r7e-e10-for-of-const-head.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p318-r7e-e10-for-of-const-head.test.ts:3: " + SPEC_NO_CLOSED_FORM }, // e10: for (const spec of PW) { return require(spec); } (before round 7: loads <spec>, which names no file in the tree)
+  { dir: W, file: "p319-r7e-e11-for-in-const-head.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p319-r7e-e11-for-in-const-head.test.ts:3: " + SPEC_NO_CLOSED_FORM }, // e11: for (const spec in PW) { return require(spec); } (before round 7: loads <spec>, which names no file in the tree)
+  { dir: W, file: "p320-r7e-e12-for-of-let-head.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p320-r7e-e12-for-of-let-head.test.ts:3: " + SPEC_NO_CLOSED_FORM }, // e12: for (let spec of PW) { return require(spec); } (before round 7: loads <spec>, which names no file in the tree)
+  { dir: W, file: "p321-r7e-e04-ambient-declare-const.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p321-r7e-e04-ambient-declare-const.test.ts:3: " + SPEC_NO_CLOSED_FORM }, // e04: declare const SPEC: string; require(SPEC) (before round 7: loads <SPEC>, which names no file in the tree)
+  { dir: W, file: "p322-r7e-e05-never-written-let.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p322-r7e-e05-never-written-let.test.ts:3: " + SPEC_NO_CLOSED_FORM }, // e05: let spec: any; require(spec), the let never written (before round 7: loads <spec>, which names no file in the tree)
 ];
 const bundleOf = (p: Plant): string => "out-tests/" + p.dir + "/" + p.file.replace(/\.test\.ts$/, ".test.js");
 
@@ -1335,7 +1370,7 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // ranges are held to abut: p246 to p248, the three plants of THE SAFETY NET's arms that had none, are the round-5 range's (refused
   // by the census before round 6, red under the census before round 5), so a moved R5_LAST alone cannot slide them into the round-6
   // population, whose statement (red under the census before round 6) would be false for them and which this test cannot re-run
-  const R6_FIRST = 249, R6_LAST = 311;
+  const R6_FIRST = 249, R6_LAST = 322;
   const R6_HELD = ["p252", "p260", "p261", "p266", "p275", "p276", "p277", "p278", "p279", "p290", "p291", "p297", "p298", "p303", "p304", "p305", "p308", "p309", "p310", "p311"];
   const R6_CARRIED: string[] = [];
   const inRound6 = (p: Plant) => num(p) >= R6_FIRST && num(p) <= R6_LAST;
@@ -1374,12 +1409,18 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // row expects the launcherBinds sentence at the module ./playwright), and a shared call whose rejection is swallowed by a spelling
   // the same-function try read missed, its promise handed to .catch, to .then's second argument or to Promise.allSettled, directly or
   // through a chain, the call inside a callback lexically inside a try, or a helper's such call (swallow [] before round 6 where the
-  // row expects the call's line, or the helper's import line, the field a PROPERTY), unless R6_HELD names it with
+  // row expects the call's line, or the helper's import line, the field a PROPERTY), and, from the review's round 7, a const or var
+  // declared in a case block, a namespace body or a static block that shares a module const's name (refused through no closed form
+  // by the census before round 6's by-name read, where the row expects the leg read, or the read-through clause for p314; at the
+  // round-6 head class none with no refusal, and for the two var stop controls, p316 and p317, a false refusal through no closed
+  // form) and a declaration with no initializer, p318 to p322 (refused before round 6 and at the round-6 head as loading a
+  // placeholder that names no file, where the row expects the no-closed-form SENTENCE), unless R6_HELD names it with
   // holds set (the renamed-parameter control, the two name-position controls, the argument-position control, the five read-position
   // controls, the literal control and the path-call control of the literal chain, and, of the swallow read, the .finally and bare
   // .then controls, the Promise.all control, the wrapper-in-try residual and the never-awaited try boundary, and, from the closing
   // pass after the round's verification, the catch-variable pin of the specifier fold, p308, green under that census by its by-name
-  // read's other road and red under the round-6 module before the pass, the two swallow spellings stated as residuals, p309 and
+  // read's other road and red under the round-6 module before the pass (the no-initializer class's control since round 7), the two
+  // swallow spellings stated as residuals, p309 and
   // p310, and the chain nested inside a path call's argument stated as a boundary, p311); a round-6 builder who adds a row moves R6_LAST to
   // it and, when the row stays green under that census, adds it to
   // R6_HELD with holds set (the round-5 population above is closed)
@@ -1400,6 +1441,84 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   }
   assert.equal(r6.length - held6.length, R6_LAST - R6_FIRST + 1 - R6_HELD.length, (R6_LAST - R6_FIRST + 1 - R6_HELD.length) + " round-6 rows red under the census before round 6 (" + (R6_LAST - R6_FIRST + 1) + " rows, " + R6_HELD.length + " with holds)" + NOT_RERUN6);
   assert.deepEqual(PLANT_TABLE.filter((p) => (p.holds !== undefined || p.carried !== undefined) && !inRound3(p) && !inRound4(p) && !inRound5(p) && !inRound6(p)).map(idOf), [], "holds and carried are fields of the round-3 rows (p38 to p88), the round-4 rows (p89 to p" + R4_LAST + "), the round-5 rows (p" + R5_FIRST + " to p" + R5_LAST + ") and the round-6 rows (p" + R6_FIRST + " to p" + R6_LAST + "), the populations the statements are about; an earlier row carries neither");
+});
+
+test("the lexical read's scope set is the compiler's grammar, not the shapes a round found (extra5-1, the review's round 7): isLexicalScope and holdsVarScope, the one definition classify's isScope and holdsVarsOf delegate to, agree node by node with the compiler's binder (getContainerFlags: HasLocals for a scope, IsContainer with HasLocals for a var holder, a namespace's locals attributed to its ModuleBlock) over a synthetic source carrying every value-scope kind once; the source covers every kind canHaveLocals admits outside the JSDoc range and a stated type-level list, so a kind a compiler upgrade adds is red here until the walker and the source take it; the internals it reads are asserted present, so an upgrade that drops one fails loudly instead of skipping; before round 7 the set lacked the case block, the namespace body and the static block, which this reds naming them", async () => {
+  const census = await load();
+  const ts = census.loadTypescript();
+  // the binder's own predicate: getContainerFlags and canHaveLocals are exported by the compiler at run time and absent from its
+  // typings, so they are read through this any-typed load and asserted functions (typescript 5.9.3 when this was written)
+  assert.equal(typeof ts.getContainerFlags, "function", "the compiler exports getContainerFlags at run time (the binder's container kinds, the predicate this test pins the walker's scope set against): an upgrade that drops it fails here by name, never a skip");
+  assert.equal(typeof ts.canHaveLocals, "function", "the compiler exports canHaveLocals at run time (the kinds that can carry locals, the coverage rule below): an upgrade that drops it fails here by name, never a skip");
+  const HAS_LOCALS = ts.ContainerFlags && ts.ContainerFlags.HasLocals, IS_CONTAINER = ts.ContainerFlags && ts.ContainerFlags.IsContainer;
+  assert.ok(typeof HAS_LOCALS === "number" && HAS_LOCALS > 0 && typeof IS_CONTAINER === "number" && IS_CONTAINER > 0, "the compiler exports ContainerFlags.HasLocals and ContainerFlags.IsContainer at run time: " + JSON.stringify([HAS_LOCALS, IS_CONTAINER]));
+  const kindName = (k: number): string => { const names = Object.keys(ts.SyntaxKind).filter((n) => ts.SyntaxKind[n] === k); return names.find((n) => !/^(First|Last)/.test(n)) || names[0]; };
+  // one snippet per kind, value scopes and type-level ones; no snippet names a browser package or the launcher (this module is read
+  // by the census too)
+  const SNIPPETS = [
+    "function fd(p: string) { void p; }",
+    "const fe = function (p: string) { void p; };",
+    "const af = (p: string) => { void p; };",
+    "class K { m(p: string) { void p; } constructor(p: string) { void p; } get g() { return 1; } set g(p: number) { void p; } static { var sv = 1; void sv; } }",
+    "namespace NS { const nc = 1; void nc; }",
+    "{ const bc = 1; void bc; }",
+    "switch (0 as number) { case 0: const cc = 1; void cc; }",
+    "for (let i = 0; i < 1; i++) { void i; }",
+    "for (const k in {}) { void k; }",
+    "for (const v of [] as number[]) { void v; }",
+    "try { void 0; } catch (e) { void e; }",
+    "type TA<T> = T; type MT = { [P in \"a\"]: P }; type CT<T> = T extends infer U ? U : never; interface I { (p: string): void; new (p: string): I; ms(p: string): void; [ix: string]: unknown; } type FT = (p: string) => void; type CTor = new (p: string) => object;",
+  ];
+  const sf = ts.createSourceFile("scopes.ts", SNIPPETS.join("\n") + "\n", ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  // the canHaveLocals kinds that hold type parameters or type-position parameters only, never a value declaration a specifier can be
+  // bound to: a stated list (ts.isTypeElement cannot build it, being true for a class's get and set accessors, value scopes)
+  const TYPE_LEVEL = new Set(["MethodSignature", "CallSignature", "ConstructSignature", "IndexSignature", "FunctionType", "ConstructorType", "ConditionalType", "MappedType", "TypeAliasDeclaration"].map((n) => ts.SyntaxKind[n]));
+  const typeLevel = (n: any) => TYPE_LEVEL.has(n.kind);
+  const isJSDocKind = (k: number) => k >= ts.SyntaxKind.FirstJSDocNode && k <= ts.SyntaxKind.LastJSDocNode;
+  const flagsOf = (n: any): number => ts.getContainerFlags(n);
+  // the binder's verdict per node: a namespace's locals live on its ModuleDeclaration, attributed to the ModuleBlock that is its one
+  // body (the node the walker reaches going up from a use inside it)
+  const compilerScope = (n: any) => ts.isModuleBlock(n) ? (flagsOf(n.parent) & HAS_LOCALS) !== 0 : ts.isModuleDeclaration(n) ? false : (flagsOf(n) & HAS_LOCALS) !== 0 && !typeLevel(n);
+  const holder = (f: number) => (f & IS_CONTAINER) !== 0 && (f & HAS_LOCALS) !== 0;
+  const compilerVarHolder = (n: any) => ts.isModuleBlock(n) ? holder(flagsOf(n.parent)) : ts.isModuleDeclaration(n) ? false : holder(flagsOf(n)) && !typeLevel(n);
+  // the walker's allowed extras: a function's or static block's body Block (the binder holds its locals on the parent and gives the
+  // Block no flags) and a type-level function-like (ts.isFunctionLike covers signatures and function types; no value declaration
+  // stands in one)
+  const allowedExtra = (n: any) => (ts.isBlock(n) && n.parent && (ts.isFunctionLike(n.parent) || ts.isClassStaticBlockDeclaration(n.parent))) || typeLevel(n);
+  const nodes: any[] = [];
+  const walk = (n: any) => { nodes.push(n); ts.forEachChild(n, walk); };
+  walk(sf);
+  const dropped = new Set<string>(), extra = new Set<string>(), varDropped = new Set<string>(), varExtra = new Set<string>();
+  for (const n of nodes) {
+    const C = compilerScope(n), Wk = census.isLexicalScope(ts, n);
+    if (C && !Wk) dropped.add(kindName(n.kind));
+    if (Wk && !C && !allowedExtra(n)) extra.add(kindName(n.kind));
+    const CV = compilerVarHolder(n), WV = census.holdsVarScope(ts, n);
+    if (CV && !WV) varDropped.add(kindName(n.kind));
+    if (WV && !CV && !typeLevel(n)) varExtra.add(kindName(n.kind));
+  }
+  assert.deepEqual([...dropped], [], "every node the binder gives locals to for a value declaration is a scope of the walker's lexical read (isLexicalScope, classify's isScope): a kind named here is one the walker skips, so a const declared in it that shares an outer const's name reads as the outer const, the silent-leg class the review's round 6 found for the case block, the namespace body and the static block (p312 to p315 carry it). Holds a PROPERTY, the walker's set against the compiler's");
+  assert.deepEqual([...extra], [], "every scope of the walker's lexical read is one the binder gives locals to, a function's or static block's body Block and a type-level function-like excepted: a kind named here is read as a scope the language does not have. Holds a PROPERTY");
+  assert.deepEqual([...varDropped], [], "every function-scoped container of the binder (IsContainer with HasLocals, where a var is held) holds vars for the walker (holdsVarScope, classify's holdsVarsOf, which also stops the inner walk): a kind named here lets a var spelled inside it hoist past it, so it shadows, or is read as, an outer name (p316 and p317 carry the stop). Holds a PROPERTY");
+  assert.deepEqual([...varExtra], [], "every var holder of the walker is a function-scoped container of the binder: a kind named here stops a var's hoisting where the language does not. Holds a PROPERTY");
+  // coverage by rule over SyntaxKind: every kind canHaveLocals admits, less the JSDoc range and the stated type-level list, is carried
+  // by the source, so the comparison above cannot pass by leaving a kind out of the snippets
+  const allKinds = [...new Set(Object.values(ts.SyntaxKind).filter((v) => typeof v === "number") as number[])];
+  const canLocals = allKinds.filter((k) => ts.canHaveLocals({ kind: k }));
+  const seen = new Set(nodes.filter((n) => (flagsOf(n) & HAS_LOCALS) !== 0).map((n) => n.kind));
+  const valueKinds = canLocals.filter((k) => !isJSDocKind(k) && !TYPE_LEVEL.has(k));
+  assert.equal(valueKinds.length, 16, "the coverage rule derives the value-scope kinds from canHaveLocals, never from a list here, and there are 16 at typescript 5.9.3, the version this count was derived at: an empty derivation cannot pass, and a compiler that admits more kinds or fewer reds here, the deliberate re-derivation point (holds a PROPERTY of the compiler in use); got " + JSON.stringify(valueKinds.map(kindName)));
+  assert.deepEqual(valueKinds.filter((k) => !seen.has(k)).map(kindName), [], "the synthetic source carries every kind canHaveLocals admits outside the JSDoc range and the stated type-level list: a kind named here (one a compiler upgrade added) is compared by nobody until a snippet carries it and the walker's set is judged against it. Holds a PROPERTY");
+  assert.deepEqual([...TYPE_LEVEL].filter((k) => !canLocals.includes(k)).map(kindName), [], "every kind of the stated type-level list is one canHaveLocals admits, so the list names only kinds the rule would otherwise demand: a kind named here is stale in the list. Holds a PROPERTY");
+  for (const k of ["CaseBlock", "ModuleDeclaration", "ClassStaticBlockDeclaration"]) assert.ok(seen.has(ts.SyntaxKind[k]), "the synthetic source carries a " + k + " the binder gives locals to, the kinds the review's round 6 found missing from the walker's set (a guard on the comparison's input, beside the coverage rule)");
+  // the delegation: the walker reads these two exports and no second definition. A text pin on WHERE the predicates are bound
+  // (classify's isScope and holdsVarsOf are each an arrow over the export), read through the compiler's tree of the module; the
+  // BEHAVIOUR is executed by the plants p312 to p317 (the readers and the stop), which the comparison above cannot see
+  const msf = ts.createSourceFile(MODULE, read(MODULE), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const bound: Record<string, string[]> = { isScope: [], holdsVarsOf: [] };
+  const visit = (n: any) => { if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text in bound && n.initializer) bound[n.name.text].push(n.initializer.getText(msf)); ts.forEachChild(n, visit); };
+  visit(msf);
+  assert.deepEqual(bound, { isScope: ["(n) => isLexicalScope(ts, n)"], holdsVarsOf: ["(n) => holdsVarScope(ts, n)"] }, "classify binds isScope and holdsVarsOf once each, as arrows over the exported isLexicalScope and holdsVarScope, so the set this test pins is the walker's own (a pin on where the predicate is bound, not on what it reads: the plants p312 to p317 execute the readers and the stop)");
 });
 
 test("the relative node_modules road (n09, extra5-3), over a synthetic root whose vscode-extension/node_modules is the extension's own: a test module that imports playwright by a relative path into node_modules is class own with the engine and the launch read, one that requires it so the same, one that loads a helper doing so is refused by name as loading a module that names a playwright package, and one that spells the path as the argument of a call the walker knows no loader for is refused by THE SAFETY NET's relative-path kind (keyed on resolveSpec, the fold's own reader); the plants live under tests/fixtures/browser-legs-plants/relative-node-modules, outside the tree the table enumerates, since their path resolves only beside a node_modules the fixtures cannot carry (before round 5 each was class none with no refusal: the walker read the path as a local module and the census skipped a file under node_modules, a silent Firefox or WebKit leg; under the net alone the first three were refused by the relative-path kind, n09c through its helper)", async (t) => {

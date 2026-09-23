@@ -30,9 +30,14 @@
 //              never read as no engine. A call with no third argument passes nothing and the record says nothing of it.
 //              A name is read at its USE SITE by lexical scope: a use reaches the innermost enclosing declaration of that name,
 //              so a destructured parameter, a catch variable or a local const of an inner scope that reuses the name is not
-//              the import or the loader-bound variable, and a use in the scope that binds them is. A `var` is declared at the
-//              nearest enclosing function or the module, not at the block, for head or catch clause that spells it (JavaScript
-//              hoists it there), so a use outside that block reaches it.
+//              the import or the loader-bound variable, and a use in the scope that binds them is. The scopes are the node
+//              kinds the compiler's grammar gives declarations to, derived from its binder and not from the shapes a round
+//              found: the source file, a block, a switch's case block, a namespace body, a class static block, every
+//              function-like, a for, for-in or for-of head and a catch clause (the census test pins the set against the
+//              binder over a synthetic source carrying every kind once). A `var` is declared at the nearest enclosing
+//              function, class static block, namespace body or the module, not at the block, case block, for head or catch
+//              clause that spells it (JavaScript hoists it there), so a use outside that block reaches it and a use outside
+//              that function, static block or namespace body does not.
 //   loaded:    every module of the tree the test loads by a relative specifier (an import, an export from, import =, require(),
 //              module.require(), await import(), a loader bound by createRequire or a createRequire(...) call applied directly; a
 //              specifier that names no file beside the module resolves
@@ -404,38 +409,53 @@ export function classify(ts, file, src, opts = {}) {
    *  literal of literals; a parameter typed as a union of string literal types; a parameter typed `string` whose every call
    *  site in the module passes a literal at that position (the function named by identifier, called directly). Anything else,
    *  or a name no enclosing scope declares: null (refuse). */
-  /** The scopes a name is looked up through, innermost first: a function (its parameters and its block body), a block, a
-   *  for/for-of/for-in head, a catch clause, the source file. */
-  const isScope = (n) => ts.isFunctionLike(n) || ts.isBlock(n) || ts.isForOfStatement(n) || ts.isForInStatement(n) || ts.isForStatement(n) || ts.isCatchClause(n) || ts.isSourceFile(n);
+  /** The scopes a name is looked up through, innermost first: the node kinds the compiler's grammar gives declarations to,
+   *  derived from its binder (getContainerFlags' HasLocals) and not from the shapes a round found: every function-like (its
+   *  parameters and its block body), a class static block, a namespace body (the ModuleBlock: the binder holds a namespace's
+   *  locals on its ModuleDeclaration, whose one body it is), a block, a switch's case block (one scope across every clause), a
+   *  for, for-in or for-of head, a catch clause, the source file. One definition, isLexicalScope below the classifier, which the
+   *  census test pins against the binder over a synthetic source carrying every kind once. Before the review's round 7 the set
+   *  was fitted to the shapes round 6 found, without the case block, the namespace body and the static block, so a const
+   *  declared in one that shared a module const's name read as the module const, and a playwright package or the launcher
+   *  loaded through it was class none with no refusal (p312 to p315; p316 and p317 hold the var stop). */
+  const isScope = (n) => isLexicalScope(ts, n);
+  /** The scopes that hold a `var`: a function-like, a class static block, a namespace body, the source file (the compiler's
+   *  function-scoped containers, holdsVarScope below the classifier, pinned beside isLexicalScope); a var spelled in any other
+   *  scope is held by the nearest of these enclosing it. */
+  const holdsVarsOf = (n) => holdsVarScope(ts, n);
   /** The declarations a scope holds ITSELF (an inner scope's are not its own): name -> the first node in source order that
    *  declares it, a variable declaration, a parameter, a binding element (a destructured declaration or parameter, an array
    *  pattern's element included), a function or class declaration, a catch variable; at the source file an import's binding too
-   *  (a named specifier, the default clause, a namespace import, an import =). A `var` (a declaration list with neither the
-   *  let nor the const flag, a destructured var's binding elements included) is hoisted: it is held by the nearest enclosing
-   *  function or the source file, whatever block, for head or catch clause spells it, and never by that block. Read once per
-   *  scope and kept for the life of this classify call: every lookup of a tracked name resolves through it. */
+   *  (a named specifier, the default clause, a namespace import, an import =). A case block's are its clauses' statements', a
+   *  namespace body's and a static block's their own statements'. A `var` (a declaration list with neither the let nor the
+   *  const flag, a destructured var's binding elements included) is hoisted: it is held by the nearest enclosing function-like,
+   *  class static block, namespace body or the source file (holdsVarsOf), whatever block, case block, for head or catch clause
+   *  spells it, and never by that block; the walk stops at an inner var holder, whose vars are its own. Read once per scope and
+   *  kept for the life of this classify call: every lookup of a tracked name resolves through it. */
   const scopeDecls = new Map();
   const hoisted = (n) => { let d = n; while (d && (ts.isBindingElement(d) || ts.isObjectBindingPattern(d) || ts.isArrayBindingPattern(d))) d = d.parent; return !!(d && ts.isVariableDeclaration(d) && d.parent && ts.isVariableDeclarationList(d.parent) && !(d.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const))); };
   const declsOf = (scope) => {
     let m = scopeDecls.get(scope);
     if (m) return m;
     m = new Map();
-    const holdsVars = ts.isFunctionLike(scope) || ts.isSourceFile(scope);
+    const holdsVars = holdsVarsOf(scope);
     const note = (n) => { if (!m.has(n.name.text)) m.set(n.name.text, n); };
-    // `inner`: the walk has crossed into an inner block, for head or catch clause, whose own declarations are not this
-    // scope's; a var found there still is (hoisted), when this scope is the kind that holds vars
+    // `inner`: the walk has crossed into an inner block, case block, for head or catch clause, whose own declarations are not
+    // this scope's; a var found there still is (hoisted), when this scope is the kind that holds vars
     const look = (n, inner) => {
       if ((ts.isVariableDeclaration(n) || ts.isBindingElement(n)) && n.name && ts.isIdentifier(n.name)) { if (hoisted(n) ? holdsVars : !inner) note(n); }
       else if (!inner && (ts.isParameter(n) || ts.isFunctionDeclaration(n) || ts.isClassDeclaration(n)) && n.name && ts.isIdentifier(n.name)) note(n);
       else if (!inner && (ts.isImportSpecifier(n) || ts.isNamespaceImport(n) || ts.isImportEqualsDeclaration(n))) note(n);
       else if (!inner && ts.isImportClause(n) && n.name) note(n);
-      if (n !== scope && isScope(n)) { if (ts.isFunctionLike(n) || !holdsVars) return; ts.forEachChild(n, (c) => look(c, true)); return; } // an inner function's declarations are never ours; an inner block's vars are, when we hold vars
+      if (n !== scope && isScope(n)) { if (holdsVarsOf(n) || !holdsVars) return; ts.forEachChild(n, (c) => look(c, true)); return; } // an inner function's, static block's or namespace body's declarations are never ours (its vars are its own); an inner block's vars are, when we hold vars
       ts.forEachChild(n, (c) => look(c, inner));
     };
     if (ts.isFunctionLike(scope)) { for (const prm of scope.parameters) look(prm, false); if (scope.body && ts.isBlock(scope.body)) for (const st of scope.body.statements) look(st, false); }
     else if (ts.isForOfStatement(scope) || ts.isForInStatement(scope) || ts.isForStatement(scope)) { if (scope.initializer) look(scope.initializer, false); }
     else if (ts.isCatchClause(scope)) { if (scope.variableDeclaration) look(scope.variableDeclaration, false); }
-    else if (ts.isBlock(scope) || ts.isSourceFile(scope)) for (const st of scope.statements) look(st, false);
+    else if (ts.isClassStaticBlockDeclaration(scope)) for (const st of scope.body.statements) look(st, false);
+    else if (ts.isCaseBlock(scope)) { for (const cl of scope.clauses) for (const st of cl.statements) look(st, false); }
+    else if (ts.isBlock(scope) || ts.isModuleBlock(scope) || ts.isSourceFile(scope)) for (const st of scope.statements) look(st, false);
     scopeDecls.set(scope, m);
     return m;
   };
@@ -657,7 +677,8 @@ export function classify(ts, file, src, opts = {}) {
    *  resolveSpec, the literal's own road, so "play" + "wright" names the package and "./play" + "wright" the module ./playwright
    *  (before the review's round 6 every chain was joined with "/", a path-join reading: "play" + "wright" was refused as loading
    *  play/wright, a file that names nothing, the wrong reason, and when a file stood at that path the chain resolved to it
-   *  SILENTLY, the module ./playwright it loads unread); a chain with a piece the fold cannot take (a placeholder, `<name>`) is
+   *  SILENTLY, the module ./playwright it loads unread); a chain with a piece the fold cannot take (a placeholder, a
+   *  property-access root such as `<process.env.X>`: since the review's round 7 an identifier is never one, below) is
    *  tested as a substring of the same concatenation, over-inclusive, on the safe side (the "/" join is not tested beside it:
    *  every needle holds the slash-free playwright or real-viewer-leg, so a match in the "/" join lies inside a piece and is a match
    *  in the concatenation too); a chain that DID cross a path call is a path and keeps the "/" join, path.join's own reading,
@@ -678,7 +699,7 @@ export function classify(ts, file, src, opts = {}) {
       const l = literalName(x); if (l !== null) { pieces.push(l); return true; }
       if (ts.isTemplateExpression(x)) { pieces.push(x.head.text); for (const sp of x.templateSpans) { if (!collect(sp.expression)) return false; pieces.push(sp.literal.text); } return true; }
       if (ts.isBinaryExpression(x) && x.operatorToken.kind === ts.SyntaxKind.PlusToken) return collect(x.left) && collect(x.right);
-      if (ts.isIdentifier(x)) { const init = constInitializer(x); if (init === undefined) return false; if (init === null) { pieces.push("<" + x.text + ">"); return true; } return collect(init); }
+      if (ts.isIdentifier(x)) { const init = constInitializer(x); if (init === undefined) return false; return collect(init); }
       if (ts.isPropertyAccessExpression(x)) { const r = rootOf(x); if (ts.isIdentifier(r) && ["process", "import", "path", "os"].includes(r.text)) { pieces.push("<" + x.getText(sf) + ">"); return true; } if (x.name.text === "href" || x.name.text === "pathname") return collect(x.expression); return false; }
       if (ts.isMetaProperty(x)) { pieces.push("<import.meta>"); return true; }
       if (ts.isCallExpression(x)) {
@@ -703,9 +724,18 @@ export function classify(ts, file, src, opts = {}) {
   };
   /** The initializer of the variable declaration the identifier `id` reaches by LEXICAL SCOPE (declOfUse: the innermost enclosing
    *  scope that declares the name decides, the read the header promises for every name), or undefined when `id` reaches no variable
-   *  declaration (a parameter, a binding pattern's element, a catch variable, an import, a function or class, a name no scope
-   *  declares) or a let or var some statement of the module writes to (assignedSomewhere, the engine fold's rule for a let or var,
-   *  which is bound to no one text), and null when the declaration carries no initializer. Before round 6 the read was by NAME over
+   *  declaration (a parameter, a binding pattern's element, an import, a function or class, a name no scope declares), a
+   *  declaration with no initializer, or a let or var some statement of the module writes to (assignedSomewhere, the engine fold's
+   *  rule for a let or var, which is bound to no one text). No declaration reaches a null return since the review's round 7, which
+   *  removed it: a declaration with no initializer (a catch clause's variable, a for-of or for-in head's const, let or var, an
+   *  ambient declare const, a let never written) is bound to no text and takes the undefined road, so the loader call is refused as
+   *  folding through no closed form, the true reason, and a driver template's substitution a placeholder (foldText's template arm
+   *  reads null and undefined alike). Before round 7 such a declaration returned null and the fold pushed the placeholder
+   *  `<name>`, so the loader was refused as loading `<spec>`, which names no file in the tree, the wrong reason, and had an
+   *  index.ts stood at the repo root or under vscode-extension/ (none does) the loader would have passed silently (p318 to p322
+   *  the for-of const, the for-in const, the for-of let, the ambient declare const and the never-written let, p308 the catch
+   *  variable, the one member the closing pass after round 6 repaired, through a catch-clause arm this class rule replaces).
+   *  Before round 6 the read was by NAME over
    *  the whole module (the one variable declaration so named, wherever it stood), so a loader's parameter sharing a module const's
    *  name read that const: `const spec = "./decoy-helper"; function load(spec: string) { return require(spec); } load("playwright")`
    *  folded to the decoy and the package passed in through the parameter loaded silently, class none with no refusal, under the
@@ -714,17 +744,18 @@ export function classify(ts, file, src, opts = {}) {
    *  spec = "playwright"; require(spec)` folded to the decoy and loaded the package silently; undefined here makes the loader call
    *  refuse as folding through no closed form, and a driver template's substitution a placeholder. A catch clause's variable is a
    *  VariableDeclaration whose parent is the CatchClause, not a VariableDeclarationList, so the VariableDeclaration test alone read
-   *  it and, the declaration carrying no initializer, took the null road until the closing pass after round 6's verification: the
-   *  fold pushed the placeholder and the loader was refused as loading `<spec>`, which names no file, the wrong reason (the census
+   *  it and took the null road until the closing pass after round 6's verification added a CatchClause test for it (the census
    *  before round 6 refused the same shape through no closed form by another road, its by-name read finding two declarations so
-   *  named); the CatchClause test returns undefined for it now. The plants p237 to p244 record the write outcome, p245 the
-   *  never-written control; p249 to p254 the lexical read (round 6), p252 its renamed-parameter control, p306 and p307 a parameter
-   *  shadowing an unwritten let and a destructured parameter sharing a const's name, p308 the catch variable (the closing pass). */
+   *  named). The plants p237 to p244 record the write outcome, p245 the never-written control; p249 to p254 the lexical read
+   *  (round 6), p252 its renamed-parameter control, p306 and p307 a parameter shadowing an unwritten let and a destructured
+   *  parameter sharing a const's name, p308 the catch variable (the closing pass), p318 to p322 the rest of the no-initializer
+   *  class (round 7). */
   const constInitializer = (id) => {
     const d = declOfUse(id);
-    if (!d || !ts.isVariableDeclaration(d) || !ts.isIdentifier(d.name) || ts.isCatchClause(d.parent)) return undefined;   // no variable declaration, or a catch clause's variable (a VariableDeclaration under the CatchClause, bound to the thrown value and to no text): no closed form (the closing pass after round 6)
+    if (!d || !ts.isVariableDeclaration(d) || !ts.isIdentifier(d.name)) return undefined;   // no variable declaration: no closed form
+    if (d.initializer === undefined) return undefined;   // no initializer (a catch clause's variable, a for-of or for-in head's const, let or var, an ambient declare, a never-written let): bound to no text, no closed form (the review's round 7, the class the catch-clause arm closed for one member)
     if (!isConstDecl(d) && assignedSomewhere(d.name.text, d)) return undefined;   // written after its declaration: no closed form (the closing pass after round 5)
-    return d.initializer === undefined ? null : d.initializer;
+    return d.initializer;
   };
   /** The branches of a ConditionalExpression or of a ??, || or && BinaryExpression, unwrapped and flattened through nested ones;
    *  null for any other node. */
@@ -1614,6 +1645,14 @@ export function census(root = REPO, opts = {}) {
   return { legs: legs.sort(), byBundle, refusals, localModules: ownCache.size };
 }
 
+/** The lexical read's scope set (classify's isScope): the node kinds the compiler's grammar gives declarations to, every
+ *  function-like, a class static block, a namespace body (ModuleBlock), a block, a case block, a for, for-in or for-of head, a
+ *  catch clause, the source file. Exported so the census test pins it against the compiler's binder (getContainerFlags'
+ *  HasLocals) over a synthetic source carrying every kind once, red when a kind is dropped. */
+export function isLexicalScope(ts, n) { return ts.isFunctionLike(n) || ts.isClassStaticBlockDeclaration(n) || ts.isModuleBlock(n) || ts.isBlock(n) || ts.isCaseBlock(n) || ts.isForOfStatement(n) || ts.isForInStatement(n) || ts.isForStatement(n) || ts.isCatchClause(n) || ts.isSourceFile(n); }
+/** The scopes that hold a var (classify's holdsVarsOf): the compiler's function-scoped containers a var statement can stand
+ *  in, a function-like, a class static block, a namespace body, the source file; pinned beside isLexicalScope. */
+export function holdsVarScope(ts, n) { return ts.isFunctionLike(n) || ts.isClassStaticBlockDeclaration(n) || ts.isModuleBlock(n) || ts.isSourceFile(n); }
 /** The gap between a leg and the roster gate, or null when it passes: the sentence both readers print. */
 export function rosterGap(r) {
   if (r.sharedCalls === undefined) return "refused by the census (above)";
