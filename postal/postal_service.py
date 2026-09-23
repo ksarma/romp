@@ -3911,15 +3911,41 @@ def _remote_sids_previous(path):
     unhashable one failed every write); and a busId that is not a str is IGNORED, never compared (the carry tests it
     for membership in the set of the heard rows' ids, where an unhashable one failed every write, and one of another
     type could match a heard id through str()). On a carried row the coerced flags feed its reason alone ("expired"
-    among the causes): both of its vouching flags are recomputed from `heard`, False on every carried row."""
+    among the causes): both of its vouching flags are recomputed from `heard`, False on every carried row.
+
+    A FILE THIS READ CANNOT READ CARRIES NOTHING, and the consequence is DISCLOSED, not closed (round 3 of fork PR
+    #897, the reviewer's verifier at the twentieth commit, by execution through this writer and the judge's reader;
+    the twenty-first commit). The files: bytes that are not UTF-8 (one stray byte inside a sid of this module's own
+    document is enough), text that is not JSON (a stray brace), a document behind a byte-order mark, a document nested
+    past the JSON parser's depth at this read's stack (on Python 3.10 a little under a thousand levels at the
+    writer's depth), a JSON value of neither shape, a text naming no session id, and a path this bus cannot open.
+    The write after such a read carries no row, so the first road of round 1 of fork PR #897 (a restarted bus's
+    first mirror naming nobody it has not heard) stays OPEN for one class of session: a session the file named on a
+    host this process has NOT HEARD yet is in no row, and once any heard host vouches for absence the judge's rule 5
+    presumes it closed, until that host's heartbeat or exchange arrives in this process (the event), which lasts as
+    long as the kernel holds that host's link down (a down notify files no row). Before the twentieth commit a file
+    whose bytes are not UTF-8, or one nested past the depth, failed every write (nothing settled, but the judge's
+    ladder raised for every sid that reached the mirror until the file was removed), and a UTF-8 file of neither
+    shape (the stray brace, the byte-order mark) carried nothing then as it does now. The read stays
+    strict because the reviewer's ruling on this function refused a replacing decode (garbage bytes must not become
+    a legacy sid). What this read does is say it: such a file is named once per distinct text in the bus log, with
+    its error and the consequence, so the window is visible when it opens. No file (the first write under a root)
+    says nothing, and neither does an empty file, the list shape until 2026-09-22 naming no session (that writer
+    wrote an empty file). The witnesses: tests/test_dead_session_staleness.py ReaderFollowsTheWriter (the unreadable
+    previous file: a live session on a host not yet heard presumed closed until that host is heard, and the line),
+    and tests/test_postal_remote_sids_mirror.py (the line for each file above, and silence for no file and an empty
+    one)."""
     try:
         text = path.read_bytes().decode("utf-8")   # strict, inside the try: a UnicodeDecodeError is a ValueError
-    except (OSError, ValueError):
-        return {}
+    except FileNotFoundError:
+        return {}                                  # no file: the first write under this root, nothing to carry or to say
+    except (OSError, ValueError) as e:
+        return _remote_sids_unreadable(path, e)
+    why = None
     try:
         doc = json.loads(text)
-    except (ValueError, RecursionError):          # RecursionError: nesting past the parser's depth, not a ValueError
-        doc = None
+    except (ValueError, RecursionError) as e:     # RecursionError: nesting past the parser's depth, not a ValueError
+        doc, why = None, e
     if isinstance(doc, dict) and isinstance(doc.get("hosts"), dict):
         out = {}
         for key, row in doc["hosts"].items():
@@ -3937,6 +3963,22 @@ def _remote_sids_previous(path):
         if sids:
             return {REMOTE_SIDS_LEGACY: {"kind": "legacy", "sids": sids, "heard": False, "expired": False, "answered": False,
                                          "seenAt": 0}}
+        if not text.split():
+            return {}                              # an empty file: the list shape until 2026-09-22 naming no session
+        return _remote_sids_unreadable(path, why)  # not JSON, and no token of it a session id (JSON null names "null")
+    return _remote_sids_unreadable(path, ValueError("a JSON %s, not a document with a hosts table" % type(doc).__name__))
+
+
+def _remote_sids_unreadable(path, e):
+    """{}, for a previous file _remote_sids_previous cannot read: it carries nothing, and the bus log says so once per
+    distinct text, with the consequence (the disclosure in _remote_sids_previous; round 3 of fork PR #897, the
+    twenty-first commit)."""
+    line = ("the previous remote-sids mirror %s is unreadable (%s: %s) and this write carries none of its rows: a session "
+            "it named on a host this bus has not heard since it started can be presumed closed by the judge's rule 5 until "
+            "that host is heard" % (path, type(e).__name__, str(e)[:120]))
+    if line not in _REMOTE_SIDS_SAID:
+        _REMOTE_SIDS_SAID.add(line)
+        _log(line)
     return {}
 
 
@@ -4189,7 +4231,10 @@ def _remote_sids_document(now, previous, owned=frozenset()):
           exchange every sid live on another host was absent from the file: every key the previous file
           named that this process has not heard is CARRIED FORWARD with its last roster and heard=false,
           so a restarted bus writes a first mirror whose hosts are all unreachable, and each becomes
-          reachable on the event that closes the road, its heartbeat or exchange arriving in this process;
+          reachable on the event that closes the road, its heartbeat or exchange arriving in this process (a
+          previous file this process cannot read carries nothing, so for a session it named on a host not yet
+          heard the road stays open, disclosed with its witness at _remote_sids_previous: the twenty-first
+          commit of round 3 of fork PR #897);
       (2) an expired legacy heartbeat was pruned from the file, so a tunnel drop or a stalled peer longer
           than HEARTBEAT_TTL removed a live session's sid: the row stays, marked expired, unreachable, and a
           beat from the session (the event) makes it reachable again; a session that has ended beats no more,
@@ -4428,9 +4473,10 @@ def _write_remote_sids():
     carries as `presenceAnswered`; round 3 of fork PR #897): its roster says nothing about a session started
     there since, and its next exchange with an answered listing is the event that releases it. The FILE
     alone no longer means the bus has spoken: a bus restarted from
-    empty memory writes a first mirror whose hosts are all unreachable (carried from the previous file)
-    until their heartbeats and exchanges arrive; a host whose link the kernel reports down is unreachable
-    from that notify until its next heartbeat or exchange arrives with the link up, and vouches for absence
+    empty memory writes a first mirror whose hosts are all unreachable (carried from the previous file; a
+    previous file it cannot read carries nothing, said once in the bus log, the consequence disclosed at
+    _remote_sids_previous) until their heartbeats and exchanges arrive; a host whose link the kernel reports
+    down is unreachable from that notify until its next heartbeat or exchange arrives with the link up, and vouches for absence
     from that exchange (the up notify plus the host heard since). This
     module's STATE is the romp state root plus `postal`, so the file's one home is
     <state root>/postal/remote-sids; the bus owns that home and the shape, and its reader

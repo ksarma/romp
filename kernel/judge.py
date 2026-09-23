@@ -19548,6 +19548,14 @@ def _presumed_closed_verdict(sid, now):
     another host was absent from the file and its local mirror store settled; the bus now carries every
     host it has not heard forward, unreachable,
     and the event that closes the road is that host's heartbeat or exchange arriving in the new process;
+    but the carry reads the previous file, and a previous file the bus cannot read carries NOTHING (bytes
+    that are not UTF-8, one stray byte inside a sid being enough; text that is not JSON; a byte-order mark;
+    nesting past the JSON parser's depth; a value of neither shape), so for a session that file named on a
+    host the new process has not heard yet this road is OPEN, disclosed and not closed (round 3 of fork PR
+    #897, the reviewer's verifier at the twentieth commit; the twenty-first commit): once a heard host
+    vouches for absence, rule 5 presumes that session closed until its host is heard in the new process. The
+    bus says so once in its log; postal_service.py _remote_sids_previous has the files and why the carry's
+    read stays strict, and ReaderFollowsTheWriter's unreadable previous file phase is the witness;
     (2) under the legacy singleton scheme the bus pruned an expired heartbeat's sid from the file, so a
     tunnel drop or a stalled peer longer than the TTL settled a live session on no new information; the
     row now stays, marked expired, and a beat from the session (the event) makes it reachable again. A

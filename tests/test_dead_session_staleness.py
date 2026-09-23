@@ -820,7 +820,11 @@ class ReaderFollowsTheWriter(unittest.TestCase):
                     A document at v 1 and one with no v, whose row names a sid and vouches: the reader refuses both (until the
                     commit `v` was decorative, and they answered rule 4 and rule 5); B's next exchange writes over the one
                     with no v, carrying its roster (the carry reads any version, a carried row vouching for nothing) and
-                    stamping v 2;
+                    stamping v 2. Last the unreadable previous file, a WITNESS of a disclosed road (the reviewer's verifier
+                    at the twentieth commit; the twenty-first commit): A heard with its link up beside B, one byte inside
+                    the sid B names made a stray byte in the writer's own document, a fifteenth restart, B heard first. The
+                    strict previous-read carries nothing, the bus log says so once naming the file, A's row is gone, and
+                    B's vouch lets rule 5 presume A's live session closed until A is heard in the new process (rule 4);
       legacy shape  the whitespace list a bus before 2026-09-22 wrote, at the bus's path: the reader
                     answers cannot-determine for the sid it does not name AND for the one it does, and
                     says once in the judge's log that the file is not the shape the bus writes; it is
@@ -1315,6 +1319,26 @@ out["noVRead"] = mirror_phase(carried=carried, nobody=dead)
 exchange(pm15, host_b, [other], bus_id="bus-b2")   # the writer over the document with no version: its roster carried, v 2 stamped
 out["versionWritten"] = mirror_phase(carried=carried, nobody=dead)
 out["versionWritten"]["v"] = json.loads(bus_file.read_text()).get("v")
+# THE UNREADABLE PREVIOUS FILE (the reviewer's verifier at the twentieth commit; DISCLOSED by the twenty-first commit, not
+# closed): A heard with its link up beside B; one byte inside the sid B names made a stray byte in the writer's own document; a
+# fifteenth restart; B heard first. The file carries nothing, so A's session is in no row and B's vouch lets rule 5 presume it
+# closed until A is heard in the new process; the bus log says so once
+notify(pm15, host_a, True)
+exchange(pm15, host_a, [carried])
+out["unreadBefore"] = mirror_phase(carried=carried, other=other)
+data = bus_file.read_bytes()
+bus_file.write_bytes(data.replace(other.encode(), other[:-1].encode() + b"\xff"))
+pm16, out["restartMemory15"] = restarted("romp_postal_oneroot_restarted_fifteenth", pm15)
+pm16.KERNEL_BASE = "http://127.0.0.1:9"           # no listing fetch reaches anything
+err = io.StringIO()
+with contextlib.redirect_stderr(err):
+    notify(pm16, host_b, True)                     # B's link up (the notify's write is the first to read the file), then B heard
+    exchange(pm16, host_b, [other], bus_id="bus-b2")
+out["unreadWritten"] = mirror_phase(carried=carried, other=other, nobody=dead)
+out["unreadWritten"]["busLog"] = [ln for ln in err.getvalue().splitlines() if "remote-sids" in ln]
+notify(pm16, host_a, True)
+exchange(pm16, host_a, [carried])                  # A heard in the new process: the event that ends the window
+out["unreadAHeard"] = mirror_phase(carried=carried, other=other, nobody=dead)
 bus_file.write_text(remote + "\n")                 # the shape a bus before 2026-09-22 wrote
 err = io.StringIO()
 with contextlib.redirect_stderr(err):
@@ -2324,6 +2348,42 @@ print(json.dumps(out))
                 self.assertEqual(wrote["hosts"], {HOST2: L(True, False, False, True, True, True, [OTHER]),
                                                   HOST: L(False, False, False, False, False, False, [CARRIED])},
                                  "B heard and vouching; the row from the document with no v carried heard=false")
+
+    def test_an_unreadable_previous_file_carries_nothing_so_a_session_on_a_host_not_yet_heard_is_presumed_closed_until_heard(self):
+        """A WITNESS of a DISCLOSED road, not a fix (round 3 of fork PR #897, the reviewer's verifier at the twentieth commit, by
+        execution through this writer and this reader; the twenty-first commit discloses it in postal_service.py
+        _remote_sids_previous, in the judge's _presumed_closed_verdict and in the ledger entry, and makes the bus say it). Host
+        A is heard with its link up beside B; one byte inside the sid B names becomes a stray byte in the writer's own
+        document; the bus restarts and hears B first. The previous-read is strict (the reviewer's ruling on this function
+        refused a replacing decode), so the file carries nothing: A's row is gone, and B, heard and vouching, lets rule 5
+        presume A's live session closed, (True, 5), until A is heard in the new process. The bus log says so once, naming the
+        file. A change that carries such a file's rows answers named-by-unreachable-host at the (True, 5) step and turns this
+        pin red; a change that closes the road updates the three disclosures along with this pin. On both root shapes."""
+        L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                before = got["unreadBefore"]
+                self.assertEqual((self._v(before, "carried"), self._v(before, "other")), (RULE_4, RULE_4),
+                                 "before the restart A and B are heard, each naming its session")
+                self.assertEqual(got["restartMemory15"], {"heartbeats": 0, "peers": 0, "links": 0, "freshObject": True},
+                                 "the fifteenth restart is a fresh module object, its memory and its link table empty")
+                wrote = got["unreadWritten"]
+                self.assertEqual(self._v(wrote, "carried"), RULE_5,
+                                 "THE DISCLOSED ROAD: A's session, live on A, which the new process has not heard, is in no row, "
+                                 "and B vouches, so rule 5 presumes it closed (a carry of the file's rows answers "
+                                 "named-by-unreachable-host here; update the disclosures with this pin)")
+                self.assertEqual((self._v(wrote, "other"), self._v(wrote, "nobody")), (RULE_4, RULE_5),
+                                 "B heard, vouching and naming its session")
+                self.assertEqual(wrote["hosts"], {HOST2: L(True, False, False, True, True, True, [OTHER])},
+                                 "the unreadable file carried nothing: B's row alone, A's gone")
+                said = [ln for ln in wrote["busLog"] if "previous remote-sids mirror" in ln]
+                self.assertEqual(len(said), 1, "the bus says once that the previous file carries nothing (until the twenty-first "
+                                 "commit it said nothing): %r" % wrote["busLog"])
+                self.assertIn(got["busFile"], said[0], "the line names the file")
+                self.assertIn("UnicodeDecodeError", said[0], "the line says what failed")
+                self.assertEqual([ln for ln in wrote["busLog"] if "not written" in ln], [], "every write landed")
+                self.assertEqual(self._v(got["unreadAHeard"], "carried"), RULE_4,
+                                 "A heard in the new process: the event that ends the window")
 
     def test_a_mirror_of_the_legacy_shape_is_cannot_determine_and_said_once(self):
         for shape, got in self.got.items():

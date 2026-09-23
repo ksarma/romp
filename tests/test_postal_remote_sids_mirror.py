@@ -106,7 +106,10 @@ entry kept and the row re-emitted heard until a write succeeds; and the previous
 #897, the reviewer's ruling, the twentieth commit): a file whose bytes are not UTF-8 carries nothing and the write
 replaces it (a replacing decode would carry the garbage's safe-id-shaped runs as legacy sids), so does a document nested
 past the JSON parser's depth (RecursionError, found by the commit's builder), and a carried row's values
-are coerced, never dropped: its flags bool(), its sids str(), a busId that is not a str ignored.
+are coerced, never dropped: its flags bool(), its sids str(), a busId that is not a str ignored; and a previous file the
+read cannot read named once in the bus log with the consequence the twenty-first commit discloses (a session it named on
+a host not yet heard can be presumed closed until that host is heard), for each such file, and nothing said for no file,
+an empty one, or a readable one.
 tests/test_dead_session_staleness.py ReaderFollowsTheWriter
 runs this writer and the judge's reader together over one root; tests/test_postal_bus_lifetime.py
 MonitorTick pins the poll's write. SYNTHETIC fixtures only: private synthetic sids, hostname TESTHOST."""
@@ -1180,7 +1183,91 @@ class Mirror(unittest.TestCase):
         self.assertEqual(self._rows(), {HB + A: (True, False, [A])},
                          "rewritten from memory alone: the garbage carries nothing (a replacing decode carries its "
                          "safe-id-shaped runs as a legacy row)")
-        self.assertEqual(err.getvalue(), "", "no write failure said")
+        self.assertEqual([ln for ln in err.getvalue().splitlines() if "not written" in ln], [],
+                         "no write failure said: %r" % err.getvalue())
+        said = [ln for ln in err.getvalue().splitlines() if "previous remote-sids mirror" in ln]
+        self.assertEqual(len(said), 1, "the discarded file is said once in the bus log (until the twenty-first commit the bus "
+                         "said nothing): %r" % err.getvalue())
+        self.assertIn("UnicodeDecodeError", said[0], "the line says what failed")
+
+    def test_a_file_this_read_cannot_read_is_said_once_in_the_bus_log_with_its_consequence(self):
+        """Round 3 of fork PR #897, the reviewer's verifier at the twentieth commit; the twenty-first commit. A previous file
+        the previous-read cannot read carries nothing, so a session it named on a host the restarted bus has not heard is
+        in no row, and once a heard host vouches for absence the judge's rule 5 presumes it closed until that host is heard
+        (DISCLOSED at _remote_sids_previous; the verdict's witness is tests/test_dead_session_staleness.py
+        ReaderFollowsTheWriter). Until the commit the bus log said nothing. Each file of the disclosure's list, planted
+        where the bus writes: the write lands from memory and the bus log names the file once, with its error and the
+        consequence, and says no write failure. A path the bus cannot open is read directly (a directory there: the write's
+        replace would fail too)."""
+        doc = json.dumps({"v": 2, "busStarted": 1, "writtenAt": 1, "hosts": {
+            HOST: {"kind": "peer", "sids": [B], "heard": True, "expired": False, "linkDown": False, "linkUp": True,
+                   "answered": True, "reachable": True, "vouchesAbsence": True, "seenAt": 1}}}, sort_keys=True) + "\n"
+        files = (("bytes that are not UTF-8, one stray byte inside a sid of the bus's own document",
+                  doc.encode().replace(B.encode(), B[:-1].encode() + b"\xff"), "UnicodeDecodeError"),
+                 ("text that is not JSON, a stray brace", doc.replace('"sids"', '"sids"}', 1).encode(), "JSONDecodeError"),
+                 ("the bus's own document behind a byte-order mark", ("﻿" + doc).encode(), "JSONDecodeError"),
+                 ("nesting past the parser's depth", ("[" * 100000 + "\n").encode(), "RecursionError"),
+                 ("a JSON list", b"[1, 2]\n", "a JSON list, not a document with a hosts table"),
+                 ("a JSON object whose hosts are a list", b'{"v": 2, "hosts": []}\n', "a JSON dict, not a document"),
+                 ("a text naming no session id", b"??? !!!\n", "JSONDecodeError"))
+        for name, data, error in files:
+            with self.subTest(file=name):
+                self.path.write_bytes(data)
+                pm.HEARTBEATS.clear()
+                pm.HEARTBEATS[A] = ("web", self.now)
+                pm._REMOTE_SIDS_SAID.clear()
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    pm._write_remote_sids()
+                self.assertEqual(self._rows(), {HB + A: (True, False, [A])}, "the write lands from memory: the file carries nothing")
+                lines = err.getvalue().splitlines()
+                said = [ln for ln in lines if "previous remote-sids mirror" in ln]
+                self.assertEqual(len(said), 1, "said once in the bus log (a read that discards the file in silence says "
+                                 "nothing): %r" % lines)
+                self.assertIn(str(self.path), said[0], "the line names the file")
+                self.assertIn(error, said[0], "the line says what failed")
+                self.assertIn("presumed closed by the judge's rule 5 until that host is heard", said[0],
+                              "the line says the consequence")
+                self.assertEqual([ln for ln in lines if "not written" in ln], [], "and no write failure")
+        with self.subTest(file="a path the bus cannot open"):
+            self.path.unlink(missing_ok=True)
+            self.path.mkdir()
+            self.addCleanup(self.path.rmdir)
+            pm._REMOTE_SIDS_SAID.clear()
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                got = pm._remote_sids_previous(self.path)
+            self.assertEqual(got, {}, "carries nothing")
+            said = [ln for ln in err.getvalue().splitlines() if "previous remote-sids mirror" in ln]
+            self.assertEqual(len(said), 1, "said once: %r" % err.getvalue())
+            self.assertIn("IsADirectoryError", said[0], "the line says what failed")
+
+    def test_no_file_an_empty_one_and_a_readable_one_say_nothing_and_an_unreadable_one_is_said_once_per_text(self):
+        """The twenty-first commit's line has no false alarm: no file (the first write under a root), an empty file (the list
+        shape until 2026-09-22 naming no session: that writer wrote an empty file), the list shape naming a session, and the
+        bus's own document say nothing. And it is said once per distinct text, as the write-failure line is: the same
+        unreadable file planted again says nothing more."""
+        pm.HEARTBEATS[A] = ("web", self.now)
+        for name, plant in (("no file", lambda: self.path.unlink(missing_ok=True)),
+                            ("an empty file", lambda: self.path.write_text("")),
+                            ("the list shape naming a session", lambda: self.path.write_text(B + "\n")),
+                            ("the bus's own document", lambda: None)):        # the previous subtest's write left one
+            with self.subTest(file=name):
+                plant()
+                pm._REMOTE_SIDS_SAID.clear()
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    pm._write_remote_sids()
+                self.assertEqual(err.getvalue(), "", "nothing said")
+                self.assertIn(HB + A, self._rows(), "the write landed")
+        pm._REMOTE_SIDS_SAID.clear()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            for _ in range(2):
+                self.path.write_bytes(b"\xff\xfe\n")
+                pm._write_remote_sids()
+        said = [ln for ln in err.getvalue().splitlines() if "previous remote-sids mirror" in ln]
+        self.assertEqual(len(said), 1, "the same file twice: said once (%r)" % said)
 
     def test_a_file_nested_past_the_parsers_depth_carries_nothing_and_the_write_replaces_it(self):
         """Round 3 of fork PR #897, the twentieth commit, found by its builder in the class of the bytes: a document nested past
