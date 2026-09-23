@@ -142,7 +142,7 @@ test('L3 puts the web test first in figureTarget, as the source does, and names 
   assert.ok(L3.includes('What it opens (`figureTarget`): a remote picture (an http or https source, a protocol-relative one) in a tab, never the viewer, the web test run FIRST, before the model\'s join'));
   const clicks = viewer.split('body.addEventListener("click", (ev) => {');
   assert.equal(clicks.length, 3, 'two click listeners on the body: the links\' and the figures\'');
-  inOrder(clicks[2].split('\n  });\n')[0], ['if (ev.defaultPrevented) return;', 'if (!img || linkOf(t)) return;', 'if (img.closest("a[href]")) return;', 'openFigure(img, ev);'], 'the figure listener');
+  inOrder(clicks[2].split('\n  });\n')[0], ['if (ev.defaultPrevented) return;', 'if (!img || figureLinkOf(img)) return;', 'openFigure(img, ev);'], 'the figure listener: the one predicate (a sentence pin)');
   assert.ok(L3.includes('stands down on a click another listener already answered (`ev.defaultPrevented`, its first line)'), 'L3 names the stand-down on an answered click');
   assert.ok(L3.includes('the figure\'s own click yields to a figure inside a link (the author\'s link, through the links listener; and an anchor with an href that listener leaves to the browser'));
 });
@@ -213,7 +213,7 @@ const openPoints = section.slice(section.indexOf('**Open points for the owner.**
 const styles = read('ui', 'webview', 'styles.css');
 const chosenLeg = read('ui', 'webview', 'file-view-figure-chosen-browser.test.ts');
 
-test('the file review: L3 names the one decision, its verdict and the state it reads, the fetching figure without a target, the door that takes no Recent row, linkAbove as any anchor and the dead link\'s plain click, each carried by the source', () => {
+test('the file review: L3 names the one decision, its verdict and the state it reads, the fetching figure without a target, the door that takes no Recent row, linkAbove over the click\'s own link set and the dead link\'s plain click, each carried by the source', () => {
   assert.ok(L3.includes('Whether the control stands is decided from the figure AS IT IS NOW, by that one function'), 'L3 states the re-decision');
   for (const fn of ['decideFigureControl', 'figureWantsControl', 'figureState', 'openFigureInViewer', 'watchFigureBoxes', 'removeFigureControl', 'addFigureControls', 'armFigureControls']) {
     assert.ok(viewer.includes('function ' + fn + '('), 'the source defines ' + fn);
@@ -250,10 +250,11 @@ test('the file review: L3 names the one decision, its verdict and the state it r
   assert.ok(L3.includes('the picture takes NO Recent row'), 'L3 records the Recent default');
   assert.ok(L3.includes('whether a picture opened from a figure should take a row instead is the owner\'s (open point 12)'), 'as overturnable, with the open point');
   const above = between(viewer, 'function linkAbove(anchor: Element): Element | null {', '\n}\n');
-  assert.ok(above.includes(`return p ? p.closest('a, [data-act="openpath"]') : null;`), 'linkAbove reads any anchor');
-  assert.ok(L3.includes('`linkAbove`: ANY anchor, or a path link, above `figureAnchor`\'s climb'), 'L3 says any anchor');
-  assert.ok(!L3.includes('`linkAbove`: an anchor with an href, or a path link'), 'the a[href] wording is gone');
-  assert.ok(L3.includes('a captioned picture inside a dead link or a named target, an anchor with no href, wears no control and its plain click opens the picture'), 'L3 records the dead link\'s plain click');
+  assert.ok(above.includes(`return p ? figureLinkOf(p) : null;`), 'linkAbove reads the click\'s own link set through the one predicate (a sentence pin)');
+  assert.ok(viewer.includes(`export const FIGURE_LINK_SET = 'a[href], a.' + URL_LINK_CLASS + ', a.' + FRAG_LINK_CLASS + ', [data-act="openpath"]';`), 'the set, one selector (a sentence pin)');
+  assert.ok(L3.includes('`linkAbove`: a link of the click\'s own set, `figureLinkOf` over `FIGURE_LINK_SET`, above `figureAnchor`\'s climb'), 'L3 names the predicate and its set (a sentence pin)');
+  assert.ok(!L3.includes('`linkAbove`: ANY anchor, or a path link') && !L3.includes('`linkAbove`: an anchor with an href, or a path link'), 'the any-anchor and the a[href] wordings are gone (a sentence pin on the absence)');
+  assert.ok(L3.includes('a captioned picture inside a dead link or a named target, an anchor with no href, keeps its control, after the picture inside the anchor, and its plain click opens the picture'), 'L3 records the dead link\'s control and plain click (a sentence pin)');
   const shapesLeg = read('ui', 'webview', 'file-view-figure-shapes-browser.test.ts');
   assert.ok(shapesLeg.includes('inside a dead link the plain click opens the picture'), 'which the shapes leg executes');
   assert.ok(L3.includes('one capture-phase pair of `load` and `error` listeners on the body per open'), 'L3 names the error listener');

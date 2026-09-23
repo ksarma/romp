@@ -31,9 +31,10 @@ file review's round 2 added the failed picture to the code's refusals, and `figu
 and the plain click agree), and the floor's number is read off the constant here. The file review of the PR
 (2026-09-20) added two clauses, held here too: with the Comments panel open a drag that starts on the button draws no
 rectangle (the button takes the press; the loss is recorded, not built against), and inside a link with no address
-left, or an anchor that only marks a place, the plain click opens the picture (linkOf reads neither, and the button is
-withheld there all the same). The figure sentence is quoted whole here and in the tools pin, and the two copies are
-read against each other.
+left, or an anchor that only marks a place, the plain click opens the picture, and since the file review's round 12
+(correctness-1 with ui-1) the button and the picture's tooltip stand there too: the click listener, the title and the
+button's exclusion read ONE predicate (figureLinkOf over FIGURE_LINK_SET), and neither anchor is in its set. The figure
+sentence is quoted whole here and in the tools pin, and the two copies are read against each other.
 
 The hidden pair. The trail sentence's condition clause (the two arrow buttons appear once there is a file to step back or
 forward to; there are none before that) and the browser plan's pointer clause ("the pair hidden until then",
@@ -113,9 +114,9 @@ PICTURE = ("A picture in a rendered file that comes from a file or a web address
                 " the file itself and which does not open; a picture smaller than 48 pixels on either side (a badge, "
                 "an inline icon), which the button would cover, and which a plain click still opens when no link hold"
                 "s it; and a picture inside a link that holds more than the picture (a caption beside it), where a cl"
-                "ick follows the link (a link with no address left, or an anchor that only marks a place, leaves the "
-                "click to the picture, which opens), while a picture that is all its link holds keeps its button besi"
-                "de the link.")
+                "ick follows the link (a link with no address left, or an anchor that only marks a place, is not a li"
+                "nk a click can follow, so a picture inside it keeps its button and its tooltip, and a plain click op"
+                "ens it), while a picture that is all its link holds keeps its button beside the link.")
 PICTURE_HEAD = PICTURE[:PICTURE.index("; a plain click")]
 PICTURE_NONE = PICTURE[PICTURE.index("a figure waiting behind"):]
 # the guide's condition clause for the Back and Forward pair, the browser plan's matching clause, and the one line of openFileView both claim
@@ -318,7 +319,7 @@ class PicturesWithoutTheButton(GuideSentences):
         self.assertIn("if (standing) { if (!want) removeFigureControl(standing); else dressFigureControl(standing, target); return; }", decide, "the one place a control is added or removed, a standing one re-dressed from the target read at the decision (the spelling: a sentence pin)")
         self.assertLess(build.index("figureTooSmall"), build.index("linkAbove"))
         above = _body(self.viewer, "function linkAbove(anchor: Element): Element | null {", "}")
-        self.assertIn("return p ? p.closest('a, [data-act=\"openpath\"]') : null;", above, "any link: to a file, a web address or a section, and a dead one")
+        self.assertIn("return p ? figureLinkOf(p) : null;", above, "a link of the click's own set: to a file, a web address or a section, never a dead one or a named target (the one predicate, figureLinkOf; a sentence pin)")
         around = _body(self.viewer, "function linkAround(p: Element, a: Element): boolean {", "}")
         self.assertIn('return p.localName === "a" && p.children.length === 1 && p.children[0] === a && (p.textContent || "").trim() === "";', around,
                       "a link holding the picture alone is climbed: the button lands after the link, and the picture keeps it")
@@ -328,8 +329,7 @@ class PicturesWithoutTheButton(GuideSentences):
         end = self.viewer.index("\n  });\n", self.viewer.index("const img = bareFigureOf(t, body);", start))
         click = self.viewer[start:end]
         self.assertIn("if (!target) return;", click, "a data: picture does not open: no target")
-        self.assertIn("if (!img || linkOf(t)) return;", click, "inside a link the click is the link's")
-        self.assertIn('if (img.closest("a[href]")) return;', click, "a web address holding the picture too")
+        self.assertIn("if (!img || figureLinkOf(img)) return;", click, "inside a link of the click's own set the click is the link's: the one predicate (an anchor with an href, a URL, section or path link; a sentence pin)")
         self.assertIn("openFigure(img, ev);", click)
         self.assertNotIn("figureTooSmall", click, "the click reads no size: a small picture no link holds opens")
         self.assertNotIn("FIGOPEN_MIN_PX", click)
@@ -337,10 +337,11 @@ class PicturesWithoutTheButton(GuideSentences):
     def test_a_dead_link_or_a_named_target_leaves_the_plain_click_to_the_picture_which_opens(self):
         """The guide's clause: a link with no address left, or an anchor that only marks a place, leaves the click to the
         picture. The figure listener yields to linkOf's links (a path link, a web address the viewer dressed, a section link)
-        and to an anchor with an href; a dead anchor (file-view-links.ts DEAD_LINK_CLASS, its href taken off) and a named
-        target (`<a id>`, never dressed unless it still carries the plain `xlink:href` of a split svg anchor, which was a link
-        and is dressed dead) are neither, so the plain click reaches openFigure. The control is withheld there
-        all the same (linkAbove reads any anchor), which the sentence's "four kinds" count relies on."""
+        and to an anchor with an href, the one set FIGURE_LINK_SET spells; a dead anchor (file-view-links.ts DEAD_LINK_CLASS,
+        its href taken off) and a named target (`<a id>`, never dressed unless it still carries the plain `xlink:href` of a
+        split svg anchor, which was a link and is dressed dead) are neither, so the plain click reaches openFigure, and the
+        control and the picture's tooltip stand there too (linkAbove and dressFigureTitle read the same predicate, figureLinkOf;
+        the file review's round 12, correctness-1 with ui-1), which the sentence's carve-out after its "four kinds" says."""
         link_of = _body(self.viewer, "const linkOf = (t: Element | null): HTMLElement | null => {", "  };")
         self.assertIn("t.closest('[data-act=\"openpath\"], a.' + URL_LINK_CLASS + \", a.\" + FRAG_LINK_CLASS)", link_of, "linkOf's selector: the three dressed links")
         self.assertNotIn("DEAD_LINK_CLASS", link_of, "a dead anchor is none of them")
@@ -350,10 +351,16 @@ class PicturesWithoutTheButton(GuideSentences):
         self.assertIn('if ((a.hasAttribute("name") || a.hasAttribute("id")) && !a.hasAttribute("xlink:href")) return;', links,
                       "a named target is never dressed, and keeps no href (the one exception, a target still carrying the plain "
                       "xlink:href the fence pass's re-parse leaves on a split svg anchor, is dressed dead: it was a link)")
-        self.assertIn("a picture inside a link that holds more than the picture (a caption beside it), where a click follows the link (a link with no "
-                      "address left, or an anchor that only marks a place, leaves the click to the picture, which opens)", self.links)
+        self.assertIn("a picture inside a link that holds more than the picture (a caption beside it), where a click follows the link (a link "
+                      "with no address left, or an anchor that only marks a place, is not a link a click can follow, so a picture inside it "
+                      "keeps its button and its tooltip, and a plain click opens it), while a picture that is all its link holds keeps its "
+                      "button beside the link.", self.links)
         above = _body(self.viewer, "function linkAbove(anchor: Element): Element | null {", "}")
-        self.assertIn("return p ? p.closest('a, [data-act=\"openpath\"]') : null;", above, "and no button stands inside such an anchor")
+        self.assertIn("return p ? figureLinkOf(p) : null;", above, "the button's exclusion reads the click's own set, so a button stands inside such an anchor, after the picture (a sentence pin)")
+        self.assertIn("export const FIGURE_LINK_SET = 'a[href], a.' + URL_LINK_CLASS + ', a.' + FRAG_LINK_CLASS + ', [data-act=\"openpath\"]';", self.viewer, "the set, one selector (a sentence pin)")
+        set_line = next(line for line in self.viewer.splitlines() if line.startswith("export const FIGURE_LINK_SET"))
+        self.assertNotIn("DEAD_LINK_CLASS", set_line, "a dead anchor is not in it (a property pin on the set's line: it names no dead class)")
+        self.assertNotIn("fv-dead", set_line, "nor the class by its literal (a property pin)")
 
 
 if __name__ == "__main__":

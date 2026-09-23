@@ -2754,14 +2754,17 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // address to openUrlTab (the file review's round 2, extra5-3: the record had named the first two gestures alone; its round 8,
   // fresh-1: the two clicks had stood with no condition while the open panel's overlay takes them on a fine pointer).
   // A failed figure opens nothing on any gesture (figureTarget).
-  // The control's click is the figure's own wherever it stands (and it never stands inside a link: decideFigureControl puts it
-  // after a link holding the figure alone and adds none inside any link holding more, linkAbove). The figure's own click yields
-  // where another gesture owns it: a figure inside a link (linkOf: the links listener follows the author's link; an anchor
-  // with an href the links listener leaves to the browser, a web address: the browser's own open), a picture the panel framed (panelMark: the
-  // card's, through the row's delegate), the Comments panel open (asideOpen: a plain click is the panel's comment offer,
-  // onImageClick, and a drag its region; the regions layer's overlay takes the press on a fine pointer, and on a coarse one the
-  // click reaches here and stands down), a drag that selected and ended on the picture (selectionOpenIn, the links' rule).
-  // A plain click is not stopped, as a link's is not.
+  // The control's click is the figure's own wherever it stands (and it never stands inside a link whose click is the link's:
+  // decideFigureControl puts it after a link holding the figure alone and adds none inside a link of FIGURE_LINK_SET holding
+  // more, linkAbove). The figure's own click yields where another gesture owns it: a figure inside a link of FIGURE_LINK_SET
+  // (figureLinkOf from the img: a URL, section or path link, which the links listener follows, and an anchor with an href that
+  // listener leaves to the browser, a web address of the markdown; a dead link with its href removed and an author's named
+  // anchor are not in the set, no listener and no browser acts on them, and the click stays the figure's, so the title
+  // dressFigureTitle reads from the same predicate stands on the picture, the file review's round 12, correctness-1 with ui-1),
+  // a picture the panel framed (panelMark: the card's, through the row's delegate), the Comments panel open (asideOpen: a plain
+  // click is the panel's comment offer, onImageClick, and a drag its region; the regions layer's overlay takes the press on a
+  // fine pointer, and on a coarse one the click reaches here and stands down), a drag that selected and ended on the picture
+  // (selectionOpenIn, the links' rule). A plain click is not stopped, as a link's is not.
   const openFigure = (img: Element, ev: MouseEvent): void => {
     const target = figureTarget(img, path);
     if (!target) return;
@@ -2779,8 +2782,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     const control = figureControlOf(t, body);
     if (control) { const img = figureOfControl(control); if (img) openFigure(img, ev); return; }
     const img = bareFigureOf(t, body);
-    if (!img || linkOf(t)) return;
-    if (img.closest("a[href]")) return;                          // a web anchor of the markdown holding the figure (`[![alt](src)](https://...)`: linkMarkdownAnchors gives it target and rel and no class, so linkOf reads none): the browser's own open of the author's link, never the picture beside it
+    if (!img || figureLinkOf(img)) return;                       // a figure inside a link whose click is the link's (FIGURE_LINK_SET, the one predicate the title and the control read too): the links listener's own three, and a web anchor of the markdown (`[![alt](src)](https://...)`: linkMarkdownAnchors gives it target and rel and no class), the browser's own open of the author's link, never the picture beside it
     if (panelMark(t) && !wantsOwnTab(ev)) return;
     if (asideOpen && !wantsOwnTab(ev)) return;
     if (selectionOpenIn(box)) return;
@@ -5082,16 +5084,34 @@ function figureTooSmall(img: Element): boolean {
   const b = figureBox(img);
   return b !== null && (b.w < FIGOPEN_MIN_PX || b.h < FIGOPEN_MIN_PX);
 }
-/** The link above `anchor` that figureAnchor's climb did not leave: ANY anchor, or a path link (`[data-act="openpath"]`, its
- *  href taken off at mark time). A control inside one is nested interactive content and the link's click too, whatever the
- *  anchor's href: a web address, a section, a file, and a dead link, an anchor the sanitizer or the viewer stripped of its
- *  href (file-view-links.ts DEAD_LINK_CLASS), which a read of `a[href]` missed, so a captioned picture inside a dead link
- *  wore its control inside the anchor (the file review). An author's named target with no href (`<a id="fig1">` around
- *  a captioned picture) counts as a link too, and its figure gets no control. A link holding the figure alone IS the anchor
- *  (figureAnchor climbed it) and is not read. */
+/** The links whose click owns a figure inside them, ONE selector for the three readers of "whose click is this" (the figures'
+ *  click listener's yield, dressFigureTitle's withholding of the picture's address line, linkAbove's withholding of the
+ *  control): an anchor with an href (a web address of the markdown, `[![alt](src)](https://...)`, which linkMarkdownAnchors
+ *  leaves its href and the links listener leaves to the browser), a URL link and a section link (URL_LINK_CLASS,
+ *  FRAG_LINK_CLASS, the links listener's own), and a path link (`[data-act="openpath"]`, its href taken off at mark time).
+ *  NOT in the set, so a figure's click inside one stays the figure's: a dead link (file-view-links.ts DEAD_LINK_CLASS with its
+ *  href removed: a host with a port, a refused scheme, an empty target) and an author's named anchor (`<a name>`, `<a id>`,
+ *  no href), which no listener and no browser acts on. Before the file review's round 12 (correctness-1 with ui-1) each reader
+ *  spelt its own set: the title and the control read ANY anchor while the click read this one, so a remote picture inside a
+ *  dead link or a named anchor opened its tab on a plain click with no title and, captioned or under the floor, no control. */
+export const FIGURE_LINK_SET = 'a[href], a.' + URL_LINK_CLASS + ', a.' + FRAG_LINK_CLASS + ', [data-act="openpath"]';
+/** The link of FIGURE_LINK_SET at or above `from` (closest), else null: the one predicate of a figure's click belonging to a
+ *  link. The click listener and dressFigureTitle start it from the img; linkAbove from the parent of figureAnchor's climb. */
+export function figureLinkOf(from: Element): Element | null {
+  return from.closest(FIGURE_LINK_SET);
+}
+/** The link above `anchor` that figureAnchor's climb did not leave, one of FIGURE_LINK_SET (figureLinkOf). A control inside one
+ *  is nested interactive content and the link's click too: a web address, a section, a file. A dead link, an anchor the
+ *  sanitizer or the viewer stripped of its href (file-view-links.ts DEAD_LINK_CLASS), and an author's named target with no
+ *  href (`<a id="fig1">` around a captioned picture) are NOT in the set: no click of theirs owns the figure, so a captioned
+ *  picture inside one keeps its control, after the picture inside the anchor, and its title (the file review's round 12,
+ *  correctness-1 with ui-1: read as ANY anchor, as its round 2 had it, the control and the title were both withheld while the
+ *  plain click opened the remote picture's tab, nothing on the surface saying so; inside a dead link the control inherits the
+ *  anchor's dimmed dress, styles.css a.fv-dead's opacity and help cursor, kept by the owner with that ruling). A link holding
+ *  the figure alone IS the anchor (figureAnchor climbed it) and is not read. */
 function linkAbove(anchor: Element): Element | null {
   const p = anchor.parentElement;
-  return p ? p.closest('a, [data-act="openpath"]') : null;
+  return p ? figureLinkOf(p) : null;
 }
 /** Whether a control belongs on `img`, whose figureAnchor is `anchor`, as the figure stands now (the section header): none
  *  inside a gate's placeholder (its figure loads on the click), none for a state without a picture to name (figureHasPicture over
@@ -5115,7 +5135,7 @@ function decideFigureControl(img: Element, filePath: string): void {
   const standing = figureControlAfter(anchor);
   const want = figureWantsControl(img, anchor, filePath);
   const target = figureTarget(img, filePath);   // the kind the dress is keyed on, read at every decision (a standing control's included), as the click reads it
-  dressFigureTitle(img, anchor, target);
+  dressFigureTitle(img, target);
   if (standing) { if (!want) removeFigureControl(standing); else dressFigureControl(standing, target); return; }
   if (!want) return;
   const b = el("button", "fileview-btn fileview-icon " + FIGOPEN_CLASS) as HTMLButtonElement;
@@ -5143,15 +5163,17 @@ function dressFigureControl(b: HTMLElement, target: FigureTarget | null): void {
   b.classList.toggle(FIGOPEN_WEB_CLASS, web);
 }
 /** The picture's own title, for the two gestures that have no control to carry words (the plain click and the Cmd/Ctrl-click on the
- *  picture, where the press reaches it): for a web target whose click is the figure's own (no link holds the figure; inside one the
- *  click is the link's whatever the picture's source, and the control after a link holding the figure alone carries its own words)
+ *  picture, where the press reaches it): for a web target whose click is the figure's own (no link of FIGURE_LINK_SET holds the
+ *  figure, figureLinkOf from the img as the click listener reads it: inside an anchor with an href, a URL, section or path link
+ *  the click is the link's and the line is withheld; inside a dead link or an author's named anchor the click is the figure's
+ *  and the line stands; the control after a link holding the figure alone carries its own words)
  *  the outbound address on a line of its own after the author's title when one stands (figureWebTitleLine, shownAddress); for a
  *  file, or nothing to open, the author's title alone or none. The author's title is kept under FIGTITLE_MARK while the viewer's
  *  line stands, so the next decision restores it when the candidate is local again (a `<picture>` at a media change) and a
  *  decision never appends the line twice. Whatever the control's verdict: a remote picture under the floor wears no control and
  *  its plain click still opens the tab (the guide's sentence), so its title says so too. Cursor unchanged. */
-function dressFigureTitle(img: Element, anchor: Element, target: FigureTarget | null): void {
-  const web = target !== null && target.kind === "web" && anchor.closest('a, [data-act="openpath"]') === null;
+function dressFigureTitle(img: Element, target: FigureTarget | null): void {
+  const web = target !== null && target.kind === "web" && figureLinkOf(img) === null;
   const held = img.getAttribute(FIGTITLE_MARK);
   if (web) {
     const author = held !== null ? held : img.getAttribute("title") || "";

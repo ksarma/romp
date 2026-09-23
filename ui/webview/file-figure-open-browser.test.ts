@@ -19,8 +19,13 @@
 // (its control's words name the host and the new tab, its class and glyph are the outbound ones, and the picture's own title
 // carries the address after the author's title) while the local picture beside it keeps the one control, and a <picture>
 // whose candidate changes kind at a media change is re-dressed both ways with no add or remove (the file review's round 11,
-// ui-1 with extra8-1). Red over the unchanged viewer at the first control assertion (no control exists), and the outbound
-// case red at the head before it, where the two controls presented one surface. Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid and example.test addresses,
+// ui-1 with extra8-1); a remote picture inside an author's named anchor or a dead host:port link, bare, captioned and under
+// the floor, carries the address line on the picture and, where the floor allows, its control (the captioned one's inside the
+// anchor, after the picture), and its plain click opens the tab, while the picture inside a live web link keeps no line (the
+// file review's round 12, correctness-1 with ui-1: the three readers of "whose click is this" read one predicate). Red over
+// the unchanged viewer at the first control assertion (no control exists), the outbound
+// case red at the head before it, where the two controls presented one surface, and the link-shapes case red at the round-12
+// head, where the title and the control read any anchor while the click did not. Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid and example.test addresses,
 // /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -432,10 +437,12 @@ const WEB_TEXT = "# Report\n\n![local](figs/plot.svg)\n\n" + PARA(1) + "\n\n"
   + "![bare](" + WEB + "/bare.svg)\n\n" + PARA(3) + "\n\n"
   + '<picture><source media="(min-width: 800px)" srcset="' + WEB + '/wide.svg"><img src="figs/plot3.svg" alt="adaptive" title="Figure 4"></picture>\n\n' + PARA(4) + "\n";
 const WEB_DOCS: Record<string, string> = { [REPORT]: WEB_TEXT, [PLOT]: svg("#456"), [PLOT3]: svg("#465") };
-/** The second server: a real http server on another loopback port, serving every remote picture and logging each request. */
-function secondServer(log: string[]): Promise<{ port: number; close: () => Promise<void> }> {
+const sized = (w: number, h: number, fill: string): string => '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '"><rect width="' + w + '" height="' + h + '" fill="' + fill + '"/></svg>';
+/** The second server: a real http server on another loopback port, serving every remote picture (300 by 200, or the size `sizes`
+ *  gives the path) and logging each request. */
+function secondServer(log: string[], sizes: Record<string, [number, number]> = {}): Promise<{ port: number; close: () => Promise<void> }> {
   return new Promise((resolve) => {
-    const s = http.createServer((req, res) => { log.push((req.method || "") + " " + (req.url || "")); res.writeHead(200, { "Content-Type": "image/svg+xml" }); res.end(svg("#333")); });
+    const s = http.createServer((req, res) => { log.push((req.method || "") + " " + (req.url || "")); const [w, h] = sizes[req.url || ""] || [300, 200]; res.writeHead(200, { "Content-Type": "image/svg+xml" }); res.end(sized(w, h, "#333")); });
     s.listen(0, "127.0.0.1", () => { const a = s.address() as { port: number }; resolve({ port: a.port, close: () => new Promise((r) => s.close(() => r())) }); });
   });
 }
@@ -513,6 +520,94 @@ test("in a browser: a LOADED picture from the web beside a local one shows where
       const w = await dress(page);
       assert.equal(await page.evaluate(() => (document.querySelectorAll(".fileview-md [data-fv-figopen]")[3] as HTMLElement).dataset.probeId), "standing", "still the same control");
       assert.deepEqual([w[3].title, w[3].web, w[3].imgTitle, w[3].glyph === w[1].glyph], [WEB_WORDS, true, "Figure 4\n" + WEB_LINE(WEB + "/wide.svg"), true], "the web dress again");
+      assert.deepEqual(errors, [], "no page errors");
+      await page.close();
+    });
+  } finally { await second.close(); }
+});
+
+// The link shapes whose click is the figure's own while an anchor stands above the picture (the file review's round 12,
+// correctness-1 with ui-1): a remote picture inside an author's named anchor (`<a name>`, no href, never dressed) and inside a
+// dead host:port link (`[..](localhost:8080)`: the href removed, fv-dead), each bare and with a caption beside it, and one under
+// the floor (100 by 20) inside a named anchor; a picture inside a live web link beside them, the shape the click yields on.
+const LINK_TEXT = "# Report\n\n" + '<a name="fig-named"><img src="' + WEB + '/named.svg" alt="named"></a>\n\n' + PARA(1) + "\n\n"
+  + '<a name="fig-namedcap"><img src="' + WEB + '/namedcap.svg" alt="namedcap"> Figure 1: a caption beside the picture</a>\n\n' + PARA(2) + "\n\n"
+  + "[![dead](" + WEB + "/dead.svg)](localhost:8080)\n\n" + PARA(3) + "\n\n"
+  + "[![deadcap](" + WEB + "/deadcap.svg) a caption beside the dead link](localhost:8080)\n\n" + PARA(4) + "\n\n"
+  + '<a name="fig-floor"><img src="' + WEB + '/floor.svg" alt="floor"></a>\n\n' + PARA(5) + "\n\n"
+  + "[![livelink](" + WEB + "/livelink.svg)](" + WEB + "/page.html)\n\n" + PARA(6) + "\n";
+const LINK_DOCS: Record<string, string> = { [REPORT]: LINK_TEXT };
+const LINK_ALTS = ["named", "namedcap", "dead", "deadcap", "floor", "livelink"];
+type LinkDress = { alt: string; control: boolean; web: boolean; controlAfterImg: boolean; controlInAnchor: boolean; imgTitle: string | null; tooltip: string | null; anchorHref: string | null; anchorDead: boolean; w: number; h: number };
+/** Every img of the Rendered box with what the reader sees before any gesture over these shapes: the control (after the img's
+ *  anchor by the controls helper's climb, or right after the img inside the anchor), the picture's title, the tooltip the
+ *  browser would show (the nearest element with a title), and the anchor's href and dead class. */
+const linkDress = (page: any): Promise<LinkDress[]> => page.evaluate(() => {
+  const box = document.querySelector(".fileview-md")!;
+  return Array.from(box.querySelectorAll("img")).map((img) => {
+    let a: Element = img;
+    for (let p = a.parentElement; p && (p.localName === "a" || p.classList.contains("fc-imgwrap") || p.localName === "picture") && (p.localName !== "a" || (p.textContent || "").trim() === ""); p = a.parentElement) a = p;
+    const n = a.nextElementSibling;
+    const c = n && n.hasAttribute("data-fv-figopen") ? n as HTMLElement : null;
+    const anchor = img.closest("a");
+    const titled = img.closest("[title]");
+    const r = img.getBoundingClientRect();
+    return { alt: img.getAttribute("alt") || "", control: !!c, web: !!c && c.classList.contains("fv-figopen-web"), controlAfterImg: !!(img.nextElementSibling && img.nextElementSibling.hasAttribute("data-fv-figopen")),
+      controlInAnchor: !!(c && c.closest("a")), imgTitle: img.getAttribute("title"), tooltip: titled ? titled.getAttribute("title") : null,
+      anchorHref: anchor ? anchor.getAttribute("href") : null, anchorDead: !!anchor && anchor.classList.contains("fv-dead"), w: r.width, h: r.height };
+  });
+});
+/** A click on the named picture at (0.3w, 0.6h), with the modifier when `ctrl`, after scrolling it into view; what window.open recorded. */
+async function clickPicture(page: any, alt: string, ctrl = false): Promise<string[]> {
+  const b = await page.evaluate((alt: string) => { const i = Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt)!; i.scrollIntoView({ block: "center" }); const q = i.getBoundingClientRect(); return { x: q.left + q.width * 0.3, y: q.top + q.height * 0.6 }; }, alt);
+  await frames(page, 2);
+  await page.mouse.click(b.x, b.y, ctrl ? { modifiers: ["Control"] } : {});
+  await frames(page, 2);
+  return opened(page);
+}
+
+test("in a browser: a LOADED remote picture inside an author's named anchor or a dead host:port link, bare or captioned, carries the address line as its own title and tooltip and, where the floor allows, its control (the captioned one's inside the anchor, right after the picture), and its plain click and Ctrl-click open the tab at its address with the viewer unmoved; one under the floor carries the line and no control and opens on the click; the picture inside a live web link keeps no line (the file review's round 12, correctness-1 with ui-1: one predicate for the click, the title and the control)", { timeout: 240000 }, async (t) => {
+  const served: string[] = [];
+  const second = await secondServer(served, { "/floor.svg": [100, 20] });
+  try {
+    await inBrowser(t, async (browser) => {
+      const before = async (pg: any): Promise<void> => {
+        await pg.context().route((u: URL) => u.href.startsWith(WEB + "/"), async (route: any) => {
+          const a = await fromSecond(second.port, new URL(route.request().url()).pathname);
+          return route.fulfill({ status: a.status, contentType: a.type, body: a.body });
+        });
+      };
+      const { page, errors } = await openViewer(browser, "chat", 900, 600, { docs: LINK_DOCS, before });
+      await page.evaluate(() => { const w = window as any; w.__opened = []; window.open = ((u: unknown) => { w.__opened.push(String(u)); return { opener: null }; }) as unknown as typeof window.open; });
+      // the host is on no list: one click on the first placeholder loads every figure of the host
+      await page.click('[data-act="fv-load"]');
+      await page.waitForFunction(() => Array.from(document.querySelectorAll(".fileview-md img")).every((i) => !i.closest('[data-act="fv-load"]') && (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalWidth > 0), null, { timeout: 10000 });
+      await frames(page, 3);
+      const d = await linkDress(page);
+      assert.deepEqual(d.map((x) => x.alt), LINK_ALTS, "the six figures, loaded");
+      // the shapes are what they claim: no href on the five (the named anchors never had one, the host:port links lost theirs and are dressed dead), the floor picture 100 by 20, the live link's href kept
+      assert.deepEqual(d.slice(0, 5).map((x) => x.anchorHref), [null, null, null, null, null], "no href above the five");
+      assert.deepEqual(d.map((x) => x.anchorDead), [false, false, true, true, false, false], "the two host:port links are dressed dead");
+      assert.deepEqual([d[4].w, d[4].h], [100, 20], "the floor picture measures under the floor");
+      assert.equal(d[5].anchorHref, WEB + "/page.html", "the live web link keeps its href");
+      // FAILS BEFORE: the picture's own title carries the address on every one of the five, the click being the figure's own, and it is the tooltip the reader sees (before: null, or the dead link's words)
+      for (let i = 0; i < 5; i++) {
+        assert.equal(d[i].imgTitle, WEB_LINE(WEB + "/" + d[i].alt + ".svg"), d[i].alt + ": the address line as the picture's title");
+        assert.equal(d[i].tooltip, d[i].imgTitle, d[i].alt + ": and the tooltip the browser shows is that line, not the anchor's words");
+      }
+      assert.equal(d[5].imgTitle, null, "inside a live web link the click is the browser's: no line of the viewer's");
+      // the control where the floor allows it: after the anchor of a bare one (as before), inside the anchor right after the picture of a captioned one (FAILS BEFORE: none), none under the floor
+      assert.deepEqual(d.map((x) => x.control), [true, true, true, true, false, true], "a control on each but the picture under the floor");
+      assert.deepEqual([d[1].controlAfterImg, d[1].controlInAnchor, d[3].controlAfterImg, d[3].controlInAnchor], [true, true, true, true], "the captioned pictures' controls stand inside their anchors right after the picture, since no click of those anchors owns the figure");
+      assert.deepEqual([d[0].controlInAnchor, d[2].controlInAnchor], [false, false], "the bare pictures' controls stand after their anchors, as before");
+      assert.deepEqual(d.filter((x) => x.control).map((x) => x.web), [true, true, true, true, true], "every control wears the web dress");
+      // the plain click on each of the five: the tab at its own address, one open, the viewer unmoved (kept; the case's other half)
+      for (let i = 0; i < 5; i++) {
+        assert.deepEqual(await clickPicture(page, d[i].alt), [WEB + "/" + d[i].alt + ".svg"], d[i].alt + ": the plain click opens the tab at the picture's address");
+        assert.equal(await base(page), "report.md", d[i].alt + ": the viewer shows the report still");
+      }
+      assert.deepEqual(await clickPicture(page, "deadcap", true), [WEB + "/deadcap.svg"], "a Ctrl-click on the captioned dead link's picture: the tab too, once");
+      assert.ok(served.some((s) => s.endsWith("/floor.svg")), "the second server served the pictures: " + JSON.stringify(served));
       assert.deepEqual(errors, [], "no page errors");
       await page.close();
     });

@@ -19,7 +19,10 @@
 // the column narrowed under the floor loses its control and one it widened past gets it back (read once, at the load, a figure
 // the pane narrowed to 323 by 32 kept a control that hung over it, file-view-figure-floor-browser.test.ts; the other states in
 // file-view-figure-state-browser.test.ts); a control removed while it holds the keyboard hands it to the viewer's body first
-// (removeFigureControl). (2)'s exclusion reads ANY anchor above the figure (linkAbove), a dead link too.
+// (removeFigureControl). (2)'s exclusion (linkAbove) and the bare figure's yield read ONE predicate, figureLinkOf over
+// FIGURE_LINK_SET (an anchor with an href, a URL, section or path link), as the picture's title does (the file review's round 12,
+// correctness-1 with ui-1: read as ANY anchor, the exclusion withheld the control inside a dead link and a named anchor, whose
+// click no listener owns and which the plain click still opened).
 // Every pin reads the tree's own source, so a rename fails loudly; the leg executes each rule in a browser. Synthetic values
 // only.
 import { test } from "node:test";
@@ -82,7 +85,7 @@ test("the one decision: figureWantsControl reads the figure's state by one rule 
     "const standing = figureControlAfter(anchor);",
     "const want = figureWantsControl(img, anchor, filePath);",
     "const target = figureTarget(img, filePath);",
-    "dressFigureTitle(img, anchor, target);",
+    "dressFigureTitle(img, target);",
     "if (standing) { if (!want) removeFigureControl(standing); else dressFigureControl(standing, target); return; }",
     "if (!want) return;",
     'const b = el("button", "fileview-btn fileview-icon " + FIGOPEN_CLASS) as HTMLButtonElement;',
@@ -150,8 +153,8 @@ test("the one decision: figureWantsControl reads the figure's state by one rule 
     "the laid-out box, whatever it is, for a figure in the document (an author's width attribute counts, and so does no box at all), else the picture's own size (a detached box)");
   assert.doesNotMatch(box, /r\.width > 0|r\.height > 0/, "no fallback keyed on a zero side: a 0 by 0 box in the document is the figure's box");
   const above = between(VIEW, "function linkAbove(anchor: Element): Element | null {", "\n}\n");
-  assert.match(above, /const p = anchor\.parentElement;\n\s*return p \? p\.closest\('a, \[data-act="openpath"\]'\) : null;/,
-    "ANY anchor above the anchor (a link holding the figure alone IS the anchor and is not read): with an href or without one (a dead link, a named target), or a path link whose href mark time took off");
+  assert.match(above, /const p = anchor\.parentElement;\n\s*return p \? figureLinkOf\(p\) : null;/,
+    "a link of the click's own set above the anchor (a link holding the figure alone IS the anchor and is not read): figureLinkOf over FIGURE_LINK_SET, an anchor with an href, a URL, section or path link; a dead link and a named target, whose click no listener owns, are not in it and their captioned picture keeps its control (a sentence pin)");
   // the load and the error re-run the decision: one capture-phase pair per open
   const arm = between(VIEW, "function armFigureControls(body: HTMLElement, filePath: string): () => void {", "\n}\n");
   assert.match(arm, /const decide = \(e: Event\): void => \{ const img = figureOf\(e\); if \(img && figureState\(img\) !== "standin"\) decideFigureControl\(img, filePath\); \};/, "the events' road into the decision, for an element carrying the browser's record (a stand-in stays as the paint decided it)");
@@ -239,15 +242,14 @@ test("the sheets' figure-control comment names the builder that exists (decideFi
   }
 });
 
-test("the figure listener: the bare figure's plain click yields to an anchor with an href as it yields to the links listener's links; the control's branch and the pinned guards stand as they were", () => {
+test("the figure listener: the bare figure's plain click yields by the one predicate (figureLinkOf: the links listener's links and an anchor with an href), never to a dead link or a named anchor; the control's branch and the pinned guards stand as they were", () => {
   const listeners = VIEW.split('body.addEventListener("click", (ev) => {');
   assert.equal(listeners.length, 3, "two click listeners on the viewer's body: the links' and the figures'");
   const fig = listeners[2].split("\n  });\n")[0];
   inOrder(fig, [
     "const control = figureControlOf(t, body);",
     "const img = bareFigureOf(t, body);",
-    "if (!img || linkOf(t)) return;",
-    'if (img.closest("a[href]")) return;',
+    "if (!img || figureLinkOf(img)) return;",
     "if (panelMark(t) && !wantsOwnTab(ev)) return;",
     "if (asideOpen && !wantsOwnTab(ev)) return;",
     "if (selectionOpenIn(box)) return;",

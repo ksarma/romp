@@ -564,8 +564,9 @@ does not open; a picture smaller than 48 pixels on either side (a badge, an inli
 which the button would cover, and which a plain click still opens when no link holds it;
 and a picture inside a link that holds more than the picture (a caption beside it), where
 a click follows the link (a link with no address left, or an anchor that only marks a
-place, leaves the click to the picture, which opens), while a picture that is all its link
-holds keeps its button beside the link.
+place, is not a link a click can follow, so a picture inside it keeps its button and its
+tooltip, and a plain click opens it), while a picture that is all its link holds keeps its
+button beside the link.
 
 **Text size and width.** The **A−** and **A+** buttons in the viewer's title bar make
 the text of any text file smaller or larger in fixed steps from 70% to 200%: a markdown

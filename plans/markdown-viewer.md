@@ -8161,7 +8161,7 @@ review before the PR ran two rounds, named below as the review's round 1 and rou
 of the PR (2026-09-20) is named the file review. Its contract is kept outside the repo; this section records what was built,
 with the build's deliberate departures from that contract recorded as the decisions, and what is left for the owner to
 rule on. The file review's rounds are numbered by the maintainer, and a record names one by its number: the file review's rounds 1,
-2, 3, 4, 5, 6, 7, 8, 9, 10 and 11 are the rounds the convention enumerates, this list the one home of the enumeration
+2, 3, 4, 5, 6, 7, 8, 9, 10, 11 and 12 are the rounds the convention enumerates, this list the one home of the enumeration
 (ui/webview/linknav-records-attribution.test.ts reads its allowed set from this list and faults a numbered round the list
 lacks, so a round the maintainer rules next is added here first, and with it the ids its fixlist filed, in the roster
 paragraph after this one; the fixlists and rulings themselves are kept outside the repo in the maintainer's notes). In that numbering rounds 1 to 6 are the delta rounds, each reading what changed since the round before
@@ -8217,7 +8217,9 @@ correctness-3, tests-4, extra6-1, extra6-2, extra6-3, extra7-1, correctness-4, c
 regression-1, regression-2, regression-3, extra5-1, extra5-2, extra5-4, extra5-5, extra5-6, extra5-7, extra8-4, extra8-5,
 tests-3, regression-6, regression-7, extra5-3, extra8-1, extra8-2, extra7-3, regression-4, ui-1 and extra8-3; round 11 filed
 correctness-1, regression-1, kernel-1, extra6-1, extra7-1, extra7-2, tests-1, tests-2, ui-1, extra8-1, ui-2, extra8-2,
-fresh-1, fresh-3, fresh-2 and fresh-4.
+fresh-1, fresh-3, fresh-2 and fresh-4; round 12 filed correctness-1, ui-1, extra6-2, fresh-1, correctness-2, tests-3,
+regression-1, extra6-1, extra9-1, extra9-2, tests-1, fresh-2, tests-2, kernel-1, extra8-1, extra7-1, extra7-2, extra8-2 and
+extra10-1.
 
 **What existed.** A link in a rendered file to another file (`[x](other.md)`, `other.md:7`, `other.md#section`, a
 picture or PDF path, a wikilink, an embed chip) opened that file in the SAME viewer card: re-opening replaced whatever
@@ -8549,11 +8551,15 @@ a 0 by 0 failed figure wore a control laid 28 px to its left, over the link befo
 that link, the file review; a failed figure with a non-empty alt has the alt text's box, which the state leg clicks),
 and a figure at the
 floor (48 by 48) keeps its control inside its own box; and a figure inside a link that holds more than it
-(`[![alt](fig.png) caption](other.md)`, an author's `<a>` with a caption beside the img; `linkAbove`: ANY anchor, or
-a path link, above `figureAnchor`'s climb, which stops under a link holding text beside the figure; a dead link too,
-an anchor the sanitizer or the viewer stripped of its href, and an author's named target with no href, `<a id="fig1">`,
-since a control inside one is nested interactive content whatever the anchor's href, and read as `a[href]` the
-predicate let a captioned picture inside a dead link wear its control inside the anchor, the file review), since
+(`[![alt](fig.png) caption](other.md)`, an author's `<a>` with a caption beside the img; `linkAbove`: a link of the
+click's own set, `figureLinkOf` over `FIGURE_LINK_SET`, above `figureAnchor`'s climb, which stops under a link holding
+text beside the figure: an anchor with an href, a URL link, a section link or a path link, the links whose click owns
+the figure inside them, ONE exported predicate read by the click listener's yield, by `dressFigureTitle` and by
+`linkAbove`; a dead link, an anchor the sanitizer or the viewer stripped of its href, and an author's named target with
+no href, `<a id="fig1">`, are not in the set, no click of theirs owns the figure, and a captioned picture inside one
+keeps its control, after the picture inside the anchor, and its title, the file review's round 12, correctness-1 with
+ui-1: read as ANY anchor since its round 2, the control and the title were withheld from a shape whose plain click
+still opened a remote picture's tab, nothing on the surface saying so), since
 a button inside a link is the link's click too (one click opened the link's target AND the picture, and put an entry
 on the trail the reader never asked for); a figure alone in a link keeps its control, after the link. The clicks (the
 body's second click listener, beside the links', since file-view-links.test.ts pins the first listener's text and
@@ -8566,8 +8572,9 @@ before the row as a link's modified click does; the figure's own click
 yields to a figure inside a link (the author's link, through the links listener; and an anchor with an href that listener
 leaves to the browser, a web address of the markdown, which carries no class: the browser's own open of the address,
 never the picture beside it, the review's round 1; a captioned picture inside a dead link or a named target, an anchor
-with no href, wears no control and its plain click opens the picture, that anchor being none of the links the listener
-yields to, file-view-figure-shapes-browser.test.ts's dead shape, and the guide's shape sentence says so), to a picture
+with no href, keeps its control, after the picture inside the anchor, and its plain click opens the picture, that anchor
+being none of the links the listener yields to, file-view-figure-shapes-browser.test.ts's dead shape, and the guide's
+shape sentence says so), to a picture
 the panel framed (`panelMark`: the card's), to the
 open Comments panel (a plain click is the panel's comment offer, `onImageClick`, and a drag its region; the layer's
 overlay takes the press on a fine pointer, and on a coarse one the click reaches the listener and stands down; one
@@ -8590,7 +8597,7 @@ with the panel open the comment offer, the region drag and the control's own cli
 one the tap standing down to the offer, the modified click's tab and the control's open), and, for the round-1 rules,
 file-view-figure-shapes.test.ts (the source pins: the web test before the join; the one decision: the state, the
 floor, the target and any link above in figureWantsControl's order, decideFigureControl's add or remove against the
-control standing, the measure's reads, linkAbove as any anchor, the load, the error and the figures' own ResizeObserver
+control standing, the measure's reads, linkAbove over the click's own link set (figureLinkOf), the load, the error and the figures' own ResizeObserver
 running it and the width watch's repaint running none, removeFigureControl's order, figureTarget's refusal of both
 states, and both sheets' comment naming decideFigureControl; the click's yield to an anchor with an href) and
 file-view-figure-shapes-browser.test.ts (Chromium: twelve shapes on one report, a captioned picture inside a dead link
@@ -8884,7 +8891,7 @@ corrections to this record: L3 names the floor by the source's constant and the 
 exclusions with their functions, the web test's place before the join and the click's yield to an anchor with an href,
 the floor's re-read at each reflow of the figure by its function and the click's stand-down on an answered
 click, both carried by the source, the decision at the load and the error in place of the paint's add and the load's
-drop, linkAbove as any anchor, the tab's document request from the three gestures with the claim's three clauses in
+drop, linkAbove over the click's own link set, the tab's document request from the three gestures with the claim's three clauses in
 L3 and in L6, the cookie classes the leg measures, the failed figure opening nothing, the hidden group and the drag
 that starts on the control, each carried by the source or by a leg; L3 and this paragraph name the two shapes modules and the floor module, which
 exist; L6 names tests among the directories and the two files

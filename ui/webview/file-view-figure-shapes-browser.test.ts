@@ -13,8 +13,10 @@
 // protocol-relative source (`//host/pic.svg`, a gated placeholder until its click) opens a TAB from its control and from its
 // plain click, the viewer and the trail unmoved (before: the viewer opened on the kernel's /file route at that path, a 404,
 // and Back was armed); (5) a captioned picture inside a DEAD link (an `<a>` whose href the sanitizer removed, dressed fv-dead)
-// wears no control either, since linkAbove reads any anchor (before: `a[href]` alone, so the control went inside the dead
-// anchor); its plain click, with no link the links listener or the browser will act on, opens the picture. Skipped LOUDLY where playwright has no browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the
+// KEEPS its control, after the picture inside the dead anchor, since linkAbove reads the click's own link set (figureLinkOf over
+// FIGURE_LINK_SET; the file review's round 12, correctness-1 with ui-1: read as any anchor since its round 2, the control was
+// withheld from a shape whose click no link owns); its plain click, with no link the links listener or the browser will act
+// on, opens the picture. Skipped LOUDLY where playwright has no browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the
 // notes-api world, a placeholder session id, example.invalid addresses, /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -112,7 +114,7 @@ async function openReport(browser: any): Promise<{ page: any; errors: string[]; 
   await o.page.evaluate(() => { const w = window as any; w.__opened = []; window.open = ((u: unknown) => { w.__opened.push(String(u)); return { opener: null }; }) as unknown as typeof window.open; });
   // every local figure's load, and the controls the loads settle (the paint adds one before a size is known; the load removes it on a figure under the floor)
   await o.page.waitForFunction(() => Array.from(document.querySelectorAll(".fileview-md img")).filter((i) => !i.closest('[data-act="fv-load"]')).every((i) => (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalWidth > 0), null, { timeout: 10000 });
-  await o.page.waitForFunction(() => document.querySelectorAll(".fileview-md [data-fv-figopen]").length === 3, null, { timeout: 10000 });
+  await o.page.waitForFunction(() => document.querySelectorAll(".fileview-md [data-fv-figopen]").length === 4, null, { timeout: 10000 });
   await frames(o.page, 2);
   return { ...o, popups };
 }
@@ -125,18 +127,18 @@ const popupAfter = async (page: any, act: () => Promise<void>): Promise<string> 
   return popup.url();
 };
 
-test("in a browser: no control stands inside a link; a figure with a caption inside a link (markdown or an author's <a>, to a file, a web address or a section) wears none, a figure alone in a link wears its control after the link; a badge, an inline icon and a figure a pixel under the floor wear none, one at the floor keeps its control inside its own box", async (t) => {
+test("in a browser: no control stands inside a link whose click is the link's; a figure with a caption inside a link (markdown or an author's <a>, to a file, a web address or a section) wears none, a figure alone in a link wears its control after the link, a captioned figure inside a DEAD link keeps its control inside the dead anchor; a badge, an inline icon and a figure a pixel under the floor wear none, one at the floor keeps its control inside its own box", async (t) => {
   await inBrowser(t, async (browser) => {
     const { page, errors } = await openReport(browser);
     const c = await controls(page);
     assert.deepEqual(c.map((x) => x.alt), ALTS, "the twelve figures in order");
     // FAILS BEFORE: the captioned links' controls stood inside the <a>, the badge, the icon and the small figure wore one; and at the
     // review's round-2 head the captioned picture inside the DEAD link wore its control inside the dead anchor (linkAbove read `a[href]` alone)
-    assert.deepEqual(c.map((x) => [x.alt, x.control]), [["the plot", true], ["linked", false], ["html", false], ["weblinked", false], ["alone", true], ["frag", false], ["ci", false], ["icon", false], ["mid", true], ["small", false], ["proto", false], ["dead", false]],
-      "a control on the bare plot, on the figure alone in a web link, and on the figure at the floor; none inside a captioned link (a dead one too), on a badge, an icon, a figure under the floor, a gated placeholder");
-    assert.equal(await page.evaluate(() => document.querySelectorAll(".fileview-md a [data-fv-figopen]").length), 0, "no control anywhere inside a link (nested interactive content, and the links listener's click)");
-    const dead = await page.evaluate(() => { const a = document.querySelectorAll(".fileview-md img")[11].closest("a")!; return { href: a.getAttribute("href"), dead: a.classList.contains("fv-dead"), inside: a.querySelectorAll("[data-fv-figopen]").length }; });
-    assert.deepEqual(dead, { href: null, dead: true, inside: 0 }, "the dead link: no href, dressed dead, and no control inside it");
+    assert.deepEqual(c.map((x) => [x.alt, x.control]), [["the plot", true], ["linked", false], ["html", false], ["weblinked", false], ["alone", true], ["frag", false], ["ci", false], ["icon", false], ["mid", true], ["small", false], ["proto", false], ["dead", true]],
+      "a control on the bare plot, on the figure alone in a web link, on the figure at the floor, and on the captioned figure inside the dead link (no click of that anchor's owns it); none inside a captioned link the click follows, on a badge, an icon, a figure under the floor, a gated placeholder");
+    assert.equal(await page.evaluate(() => document.querySelectorAll(".fileview-md a[href] [data-fv-figopen], .fileview-md a.fv-url [data-fv-figopen], .fileview-md a.fv-frag [data-fv-figopen], .fileview-md [data-act=\"openpath\"] [data-fv-figopen]").length), 0, "no control anywhere inside a link whose click is the link's (nested interactive content, and the links listener's click)");
+    const dead = await page.evaluate(() => { const a = document.querySelectorAll(".fileview-md img")[11].closest("a")!; return { href: a.getAttribute("href"), dead: a.classList.contains("fv-dead"), inside: a.querySelectorAll("[data-fv-figopen]").length, afterImg: a.querySelectorAll("img")[0].nextElementSibling!.hasAttribute("data-fv-figopen") }; });
+    assert.deepEqual(dead, { href: null, dead: true, inside: 1, afterImg: true }, "the dead link: no href, dressed dead, and the control inside it right after the picture (FAILS BEFORE: none, linkAbove read any anchor)");
     assert.equal(c[4].before, "a", "the figure alone in a web link: its control stands after the link");
     assert.deepEqual(c.slice(1, 4).map((x) => x.inLink), [true, true, true], "the captioned figures do sit inside their links (the shape under test)");
     assert.deepEqual([c[6].w, c[6].h, c[7].w, c[7].h, c[8].w, c[8].h, c[9].w, c[9].h], [100, 20, 16, 16, 48, 48, 47, 60], "the badge, the icon, the figure at the floor and the one under it measure as served");
@@ -170,7 +172,7 @@ test("in a browser: the plain click on a captioned linked figure is the author's
     await painted(page, "report.md");
     let n = await nav(page);
     disabled(n.back, "back at the root: nothing behind the report"); enabledTo(n.forward, "Forward to notes.md", "the notes ahead");
-    await page.waitForFunction(() => document.querySelectorAll(".fileview-md [data-fv-figopen]").length === 3, null, { timeout: 10000 });
+    await page.waitForFunction(() => document.querySelectorAll(".fileview-md [data-fv-figopen]").length === 4, null, { timeout: 10000 });
     // the author's <a> with a caption: the same
     b = await centred(page, 2);
     await page.mouse.click(b.left + b.width * 0.3, b.top + b.height * 0.6);
@@ -178,7 +180,7 @@ test("in a browser: the plain click on a captioned linked figure is the author's
     enabledTo((await nav(page)).back, "Back to report.md", "the author's <a>: one push");
     await page.click(".fileview-nav-back");
     await painted(page, "report.md");
-    await page.waitForFunction(() => document.querySelectorAll(".fileview-md [data-fv-figopen]").length === 3, null, { timeout: 10000 });
+    await page.waitForFunction(() => document.querySelectorAll(".fileview-md [data-fv-figopen]").length === 4, null, { timeout: 10000 });
     // the badge: its whole face follows its link (before: the corner 12px in opened badge.svg in the viewer)
     b = await centred(page, 6);
     await page.mouse.click(b.right - 12, b.top + b.height / 2);
@@ -186,7 +188,7 @@ test("in a browser: the plain click on a captioned linked figure is the author's
     enabledTo((await nav(page)).back, "Back to report.md", "the badge's link");
     await page.click(".fileview-nav-back");
     await painted(page, "report.md");
-    await page.waitForFunction(() => document.querySelectorAll(".fileview-md [data-fv-figopen]").length === 3, null, { timeout: 10000 });
+    await page.waitForFunction(() => document.querySelectorAll(".fileview-md [data-fv-figopen]").length === 4, null, { timeout: 10000 });
     n = await nav(page);
     disabled(n.back, "the root again");
     // the captioned link to a web address: the browser's own popup, the viewer unmoved
