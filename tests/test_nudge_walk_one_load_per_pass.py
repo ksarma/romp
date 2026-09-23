@@ -3688,11 +3688,25 @@ class TheCountersOneSite(unittest.TestCase):
         _NUDGE_WALK_STATS is one of the admitted forms (the one module-level assignment of its dict display with "loads" among
         its keys, a plain or augmented store to a constant key, `.get` with a constant key, a `dict(...)` copy), any other form
         named by line, and exactly one of them writes the "loads" key: the look's bump. The counter's name has no other spelling
-        in kernel/kernel.py or kernel/judge.py: no node names it in an identifier field its class declares (_IDENTIFIER_FIELDS),
-        the kernel's Names excepted, and no string constant reads as it through _door_text (a verifier of the round-9 fixes: a
-        write through the kernel module object or through globals(), in the kernel or in the judge, left no Name for the census
-        to classify and passed on a road no case drives). The value that write adds is the served delta's to hold, on every
-        driven road that reaches the read."""
+        in any kernel module whose text holds it in any case (every kernel/*.py read as text, and each that holds the name parsed
+        and walked with _walk, so the population is derived and the kernel is in it or the case reds): no node names it in an
+        identifier field its class declares (_IDENTIFIER_FIELDS), the kernel's Names excepted; no str or bytes constant reads as
+        it whole through _door_text, wherever it appears; and none whose text so read contains it reaches a subscript key or a
+        call of a name in _DYNAMIC_LOOKUPS or _DICT_READS, the slice, the arguments and the keyword values walked (the consumer
+        clause of _loader_births, copied). A verifier of the round-9 fixes: a write through the kernel module object or through
+        globals(), in the kernel or in the judge, left no Name for the census to classify and passed on a road no case drives; a
+        second verifier of those fixes: an exec of a statement naming the counter, in the kernel or in the judge against the
+        kernel's globals, a globals() key sliced from a longer constant and a write from another kernel module each passed again,
+        since the census compared a constant's whole text alone and read two files named by hand. The limit that stays, the
+        counter's copy of the assembled class of _LIMITS: a name completed at run time, by any transform _door_text does not undo,
+        from constants none of which reads as it whole or carries it whole into a subscript key or a listed lookup ('_NUDGE' +
+        '_WALK_STATS', a join, an interpolating f-string, a %-format, the result handed to getattr, setattr, operator.attrgetter,
+        vars() or a module's __dict__); a spelling in escape sequences alone, in a module whose text holds the name in no case;
+        and a write that reaches the dict with no spelling of its name at all (a function in another kernel module that finds the
+        dict through sys.modules by its keys, a scan of globals().values() for a dict holding the counter's keys) are outside
+        this census and outside any static census. Execution on the driven roads is what catches such a write: a case that
+        drives a road and asserts memos.nudgeWalk.loads on that pass, against the walk's recorded calls or an exact figure, reds
+        on the extra write, and a write on a road no case drives is caught by nothing here."""
         self._the_named_def("_auto_nudge_session", km._auto_nudge_session, "_auto_nudge_session")
         at = [i for i, _ln in _loader_sites(km._auto_nudge_session, "jd.load_goals_shared")]
         self.assertEqual(len(at), 1, "one shared load in the walk's look, by either spelling of the shared door: a second call site is "
@@ -3766,25 +3780,46 @@ class TheCountersOneSite(unittest.TestCase):
                                       "key, or a `dict(...)` copy; any other form (an alias, a key that is not a constant, a method that "
                                       "writes, a second definition) could write the counter where this census does not read: %s"
                                       % (name, "; ".join(outside)))
-        # every other spelling of the counter's name, in the kernel and in the judge: a node naming it in an identifier field its class
-        # declares (in the kernel a Name is classified above) and a constant reading as it through _door_text, wherever either appears
-        jsrc = Path(os.path.realpath(jd.__file__)).read_text(encoding="utf-8")
+        # every other spelling of the counter's name, in every kernel module whose text holds it in any case (the population derived
+        # from the text of every kernel/*.py): a node naming it in an identifier field its class declares (in the kernel a Name is
+        # classified above), a constant reading as it whole through _door_text wherever it appears, and a constant CONTAINING it where
+        # it reaches a subscript key, a listed lookup or a dict read (_loader_births' consumer clause, copied: the slice, the arguments
+        # and the keyword values walked with _walk, each constant reported once, before the whole-text rule reads it)
+        texts = {p.name: p.read_text(encoding="utf-8") for p in sorted(Path(os.path.realpath(km.__file__)).parent.glob("*.py"))}
+        population = [f for f, text in texts.items() if name.lower() in text.lower()]
+        self.assertIn(KERNEL_FILE, population, "the census reads every kernel module whose text holds %s in any case, and the kernel "
+                                               "defines it (a derived population fails on empty): %r of %d modules"
+                                               % (name, population, len(texts)))
         spellings = []
-        for fname, flines, fnodes, names_too in ((KERNEL_FILE, lines, nodes, False),
-                                                 (JUDGE_FILE, jsrc.splitlines(), list(_walk(ast.parse(jsrc))), True)):
-            for n in fnodes:
+        for fname in population:
+            flines = texts[fname].splitlines()
+            reported = set()
+            for n in (nodes if fname == KERNEL_FILE else list(_walk(ast.parse(texts[fname])))):
                 fields = [f for f in _IDENTIFIER_FIELDS.get(type(n), ())
                           if name in (getattr(n, f) if isinstance(getattr(n, f), list) else [getattr(n, f)])]
-                what = ("%s.%s" % (type(n).__name__, fields[0]) if fields and (names_too or not isinstance(n, ast.Name))
-                        else "a constant %r" % (n.value,) if _door_text(n) == name.lower() else None)
+                keys, into = ([n.slice], "a subscript key") if isinstance(n, ast.Subscript) else ([], None)
+                if isinstance(n, ast.Call):
+                    last = n.func.id if isinstance(n.func, ast.Name) else n.func.attr if isinstance(n.func, ast.Attribute) else ""
+                    if last in _DYNAMIC_LOOKUPS or last in _DICT_READS:
+                        keys, into = list(n.args) + [k.value for k in n.keywords], "a call of %s" % last
+                for sub in (s for key in keys for s in _walk(key)):
+                    if name.lower() in (_door_text(sub) or "") and id(sub) not in reported:
+                        reported.add(id(sub))
+                        spellings.append("%s line %d, a constant %r containing it, reaching %s: %s"
+                                         % (fname, sub.lineno, sub.value[:48], into, flines[sub.lineno - 1].strip()))
+                what = ("%s.%s" % (type(n).__name__, fields[0]) if fields and (fname != KERNEL_FILE or not isinstance(n, ast.Name))
+                        else "a constant %r" % (n.value,) if _door_text(n) == name.lower() and id(n) not in reported else None)
                 if what is not None:
                     ln = getattr(n, "lineno", 0)
                     spellings.append("%s line %d, %s: %s" % (fname, ln, what, flines[ln - 1].strip() if ln else ""))
-        self.assertEqual(spellings, [], "no other spelling of %s in %s or %s: no node naming it in an identifier field (an attribute on "
-                                        "any receiver, a keyword, a parameter, an import alias, a global declaration, a def; in the judge a "
-                                        "Name as well) and no str or bytes constant whose text reads as it through _door_text; a write "
-                                        "through the kernel module object, globals(), vars(), setattr or getattr leaves no Name for the "
-                                        "census above to classify: %s" % (name, KERNEL_FILE, JUDGE_FILE, "; ".join(spellings)))
+        self.assertEqual(spellings, [], "no other spelling of %s in the kernel modules whose text holds it, %s: no node naming it in an "
+                                        "identifier field (an attribute on any receiver, a keyword, a parameter, an import alias, a global "
+                                        "declaration, a def; outside the kernel a Name as well), no str or bytes constant whose text reads "
+                                        "as it whole through _door_text, and none whose text so read contains it reaching a subscript key "
+                                        "or a call of a name in _DYNAMIC_LOOKUPS or _DICT_READS (an exec of a statement naming it, a key "
+                                        "sliced from a longer constant); a write through the kernel module object, globals(), vars(), "
+                                        "setattr, getattr or exec leaves no Name for the census above to classify: %s"
+                                        % (name, ", ".join(population), "; ".join(spellings)))
         writes = ["line %d: %s" % (t.lineno, lines[t.lineno - 1].strip()) for t in loads_writes]
         self.assertEqual([t.lineno for t in loads_writes], [first + bump[0]],
                          "exactly one write of the \"loads\" key through the Name in kernel/kernel.py, the look's bump at line %d: a "
