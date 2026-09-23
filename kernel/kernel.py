@@ -6650,6 +6650,63 @@ def _tab_order_frame(order, tabs, live, c=None):
     return fr
 
 
+_TAB_META_GATE_NOTED = set()        # sids whose ended gate raised inside _tab_meta on their last push with open rows (one stderr line per
+                                    #  episode; the episode ends on a push that computes the sid without a raise, open rows or none)
+
+
+def _tab_meta(chat_list):
+    """The `tabs` rows of the tabOrder frame, one per listed session, for its three senders (_push, _push_session_now,
+    _confirm_close_now): id, name, colour, emoji and `userTodos`, the count of the session's open user todos. The rule
+    (the user 2026-09-22, after todos went unseen on tabs the page had not loaded): a todo's presence is strip metadata
+    beside the name, the colour and the emoji, and its text is session content that loads with the tab. The count is
+    what a tab a client holds as a skeleton or a placeholder paints its flag from (the skeleton diet and the cold-tab
+    gate withhold its session payload); a loaded tab paints from the payload's rows, and both derive from the one
+    predicate (_user_todo_open) and the one ended gate (_user_todos_shown, build_session's), so the two inputs cannot
+    disagree. Built once per push, and only where a chat client exists (the strip goes to chat clients alone): the
+    switch is read ONCE here, not per tab (_user_todos_on reads its file on every call), the store once (the
+    mtime-cached dict), and the ended gate runs only for a sid with a nonzero count. Store values only, like every
+    field of the row: the strip is deduped per client on content, so a filed, answered, dismissed, withdrawn or reopened
+    todo re-sends it on the _push_soon() every store mutation ends in (the filing, dismiss, withdraw and recall routes; the
+    answered stamp at its delivery moment, the immediate send or the drain, _stamp_user_todo_answered; the recall's and
+    the answer-lost reopen, _reopen_user_todo), the event and never the pusher's 0.5 s backstop, and an unchanged roster
+    costs nothing. The ended gate is CONTAINED per sid: a raise from it (a reg-less sid's malformed death marker or states
+    row) makes that sid's count read 0, said once on stderr per episode, and the other rows ship, in every sender. An episode
+    runs from the raise until a push computes the sid WITHOUT one: the gate reading clean, or the sid holding no open row (the
+    gate runs only for open rows), so a marker repaired while nothing was open ends the episode there and a later fault under
+    a new todo is said again; a persisting fault is said once per open interval, not per cycle, bounded by todo filings (review
+    round 2; before it the episode ended only on a gate read, and a repair made while nothing was open left the next fault silent);
+    uncontained, one bad marker aborted every client's whole push each cycle in _push, dropped _push_session_now's
+    per-session push and made _confirm_close_now answer False (the board-freeze lesson of 2026-09-06, which _push's
+    per-session catch around build_session already applies; tests/test_user_todos_roster.py drives all three senders)."""
+    on = _user_todos_on()
+    store = _user_todos() if on else {}
+    rows = []
+    for s in chat_list:
+        sid = s["sid"]
+        n = sum(1 for t in (store.get(sid) or []) if _user_todo_open(t)) if on else 0
+        if n:
+            try:
+                shown = _user_todos_shown(sid)       # the one ended gate, run for a sid with open rows alone
+            except Exception as e:
+                shown = False                        # contained per sid (the docstring): this row reads 0, the rest ship
+                if sid not in _TAB_META_GATE_NOTED:
+                    _TAB_META_GATE_NOTED.add(sid)
+                    sys.stderr.write("user-todos: the ended gate for %s raised inside the tab roster; its count reads 0 "
+                                     "until the read succeeds, and the other rows ship (said once per episode): %s: %s\n"
+                                     % (sid[:8], type(e).__name__, e))
+            else:
+                _TAB_META_GATE_NOTED.discard(sid)    # a gate that reads again ends the episode: a later fault speaks again
+            if not shown:
+                n = 0                                # an ended session's todos are hidden, here as on every surface
+        else:
+            _TAB_META_GATE_NOTED.discard(sid)        # nothing open, no gate read: the episode ends here too (review round 2), so a
+                                                     #  marker repaired while nothing was open is not a silent fault at the next todo
+        rows.append({"id": sid, "name": s.get("name", ""), "color": _name_color(sid),
+                     "emoji": _name_emoji(sid),      # the fork's session label (#246)
+                     "userTodos": n})
+    return rows
+
+
 def _alive_sessions(now, live_map):
     """The sessions shown on EVERY surface (feed / timeline / chat tabs): only those alive on a backend
     right now. The hard liveness filter (the user 2026-06-15) — ignore everything that isn't a living
@@ -10350,7 +10407,11 @@ def _reopen_user_todo(sid, tid):
     corroborated loss of its holder (_user_todo_answer_lost: the entry's echo drop-marked with the
     text provably not in the transcript). Never lifts a dismiss or a withdraw (those clearing
     events had no delivery to fail), and never fires from inference — both callers key on the
-    exact delivery-failure event of the send the stamp recorded, so the authority tier holds."""
+    exact delivery-failure event of the send the stamp recorded, so the authority tier holds.
+
+    A lift ends in _push_soon() (2026-09-22), whichever caller lifted it: the store mutation is the event the strip's
+    count (_tab_meta) and the split card re-send on, never the pusher's 0.5 s backstop (the answer-lost verdict also
+    marks the views dirty, for the feed and the timeline; this wake is the roster's and the card's)."""
     with _user_todos_lock:
         cur = dict(_user_todos())                    # copy: never mutate the cached dict in place
         lst = [dict(t) for t in cur.get(sid) or [] if isinstance(t, dict)]
@@ -10363,7 +10424,28 @@ def _reopen_user_todo(sid, tid):
         _write_user_todos(cur)
         _log_user_todo_event(sid, tid, "lost", hit.get("text"), hit.get("detail", ""),   # the answer never arrived
                              file=hit.get("file"), link=hit.get("link"))
+    _push_soon()                                     # the event, not the backstop (the docstring)
     return True
+
+
+def _user_todo_open(t):
+    """The ONE spelling of "an open user todo" for every reader that shows, counts or rules on one: a record (a dict)
+    with an id and no clearing stamp (`resolved`). _open_user_todos (the rows the chat payload ships), the boot notice
+    (_user_todos_off_boot_notice), the tab roster's count (_tab_meta) and the answer-lost verdict
+    (_user_todo_answer_lost, whose "open" is this claim about the row it found) all ask this, so a loaded tab's rows
+    and a skeleton tab's count can never disagree on what counts as open (the fix brief of 2026-09-22, requirement 1).
+    The store's mutators keep their own lookups: _resolve_user_todo finds a row by id, and _prune_user_todos keeps
+    every unstamped row, id or not. tests/test_user_todos_roster.py DERIVES the population by an AST walk of this file
+    (every function that reaches the stamp key, "resolved", by .get, .pop, a subscript or `in`) and holds each to this
+    predicate or to a NAMED exemption: the store's mutators (_resolve_user_todo, _reopen_user_todo, _withdraw_user_todo,
+    _prune_user_todos), the log replay (_user_todos_from_log), the boot pass's answered filter
+    (_user_todo_loss_boot_pass) and the settled-phrase reader (_settled_todo_phrase), which read a stamp's kind or
+    presence for their own step and rule on no row's openness. The walk's bound is the key's literal: every other
+    "resolved" literal in this file is held, with the function around it, to the five file-comments functions where
+    the word is a status value, so a function that holds the literal any other way (in a name, a tuple, a .get's
+    default, a conditional's arm, an equality over the keys) is named in that test's red as well; only a key spelled
+    without the literal, a string built at run time, is outside it."""
+    return isinstance(t, dict) and bool(t.get("id")) and not t.get("resolved")
 
 
 def _open_user_todos(sid):
@@ -10382,7 +10464,7 @@ def _open_user_todos(sid):
         return []
     out = []
     for t in _user_todos().get(sid) or []:
-        if not isinstance(t, dict) or t.get("resolved") or not t.get("id"):
+        if not _user_todo_open(t):                       # the one predicate (_tab_meta counts by the same one)
             continue
         rec = {"id": str(t["id"]), "text": str(t.get("text") or ""), "createdT": t.get("createdT") or 0}
         if str(t.get("detail") or "").strip():
@@ -10461,6 +10543,14 @@ def _user_todo_session_ended(sid):
         return False
     last = _last_states_row(sid)
     return not (int((last or {}).get("t") or 0) > int(m.get("t") or 0))
+
+
+def _user_todos_shown(sid):
+    """The ONE ended gate for every surface that shows a session's open user todos: an ENDED session (corroborated,
+    _user_todo_session_ended) hides its todos from every surface, hidden and not cleared, so they return with a revive.
+    build_session's rows, the feed's rows (_feed_session_key) and the tab roster's count (_tab_meta) all ask this, and
+    only when open rows exist, so the common case pays no registry read (the fix brief of 2026-09-22, requirement 1)."""
+    return not _user_todo_session_ended(sid)
 
 
 def _prune_user_todos():
@@ -10890,9 +10980,17 @@ def _stamp_user_todo_answered(sid, tid, text, nonce=None):
         is the stamp's evidence and the callers stamp on it (_deliver_todo_reply, _deliver_send_batch).
 
     `nonce` stays as a parameter for that retired seam's callers and tests (the stand-down it keyed
-    left with the pending-paste marks); nothing reads it."""
+    left with the pending-paste marks); nothing reads it.
+
+    A stamp that lands ends in _push_soon() (2026-09-22): the stamp is the event the strip's count (_tab_meta) and the
+    split card re-send on, so the woken cycle carries it and the pusher's 0.5 s backstop is never what delivers it.
+    Inside the drain (a parked answer, stamped in the pusher cycle ahead of _push_all) the wake costs one more cycle,
+    which the per-client dedup absorbs. A stamp that did not land (False: cleared meanwhile) changes nothing and
+    wakes nothing."""
     with _user_todos_lock:
-        _resolve_user_todo(sid, tid, "answered", reply=text)
+        stamped = _resolve_user_todo(sid, tid, "answered", reply=text)
+    if stamped:
+        _push_soon()                                 # the event, not the backstop (the docstring)
 
 
 def _user_todo_answer_lost(sid, tid, text, wait=False, nonce=None):
@@ -10968,7 +11066,7 @@ def _user_todo_answer_lost(sid, tid, text, wait=False, nonce=None):
         else:
             row = next((t for t in (_user_todos().get(sid) or [])
                         if isinstance(t, dict) and t.get("id") == tid), None)
-            verdict = "open" if row is not None and not row.get("resolved") else "stale"
+            verdict = "open" if _user_todo_open(row) else "stale"   # the one predicate; no row (evicted) is not open
     if verdict == "reopened":
         # the reopened ask is NEWS again (round 2, 2026-08-22): the same id going back under the
         # floor would be eaten by the push latch's set dedup, and this re-floor is the one signal
@@ -12015,7 +12113,7 @@ def _user_todos_off_boot_notice():
     if _user_todos_on():
         return 0
     n = sum(1 for rows in _user_todos().values() if isinstance(rows, list)
-            for t in rows if isinstance(t, dict) and t.get("id") and not t.get("resolved"))
+            for t in rows if _user_todo_open(t))         # the one predicate
     if n:
         sys.stderr.write("romp-kernel: %d user todo(s) are stored but the feature is off. Turn it on in "
                          "the gear (User todos) to see them.\n" % n)
@@ -43946,9 +44044,10 @@ def build_session(sid, now, live_map=None, path_override=None, tail_cap_t=None, 
     # dead tmux session's todos kept a live Reply that fire-and-forgot answers into a nonexistent
     # pane; that backend left 2026-09-11). A dormant session (alive:true, no thread) still shows
     # them: it is addressable, and
-    # answering auto-revives it. Checked only when open todos exist (the common case skips it).
+    # answering auto-revives it. Checked only when open todos exist (the common case skips it). The gate is
+    # _user_todos_shown, the ONE every surface asks (the feed's rows, the tab roster's count), since 2026-09-22.
     _user_todos_open = _open_user_todos(sid)
-    if _user_todos_open and _user_todo_session_ended(sid):
+    if _user_todos_open and not _user_todos_shown(sid):
         _user_todos_open = []
     _todo_ev = None
     if todo is None:                                  # authoritative store unreadable — never silently fold
@@ -46498,7 +46597,7 @@ def _feed_session_key(s, tm, ctx, prev_entry):
       interrupting: _interrupting(fsid, ps or {}, now, tm), computed here (the stamp's 120 s cap and its settle).
       closer: _closer_pending(fsid, path, now, store) under the body's exact gate (live, warm parse, idle, no judge
         call in flight), the settle gap the Analyzing swirl reads.
-      todos: the session's open user todos by value (_open_user_todos after _user_todo_session_ended: id, text,
+      todos: the session's open user todos by value (_open_user_todos behind _user_todos_shown, the ended gate: id, text,
         createdT, detail, file, link), None when none; the floor, the marker map and the Waiting pane rows (the
         fork's plans/user-todos.md, re-applied inside the memo at the 2026-09-15 pull-in). A hidden session reads
         none, as the loop's `continue` skipped them; the read's switch (_user_todos_on) rides the value.
@@ -46581,10 +46680,10 @@ def _feed_session_key(s, tm, ctx, prev_entry):
         # USER TODOS (plans/user-todos.md, slice 2): the open asks this session registered with the person it
         # works for, read here ONCE per build so they ride the key by value (`todos`) and reach the body through
         # ctx; ENDED sessions hide theirs from every surface and aggregate (build_session's exact corroborated
-        # gate, _user_todo_session_ended). Store values only: the component compares equal across builds when
-        # nothing changed.
+        # gate, _user_todos_shown, the ONE every surface asks). Store values only: the component compares equal
+        # across builds when nothing changed.
         ut_open = _open_user_todos(fsid)
-        if ut_open and _user_todo_session_ended(fsid):
+        if ut_open and not _user_todos_shown(fsid):
             ut_open = []
     ctx.update(ps=ps, who_working=who_working, interrupting=interrupting, store=st, closer=closer, hide=hide,
                ut_open=ut_open)
@@ -47180,13 +47279,14 @@ def _feed_session_entry(s, ctx):
         parked_rows = _parked_rows(nodes, children)
     # USER TODOS (plans/user-todos.md, slice 2): the open needs this session registered with the
     # person it works for, read ONCE per build by _feed_session_key (the `todos` component, by value)
-    # and handed here through ctx with the ENDED gate already applied (build_session's exact
-    # corroborated gate, _user_todo_session_ended). The entry's userTodos row (below) feeds the quiet
+    # and handed here through ctx with the ENDED gate already applied (_user_todos_shown: build_session's
+    # gate, and the ONE every surface asks since 2026-09-22). The entry's userTodos row (below) feeds the quiet
     # per-card marker and the widened badge (build_feed aggregates the rows), and a muted session
     # never reaches here (the hideFromFeed return above), so the marker, the floor and the badge all
     # go quiet for it. THE MUTE ASYMMETRY IS DESIGNED
-    # (review call, 2026-08-22 — do not "fix"): the TAB GLYPH reads build_session's userTodos
-    # field, which mute does not touch — mute means "stop interrupting me about this session"
+    # (review call, 2026-08-22; do not "fix"): the TAB GLYPH has two sources, build_session's userTodos
+    # field on a loaded tab and _tab_meta's count on the tabOrder row for a skeleton or placeholder tab
+    # (since 2026-09-22), and mute touches neither: mute means "stop interrupting me about this session"
     # and quiets the feed and its aggregates; the tab stays truthful about what its session
     # holds. Store values only: the row must serialize identically across builds when nothing
     # changed.
@@ -61174,9 +61274,10 @@ def _push(targets, connect=False, live_map=None):
         if want_chat or want_fleet:   # the fleet needs every session's ledger slice (built below, attached to feed)
             # TABS-FIRST (the user 2026-06-26): ship name+color per tab so the client can paint the WHOLE strip
             # as placeholders up front (no tab popping in one-by-one as each build_session lands). The full
-            # session fills the placeholder in when it arrives below.
-            tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),
-                             "emoji": _name_emoji(s["sid"])} for s in chat_list]   # emoji: the fork's session label (PR 246)
+            # session fills the placeholder in when it arrives below. The rows come from _tab_meta (the emoji and,
+            # since 2026-09-22, the count of open user todos ride them), built only when a chat client is among the
+            # targets: the strip below goes to chat clients alone, and an Outline-only push has no use for it.
+            tab_meta = _tab_meta(chat_list) if chat_clients else []
             for c in chat_clients:                       # tab strip first → the shell paints before any build
                 _send_client(c, ("globalRetryPaused",), {"type": "globalRetryPaused", "value": _retry_paused_on(),
                                                          "resumeAt": _retry_resume_at(),   # limit reset epoch → the card counts down to the real retry
@@ -61830,8 +61931,7 @@ def _push_session_now(sid):
         if not any(s["sid"] == sid for s in chat_list):
             return                                   # hidden / raced a teardown — the periodic pusher owns the rest
         tab_order = [s["sid"] for s in chat_list]
-        tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),
-                             "emoji": _name_emoji(s["sid"])} for s in chat_list]   # emoji: the fork's session label (PR 246)
+        tab_meta = _tab_meta(chat_list)                  # the rows every strip sender ships (targets are chat clients)
         # The cold-tab gate (2026-09-14; see _held_as_skeleton_by_all): at a boot with a browser connected, each of the
         # 27 attach handshakes ran this push, a cold build per session, for tabs the page holds as skeletons; a full
         # here would also release the skeleton and hand the page a tab it did not ask for. Not built: the click or the
@@ -61973,14 +62073,13 @@ def _confirm_close_now(sid):
         live_map = _live_map()
         chat_list = _chat_tab_sessions(now, live_map)
         tab_order = [s["sid"] for s in chat_list]
-        tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),
-                             "emoji": _name_emoji(s["sid"])} for s in chat_list]
         with _clients_lock:
             # alive and ready, as _push_session_now filters: a chat page that announced READY_GATE_CAP is
             # held until its bundle says `ready` (_client_ready) — every other tabOrder sender filters on
             # it, and this one sent to every chat client, so a page still behind the gate received a frame
             # before its bundle had asked for one
             targets = [c for c in _clients if c["app"] == "chat" and c.get("alive", True) and _client_ready(c)]
+        tab_meta = _tab_meta(chat_list) if targets else []   # the rows every strip sender ships, for a chat client alone
         for c in targets:
             try:
                 redialed = _resolve_reconnect(c, chat_list)   # a confirmation may be the FIRST strip a redialing page sees

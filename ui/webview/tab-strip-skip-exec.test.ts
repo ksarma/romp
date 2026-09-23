@@ -13,7 +13,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { planStrip, parseTabGroups, headWords, revealedTabs } from "./tab-groups";
-import { tabStateClass, tabRingId, RING_ORDER, tabDotClass, tabDotTitle, sectionPip, sectionPipMembers, sectionPipTitle } from "./tab-state";
+import { tabStateClass, tabRingId, RING_ORDER, tabDotClass, tabDotTitle, sectionPip, sectionPipMembers, sectionPipTitle, openUserTodo } from "./tab-state";
 import { newSkeletonState, renderKind } from "./skeleton-tabs";
 import type { TagUnion } from "./session-views";
 import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
@@ -71,7 +71,8 @@ type Hooks = {
   heads: HeadCall[];          // every group header the paint minted, in order
   planStrip: typeof planStrip; parseTabGroups: typeof parseTabGroups; headWords: typeof headWords; revealedTabs: typeof revealedTabs;
   tabStateClass: typeof tabStateClass; tabRingId: typeof tabRingId; RING_ORDER: typeof RING_ORDER; tabDotClass: typeof tabDotClass; tabDotTitle: typeof tabDotTitle; sectionPip: typeof sectionPip; sectionPipMembers: typeof sectionPipMembers; sectionPipTitle: typeof sectionPipTitle;
-  newSkeletonState: typeof newSkeletonState; renderKind: typeof renderKind;   // the skeleton strip (2026-09-07): empty here, so every listed id is a loaded tab or a placeholder
+  openUserTodo: typeof openUserTodo;   // the one open predicate over a roster count (tab-state.ts; correctness-1, review round 1): the skeleton and placeholder rows of the signature read it, for real here
+  newSkeletonState: typeof newSkeletonState; renderKind: typeof renderKind;   // the skeleton strip (2026-09-07): empty unless a world hands its own state, so every listed id is a loaded tab or a placeholder
   skeletons: number;          // skeleton tabs minted (none expected: the set stays empty in these worlds)
   timers: Array<() => void>;  // the deferred checks renderTabs schedules (setTimeout 0), fired by the test when it chooses
   activated: string[];        // every setActive the fired checks made (T357 later lows: the hidden tab's restore)
@@ -147,6 +148,7 @@ function lift(): (hooks: Hooks) => Api {
     const tabGroups = () => readTabGroups(H.unions); const writeTabGroups = () => {};
     const phoneLayout = () => H.phone;
     const tabStateClass = H.tabStateClass, tabDotClass = H.tabDotClass, tabDotTitle = H.tabDotTitle, sectionPip = H.sectionPip, sectionPipMembers = H.sectionPipMembers, sectionPipTitle = H.sectionPipTitle;   // tabDotClass: the state-dot slot every tab carries (the tab-strip fix, 2026-09-08); tabDotTitle: what the slot says on hover
+    const openUserTodo = H.openUserTodo;   // the signature rows' open predicate over the roster count, the real one
     // the RINGS (widgets since 2026-09-14): a faithful stand-in for tab-widgets.ts composeTabRing over the real tab-state rule — every
     // ring class off, then the first switched-on ring whose test holds (settings.tabWidgets.on, every ring on by default) — and the
     // switch predicate the folded header's pip reads
@@ -198,12 +200,12 @@ const groups = (patch: Record<string, unknown>) => JSON.stringify({ on: true, co
 
 /** Two landed sessions and one placeholder, the first active; every knob at a quiet default (no tags: the
  *  flat strip). */
-function world(): { H: Hooks; api: Api; sessions: Map<string, any>; tabMeta: Map<string, any>; settings: any } {
+function world(skel?: ReturnType<typeof newSkeletonState>): { H: Hooks; api: Api; sessions: Map<string, any>; tabMeta: Map<string, any>; settings: any } {
   const H: Hooks = { FakeEl, bar: new FakeEl("div"), mslot: null, only: "", hidden: new Set(), down: new Set(), notes: {},
                      keyHint: "Open a session (K)", lens: { all: true }, unions: [], tips: [], aftermaths: [], rowPaints: 0, tagSyncs: 0, placeholders: 0,
                      groupsRaw: null, phone: false, heads: [],
-                     planStrip, parseTabGroups, headWords, revealedTabs, tabStateClass, tabRingId, RING_ORDER, tabDotClass, tabDotTitle, sectionPip, sectionPipMembers, sectionPipTitle,
-                     newSkeletonState, renderKind, skeletons: 0, timers: [], activated: [] };
+                     planStrip, parseTabGroups, headWords, revealedTabs, tabStateClass, tabRingId, RING_ORDER, tabDotClass, tabDotTitle, sectionPip, sectionPipMembers, sectionPipTitle, openUserTodo,
+                     newSkeletonState: skel ? () => skel : newSkeletonState, renderKind, skeletons: 0, timers: [], activated: [] };   // a world may hand its own skeleton state (the roster-count case lists a member as a skeleton)
   const api = lift()(H);
   const sessions = new Map<string, any>([["a", session("web", "ready")], ["b", session("api", "working")]]);
   const tabMeta = new Map<string, any>([["p", { name: "tests", color: { bg: "#112233", fg: "#ffffff" } }]]);
@@ -211,6 +213,30 @@ function world(): { H: Hooks; api: Api; sessions: Map<string, any>; tabMeta: Map
   api.set({ order: ["a", "b", "p"], sessions, tabMeta, settings, activeId: "a" });
   return { H, api, sessions, tabMeta, settings };
 }
+
+test("executed: the roster count enters the signature through the one open predicate, on the placeholder row and the skeleton row alike: -1 and no count compute the signature 0 computes (nothing open, no repaint between them), 2 another", () => {
+  // correctness-1 (review round 1): the rows read the count by truthiness, so -1 computed a signature 0 did not and repainted a
+  // flag the header would not raise. Now both rows ask openUserTodo (tab-state.ts), the real one in this world.
+  const skel = newSkeletonState(); skel.ids.add("b");   // b is a skeleton: its row is the "k" row, read from the strip meta
+  const { H, api, tabMeta } = world(skel);
+  const sigFor = (id: string, count: number | undefined): string => {
+    tabMeta.set(id, { name: id === "p" ? "tests" : "api", color: { bg: "#112233", fg: "#ffffff" }, userTodos: count });
+    api.renderTabs();
+    return api.sig();
+  };
+  for (const id of ["p", "b"]) {
+    const s0 = sigFor(id, 0), wipes0 = H.bar.wipes;
+    assert.equal(sigFor(id, -1), s0, id + ": -1 computes the signature 0 computes (the one predicate: nothing open either way)");
+    assert.equal(sigFor(id, undefined), s0, id + ": no count computes it too (an older kernel's row)");
+    assert.equal(H.bar.wipes, wipes0, id + ": no repaint between 0, -1 and no count");
+    const s2 = sigFor(id, 2);   // captured: the value 1 is held to below (review round 2: an assertion that read api.sig() twice compared it to itself)
+    assert.notEqual(s2, s0, id + ": a count of 2 computes another signature: the flag's paint");
+    assert.equal(H.bar.wipes, wipes0 + 1, id + ": the strip repainted once for it");
+    assert.equal(sigFor(id, 1), s2, id + ": 1 keeps the signature 2 computed (open is one bit on the strip)");
+    assert.equal(H.bar.wipes, wipes0 + 1, id + ": no repaint between 2 and 1");
+  }
+  assert.equal(H.skeletons > 0 && H.placeholders > 0, true, "the world minted a skeleton and a placeholder: both rows ran");
+});
 
 /** The same world sectioned: `a` and `b` home in the tag `backend`, the placeholder `p` untagged, and the
  *  UNTAGGED placeholder active — so the backend section may fold (the active tab's section never does). */

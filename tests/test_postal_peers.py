@@ -2117,6 +2117,11 @@ class RecallAfterTheCarry(_TwoBusHarness):
         got = []
         t = threading.Thread(target=lambda: got.append(pmb._peer_http(port, self._inbound_from_srv(), token=pm.SERVE_TOKEN)),
                              daemon=True)
+
+        def end():                                   # on every exit path: release srv's held response, wait for the dial
+            gate.set()
+            t.join(5)
+        self.addCleanup(end)
         t.start()
         self.assertTrue(listed.wait(5), "srv's dial listed A's outbox into its flight")
 

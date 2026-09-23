@@ -471,45 +471,21 @@ class Journal:
             self._fh = None
 
 
-def read_journal_dir(directory, offset: int = 0):
-    """Read an ORPHAN journal (its host is gone) from `offset` to the end without an index: segments in
-    first-offset order, each record numbered from its segment's first offset, so acknowledged-and-deleted
-    early segments cost nothing but the records they held. Pure on the files.
-
-    FOLLOW-UP, one item, "the journal reads descend by descriptor" (the general notes' small-asks file, filed
-    2026-09-20 by the round-7 fourth addendum of fork PR #814's review): the three reads below take PATHS (the
-    glob over the directory, gaps.json by the directory's path, each segment by the path the glob yields), and
-    with the two journal globs in the kernel that decide whether to call this (sdk_backend._host_lease_applies,
-    _host_orphan_recover) they are the item's five sites, one change: this function takes the verified `<sid>`
-    descriptor the kernel's read descent holds (host_transport.open_host_dirs_if_present), lists with a scandir
-    off it and a name match, and opens by name under it with O_NOFOLLOW and the owner check the other readers
-    under hosts/<sid>/ make (host_transport.read_host_file), its two callers (the orphan road's tail check and
-    HostTransport._read_journal) rewritten with it. Until then a re-point of `<sid>` landing between the kernel's
-    descent and these reads is read through the link, and a journal file a peer planted under a loose `<sid>/`
-    of the kernel's uid is read with no owner check. The host's own use of this module is unaffected: the host
-    writes its journal through Journal, which does not call this."""
-    d = Path(directory)
-    segs = sorted((f, p) for p in d.glob("journal-*.jsonl") for f in [_segment_first(p.name)] if f is not None)
-    try:
-        gaps = set(json.loads((d / "gaps.json").read_text()))
-    except Exception:
-        gaps = set()
-    for first, p in segs:
-        n = first
-        while n in gaps:            # an unrecorded gap at the segment's head
-            n += 1
-        with open(p, "rb") as fh:
-            for line in fh:
-                if n >= offset:
-                    try:
-                        rec = json.loads(line)
-                    except ValueError:
-                        rec = None
-                    if rec is not None and rec.get("type") != GAP_TYPE:
-                        yield n, rec
-                n += 1
-                while n in gaps:    # an unrecorded gap between two records on disk: the numbering skips it
-                    n += 1
+# THE ORPHAN READER LIVES IN THE KERNEL'S MODULE (kernel/host_transport.py, read_journal_dir and journal_segments) since
+# the fork PR that follows #814 (2026-09-21, the item "the journal reads descend by descriptor" of the general notes'
+# small-asks file). Through #814 `read_journal_dir(directory, offset)` stood here and read by PATH, three of the item's
+# five sites: a glob over the directory for the segments, gaps.json by the directory's path, each segment by the path
+# the glob yielded; a `<sid>/` re-pointed between the kernel's descent and those reads was read through the link, and
+# a journal file a peer planted under a loose `<sid>/` of the kernel's uid was read with no owner check. The rewrite
+# takes the <sid> DESCRIPTOR the kernel's read descent holds, lists off it and opens each file by name under it through
+# the one reader every kernel read under hosts/<sid>/ goes through (the owner question before the open, the
+# O_NOFOLLOW|O_NONBLOCK open, the fstat of the descriptor), which is why it moved: that reader and the refusal classes
+# it answers with are the kernel's, and this module, the host's, imports nothing of the kernel's. THE HOST NEVER CALLED
+# THE PREDECESSOR: the host reads its own journal through Journal.read_from, off the in-memory index of the segments it
+# wrote itself under a directory owner_only_dir verified (0700, its own uid; Journal.__init__), and lists its directory
+# for nothing, so the host side had no caller to convert and asks no owner question of its own directory
+# (tests/test_session_host.py pins both, by execution and by structure). The design in full is stated at
+# host_transport.read_journal_dir.
 
 
 # ── open control requests ───────────────────────────────────────────────────────────────────────
@@ -722,9 +698,12 @@ def sock_names(sid: str) -> tuple[str, str]:
     the fixed `<sid8>.tmp` of the first cut was the shared-name hazard (the review of this fix, 2026-09-19: a second
     host for the sid unlinking and rebinding that name between the first host's bind and its rename made the first
     publish, and report ready on, a socket it never created). Exactly the published name's length, 13 bytes for the
-    uuid sids the kernel mints (host_sock takes the first 8 characters), because the published path IS the socket path
-    budget on the box's deepest test root (SOCK_PATH_MAX; the sweep's xdist nesting puts `hosts/<sid8>.sock` at 107
-    exactly), so a temp longer than the published name would fail the bind where the published name fits. A sid shorter
+    uuid sids the kernel mints (host_sock takes the first 8 characters), because the published path is what the socket
+    path budget (SOCK_PATH_MAX) is spent on: under the test harness's deepest hosts-on root it sits at TMPDIR + 70 bytes
+    (one `romp-tests-*` level per process since 2026-09-21; two under xdist before, which put `hosts/<sid8>.sock` at 107
+    exactly under a 17-byte TMPDIR — tests/test_tempdir_hygiene.py HarnessSocketBudget derives the figure), so wherever
+    the published path fits the budget exactly a temp longer than it would fail the bind where the published name fits.
+    A sid shorter
     than 8 characters is not a shape the kernel produces: its temp is longer than its published name, and a temp over
     the budget fails the bind loudly (socket-bind-failed) rather than publishing anything. tests/test_session_host.py
     SocketMode pins the form, the length and the uniqueness."""

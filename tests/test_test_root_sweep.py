@@ -271,6 +271,8 @@ class RunningSuiteIsMarked(unittest.TestCase):
         pkg = sys.modules.get("tests")
         self.assertIsNotNone(pkg, "the tests package, which mints the root and writes the marker")
         self.assertEqual(pkg.TEST_ROOT_OWNER_MARKER, sb.TEST_ROOT_OWNER_MARKER)
+        self.assertEqual(pkg.TEST_ROOT_PREFIX, sb.TEST_ROOT_PREFIX,
+                         "the package mints roots under the prefix the kernel's sweep looks for (2026-09-21: the package names it too)")
         root = os.environ["TMPDIR"]
         self.assertEqual(os.path.realpath(root), os.path.realpath(pkg.TMP_ROOT), root)
         conftest = sys.modules.get("tests.conftest") or sys.modules.get("conftest")
