@@ -100,8 +100,11 @@ This repo may go public; assume every commit is permanent and world-readable.
   where the refusal names the previous version's bytes as the cause, since
   git prints no text diff for such a pair and the scan could not read the
   new text, and the remedy: fetch the remote whose history already holds the
-  commit and push again, or, when no remote holds it yet, check the new text
-  yourself before pushing with `--no-verify`;
+  commit and push again, or, when no remote holds it yet, set an explicit
+  `<path> diff` line in `.gitattributes` on the previous version's path (the
+  old path for a rename; the file's own path otherwise, a merge's parents'
+  included), so git prints the change and the scan reads it; the hook names
+  `--no-verify` last, since it publishes the new text unread;
   and the maintainer's clone carries an UNTRACKED
   `tests/test_no_personal_identifiers.py` that scans the working tree for the
   same strings plus that machine's hostname and home path. The pytest file is
