@@ -117,8 +117,8 @@ and the equality the cases assert holds here because the harness's parsed_sessio
 So the first pass and a moved-transcript pass derive and the gate loads once per derived session
 beside the walk's one; a ledger-driven run pass (the ledger is the tenth keyed file) re-evaluates every look with the gate
 served, so the walk loads once and the gate not at all. A look the state gates end before the store read (a working
-session's, say) runs, records, and loads through neither; one whose store read faults (a directory or a symlink loop at the
-store path) loads once through the walk, is counted, and notes its storeFault leg, with no gate check.
+session's, say) runs, records, and loads through neither; one whose store read faults (a directory, a symlink loop or a file
+of mode 000 at the store path) loads once through the walk, is counted, and notes its storeFault leg, with no gate check.
 
 The wake sweep, `_awaiting_wake_outcomes`, is the store's third reader on the pass. It runs after the per-session loop,
 in the same pass and outside the toggle guard, and takes one shared load per wake record it owns: a record that is
@@ -2822,15 +2822,19 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
         the session is read again on the next pass. memos.nudgeWalk.loads counts a look that reaches the read whatever the read
         does, so on each such pass it moves by the walk's recorded calls, the raising session's call among them (review round 8,
         correctness-1 and kernel-1: the bump sat on the line after the read, and every raising read went uncounted, on every
-        pass). Two roads, one subTest each, raise out of the shared door's fill after its miss bump, so _pass's reconciliation
-        balances on both: a journal row whose instant is not a number (the replay's int() raises ValueError) and journal bytes
-        that do not decode (UnicodeDecodeError out of _journal_read). Nothing here is asserted about goals.loads_shared, which the
-        decode road never moves."""
+        pass). Three roads, one subTest each, raise out of the shared door's fill after its miss bump, so _pass's reconciliation
+        balances on each: a journal row whose instant is not a number (the replay's int() raises ValueError), a journal row that
+        is a JSON list (the replay's .get on it raises AttributeError) and journal bytes that do not decode (UnicodeDecodeError
+        out of _journal_read). The walk's bound in _pass holds the raising session to one call per pass on each road, so a retry
+        of the look on a raise, inside its body or around it, reds on the road it catches (a verifier of the round-9 fixes: the
+        gate calling the look again on AttributeError or TypeError took two loads per pass with the module green, no case driving
+        either). Nothing here is asserted about goals.loads_shared, which the decode road never moves."""
         jdir = jd._overrides_dir()
         jdir.mkdir(parents=True, exist_ok=True)
         journal = jdir / (SID_A + ".jsonl")               # _restore unlinks it with the other journals under this test's root
         roads = (("a journal row whose instant is not a number", "ValueError",
                   (json.dumps({"op": "block", "node": SID_A + ":g1", "t": "abc"}) + "\n").encode()),
+                 ("a journal row that is a JSON list", "AttributeError", b"[1]\n"),
                  ("journal bytes that do not decode", "UnicodeDecodeError", b"\xff\xfe\xfa\n"))
         now = NOW
         for road, exc, data in roads:
@@ -2857,19 +2861,29 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
     def test_a_look_whose_store_read_faults_loads_once_and_is_counted(self):
         """The look's fault return: an OSError out of the store read, which _or_fault turns into a fault, so the look notes its
         storeFault leg and returns before the placement gate (review round 8, tests-1 and correctness-2: no case drove this road,
-        and a retry of the read on a fault, or a bump conditioned on the read returning a store, left the module green). Two roads,
-        one subTest each, each on a first pass (the caches and memos cleared as setUp clears them): a directory at SID_A's store
-        path, whose read raises, and a symlink loop there, whose open raises. Neither moves a call key, so _pass's reconciliation
-        subtracts the call the recorder noted raising. On the fault pass the walk loads once per session and the counter moves by
-        two; SID_B's look reaches its gate, and SID_A's is the fault: its storeFault leg, a memo row with no flip (so it is
-        evaluated again on the next pass) and an unreadable-store episode for SID_A alone."""
+        and a retry of the read on a fault, or a bump conditioned on the read returning a store, left the module green). Three
+        roads, one subTest each, each on a first pass (the caches and memos cleared as setUp clears them): a directory at SID_A's
+        store path, whose read raises, a symlink loop there, whose open raises, and a store file of mode 000, whose open raises
+        EACCES (skipped under root, which opens it). None moves a call key, so _pass's reconciliation subtracts the call the
+        recorder noted raising. On the fault pass the walk loads once per session and the counter moves by two, so a retry on a
+        fault, inside the look's body or by the look calling itself again, reds on the road it catches (a verifier of the round-9
+        fixes: the look calling its unwrapped self once more on a PermissionError took two loads per pass with the module green,
+        no case driving EACCES). SID_B's look reaches its gate, and SID_A's is the fault: its storeFault leg, a memo row with no
+        flip (so it is evaluated again on the next pass) and an unreadable-store episode for SID_A alone."""
         store = jd.GOALDIR / (SID_A + ".json")
         self.addCleanup(jd._end_store_fault, SID_A)       # the episode table is a module-level dict the cleanup's check does not read
+
+        def unreadable():
+            store.write_text("{}")
+            store.chmod(0)
         roads = (("a directory at the store path", "IsADirectoryError", store.mkdir),
-                 ("a symlink loop at the store path", "OSError: [Errno %d]" % errno.ELOOP, lambda: os.symlink(str(store), str(store))))
+                 ("a symlink loop at the store path", "OSError: [Errno %d]" % errno.ELOOP, lambda: os.symlink(str(store), str(store))),
+                 ("a store file of mode 000", "PermissionError: [Errno %d]" % errno.EACCES, unreadable))
         now = NOW
         for road, fault, plant in roads:
             with self.subTest(road=road):
+                if plant is unreadable and os.geteuid() == 0:
+                    self.skipTest("root opens a file of mode 000, so the read does not fault")
                 if store.is_symlink() or store.is_file():
                     store.unlink()
                 elif store.is_dir():
