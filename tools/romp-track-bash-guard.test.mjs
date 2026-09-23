@@ -4920,6 +4920,7 @@ const SINCE_HEADS = {
   'round 5': null,   // this tree; its previous head is the attacker's
   'round 5, second addendum': null,   // this tree too (one commit after the addendum's); its previous head is the attacker's
   'round 5, third addendum': null,   // this tree too (the closing-brace cut at the lexer); its previous head is the attacker's
+  'round 7, Q1': null,   // this tree too (round 7's twenty-fifth commit, the reviewer's Q1: THE UNREAD OPERAND); its previous head is the attacker's
 };
 test("round 5, the since sweep: every corpus row marked `since` newly refuses at the pass it names (allowed by the hook at the head before that pass, refused at the pass's head, both hooks taken from this checkout's history and run as processes over the corpus world); every label is one the sweep's table knows; a checkout without the history says so loudly", () => {
   const since = CORPUS.filter((e) => e.since);
@@ -7419,12 +7420,11 @@ test("round 6, second commit, THE OUTPUT MODEL: a subshell or a `{ }` group of e
 const RESIDUAL_CLASSES = {
   'a writer outside the model': 'a program, or a write form of a program the hook models, that writes the file by its own nature and is not among the write forms the hook reads (rsync, patch, tar -x, ed, ex, vim, make, shuf -o, gawk -i inplace, awk\'s print redirect, uniq, scp, openssl -out, shred, curl -o, wget -O, find -exec, a git alias or a subcommand that writes the tree, bash\'s history -w, zsh\'s sysopen and mapfile modules, sed\'s e command and a w command in a sed script the resolver cannot read, busybox\'s applets)',
   'a reader outside the roads': 'a program that runs a command or a script the hook does not follow into it (xargs, an interpreter\'s system, exec or subprocess call, a wrapper outside the set, a shell outside SHELLS, a file the command writes and then runs or sources, a function\'s call of itself, which the replay does not follow again)',
-  'a command name the resolver never reads': 'a command whose name is an expansion of a kind the resolver does not read ("${a[@]}", a loop variable, a name read or filled by getopts, printf -v or a nameref, a name the shell itself sets (${SHELL}, $0, $BASH, $ZSH_ARGZERO, $_ after a command), a substitution outside the output model such as $(which cp), a ${...} operator form the resolver does not read, a positional parameter of a script handed to a fresh shell with arguments of its own; "$@", $1 and $* stand for the operands of a called function or of a `set` this shell ran since round 6\'s sixth commit)',
+  'a command name the resolver never reads': 'a command whose name is an expansion of a kind the resolver does not read ("${a[@]}", a loop variable, a name read or filled by getopts, printf -v or a nameref, a name the shell itself sets (${SHELL}, $0, $BASH, $ZSH_ARGZERO, $_ after a command), a substitution outside the output model such as $(which cp), a ${...} operator form the resolver does not read, a positional parameter of a script handed to a fresh shell with arguments of its own; "$@", $1 and $* stand for the operands of a called function or of a `set` this shell ran since round 6\'s sixth commit), handed no literal operand that names a tracked file (the operand a directory, or a word the resolver does not read): since round 7\'s twenty-fifth commit a command so named, or a script or piped script the resolver does not read, whose literal operand names a tracked file is refused by name (the reviewer\'s Q1: the target known, the writer not)',
   'a script held in a variable': 'a value the command gives a name through a construct the resolver does not read (`read`, `printf -v`, a positional parameter of a fresh shell\'s script), run as a command or handed to a shell (`$c` after `read c`, `eval "$1"` inside a `bash -c` given arguments, `bash -c "$c"` after `printf -v c`; a value an assignment word gives, whitespace included, is read through THE HEAD CANDIDATES since round 6\'s fourth commit, and a `${name:=word}` gives word since the sixth)',
   'a producer outside the output model': 'a pipe into a shell, or a write redirection into a process substitution running one, from anything but a literal echo or printf, alone or in a subshell or group of such commands, or a plain cat passing such a text through, or a command substitution over such a producer handed to a shell, an eval or a here-string (a call of a function the command defines, a tee or a pipe through another command, a cat of a file, an eval or a shell -c inside the substitution)',
   'zsh\'s glob grouping': 'a `(..)` inside a word handed to zsh, read as a subshell by the lexer\'s zsh grammar while zsh globs it (a lexer gap, stated since the first commit of this round)',
   'zsh\'s hook functions': 'a function the command defines under a name zsh calls on its own (chpwd, precmd, preexec, periodic, zshexit, and the names in chpwd_functions and its kin), whose body runs when the shell moves, prompts or exits, from the directory the shell is in then, while the guard judges the definition where it stands',   // round 6's eighth commit
-  'a positional the resolver reads at the word by a model the shell does not keep': 'an element\'s emptiness, a binding a later shift or unset removed, zsh\'s subscript grammar beyond one index (the colon form of a positional\'s alternate value is read as set by the list\'s length, not the element, so `set -- \'\'; eval cp ${1:+x} a b` copies in every shell; a head or script text reads a positional\'s candidate that no shift, second set, unset, read or body\'s local removes, so `set -- a; shift; ${1}cp a b` is read as `acp` while every shell runs cp, and the known set reads a name bound in a subshell, a pipeline, a background job, a command substitution, an untaken body, a prefix position or behind a wrapper as this shell\'s, as in `c=a; unset c; eval cp ${c:+x} a b`; the unbraced list\'s subscript is read as one numeric index while zsh\'s `[@]`, `[*]`, an arithmetic, flagged or quoted subscript and a word of several such expansions select from the list too, so `$argv[*] cp a b` copies in zsh, and in every shell through `zsh -c`; each pre-existing at the round-5 head and filed in round 6\'s thirteenth commit for the round\'s ruling, a fix at the mechanism or an accepted allow)',   // round 6's thirteenth commit: the three populations the round's verifiers measured on the twelfth commit's head, filed for the round's ruling
   'an opaque expansion from a cwd outside every project': 'a leading opaque expansion, or one after a literal head outside every project, from a cwd in no project (B2 as ruled, with its boundary)',
 };
 const RESIDUAL_TABLE = [
@@ -7448,11 +7448,7 @@ const RESIDUAL_TABLE = [
   ['RT-script-wrapper', 'a reader outside the roads', 'script', "script -qc 'cp ../base/report.md report.md' /dev/null", ['bash', 'zsh', 'dash']],
   ['RT-strace', 'a reader outside the roads', 'strace', 'strace -o /dev/null cp ../base/report.md report.md', ['bash', 'zsh', 'dash']],
   ['RT-busybox-sh', 'a reader outside the roads', 'busybox', "busybox sh -c 'cp ../base/report.md report.md'", ['bash', 'zsh', 'dash']],
-  ['RT-array-head', 'a command name the resolver never reads', null, 'cmd=(cp); "${cmd[@]}" ../base/report.md report.md', ['bash', 'zsh']],
   ['RT-nameref-head', 'a command name the resolver never reads', null, 'c=cp; declare -n r=c; $r ../base/report.md report.md', ['bash']],
-  ['RT-loop-head', 'a command name the resolver never reads', null, 'for c in cp; do $c ../base/report.md report.md; done', ['bash', 'zsh', 'dash']],
-  ['RT-printf-v-head', 'a command name the resolver never reads', null, 'printf -v c cp; $c ../base/report.md report.md', ['bash', 'zsh']],
-  ['RT-read-head', 'a command name the resolver never reads', null, 'read c <<< cp; $c ../base/report.md report.md', ['bash', 'zsh']],
   ['RT-shell-var-c', 'a command name the resolver never reads', null, "${SHELL} -c 'cp ../base/report.md report.md'", ['bash']],   // the world's SHELL is bash's alone (zsh and dash have no SHELL of their own here)
   ['RT-function-producer', 'a producer outside the output model', null, "f() { echo 'cp ../base/report.md report.md'; }; f | bash", ['bash', 'zsh', 'dash']],
   ['RT-tee-producer', 'a producer outside the output model', 'tee', "echo 'cp ../base/report.md report.md' | tee /dev/null | bash", ['bash', 'zsh', 'dash']],
@@ -7476,19 +7472,6 @@ const RESIDUAL_TABLE = [
   ['RT-zsh-glob-group', "zsh's glob grouping", null, "zsh -c 'cp ../base/(r)eport.md report.md'", ['bash', 'zsh', 'dash']],
   // round 6's third commit (the residuals verifier): members of the stated classes the table lacked, each measured; `=cp`, `emulate -c` and
   // zsh/files' zf_ builtins are read now (the rows test above), so they are not here
-  ['RT-which-head', 'a command name the resolver never reads', 'which', '$(which cp) ../base/report.md report.md', ['bash', 'zsh', 'dash']],
-  ['RT-command-v-head', 'a command name the resolver never reads', null, '"$(command -v cp)" ../base/report.md report.md', ['bash', 'zsh', 'dash']],
-  ['RT-strip-prefix-head', 'a command name the resolver never reads', null, 'c=xcp; ${c#x} ../base/report.md report.md', ['bash', 'zsh', 'dash']],
-  ['RT-strip-suffix-head', 'a command name the resolver never reads', null, 'c=cpx; ${c%x} ../base/report.md report.md', ['bash', 'zsh', 'dash']],
-  ['RT-substring-head', 'a command name the resolver never reads', null, 'c=xcp; ${c:1} ../base/report.md report.md', ['bash', 'zsh']],
-  ['RT-pattern-head', 'a command name the resolver never reads', null, 'c=cx; ${c/x/p} ../base/report.md report.md', ['bash', 'zsh']],
-  ['RT-lowercase-head', 'a command name the resolver never reads', null, 'c=CP; ${c,,} ../base/report.md report.md', ['bash']],
-  ['RT-indirect-head', 'a command name the resolver never reads', null, 'c=d; d=cp; ${!c} ../base/report.md report.md', ['bash']],
-  ['RT-array-index-head', 'a command name the resolver never reads', null, 'declare -a a=(cp); ${a[0]} ../base/report.md report.md', ['bash']],
-  ['RT-mapfile-head', 'a command name the resolver never reads', null, 'mapfile -t a <<< cp; ${a[0]} ../base/report.md report.md', ['bash']],
-  ['RT-zsh-lower-head', 'a command name the resolver never reads', null, 'c=CP; ${c:l} ../base/report.md report.md', ['zsh']],
-  ['RT-zsh-P-head', 'a command name the resolver never reads', null, 'c=d; d=cp; ${(P)c} ../base/report.md report.md', ['zsh']],
-  ['RT-zsh-e-head', 'a command name the resolver never reads', null, 'c=cp; ${(e)c} ../base/report.md report.md', ['zsh']],
   ['RT-setarch', 'a reader outside the roads', 'setarch', 'setarch x86_64 cp ../base/report.md report.md', ['bash', 'zsh', 'dash']],
   ['RT-linux64', 'a reader outside the roads', 'linux64', 'linux64 cp ../base/report.md report.md', ['bash', 'zsh', 'dash']],
   ['RT-sed-f-written', 'a reader outside the roads', 'sed', "printf 'w report.md\\n' > ../scratch/s.sed; sed -n -f ../scratch/s.sed ../base/report.md", ['bash', 'zsh', 'dash']],
@@ -7520,37 +7503,10 @@ const RESIDUAL_TABLE = [
   // forms the fifth commit reads (a default word's value, a cd in an eval, a dup, a plain cat, a startup value naming a fed input, an exported
   // function, an alias of alias, a fed function call, `+=`, a newline, two names in one text, a resolved value) are in its rows test, not here
   ['RT-zsh-eq-split-head', 'a command name the resolver never reads', null, "c='cp ../base/report.md report.md'; ${=c}", ['zsh']],
-  ['RT-zsh-tilde-head', 'a command name the resolver never reads', null, 'c=cp; ${~c} ../base/report.md report.md', ['zsh']],
   ['RT-zsh-z-head', 'a command name the resolver never reads', null, "c='cp ../base/report.md report.md'; ${(z)c}", ['zsh']],
   ['RT-zsh-eq-eval', 'a command name the resolver never reads', null, "c='cp ../base/report.md report.md'; eval ${=c}", ['zsh']],
   ['RT-zsh-unbraced-eq-head', 'a command name the resolver never reads', null, "c='cp ../base/report.md report.md'; $=c", ['zsh']],
-  ['RT-zsh-L-head', 'a command name the resolver never reads', null, 'c=CP; ${(L)c} ../base/report.md report.md', ['zsh']],
-  ['RT-zsh-modifier-head', 'a command name the resolver never reads', null, 'c=cx; ${c:s/x/p/} ../base/report.md report.md', ['zsh']],
-  ['RT-quote-modifier-head', 'a command name the resolver never reads', null, 'c=cp; ${c:q} ../base/report.md report.md', ['bash', 'zsh']],
-  ['RT-substring-length-head', 'a command name the resolver never reads', null, 'c=cpx; ${c:0:2} ../base/report.md report.md', ['bash', 'zsh']],
-  ['RT-substring-zero-head', 'a command name the resolver never reads', null, 'c=cp; ${c:0} ../base/report.md report.md', ['bash', 'zsh']],
-  ['RT-lowercase-first-head', 'a command name the resolver never reads', null, 'c=Cp; ${c,} ../base/report.md report.md', ['bash']],
-  ['RT-at-P-head', 'a command name the resolver never reads', null, 'c=cp; ${c@P} ../base/report.md report.md', ['bash']],
-  ['RT-at-E-head', 'a command name the resolver never reads', null, 'c=cp; ${c@E} ../base/report.md report.md', ['bash']],
-  ['RT-pattern-all-head', 'a command name the resolver never reads', null, 'c=cxp; ${c//x} ../base/report.md report.md', ['bash', 'zsh']],
-  ['RT-strip-empty-prefix-head', 'a command name the resolver never reads', null, 'c=cp; ${c#} ../base/report.md report.md', ['bash', 'zsh', 'dash']],
-  ['RT-strip-one-suffix-head', 'a command name the resolver never reads', null, 'c=cpx; ${c%?} ../base/report.md report.md', ['bash', 'zsh', 'dash']],
   ['RT-array-bare-head', 'a command name the resolver never reads', null, 'c=(cp); $c ../base/report.md report.md', ['bash', 'zsh']],
-  ['RT-array-star-head', 'a command name the resolver never reads', null, 'c=(cp); ${c[*]} ../base/report.md report.md', ['bash', 'zsh']],
-  ['RT-array-at-unquoted-head', 'a command name the resolver never reads', null, 'c=(cp); ${c[@]} ../base/report.md report.md', ['bash', 'zsh']],
-  ['RT-assoc-head', 'a command name the resolver never reads', null, 'declare -A m=([x]=cp); ${m[x]} ../base/report.md report.md', ['bash', 'zsh']],
-  ['RT-subscript-assign-head', 'a command name the resolver never reads', null, 'c[0]=cp; ${c[0]} ../base/report.md report.md', ['bash']],
-  ['RT-scalar-index-head', 'a command name the resolver never reads', null, 'c=cp; ${c[0]} ../base/report.md report.md', ['bash']],
-  ['RT-scalar-at-head', 'a command name the resolver never reads', null, 'c=cp; ${c[@]} ../base/report.md report.md', ['bash', 'zsh']],
-  ['RT-array-append-index-head', 'a command name the resolver never reads', null, 'c=(cp); c+=(x); ${c[0]} ../base/report.md report.md', ['bash']],
-  ['RT-getopts-optarg-head', 'a command name the resolver never reads', null, 'getopts c: o -c cp; $OPTARG ../base/report.md report.md', ['bash', 'zsh', 'dash']],
-  ['RT-reply-head', 'a command name the resolver never reads', null, 'read <<< cp; $REPLY ../base/report.md report.md', ['bash', 'zsh']],
-  ['RT-select-head', 'a command name the resolver never reads', null, 'select c in cp; do $c ../base/report.md report.md; break; done <<< 1', ['bash', 'zsh']],
-  ['RT-loop-var-after-loop', 'a command name the resolver never reads', null, 'for c in cp; do :; done; $c ../base/report.md report.md', ['bash', 'zsh', 'dash']],
-  ['RT-glued-silent-sub-head', 'a command name the resolver never reads', null, 'c=cp; $c$(:) ../base/report.md report.md', ['bash', 'zsh', 'dash']],
-  ['RT-glued-true-sub-head', 'a command name the resolver never reads', null, 'c=cp; $c$(true) ../base/report.md report.md', ['bash', 'zsh', 'dash']],
-  ['RT-glued-backtick-head', 'a command name the resolver never reads', null, 'c=cp; $c`:` ../base/report.md report.md', ['bash', 'zsh', 'dash']],
-  ['RT-glued-strip-head', 'a command name the resolver never reads', null, 'c=cp; $c${x#y} ../base/report.md report.md', ['bash', 'zsh', 'dash']],
   ['RT-getopts-optarg-eval', 'a script held in a variable', null, "getopts c: o -c 'cp ../base/report.md report.md'; eval \"$OPTARG\"", ['bash', 'zsh', 'dash']],
   ['RT-while-read-eval', 'a script held in a variable', null, "echo 'cp ../base/report.md report.md' | while read -r l; do eval \"$l\"; done", ['bash', 'zsh', 'dash']],
   ['RT-subshell-read-eval', 'a script held in a variable', null, "echo 'cp ../base/report.md report.md' | (read -r l; eval \"$l\")", ['bash', 'zsh', 'dash']],
@@ -7585,7 +7541,6 @@ const RESIDUAL_TABLE = [
   ['RT-nsenter', 'a reader outside the roads', 'nsenter', 'nsenter cp ../base/report.md report.md', ['bash', 'zsh', 'dash']],   // a wrapper outside the set (named on the contract's list of unlisted wrappers)
   ['RT-tmux-new', 'a reader outside the roads', 'tmux', 'tmux -L rompguardtest new -d cp ../base/report.md report.md; while tmux -L rompguardtest has-session 2>/dev/null; do sleep 0.1; done', ['bash', 'zsh', 'dash']],   // a program that runs a command in a session of its own (a private socket; the loop waits for the session to end, so the row measures the write)
   ['RT-alias-sourced-heredoc', 'a reader outside the roads', null, "cat > ../scratch/a.sh <<'EOF'\nalias c=cp\nEOF\n. ../scratch/a.sh\nc ../base/report.md report.md", ['dash']],   // an alias in a sourced written file, the file written through a here-document (RT-alias-sourced-written is the printf spelling)
-  ['RT-fresh-shell-positional-head', 'a command name the resolver never reads', null, "bash -c '$1 ../base/report.md report.md' _ cp", ['bash', 'zsh', 'dash']],   // a fresh shell's own positional parameters, the arguments after its script, which the guard does not read
   ['RT-fresh-shell-positional-eval', 'a script held in a variable', null, "bash -c 'eval \"$1\"' _ 'cp ../base/report.md report.md'", ['bash', 'zsh', 'dash']],
   ['RT-read-trap', 'a script held in a variable', null, "read -r t <<< 'cp ../base/report.md report.md'; trap \"$t\" EXIT", ['bash', 'zsh']],   // a `read` value as the trap action (dash has no here-string)
   ['RT-read-in-c-head', 'a script held in a variable', null, "echo 'cp ../base/report.md report.md' | bash -c 'read -r x; $x'", ['bash', 'zsh', 'dash']],   // a `read` inside the `-c` script, fed by the pipe: the name is read through a construct the resolver does not follow
@@ -7594,10 +7549,7 @@ const RESIDUAL_TABLE = [
   // read, each measured. The command-name operator forms over a POSITIONAL parameter mirror the name forms already in the table (RT-strip-prefix-head,
   // RT-substring-head, RT-indirect-head, RT-zsh-eq-split-head, RT-array-index-head), a `${...}` operator form the resolver does not read; the head candidates
   // and the positional value read `$N`, `${@:N}`, `$argv` and a name a positional fills, not these operator spellings of them
-  ['RT-positional-strip-head', 'a command name the resolver never reads', null, 'f() { ${1#x} ../base/report.md report.md; }; f xcp', ['bash', 'zsh', 'dash']],
-  ['RT-positional-substring-head', 'a command name the resolver never reads', null, 'f() { ${1:0:2} ../base/report.md report.md; }; f cpx', ['bash', 'zsh']],
   ['RT-positional-eq-split-head', 'a command name the resolver never reads', null, "f() { ${=1}; }; f 'cp ../base/report.md report.md'", ['zsh']],
-  ['RT-positional-indirect-head', 'a command name the resolver never reads', null, 'f() { ${!1} ../base/report.md report.md; }; c=cp; f c', ['bash']],
   // a script the shell reads from a text the command wrote or a substitution the resolver does not follow into: the outer shell runs a script the
   // hook does not see (a file written then read through `$(cat)`, a `<(..)`, a here-string or `$(<..)`; a decode; an inner shell's output; a written
   // file run as `bash FILE`), and a wrapper or a shell outside the set (fakeroot, rbash), each a reader outside the roads
@@ -7638,7 +7590,6 @@ const RESIDUAL_TABLE = [
   ['RT-bash-var-heredoc', 'a command name the resolver never reads', null, "$BASH <<'EOF'\ncp ../base/report.md report.md\nEOF", ['bash']],
   ['RT-shell-var-heredoc', 'a command name the resolver never reads', null, "$SHELL <<'EOF'\ncp ../base/report.md report.md\nEOF", ['bash']],   // as RT-shell-var-c: bash alone fills SHELL in when the environment lacks it; zsh and dash feed the here-document to no command
   ['RT-zsh-argzero-c', 'a command name the resolver never reads', null, "$ZSH_ARGZERO -c 'cp ../base/report.md report.md'", ['zsh']],
-  ['RT-underscore-head', 'a command name the resolver never reads', null, 'true /usr/bin/cp; $_ ../base/report.md report.md', ['bash', 'zsh']],   // dash has no `$_`
   ['RT-zsh-chpwd', 'zsh\'s hook functions', null, 'chpwd() { cp base/report.md docs/report.md; }; cd ..', ['zsh']],   // the body runs at the project's root, where the cd lands; the guard judges it from docs/, where `docs/report.md` names no tracked file
   ['RT-zsh-chpwd-functions', 'zsh\'s hook functions', null, 'f() { cp base/report.md docs/report.md; }; chpwd_functions=(f); cd ..', ['zsh']],
   ['RT-zsh-null-glob-qualifier', 'zsh\'s glob grouping', null, 'cp nomatch*(N) ../base/report.md report.md', ['zsh']],   // zsh's `(N)` makes no word of a pattern matching nothing, so zsh runs the two-operand copy (bash and dash stop on the parenthesis); the lexer reads `(N)` as a subshell
@@ -7709,10 +7660,6 @@ const RESIDUAL_TABLE = [
   ['RT-python-popen', 'a reader outside the roads', 'python3', "python3 -c 'import os; os.popen(\"cp ../base/report.md report.md\").read()'", ['bash', 'zsh', 'dash']],
   ['RT-python-subprocess-shell', 'a reader outside the roads', 'python3', "python3 -c 'import subprocess; subprocess.call(\"cp ../base/report.md report.md\", shell=True)'", ['bash', 'zsh', 'dash']],   // shell=True hands the string to /bin/sh (spelled with call, since the real-shell-leg scan keys on the other method's name before a parenthesis)
   // a substitution outside the output model as the command name (beside RT-which-head)
-  ['RT-type-P-head', 'a command name the resolver never reads', null, '$(type -P cp) ../base/report.md report.md', ['bash']],   // `type -P` is bash's
-  ['RT-realpath-head', 'a command name the resolver never reads', 'realpath', '$(realpath /usr/bin/cp) ../base/report.md report.md', ['bash', 'zsh', 'dash']],
-  ['RT-readlink-head', 'a command name the resolver never reads', null, '$(readlink -f /usr/bin/cp) ../base/report.md report.md', ['bash', 'zsh', 'dash']],
-  ['RT-basename-head', 'a command name the resolver never reads', null, '$(basename /usr/bin/cp) ../base/report.md report.md', ['bash', 'zsh', 'dash']],
   // a pipe through another command before the shell (the fifth class's "a pipe through another command")
   ['RT-pipe-rev', 'a producer outside the output model', 'rev', "echo 'dm.troper dm.troper/esab/.. pc' | rev | bash", ['bash', 'zsh', 'dash']],
   ['RT-pipe-tr', 'a producer outside the output model', null, "echo 'cp ../base/report.md report.md' | tr a a | bash", ['bash', 'zsh', 'dash']],
@@ -7749,168 +7696,23 @@ const RESIDUAL_TABLE = [
   ['RT-var-sub-eval-head', 'a script held in a variable', null, "x=$(eval \"echo 'cp ../base/report.md report.md'\"); $x", ['bash', 'dash']],   // zsh splits no expansion: the whole value is the command name there
   ['RT-var-sub-function-head', 'a script held in a variable', null, "f() { echo 'cp ../base/report.md report.md'; }; x=$(f); $x", ['bash', 'dash']],
   ['RT-var-sub-function-eval', 'a script held in a variable', null, "f() { echo 'cp ../base/report.md report.md'; }; x=$(f); eval \"$x\"", ['bash', 'zsh', 'dash']],
-  // round 6's thirteenth commit (2026-09-22; the round's two verifiers on the twelfth commit's head): three populations measured allowing while a
-  // shell writes, each pre-existing at the round-5 head and on no surface, filed here under one class named for the mechanism (the hook unchanged;
-  // whether the class is fixed at the mechanism or accepted as allow-by-default is the round's ruling). Rows from a cwd other than docs/ name it
-  // in a sixth element (nan the tracked notes/ folder, na the project root, nas scratch/, out a cwd in no project, the paths absolute there).
-  // THE EMPTY POSITIONAL: scriptTexts' posKnown reads the colon form as set when the list the walk holds is long enough, never whether the
-  // element is non-empty, so `${1:+x}` after `set -- ''` is read as the word alone while the shell drops it and the two-operand copy runs
-  // (`${@:+x}` and `${*:+x}` stand for nothing in bash and dash alone: zsh's `$@` with one empty element is one empty field, set).
-  ['RT-ep-eval', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; eval cp ${1:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-ep-eval-second-elem', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- '' b; eval cp ${1:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-ep-eval-pos2', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a ''; eval cp ${2:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-ep-bash-c', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; bash -c \"cp ${1:+x} ../base/report.md report.md\"", ['bash', 'zsh', 'dash']],
-  ['RT-ep-sh-c', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; sh -c \"cp ${1:+x} ../base/report.md report.md\"", ['bash', 'zsh', 'dash']],
-  ['RT-ep-eval-dq-word', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; eval cp \"${1:+x}\" ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-ep-eval-dq-text', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; eval \"cp ${1:+x} ../base/report.md report.md\"", ['bash', 'zsh', 'dash']],
-  ['RT-ep-dq-empty', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- \"\"; eval cp ${1:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-ep-eval-install', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; eval install ${1:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-ep-eval-mv', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; eval mv ${1:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-ep-eval-ln-f', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; eval ln -f ${1:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-ep-eval-redirect', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; eval \"echo x > ${1:+x}report.md\"", ['bash', 'zsh', 'dash']],
-  ['RT-ep-subshell', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; ( eval cp ${1:+x} ../base/report.md report.md )", ['bash', 'zsh', 'dash']],
-  ['RT-ep-group', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; { eval cp ${1:+x} ../base/report.md report.md; }", ['bash', 'zsh', 'dash']],
-  ['RT-ep-and-true', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; eval cp ${1:+x} ../base/report.md report.md && true", ['bash', 'zsh', 'dash']],
-  ['RT-ep-then-echo', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; eval cp ${1:+x} ../base/report.md report.md; echo", ['bash', 'zsh', 'dash']],
-  ['RT-ep-then-colon', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; eval cp ${1:+x} ../base/report.md report.md; :", ['bash', 'zsh', 'dash']],
-  ['RT-ep-true-first', 'a positional the resolver reads at the word by a model the shell does not keep', null, "true; set -- ''; eval cp ${1:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-ep-stderr-null', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; eval cp ${1:+x} ../base/report.md report.md 2>/dev/null", ['bash', 'zsh', 'dash']],
-  ['RT-ep-shift-onto-empty', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a ''; shift; eval cp ${1:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-ep-empty-first', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- '' a; eval cp ${1:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-ep-set-twice', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; set -- ''; eval cp ${1:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-ep-two-empty-pos2', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- '' ''; eval cp ${2:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-ep-at', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; eval cp ${@:+x} ../base/report.md report.md", ['bash', 'dash']],
-  ['RT-ep-star', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; eval cp ${*:+x} ../base/report.md report.md", ['bash', 'dash']],
-  ['RT-ep-dq-empty-at', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- \"\"; eval cp ${@:+x} ../base/report.md report.md", ['bash', 'dash']],
-  ['RT-ep-notes', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; eval cp ${1:+x} ../base/report.md n1.md", ['bash', 'zsh', 'dash'], 'nan'],
-  ['RT-ep-root', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; eval cp ${1:+x} base/report.md docs/report.md", ['bash', 'zsh', 'dash'], 'na'],
-  ['RT-ep-out', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; eval cp ${1:+x} {NA}/base/report.md {NA}/docs/report.md", ['bash', 'zsh', 'dash'], 'out'],
-  ['RT-ep-scratch', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ''; eval cp ${1:+x} ../base/report.md ../docs/report.md", ['bash', 'zsh', 'dash'], 'nas'],
-  // THE STALE POSITIONAL CANDIDATE: bindPositionals notes each bind's values into the candidates and clears none, so after `set -- a; shift`
-  // candidateTexts still yields `a` for `1` at a head word (`${1}cp` read as `acp`, no writer) and in a script text (`${1}report.md` read as the
-  // untracked `areport.md`), while every shell runs the copy onto the tracked file.
-  ['RT-sp-braced-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; ${1}cp ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sp-bare-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; $1cp ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sp-shift-2', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a b; shift 2; ${1}cp ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sp-shift-pos2', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a b; shift; ${2}cp ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sp-set-empty', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; set --; ${1}cp ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sp-twice-glued', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; ${1}c${1}p ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sp-dq-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; \"${1}\"cp ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sp-dq-tail', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; $1\"cp\" ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sp-two-letter', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- ab; shift; ${1}cp ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sp-eval-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; eval \"${1}cp ../base/report.md report.md\"", ['bash', 'zsh', 'dash']],
-  ['RT-sp-bash-c-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; bash -c \"${1}cp ../base/report.md report.md\"", ['bash', 'zsh', 'dash']],
-  ['RT-sp-sed', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; ${1}sed -i 's/^/x/' report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sp-tee', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; ${1}tee report.md < ../base/report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sp-pipe-consumer', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; echo 'cp ../base/report.md report.md' | ${1}bash", ['bash', 'zsh', 'dash']],
-  ['RT-sp-procsub-consumer', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; ${1}bash <(echo 'cp ../base/report.md report.md')", ['bash', 'zsh']],
-  ['RT-sp-notes', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; ${1}cp ../base/report.md n1.md", ['bash', 'zsh', 'dash'], 'nan'],
-  ['RT-sp-root', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; ${1}cp base/report.md docs/report.md", ['bash', 'zsh', 'dash'], 'na'],
-  ['RT-sp-out', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; ${1}cp {NA}/base/report.md {NA}/docs/report.md", ['bash', 'zsh', 'dash'], 'out'],
-  ['RT-sp-out-bound', 'a positional the resolver reads at the word by a model the shell does not keep', null, "cp /usr/bin/cp {OUT}/scratch/c; PATH={OUT}/scratch:$PATH; set -- a; shift; ${1}c {NA}/base/report.md {NA}/docs/report.md", ['bash', 'zsh', 'dash'], 'out'],
-  ['RT-sp-eval-target', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; eval \"cp ../base/report.md ${1}report.md\"", ['bash', 'zsh', 'dash']],
-  ['RT-sp-bash-c-target', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; bash -c \"cp ../base/report.md ${1}report.md\"", ['bash', 'zsh', 'dash']],
-  ['RT-sp-sh-c-target', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; sh -c \"cp ../base/report.md ${1}report.md\"", ['bash', 'zsh', 'dash']],
-  ['RT-sp-eval-redirect', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; eval \"echo x > ${1}report.md\"", ['bash', 'zsh', 'dash']],
-  ['RT-sp-eval-bare-target', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; eval \"cp ../base/report.md $1report.md\"", ['bash', 'zsh', 'dash']],
-  ['RT-sp-eval-pos2-target', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a b; shift; eval \"cp ../base/report.md ${2}report.md\"", ['bash', 'zsh', 'dash']],
-  ['RT-sp-set-empty-target', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; set --; eval \"cp ../base/report.md ${1}report.md\"", ['bash', 'zsh', 'dash']],
-  ['RT-sp-eval-target-then-echo', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; eval \"cp ../base/report.md ${1}report.md\"; echo", ['bash', 'zsh', 'dash']],
-  ['RT-sp-eval-tee-target', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; eval \"tee ${1}report.md < ../base/report.md\"", ['bash', 'zsh', 'dash']],
-  ['RT-sp-eval-install-target', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; eval \"install ../base/report.md ${1}report.md\"", ['bash', 'zsh', 'dash']],
-  ['RT-sp-root-target', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; eval \"cp base/report.md docs/${1}report.md\"", ['bash', 'zsh', 'dash'], 'na'],
-  ['RT-sp-out-target', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a; shift; eval \"cp {NA}/base/report.md {NA}/docs/${1}report.md\"", ['bash', 'zsh', 'dash'], 'out'],
-  // THE KNOWN SET: scriptTexts' setKnown and candKnown read a name's binding, and posKnown the list's, as this shell's where the shell does not
-  // hold it at the word: a value an `unset`, a `read`, a body's `local` or a reassignment to an empty default dropped, and a `c=a` or a `set -- a`
-  // in a subshell, a pipeline, a background job, a command substitution, an untaken body, a prefix position or behind `env`, `nice` or zsh's
-  // `command` (which finds external commands alone); bash and dash run a pipeline's last member in a subshell, zsh in this shell, so `true | c=a`
-  // binds the name in zsh (no writer there) and not in bash or dash.
-  ['RT-sb-unset', 'a positional the resolver reads at the word by a model the shell does not keep', null, "c=a; unset c; eval cp ${c:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-unset-plus', 'a positional the resolver reads at the word by a model the shell does not keep', null, "c=a; unset c; eval cp ${c+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-unset-v', 'a positional the resolver reads at the word by a model the shell does not keep', null, "c=a; unset -v c; eval cp ${c:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-reassign-default', 'a positional the resolver reads at the word by a model the shell does not keep', null, "c=a; c=${d:-}; eval cp ${c:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-read', 'a positional the resolver reads at the word by a model the shell does not keep', null, "c=a; read -r c < /dev/null; eval cp ${c:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-body-unset', 'a positional the resolver reads at the word by a model the shell does not keep', null, "c=a; f() { unset c; }; f; eval cp ${c:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-body-local', 'a positional the resolver reads at the word by a model the shell does not keep', null, "f() { local c=a; }; f; eval cp ${c:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-if-false', 'a positional the resolver reads at the word by a model the shell does not keep', null, "if false; then c=a; fi; eval cp ${c:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-and-false', 'a positional the resolver reads at the word by a model the shell does not keep', null, "false && c=a; eval cp ${c:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-subshell', 'a positional the resolver reads at the word by a model the shell does not keep', null, "(c=a); eval cp ${c:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-pipe', 'a positional the resolver reads at the word by a model the shell does not keep', null, "true | c=a; eval cp ${c:+x} ../base/report.md report.md", ['bash', 'dash']],
-  ['RT-sb-substitution', 'a positional the resolver reads at the word by a model the shell does not keep', null, "x=$(c=a); eval cp ${c:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-background', 'a positional the resolver reads at the word by a model the shell does not keep', null, "c=a & wait; eval cp ${c:+x} ../base/report.md report.md", ['bash', 'dash']],
-  ['RT-sb-prefix-true', 'a positional the resolver reads at the word by a model the shell does not keep', null, "c=a true; eval cp ${c:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-prefix-bin-true', 'a positional the resolver reads at the word by a model the shell does not keep', null, "c=a /bin/true; eval cp ${c:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-unset-bash-c', 'a positional the resolver reads at the word by a model the shell does not keep', null, "c=a; unset c; bash -c \"cp ${c:+x} ../base/report.md report.md\"", ['bash', 'zsh', 'dash']],
-  // THE SUBSCRIPTED POSITIONAL beyond one numeric index: ZSH_POSITIONAL_SUBSCRIPT takes one numeric subscript on the whole word, while under zsh's
-  // grammar every `[..]` after the unbraced `$argv`, `$@` or `$*` selects from the positional list (`[@]`, `[*]`, an arithmetic, flagged or quoted
-  // subscript), no field where the list is empty, and a word of several such expansions is not one subscript; the lexer glob-marks them and
-  // mayVanish keeps the head from a known cwd, so zsh runs the copy while the guard allows (every shell where the line is handed to `zsh -c`).
-  ['RT-zs-star-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[*] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-at-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[@] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-atstar-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$@[*] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-atat-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$@[@] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-starat-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$*[@] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-plus1-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[+1] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-arith-1plus0-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[1+0] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-arith-2minus1-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[2-1] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-arith-1times1-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[1*1] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-arith-sub-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[$((1))] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-quoted-index-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[\"1\"] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-flag-r-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[(r)x] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-flag-w-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[(w)1] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-flag-R-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[(R)x] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-flag-k-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[(k)x] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-glued-two-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[1]$argv[2] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-glued-same-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[1]$argv[1] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-glued-three-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[1]$argv[1]$argv[1] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-glued-argv-at-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[1]$@[1] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-glued-star-star-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[*]$argv[*] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-glued-braced-name-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[1]${c} cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-braced-name-glued-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "${c}$argv[1] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-bare-name-glued-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$c$argv[1] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-glued-name-between-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[1]$c$argv[2] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-braced-elem-glued-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "${argv[1]}$argv[2] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-glued-positional-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[1]${1} cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-positional-glued-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$1$argv[1] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-glued-sub-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[1]$(true) cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-sub-glued-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$(true)$argv[1] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-glued-braced-elem-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[1]${argv[1]} cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-star-twice-head', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[*] $argv[*] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-star-glued-cp', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[*]cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-at-glued-cp', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[@]cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-flag-glued-cp', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[(r)x]cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-plus1-glued-cp', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[+1]cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-star-printer', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[*] echo 'cp ../base/report.md report.md' | bash", ['zsh']],
-  ['RT-zs-at-printer', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[@] echo 'cp ../base/report.md report.md' | bash", ['zsh']],
-  ['RT-zs-flag-printer', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[(r)x] echo 'cp ../base/report.md report.md' | bash", ['zsh']],
-  ['RT-zs-glued-printer', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[1]$argv[2] echo 'cp ../base/report.md report.md' | bash", ['zsh']],
-  ['RT-zs-fed-star', 'a positional the resolver reads at the word by a model the shell does not keep', null, "zsh -c '$argv[*] cp ../base/report.md report.md'", ['bash', 'zsh', 'dash']],
-  ['RT-zs-fed-at', 'a positional the resolver reads at the word by a model the shell does not keep', null, "zsh -c '$argv[@] cp ../base/report.md report.md'", ['bash', 'zsh', 'dash']],
-  ['RT-zs-fed-glued', 'a positional the resolver reads at the word by a model the shell does not keep', null, "zsh -c '$argv[1]$argv[2] cp ../base/report.md report.md'", ['bash', 'zsh', 'dash']],
-  ['RT-zs-fed-flag', 'a positional the resolver reads at the word by a model the shell does not keep', null, "zsh -c '$argv[(r)x] cp ../base/report.md report.md'", ['bash', 'zsh', 'dash']],
-  ['RT-zs-body-star', 'a positional the resolver reads at the word by a model the shell does not keep', null, "f() { $argv[*] cp ../base/report.md report.md; }; f", ['zsh']],
-  ['RT-zs-body-at', 'a positional the resolver reads at the word by a model the shell does not keep', null, "f() { $argv[@] cp ../base/report.md report.md; }; f", ['zsh']],
-  ['RT-zs-body-glued', 'a positional the resolver reads at the word by a model the shell does not keep', null, "f() { $argv[1]$argv[2] cp ../base/report.md report.md; }; f", ['zsh']],
-  ['RT-zs-eval-at', 'a positional the resolver reads at the word by a model the shell does not keep', null, "eval '$argv[@] cp ../base/report.md report.md'", ['zsh']],
-  ['RT-zs-star-sed', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[*] sed -i 's/^/x/' report.md", ['zsh']],
-  ['RT-zs-at-tee', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[@] tee report.md < ../base/report.md", ['zsh']],
-  ['RT-zs-set-empty-glued', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set --; $argv[1]$argv[2] cp ../base/report.md report.md", ['zsh']],
-  ['RT-zs-operand-at', 'a positional the resolver reads at the word by a model the shell does not keep', null, "cp $argv[@] ../base/report.md report.md", ['zsh']],
-  ['RT-zs-operand-star', 'a positional the resolver reads at the word by a model the shell does not keep', null, "cp $argv[*] ../base/report.md report.md", ['zsh']],
-  ['RT-zs-operand-plus1', 'a positional the resolver reads at the word by a model the shell does not keep', null, "cp $argv[+1] ../base/report.md report.md", ['zsh']],
-  ['RT-zs-operand-arith', 'a positional the resolver reads at the word by a model the shell does not keep', null, "cp $argv[1+0] ../base/report.md report.md", ['zsh']],
-  ['RT-zs-notes-star', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[*] cp ../base/report.md n1.md", ['zsh'], 'nan'],
-  ['RT-zs-notes-at', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[@] cp ../base/report.md n1.md", ['zsh'], 'nan'],
-  ['RT-zs-root-at', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[@] cp base/report.md docs/report.md", ['zsh'], 'na'],
-  ['RT-zs-out-star', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[*] cp {NA}/base/report.md {NA}/docs/report.md", ['zsh'], 'out'],
-  ['RT-zs-out-glued', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[1]$argv[2] cp {NA}/base/report.md {NA}/docs/report.md", ['zsh'], 'out'],
-  ['RT-zs-out-flag', 'a positional the resolver reads at the word by a model the shell does not keep', null, "$argv[(r)x] cp {NA}/base/report.md {NA}/docs/report.md", ['zsh'], 'out'],
+  // round 6's thirteenth commit filed three populations here under a ninth class, a positional the resolver read at the word by a model the shell
+  // does not keep; round 7's twenty-fifth commit made the four readings sound or unresolvable as the reviewer ruled (extra5-2, option (a)), and
+  // every row of it is refused now and pinned in "round 7, twenty-fifth commit, the rows" with the shells that write, the class gone
   // members of stated classes with an adjacent witness row and no row of their shape (the round's verifiers, LOW): an unset head before
   // `printf -v` (RT-printf-v-head's construct), a cat of a process substitution piped into a shell (RT-procsub-cat-procsub's producer as the
   // pipe's head), and a function the command defines running cat inside a written process substitution (RT-function-producer's producer there)
   ['RT-printf-v-unset-head', 'a script held in a variable', null, "$c printf -v x 'cp ../base/report.md report.md'; $x", ['bash']],
   ['RT-cat-procsub-pipe', 'a producer outside the output model', null, "cat <(echo 'cp ../base/report.md report.md') | bash", ['bash', 'zsh']],
   ['RT-procsub-function-cat', 'a producer outside the output model', null, "f() { cat; }; echo 'cp ../base/report.md report.md' > >(f | bash)", ['bash', 'zsh']],
+  // round 7's twenty-fifth commit (the reviewer's Q1, THE UNREAD OPERAND): a command whose name the resolver does not read is refused by name where a
+  // literal operand names a tracked file, so the class keeps the commands handed none: the operand a directory (the copy lands in it, the tracked
+  // notes/ folder among them) or a word the resolver does not read; the rows of the class it refuses left the table for that commit's rows
+  ['RT-q1-dir-dot', 'a command name the resolver never reads', null, '"$(command -v cp)" ../base/report.md .', ['bash', 'zsh', 'dash']],
+  ['RT-q1-dir-loop', 'a command name the resolver never reads', null, 'for c in cp; do $c ../base/report.md .; done', ['bash', 'zsh', 'dash']],
+  ['RT-q1-dir-notes', 'a command name the resolver never reads', null, 'for c in cp; do $c ../base/report.md ../notes; done', ['bash', 'zsh', 'dash'], 'nan'],
+  ['RT-q1-dir-target-option', 'a command name the resolver never reads', null, 'cmd=(cp); "${cmd[@]}" -t . ../base/report.md', ['bash', 'zsh']],
+  ['RT-q1-unread-operand', 'a command name the resolver never reads', null, 'read c <<< cp; read t <<< report.md; $c ../base/report.md $t', ['bash', 'zsh']],
 ];
 // THE REFUSING PROGRAM (round 6's fifteenth commit, 2026-09-22): a program this box HAS may refuse to run the command it is given,
 // before running it. The fork's CI at the fourteenth commit had perf on its ubuntu runner, and perf without CAP_PERFMON printed
@@ -9623,7 +9425,7 @@ test("round 6, tenth commit, the rows: a double-quoted `\"$*\"` joins the positi
       ["S10-head-nice", "nad", "$c nice cp ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
       ["S10-head-tee", "nad", "$c tee report.md < ../base/report.md", ["bash", "zsh", "dash"], 'name'],
       ["S10-head-out-abs", "out", "$c cp {NA}/base/report.md {NA}/docs/report.md", ["bash", "zsh", "dash"], 'name', null],
-      ["S10-head-twin", "nad", "$c report.md", [], 'allow'],
+      ["S10-head-twin", "nad", "$c report.md", [], 'name'],   // refused by name since round 7's twenty-fifth commit: its command name is not read and an operand names the tracked file (THE UNREAD OPERAND, the reviewer's Q1; no shell writes, a cost)
       // THE ROUTED STANDARD OUTPUT (finding: the output reaches a process substitution along a chain of `>&` dups)
       ["S10-dup-two-hop", "nad", "echo 'cp ../base/report.md report.md' 3> >(bash) 2>&3 1>&2", ["bash", "zsh"], 'name'],
       ["S10-dup-three-hop", "nad", "echo 'cp ../base/report.md report.md' 3> >(bash) 4>&3 5>&4 >&5", ["bash", "zsh"], 'name'],
@@ -9823,7 +9625,7 @@ test("round 6, eleventh commit, the rows: a positional slice whose offset or len
     const hook = fs.readFileSync(HOOK, 'utf8');
     for (const fn of ['const headMayVanish = ', 'const vanishedHeadTexts = ', 'const dashCommandRoads = ', 'const runHeadSplices = ', 'const absSpelled = ', 'let rereadForVanish = ']) assert.ok(hook.includes(fn), `the hook has ${fn.trim()} (THE VANISHING HEAD's one home, THE KEYWORD DASH RUNS, THE BOUND NAME)`);
     assert.equal((hook.match(/dashCommandRoads\(seg\.words\[(p|at)\], (p|at)\);/g) || []).length, 3, 'the three keyword sites (function, coproc, repeat) ask the roads under dash\'s grammar (behaviour: S11-kd-* above)');
-    assert.ok(hook.includes("Array.isArray(positionals) && (name === '@' || name === '*' ? positionals.length > 0 : positionals.length >= Number(name))"), 'posKnown reads the list only where it is modelled (behaviour: S11-av-* above)');
+    assert.ok(hook.includes("const posKnown = /^[0-9@*]+$/.test(name) && positionalsApply() && Array.isArray(positionals) && (name === '0' ? true"), 'posKnown reads the list only where it is modelled (behaviour: S11-av-* above; the element\'s text since round 7\'s twenty-fifth commit)');
     assert.ok(hook.includes("const COUNT = /^\\$(?:#|\\{#\\}|\\{#[@*]\\})$/;"), 'the counted slice knows the four spellings of the count (behaviour: S11-cs-* above)');
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
@@ -9874,12 +9676,12 @@ test("round 6, twelfth commit, the rows: zsh's unbraced positional subscript (`$
       ["S12-sp-ctl-slice-at", "nad", "${@:1} cp ../base/report.md report.md", ["bash", "zsh"], 'name'],
       ["S12-sp-ctl-slice-star", "nad", "${*:1} cp ../base/report.md report.md", ["bash", "zsh"], 'name'],
       ["S12-sp-ctl-braced-echo-bash", "nad", "${argv[1]} echo 'cp ../base/report.md report.md' | bash", ["bash", "zsh"], 'name'],
-      ["S12-sp-twin-dq-head", "nad", "\"$argv[1]\" cp ../base/report.md report.md", [], 'allow'],
+      ["S12-sp-twin-dq-head", "nad", "\"$argv[1]\" cp ../base/report.md report.md", [], 'name'],   // refused by name since round 7's twenty-fifth commit: its command name is not read and an operand names the tracked file (THE UNREAD OPERAND, the reviewer's Q1; no shell writes, a cost)
       ["S12-sp-twin-dq-operand", "nad", "cp \"$argv[1]\" ../base/report.md report.md", [], 'allow'],
-      ["S12-sp-twin-bash-c", "nad", "bash -c '$argv[1] cp ../base/report.md report.md'", [], 'allow'],
-      ["S12-sp-twin-dash-c", "nad", "dash -c '$argv[1] cp ../base/report.md report.md'", [], 'allow'],
+      ["S12-sp-twin-bash-c", "nad", "bash -c '$argv[1] cp ../base/report.md report.md'", [], 'name'],   // refused by name since round 7's twenty-fifth commit: its command name is not read and an operand names the tracked file (THE UNREAD OPERAND, the reviewer's Q1; no shell writes, a cost)
+      ["S12-sp-twin-dash-c", "nad", "dash -c '$argv[1] cp ../base/report.md report.md'", [], 'name'],   // refused by name since round 7's twenty-fifth commit: its command name is not read and an operand names the tracked file (THE UNREAD OPERAND, the reviewer's Q1; no shell writes, a cost)
       ["S12-sp-twin-set-one", "nad", "set -- ls; $argv[1] cp ../base/report.md report.md", [], 'allow'],
-      ["S12-sp-twin-escaped", "nad", "$argv\\[1\\] cp ../base/report.md report.md", [], 'allow'],
+      ["S12-sp-twin-escaped", "nad", "$argv\\[1\\] cp ../base/report.md report.md", [], 'name'],   // refused by name since round 7's twenty-fifth commit: its command name is not read and an operand names the tracked file (THE UNREAD OPERAND, the reviewer's Q1; no shell writes, a cost)
       ["S12-sp-cost-valued", "nad", "argv=(ls); $argv[1] cp ../base/report.md report.md", [], 'name'],
       ["S12-sp-cost-echo-ls", "nad", "$argv[1] echo 'ls' | bash", [], ['text', "is filled in from"]],
       // THE VANISHED HEAD TEXT (finding's row `$argv[1]cp ..`; the glued form's plainer members allowed at the round-5 head too)
@@ -9892,11 +9694,11 @@ test("round 6, twelfth commit, the rows: zsh's unbraced positional subscript (`$
       ["S12-vt-at1-glued", "nad", "$@[1]cp ../base/report.md report.md", ["zsh"], 'name'],
       ["S12-vt-braced-c-echo-bash", "nad", "${c}echo 'cp ../base/report.md report.md' | bash", ["bash", "zsh", "dash"], 'name'],
       ["S12-vt-valued-glued", "nad", "c=/bin/; ${c}cp ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
-      ["S12-vt-twin-braced-c-ls", "nad", "${c}ls ../base/report.md report.md", [], 'allow'],
-      ["S12-vt-twin-dq-c-head", "nad", "\"$c\" cp ../base/report.md report.md", [], 'allow'],
+      ["S12-vt-twin-braced-c-ls", "nad", "${c}ls ../base/report.md report.md", [], 'name'],   // refused by name since round 7's twenty-fifth commit: its command name is not read and an operand names the tracked file (THE UNREAD OPERAND, the reviewer's Q1; no shell writes, a cost)
+      ["S12-vt-twin-dq-c-head", "nad", "\"$c\" cp ../base/report.md report.md", [], 'name'],   // refused by name since round 7's twenty-fifth commit: its command name is not read and an operand names the tracked file (THE UNREAD OPERAND, the reviewer's Q1; no shell writes, a cost)
       ["S12-vt-twin-valued-glued-ls", "nad", "c=/bin/; ${c}ls ../base/report.md report.md", [], 'allow'],
-      ["S12-vt-twin-two-expansions", "nad", "$c$dcp ../base/report.md report.md", [], 'allow'],
-      ["S12-vt-twin-count-glued", "nad", "$#cp ../base/report.md report.md", [], 'allow'],
+      ["S12-vt-twin-two-expansions", "nad", "$c$dcp ../base/report.md report.md", [], 'name'],   // refused by name since round 7's twenty-fifth commit: its command name is not read and an operand names the tracked file (THE UNREAD OPERAND, the reviewer's Q1; no shell writes, a cost)
+      ["S12-vt-twin-count-glued", "nad", "$#cp ../base/report.md report.md", [], 'name'],   // refused by name since round 7's twenty-fifth commit: its command name is not read and an operand names the tracked file (THE UNREAD OPERAND, the reviewer's Q1; no shell writes, a cost)
       // THE STALE POSITIONAL CANDIDATE and THE BODY'S OWN LIST (finding: `${N:+word}` after a shift or a second set kept the word alone)
       ["S12-sc-shift-eval-1", "nad", "set -- a; shift; eval cp ${1:+x} ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
       ["S12-sc-shift-eval-2", "nad", "set -- a b; shift; eval cp ${2:+x} ../base/report.md report.md", ["bash", "zsh", "dash"], 'name'],
@@ -9995,7 +9797,7 @@ test("round 6, twelfth commit, the rows: zsh's unbraced positional subscript (`$
     assert.ok(hook.includes('if (zshMayRun && ZSH_POSITIONAL_SUBSCRIPT.test(w.raw)) return true;'), 'mayVanish reads the subscripted positional where zsh may run the line (behaviour: S12-sp-argv1-cp, S12-sp-operand)');
     assert.ok(hook.includes("(zshMayRun && /^x+u+$/.test(w.marks) && ZSH_POSITIONAL_SUBSCRIPT.test(w.raw))"), 'the positional rewrite reads the unbraced subscript where the walk holds the list (behaviour: S12-sp-set-empty, S12-sp-function)');
     assert.ok(hook.includes('const vanishedHeadTexts = (w) => {') && hook.includes("return v.texts.filter((t) => t !== '' || whole);"), 'the vanished head text keeps the empty text only where the whole word may vanish (behaviour: S12-vt-* above)');
-    assert.ok(hook.includes("const candKnown = !/^[0-9@*]+$/.test(name) && candidates.has(name)"), 'a positional\'s alternate value is never read from the candidates (behaviour: S12-sc-* above)');
+    assert.ok(hook.includes("const posKnown = /^[0-9@*]+$/.test(name) && positionalsApply() && Array.isArray(positionals)") && !hook.includes('const candKnown'), 'a positional\'s alternate value is never read from the candidates (behaviour: S12-sc-* above; since round 7\'s twenty-fifth commit no name\'s is either)');
     assert.ok(hook.includes("if (name === 'set' && positionalsApply())") && hook.includes("else if (name === 'shift' && positionals !== null && positionalsApply())"), 'a set or shift inside a body being defined does not rebind this shell\'s list (behaviour: S12-bl-body-set)');
     assert.ok(hook.includes('const NEVER_EMPTY = /^[#$0?]$/;') && hook.includes("(param.op.startsWith(':') ? NEVER_EMPTY : ALWAYS_SET).test(param.name)"), 'the colon form of an always-set parameter needs a never-empty one (behaviour: S12-of-* above)');
   } finally { process.env.HOME = savedHome; w.rm(); }
@@ -10703,7 +10505,7 @@ test("round 7, nineteenth commit, the rows: a `set` or `shift` in a subshell, a 
       assert.ok(rows.some((r) => r[0] === `S19-${id}` && r[4] === 'name'), `${id} stands above as a refusal by name`);
     }
     assert.ok(RESIDUAL_TABLE.filter((r) => r[0].startsWith('RT-sb-')).every((r) => !/\bset --|\bshift\b/.test(r[3])), 'every remaining sb row is a name the known set reads, not a positional list bound outside this shell\'s frame');
-    assert.ok(!RESIDUAL_CLASSES['a positional the resolver reads at the word by a model the shell does not keep'].includes('or a list bound'), 'the class gloss names the name clause alone (the list clause is refused now)');
+    assert.ok(!Object.hasOwn(RESIDUAL_CLASSES, 'a positional the resolver reads at the word by a model the shell does not keep'), 'the class is gone since round 7\'s twenty-fifth commit (its name rows refused there too)');
     // where the code lives (the rows above prove what it does)
     const hook = fs.readFileSync(HOOK, 'utf8');
     assert.ok(hook.includes("const positionalFrame = (seg, idx, cmd) => {") && hook.includes("const seq = plainSequence(seg, idx, (f) => f.kind === 'group' || (f.kind === 'function' && f.running && !f.coproc));"), "THE BIND'S FRAME asks plainSequence with a running function body counted as this shell's own (behaviour: S19-set-*, S19-ctl-function-shift-head, S19-ctl-function-set-cat)");
@@ -11449,8 +11251,8 @@ test("round 7, twenty-second commit, the rows: a `.` or `source` of a text the g
     // where the code lives (the rows above prove what it does)
     const hook = fs.readFileSync(HOOK, 'utf8');
     // the source site reads through THE UNHELD ROAD's one reader since round 7's twenty-third commit (readInPlace; the twenty-third commit's rows pin the reader itself)
-    assert.ok(hook.includes("const fedName = ops.length && ops[0].literal && isStdinName(ops[0].text) ? ops[0].text : null;") && hook.includes("if (fedName != null) readInPlace(() => stdinBodies(idx, fdOfName(fedName)), frameDoor, `a text read from \\`${fedName}\\` that is not in the command`, (body) => recurse(body, shell, false, ` through \\`${name} ${fedName}\\``, [], aliasChain, false, sourceDoor()), { emptyIsUnheld: !inDefinition, road: !feedResidual });"), 'THE UNHELD TEXT: a standard input the hook holds no text for takes the unheld road instead of no road (behaviour: S22-dot-lt-file-set and the rows of part 1 and 2; the held texts: S22-ctl-dot-heredoc-set and the controls of part 4)');
-    assert.ok(hook.includes("else frameDoor.unheld('a file whose contents are not in the command');"), 'the file operand, literal or not, takes the same road (behaviour: S22-move-dot-file-notes, S22-move-dot-var-notes, S22-ctl-dot-file-set)');
+    assert.ok(hook.includes("const fedName = ops.length && ops[0].literal && isStdinName(ops[0].text) ? ops[0].text : null;") && hook.includes("const r = readInPlace(() => stdinBodies(idx, fdOfName(fedName)), frameDoor, `a text read from \\`${fedName}\\` that is not in the command`, (body) => recurse(body, shell, false, ` through \\`${name} ${fedName}\\``, [], aliasChain, false, sourceDoor()), { emptyIsUnheld: !inDefinition, road: !feedResidual });"), 'THE UNHELD TEXT: a standard input the hook holds no text for takes the unheld road instead of no road (behaviour: S22-dot-lt-file-set and the rows of part 1 and 2; the held texts: S22-ctl-dot-heredoc-set and the controls of part 4)');
+    assert.ok(hook.includes("else { frameDoor.unheld('a file whose contents are not in the command');"), 'the file operand, literal or not, takes the same road (behaviour: S22-move-dot-file-notes, S22-move-dot-var-notes, S22-ctl-dot-file-set)');
     assert.ok(hook.includes("const inDefinition = frames.some((f) => f.kind === 'function' && !f.running && !f.coproc);") && hook.includes("sourceDoor()), { emptyIsUnheld: !inDefinition, road: !feedResidual });"), 'inside a function body being defined the standard input is the call\'s, judged when the call is replayed (readInPlace\'s emptyIsUnheld; behaviour: S22-fn-dot-stdin-call-lt-file, S22-ctl-fn-dot-stdin-piped-text, S22-ctl-fn-dot-stdin-uncalled)');
     assert.ok(hook.includes("const frameDoor = frameText(seg, idx, cmd, `\\`${name}\\``);") && hook.includes("if (positionals !== null && positionals !== UNKNOWN_POSITIONALS) rebind(UNKNOWN_POSITIONALS, `${subject} may rebind the positional parameters`);") && hook.includes("moveUnknown(`${subject} may move the shell, so where the shell is when a later command runs is not known`);") && hook.includes("movedHere(); markFunctionBody();   // in a function body, the body moves the shell when the function is called (cdFunctions), as a literal cd there does"), 'the unheld road binds the list through the frame door, leaves the directory unknown and marks a function body it stands in (behaviour: S22-dot-lt-file-set, S22-ctl-dot-lt-file-subshell-set, S22-move-dot-lt-file-notes, S22-move-dot-file-fn)');
     assert.ok(hook.includes("const j = t.indexOf('p', 1);") && hook.includes("if (t.slice(1, j < 0 ? t.length : j).includes('t')) prints = true;") && hook.includes("hp = j + 1 < t.length ? sliceWord(args[k], j + 1) : args[++k];") && hook.includes("if (hp !== undefined && !prints) for (const n of args.slice(k)) if (n.literal) hashes.set(n.text, hp && hp.literal ? hp.text : null);"), 'THE GLUED PATH: the hash site reads a `p` anywhere in an option word, its value the glued rest or the next word, the last `p` winning, a `t` binding nothing (behaviour: S22-hash-p-glued-cp, S22-hash-dp-glued, S22-hash-p-glued-last-wins, S22-ctl-hash-tp-glued, S22-ctl-hash-p-sep-cp)');
@@ -12248,7 +12050,369 @@ test("round 7, twenty-fourth commit: where THE OPTION GRAMMAR lives (the rows ab
   assert.ok(hook.includes("if (shell === 'dash' && name === 'stdin') s = sign === '-';") && hook.includes("if (shell === 'zsh') { const n = name.toLowerCase().replace(/[_-]/g, ''); if (n === 'shinstdin' || n === 'stdin') s = sign === '-'; else if (n === 'noshinstdin' || n === 'nostdin') s = sign !== '-'; }"), "the standard input's option by name (behaviour: X-dash-o-stdin-pipe-nad, X-zsh-o-shinstdin-pipe-nad, X-zsh-o-stdin-pipe, X-zsh-plus-o-noshinstdin-pipe; X-ctl-zsh-o-noshinstdin-pipe stays allowed)");
   assert.ok(hook.includes("else if (shell === 'zsh' && /^[-+]-/.test(t)) { byName(t.slice(2), t[0]); continue; }"), "zsh's long option names, `+-NAME` turning one off (behaviour: X-zsh-long-shinstdin-pipe, X-zsh-long-shin-stdin-pipe, X-zsh-long-stdin-pipe, Z-zsh-plusdash-noshinstdin-pipe; Z-ctl-zsh-plusdash-shinstdin-pipe stays allowed)");
   assert.ok(hook.includes('const valueMoves = (w) => !!w && !w.literal && procsubOf(w) == null && !dqSingleField(w.raw);') && hook.includes("const nameUnread = (w) => (shell === 'dash' || shell === 'zsh') && !!w && !w.literal && procsubOf(w) == null;") && hook.includes('if (j < args.length - 1 && (valueMoves(w) || (isName && nameUnread(w)))) return done({ optionWord: w, at: j, takenBy: t, name: isName && !valueMoves(w) });') && hook.includes('if (isName && w && w.literal) byName(w.text, t[0]);'), 'a value word that may become no word or several, or an option name dash or zsh may read as the standard input\'s, is the option word, and a literal name is read (behaviour: V-zsh-o-empty-nad, V-bash-o-split-nad, V-bash-o-unknown-nad, X-zsh-o-var-shinstdin-pipe, X-zsh-o-unread-name-pipe, X-dash-o-stdin-pipe-nad; V-ctl-bash-o-quoted-read-nad stays allowed)');
-  assert.ok(hook.includes("if (c) return done(shell === 'dash' && s ? { script: operand || null, stdin: true, fd: null } : { script: operand || null });") && hook.includes("if (sh.stdin) {   // after a `-c` text too where the shell runs both (THE OPTION GRAMMAR: dash's `-sc`)"), "dash runs its `-c` text and then its standard input (behaviour: X-dash-sc-pipe-nad, X-dash-ostdin-c-pipe; X-ctl-bash-sc-pipe and X-ctl-zsh-sc-pipe stay allowed)");
+  assert.ok(hook.includes("if (c) return done(shell === 'dash' && s ? { script: operand || null, stdin: true, fd: null, argsAt: operand ? at(operand) + 1 : args.length } : { script: operand || null, argsAt: operand ? at(operand) + 1 : args.length });") && hook.includes("if (sh.stdin) {   // after a `-c` text too where the shell runs both (THE OPTION GRAMMAR: dash's `-sc`)"), "dash runs its `-c` text and then its standard input (behaviour: X-dash-sc-pipe-nad, X-dash-ostdin-c-pipe; X-ctl-bash-sc-pipe and X-ctl-zsh-sc-pipe stay allowed)");
   assert.ok(hook.includes("const readShell = (argv, budget) => { const parsed = shellScript(argv, name); for (const sh of parsed.perGrammar || [parsed]) readReading(argv, budget, sh); };"), 'every reading is read (behaviour: S-sh-oglued, S-ksh-O)');
   assert.ok(hook.includes("const pieces = /^\"/.test(ow.raw) ? [lit(t)] : t.split(/[ \\t\\n]+/).filter(Boolean).map(lit);"), 'an empty unquoted text in option position is no word (behaviour: E-bash-empty-option-nad, E-zsh-emu-empty-after-nad; E-ctl-bash-quoted-empty-option-nad stays allowed)');
+});
+
+// ── round 7 of fork PR #780 review, twenty-fifth commit (2026-09-23): the reviewer's extra5-2 as ruled (option (a)) and Q1 ──
+//
+// THE RESIDUAL TABLE's ninth class, 'a positional the resolver reads at the word by a model the shell does not keep', was keyed on readings the
+// resolver made and got wrong, 152 pinned allows of writes onto tracked files: the reviewer ruled it no property and ruled the four sites sound or
+// unresolvable. THE EMPTY POSITIONAL (posKnown reads the element's text for the colon forms, `$@` and `$*` set under the colon form only when their
+// elements joined by one blank are not empty), THE KNOWN SET (a name known set from the readability rule alone, `setNow` for a plain assignment of a
+// value it does not read; THE HEAD CANDIDATES, a union over the command, never say a name is set), THE LIST AT THE WORD (a positional parameter read
+// from the list the walk holds, THE LIST BEFORE THE WALK a union with values not read beside it, THE VALUE AT THE WALK noting each assignment again
+// where the walk performs it) and THE SUBSCRIPTED POSITIONAL beyond one numeric index (UNRESOLVABLE where zsh may run the line, on the head, script,
+// operand and target roads; a subscript's flags read into the word). Every row of the class is refused now: the 137 the table held are below with
+// the shells that write (the other 15 left with the nineteenth commit and stand in its rows), and the class is gone from RESIDUAL_CLASSES and from
+// every surface the property stands on. THE UNREAD OPERAND (the reviewer's Q1): a command whose name, script or piped script is a text the resolver
+// does not read is refused by name where a literal operand names a tracked file, and stays allowed where none does; the table's rows that it refuses
+// left the table and are below too. Each row runs through the hook as a process from its cwd (and from a cwd in no project, where a relative operand
+// names no tracked file), then unguarded in bash, zsh and dash over a fresh world, the writers pinned (r7-b25-*.log in the notes).
+const NINTH_CLASS = 'a positional the resolver reads at the word by a model the shell does not keep';
+test("round 7, twenty-fifth commit, the rows: every row of the ninth residual class is refused (the element's text for the colon forms, the known set from the readability rule, the list the walk holds at the word, zsh's subscripts beyond one numeric index unresolvable) and the class is gone; a command whose name, script or piped script the resolver does not read is refused by name where a literal operand names a tracked file and allowed where none does; each with the shells that write", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const BD = ['bash', 'dash'];
+    const BZ = ['bash', 'zsh'];
+    const Z = ['zsh'];
+    const B = ['bash'];
+    const N = [];
+    const SUBSCRIPT_NOT_READ = ['text', 'selects from the positional parameters through a subscript I do not read'];
+    const GLUED_EXPANSION = ['text', 'glues an element of the positional parameters to another expansion'];
+    const SAME_COMMAND = ['text', 'in the same command'];
+    const VALUE_NOT_READ = ['text', 'is composed from `$1`'];
+    const toolPresent = (p) => _spawnSync('sh', ['-c', `command -v ${p}`], { encoding: 'utf8' }).status === 0;   // plumbing, as the table's own check
+    // [id, cwd, command, the shells that write (measured), the verdict ('allow', 'name', or ['text', a substring of the reason]), the verdict from a cwd in
+    // no project ('allow' unless given; null: not asked, the row's own cwd is that cwd or the row says why), the program the row needs besides the shells]
+    const rows = [
+      // 1. the ninth class's 137 rows, left the table (THE EMPTY POSITIONAL 30, THE STALE POSITIONAL CANDIDATE 31, THE KNOWN SET 16, THE SUBSCRIPTED
+      // POSITIONAL 60); RT-ep-eval-ln-f from a cwd in no project is refused too: its two readings (with `x` and without) are walked one after the other and
+      // the first's link is recorded before the second's target is judged (the mutated rule), a cost recorded, not changed here
+      ["S25-RT-ep-eval", "nad", "set -- ''; eval cp ${1:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-ep-eval-second-elem", "nad", "set -- '' b; eval cp ${1:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-ep-eval-pos2", "nad", "set -- a ''; eval cp ${2:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-ep-bash-c", "nad", "set -- ''; bash -c \"cp ${1:+x} ../base/report.md report.md\"", A, 'name'],
+      ["S25-RT-ep-sh-c", "nad", "set -- ''; sh -c \"cp ${1:+x} ../base/report.md report.md\"", A, 'name'],
+      ["S25-RT-ep-eval-dq-word", "nad", "set -- ''; eval cp \"${1:+x}\" ../base/report.md report.md", A, 'name'],
+      ["S25-RT-ep-eval-dq-text", "nad", "set -- ''; eval \"cp ${1:+x} ../base/report.md report.md\"", A, 'name'],
+      ["S25-RT-ep-dq-empty", "nad", "set -- \"\"; eval cp ${1:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-ep-eval-install", "nad", "set -- ''; eval install ${1:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-ep-eval-mv", "nad", "set -- ''; eval mv ${1:+x} ../base/report.md report.md", A, SAME_COMMAND],
+      ["S25-RT-ep-eval-ln-f", "nad", "set -- ''; eval ln -f ${1:+x} ../base/report.md report.md", A, SAME_COMMAND, null],
+      ["S25-RT-ep-eval-redirect", "nad", "set -- ''; eval \"echo x > ${1:+x}report.md\"", A, 'name'],
+      ["S25-RT-ep-subshell", "nad", "set -- ''; ( eval cp ${1:+x} ../base/report.md report.md )", A, 'name'],
+      ["S25-RT-ep-group", "nad", "set -- ''; { eval cp ${1:+x} ../base/report.md report.md; }", A, 'name'],
+      ["S25-RT-ep-and-true", "nad", "set -- ''; eval cp ${1:+x} ../base/report.md report.md && true", A, 'name'],
+      ["S25-RT-ep-then-echo", "nad", "set -- ''; eval cp ${1:+x} ../base/report.md report.md; echo", A, 'name'],
+      ["S25-RT-ep-then-colon", "nad", "set -- ''; eval cp ${1:+x} ../base/report.md report.md; :", A, 'name'],
+      ["S25-RT-ep-true-first", "nad", "true; set -- ''; eval cp ${1:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-ep-stderr-null", "nad", "set -- ''; eval cp ${1:+x} ../base/report.md report.md 2>/dev/null", A, 'name'],
+      ["S25-RT-ep-shift-onto-empty", "nad", "set -- a ''; shift; eval cp ${1:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-ep-empty-first", "nad", "set -- '' a; eval cp ${1:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-ep-set-twice", "nad", "set -- ''; set -- ''; eval cp ${1:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-ep-two-empty-pos2", "nad", "set -- '' ''; eval cp ${2:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-ep-at", "nad", "set -- ''; eval cp ${@:+x} ../base/report.md report.md", BD, 'name'],
+      ["S25-RT-ep-star", "nad", "set -- ''; eval cp ${*:+x} ../base/report.md report.md", BD, 'name'],
+      ["S25-RT-ep-dq-empty-at", "nad", "set -- \"\"; eval cp ${@:+x} ../base/report.md report.md", BD, 'name'],
+      ["S25-RT-ep-notes", "nan", "set -- ''; eval cp ${1:+x} ../base/report.md n1.md", A, 'name'],
+      ["S25-RT-ep-root", "na", "set -- ''; eval cp ${1:+x} base/report.md docs/report.md", A, 'name'],
+      ["S25-RT-ep-out", "out", "set -- ''; eval cp ${1:+x} {NA}/base/report.md {NA}/docs/report.md", A, 'name', null],
+      ["S25-RT-ep-scratch", "nas", "set -- ''; eval cp ${1:+x} ../base/report.md ../docs/report.md", A, 'name'],
+      ["S25-RT-sp-braced-head", "nad", "set -- a; shift; ${1}cp ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sp-bare-head", "nad", "set -- a; shift; $1cp ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sp-shift-2", "nad", "set -- a b; shift 2; ${1}cp ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sp-shift-pos2", "nad", "set -- a b; shift; ${2}cp ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sp-set-empty", "nad", "set -- a; set --; ${1}cp ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sp-twice-glued", "nad", "set -- a; shift; ${1}c${1}p ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sp-dq-head", "nad", "set -- a; shift; \"${1}\"cp ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sp-dq-tail", "nad", "set -- a; shift; $1\"cp\" ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sp-two-letter", "nad", "set -- ab; shift; ${1}cp ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sp-eval-head", "nad", "set -- a; shift; eval \"${1}cp ../base/report.md report.md\"", A, 'name'],
+      ["S25-RT-sp-bash-c-head", "nad", "set -- a; shift; bash -c \"${1}cp ../base/report.md report.md\"", A, 'name'],
+      ["S25-RT-sp-sed", "nad", "set -- a; shift; ${1}sed -i 's/^/x/' report.md", A, 'name'],
+      ["S25-RT-sp-tee", "nad", "set -- a; shift; ${1}tee report.md < ../base/report.md", A, 'name'],
+      ["S25-RT-sp-pipe-consumer", "nad", "set -- a; shift; echo 'cp ../base/report.md report.md' | ${1}bash", A, 'name'],
+      ["S25-RT-sp-procsub-consumer", "nad", "set -- a; shift; ${1}bash <(echo 'cp ../base/report.md report.md')", BZ, 'name'],
+      ["S25-RT-sp-notes", "nan", "set -- a; shift; ${1}cp ../base/report.md n1.md", A, 'name'],
+      ["S25-RT-sp-root", "na", "set -- a; shift; ${1}cp base/report.md docs/report.md", A, 'name'],
+      ["S25-RT-sp-out", "out", "set -- a; shift; ${1}cp {NA}/base/report.md {NA}/docs/report.md", A, 'name', null],
+      ["S25-RT-sp-out-bound", "out", "cp /usr/bin/cp {OUT}/scratch/c; PATH={OUT}/scratch:$PATH; set -- a; shift; ${1}c {NA}/base/report.md {NA}/docs/report.md", A, 'name', null],
+      ["S25-RT-sp-eval-target", "nad", "set -- a; shift; eval \"cp ../base/report.md ${1}report.md\"", A, 'name'],
+      ["S25-RT-sp-bash-c-target", "nad", "set -- a; shift; bash -c \"cp ../base/report.md ${1}report.md\"", A, 'name'],
+      ["S25-RT-sp-sh-c-target", "nad", "set -- a; shift; sh -c \"cp ../base/report.md ${1}report.md\"", A, 'name'],
+      ["S25-RT-sp-eval-redirect", "nad", "set -- a; shift; eval \"echo x > ${1}report.md\"", A, 'name'],
+      ["S25-RT-sp-eval-bare-target", "nad", "set -- a; shift; eval \"cp ../base/report.md $1report.md\"", A, 'name'],
+      ["S25-RT-sp-eval-pos2-target", "nad", "set -- a b; shift; eval \"cp ../base/report.md ${2}report.md\"", A, 'name'],
+      ["S25-RT-sp-set-empty-target", "nad", "set -- a; set --; eval \"cp ../base/report.md ${1}report.md\"", A, 'name'],
+      ["S25-RT-sp-eval-target-then-echo", "nad", "set -- a; shift; eval \"cp ../base/report.md ${1}report.md\"; echo", A, 'name'],
+      ["S25-RT-sp-eval-tee-target", "nad", "set -- a; shift; eval \"tee ${1}report.md < ../base/report.md\"", A, 'name'],
+      ["S25-RT-sp-eval-install-target", "nad", "set -- a; shift; eval \"install ../base/report.md ${1}report.md\"", A, 'name'],
+      ["S25-RT-sp-root-target", "na", "set -- a; shift; eval \"cp base/report.md docs/${1}report.md\"", A, 'name'],
+      ["S25-RT-sp-out-target", "out", "set -- a; shift; eval \"cp {NA}/base/report.md {NA}/docs/${1}report.md\"", A, 'name', null],
+      ["S25-RT-sb-unset", "nad", "c=a; unset c; eval cp ${c:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sb-unset-plus", "nad", "c=a; unset c; eval cp ${c+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sb-unset-v", "nad", "c=a; unset -v c; eval cp ${c:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sb-reassign-default", "nad", "c=a; c=${d:-}; eval cp ${c:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sb-read", "nad", "c=a; read -r c < /dev/null; eval cp ${c:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sb-body-unset", "nad", "c=a; f() { unset c; }; f; eval cp ${c:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sb-body-local", "nad", "f() { local c=a; }; f; eval cp ${c:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sb-if-false", "nad", "if false; then c=a; fi; eval cp ${c:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sb-and-false", "nad", "false && c=a; eval cp ${c:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sb-subshell", "nad", "(c=a); eval cp ${c:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sb-pipe", "nad", "true | c=a; eval cp ${c:+x} ../base/report.md report.md", BD, 'name'],
+      ["S25-RT-sb-substitution", "nad", "x=$(c=a); eval cp ${c:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sb-background", "nad", "c=a & wait; eval cp ${c:+x} ../base/report.md report.md", BD, 'name'],
+      ["S25-RT-sb-prefix-true", "nad", "c=a true; eval cp ${c:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sb-prefix-bin-true", "nad", "c=a /bin/true; eval cp ${c:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-sb-unset-bash-c", "nad", "c=a; unset c; bash -c \"cp ${c:+x} ../base/report.md report.md\"", A, 'name'],
+      ["S25-RT-zs-star-head", "nad", "$argv[*] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-at-head", "nad", "$argv[@] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-atstar-head", "nad", "$@[*] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-atat-head", "nad", "$@[@] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-starat-head", "nad", "$*[@] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-plus1-head", "nad", "$argv[+1] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-arith-1plus0-head", "nad", "$argv[1+0] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-arith-2minus1-head", "nad", "$argv[2-1] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-arith-1times1-head", "nad", "$argv[1*1] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-arith-sub-head", "nad", "$argv[$((1))] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-quoted-index-head", "nad", "$argv[\"1\"] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-flag-r-head", "nad", "$argv[(r)x] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-flag-w-head", "nad", "$argv[(w)1] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-flag-R-head", "nad", "$argv[(R)x] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-flag-k-head", "nad", "$argv[(k)x] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-glued-two-head", "nad", "$argv[1]$argv[2] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-glued-same-head", "nad", "$argv[1]$argv[1] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-glued-three-head", "nad", "$argv[1]$argv[1]$argv[1] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-glued-argv-at-head", "nad", "$argv[1]$@[1] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-glued-star-star-head", "nad", "$argv[*]$argv[*] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-glued-braced-name-head", "nad", "$argv[1]${c} cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-braced-name-glued-head", "nad", "${c}$argv[1] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-bare-name-glued-head", "nad", "$c$argv[1] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-glued-name-between-head", "nad", "$argv[1]$c$argv[2] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-braced-elem-glued-head", "nad", "${argv[1]}$argv[2] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-glued-positional-head", "nad", "$argv[1]${1} cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-positional-glued-head", "nad", "$1$argv[1] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-glued-sub-head", "nad", "$argv[1]$(true) cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-sub-glued-head", "nad", "$(true)$argv[1] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-glued-braced-elem-head", "nad", "$argv[1]${argv[1]} cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-star-twice-head", "nad", "$argv[*] $argv[*] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-star-glued-cp", "nad", "$argv[*]cp ../base/report.md report.md", Z, SUBSCRIPT_NOT_READ],
+      ["S25-RT-zs-at-glued-cp", "nad", "$argv[@]cp ../base/report.md report.md", Z, SUBSCRIPT_NOT_READ],
+      ["S25-RT-zs-flag-glued-cp", "nad", "$argv[(r)x]cp ../base/report.md report.md", Z, SUBSCRIPT_NOT_READ],
+      ["S25-RT-zs-plus1-glued-cp", "nad", "$argv[+1]cp ../base/report.md report.md", Z, SUBSCRIPT_NOT_READ],
+      ["S25-RT-zs-star-printer", "nad", "$argv[*] echo 'cp ../base/report.md report.md' | bash", Z, SUBSCRIPT_NOT_READ],
+      ["S25-RT-zs-at-printer", "nad", "$argv[@] echo 'cp ../base/report.md report.md' | bash", Z, SUBSCRIPT_NOT_READ],
+      ["S25-RT-zs-flag-printer", "nad", "$argv[(r)x] echo 'cp ../base/report.md report.md' | bash", Z, SUBSCRIPT_NOT_READ],
+      ["S25-RT-zs-glued-printer", "nad", "$argv[1]$argv[2] echo 'cp ../base/report.md report.md' | bash", Z, GLUED_EXPANSION],
+      ["S25-RT-zs-fed-star", "nad", "zsh -c '$argv[*] cp ../base/report.md report.md'", A, 'name'],
+      ["S25-RT-zs-fed-at", "nad", "zsh -c '$argv[@] cp ../base/report.md report.md'", A, 'name'],
+      ["S25-RT-zs-fed-glued", "nad", "zsh -c '$argv[1]$argv[2] cp ../base/report.md report.md'", A, 'name'],
+      ["S25-RT-zs-fed-flag", "nad", "zsh -c '$argv[(r)x] cp ../base/report.md report.md'", A, 'name'],
+      ["S25-RT-zs-body-star", "nad", "f() { $argv[*] cp ../base/report.md report.md; }; f", Z, 'name'],
+      ["S25-RT-zs-body-at", "nad", "f() { $argv[@] cp ../base/report.md report.md; }; f", Z, 'name'],
+      ["S25-RT-zs-body-glued", "nad", "f() { $argv[1]$argv[2] cp ../base/report.md report.md; }; f", Z, 'name'],
+      ["S25-RT-zs-eval-at", "nad", "eval '$argv[@] cp ../base/report.md report.md'", Z, 'name'],
+      ["S25-RT-zs-star-sed", "nad", "$argv[*] sed -i 's/^/x/' report.md", Z, 'name'],
+      ["S25-RT-zs-at-tee", "nad", "$argv[@] tee report.md < ../base/report.md", Z, 'name'],
+      ["S25-RT-zs-set-empty-glued", "nad", "set --; $argv[1]$argv[2] cp ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-operand-at", "nad", "cp $argv[@] ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-operand-star", "nad", "cp $argv[*] ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-operand-plus1", "nad", "cp $argv[+1] ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-operand-arith", "nad", "cp $argv[1+0] ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zs-notes-star", "nan", "$argv[*] cp ../base/report.md n1.md", Z, 'name'],
+      ["S25-RT-zs-notes-at", "nan", "$argv[@] cp ../base/report.md n1.md", Z, 'name'],
+      ["S25-RT-zs-root-at", "na", "$argv[@] cp base/report.md docs/report.md", Z, 'name'],
+      ["S25-RT-zs-out-star", "out", "$argv[*] cp {NA}/base/report.md {NA}/docs/report.md", Z, 'name', null],
+      ["S25-RT-zs-out-glued", "out", "$argv[1]$argv[2] cp {NA}/base/report.md {NA}/docs/report.md", Z, 'name', null],
+      ["S25-RT-zs-out-flag", "out", "$argv[(r)x] cp {NA}/base/report.md {NA}/docs/report.md", Z, 'name', null],
+      // 2. the table's rows of other classes THE UNREAD OPERAND refuses (a command name the resolver never reads, handed a literal operand naming the tracked
+      // file), left the table
+      ["S25-RT-array-head", "nad", "cmd=(cp); \"${cmd[@]}\" ../base/report.md report.md", BZ, 'name'],
+      ["S25-RT-loop-head", "nad", "for c in cp; do $c ../base/report.md report.md; done", A, 'name'],
+      ["S25-RT-printf-v-head", "nad", "printf -v c cp; $c ../base/report.md report.md", BZ, 'name'],
+      ["S25-RT-read-head", "nad", "read c <<< cp; $c ../base/report.md report.md", BZ, 'name'],
+      ["S25-RT-which-head", "nad", "$(which cp) ../base/report.md report.md", A, 'name', 'allow', "which"],
+      ["S25-RT-command-v-head", "nad", "\"$(command -v cp)\" ../base/report.md report.md", A, 'name'],
+      ["S25-RT-strip-prefix-head", "nad", "c=xcp; ${c#x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-strip-suffix-head", "nad", "c=cpx; ${c%x} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-substring-head", "nad", "c=xcp; ${c:1} ../base/report.md report.md", BZ, 'name'],
+      ["S25-RT-pattern-head", "nad", "c=cx; ${c/x/p} ../base/report.md report.md", BZ, 'name'],
+      ["S25-RT-lowercase-head", "nad", "c=CP; ${c,,} ../base/report.md report.md", B, 'name'],
+      ["S25-RT-indirect-head", "nad", "c=d; d=cp; ${!c} ../base/report.md report.md", B, 'name'],
+      ["S25-RT-array-index-head", "nad", "declare -a a=(cp); ${a[0]} ../base/report.md report.md", B, 'name'],
+      ["S25-RT-mapfile-head", "nad", "mapfile -t a <<< cp; ${a[0]} ../base/report.md report.md", B, 'name'],
+      ["S25-RT-zsh-lower-head", "nad", "c=CP; ${c:l} ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zsh-P-head", "nad", "c=d; d=cp; ${(P)c} ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zsh-e-head", "nad", "c=cp; ${(e)c} ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zsh-tilde-head", "nad", "c=cp; ${~c} ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zsh-L-head", "nad", "c=CP; ${(L)c} ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-zsh-modifier-head", "nad", "c=cx; ${c:s/x/p/} ../base/report.md report.md", Z, 'name'],
+      ["S25-RT-quote-modifier-head", "nad", "c=cp; ${c:q} ../base/report.md report.md", BZ, 'name'],
+      ["S25-RT-substring-length-head", "nad", "c=cpx; ${c:0:2} ../base/report.md report.md", BZ, 'name'],
+      ["S25-RT-substring-zero-head", "nad", "c=cp; ${c:0} ../base/report.md report.md", BZ, 'name'],
+      ["S25-RT-lowercase-first-head", "nad", "c=Cp; ${c,} ../base/report.md report.md", B, 'name'],
+      ["S25-RT-at-P-head", "nad", "c=cp; ${c@P} ../base/report.md report.md", B, 'name'],
+      ["S25-RT-at-E-head", "nad", "c=cp; ${c@E} ../base/report.md report.md", B, 'name'],
+      ["S25-RT-pattern-all-head", "nad", "c=cxp; ${c//x} ../base/report.md report.md", BZ, 'name'],
+      ["S25-RT-strip-empty-prefix-head", "nad", "c=cp; ${c#} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-strip-one-suffix-head", "nad", "c=cpx; ${c%?} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-array-star-head", "nad", "c=(cp); ${c[*]} ../base/report.md report.md", BZ, 'name'],
+      ["S25-RT-array-at-unquoted-head", "nad", "c=(cp); ${c[@]} ../base/report.md report.md", BZ, 'name'],
+      ["S25-RT-assoc-head", "nad", "declare -A m=([x]=cp); ${m[x]} ../base/report.md report.md", BZ, 'name'],
+      ["S25-RT-subscript-assign-head", "nad", "c[0]=cp; ${c[0]} ../base/report.md report.md", B, 'name'],
+      ["S25-RT-scalar-index-head", "nad", "c=cp; ${c[0]} ../base/report.md report.md", B, 'name'],
+      ["S25-RT-scalar-at-head", "nad", "c=cp; ${c[@]} ../base/report.md report.md", BZ, 'name'],
+      ["S25-RT-array-append-index-head", "nad", "c=(cp); c+=(x); ${c[0]} ../base/report.md report.md", B, 'name'],
+      ["S25-RT-getopts-optarg-head", "nad", "getopts c: o -c cp; $OPTARG ../base/report.md report.md", A, 'name'],
+      ["S25-RT-reply-head", "nad", "read <<< cp; $REPLY ../base/report.md report.md", BZ, 'name'],
+      ["S25-RT-select-head", "nad", "select c in cp; do $c ../base/report.md report.md; break; done <<< 1", BZ, 'name'],
+      ["S25-RT-loop-var-after-loop", "nad", "for c in cp; do :; done; $c ../base/report.md report.md", A, 'name'],
+      ["S25-RT-glued-silent-sub-head", "nad", "c=cp; $c$(:) ../base/report.md report.md", A, 'name'],
+      ["S25-RT-glued-true-sub-head", "nad", "c=cp; $c$(true) ../base/report.md report.md", A, 'name'],
+      ["S25-RT-glued-backtick-head", "nad", "c=cp; $c`:` ../base/report.md report.md", A, 'name'],
+      ["S25-RT-glued-strip-head", "nad", "c=cp; $c${x#y} ../base/report.md report.md", A, 'name'],
+      ["S25-RT-fresh-shell-positional-head", "nad", "bash -c '$1 ../base/report.md report.md' _ cp", A, 'name'],
+      ["S25-RT-positional-strip-head", "nad", "f() { ${1#x} ../base/report.md report.md; }; f xcp", A, 'name'],
+      ["S25-RT-positional-substring-head", "nad", "f() { ${1:0:2} ../base/report.md report.md; }; f cpx", BZ, 'name'],
+      ["S25-RT-positional-indirect-head", "nad", "f() { ${!1} ../base/report.md report.md; }; c=cp; f c", B, 'name'],
+      ["S25-RT-underscore-head", "nad", "true /usr/bin/cp; $_ ../base/report.md report.md", BZ, 'name'],
+      ["S25-RT-type-P-head", "nad", "$(type -P cp) ../base/report.md report.md", B, 'name'],
+      ["S25-RT-realpath-head", "nad", "$(realpath /usr/bin/cp) ../base/report.md report.md", A, 'name', 'allow', "realpath"],
+      ["S25-RT-readlink-head", "nad", "$(readlink -f /usr/bin/cp) ../base/report.md report.md", A, 'name'],
+      ["S25-RT-basename-head", "nad", "$(basename /usr/bin/cp) ../base/report.md report.md", A, 'name'],
+      // 3. the ninth class's population beyond the table, derived over the four sites: a name's value composed from a positional read at the pre-walk (a
+      // `shift` or `set` in a subshell, an eval's `set` the pre-walk read cannot see, a name composed from such a name, a head before the `set`, a splice
+      // of a text holding one: the verifier's F-head-var-from-positional and F-script-head-splice-text among them), zsh's `argv` glued to text where the
+      // list is held, a subscript's flags as an operand and from the root, the colon forms over an empty value; and the twins the readings keep
+      ["S25-b-subshell-shift-name", "nad", "set -- cp; (shift); c=$1; $c ../base/report.md report.md", A, VALUE_NOT_READ],
+      ["S25-b-subshell-set-name", "nad", "set -- cp; (set -- ls); c=$1; $c ../base/report.md report.md", A, VALUE_NOT_READ],
+      ["S25-b-eval-set-name", "nad", "set -- x; eval 'set -- cp'; c=$1; $c ../base/report.md report.md", A, 'name'],
+      ["S25-b-composed-name", "nad", "set -- x; eval 'set -- cp'; d=$1; c=$d; $c ../base/report.md report.md", A, 'name'],
+      ["S25-b-head-before-set", "nad", "${1}cp ../base/report.md report.md; set -- x", A, 'name'],
+      ["S25-b-splice-text", "nad", "set -- report.md; (set -- other.md); c=\"cp ../base/report.md $1\"; $c", BD, VALUE_NOT_READ],
+      ["S25-b-argv-glued-held", "nad", "set -- c; $argv[1]p ../base/report.md report.md", Z, 'name'],
+      ["S25-b-argv-braced-glued-held", "nad", "set -- c; ${argv}p ../base/report.md report.md", Z, ['text', "`argv` in the word `${argv}p` is the positional parameters glued to other text"]],
+      ["S25-b-flag-operand", "nad", "cp $argv[(w)1] ../base/report.md report.md", Z, 'name'],
+      ["S25-b-flag-root", "na", "$argv[(r)x] cp base/report.md docs/report.md", Z, 'name'],
+      ["S25-b-empty-colon-plus", "nad", "c=; eval cp ${c:+x} ../base/report.md report.md", A, 'name'],
+      ["S25-b-at-colon-empty", "nad", "set -- ''; eval cp ${*:+x} ../base/report.md report.md", BD, 'name'],
+      // a head read before the assignment it names, in a loop whose second pass runs it: the pre-walk read is the one read there, so a bind it
+      // cannot see (an eval, an alias) makes the value one beside values not read (seedPartial), and THE UNREAD OPERAND refuses the command
+      ["S25-b-loop-eval-bind", "nad", "set -- x; eval 'set -- cp'; for i in 1 2; do $c ../base/report.md report.md; c=$1; done", A, 'name'],
+      ["S25-b-loop-alias-bind", "nad", "set -- x; alias s='set -- cp'\ns; for i in 1 2; do $c ../base/report.md report.md; c=$1; done", ['dash'], 'name'],
+      ["S25-b-loop-seen-bind", "nad", "set -- x; set -- cp; for i in 1 2; do $c ../base/report.md report.md; c=$1; done", A, 'name'],
+      ["S25-b-twin-set-list", "nad", "set -- ls; c=$1; $c ../base/report.md report.md", N, 'allow'],
+      ["S25-b-twin-call-shadow", "nad", "set -- x; f() { :; }; f cp; ${1}cp ../base/report.md report.md", N, 'allow'],
+      ["S25-b-twin-name-set", "nad", "c=a; eval cp ${c:+x} ../base/report.md report.md", N, 'allow'],
+      ["S25-b-twin-pos-set", "nad", "set -- a; eval cp ${1:+x} ../base/report.md report.md", N, 'allow'],
+      ["S25-b-twin-at-two-empty", "nad", "set -- '' ''; eval cp ${@:+x} ../base/report.md report.md", N, 'allow'],
+      ["S25-b-twin-at-empty-then-set", "nad", "set -- '' a; eval cp ${@:+x} ../base/report.md report.md", N, 'allow'],
+      ["S25-b-twin-empty-plus", "nad", "c=; eval cp ${c+x} ../base/report.md report.md", N, 'allow'],
+      // 4. THE UNREAD OPERAND's population: the head road over every spelling of the tracked operand (a relative, `./`, `../` path, a quoted word, a brace
+      // list, a pattern, a value the command gives, an option's glued value, an absolute path from a cwd in no project, the tracked notes/ folder's
+      // existing note and a new one), a command inside eval's text or a `-c` text whose name was not read (the prelude verifier's E8 and E9, which
+      // every shell copies through), the script roads (a `-c` text, a sourced file, a process substitution, a pipe and a here-string not read), the
+      // rows where a shell writes, and a relative operand after a `cd` the walk does not follow (a cost: whether it names a tracked file is not known)
+      ["S25-q-cmdv-cat-root", "na", "$(command -v cat) docs/report.md", N, 'name'],
+      ["S25-q-cmdv-ls-root", "na", "$(command -v ls) -l docs/report.md", N, 'name'],
+      ["S25-q-cc-report", "na", "$CC docs/report.md", N, 'name'],
+      ["S25-q-at-report", "na", "\"$@\" docs/report.md", N, 'name'],
+      ["S25-q-glob", "nad", "$c *.md", N, 'name'],
+      ["S25-q-optval", "na", "$c --out=docs/report.md", N, 'name'],
+      ["S25-q-notes-new", "nan", "$c ../base/report.md new.md", N, 'name'],
+      ["S25-q-notes-existing", "nan", "$c ../base/report.md n1.md", N, 'name'],
+      ["S25-q-out-abs", "out", "$c {NA}/base/report.md {NA}/docs/report.md", N, 'name', null],
+      ["S25-q-var-op", "nad", "t=report.md; $c ../base/report.md $t", N, 'name'],
+      ["S25-q-dot-slash", "nad", "$c ./report.md", N, 'name'],
+      ["S25-q-up-path", "nas", "$c ../docs/report.md", N, 'name'],
+      ["S25-q-quoted", "nad", "$c \"report.md\"", N, 'name'],
+      ["S25-q-brace", "nad", "$c {report,a}.md", N, 'name'],
+      ["S25-q-unknowndir", "na", "cd \"$d\"; $c x.md", N, ['text', 'its command named by `$c` names x.md, a relative path, and the directory it is relative to is not known']],
+      ["S25-q-E8", "na", "eval \"$(command -v cp) base/report.md docs/report.md\"", A, 'name'],
+      ["S25-q-E9", "na", "eval $(command -v cp) base/report.md docs/report.md", A, 'name'],
+      ["S25-q-eval-var", "na", "eval \"$c base/report.md docs/report.md\"", N, 'name'],
+      ["S25-q-bashc-head", "na", "bash -c \"$x docs/report.md\"", N, 'name'],
+      ["S25-q-bashc-cmdv", "na", "bash -c \"$(command -v cp) base/report.md docs/report.md\"", A, 'name'],
+      ["S25-q-source-var", "na", ". \"$f\" docs/report.md", N, 'name'],
+      ["S25-q-procsub", "na", "bash <(cat scratch/other.md) docs/report.md", N, 'name'],
+      ["S25-q-pipe", "na", "cat scratch/other.md | sh -s -- docs/report.md", N, 'name'],
+      ["S25-q-pipe-s", "nad", "cat ../scratch/other.md | bash -s report.md", N, 'name'],
+      ["S25-q-herestring", "na", "bash -s docs/report.md <<< \"$x\"", N, 'name'],
+      ["S25-q-heredoc", "na", "bash -s docs/report.md <<EOF\n$x\nEOF", N, 'name'],
+      ["S25-q-w-pipe", "nad", "printf 'cp ../base/report.md \"$1\"\\n' > ../scratch/s.sh; cat ../scratch/s.sh | bash -s report.md", A, 'name'],
+      ["S25-q-w-source", "nad", "printf 'cp ../base/report.md \"$1\"\\n' > ../scratch/s.sh; read f <<< ../scratch/s.sh; . \"$f\" report.md", BZ, 'name'],
+      ["S25-q-w-procsub", "nad", "printf 'cp ../base/report.md \"$1\"\\n' > ../scratch/s.sh; bash <(cat ../scratch/s.sh) report.md", BZ, 'name'],
+      // 5. its twins: no literal operand names a tracked file (the corpus's everyday shapes, an untracked operand, a pattern matching nothing, a command
+      // of the text that is not the one not read), a script file spelled out (a file, the reader class's), a read of the file by name, a positional
+      // head the walk holds the list for, a body being defined (its call is replayed), a fed text the resolver reads
+      ["S25-q-twin-cc", "na", "$CC f.c", N, 'allow'],
+      ["S25-q-twin-cmdv-l", "na", "$(command -v ls) -l", N, 'allow'],
+      ["S25-q-twin-untracked", "nad", "$c ../base/report.md ../scratch/x.md", N, 'allow'],
+      ["S25-q-twin-glob-none", "nad", "$c *.txt", N, 'allow'],
+      ["S25-q-twin-script-file", "na", "bash run.sh docs/report.md", N, 'allow'],
+      ["S25-q-twin-literal-cat", "na", "cat docs/report.md", N, 'allow'],
+      ["S25-q-twin-pipe-no-operand", "na", "cat scratch/other.md | sh", N, 'allow'],
+      ["S25-q-twin-bashc-tail", "na", "bash -c \"cat docs/report.md; $x\"", N, 'allow'],
+      ["S25-q-twin-eval-tail", "na", "eval \"cat docs/report.md; $x\"", N, 'allow'],
+      ["S25-q-twin-set-list", "nad", "set -- ls; $1 report.md", N, 'allow'],
+      ["S25-q-twin-body", "nad", "f() { $1 report.md; }", N, 'allow'],
+      ["S25-q-twin-dircolors", "na", "eval \"$(dircolors)\"", N, 'allow'],
+      ["S25-q-twin-herestring-read", "na", "c=cp; bash -s docs/report.md <<< \"$c\"", N, 'allow'],
+      ["S25-q-twin-heredoc-quoted", "na", "bash -s docs/report.md <<'EOF'\n$x\nEOF", N, 'allow'],
+    ];
+    const judge = (id, cwd, raw, writers, expect, outside = 'allow', program = null) => {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      w.build();
+      const h = w.hook(cmd, at);
+      assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error: ${h.reason.split('\n')[0]}`);
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      if (outside != null) {
+        w.build();
+        const o = w.hook(cmd, w.cwds.out);
+        assert.equal(o.status, 0, `${id}: from a cwd in no project the relative operand names no tracked file: ${cmd}: ${o.reason}`);
+      }
+      if (program && !toolPresent(program)) { console.error(`NOT RUN: real ${program} is not on this runner, so its evidence leg did not run: ${id}`); return; }
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    };
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect, outside, program] of rows) { judge(id, cwd, raw, writers, expect, outside, program); n++; }
+    assert.equal(n, rows.length);
+    const moved = rows.filter((r) => r[0].startsWith('S25-RT-')).map((r) => r[0].slice(4));
+    assert.equal(moved.length, 190, `the table's rows the fixes refuse (${moved.length}): 137 of the ninth class and 53 THE UNREAD OPERAND refuses`);
+    assert.equal(moved.filter((id) => /^RT-(ep|sp|sb|zs)-/.test(id)).length, 137, 'the ninth class\'s rows the table held');
+    // the ninth class is gone: no key, no row, and each moved row left the table
+    assert.ok(!Object.hasOwn(RESIDUAL_CLASSES, NINTH_CLASS), 'RESIDUAL_CLASSES states no ninth class (the reviewer\'s extra5-2: no residual keyed on a reading the resolver makes and gets wrong)');
+    assert.ok(!RESIDUAL_TABLE.some((r) => r[1] === NINTH_CLASS || /^RT-(ep|sp|sb|zs)-/.test(r[0])), 'no residual row stands under the ninth class');
+    for (const id of moved) assert.ok(!RESIDUAL_TABLE.some((r) => r[0] === id), `${id} left the residual table (refused now)`);
+    // the refusal's account names the road and the operand (the text a person reads; judge)
+    for (const [cwd, raw, road] of [['na', '$(command -v cat) docs/report.md', 'its command name is filled in from `$(command -v cat)`, a text I do not read'], ['na', 'cat scratch/other.md | sh -s -- docs/report.md', 'the script its shell reads on its standard input comes from `cat scratch/other.md`, a text I do not read'], ['na', '. "$f" docs/report.md', 'the script it runs is filled in from `"$f"`, a text I do not read']]) {
+      w.build();
+      const h = w.hook(w.fill(raw), w.cwds[cwd]);
+      assert.ok(h.reason.includes(road) && h.reason.includes('as an operand, so it may write the file silently') && h.reason.includes('Spell the command out (one that only reads the file then runs as usual)'), `the refusal names the road and the operand: ${raw}: ${h.reason.split('\n')[0]}`);
+    }
+    // where the code lives (the rows above prove what it does; each pin names the rows that red without it)
+    const hook = fs.readFileSync(HOOK, 'utf8');
+    assert.ok(hook.includes("const posEl = (k) => positionals[k] && positionals[k].literal && !positionals[k].text.includes('\\0') ? positionals[k].text : null;") && !hook.includes('const candKnown'), "THE EMPTY POSITIONAL and THE KNOWN SET read the element's text and never the candidates (behaviour: S25-RT-ep-*, S25-RT-sb-*)");
+    assert.ok(hook.includes("(!/:/.test(op || '') && setNow.has(name))"), 'a plain assignment of a value the rule does not read still sets the name (behaviour: S25-b-twin-empty-plus, S10-alt-twin-plus-empty)');
+    assert.ok(hook.includes('if (walkIdx >= 0 && !Array.isArray(positionals)) {') && hook.includes('const seedValues = new Map();') && !/\bseedPos\b/.test(hook), 'THE LIST AT THE WORD and THE LIST BEFORE THE WALK (behaviour: S25-RT-sp-*, S25-b-subshell-*, S25-b-head-before-set)');
+    assert.ok(hook.includes('const noteAtWalk = (w) => {'), 'THE VALUE AT THE WALK (behaviour: S25-b-eval-set-name, S25-b-composed-name)');
+    assert.ok(hook.includes('function zshListSubscriptWhy(w) {') && hook.includes('    markZshSubscripts(seg);'), 'THE SUBSCRIPTED POSITIONAL beyond one numeric index (behaviour: S25-RT-zs-*)');
+    assert.ok(hook.includes('const unreadOperands = (words, q1) => {') && hook.includes('const q1Scan = (texts, spelling, w = null) => {') && hook.includes('const readFeed = (idx, fd) => {'), 'THE UNREAD OPERAND on the head, script and piped roads (behaviour: S25-q-*)');
+    assert.ok(hook.indexOf('const own = judgeUnresolved(unresolved);') > 0 && hook.indexOf('const own = judgeUnresolved(unresolved);') < hook.indexOf('for (const t of q1Targets) {'), "THE UNREAD OPERAND speaks after the command's own reading, so a refusal the reading gives keeps its account (behaviour: the rows of earlier commits whose reasons are pinned, HD-default-word among them)");
+  } finally { process.env.HOME = savedHome; w.rm(); }
 });

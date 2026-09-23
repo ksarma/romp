@@ -856,36 +856,38 @@
 // call of a function the command defines in any spelling, no subscript; any other construct that can write the name,
 // listed here or not, leaves it unreadable, the doctrine a `read` and a loop variable already had. HOME, PWD, OLDPWD,
 // `~+` and `~-` are read the same way: HOME after a plain top-level `HOME=<path>` assignment of its own, and none of
-// the three once the command names or may fill in the name in any other form. THE RESIDUAL PROPERTY. The guard refuses a
-// write only when it resolves the command to a writer it models (the writer cases of extract's switch, a write redirection,
-// an interpreter's write call it scans) reached through a road it reads (the wrapper set, the shells' script roads, the
-// readings of the resolver, the alias and hash roads), with a target it can place or cannot read. Every write that still
-// reaches a tracked file is one the guard does not resolve to such a writer through such a road, whether or not its text
-// stands in the command, and falls in one of these classes, each measured by execution in
-// tools/romp-track-bash-guard.test.mjs (THE RESIDUAL TABLE, whose rows are the population this statement is over): a writer
-// outside the model, a program, or a write form of a program the hook models, that writes the file by its own nature and is
-// not among the write forms the hook reads (rsync, patch, tar -x, ed, ex, vim, make, shuf -o, gawk -i inplace, awk's print
-// redirect, uniq, scp, openssl -out, shred, curl -o, wget -O, find -exec, a git alias or a subcommand that writes the tree,
-// bash's history -w, zsh's sysopen and mapfile modules, sed's e command and a w command in a sed script the resolver cannot
-// read, busybox's applets); a reader outside the roads, a program that runs a command or a script the hook does not follow
-// into it (xargs, an interpreter's system, exec or subprocess call, a wrapper outside the set, a shell outside SHELLS, a file
-// the command writes and then runs or sources, a function's call of itself, which the replay does not follow again); a
-// command name the resolver never reads, a command whose name is an expansion of a kind the resolver does not read
-// ("${a[@]}", a loop variable, a name read or filled by getopts, printf -v or a nameref, a name the shell itself sets (${SHELL}, $0, $BASH, $ZSH_ARGZERO, $_ after a command), a substitution outside the
-// output model such as $(which cp), a ${...} operator form the resolver does not read, a positional parameter of a script
-// handed to a fresh shell with arguments of its own; "$@", $1 and $* stand for the operands of a called function or of a
-// `set` this shell ran since round 6's sixth commit); a script held in a variable, a value the command gives a name through a
-// construct the resolver does not read (`read`, `printf -v`, a positional parameter of a fresh shell's script), run as a
-// command or handed to a shell (`$c` after `read c`, `eval "$1"` inside a `bash -c` given arguments, `bash -c "$c"` after
-// `printf -v c`; a value an assignment word gives, whitespace included, is read through THE HEAD CANDIDATES since round 6's
-// fourth commit, and a `${name:=word}` gives word since the sixth); a producer outside the output model, a pipe into a shell, or a write redirection into a process substitution running one,
-// from anything but a literal echo or printf, alone or in a subshell or group of such commands, or a plain cat passing such a
-// text through, or a command substitution over such a producer handed to a shell, an eval or a here-string (a call of a function
-// the command defines, a tee or a pipe through another command, a cat of a file, an eval or a shell -c inside the substitution);
-// zsh's glob grouping, a `(..)` inside a word handed to zsh, read as a subshell by the lexer's zsh grammar while zsh globs it (a
-// lexer gap, stated since the first commit of this round); zsh's hook functions, a function the command defines under a name zsh calls on its own (chpwd, precmd, preexec, periodic, zshexit, and the names in chpwd_functions and its kin), whose body runs when the shell moves, prompts or exits, from the directory the shell is in then, while the guard judges the definition where it stands; a positional the resolver reads at the word by a model the shell does not keep, an element's emptiness, a binding a later shift or unset removed, zsh's subscript grammar beyond one index (the colon form of a positional's alternate value is read as set by the list's length, not the element, so `set -- ''; eval cp ${1:+x} a b` copies in every shell; a head or script text reads a positional's candidate that no shift, second set, unset, read or body's local removes, so `set -- a; shift; ${1}cp a b` is read as `acp` while every shell runs cp, and the known set reads a name bound in a subshell, a pipeline, a background job, a command substitution, an untaken body, a prefix position or behind a wrapper as this shell's, as in `c=a; unset c; eval cp ${c:+x} a b`; the unbraced list's subscript is read as one numeric index while zsh's `[@]`, `[*]`, an arithmetic, flagged or quoted subscript and a word of several such expansions select from the list too, so `$argv[*] cp a b` copies in zsh, and in every shell through `zsh -c`; each pre-existing at the round-5 head and filed in round 6's thirteenth commit for the round's ruling, a fix at the mechanism or an accepted allow); an opaque expansion from a cwd outside every project, a leading
-// opaque expansion, or one after a literal head outside every project, from a cwd in no project (B2 as ruled, with its
-// boundary). A shape outside these classes that reaches a tracked file is a rule to state, not a residual. The same
+// the three once the command names or may fill in the name in any other form. THE RESIDUAL PROPERTY. The guard refuses a write only when it resolves
+// the command to a writer it models (the writer cases of extract's switch, a write redirection, an interpreter's write call it scans) reached through
+// a road it reads (the wrapper set, the shells' script roads, the readings of the resolver, the alias and hash roads), with a target it can place or
+// cannot read, or when a command whose name, script or piped script it does not read names a tracked file as a literal operand. Every write that
+// still reaches a tracked file is one the guard does not resolve to such a writer through such a road, whether or not its text stands in the command,
+// and falls in one of these classes, each measured by execution in tools/romp-track-bash-guard.test.mjs (THE RESIDUAL TABLE, whose rows are the
+// population this statement is over): a writer outside the model, a program, or a write form of a program the hook models, that writes the file by
+// its own nature and is not among the write forms the hook reads (rsync, patch, tar -x, ed, ex, vim, make, shuf -o, gawk -i inplace, awk's print
+// redirect, uniq, scp, openssl -out, shred, curl -o, wget -O, find -exec, a git alias or a subcommand that writes the tree, bash's history -w, zsh's
+// sysopen and mapfile modules, sed's e command and a w command in a sed script the resolver cannot read, busybox's applets); a reader outside the
+// roads, a program that runs a command or a script the hook does not follow into it (xargs, an interpreter's system, exec or subprocess call, a
+// wrapper outside the set, a shell outside SHELLS, a file the command writes and then runs or sources, a function's call of itself, which the replay
+// does not follow again); a command name the resolver never reads, a command whose name is an expansion of a kind the resolver does not read
+// ("${a[@]}", a loop variable, a name read or filled by getopts, printf -v or a nameref, a name the shell itself sets (${SHELL}, $0, $BASH,
+// $ZSH_ARGZERO, $_ after a command), a substitution outside the output model such as $(which cp), a ${...} operator form the resolver does not read,
+// a positional parameter of a script handed to a fresh shell with arguments of its own; "$@", $1 and $* stand for the operands of a called function
+// or of a `set` this shell ran since round 6's sixth commit), handed no literal operand that names a tracked file (the operand a directory, or a word
+// the resolver does not read): since round 7's twenty-fifth commit a command so named, or a script or piped script the resolver does not read, whose
+// literal operand names a tracked file is refused by name (the reviewer's Q1: the target known, the writer not); a script held in a variable, a value
+// the command gives a name through a construct the resolver does not read (`read`, `printf -v`, a positional parameter of a fresh shell's script),
+// run as a command or handed to a shell (`$c` after `read c`, `eval "$1"` inside a `bash -c` given arguments, `bash -c "$c"` after `printf -v c`; a
+// value an assignment word gives, whitespace included, is read through THE HEAD CANDIDATES since round 6's fourth commit, and a `${name:=word}` gives
+// word since the sixth); a producer outside the output model, a pipe into a shell, or a write redirection into a process substitution running one,
+// from anything but a literal echo or printf, alone or in a subshell or group of such commands, or a plain cat passing such a text through, or a
+// command substitution over such a producer handed to a shell, an eval or a here-string (a call of a function the command defines, a tee or a pipe
+// through another command, a cat of a file, an eval or a shell -c inside the substitution); zsh's glob grouping, a `(..)` inside a word handed to
+// zsh, read as a subshell by the lexer's zsh grammar while zsh globs it (a lexer gap, stated since the first commit of this round); zsh's hook
+// functions, a function the command defines under a name zsh calls on its own (chpwd, precmd, preexec, periodic, zshexit, and the names in
+// chpwd_functions and its kin), whose body runs when the shell moves, prompts or exits, from the directory the shell is in then, while the guard
+// judges the definition where it stands; an opaque expansion from a cwd outside every project, a leading opaque expansion, or one after a literal
+// head outside every project, from a cwd in no project (B2 as ruled, with its boundary). A shape outside these classes that reaches a tracked file is
+// a rule to state, not a residual. The same
 // paragraph,
 // and THE RESIDUAL PROPERTY, are on the vendored SKILL.md, hooks/README.md
 // and docs/install.md, pinned identical by a test; the property is on decision 47, docs/guide.md and the ledger entry too, pinned
@@ -1127,6 +1129,26 @@
 // after); a move inside any conditional text leaves the directory unknown, the road named; and a `-C` value glued to its letter is the callback,
 // an expansion glued there a callback the guard cannot read. Every row is pinned with its writers in tools/romp-track-bash-guard.test.mjs (round 7,
 // twenty-first commit).
+// ROUND 7 OF FORK PR #780 REVIEW, TWENTY-FIFTH COMMIT (2026-09-23; the reviewer's extra5-2 as ruled, option (a), and the reviewer's Q1): the ninth
+// residual class, a positional the resolver read at the word by a model the shell does not keep, was keyed on readings the resolver made and got
+// wrong, so it is gone: the four readings are sound or unresolvable and every row of it is refused. THE EMPTY POSITIONAL (posKnown): the colon form
+// reads the element's text, and `$@` and `$*` under it are set in every shell only when their elements joined by one blank are not empty. THE KNOWN
+// SET: a name is known set from the readability rule alone (setNow for a plain assignment of a value the rule does not read), never from THE HEAD
+// CANDIDATES, a union over the command. THE LIST AT THE WORD (candidateTexts): a positional parameter is read from the list the walk holds, the
+// empty text past its end, a value not read where the walk holds none; THE LIST BEFORE THE WALK (seedValues) is a union over the command's binds
+// with values not read beside it where a bind the pre-walk read cannot see stands, and THE VALUE AT THE WALK (noteAtWalk) notes each assignment's
+// value again where the walk performs it (`set -- cp; (set -- ls); c=$1; $c ../base/report.md report.md`, allowed while every shell copied, is
+// refused). THE SUBSCRIPTED POSITIONAL beyond one numeric index (zshListSubscriptWhy, markZshSubscripts): a subscript of the unbraced list name that
+// is not numeric, or a subscripted list glued to another expansion, is UNRESOLVABLE where zsh may run the line, on the head, script, operand and
+// target roads, the word may vanish on the operand road, zsh's glued `argv` is not read where the list is held, and a subscript's flags are read
+// into the word (lex: `$argv[(r)x]` had been split at its parenthesis). THE UNREAD OPERAND (unreadOperands, q1Scan, readScript, readFeed): a command
+// whose name, script or piped script is a text the resolver does not read may be any command, so a literal operand of it naming a tracked file is
+// refused by name from any cwd (a pattern's matches, a value the command gives, an option's glued value among the spellings), after the command's
+// own reading so a refusal it gives keeps its account; a command of an eval's or a `-c` text whose name was not read is found by reading the text
+// with a marker where the unread expansion stood; a directory operand or an operand the resolver does not read leaves the command allowed, the class
+// 'a command name the resolver never reads' keeping those members. 190 rows left the residual table (137 of the ninth class, 53 of the third), each
+// pinned as a refusal with the shells that write in tools/romp-track-bash-guard.test.mjs (round 7, twenty-fifth commit), and the table gains the
+// class's directory and unread-operand members.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -1219,6 +1241,12 @@ const PREFIXES = new Set(['sudo', 'command', 'builtin', 'exec', 'nice', 'nohup',
 // sed, tee, python, the shells) keep their basename: `/usr/bin/cp a b` is the copy it is, and the wrappers (PREFIXES) their peeling: `/usr/bin/env`
 // and `/usr/bin/time` are the programs on disk.
 const SHELL_OWN = new Set(['set', 'shift', 'eval', 'trap', 'source', '.', 'emulate', 'mapfile', 'readarray', 'alias', 'unalias', 'hash', 'cd', 'chdir', 'pushd', 'popd', 'export', 'declare', 'typeset', 'local', 'readonly', 'unset', 'read', 'getopts', 'let', 'shopt', 'setopt', 'unsetopt']);
+// THE LIST BEFORE THE WALK (extract's seedValues, round 7's twenty-fifth commit): the commands whose text this shell runs in place, or whose alias a later
+// command name may be, so a `set` or `shift` there binds the positional parameters where the pre-walk read does not see it
+const IN_PLACE_BINDERS = new Set(['eval', 'trap', '.', 'source', 'emulate', 'mapfile', 'readarray', 'alias']);
+// THE UNREAD OPERAND inside a text (extract's q1Scan, round 7's twenty-fifth commit): the commands after which a relative operand of the text is one whose
+// directory is not known, since they move or may move the shell (a cd, pushd, popd, chdir, or a text run in place)
+const TEXT_MOVERS = new Set(['cd', 'pushd', 'popd', 'chdir', '.', 'source', 'eval', 'emulate', 'trap']);
 const RESERVED = new Set(['do', 'then', 'else', 'elif', 'if', 'while', 'until', '!', '{', '}']);
 // The shells verified (round 3, 2026-09-19, by execution) to read `$'...'` as ANSI-C quoting: bash 5.2 and zsh 5.9,
 // the shells the Bash tool runs, so the top-level command (shell null) reads it so too. dash, `/bin/sh` here, reads a
@@ -1476,7 +1504,7 @@ function parenCloseAt(text) {
 // addendum, 2026-09-20): a `(( ))` body under dash's reading, a `$((` bash and zsh read as `$( (`, and every `$(...)` or backtick
 // inside an arithmetic body; `dashPieces` the further commands dash reads after a `&&` or `||` inside a `[[ ... ]]`, spliced into
 // extract's walk after the test's segment (withDashPieces), and `dashFirstOp` the operator that joins the first of them.
-const newSegment = () => ({ words: [], redirects: [], heredocs: [], stdin: [], dups: [], outDups: [], subs: [], arith: [], arithAt: [], viaSubs: [], dashPieces: null, dashFirstOp: '', op: '', start: 0, paramAssigns: [], herestring: false });   // paramAssigns: the `${name:=word}` assignments the segment's words perform, name and the word's texts (null: a text the resolver could not establish), for THE HEAD CANDIDATES (THE ASSIGNED DEFAULT, round 6's sixth commit)   // dups: the input descriptors this command duplicates, `[n]<&m` as { to: n or '0', from: m, or null for a word the lexer cannot read } (THE DUPLICATED DESCRIPTOR, round 6's fifth commit: `exec 3< <(echo '..'); bash <&3` read the text through 3 while the `<&` was skipped)   // start: the source index the segment begins at (extract counts the lines before it: THE ALIAS ROAD applies to a later line)   // stdin: the words a `<` redirects into the standard input (the third fix-up: `bash < <(echo '..')` reads the script the substitution prints)   // arithAt: the number of words before each `(( ))` (round 5's third addendum: compoundBody tells `if (( 0 )) {` from `if { cond } {` by it)
+const newSegment = () => ({ words: [], redirects: [], heredocs: [], fedWords: [], stdin: [], dups: [], outDups: [], subs: [], arith: [], arithAt: [], viaSubs: [], dashPieces: null, dashFirstOp: '', op: '', start: 0, paramAssigns: [], herestring: false });   // paramAssigns: the `${name:=word}` assignments the segment's words perform, name and the word's texts (null: a text the resolver could not establish), for THE HEAD CANDIDATES (THE ASSIGNED DEFAULT, round 6's sixth commit)   // dups: the input descriptors this command duplicates, `[n]<&m` as { to: n or '0', from: m, or null for a word the lexer cannot read } (THE DUPLICATED DESCRIPTOR, round 6's fifth commit: `exec 3< <(echo '..'); bash <&3` read the text through 3 while the `<&` was skipped)   // start: the source index the segment begins at (extract counts the lines before it: THE ALIAS ROAD applies to a later line)   // stdin: the words a `<` redirects into the standard input (the third fix-up: `bash < <(echo '..')` reads the script the substitution prints)   // arithAt: the number of words before each `(( ))` (round 5's third addendum: compoundBody tells `if (( 0 )) {` from `if { cond } {` by it)
 
 // `shell` is the name of the shell the command is a script of, when the call is a recursion into `sh -c '...'`,
 // `bash <<EOF` or a `$(...)` inside one (null for the Bash tool's own command): it decides whether `$'...'` is
@@ -1633,7 +1661,7 @@ export function lex(command, shell = null, opts = {}) {
         if (wordUnresolvable) seg.stdin.push(Object.assign(word(buf, false, raw, { marks }), { fd: null, unresolvableReading: wordUnresolvable, herestring: true }));
         else if (wordReadings && wordReadings.params) { const ps = paramsOf(); seg.stdin.push(Object.assign(word(buf, false, raw, { marks }), ps ? { fd: null, readings: rd, readingParams: ps, herestring: true } : { fd: null, unresolvableReading: glueUnresolvable(), herestring: true })); }
         else if (rd.length) seg.heredocs.push(...rd);
-        else seg.heredocs.push(buf);
+        else { seg.heredocs.push(buf); if (marks.includes('x')) seg.fedWords.push(word(buf, false, raw, { marks })); }   // `fedWords`: a fed text's words holding an expansion the body hands over as its spelling (THE UNREAD OPERAND's feed, readFeed)
       }
       else if (expect.kind === 'data') {
         // a `<` into the standard input, or into the descriptor numbered before it (the third fix-up); the word carries the readings a
@@ -1829,7 +1857,7 @@ export function lex(command, shell = null, opts = {}) {
       // plain script and refused a body every shell runs as a quoted command name), any other body its text after quote removal
       if (w && w.readingParams) owner.stdin.push(Object.assign(word(w.text, false, w.raw, { marks: w.marks }), { fd: null, readings: w.readings, readingParams: w.readingParams, herestring: true }));   // a body that is one default word depends on the parameter's value: recorded for scriptTexts to join the value or refuse (THE PARAMETER'S VALUE, round 6's fifth commit: `c=cp; bash <<EOF` with `${c:-cat} a b` as the body ran the copy)
       else if (w && w.readings) for (const t of w.readings) owner.heredocs.push(t);
-      else owner.heredocs.push(w ? w.text : body);
+      else { owner.heredocs.push(w ? w.text : body); for (const sg of x.segments) for (const ww of sg.words) if (ww.marks && ww.marks.includes('x')) owner.fedWords.push(ww); }   // `fedWords` (readFeed)
       if (w && w.unresolvableReading) owner.stdin.push(Object.assign(word(w.text, false, w.raw, { marks: w.marks }), { fd: null, unresolvableReading: w.unresolvableReading, herestring: true }));   // the body's text is not known: scriptTexts refuses the consumer (THE RESOLVER'S CONTRACT)
       for (const sg of x.segments) {
         for (const t of sg.subs) owner.viaSubs.push({ text: t, via: HEREDOC_BODY_VIA });
@@ -2274,6 +2302,29 @@ export function lex(command, shell = null, opts = {}) {
       if (rest === '' || /^[\s/;&|)]/.test(rest)) { inWord = true; home(os.homedir()); raw += '~'; i++; continue; }
       inWord = true; opaqueExpansion(c); raw += c; i++;   // ~user: not resolved here
       continue;
+    }
+    // THE SUBSCRIPT'S FLAGS (round 7 of fork PR #780 review, twenty-fifth commit, 2026-09-23; the reviewer's extra5-2 as ruled, option (a)): under zsh's
+    // grammar a `(` inside the subscript of an unbraced `$argv`, `$@` or `$*` opens the subscript's flags (`$argv[(r)x]`, zshparam(1): Subscript Flags),
+    // part of the word up to the `]` that closes the subscript, while bash and dash reject the line; the lexer read a subshell there, so `$argv[(r)x] cp
+    // ../base/report.md report.md` was the word `$argv[`, a subshell `(r)` and a command `x]` with the copy's words for operands, allowed while zsh copied.
+    // The subscript is read into the word as literal characters, and THE SUBSCRIPTED POSITIONAL (zshListSubscriptWhy) reads it as one the resolver
+    // does not read.
+    if (zshGrammar && c === '(' && inWord && !dqInner) {
+      const m = buf.match(/\$(?:argv|[@*])\[[^\]]*$/);
+      if (m && marks[buf.length - m[0].length] === 'x' && marks[buf.length - m[0].length + m[0].indexOf('[')] !== 'x') {
+        let j = i;
+        let depth = 0;
+        for (; j < src.length; j++) {
+          const ch = src[j];
+          if (ch === '(' || ch === '[') depth++;
+          else if (ch === ')') depth--;
+          else if (ch === ']') { if (depth <= 0) break; depth--; }
+          else if (depth <= 0 && /[\s;&|<>]/.test(ch)) break;
+        }
+        const piece = src.slice(i, j < src.length && src[j] === ']' ? j + 1 : j);
+        buf += piece; marks += 'u'.repeat(piece.length); raw += piece; i += piece.length;
+        continue;
+      }
     }
     // operators
     if (c === '<' || c === '>' || c === '&' || c === '|' || c === ';' || c === '(' || c === ')') {
@@ -3728,9 +3779,12 @@ function shellScriptIn(args, shell) {
     k = next - 1;
   }
   // dash given both `-s` and `-c` runs the `-c` text and then the standard input (`echo '..' | dash -sc true`); bash and zsh run the `-c` text alone
-  if (c) return done(shell === 'dash' && s ? { script: operand || null, stdin: true, fd: null } : { script: operand || null });
-  if (s || !operand || (operand.literal && isStdinName(operand.text))) return done({ stdin: true, fd: operand && operand.literal ? fdOfName(operand.text) : null });   // a script operand naming the standard input, or a descriptor fed by this command, reads it (the third fix-up: `bash /dev/stdin`, `sh /dev/fd/0` ran the piped script in bash, zsh and dash; round 6's third commit: `bash /dev/fd/3 3<<'EOF'`); `fd`: the numbered descriptor it names, so a `<` on that descriptor is read too (THE DESCRIPTOR FEED, round 6's fourth commit: `bash /dev/fd/3 3< <(echo '..')`)
-  return done({ file: operand });   // a script file, whose contents are not in the command, unless it is a process substitution printing text the guard can read (extract, `bash <(echo '..')`)
+  // `argsAt`: where the script's own operands begin among the words (THE UNREAD OPERAND, round 7's twenty-fifth commit): after the `-c` text or the script
+  // file, after a script operand naming the standard input, and at the first operand under `-s`, which reads every operand as one
+  const at = (w) => (w ? args.indexOf(w) : args.length);
+  if (c) return done(shell === 'dash' && s ? { script: operand || null, stdin: true, fd: null, argsAt: operand ? at(operand) + 1 : args.length } : { script: operand || null, argsAt: operand ? at(operand) + 1 : args.length });
+  if (s || !operand || (operand.literal && isStdinName(operand.text))) return done({ stdin: true, fd: operand && operand.literal ? fdOfName(operand.text) : null, argsAt: !operand ? args.length : s ? at(operand) : at(operand) + 1 });   // a script operand naming the standard input, or a descriptor fed by this command, reads it (the third fix-up: `bash /dev/stdin`, `sh /dev/fd/0` ran the piped script in bash, zsh and dash; round 6's third commit: `bash /dev/fd/3 3<<'EOF'`); `fd`: the numbered descriptor it names, so a `<` on that descriptor is read too (THE DESCRIPTOR FEED, round 6's fourth commit: `bash /dev/fd/3 3< <(echo '..')`)
+  return done({ file: operand, argsAt: at(operand) + 1 });   // a script file, whose contents are not in the command, unless it is a process substitution printing text the guard can read (extract, `bash <(echo '..')`)
 }
 
 // THE RESOLVER'S CONTRACT (round 6 of the review of fork PR #780, 2026-09-20; round 5 found four readings that turned a refusal
@@ -4328,6 +4382,11 @@ const procsubOf = (w) => (w && w.marks && /^x+$/.test(w.marks) && /^[<>=]\([^]*\
 // word (resolveWord keeps an empty or blank value as the expansion, so `c=; cp $c a b` is read here); a pattern the guard expanded is its
 // matches (copyTargets drops a source matching nothing already, the same reading under a known directory), and one it could not expand (the
 // directory unknown) may vanish. Pinned by execution in the three shells (the eighth commit's rows test), the never-empty forms among them.
+// THE UNREAD OPERAND's marker (extract's q1Scan, round 7's twenty-fifth commit): the spelling that stands, in a script text read as THE VANISHED TEXT
+// reads it, where an expansion the resolver does not read stood, so the text's command names are read with that place kept; a name no command sets
+// (a command that spells it has its scan refused, q1Scan)
+const UNREAD_MARKER_NAME = '__romp_unread_text__';
+const UNREAD_MARKER = '${' + UNREAD_MARKER_NAME + '}';
 const NEVER_EMPTY_EXPANSION = /^(?:\$\(\(|\$\{#|\$[?$#0]$|\$\{[?$#0]\}$)/;   // never an empty value in any shell: an arithmetic expansion, a length, and the parameters every shell sets
 // THE SUBSCRIPTED POSITIONAL (round 6's twelfth commit, 2026-09-22; the round's verifiers: `$argv[1] cp ../base/report.md report.md` from docs/
 // ran the copy in zsh while allowed, and so did `$argv[1] echo 'cp ..' | bash`, `| sh`, `| zsh`, a here-string, sed -i, tee, `$argv[2]`,
@@ -4345,8 +4404,8 @@ const NEVER_EMPTY_EXPANSION = /^(?:\$\(\(|\$\{#|\$[?$#0]$|\$\{[?$#0]\}$)/;   // 
 // THE SUBSCRIPTED POSITIONAL beyond one numeric index (round 6's thirteenth commit, 2026-09-22; the round's verifiers on the twelfth commit's head): the
 // regex below takes one numeric subscript on the whole word, while under zsh's grammar every `[..]` after the unbraced list name selects from the list
 // (`[@]`, `[*]`, an arithmetic, flagged or quoted subscript), and a word of several such expansions is not one subscript, so the head keeps its place
-// and `$argv[*] cp a b` copies in zsh while allowed: filed, not changed here, as 60 rows of THE RESIDUAL TABLE under the class 'a positional the
-// resolver reads at the word by a model the shell does not keep', for the round's ruling.
+// and `$argv[*] cp a b` copies in zsh while allowed: filed as 60 rows of THE RESIDUAL TABLE for the round's ruling, and fixed as ruled in round 7's
+// twenty-fifth commit (zshListSubscripts below: UNRESOLVABLE where zsh may run the line).
 // a word whose every expansion is a positional form (`$N`, `${N..}`, `$@`, `$*`, `$#`, their braced forms, zsh's `$argv..` and `${argv..}`, `$@[..]`, `$*[..]`):
 // with those removed no `$` or backtick remains (THE UNREAD HEAD: such a head in a body being defined is the call's, and at the top level before any
 // `set` the residual the property names, not a text of the command the resolver did not read)
@@ -4355,12 +4414,50 @@ const allPositional = (raw) => /\$/.test(raw) && !/[$`]/.test(raw.replace(POSITI
 const ZSH_POSITIONAL_SUBSCRIPT = /^\$(?:argv|[@*])\[-?[0-9]+(?:,-?[0-9]+)?\]$/;   // the whole word: the list's unbraced name and one subscript, unquoted
 const ZSH_SUBSCRIPT_AFTER_LIST = /^\[-?[0-9]+(?:,-?[0-9]+)?\]/;   // the subscript opening a literal run that follows the list's name (candidateTexts)
 const ENDS_WITH_LIST_NAME = /\$(?:argv|[@*])$/;   // the expansion run before such a literal run ends with the list's unbraced name
+// THE SUBSCRIPTED POSITIONAL beyond one numeric index, as ruled (round 7 of fork PR #780 review, twenty-fifth commit, 2026-09-23; the reviewer's extra5-2,
+// option (a): 60 rows of the residual table, `$argv[*] cp ../base/report.md report.md` copying in zsh while allowed, 45 of them with no `set`): the
+// subscripts of the unbraced list names in a word, `[..]` after an expansion ending in `$argv`, `$@` or `$*` (unquoted or double-quoted, as zsh reads
+// one; zshparam(1): Array Subscripts), each { at, end, numeric } (numeric: `[N]`, `[-N]` or `[N,M]`, unquoted, the forms positionalSpelling computes),
+// or null for a word holding none. zshListSubscriptWhy reads them: a subscript that is not numeric (`[@]`, `[*]`, an arithmetic, a quoted index, a
+// flag), or a subscripted list glued to another expansion (`$argv[1]$argv[2]`, `$c$argv[1]`, `$argv[1]${1}`, `$(true)$argv[1]`), is a word the
+// resolver does not read, UNRESOLVABLE where zsh may run the line, on the head, script, operand and target roads alike; one numeric subscript glued
+// to literal text alone is 'glued', read by candidateTexts (the text with the subscript removed beside bash's reading, a value not read where the list
+// is not held, and not read at all where the walk holds it); the whole word `$argv[N]` is null, read by positionalWords and mayVanish.
+function zshListSubscripts(w) {
+  if (!w || w.literal || !w.marks || !w.marks.includes('x')) return null;
+  const subs = [];
+  const covered = new Array(w.text.length).fill(false);
+  for (let i = 1; i < w.text.length; i++) {
+    if (!(w.marks[i - 1] === 'x' && w.marks[i] !== 'x' && w.text[i] === '[')) continue;
+    const name = w.text.slice(0, i).match(ENDS_WITH_LIST_NAME);
+    if (!name) continue;
+    let end = i;
+    let depth = 0;
+    for (; end < w.text.length; end++) { if (w.text[end] === '[') depth++; else if (w.text[end] === ']' && --depth === 0) break; }
+    const inner = w.text.slice(i + 1, end);
+    const numeric = end < w.text.length && /^-?[0-9]+(?:,-?[0-9]+)?$/.test(inner) && (/^u*$/.test(w.marks.slice(i, end + 1)) || /^q*$/.test(w.marks.slice(i, end + 1)));   // one quoting over the whole subscript: unquoted, or inside the double quotes the name stands in (`"$argv[1]"`); a quoted index (`$argv["1"]`) is not this
+    for (let k = i - name[0].length; k <= Math.min(end, w.text.length - 1); k++) covered[k] = true;
+    subs.push({ at: i, end, numeric });
+    i = end;
+  }
+  if (!subs.length) return null;
+  const rest = [...w.marks].map((m, k) => (covered[k] ? '' : m)).join('');
+  return { subs, otherExpansion: rest.includes('x'), literalGlue: /[^x]/.test(rest) };
+}
+function zshListSubscriptWhy(w) {
+  const z = zshListSubscripts(w);
+  if (!z) return null;
+  if (z.subs.some((x) => !x.numeric)) return `under zsh's grammar the word \`${w.raw}\` selects from the positional parameters through a subscript I do not read (zsh's \`[@]\`, \`[*]\`, an arithmetic or quoted index, or a subscript flag)`;
+  if (z.subs.length > 1 || z.otherExpansion) return `under zsh's grammar the word \`${w.raw}\` glues an element of the positional parameters to another expansion, a word I do not read`;
+  return z.literalGlue ? 'glued' : null;
+}
 const VANISH_CAP = 6;
 // `zshMayRun`: whether zsh may run the line (extract's zshMayRun); THE SUBSCRIPTED POSITIONAL applies under zsh's grammar alone. The default is
 // the safe side (the word may vanish) for a caller that does not know the shell.
 function mayVanish(w, cwdKnown, zshMayRun = true) {
   if (w.literal) return false;
   if (zshMayRun && ZSH_POSITIONAL_SUBSCRIPT.test(w.raw)) return true;   // THE SUBSCRIPTED POSITIONAL: an element or a range of the positional list past its end is no field in zsh
+  if (zshMayRun && !dqSingleField(w.raw)) { const z = zshListSubscripts(w); if (z && !z.literalGlue) return true; }   // beyond one numeric index (round 7's twenty-fifth commit): a word of the list's subscripts and expansions alone may stand for no field in zsh (`cp $argv[@] ../base/report.md report.md` copied in zsh while the operand was read as always a field)
   if (w.glob) return !cwdKnown;
   if (!w.marks || !/^x+$/.test(w.marks)) return false;
   if (dqSingleField(w.raw)) return false;
@@ -4889,6 +4986,8 @@ function extractIn(command, ctx) {
   let opaque = lexed.opaque;
   const targets = [];
   const unresolved = [];
+  const q1Targets = [];      // THE UNREAD OPERAND's entries (unreadOperands), apart from the command's own reading: judge speaks for them after it
+  const q1Unresolved = [];
   let keywordMode = !!ctx.keywordMode;   // bash's `set -k` is on from an earlier segment (setsKeywordMode)
   // B2: the names this command set to a plain string (name -> value; null for a name a write the readability rule does not
   // follow touched, which stays null: a later plain write does not restore it), why each such name is unreadable (for the
@@ -4930,6 +5029,7 @@ function extractIn(command, ctx) {
   // positional parameter) stays the residual the property names.
   const candidates = ctx.candidates || new Map();
   const vanishedValues = ctx.vanishedValues || new Set();   // THE VANISHED VALUE (round 7's twenty-third commit, 2026-09-23): the names one of whose values is THE VANISHED TEXT's reading (the expansions the command never gives a value removed: `v=$(cat f)` holds the empty text beside whatever the cat printed), so a word over such a name stands for the value read AND for a text not read; candidateTexts marks the texts it answers over one `vanished`, scriptTexts raises vanishedRead (or the head road's meta) on them, and THE UNHELD ROAD is taken beside the reading wherever this shell runs the text in place
+  const unreadValueWhy = ctx.unreadValueWhy || new Map();   // why a name of unreadValues holds a value not read, where the reading said (round 7's twenty-fifth commit: a value composed from a positional parameter of a list rebound to values not read)
   const unreadValues = ctx.unreadValues || new Set();   // the names a value the resolver looked at and could not establish is given (round 6's fifth commit): a command name or script formed from such a name is UNRESOLVABLE
   const noteCandidate = (w) => {
     const m = w.text.match(/^([A-Za-z_][A-Za-z0-9_]*)(\+?=)([^]*)$/);
@@ -4954,7 +5054,7 @@ function extractIn(command, ctx) {
       if (ts == null) { unreadValues.add(m[1]); return []; }
       if (ts.length) return ts.map(strip);
       const c = candidateTexts(w);
-      if (c && c.unread) { unreadValues.add(m[1]); return []; }
+      if (c && c.unread) { unreadValues.add(m[1]); if (c.why && !unreadValueWhy.has(m[1])) unreadValueWhy.set(m[1], `the value this command gives \`${m[1]}\` is composed from \`$${c.unread}\`, and ${c.why}`); return []; }
       if (c) { if (c.vanished) vanishedValues.add(m[1]); return c.texts.map(strip); }   // THE VANISHED VALUE: a value composed over a name that holds one holds one too (`d=$(cat f); c=$d`)
       const v = candidateTexts(w, true);   // THE VANISHED TEXT: a value whose expansions the command never gives values holds the text with them removed (`x="cp $c a b"; $x` ran the two-operand copy)
       if (v && v.unread) { unreadValues.add(m[1]); return []; }
@@ -4976,20 +5076,43 @@ function extractIn(command, ctx) {
   // here noteCandidates tracks the operands a plain `set` in the command gives (and a `shift` drops), seeding candidates['1'], ['@'] and ['*'] as
   // bindPositionals does in the walk, so a later `c=$N`/`c=$@`/`c=$*` noted below reads them. The union over the whole command (a `set` in a branch the
   // shell does not take seeds here too: the safe side, a refusal at worst); it touches candidates alone, never the positionals the walk binds
+  // THE LIST BEFORE THE WALK (round 7 of fork PR #780 review, twenty-fifth commit, 2026-09-23; the reviewer's extra5-2 as ruled, option (a), with the
+  // verifier's `set -- cp; (set -- ls); c=$1; $c ../base/report.md report.md` beside it): the seed above was REPLACED at each `set` and `shift` the pre-walk
+  // read met, in the order the segments stand, whether or not the shell ran the bind in this shell's frame, and no bind a text this shell runs in place
+  // makes was seen, so the subshell's `ls` stood for `$1` while every shell copied, and so did `set -- cp; (shift); c=$1`, `set -- x; eval 'set -- cp';
+  // c=$1` and a `c="cp ../base/report.md $1"` run as `$c`. The values a positional parameter may hold before the walk are now a UNION over the command
+  // (`seedValues`, this text's own: the call's operands, each `set`'s, each `shift` of each list, and the empty text where a list is shorter), and a bind
+  // the pre-walk read cannot see (a `set` or `shift` it does not read, an eval, a trap, a `.` or source, emulate, mapfile or readarray, an alias, a
+  // command name that is an expansion), or a list it does not hold (the top level's and a fresh shell's, which the guard does not read), makes every
+  // reading one beside values not read (`seedPartial`, THE VANISHED VALUE's tag), so a name composed from a positional stands for every value it may
+  // hold and a command name over it takes THE UNHELD ROAD and THE UNREAD OPERAND beside its readings. A list the pre-walk read does not hold (the top
+  // level's, a fresh shell's) gives no value (candidateTexts' vanished reading), and THE VALUE AT THE WALK below notes every assignment's value again
+  // where the walk performs it, over the list the walk holds there; the walk reads its own list at a head or a script word (candidateTexts).
+  const seedValues = new Map();
+  let seedPartial = null;   // set on the first call (positionals is bound below)
+  const seedKeys = new Set();
+  const seedLists = [];
   const seedPositional = (ws) => {
-    for (const k of [...candidates.keys()]) if (/^[0-9@*]+$/.test(k)) candidates.delete(k);
-    const add = (n, t) => { if (!candidates.has(n)) candidates.set(n, new Set()); candidates.get(n).add(t); };
-    ws.forEach((w, i) => { if (w && w.literal && !w.text.includes('\0')) add(String(i + 1), w.text); });
+    const key = ws.map((w) => (w && w.literal && !w.text.includes('\0') ? w.text : '\0')).join('\u0001');
+    if (seedKeys.has(key)) return;
+    if (seedKeys.size >= 64) { seedPartial = true; return; }
+    seedKeys.add(key);
+    seedLists.push(ws);
+    const add = (n, t) => { if (!seedValues.has(n)) seedValues.set(n, new Set()); seedValues.get(n).add(t); };
+    ws.forEach((w, i) => { if (w && w.literal && !w.text.includes('\0')) add(String(i + 1), w.text); else seedPartial = true; });
+    for (let k = ws.length + 1; k <= 9; k++) add(String(k), '');   // no element there: the empty text
     if (ws.every((w) => w && w.literal && !w.text.includes('\0'))) { const j = ws.map((w) => w.text).join(' '); add('@', j); add('*', j); }
   };
-  let seedPos;   // set on the first call (positionals is bound below): the call's operands, so a called body's `set` composes with them
   const noteCandidates = () => {
-    if (seedPos === undefined) seedPos = Array.isArray(positionals) ? positionals : null;
-    if (seedPos) seedPositional(seedPos);
+    if (seedPartial === null) seedPartial = positionals === UNKNOWN_POSITIONALS;   // a list rebound to values not read; the top level's and a fresh shell's list is read as no value at all (candidateTexts' vanished reading), and the walk notes each value again where it runs (THE VALUE AT THE WALK)
+    if (Array.isArray(positionals)) seedPositional(positionals);
     for (const s of segments) {
       const c0 = commandOf(s.words);
-      if (c0 && !c0.wrapped && c0.name === 'set') { const ops = setOperands(c0.args); if (ops && ops.every((w) => w && w.literal && !w.text.includes('\0'))) { seedPos = ops; seedPositional(seedPos); } else if (ops) seedPos = null; }
-      else if (c0 && !c0.wrapped && c0.name === 'shift' && Array.isArray(seedPos)) { const n = c0.args.length ? (c0.args[0].literal && /^[0-9]+$/.test(c0.args[0].text) ? Number(c0.args[0].text) : null) : 1; if (n == null) seedPos = null; else { seedPos = seedPos.slice(n); seedPositional(seedPos); } }
+      const head0 = c0 && c0.name ? s.words[s.words.length - c0.args.length - 1] : null;
+      if (c0 && c0.name === 'set') { const ops = setOperands(c0.args); if (ops && ops.every((w) => w && w.literal && !w.text.includes('\0'))) seedPositional(ops); else if (ops) seedPartial = true; }
+      else if (c0 && c0.name === 'shift') { const n = c0.args.length ? (c0.args[0].literal && /^[0-9]+$/.test(c0.args[0].text) ? Number(c0.args[0].text) : null) : 1; if (n == null) seedPartial = true; else for (const l of [...seedLists]) seedPositional(l.slice(n)); }
+      else if (c0 && (IN_PLACE_BINDERS.has(c0.name) || (head0 && !head0.literal))) seedPartial = true;
+      if (s.words.some((w) => /^(?:aliases|galiases|saliases)(?:\[|\+?=)/.test(w.text))) seedPartial = true;   // zsh's alias tables (THE TABLE ROAD)
       // THE ASSIGNED DEFAULT (round 6's sixth commit): `${name:=word}` gives name each text of word; a word the resolver could not establish marks the name
       for (const pa of s.paramAssigns || []) {
         if (pa.texts == null) { unreadValues.add(pa.name); continue; }
@@ -5035,8 +5158,8 @@ function extractIn(command, ctx) {
   let trapBinds = ctx.trapBinds || null;
   // THE STALE POSITIONAL CANDIDATE (round 6's thirteenth commit, 2026-09-22; the round's verifiers on the twelfth commit's head): the notes below clear no
   // earlier bind's candidates, so after `set -- a; shift` candidateTexts still yields `a` for `1` at a head word or in a script text (`set -- a; shift;
-  // ${1}cp a b` is read as `acp` while every shell runs cp): filed, not changed here, as 31 rows of THE RESIDUAL TABLE under the class 'a positional the
-  // resolver reads at the word by a model the shell does not keep', for the round's ruling.
+  // ${1}cp a b` is read as `acp` while every shell runs cp): filed as 31 rows of THE RESIDUAL TABLE for the round's ruling, and fixed as ruled in round
+  // 7's twenty-fifth commit (THE LIST AT THE WORD in candidateTexts: a positional is read from the list the walk holds, never from the candidates).
   let rebound = false;   // a `set`, `shift` or in-place text rebound the list during this walk (the init binds below do not count): a trap action's sub-walk reports it, since its list starts as values not read and a `shift` leaves it so (trapText)
   const bindPositionals = (ws, why = null) => {
     rebound = true;
@@ -5163,6 +5286,16 @@ function extractIn(command, ctx) {
     if (quoted) return { words: texts.map((t) => lit(t, true)) };
     return { words: texts.flatMap((t) => t.split(/[ \t\n]+/)).filter(Boolean).map((t) => lit(t, false)) };
   };
+  // THE SUBSCRIPTED POSITIONAL beyond one numeric index (zshListSubscriptWhy says which words): each such word of the segment, its words, here-strings and
+  // `<` words and redirection targets, is marked UNRESOLVABLE where zsh may run the line, in every frame (the subscript is no reading of any list), so
+  // the head road refuses it (scriptTexts), a target is refused as not literal, and an operand may vanish (mayVanish)
+  const markZshSubscripts = (seg) => {
+    if (!zshMayRun) return;
+    const mark = (w) => { const why = zshListSubscriptWhy(w); return why && why !== 'glued' ? Object.assign({ ...w }, { unresolvableReading: { raw: w.raw, why } }) : w; };
+    seg.words = seg.words.map(mark);
+    if (seg.stdin) seg.stdin = seg.stdin.map((x) => { const r = mark(x); return r === x ? x : Object.assign(r, { fd: x.fd, herestring: x.herestring }); });
+    seg.redirects = seg.redirects.map((r) => { const t = mark(r.target); return t === r.target ? r : { ...r, target: t }; });
+  };
   const expandPositionals = (seg) => {
     if (positionals === null || !positionalsApply()) return;
     const mark = (w, why) => Object.assign({ ...w }, { unresolvableReading: { raw: w.raw, why } });
@@ -5214,8 +5347,12 @@ function extractIn(command, ctx) {
   // The readability rule's two marks: a name a construct outside the plain form may write (sticky), and the whole table
   // once a construct may write any name. The text names the construct, so the refusal can say why the name was not read.
   const wroteThrough = (name, construct, raw) => `the command writes \`${name}\` through ${construct} (${raw}), which I do not follow`;
+  // THE KNOWN SET (round 7's twenty-fifth commit): the names a plain assignment in plain sequence gave a value, readable or not (`c=` gives the empty
+  // text, which the readability rule does not read as a path), so `${c+x}` is known to be the word; any other write, an unset and every taint forget it
+  const setNow = new Set();
   const taint = (name, why) => {
     if (!name || !IDENTIFIER.test(name)) return;
+    setNow.delete(name);
     if (vars.has(name) && vars.get(name) === null) return;
     vars.set(name, null);
     if (why && !unreadableWhy.has(name)) unreadableWhy.set(name, why);
@@ -5513,7 +5650,8 @@ function extractIn(command, ctx) {
     if (m[2] === '+=') { taint(name, wroteThrough(name, '`+=`, an append', w.raw)); return; }
     if (!seq.ok) { taint(name, wroteThrough(name, seq.why, w.raw)); return; }
     const { value, why } = plainValue(w, m[0].length - 1);
-    if (value == null) { taint(name, wroteThrough(name, why, w.raw)); return; }
+    if (value == null) { taint(name, wroteThrough(name, why, w.raw)); setNow.add(name); return; }
+    setNow.add(name);
     if (vars.has(name) && vars.get(name) === null) return;   // a write the rule did not follow touched it earlier: it stays unreadable
     vars.set(name, value);
   };
@@ -5688,7 +5826,7 @@ function extractIn(command, ctx) {
         if (!w.literal || !IDENTIFIER.test(w.text) || EXPANDED_NAMES.includes(w.text)) continue;   // an assembled or subscripted name: taintWord reads it
         handled.add(w);
         if (readonlyNames.has(w.text)) continue;   // a readonly name is not unset: bash keeps the value and continues, zsh and dash stop
-        if (plainUnset && !refTargets.has(w.text)) { vars.delete(w.text); unreadableWhy.delete(w.text); }
+        if (plainUnset && !refTargets.has(w.text)) { vars.delete(w.text); unreadableWhy.delete(w.text); setNow.delete(w.text); }
         else taint(w.text, wroteThrough(w.text, `an \`unset\`${refTargets.has(w.text) ? ' of a name a nameref points at' : ` with ${flags.map((f) => f.text).join(' ')}`}`, w.raw));
       }
     }
@@ -5937,9 +6075,13 @@ function extractIn(command, ctx) {
   // is marked opaque all the same). Never empty: an arithmetic expansion, a length, `$?`, `$$`, `$#`, `$0` and a process substitution (a path),
   // so a run holding one has no vanished reading.
   const NEVER_EMPTY_RUN = /\$\(\(|\$\{#|\$[?$#0](?![A-Za-z0-9_])|\$\{[?$#0]\}|(?:^|[^$])[<>=]\(/;
+  // THE UNREAD OPERAND's marker (round 7's twenty-fifth commit): `vanish` 'marker' reads the word as THE VANISHED TEXT does with UNREAD_MARKER standing
+  // where each expansion not read stood (a name the command gives no value, a run the token grammar does not read, a value not read beside the values
+  // read), so the text keeps the place of what is not read: q1Scan reads the texts so made for a command name that is such a place
   const candidateTexts = (w, vanish = false) => {
+    const marker = vanish === 'marker';
     if (w.literal || !w.marks || !w.marks.includes('x')) return null;   // no expansion in the word (a glob-shaped head such as `[[`): nothing to stand for
-    if (w.text.includes('\0') && (!vanish || NEVER_EMPTY_RUN.test(w.raw))) return null;   // a substitution the resolver did not read stands as a NUL: no candidate; THE VANISHED TEXT reads it as empty unless the spelling holds a never-empty form
+    if (w.text.includes('\0') && !marker && (!vanish || NEVER_EMPTY_RUN.test(w.raw))) return null;   // a substitution the resolver did not read stands as a NUL: no candidate; THE VANISHED TEXT reads it as empty unless the spelling holds a never-empty form
     let texts = [''];
     let vanished = false;   // THE VANISHED VALUE: a name used here holds a vanished reading, so the texts answered are one reading beside a text not read
     for (let i = 0; i < w.text.length;) {
@@ -5950,6 +6092,10 @@ function extractIn(command, ctx) {
         // THE SUBSCRIPTED POSITIONAL: a literal run opening with `[N]`, `[-N]` or `[N,M]` after an unbraced `$argv`, `$@` or `$*` is zsh's subscript of
         // the list, so the text without it stands beside bash's reading (the subscript kept as literal characters) where zsh may run the line
         const sub = zshMayRun && (w.marks[i] === 'u' || w.marks[i] === 'q') && i > 0 && w.marks[i - 1] === 'x' && ENDS_WITH_LIST_NAME.test(w.text.slice(0, i)) ? run.match(ZSH_SUBSCRIPT_AFTER_LIST) : null;   // an escaped `\[1\]` is no subscript
+        // THE SUBSCRIPTED POSITIONAL glued to literal text (round 7's twenty-fifth commit): zsh's element is the list's, so where the walk holds the list the
+        // text without the subscript is no reading of it (`set -- c; $argv[1]p a b` runs cp in zsh), a word not read; where it holds none (the top level's,
+        // a fresh shell's, before the walk) the element is a value not read, beside the readings
+        if (sub) { if (!positionalsApply()) return null; if (walkIdx >= 0 && positionals !== null) return { unread: 'argv', why: `under zsh's grammar the word \`${w.raw}\` glues an element of the positional parameters to other text, a reading I do not compute` }; vanished = true; }
         texts = sub ? texts.flatMap((t) => [t + run, t + run.slice(sub[0].length)]) : texts.map((t) => t + run);
         if (texts.length > 64) return null;
         i = j; continue;
@@ -5958,14 +6104,51 @@ function extractIn(command, ctx) {
       let tokens = true;
       CANDIDATE_TOKEN.lastIndex = 0;
       while (CANDIDATE_TOKEN.lastIndex < run.length) { const m = CANDIDATE_TOKEN.exec(run); if (!m) { tokens = false; break; } names.push(m[1] || m[2]); }
-      if (!tokens) { if (!vanish || NEVER_EMPTY_RUN.test(run)) return null; i = j; continue; }   // THE VANISHED TEXT: a run the token grammar does not read (a substitution, an operator form) that may be empty stands for nothing
+      if (!tokens) { if (marker) { texts = texts.map((t) => t + UNREAD_MARKER); i = j; continue; } if (!vanish || NEVER_EMPTY_RUN.test(run)) return null; i = j; continue; }   // THE VANISHED TEXT: a run the token grammar does not read (a substitution, an operator form) that may be empty stands for nothing
       for (const n of names) {
         if (/^[0-9@*]+$/.test(n) && !positionalsApply()) return null;
         if (/^[0-9@*]+$/.test(n) && positionals === UNKNOWN_POSITIONALS) return { unread: n, why: positionalsWhy };
-        if (unreadValues.has(n)) return { unread: n };
-        if (!candidates.has(n)) { if (!vanish) return null; continue; }   // THE VANISHED TEXT: a name the command gives no value may be empty
+        // THE LIST AT THE WORD (round 7's twenty-fifth commit, 2026-09-23; the reviewer's extra5-2 as ruled, option (a): bindPositionals noted each bind's
+        // values into the candidates and cleared none, so after `set -- a; shift` a head or a script text read `a` for `1`, `set -- a; shift; ${1}cp
+        // ../base/report.md report.md` read as `acp` while every shell ran cp, 31 rows of the residual table): a positional parameter is read from the list
+        // the walk holds at the word, never from the candidates (the element, the empty text past the end, the elements joined by one blank for `@` and
+        // `*`; an element the resolver did not read is a value not read), and where the walk holds no list (the top level's, a fresh shell's) it is a name
+        // the command gives no value; before the walk, from THE LIST BEFORE THE WALK's union (seedValues), beside values not read where seedPartial says so
+        // zsh's `argv` is the positional list itself (zshparam(1)): a word gluing it to other text, with no subscript after it (the subscript's road is the
+        // literal run's, above), is no reading of the list where the walk holds one, and a value not read where it does not
+        if (n === 'argv' && zshMayRun && !(w.text[j] === '[' && ENDS_WITH_LIST_NAME.test(w.text.slice(0, j)))) {
+          if (!positionalsApply()) return null;
+          if (walkIdx >= 0 && positionals !== null) return { unread: 'argv', why: `under zsh's grammar \`argv\` in the word \`${w.raw}\` is the positional parameters glued to other text, a reading I do not compute` };
+          vanished = true;
+          if (marker) { texts = texts.flatMap((t) => [t, t + UNREAD_MARKER]); if (texts.length > 64) return null; }
+        }
+        if (/^(?:[1-9][0-9]*|[@*])$/.test(n)) {
+          let vs;
+          if (walkIdx >= 0 && !Array.isArray(positionals)) {
+            // a list the walk does not hold (the top level's before any `set`, a fresh shell's own): the values the calling shell's binds noted
+            // (bindPositionals) reach a text it hands over unexpanded (a here-string, an unquoted here-document body: `f() { bash <<< "$*"; }; f cp a b`),
+            // so they are read with the empty text beside them, one reading beside values not read
+            const cs = candidates.get(n);
+            if (!cs || !cs.size) { if (marker) { texts = texts.map((t) => t + UNREAD_MARKER); continue; } if (!vanish) return null; continue; }
+            vanished = true;
+            vs = [...cs, '', ...(marker ? [UNREAD_MARKER] : [])];
+          } else if (walkIdx >= 0) {
+            const els = n === '@' || n === '*' ? positionals : [positionals[Number(n) - 1]];
+            if (els.some((e) => e && (!e.literal || e.text.includes('\0')))) return { unread: n, why: `the positional parameter \`${n}\` holds an operand that is an expansion I do not read, so what the word stands for is not known` };
+            vs = [n === '@' || n === '*' ? els.map((e) => e.text).join(' ') : (els[0] ? els[0].text : '')];
+          } else {
+            vs = [...(seedValues.get(n) || [])];
+            if (seedPartial) { vanished = true; if (marker) vs.push(UNREAD_MARKER); }
+            if (!vs.length) { if (marker) { texts = texts.map((t) => t + UNREAD_MARKER); continue; } if (!vanish) return null; continue; }
+          }
+          texts = texts.flatMap((t) => vs.map((v) => t + v));
+          if (texts.length > 64) return null;
+          continue;
+        }
+        if (unreadValues.has(n)) return { unread: n, why: unreadValueWhy.get(n) };
+        if (!candidates.has(n)) { if (marker) { texts = texts.map((t) => t + UNREAD_MARKER); continue; } if (!vanish) return null; continue; }   // THE VANISHED TEXT: a name the command gives no value may be empty
         if (vanishedValues.has(n)) vanished = true;
-        texts = texts.flatMap((t) => [...candidates.get(n)].map((v) => t + v));
+        texts = texts.flatMap((t) => [...candidates.get(n), ...(marker && vanishedValues.has(n) ? [UNREAD_MARKER] : [])].map((v) => t + v));
         if (texts.length > 64) return null;
       }
       i = j;
@@ -6018,7 +6201,7 @@ function extractIn(command, ctx) {
           // THE ALTERNATE VALUE (round 6's tenth commit): `${name:+word}`/`${name+word}` is the word (already in the readings) when the
           // name is set (non-empty, with the colon) and the word dropped otherwise; add the dropped form unless the name is known set,
           // so the empty text the shell may hand over reaches the judgment (a two-operand copy the three-operand reading hid)
-          const setKnown = vars.has(name) && vars.get(name) != null && (!/:/.test(op || '') || vars.get(name) !== '');
+          const setKnown = !varsPoisoned && ((vars.has(name) && vars.get(name) != null && (!/:/.test(op || '') || vars.get(name) !== '')) || (!/:/.test(op || '') && setNow.has(name)));   // THE KNOWN SET (round 7's twenty-fifth commit): a name the readability rule holds, read only while no construct may have assigned or unset it (varsPoisoned: an eval, a source, a call of a function the command defines; `c=a; f() { unset c; }; f; eval cp ${c:+x} a b` copied in every shell while the table still held `a`)
           // THE STALE POSITIONAL CANDIDATE (round 6's twelfth commit, 2026-09-22; the round's verifiers: `set -- a; shift; eval cp ${1:+x}
           // ../base/report.md report.md` ran the two-operand copy in every shell while allowed, and so did `shift 1`, `shift 2`, a second `set`
           // that drops the parameter, `bash -c`, `sh -c`, the colon-less `${1+x}`, a head, the tracked notes/ folder, the project root and a
@@ -6031,11 +6214,22 @@ function extractIn(command, ctx) {
           // below reads the colon form as set by the list's length, never whether the element is non-empty (`set -- ''; eval cp ${1:+x} a b` copies in
           // every shell while allowed), and setKnown, candKnown and posKnown read a name's or the list's binding as this shell's where the shell does
           // not hold it at the word (an unset, a read, a body's local, a bind in a subshell, a pipeline, a background job, a command substitution, an
-          // untaken body, a prefix position or behind a wrapper): filed, not changed here, as 61 rows of THE RESIDUAL TABLE under the class 'a positional
-          // the resolver reads at the word by a model the shell does not keep', for the round's ruling.
-          const candKnown = !/^[0-9@*]+$/.test(name) && candidates.has(name) && [...candidates.get(name)].length > 0 && (!/:/.test(op || '') || [...candidates.get(name)].every((v) => v !== ''));
-          const posKnown = /^[0-9@*]+$/.test(name) && positionalsApply() && Array.isArray(positionals) && (name === '@' || name === '*' ? positionals.length > 0 : positionals.length >= Number(name));   // Array.isArray: at the top level the list is not modelled (null), so a positional's alternate value is not known and the dropped form joins the readings (round 6's eleventh commit: `eval cp ${1:+x} a b` had refused through the catch-all, a TypeError on null, where the rule refuses by name)
-          if (!(setKnown || candKnown || posKnown)) texts.add(before + after);
+          // untaken body, a prefix position or behind a wrapper): filed as 61 rows of THE RESIDUAL TABLE for the round's ruling, and fixed as ruled in
+          // round 7's twenty-fifth commit (THE KNOWN SET and THE EMPTY POSITIONAL, below).
+          // THE KNOWN SET and THE EMPTY POSITIONAL (round 7's twenty-fifth commit, 2026-09-23; the reviewer's extra5-2 as ruled, option (a): the colon form
+          // was read as set by the list's length, never the element, so `set -- ''; eval cp ${1:+x} ../base/report.md report.md` copied in every shell while
+          // allowed, 30 rows of the residual table; and a name was read as set when THE HEAD CANDIDATES held a value for it, a union over the command that
+          // says nothing of whether the name is set at the word, so `c=a; unset c`, a `read`, a body's `local`, an untaken body, a subshell, a pipeline, a
+          // background job, a command substitution and a prefix position left it read as set, 16 rows): a name is known set from the readability rule
+          // alone (setKnown), a positional from the list the walk holds (the element exists, and under the colon form its text is not empty; `$@` and `$*`
+          // under the colon form are set in every shell only when the elements joined by one blank are not empty, bash and dash reading `set -- ''` as
+          // unset and zsh reading `$@` as set: measured), and every other name's dropped form joins the readings
+          const colon = /:/.test(op || '');
+          const posEl = (k) => positionals[k] && positionals[k].literal && !positionals[k].text.includes('\0') ? positionals[k].text : null;
+          const posKnown = /^[0-9@*]+$/.test(name) && positionalsApply() && Array.isArray(positionals) && (name === '0' ? true
+            : name === '@' || name === '*' ? (!colon ? positionals.length > 0 : !ifsNamed && positionals.every((_, k) => posEl(k) != null) && positionals.map((_, k) => posEl(k)).join(' ') !== '')
+              : positionals.length >= Number(name) && (!colon || (posEl(Number(name) - 1) != null && posEl(Number(name) - 1) !== '')));   // Array.isArray: at the top level the list is not modelled (null), so a positional's alternate value is not known and the dropped form joins the readings (round 6's eleventh commit: `eval cp ${1:+x} a b` had refused through the catch-all, a TypeError on null, where the rule refuses by name)
+          if (!(setKnown || posKnown)) texts.add(before + after);
           continue;
         }
         const stands = `the word stands for the value of \`${name}\` when it is set, and`;
@@ -6078,7 +6272,7 @@ function extractIn(command, ctx) {
     if ((role === 'text' || w.herestring) && !optionWord && procsubOf(w) == null) {
       const v = candidateTexts(w, true);
       if (v && v.unread) { cannotRead(w, how, { kind: 'unresolvableReading', spelling: w.raw, text: v.why || `a value this command gives \`${v.unread}\` comes from a text I looked at and could not establish, so what the word stands for is not known` }); return []; }
-      if (v && v.texts.length) { sawOpaqueCommand = true; vanishedRead = true; return v.texts; }
+      if (v && v.texts.length) { sawOpaqueCommand = true; vanishedRead = true; if (!(positionalResidual([w]) && !positionalsApply())) q1Scan((candidateTexts(w, 'marker') || {}).texts || [], `\`${w.raw}\``, w); return v.texts; }   // THE UNREAD OPERAND inside the text (q1Scan)
     }
     if (role === 'text' || w.herestring || procsubOf(w) != null) sawOpaqueCommand = true;
     return [];
@@ -6123,6 +6317,88 @@ function extractIn(command, ctx) {
     if (!p) return;
     if (p.unresolvable) { cannotRead(w, how, { kind: 'unresolvable', text: p.unresolvable }); return; }
     targets.push({ path: p.path, how: how + viaOf() });
+  };
+  // THE UNREAD OPERAND (round 7 of fork PR #780 review, twenty-fifth commit, 2026-09-23; the reviewer's Q1 as ruled in section B of the round-6 rulings,
+  // for the user's decision on the guard): a command whose name, script or piped script is an expansion the resolver does not read (a name the command never
+  // gives a value, a value not read, a substitution outside the output model, a positional parameter of a list the walk does not hold, a producer outside
+  // the output model) may be any command, so where a literal operand of it names a tracked file (the target known, the writer not: the contract's case)
+  // the command is refused by name, and where none does it stays allowed (nothing to protect). `words`: the operands (the words after the command name, a
+  // shell's operands after its script, a sourced file's); a literal word, each match of a pattern and the value glued to an option (`--out=PATH`) are
+  // read as paths, judged by the path's own project from any cwd, and a word not read names no file the guard knows. `q1`: { road, spelling }, the
+  // refusal's account (judge). Each target or unread entry it records carries the tag.
+  const unreadOperands = (words, q1) => {
+    const how = q1.road === 'head' ? `command named by ${q1.spelling}` : q1.road === 'piped' ? `shell reading its script from ${q1.spelling}` : `script held in ${q1.spelling}`;
+    const one = (w) => {
+      if (!w || !w.text) return;
+      if (w.glob) { const m = expandGlob(w, unknownDir ? null : dir); if (m) for (const x of m) one(x); return; }   // a pattern: each match the shell names (none matching: no file named)
+      if (!w.literal || w.text.includes('\0')) return;   // a word not read names no file I know: the target is not known either
+      const [t0, u0] = [targets.length, unresolved.length];
+      add(w, how);
+      for (const t of targets.splice(t0)) { t.q1 = q1; q1Targets.push(t); }
+      for (const u of unresolved.splice(u0)) { u.q1 = q1; q1Unresolved.push(u); }
+    };
+    for (const w of words) {
+      one(w);
+      if (w && w.literal && /^-[^=]*=./.test(w.text)) one(sliceWord(w, w.text.indexOf('=') + 1));   // an option's glued value: `--out=PATH`, `-o=PATH`
+    }
+  };
+  // THE UNREAD OPERAND inside a text (q1Scan): a script text read as THE VANISHED TEXT reads it stands for the text with the expansions not read removed,
+  // so a command name inside it that was one of them is gone from that reading (`eval "$(command -v cp) base/report.md docs/report.md"` read as the
+  // command `base/report.md`, allowed while every shell copied); the text is read again with UNREAD_MARKER in each such place (candidateTexts' marker),
+  // and a command of it whose name holds the marker takes THE UNREAD OPERAND over its operands. The read is the lexer's alone (no walk, so nothing is
+  // bound, moved or defined by it); a relative operand after a command of the text that moves or may move the shell (a cd, pushd, popd, a `.` or source,
+  // an eval, emulate, a trap, a command name not read) is one whose directory is not known. A command that spells the marker's name has no such read:
+  // its script word is refused as a text I cannot read (the marker would be no marker there).
+  // a script word's texts (scriptTexts) and whether the script is one the resolver did not read, whole or in part: no text and no refusal (the residual),
+  // THE VANISHED TEXT's reading, or a NUL where a substitution not read stood (THE UNREAD OPERAND's roads)
+  const readScript = (w, how, role = 'text') => {
+    const [v0, u0] = [vanishedRead, unresolved.length];
+    vanishedRead = false;
+    const texts = scriptTexts(w, how, role);
+    const unread = vanishedRead || (!texts.length && unresolved.length === u0) || texts.some((t) => String(t).includes('\0'));
+    vanishedRead = vanishedRead || v0;
+    return { texts, unread };
+  };
+  // the texts fed on a consumer's standard input (stdinBodies), and whether a feed it has is one the resolver did not read, whole or in part: a producer piped
+  // in whose text is not held, a here-string or a `<(..)` whose text is not held (a `<` of a file is a file, the reader class's)
+  const readFeed = (idx, fd) => {
+    const v0 = vanishedRead;
+    vanishedRead = false;
+    const bodies = stdinBodies(idx, fd);
+    const s0 = segments[idx];
+    const fed = producerAt(idx) != null || (s0.stdin || []).some((x) => x.herestring || procsubOf(x) != null);
+    // a here-string or an unquoted here-document body hands its expansions over as spelled (lex), so one the resolver does not read makes the fed text one not read
+    const fedUnread = (s0.fedWords || []).some((fw) => { const c = candidateTexts(fw, 'marker'); return !c || !!c.unread || c.texts.some((t) => t.includes(UNREAD_MARKER)); });
+    const unread = vanishedRead || (!bodies.length && fed) || bodies.some((t) => String(t).includes('\0')) || fedUnread;
+    vanishedRead = vanishedRead || v0;
+    const p = producerAt(idx);
+    return { bodies, unread, spelling: p != null ? `\`${spellWords(segments[p].words) || 'the command before the pipe'}\`` : 'its standard input' };
+  };
+  // the directory the walk is in, and a call run from a directory saved so (THE UNREAD OPERAND: a text's operands are the words the command hands over
+  // where it stands, before the text runs and moves the shell)
+  const dirNow = () => ({ dir, unknownDir, unknownWhy });
+  const fromDir = (at, fn) => { const saved = dirNow(); ({ dir, unknownDir, unknownWhy } = at); try { fn(); } finally { ({ dir, unknownDir, unknownWhy } = saved); } };
+  const q1Scan = (texts, spelling, w = null) => {
+    const marked = texts.filter((t) => t.includes(UNREAD_MARKER));
+    if (!marked.length) return;
+    if (command.includes(UNREAD_MARKER_NAME)) { if (w) cannotRead(w, 'script', { kind: 'unresolvableReading', spelling: w.raw, text: 'the command spells a name I keep for what I do not read, so I cannot read its script' }); return; }
+    for (const text of marked.slice(0, 16)) {
+      let r;
+      try { r = lex(text, shell); } catch { continue; }
+      let moved = false;
+      for (const sg of r.segments) {
+        const c = commandOf(sg.words);
+        if (!c || c.unknown || c.opaque) { if (c) moved = true; continue; }
+        const hw = c.name ? sg.words[sg.words.length - c.args.length - 1] : null;
+        const markedHead = !!hw && hw.raw.includes(UNREAD_MARKER_NAME);
+        if (markedHead) {
+          const saved = [unknownDir, unknownWhy];
+          if (moved && !unknownDir) { unknownDir = true; unknownWhy = `an earlier command of the text ${spelling} stands for may move the shell`; }
+          try { unreadOperands(c.args, { road: 'script', spelling }); } finally { [unknownDir, unknownWhy] = saved; }
+        }
+        if (markedHead || (hw && !hw.literal) || TEXT_MOVERS.has(c.name)) moved = true;
+      }
+    }
   };
   let sawOpaqueCommand = false;
   let vanishedRead = false;   // THE VANISHED TEXT: scriptTexts answered a text with an expansion the command never gives a value removed (readInPlace reads it: such a text is one reading beside a text not read, THE UNHELD ROAD's case)
@@ -6189,7 +6465,7 @@ function extractIn(command, ctx) {
     const homeValue = vars.has('HOME') && vars.get('HOME') != null ? [['HOME', vars.get('HOME')]] : [];
     const sub = extract(text, {
       dir, unknownDir, unknownWhy, shell: sh, depth: depth + 1, homeAssigned: homeUnreadableNow(), homeWhy: homeWhyNow(), unreadableNames, links, cdFunctions, mutated, keywordMode,
-      ifsNamed, candidates, unreadValues, vanishedValues, execFeeds,   // THE IFS RULE, THE HEAD CANDIDATES (THE VANISHED VALUE with them) and THE EXEC FEED hold in every text this command hands over, a fresh shell's included (round 6's fourth commit)
+      ifsNamed, candidates, unreadValues, unreadValueWhy, vanishedValues, execFeeds,   // THE IFS RULE, THE HEAD CANDIDATES (THE VANISHED VALUE with them) and THE EXEC FEED hold in every text this command hands over, a fresh shell's included (round 6's fourth commit)
       aliases: fresh ? new Map() : aliases, hashes: fresh ? new Map() : hashes, aliasState: fresh ? { unread: null } : aliasState, bound, aliasChain: chain, headSplice: spliced,   // THE ALIAS ROAD: a fresh shell starts with no alias or hash; the paths made are on the filesystem for every shell
       spliceLine: spliced ? defLineOf(walkIdx >= 0 ? segments[walkIdx] : null) : undefined,   // a definition inside the splice binds at the spliced segment's line (defLineOf)
       functionBodies, functionLines, fnChain: opts.fnChain || fnChain, runFunction: opts.runFunction || null,   // THE CALLED BODY
@@ -6208,6 +6484,8 @@ function extractIn(command, ctx) {
     });
     targets.push(...(opts.runFunction ? sub.targets.filter((t) => !targets.some((x) => x.path === t.path)) : sub.targets));   // a replayed body's literal writes were judged at the definition already: each path once
     unresolved.push(...sub.unresolved);
+    q1Targets.push(...sub.q1Targets);
+    q1Unresolved.push(...sub.q1Unresolved);
     if (sub.opaque) sawOpaqueCommand = true;
     // THE MOVED SHELL (round 6's fifth commit, 2026-09-21; the residuals verifier: `eval 'cd ../notes'; cp ../base/report.md n1.md` and the same
     // through `eval "cd $d"`, `${d:-../notes}`, `pushd`, a sourced standard input, here-string or `<(..)`, an alias of cd or one whose body is a
@@ -6656,6 +6934,13 @@ function extractIn(command, ctx) {
     try { for (const r of seg.redirects) if (WRITE_REDIRECTS.has(r.op)) add(r.target, r.how || `${r.op} redirection`); }   // a dash-reading redirect carries its own how, naming the construct (round 5's fifth addendum)
     finally { if (construct) ({ dir, unknownDir, unknownWhy } = saved); }
   };
+  // THE VALUE AT THE WALK (round 7's twenty-fifth commit, 2026-09-23): noteCandidates reads each assignment's value before the walk, over THE LIST BEFORE
+  // THE WALK's union, which holds no value for the top level's list and none a text run in place binds; the walk notes the value again where it performs
+  // the assignment, over the list it holds there (a value over a list rebound to values not read marks the name, unreadValues; one over the top level's
+  // list, which the guard does not read, holds the empty text beside a value not read, vanishedValues), so a name composed from a positional holds the
+  // value the shell gives it (`set -- x; eval 'set -- cp'; c=$1; $c ../base/report.md report.md` is refused by name, where the pre-walk read gave c `x`
+  // alone while every shell copied), and a name composed from such a name does too (`d=$1; c=$d`); the candidates stay a union, so a value is only added
+  const noteAtWalk = (w) => { if (w && /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(w.text)) noteCandidate(w); };
   const countCandidates = () => { let n = 0; for (const set of candidates.values()) n += set.size; return n; };
   let knownCandidates = countCandidates();
   noteCandidates();   // THE HEAD CANDIDATES, over the words as lexed, before the walk (scriptTexts exists by now)
@@ -6968,6 +7253,7 @@ function extractIn(command, ctx) {
     }
     // THE POSITIONAL VALUE (round 6's sixth commit): a whole word that is a positional parameter stands for the operands this shell holds for it
     expandPositionals(seg);
+    markZshSubscripts(seg);   // THE SUBSCRIPTED POSITIONAL beyond one numeric index: UNRESOLVABLE where zsh may run the line
     // B2: the expansions the guard can read are resolved before the segment's words and targets are judged
     for (const r of seg.redirects) r.target = resolveWord(r.target);
     if (seg.stdin) seg.stdin = seg.stdin.map((s) => { const r = resolveWord(s); return r === s ? s : Object.assign(r, { fd: s.fd, herestring: s.herestring }); });   // a here-string or `<` word too (round 6's sixth commit: `f() { bash <<< "$1"; }` fed the operand)
@@ -6979,7 +7265,7 @@ function extractIn(command, ctx) {
       const head0 = compoundHeadOf(seg.words);   // after the peel (round 5), read from the one table
       if (head0 != null && Object.hasOwn(BODY_CLOSER, head0)) compoundBody(seg, peelIndex(seg.words) + 1, pushCompound(head0), true);
       const seq = plainSequence(seg, idx);
-      seg.words = seg.words.map((w) => { const r = resolveWord(w); recordPlainWord(r, seg, idx, seq); return r; });
+      seg.words = seg.words.map((w) => { const r = resolveWord(w); recordPlainWord(r, seg, idx, seq); noteAtWalk(r); return r; });
       addRedirects(seg, construct);
       recurseSubs(seg);
       for (const v of seg.viaSubs) recurse(v.text, shell, false, v.via);   // the construct's other reading (round 5's fifth addendum)
@@ -7011,7 +7297,9 @@ function extractIn(command, ctx) {
       else compoundBody(seg, at + 1, f, true, preWords);
     }
     const cmd = commandOf(seg.words);
+    if (cmd && cmd.name) { for (const w of seg.words.slice(0, seg.words.length - cmd.args.length - 1)) noteAtWalk(w); if (VAR_ASSIGNERS.has(cmd.name) || cmd.name === 'local') for (const w of cmd.args) noteAtWalk(w); }   // THE VALUE AT THE WALK: the prefix assignments and a declaration's operands, as noteCandidates reads them
     if (!cmd) {
+      if (seg.words.every((w) => isAssignmentWord(w) || (plainWord(w) && RESERVED.has(w.text)))) for (const w of seg.words) noteAtWalk(w);
       // assignment words (and reserved words) alone once compoundBody dropped a condition's words or the head branch `repeat N`
       // (round 5's second and third addenda: `if [[ 1 = 1 ]] { x=.. }`, `repeat 0 { x=.. }`): recorded as the assignment-only
       // path above records them, inside the frame the head pushed, so the body's assignment is unreadable with the body's own
@@ -7075,6 +7363,7 @@ function extractIn(command, ctx) {
     // cannot read (refused while a project is in play); after an alias whose NAME is unreadable, every later command name is one.
     // The splice runs in this shell with this command's names (not a fresh shell), the chain of alias names bounding the recursion.
     let unreadHead = null;   // THE UNREAD HEAD's road, taken after the splices (below)
+    let unreadOperandsAtHead = null;   // THE UNREAD OPERAND at the head, taken after the splices (below)
     if (headWord) {
       const meta = {};
       const refusedBefore = unresolved.length;
@@ -7104,6 +7393,12 @@ function extractIn(command, ctx) {
       // relative target under an unknown directory is the B2 residual either way.
       const positionalHead = positionalSpelling(headWord.raw) != null || (zshMayRun && !!headWord.marks && /^x+u*$/.test(headWord.marks) && ZSH_POSITIONAL_SUBSCRIPT.test(headWord.raw)) || allPositional(headWord.raw);   // one positional, or a word glued from positionals alone (`$argv[1]$argv[2]`, `$1$2`): the call's operands in a body
       if (!headWord.literal && headWord.marks && headWord.marks.includes('x') && (!texts.length || meta.vanished) && !refusedHead && !(positionalHead && (positionals === null || !positionalsApply()))) unreadHead = () => frameText(seg, idx, cmd, `\`${headWord.raw}\``).unheld('a text I do not read', `an earlier \`${headWord.raw}\`, a command name that stands for a text I do not read,`);
+      // THE UNREAD OPERAND at the head (round 7's twenty-fifth commit; the reviewer's Q1): a command name that is an expansion the resolver did not read, read
+      // as THE VANISHED HEAD TEXT or THE VANISHED VALUE, or could not establish (refused as such while a project is in play), may be any command, so a
+      // literal operand naming a tracked file is refused by name from any cwd; a positional head in a body being defined is the call's, read when the
+      // call is replayed, and at the top level before any `set` it is one the guard does not read, as any name the command gives no value
+      // (taken after the splices, below, so a spliced reading's own refusal by name, the more useful answer, is the one given)
+      if (!headWord.literal && headWord.marks && headWord.marks.includes('x') && (!texts.length || meta.vanished || refusedHead) && !(positionalHead && !positionalsApply())) { const at = dirNow(); unreadOperandsAtHead = () => fromDir(at, () => unreadOperands(cmd.args, { road: 'head', spelling: `\`${headWord.raw}\`` })); }
     }
     // a glob in the command name (round 6's third commit, 2026-09-21: `/usr/bin/[c]p a b` ran cp in bash, zsh and dash while the walk read an
     // unknown command named so): the matches, sorted as the shells sort them, stand in the name's place as the words the shell makes (the
@@ -7134,6 +7429,7 @@ function extractIn(command, ctx) {
     for (const w of seg.words) if (w !== headWord && plainWord(w)) { const g = aliases.get(w.text); if (g && g.global && g.line < lineOf(seg)) cannotRead(w, 'a global alias', { kind: 'aliasUnread', text: `\`${w.text}\` is a global alias this command defines (zsh expands it in every position), so the word is not the text spelled` }); }
     for (const r of seg.redirects) if (plainWord(r.target)) { const g = aliases.get(r.target.text); if (g && g.global && g.line < lineOf(seg)) cannotRead(r.target, 'a global alias', { kind: 'aliasUnread', text: `\`${r.target.text}\` is a global alias this command defines (zsh expands it at a redirection target too), so the target is not the text spelled` }); }   // round 6's fourth commit: `alias -g R=report.md` then `echo x > R` wrote report.md in zsh while the target escaped the rule
     runHeadSplices(headIdx);
+    if (unreadOperandsAtHead) unreadOperandsAtHead();   // THE UNREAD OPERAND at the head, before THE UNREAD HEAD's road moves the directory: the operands are the words the command is handed where it stands
     if (unreadHead) unreadHead();   // THE UNREAD HEAD: the road after the readings (the comment at the head site says why)
     const asSpelled = cmd.args;
     let { name } = cmd;
@@ -7473,6 +7769,7 @@ function extractIn(command, ctx) {
         // stands for none, the text is not read), each read through the site's door; an unread or vanished text takes the road (eval's text runs in this
         // shell's frame and moves it, THE MOVED SHELL; a trap action's `set`, `shift` or cd acts when the trap fires, trapText)
         const door = name === 'eval' ? frameText(seg, idx, cmd, '`eval`') : trapText(seg, idx, cmd, sigs);
+        const atEval = dirNow();
         const read = readInPlace(() => {
           let texts = [''];
           for (const w of ws) {
@@ -7484,6 +7781,18 @@ function extractIn(command, ctx) {
           return texts;
         }, door, 'a text I do not read', (t) => recurse(t, shell, false, ` through \`${name}\``, null, aliasChain, false, door), { road: !positionalResidual(ws) });   // `f() { eval "$1"; }; f 'cp a b'` is the call's text, replayed by name; `eval "$1"` at the top level the residual
         if (name === 'eval' && !read.held) sawOpaqueCommand = true;   // a script held in a name the guard does not read: the residual named
+        // THE UNREAD OPERAND inside eval's text (q1Scan): the words joined as eval joins them, each read with UNREAD_MARKER where an expansion not read
+        // stood, so a command name the join puts there (`eval $(command -v cp) base/report.md docs/report.md`) takes the road over the words after it
+        if (!read.held && !(positionalResidual(ws) && !positionalsApply())) {
+          let marks = [''];
+          for (const w of ws) {
+            const r = w.literal ? { texts: [w.text], unread: false } : readScript(w, name === 'eval' ? 'eval' : 'trap action');   // a word read whole keeps its texts (a reading, a value the command gives); one not read, its marked texts
+            const ts = !r.unread && r.texts.length ? r.texts : ((candidateTexts(w, 'marker') || {}).texts || [UNREAD_MARKER]);
+            marks = marks.flatMap((a) => ts.map((b) => (a ? a + ' ' : '') + b));
+            if (marks.length > 16) break;
+          }
+          fromDir(atEval, () => q1Scan(marks, `\`${spellWords(ws)}\``));
+        }
         break;
       }
       case 'xargs': sawOpaqueCommand = true; break;
@@ -7609,12 +7918,17 @@ function extractIn(command, ctx) {
         const inDefinition = frames.some((f) => f.kind === 'function' && !f.running && !f.coproc);   // a body being defined reads the standard input of its CALL, which THE CALLED BODY's replay feeds it (`f() { . /dev/stdin; }; echo 'cp a b' | f` is read by name there; `f < ../scratch/x` takes the unheld road there and marks the body, so the call leaves the directory unknown); the definition's own walk has no feed to judge (readInPlace's emptyIsUnheld), while a vanished here-string of its own is the body's text not read
         const fedName = ops.length && ops[0].literal && isStdinName(ops[0].text) ? ops[0].text : null;   // the standard input, or a descriptor, by name (THE DESCRIPTOR FEED: `. /dev/fd/3 3< <(..)`)
         const feedResidual = (seg.stdin || []).length > 0 && (seg.stdin || []).every((s) => s.herestring) && positionalResidual(seg.stdin);   // `. /dev/stdin <<< "$1"` at the top level: the residual; in a body being defined, the call's
-        if (fedName != null) readInPlace(() => stdinBodies(idx, fdOfName(fedName)), frameDoor, `a text read from \`${fedName}\` that is not in the command`, (body) => recurse(body, shell, false, ` through \`${name} ${fedName}\``, [], aliasChain, false, sourceDoor()), { emptyIsUnheld: !inDefinition, road: !feedResidual });   // the texts this command feeds the descriptor named; a sourced text runs in this shell and moves it (THE MOVED SHELL) by the door's reading; none held (a `<` of a file or of /dev/null, a descriptor opened on a file, a pipe from a cat of one, no feed at all): THE UNHELD TEXT
+        // THE UNREAD OPERAND on the sourced road (round 7's twenty-fifth commit; the reviewer's Q1): a sourced text named by an expansion, a process
+        // substitution or a fed standard input the resolver did not read may be any script, so a literal operand after it naming a tracked file is
+        // refused by name (a file spelled out is a file, the reader class's)
+        const atSource = dirNow();
+        const sourceQ1 = (unread, spelling) => { if (unread && ops.length > 1 && !(inDefinition && positionalResidual(ops.slice(0, 1)))) fromDir(atSource, () => unreadOperands(ops.slice(1), { road: fedName != null ? 'piped' : 'script', spelling })); };
+        if (fedName != null) { const fed = producerAt(idx) != null || (seg.stdin || []).some((x) => x.herestring || procsubOf(x) != null); const r = readInPlace(() => stdinBodies(idx, fdOfName(fedName)), frameDoor, `a text read from \`${fedName}\` that is not in the command`, (body) => recurse(body, shell, false, ` through \`${name} ${fedName}\``, [], aliasChain, false, sourceDoor()), { emptyIsUnheld: !inDefinition, road: !feedResidual }); sourceQ1(fed && !r.held, `\`${fedName}\``); }   // the texts this command feeds the descriptor named; a sourced text runs in this shell and moves it (THE MOVED SHELL) by the door's reading; none held (a `<` of a file or of /dev/null, a descriptor opened on a file, a pipe from a cat of one, no feed at all): THE UNHELD TEXT
         // a sourced process substitution is the text a literal echo or printf prints, as a script operand that is one is (round 6's third
         // commit: `. <(echo 'cp a b')` copied in bash and zsh, zsh's `. =(echo '..')` too, while the operand was read as a file outside the command); the
         // operand is a form dash does not parse: every shell that reaches the next command ran the text (the frame door for both spellings)
-        else if (ops.length && procsubOf(ops[0]) != null) readInPlace(() => scriptTexts(ops[0], `\`${name}\` operand`, 'file'), frameDoor, 'a process substitution whose output is not in the command', (t) => recurse(t, shell, false, ` through \`${name} <(..)\``, null, aliasChain, false, frameDoor));
-        else frameDoor.unheld('a file whose contents are not in the command');   // THE UNHELD TEXT: the file operand (literal, or a word the resolver did not read), or no operand at all
+        else if (ops.length && procsubOf(ops[0]) != null) { const r = readInPlace(() => scriptTexts(ops[0], `\`${name}\` operand`, 'file'), frameDoor, 'a process substitution whose output is not in the command', (t) => recurse(t, shell, false, ` through \`${name} <(..)\``, null, aliasChain, false, frameDoor)); sourceQ1(!r.held, `\`${ops[0].raw}\``); }
+        else { frameDoor.unheld('a file whose contents are not in the command'); if (ops.length && !ops[0].literal) sourceQ1(true, `\`${ops[0].raw}\``); }   // THE UNHELD TEXT: the file operand (literal, or a word the resolver did not read), or no operand at all
         break;
       }
       default:
@@ -7657,15 +7971,25 @@ function extractIn(command, ctx) {
           // the text fed, which the shell sources at startup; read whether or not this shell would (bash reads BASH_ENV when not interactive
           // and ENV under POSIX mode when interactive, dash reads ENV when interactive: the safe side, as `--rcfile` is read)
           for (const nm of STARTUP_FILE_NAMES) for (const v of candidates.get(nm) || []) if (isStdinName(v)) for (const body of stdinBodies(idx, fdOfName(v))) recurse(body, name, undefined, ` through \`${nm}\``, []);
-          if ('script' in sh) {
-            for (const t of scriptTexts(sh.script, `\`${name} -c\` script`)) recurse(t, name, undefined, sh.script.literal ? '' : READING_VIA(sh.script.raw));   // the texts the word can stand for, each a script (THE RESOLVED SUBSTITUTION, THE DEFAULT WORD; THE RESOLVER'S CONTRACT)
+          // THE UNREAD OPERAND on the script roads (round 7's twenty-fifth commit; the reviewer's Q1): a `-c` text, a script file operand that is an
+          // expansion or a process substitution, or a script fed on the standard input, that the resolver did not read, whole or in part, may be any
+          // script, so a literal operand of the script (the shell's words after it) naming a tracked file is refused by name; a script file spelled out
+          // is a file, the reader class's (`bash run.sh docs/report.md`), and a script read whole leaves its operands to the script's own reading
+          const scriptOperands = argv.slice(sh.argsAt == null ? argv.length : sh.argsAt);
+          if ('script' in sh && sh.script) {
+            const r = readScript(sh.script, `\`${name} -c\` script`);
+            for (const t of r.texts) recurse(t, name, undefined, sh.script.literal ? '' : READING_VIA(sh.script.raw));   // the texts the word can stand for, each a script (THE RESOLVED SUBSTITUTION, THE DEFAULT WORD; THE RESOLVER'S CONTRACT)
+            if (r.unread) unreadOperands(scriptOperands, { road: 'script', spelling: `\`${sh.script.raw}\`` });
           }
           if (sh.stdin) {   // after a `-c` text too where the shell runs both (THE OPTION GRAMMAR: dash's `-sc`)
-            for (const body of stdinBodies(idx, sh.fd)) recurse(body, name, undefined, '', []);   // bash <<'EOF' ... EOF, a pipe, `bash /dev/stdin`: the body is the script, and the shell has consumed it (nothing passes on); `bash /dev/fd/3 3< <(..)` reads the descriptor named (THE DESCRIPTOR FEED)
+            const f = readFeed(idx, sh.fd);
+            for (const body of f.bodies) recurse(body, name, undefined, '', []);   // bash <<'EOF' ... EOF, a pipe, `bash /dev/stdin`: the body is the script, and the shell has consumed it (nothing passes on); `bash /dev/fd/3 3< <(..)` reads the descriptor named (THE DESCRIPTOR FEED)
+            if (f.unread) unreadOperands(scriptOperands, { road: 'piped', spelling: f.spelling });
           } else if (sh.file) {
             // `bash <(echo 'cp a b')`, zsh's `=(...)`: the file the shell reads is the text a literal echo or printf prints (the third fix-up;
             // bash and zsh copied); any other file's contents are not in the command
-            if (procsubOf(sh.file) != null) for (const t of scriptTexts(sh.file, `\`${name}\` script operand`, 'file')) recurse(t, name);
+            if (procsubOf(sh.file) != null) { const r = readScript(sh.file, `\`${name}\` script operand`, 'file'); for (const t of r.texts) recurse(t, name); if (r.unread) unreadOperands(scriptOperands, { road: 'script', spelling: `\`${sh.file.raw}\`` }); }
+            else if (!sh.file.literal) unreadOperands(scriptOperands, { road: 'script', spelling: `\`${sh.file.raw}\`` });   // a script file named by an expansion: a file the command does not name
           }
           // a startup file that is a process substitution is read the same way (round 6's third commit: `bash --rcfile <(echo 'cp a b') -i`)
           for (const f of sh.rc || []) if (procsubOf(f) != null) for (const t of scriptTexts(f, `\`${name} --rcfile\` file`, 'file')) recurse(t, name);
@@ -7693,7 +8017,7 @@ function extractIn(command, ctx) {
   // will follow it once it exists (`ln -s <proj>/notes <out>/d && echo x > <out>/d/x-$$.md` landed in the tracked folder
   // while the numeric view resolved `<out>/d` through a filesystem where the link did not yet exist).
   // the directory state at the text's end, for a caller whose shell ran this text in place (recurse's adopt: THE MOVED SHELL, round 6's fifth commit)
-  return { targets, opaque: opaque || sawOpaqueCommand, unresolved, links, dir, unknownDir, unknownWhy, oldDir, moved: movedAny || dir !== ctx.dir || unknownDir !== !!ctx.unknownDir, positionals, positionalsWhy, rebound };
+  return { targets, opaque: opaque || sawOpaqueCommand, unresolved, q1Targets, q1Unresolved, links, dir, unknownDir, unknownWhy, oldDir, moved: movedAny || dir !== ctx.dir || unknownDir !== !!ctx.unknownDir, positionals, positionalsWhy, rebound };
 }
 
 // ── the verdict ─────────────────────────────────────────────────────
@@ -8341,7 +8665,9 @@ function judge(command, cwd) {
   let targets;
   let unresolved;
   let links;
-  try { ({ targets, unresolved, links } = extractWriteTargets(command, cwd)); }
+  let q1Targets;
+  let q1Unresolved;
+  try { ({ targets, unresolved, links, q1Targets, q1Unresolved } = extractWriteTargets(command, cwd)); }
   catch (e) { if (isUnknownPath(e)) return statErrorRefusal(e.why && e.why.how ? e.why.how : 'write', e.why && e.why.raw ? e.why.raw : 'the path', e); throw e; }   // any other throw: the catch-all refuses
   const seen = new Set();
   const closures = new Map();
@@ -8368,7 +8694,8 @@ function judge(command, cwd) {
   const prevLinks = activeLinks;
   activeLinks = links || null;   // M3: the command's own links are followed while the unreadable targets are placed
   try {
-  for (const u of unresolved) {
+  const judgeUnresolved = (list) => {
+  for (const u of list) {
     let hit = null;
     try {
       hit = inPlayFor(u, cwd, memo);
@@ -8572,8 +8899,26 @@ function judge(command, cwd) {
       + `reject.${compare} Spell the path out: outside that project the command then runs as usual, and a tracked file `
       + `takes its change through track-edit instead:\n${TRACK_EDIT}`;
   }
-  } finally { activeLinks = prevLinks; }
   return null;
+  };
+  const own = judgeUnresolved(unresolved);
+  if (own) return own;
+  // THE UNREAD OPERAND (extract's unreadOperands; round 7 of fork PR #780 review, twenty-fifth commit; the reviewer's Q1), after the command's own reading
+  // (its writes by name and the targets it cannot read keep their answers, the more useful ones): a command whose name, script or piped script is a
+  // text the guard does not read, handed a literal operand that is a tracked file, is refused by name, the target known and the writer not
+  for (const t of q1Targets) {
+    let guarded;
+    try { guarded = isGuardedPath(t.path, closures); }
+    catch (e) { if (isUnknownPath(e)) return statErrorRefusal(t.how, t.path, e); throw e; }
+    if (!guarded) continue;
+    const what = t.q1.road === 'head' ? `its command name is filled in from ${t.q1.spelling}` : t.q1.road === 'piped' ? `the script its shell reads on its standard input comes from ${t.q1.spelling}` : `the script it runs is filled in from ${t.q1.spelling}`;
+    return `Track-changes is ON for ${t.path}, so this command is blocked here: ${what}, a text I do not read, so it may run any command, `
+      + `and it names ${t.path} as an operand, so it may write the file silently, with no change for me to accept or reject. Spell the command `
+      + `out (one that only reads the file then runs as usual), or make the change with track-edit instead, which records it for me to accept `
+      + `or reject:\n${trackEditLine(t.path)}`;
+  }
+  return judgeUnresolved(q1Unresolved);
+  } finally { activeLinks = prevLinks; }
 }
 
 // B1 (the fifth commit, 2026-09-19): the project in play for a write through an alias the same command made (a hard `ln`,
