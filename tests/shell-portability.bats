@@ -1,9 +1,9 @@
 #!/usr/bin/env bats
 # The shell surfaces run on a stock mac too: /bin/sh, and a /bin/bash at 3.2. The bats macOS cell runs on manual dispatch
 # alone, so nothing in CI reads them under that bash; this pins the bash-4-plus constructs out of every shell script the
-# repo ships (bin/, scripts/*.sh, install.sh, bootstrap.sh, hooks/*.sh, .githooks/pre-push, tools/ and the extension's
-# install.sh) statically instead (round four of issue 1600: a ${1,,} in romp-service's escape-hatch reader made the
-# install die with a bad substitution after writing the plist and before bootstrapping the agent). Non-comment lines
+# repo ships (bin/, scripts/*.sh, install.sh, bootstrap.sh, hooks/*.sh, .githooks/pre-push, tools/, and the extension's
+# install.sh and scripts/) statically instead (round four of issue 1600: a ${1,,} in romp-service's escape-hatch reader
+# made the install die with a bad substitution after writing the plist and before bootstrapping the agent). Non-comment lines
 # only, so a construct NAMED in a comment is fine; one named in a string is a hit, and the line is reworded. The patterns
 # are bash-shaped on purpose: a Python heredoc inside a script writes [-1] and a nested ${a:-${b:-c}} default is not a
 # negative-length substring, and neither may read as a hit.

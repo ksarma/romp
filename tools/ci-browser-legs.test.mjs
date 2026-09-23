@@ -187,13 +187,13 @@ test('the step is bounded twice: its own timeout-minutes fits the margin under t
   assert.ok(comment.includes('re-measures here'), 'the step\'s comment names the re-measure condition for growth outside the roster (the job\'s other phases toward the cap), not only the roster-growth trigger');
   const jobComment = job.lines.slice(0, job.lines.indexOf(capLine)).filter((l) => /^\s*#/.test(l)).join('\n');
   assert.ok(new RegExp('\\b' + bound + ' minutes \\(its timeout-minutes\\)').test(jobComment), 'the job\'s cap comment derives the step\'s bound and names the same number (' + bound + ' minutes (its timeout-minutes)): a changed bound rewrites the sentence');
-  // the job comment's sentence about this step (from "The Browser legs step below" to its end) points at this pin for the margin
+  // the job comment's passage about this step (two sentences, from "The Browser legs step below" to "in the same PR.") points at this pin for the margin
   // and carries no copy of the measured job time or the margin in seconds: the measured time has one home, the step comment
   // above, which this pin reads (the job comment's other sentences record the served step's own history and are not read here)
   const about = /The Browser legs step below[\s\S]*?in the same PR\./.exec(jobComment.replace(/\n\s*#\s?/g, ' '));
-  assert.ok(about, 'the job comment holds one sentence about the Browser legs step, from "The Browser legs step below" to "in the same PR."');
-  assert.ok(!/\d+ min \d+ s/.test(about[0]) && !/\b\d+ s\b/.test(about[0]), 'the job comment\'s sentence about this step carries no copy of the measured job time or the margin in seconds (one home: the step comment, read by this pin): ' + about[0]);
-  assert.ok(about[0].includes('tools/ci-browser-legs.test.mjs'), 'that sentence names this file as where the margin is derived: ' + about[0]);
+  assert.ok(about, 'the job comment holds one passage about the Browser legs step, from "The Browser legs step below" to "in the same PR."');
+  assert.ok(!/\d+ min \d+ s/.test(about[0]) && !/\b\d+ s\b/.test(about[0]), 'the job comment\'s passage about this step carries no copy of the measured job time or the margin in seconds (one home: the step comment, read by this pin): ' + about[0]);
+  assert.ok(about[0].includes('tools/ci-browser-legs.test.mjs'), 'that passage names this file as where the margin is derived: ' + about[0]);
   // node's per-file bound: above every own { timeout: N } a rostered source passes (else a legitimate slow leg is cut), under
   // the step's bound (else the step is cut nameless first)
   const ms = testTimeoutMs();
@@ -263,7 +263,7 @@ test('each home of the roster rule (the roster header, the step\'s comment, the 
   for (const f of RULE_HOMES) {
     const text = flat(read(f));
     const missing = RULE_WORDS.filter((w) => !text.includes(w));
-    assert.deepEqual(missing, [], path.relative(REPO, f) + ' is a home of the roster rule and does not say ' + JSON.stringify(missing) + ': each home states the rule as the PR reviewer\'s, names the four cases the step reads green (nothing in the tree reads a leg\'s source for the rule) and says that nothing checks that every browser leg in the tree is rostered, so a reader of any one of them does not take the rule for a machine check. A text pin: it holds that each home says these words, whatever the wrap; that the four cases read green is what the homes state, not what this test executes');
+    assert.deepEqual(missing, [], path.relative(REPO, f) + ' is a home of the roster rule and does not say ' + JSON.stringify(missing) + ': each home states the rule as the PR reviewer\'s, names the four cases the step reads green (nothing in the tree reads a leg\'s source for the rule) and says that nothing checks that every browser leg in the tree is rostered, so a reader of any one of them does not take the rule for a machine check. A text pin: it holds that each home says these words, whatever the wrap; that the four cases read green is executed by the test "the four cases the roster rule\'s homes name read green, executed" below, not by this one');
   }
 });
 

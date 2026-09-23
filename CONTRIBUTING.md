@@ -71,9 +71,9 @@ passing test, a skipped test, a failure inside a todo, or a file that failed as 
 the leg or the test; a leg whose launch failed under the switch is named with the remedy to check the
 Chromium install step. Before you push, `node --test tools/ci-browser-legs.test.mjs` from the repo root
 runs the tree checks CI's shell job runs (no `npm ci` needed). From `vscode-extension/`,
-`bash scripts/ci-browser-legs.sh --check` runs the step's pre-run checks alone, without starting a
-browser, and the step itself is `bash scripts/ci-browser-legs.sh` with `ROMP_BROWSER_LEGS_REQUIRE=1`,
-after `node esbuild.js --tests`.
+`bash scripts/ci-browser-legs.sh --check` runs the step's pre-run checks except the bundle check,
+without starting a browser, and the step itself is `bash scripts/ci-browser-legs.sh` with
+`ROMP_BROWSER_LEGS_REQUIRE=1`, after `node esbuild.js --tests`.
 
 `tests/gitleaks-config.bats` checks the secret-scanning rules in `.gitleaks.toml`
 against the real scanner and skips itself when `gitleaks` is not installed
