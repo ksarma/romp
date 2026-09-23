@@ -1827,16 +1827,17 @@ class HermeticKernelPostal(unittest.TestCase):
     def test_the_guard_itself_sees_the_spawn_sites(self):
         """The scan must read the spawn idioms the labs use, else the trio rule above would pass vacuously; and it must
         refuse the shapes the regex census read wrongly (2026-09-21), else the rule reds on a module that starts no
-        kernel. Three reads. (1) The tree: the roads table over every module the trio test reads (spawn_roads; the
-        `--roads` arm prints it) holds the two lab modules on the argv road and no module refused, and the message
-        REPORTS the four road counts, the module count and the plant-table row count at whatever size the tree has,
-        so a change of population is visible here and fails nothing by itself. (2) The head's five positives and four negatives, snippets with no import of subprocess,
-        so the library is read by its spelling as an unbound name (the stated fallback). (3) PLANT_TABLE: every row
-        run and held to its label, the site's LINE held to the planted call's, the road held to the label's, the
-        refusal's message held to name the call's line and both declarations. (4) The listed residual: a helper's
-        call, a passthrough's splatted parameter, a star import's name, a class attribute read through the class
-        name, a comprehension's parameter iterable, a keywords splat handed alone, a parameter extended in place and
-        a staticmethod's attribute read through a parameter named self (row N42) are no site and each is under
+        kernel. The tree: the roads table over every module the trio test reads (spawn_roads, the one derivation the
+        trio test reads as well; the `--roads` arm prints it) holds the lab modules, test_federation_missing_served.py
+        and test_notification_tap_resume_browser.py, on the argv road and no module refused, and the message REPORTS
+        each road's count, the module count and the plant-table row count at whatever size the tree has, so a change
+        of population is visible here and fails nothing by itself. The head's positives and negatives: snippets with
+        no import of subprocess, so the library is read by its spelling as an unbound name (the stated fallback).
+        PLANT_TABLE: every row run and held to its label, the site's LINE held to the planted call's, the road held to
+        the label's, the refusal's message held to name the call's line and both declarations. The listed residual: a
+        helper's call, a passthrough's splatted parameter, a star import's name, a class attribute read through the
+        class name, a comprehension's parameter iterable, a keywords splat handed alone, a parameter extended in place
+        and a staticmethod's attribute read through a parameter named self (row N42) are no site and each is under
         `unresolved` with its line, text and kind; a comprehension's own target is not, and neither is a builtin's
         call, a consumer."""
         roads = spawn_roads(HERE, skip=TREE_SKIP)
