@@ -121,11 +121,10 @@ def _py_maps(msg, keys=None):
         def put(kk, val, pre=""):
             if kk is None or kk in items:
                 n = len(order)
-                while True:
+                for n in range(n, n + len(items) + 1):   # bounded: of len(items) + 1 candidates one is free (unbounded until 2026-09-22)
                     kk = pre + "#%d" % n
                     if kk not in items:
                         break
-                    n += 1
             items[kk] = val; order.append(kk)
 
         def key_of(it, pre=""):
@@ -1030,7 +1029,9 @@ class TwoThreadsOneClient(unittest.TestCase):
         done = []
         # BOTH pushes on the guarded thread: with a plain Lock even the first (full) frame deadlocks in-thread
         # (_send_slot → _send_client both take it), so a push on the main thread would hang the suite, not fail it
-        t = threading.Thread(target=lambda: (st.push(p1), done.append(st.push(p2))), daemon=True); t.start(); t.join(5)
+        t = threading.Thread(target=lambda: (st.push(p1), done.append(st.push(p2))), daemon=True)
+        self.addCleanup(t.join, 5)                       # on every exit path (the join below is the success path's)
+        t.start(); t.join(5)
         self.assertFalse(t.is_alive(), "the fallback re-entered the lock and returned")
         self.assertEqual([f["type"] for f in done[0]], ["bars"], "sent whole, and the stream re-based")
         self.assertEqual(st.held, p2)
