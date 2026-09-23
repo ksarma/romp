@@ -603,10 +603,10 @@ class _World(unittest.TestCase):
             rec["counts"], rec["per_call"], rec["asked"] = [], [], []
             real, root = km._subagent_tree, str(self.sub)
 
-            def asking(d):
+            def asking(d, *a, **k):
                 sc = _scope()
                 held = (sc["trees"].get(str(d)) if sc is not None else None)   # (the (dirs, stats) pair, the gen it was held under)
-                out = real(d)
+                out = real(d, *a, **k)
                 if str(d) == root:
                     rec["asked"][-1].append("served" if held is not None and out is held[0] else "validated")
                 return out
@@ -3298,10 +3298,10 @@ class SumOverRoots(_World):
         rec = {"counts": {sid: [] for sid, _p, _r, _d, _a in sess}, "asked": {sid: [] for sid, _p, _r, _d, _a in sess}}
         real = km._subagent_tree
 
-        def asking(d):
+        def asking(d, *a, **k):
             sc = _scope()
             held = (sc["trees"].get(str(d)) if sc is not None else None)
-            out = real(d)
+            out = real(d, *a, **k)
             sid = by_root.get(str(d))
             if sid is not None:
                 rec["asked"][sid][-1].append("served" if held is not None and out is held[0] else "validated")

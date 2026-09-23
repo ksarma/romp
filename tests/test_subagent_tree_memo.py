@@ -38,9 +38,13 @@ removed tree's and keyed as it is, and an Agent head with no steps, both gone on
 the witness of the texts that state it); (14) a lookup that could not be made answers the memo's standing resolution
 only when that path lies under what the walk could not read (StandingResolutionUnderAFault): a standing path under a
 tree the walk read in full, a sibling's or the own tree before a listing that faults, is not answered, and one under
-the tree that faults, or under a sibling the listing could not name, is. Red-first on (1), the jobs-pass half of (6),
-(9), (10), (11) and (14); (12) is red under a mutant per road; (13) is green before its change by design and red under
-the follow-up that has the viewer state the fault.
+the tree that faults, or under a sibling the listing could not name, is; (15) a place below a tree's root that cannot
+be read, its root reading (FaultBelowTheRoot): a workflows/ or workflow directory whose listing fails excludes that
+place from the agent-file walk, so with the file under it the lookup answers None with the fault, memoizes nothing and
+walks again at the next lookup, the chat build's record re-arms once the fault clears, the lookup then finds the file,
+and a standing resolution under the place is answered and left standing. Red-first on (1), the jobs-pass half of (6),
+(9), (10), (11), (14) and (15); (12) is red under a mutant per road; (13) is green before its change by design and red
+under the follow-up that has the viewer state the fault.
 Synthetic fixtures only: placeholder ids, invented text, a temp directory."""
 import contextlib
 import errno
@@ -1134,6 +1138,132 @@ class StandingResolutionUnderAFault(_Walk):
 
     def test_control_a_standing_path_under_a_sibling_is_answered_while_the_project_directory_cannot_be_listed_eacces(self):
         self._under_a_sibling_while_the_listing_faults("eacces")
+
+
+class FaultBelowTheRoot(_Walk):
+    """A place below a tree's root that the tree read could not read, the root itself reading: workflows/ whose listing
+    fails (a real EACCES, the directory at mode 000; an EIO by mock on its os.scandir) or the workflow directory that holds
+    AID_WF's file at mode 000. The agent-file walk excludes that place as it excludes a tree whose root could not be read,
+    so with the file under it the lookup answers None with the fault, memoizes nothing and walks again at the next
+    lookup, and the running chat build is told the place is unreadable; once the fault clears, the key the build recorded
+    differs from the next signature's re-stat (the tab is rebuilt) and the lookup finds the file. RED at the round-2 head
+    and before this change (the pass applying round 2 of #882's rulings; the base behaved the same): _subagent_tree told no
+    reader of a failed listing below the root, so the walk found no file, took that for a miss and memoized it on stamps
+    a chmod or a transient EIO does not move, and every lookup after the fault cleared was answered the memoized miss
+    until a stamped directory changed. The chat record's re-arm composes two rules: the tree read noted the place under
+    its own key, which a chmod does not move, and the walk noted it unreadable, and a path reported under two keys is
+    recorded as their disagreement (_chat_build_deps). A standing resolution under the place that faults is answered with
+    the fault and left standing, red before too, when the walk's miss replaced it in the memo. A control, green before the
+    change and after it: a file under a readable sibling is found past the fault below the own root, memoized and answered
+    with no fault. The EACCES cases skip as root, whom permission bits do not bind."""
+
+    ERR = {"eacces-workflows": "PermissionError", "eio-workflows": "OSError", "eacces-wf": "PermissionError"}
+
+    def setUp(self):
+        super().setUp()
+        self.wf_key = (str(self.tpath), AID_WF)
+        km._SUBAGENT_FILE_CACHE.pop(self.wf_key, None)
+        self.addCleanup(km._SUBAGENT_FILE_CACHE.pop, self.wf_key, None)
+        self.target = self.wf / ("agent-%s.jsonl" % AID_WF)
+
+    @contextlib.contextmanager
+    def _below(self, how):
+        """The place below the own root that cannot be read inside the block, yielded; the root and every other path read."""
+        place = str(self.subdir / "workflows") if how.endswith("workflows") else str(self.wf)
+        if how.startswith("eacces"):
+            if os.geteuid() == 0:
+                self.skipTest("permission bits do not bind root: no EACCES to drive")
+            os.chmod(place, 0o000)
+            try:
+                with self.assertRaises(PermissionError, msg="premise: the real fault this case drives, the place's listing"):
+                    os.listdir(place)
+                os.lstat(str(self.subdir))                          # premise: the root itself still reads
+                yield place
+            finally:
+                os.chmod(place, 0o755)
+            return
+        real = os.scandir
+
+        def eio(p=".", *a, **k):
+            if not isinstance(p, int) and os.fsdecode(p) == place:
+                raise OSError(errno.EIO, "input/output error")
+            return real(p, *a, **k)
+        with mock.patch.object(os, "scandir", eio):
+            yield place
+
+    def _lookup_wf(self):
+        """AID_WF's lookup under a running chat build's dependency scope: (answer, the caller's faults, the build's notes)."""
+        faults, deps = [], {"task_outs": [], "postal_any": False}
+        km._chat_dep_scope.deps = deps
+        try:
+            got = km._subagent_file(str(self.tpath), AID_WF, faults)
+        finally:
+            km._chat_dep_scope.deps = None
+        return got, faults, deps["task_outs"]
+
+    def _fault_below(self, how):
+        km._SUBAGENT_TREES.pop(str(self.subdir), None)             # no standing tree entry: the fault is met by a walk
+        walks, real_walk = [], km._subagent_file_walk
+
+        def counting(*a, **k):
+            walks.append(1)
+            return real_walk(*a, **k)
+        with self._below(how) as place, mock.patch.object(km, "_subagent_file_walk", counting):
+            for call in ("first", "second"):
+                got, faults, notes = self._lookup_wf()
+                self.assertIsNone(got, "%s lookup: the file lies under the place the tree read could not read" % call)
+                self.assertNotIn(self.wf_key, km._SUBAGENT_FILE_CACHE,
+                                 "%s lookup: the walk could not read the place the file lies under, so its miss is not a miss and "
+                                 "is not memoized (a memoized miss is served after the fault clears, since a chmod or an EIO moves "
+                                 "no stamp): %r" % (call, km._SUBAGENT_FILE_CACHE.get(self.wf_key)))
+                self.assertEqual(faults, [self.ERR[how]], "%s lookup: the caller is told the lookup could not be made" % call)
+                self.assertIn((place, km._TREE_UNREADABLE), notes,
+                              "%s lookup: the running chat build is told the place is unreadable: %r" % (call, notes))
+            self.assertEqual(len(walks), 2, "two lookups under the fault, two walks: nothing memoized, so each lookup walks again")
+        km._chat_dep_scope.deps = {"task_outs": list(notes), "postal_any": False}
+        try:
+            rec = km._chat_build_deps(SID, {"events": []})
+        finally:
+            km._chat_dep_scope.deps = None
+        restat = km._chat_sig_deps(SID, rec)[0]
+        self.assertNotEqual(dict(rec["task_outs"]).get(place), dict(restat).get(place),
+                            "the fault cleared: the key the build recorded for the place differs from the next signature's re-stat, "
+                            "so the tab that showed the file missing is rebuilt (recorded %r, re-stat %r)"
+                            % (dict(rec["task_outs"]).get(place), dict(restat).get(place)))
+        got, faults, _notes = self._lookup_wf()
+        self.assertEqual((got, faults), (self.target, []), "the fault cleared: the next lookup finds the file, with no fault")
+        self.assertEqual(km._SUBAGENT_FILE_CACHE[self.wf_key][1], self.target, "and memoizes it")
+
+    def test_a_workflows_directory_that_cannot_be_listed_eacces_is_a_fault_with_nothing_memoized(self):
+        self._fault_below("eacces-workflows")
+
+    def test_a_workflows_directory_that_cannot_be_listed_eio_is_a_fault_with_nothing_memoized(self):
+        self._fault_below("eio-workflows")
+
+    def test_a_workflow_directory_that_cannot_be_listed_eacces_is_a_fault_with_nothing_memoized(self):
+        self._fault_below("eacces-wf")
+
+    # ── controls, green before the change and after it ─────────────────────────────────────────────────────────────────
+    def test_control_a_file_under_a_readable_sibling_is_found_past_a_fault_below_the_own_root(self):
+        _hold, holder_file = self._sibling(SID_HOLD, holder=True)
+        km._SUBAGENT_TREES.pop(str(self.subdir), None)
+        with self._below("eio-workflows"):
+            got, faults, _notes = self._lookup()
+        self.assertEqual((got, faults), (holder_file, []), "found past the fault below the own root, with no fault passed on")
+        self.assertEqual(km._SUBAGENT_FILE_CACHE[self.fork_key][1], holder_file, "and memoized")
+
+    def test_a_standing_resolution_under_the_place_that_faults_is_answered_with_the_fault_and_left_standing(self):
+        self.assertEqual(km._subagent_file(str(self.tpath), AID_WF), self.target, "premise: found and memoized")
+        entry = km._SUBAGENT_FILE_CACHE[self.wf_key]
+        (self.subdir / "notes.txt").write_text("")                 # the own root's stamp moves: the memo re-check misses, the lookup walks
+        with self._below("eacces-wf"):
+            faults = []
+            got = km._subagent_file(str(self.tpath), AID_WF, faults)
+        self.assertIs(km._SUBAGENT_FILE_CACHE.get(self.wf_key), entry,
+                      "the standing entry is left as it was: the walk could not read the place the file lies under, so its miss "
+                      "does not replace the resolution (%r)" % (km._SUBAGENT_FILE_CACHE.get(self.wf_key),))
+        self.assertEqual((got, faults), (self.target, ["PermissionError"]),
+                         "the standing resolution lies under the place the walk could not read: answered, with the fault")
 
 
 class ViewerUnderAnUnreadableTree(_Walk):
