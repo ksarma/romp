@@ -19,9 +19,13 @@ callers are the guard's road and the status's own merge, which never enter the r
 is the path of nested defs and classes (the worker is `_refresh_remote_prices.work`); a call at module level is
 `<module>`.
 
-Text only: kernel/kernel.py is read as a file and parsed, nothing loads romp code, so no state root is minted
-(tests/test_price_feed_vocabulary.py's shape). tests/test_price_feed_off.py executes the switch at the one site this
-module counts (OffSwitch, GuardRoad); tests/test_stage_marks.py's census keys on the worker's inner def name.
+Text only: kernel/kernel.py is read as a file and parsed once per process (tests/parse_cache.py's source_and_tree: the
+parse this half, the switch case and the served pass below share, and in a serial cell the thread-stop census's parse of
+the same file is the same object); nothing loads romp code. The state root the preamble at the head mints is the state
+ratchet's floor for the in-process load of the census script (tests/test_state_isolation_order.py reads every importlib
+load in a test module as a load of romp code), an empty directory under the run's temp root. tests/test_price_feed_off.py
+executes the switch at the one site this module counts (OffSwitch, GuardRoad); tests/test_stage_marks.py's census keys on
+the worker's inner def name.
 
 The second half of this module (round 2 of the review, 2026-09-21) runs scripts/network-inventory.py, the census of
 every outbound primitive over the runtime trees that SECURITY.md's Network access section and the ledger entry's road
@@ -33,13 +37,16 @@ unknown import, no sites, an unclassified site, a stale row, a road with no tabl
 from the committed counts (scripts/network-inventory-expected.json); it walks its roots recursively, classes a program
 whose far end its argv does not derive as external-program (never set aside), places a browser fetch by its URL, names
 the four classes it cannot see in its --table output, and prints the ledger's table from the sites. The classes below
-run it by subprocess with the repository's python: over the tree (clean, against the committed counts), over a copy of
-the scanned scope with one mutation at a time (each red the round reproduced or named, now a pin), or with a class's
-row-less mutations planted together and read from one run (_SharedRun, whose docstring says why that loses nothing),
-over two tiny roots (no sites; a missing root), and --table against the block the ledger entry carries between its two
-marker lines. The
-script loads no romp code and neither does this module, so no state root is minted here either; the copy lives under
-the run's temp root (tests/__init__.py's hook removes it, and tearDownModule does too).
+run it in this process (the fifth round, 2026-09-23; a child interpreter per run before it): the script imported as a
+module (script_module) and its main called over a root with stdout and stderr captured and the collector held off for
+the run (inventory, _collector_off), over the tree once per process (tree_run: one derivation behind
+tests/parse_cache.py's derived, the script's scan, figures, problems, render_sites and render_table in main's order,
+serving the listing road and the --table road from one scan), over a copy of the scanned scope with one mutation at a
+time (each red the round reproduced or named, now a pin), or with a class's row-less mutations planted together and read
+from one run (_SharedRun, whose docstring says why that loses nothing), over two tiny roots (no sites; a missing root),
+and --table against the block the ledger entry carries between its two marker lines. The script loads no romp code and
+neither does this module; the copy lives under the run's temp root (tests/__init__.py's hook removes it, and
+tearDownModule does too).
 
 The third round of the review (2026-09-22) found the completeness claim holding for the Python half alone: the shell and
 browser scans were closed tool lists with no interpreter arm and no import gate, a program site in the browser or editor
@@ -76,7 +83,10 @@ get, a renamed destructured request, a ws default import's constructor) and prob
 literal list and the arm both match, listed once), and holds the timeline view's two require('http').request calls to their
 local-kernel row by content (M20: the arm's loop emptied, the three lines unlisted and the row stale; M26: the arm's once-per-line
 guard dropped, the doubly matched call two sites and the tree's namespace-bound keys doubled). TheServedPagesAreScanned,
-a run of its own (its import plant would join the credentials run's IMPORT set), plants in kernel/kernel.py a third-party
+since the fifth round an in-process pass and not a run (served_pass: the plants applied to kernel/kernel.py's text in
+memory, that text parsed once, the script's Scan over it for the routes and served_texts over them, spliced into the tree's
+one result in place of kernel.py's own contributions, then the script's figures, problems and render_sites; its import
+plant would otherwise join the credentials run's IMPORT set), plants in kernel/kernel.py a third-party
 fetch, a socket, an opener, a brace-led alert and an import statement in _TIMELINE_BOOT, a sendBeacon in the settings page's
 template, three routes before the /chat branch (a page read from a file the walk does not scan, an f-string page, a page whose
 fetch URL is a Python format slot) and a method serving text/html from a parameter, and holds the shim's and the shell's
@@ -99,20 +109,49 @@ the chat-media, timeline and served rows absent; the old residual text; the docs
 mutation case (M19 to M26) is a case of its own that removes or restores an arm the round added and asserts the shape that
 leaves, so its evidence is the mutation at the tree; over the archive such a case stops at its anchor, since the arm's own line is
 not there, and the plant case beside it carries the archive red.
+
+The fifth round (2026-09-23), on the fork reviewer's ruling over the serial cell's cost, changed how the runs happen and not
+what they assert: every case keeps its name, its property and its M-number. What runs, per run of this module: one tree
+derivation (the listing and the table from one scan), one served pass (about 1 s, under half a scan), five shared runs (walk,
+shell, browser, credentials, clean) and twenty-one runs of their own, each an in-process main over the copy, plus the two
+tiny roots: 27 full scans and the pass where 34 child processes each ran a full scan before, and each scan about a third
+cheaper with the collector held off (2.4 s against 3.7 s on 3.10 on the box that measured it). The joins: the default-rule
+programs block (AnExternalProgramIsNeverLocalByDefault) in the credentials run; the unknown-import and socket blocks
+(ThePrimitiveListIsKeptHonest) and the literal-URL function (ASecondSiteInsideARowedFunctionIsRed) in the walk run; the
+copy-clean control and the residual class's plant in the clean run. Every joined case asserts its own file's lines or its
+own row key; every case that asserts a figure of the whole run (a class count, an empty UNCLASSIFIED set, the run's IMPORT
+set, a clean summary) keeps its run, as does every mutation of the script and of the whole listing. The round's record
+carries the before and after figures and every touched pin's red.
 """
 import ast
+import contextlib
 import difflib
+import gc
+import importlib.util
+import io
 import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 import unittest
 
+# Hermetic state BEFORE the in-process load of the census script (script_module, below): tests/test_state_isolation_order.py
+# reads every importlib load in a test module as a load of romp code and asks for this floor above it. The script is
+# standard-library code and resolves no state root, and nothing here loads romp code; the floor is the ratchet's price for
+# the load, an empty directory under the run's temp root.
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)   # a live kernel's export outranks the XDG floor
+
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
+if __package__:                                   # under pytest tests/ is a package: THE SAME parse_cache module object every
+    from . import parse_cache as PC               # census in the process shares (one parse per file, one derivation per key)
+else:                                             # a direct run of this file: the module by name from its own directory
+    if HERE not in sys.path:
+        sys.path.insert(0, HERE)
+    import parse_cache as PC
 KERNEL_PATH = os.path.join("kernel", "kernel.py")
 
 # The table. A site is classified here, with its reason, only once it cannot start an ungated fetch: a fetch that
@@ -127,11 +166,6 @@ REFRESH_FALSE_CALLERS = {
 }
 RESOLVE = ("either gate it behind _price_feed_off (the first statement of _refresh_remote_prices is the shape) and add it "
            "to the table in tests/test_price_feed_census.py with its reason, or route it through _model_prices")
-
-
-def _read_kernel():
-    with open(os.path.join(ROOT, KERNEL_PATH), encoding="utf-8") as f:
-        return f.read()
 
 
 class _Census(ast.NodeVisitor):
@@ -178,10 +212,11 @@ def _refresh_is_false(call):
     return False
 
 
-def census(src):
-    """{"url": {path: [lines]}, "url_reads": {path: [lines]}, "refresh": {...}, "true": {...}, "false": {...}}."""
+def census(src, tree=None):
+    """{"url": {path: [lines]}, "url_reads": {path: [lines]}, "refresh": {...}, "true": {...}, "false": {...}}; `tree` is the
+    source's parsed tree when the caller holds one (the kernel's, from tests/parse_cache.py), else the source is parsed here."""
     c = _Census()
-    c.visit(ast.parse(src))
+    c.visit(tree if tree is not None else ast.parse(src))
     out = {"url": {}, "url_reads": {}, "refresh": {}, "true": {}, "false": {}}
     for path, line in c.url_reads:
         out["url_reads"].setdefault(path, []).append(line)
@@ -196,8 +231,10 @@ def census(src):
     return out
 
 
-KERNEL = _read_kernel()
-CENSUS = census(KERNEL)
+# kernel/kernel.py's text and tree, parsed once per process (tests/parse_cache.py: the module's first half, the switch case and
+# the served pass read this one; in a serial cell the thread-stop census's parse of the same file is the same object)
+KERNEL, KERNEL_TREE = PC.source_and_tree(os.path.join(ROOT, KERNEL_PATH), KERNEL_PATH)
+CENSUS = census(KERNEL, KERNEL_TREE)
 
 
 class _Pins(unittest.TestCase):
@@ -240,7 +277,7 @@ class TheFeedHasOneFetchSite(_Pins):
 
     def test_the_switch_is_the_first_statement_of_the_one_fetch_site(self):
         """Read as text here so the census and the gate are one module (tests/test_price_feed_off.py executes it)."""
-        fn = next(n for n in ast.parse(KERNEL).body if isinstance(n, ast.FunctionDef) and n.name == "_refresh_remote_prices")
+        fn = next(n for n in KERNEL_TREE.body if isinstance(n, ast.FunctionDef) and n.name == "_refresh_remote_prices")
         body = fn.body[1:] if isinstance(fn.body[0], ast.Expr) and isinstance(fn.body[0].value, ast.Constant) else fn.body
         self.assertIsInstance(body[0], ast.If)
         self.assertEqual(ast.unparse(body[0].test), "_price_feed_off()", "the switch gates the one fetch site before anything else")
@@ -333,20 +370,109 @@ SITE_LINE = re.compile(r"^\S+:\d+  ")
 BASH_HOOK_TEXT = "#!/usr/bin/env bash\ncurl https://example.invalid/probe\n"
 
 
+@contextlib.contextmanager
+def _collector_off():
+    """The collector held off for one in-process run of the script, the rule tests/parse_cache.py's derived applies to a
+    build: disabled when found enabled and handed back on in a finally, never touched when found off (the state read inside
+    the try, so an interrupt between the read and the finally cannot leave it off). A run builds kernel.py's tree and drops
+    it before returning (an ast node holds no parent, so no cycle survives), so nothing is left for a collection after the
+    run and nothing is frozen here; with the collector on, its walks of the tree under construction were a third of a run
+    on 3.10 (3.7 s against 2.4 s on the box that measured the fifth round, 2026-09-23)."""
+    collecting = False
+    try:
+        collecting = gc.isenabled()
+        if collecting:
+            gc.disable()
+        yield
+    finally:
+        if collecting:
+            gc.enable()
+
+
+_SCRIPTS = {}   # (realpath, (size, mtime_ns, inode, ctime_ns)) -> the module object: the tree's once, a copy's once per text on disk
+
+
+def script_module(root):
+    """<root>/scripts/network-inventory.py imported as a module object in this process, keyed on the file's realpath and its
+    (size, mtime_ns, inode, ctime_ns) as tests/parse_cache.py keys a parse: the tree's script once per process (the tree
+    derivation, the served pass and the binding read share it), a copy's once per text on disk, since a case mutates the
+    copy's script (M19 to M26, the stale row, the roads set, the openExternal entry, the rowed interpreter text) and its
+    cleanup restores it, and each text is its own module. The name is private and never enters sys.modules, so the script's
+    `if __name__ == "__main__"` road does not run. The module carries the script's constants (T, ROADS, CLASS_ROWS,
+    CLICK_RESIDUAL, EXPECTED) and its functions (main, scan, figures, problems, render_sites, render_table, Scan,
+    served_texts, Result, Site), the surface the runs and the served pass call. The fifth round (2026-09-23), on the
+    reviewer's cost ruling; a child interpreter ran the file before it."""
+    real = os.path.realpath(os.path.join(root, INVENTORY))
+    st = os.stat(real)
+    key = (real, (st.st_size, st.st_mtime_ns, st.st_ino, st.st_ctime_ns))
+    mod = _SCRIPTS.get(key)
+    if mod is None:
+        spec = importlib.util.spec_from_file_location("network_inventory_%d" % len(_SCRIPTS), real)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _SCRIPTS[key] = mod
+    return mod
+
+
 def inventory(root, *flags):
-    """Run <root>/scripts/network-inventory.py over root with the repository's python: (exit code, stdout, stderr)."""
-    p = subprocess.run([sys.executable, os.path.join(root, INVENTORY)] + list(flags) + [root], capture_output=True, text=True, timeout=120)
-    return p.returncode, p.stdout, p.stderr
+    """Run <root>/scripts/network-inventory.py over root in this process: the script's own main (script_module), the flags
+    and the root as the command line hands them, stdout and stderr captured, the collector held off for the run
+    (_collector_off): (exit code, stdout, stderr), the exit code being main's return, which the command line passes to
+    sys.exit. One run is one full scan of the root's declared scope, about 2.4 s on 3.10 with the collector off."""
+    mod = script_module(root)
+    out, err = io.StringIO(), io.StringIO()
+    with _collector_off(), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        rc = mod.main(list(flags) + [root])
+    return rc, out.getvalue(), err.getvalue()
 
 
-_TREE = {}
+class _Run(object):
+    """One run's pieces as the script's main composes them (read for the order): the Result scan returned, its figures, the
+    committed counts read from <root>/scripts/network-inventory-expected.json (None when the file is absent), the problem
+    lines, the listing render_sites writes and the table render_table writes."""
+    __slots__ = ("res", "fig", "expected", "problems", "listing", "table")
+
+    def __init__(self, res, fig, expected, problems, listing, table):
+        self.res, self.fig, self.expected, self.problems, self.listing, self.table = res, fig, expected, problems, listing, table
+
+
+def _run_of(mod, root, res):
+    """The pieces main composes from one Result (_Run), in main's order: figures, the committed counts, problems, and both
+    renders, so one scan serves the listing road and the --table road."""
+    fig = mod.figures(res)
+    path, expected = os.path.join(root, mod.EXPECTED), None
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8") as fh:
+            expected = json.load(fh)
+    probs = mod.problems(root, res, fig, expected)
+    listing, table = io.StringIO(), io.StringIO()
+    mod.render_sites(res, fig, listing)
+    mod.render_table(res, fig, table)
+    return _Run(res, fig, expected, probs, listing.getvalue(), table.getvalue())
+
+
+TREE_KEY = ("tests/test_price_feed_census.py", "the tree run")   # parse_cache.derived's key for the tree's one derivation
+
+
+def _tree():
+    """The tree's one derivation, built on the first call in the process and the same object after (parse_cache.derived,
+    which holds the collector off for the build and freezes what the build leaves tracked): the script's scan over ROOT
+    and the pieces main composes from it (_run_of). The tree is never mutated."""
+    return PC.derived(TREE_KEY, lambda: _run_of(script_module(ROOT), ROOT, script_module(ROOT).scan(ROOT)))
 
 
 def tree_run(*flags):
-    """The tree's own run, once per process and shared by the cases: the tree is never mutated."""
-    if flags not in _TREE:
-        _TREE[flags] = inventory(ROOT, *flags)
-    return _TREE[flags]
+    """The tree's own run, once per process and shared by the cases: (exit code, stdout, stderr) as
+    `python3 scripts/network-inventory.py [--table] ROOT` prints them, from the one derivation (_tree): with no flag the
+    listing, the problem lines after it on stdout; with --table the table on stdout and the problem lines on stderr; the exit
+    code 1 when there is any problem line, else 0 (main's own composition, read for the order; main itself runs in every
+    other run of this module, over the copy and the tiny roots). Two roads and no other flag."""
+    if flags not in ((), ("--table",)):
+        raise ValueError("tree_run takes no flag or --table alone, the two roads main renders: %r" % (flags,))
+    run = _tree()
+    tail = ("\n".join(run.problems) + "\n") if run.problems else ""
+    rc = 1 if run.problems else 0
+    return (rc, run.table, tail) if flags else (rc, run.listing + tail, "")
 
 
 def summary(out):
@@ -428,12 +554,18 @@ def _append(rel, text, cleanup):
     return _plant(rel, old + ("" if old.endswith("\n") else "\n") + text, cleanup)
 
 
+def _replace_text(text, old, new, where):
+    """`text` with its one occurrence of `old` replaced by `new`; an anchor that is absent or repeated in `where` is a broken
+    mutation, not a pass. The served pass mutates kernel/kernel.py's text in memory through this; _replace, a file's."""
+    if text.count(old) != 1:
+        raise AssertionError("the mutation's anchor %r occurs %d times in %s, not once" % (old[:60], text.count(old), where))
+    return text.replace(old, new)
+
+
 def _replace(rel, old, new, cleanup):
     with open(os.path.join(scope_copy(), rel), encoding="utf-8") as f:
         text = f.read()
-    if text.count(old) != 1:
-        raise AssertionError("the mutation's anchor %r occurs %d times in %s, not once" % (old[:60], text.count(old), rel))
-    return _plant(rel, text.replace(old, new), cleanup)
+    return _plant(rel, _replace_text(text, old, new, rel), cleanup)
 
 
 def _lines(path):
@@ -497,9 +629,11 @@ class _SharedRun(_Scope):
     """Classes whose row-less mutation cases read ONE run over the scope copy. Every class naming the same RUN plants its
     mutations (`mutate`, recording line numbers in cls.at) on the copy in definition order, the script runs once, and every
     mutation is undone before any case runs, so a case of the class with a mutation of its own still starts from the clean
-    copy; the cases read the run as self.rc and self.out. One child process per run instead of one per case: the serial CI
-    cell's growth after the third round (2026-09-22) was these runs, at about 3.5 s each on the box, and the cell reached
-    its 25-minute wall.
+    copy; the cases read the run as self.rc and self.out. One run of the script per shared run instead of one per case: the
+    serial CI cell's growth after the third round (2026-09-22) was these runs, at about 3.5 s each on the box, and the cell
+    reached its 25-minute wall; since the fifth round (2026-09-23) a run is an in-process main over the copy (inventory),
+    about 2.4 s on 3.10, and the runs are walk, shell, browser, credentials and clean (the last two members of the clean
+    run assert the whole run clean, and its one plant is a call the scan does not see by construction).
 
     A run shared this way is exactly as strict as one run per case because of what the shared cases assert: a property
     keyed on a file and a line (a site named UNCLASSIFIED at file:line, the tag on that line's listing, an IMPORT line at
@@ -546,8 +680,18 @@ def _expected():
         return json.load(f)
 
 
-class TheCensusRunsFromTheSuite(_Scope):
-    """The instrument is run by the suite (and so by CI's Python job), against counts committed beside it."""
+class TheCensusRunsFromTheSuite(_SharedRun):
+    """The instrument is run by the suite (and so by CI's Python job), against counts committed beside it. The copy-clean
+    control reads the shared clean run (RUN clean, the fifth round), whose one plant is the residual class's calls the scan
+    does not see (TheResidualClassIsStatedAndHeld); this class plants nothing. The other cases run the script themselves:
+    the tree's one derivation (tree_run), a run with a flag, or a run over the copy with a mutation of the whole listing
+    (kernel/kernel.py moved or emptied), each a run of its own."""
+
+    RUN = "clean"
+
+    @classmethod
+    def mutate(cls, cleanup):
+        """The control: no mutation of its own."""
 
     def test_the_tree_runs_clean_against_the_committed_counts(self):
         self.assertTrue(os.path.isfile(os.path.join(ROOT, EXPECTED)), "%s exists: the committed counts the run is compared against "
@@ -566,8 +710,10 @@ class TheCensusRunsFromTheSuite(_Scope):
         self.assertEqual(sum(expected["per_key"].values()), got["sites"], "the committed row-key counts sum to the sites")
 
     def test_the_copy_runs_clean_like_the_tree(self):
-        """The control for every mutation case below: the copy alone reads as the tree does."""
-        rc, out, _ = inventory(scope_copy())
+        """The control for every mutation case below: the copy reads as the tree does. The clean run it reads carries the
+        residual class's calls, which the scan does not see by construction (TheResidualClassIsStatedAndHeld), so the run is
+        the tree's; a copy that lost a file, or a scan that opened fewer of them, differs here whatever the plant."""
+        rc, out = self.rc, self.out
         self.assertEqual(rc, 0, "the run must exit 0:\n" + gates(out))
         rc2, out2, _ = tree_run()
         line = lambda text: re.sub(r"; \d+ files scanned.*$", "", next(ln for ln in text.splitlines() if ln.startswith("--- ")))
@@ -638,7 +784,9 @@ class TheWalkIsRecursiveOverTheDeclaredScope(_SharedRun):
     """The declared scope and the walk are held equal by execution: a file below a root and a hook of any kind are opened.
     One run (_SharedRun) carries the five plants: a Python file one directory down, a site appended to the node hook, a new
     shell hook, a Python fixture below the webview root and a program reference in kernel/credentials.py; each case's
-    property is a file's own line in UNCLASSIFIED or in a gate line, or a file's absence from them."""
+    property is a file's own line in UNCLASSIFIED or in a gate line, or a file's absence from them. Since the fifth round
+    the run also carries the primitive list's two blocks in kernel/credentials.py and the literal-URL function in
+    kernel/kernel.py (ThePrimitiveListIsKeptHonest, ASecondSiteInsideARowedFunctionIsRed), each keyed on its own lines."""
 
     RUN = "walk"
 
@@ -695,16 +843,24 @@ def _probe_ps():
 '''
 
 
-class AnExternalProgramIsNeverLocalByDefault(_Scope):
+class AnExternalProgramIsNeverLocalByDefault(_SharedRun):
     """A shell, an interpreter, the running python, an argv the code does not spell out and a git subcommand that can fetch
     are not placed by any default rule: each needs a row. A fixed literal of a local tool still is, and the committed row-key
-    count catches it as a new key."""
+    count catches it as a new key. The block is appended to kernel/credentials.py in the shared credentials run, the first
+    of its blocks (the fifth round; a run of its own before), its lines recorded as it lands; each property is one of those
+    lines or the block's own row key, and the block imports nothing, so the run's IMPORT set, which the import-gate case
+    holds equal to its own lines, is untouched."""
+
+    RUN = "credentials"
+
+    @classmethod
+    def mutate(cls, cleanup):
+        lines = _lines(_append("kernel/credentials.py", MUTANT_PROGRAMS, cleanup))
+        cls.at.update({name: next(i + 2 for i, ln in enumerate(lines) if ln.startswith("def %s(" % name))
+                       for name in ("_probe_sh", "_probe_node", "_probe_python", "_probe_argv", "_probe_git_remote", "_probe_ps")})
 
     def test_each_spelling_needs_a_row_and_a_fixed_local_tool_is_a_new_key(self):
-        lines = self.lines(self.append("kernel/credentials.py", MUTANT_PROGRAMS))
-        at = {name: next(i + 2 for i, ln in enumerate(lines) if ln.startswith("def %s(" % name))
-              for name in ("_probe_sh", "_probe_node", "_probe_python", "_probe_argv", "_probe_git_remote", "_probe_ps")}
-        rc, out, _ = inventory(scope_copy())
+        at, rc, out = self.at, self.rc, self.out
         self.assertRefused(rc, out, "UNCLASSIFIED")
         named = unclassified(out)
         for name in ("_probe_sh", "_probe_node", "_probe_python", "_probe_argv", "_probe_git_remote"):
@@ -765,14 +921,27 @@ class TheBrowserFetchIsClassifiedByItsUrl(_Scope):
         self.assertEqual(sorted(ln.split("  ")[1] for ln in figures), ["Image", "figureHosts"], figures)
 
 
-class ThePrimitiveListIsKeptHonest(_Scope):
+SOCKETS_TEXT = ('\nimport asyncio, socket\n\ndef _probe_sock(addr):\n    s = socket.socket()\n    s.connect(addr)\n\n'
+                'async def _probe_aio():\n    return await asyncio.open_connection("TESTHOST", 443)\n')
+
+
+class ThePrimitiveListIsKeptHonest(_SharedRun):
     """NET is a closed list, so the import side is the gate: a module the census does not know fails the run; and the
-    primitives the round named beyond the list (a bound socket's connect, asyncio's connections) are sites."""
+    primitives the round named beyond the list (a bound socket's connect, asyncio's connections) are sites. The unknown
+    import and the socket block are appended to kernel/credentials.py in the shared walk run (the fifth round; a run each
+    before), the one shared run whose members hold no property over the run's IMPORT set (the credentials run's import-gate
+    case holds that run's set equal to its own lines); each property here is a line of its own block. The known-import case
+    asserts the whole run's IMPORT lines empty and keeps a run of its own."""
+
+    RUN = "walk"
+
+    @classmethod
+    def mutate(cls, cleanup):
+        cls.at["httpx"] = len(_lines(_append("kernel/credentials.py", "\nimport httpx\n", cleanup)))
+        cls.at["sockets"] = len(_lines(_append("kernel/credentials.py", SOCKETS_TEXT, cleanup)))
 
     def test_an_unknown_import_is_the_loud_line(self):
-        n = len(self.lines(self.append("kernel/credentials.py", "\nimport httpx\n")))
-        rc, out, _ = inventory(scope_copy())
-        self.assertRefused(rc, out, "IMPORT kernel/credentials.py:%d imports httpx" % n)
+        self.assertRefused(self.rc, self.out, "IMPORT kernel/credentials.py:%d imports httpx" % self.at["httpx"])
 
     def test_a_known_import_is_not(self):
         self.append("kernel/credentials.py", "\nimport json as _probe_json\n")
@@ -780,18 +949,28 @@ class ThePrimitiveListIsKeptHonest(_Scope):
         self.assertFalse([ln for ln in out.splitlines() if ln.startswith("IMPORT")], gates(out))
 
     def test_a_bound_sockets_connect_and_an_asyncio_connection_are_sites(self):
-        n = len(self.lines(self.append("kernel/credentials.py", '\nimport asyncio, socket\n\ndef _probe_sock(addr):\n    s = socket.socket()\n    s.connect(addr)\n\n'
-                                       'async def _probe_aio():\n    return await asyncio.open_connection("TESTHOST", 443)\n')))
-        rc, out, _ = inventory(scope_copy())
-        self.assertRefused(rc, out, "UNCLASSIFIED")
+        n, out = self.at["sockets"], self.out
+        self.assertRefused(self.rc, out, "UNCLASSIFIED")
         named = unclassified(out)
         self.assertIn("kernel/credentials.py:%d" % (n - 3), named, "s.connect(addr) on a socket bound in the function")
         self.assertIn("kernel/credentials.py:%d" % n, named, "asyncio.open_connection")
 
 
-class ASecondSiteInsideARowedFunctionIsRed(_Scope):
+WARM_TEXT = "\n\ndef _warm_prices():\n    import urllib.request\n    return urllib.request.urlopen(%r, timeout=4)\n" % FEED_LITERAL
+
+
+class ASecondSiteInsideARowedFunctionIsRed(_SharedRun):
     """The table is keyed on file and function; the committed count per key is the guard for a second site inside a rowed
-    function, a stale row is its own gate, and the table's road list is held equal to the rows' roads."""
+    function, a stale row is its own gate, and the table's road list is held equal to the rows' roads. The literal-URL
+    function is appended to kernel/kernel.py in the shared walk run (the fifth round), its line recorded as it lands and its
+    property that line's; the other three cases assert a figure of the whole run (an empty UNCLASSIFIED set) or mutate the
+    script and keep runs of their own."""
+
+    RUN = "walk"
+
+    @classmethod
+    def mutate(cls, cleanup):
+        cls.at["warm"] = len(_lines(_append("kernel/kernel.py", WARM_TEXT, cleanup)))
 
     def test_a_second_urlopen_inside_the_workers_function_is_named_by_its_key(self):
         anchor = "                with urllib.request.urlopen(PRICE_FEED_URL, timeout=4) as r:\n"
@@ -804,10 +983,8 @@ class ASecondSiteInsideARowedFunctionIsRed(_Scope):
 
     def test_a_fetch_of_the_feeds_url_spelled_as_a_literal_in_a_new_function_is_unclassified(self):
         """correctness-3: the module's first half keys on the NAME PRICE_FEED_URL; this run keys on the primitive."""
-        n = len(self.lines(self.append("kernel/kernel.py", "\n\ndef _warm_prices():\n    import urllib.request\n    return urllib.request.urlopen(%r, timeout=4)\n" % FEED_LITERAL)))
-        rc, out, _ = inventory(scope_copy())
-        self.assertRefused(rc, out, "UNCLASSIFIED")
-        self.assertIn("kernel/kernel.py:%d" % n, unclassified(out))
+        self.assertRefused(self.rc, self.out, "UNCLASSIFIED")
+        self.assertIn("kernel/kernel.py:%d" % self.at["warm"], unclassified(self.out))
 
     def test_a_row_naming_no_site_is_stale(self):
         self.replace(INVENTORY, '_t("price-feed", K + "_refresh_remote_prices.work")', '_t("price-feed", K + "_refresh_remote_prices.work", K + "_no_such_function")')
@@ -1070,9 +1247,11 @@ class ThePythonImportGateReachesImportModule(_SharedRun):
     """importlib.import_module and __import__ name a module the way an import statement does: a string literal, a module
     constant, or a loop or comprehension variable over a module constant resolves and goes through KNOWN_IMPORTS; an
     argument the scan cannot resolve is refused as a module named at run time (extra6-2 of the third round). The
-    credentials run is shared with the net-list and git-boundary classes below: four blocks appended in turn to
-    kernel/credentials.py, this class's two first, under names no other block uses (the scan resolves a module constant by
-    its last assignment, so the known-module block's constant is not the unknown-module block's)."""
+    credentials run is shared with the default-rule programs class above and the net-list and git-boundary classes below:
+    five blocks appended in turn to kernel/credentials.py (the programs block first since the fifth round, then this
+    class's two), under names no other block uses (the scan resolves a module constant by its last assignment, so the
+    known-module block's constant is not the unknown-module block's), and none of the others imports anything, so this
+    class's case holds the run's IMPORT set equal to its own lines."""
 
     RUN = "credentials"
 
@@ -1125,17 +1304,27 @@ class TheNetListNamesSendtoAndTheLoopConnections(_SharedRun):
         self.assertListed(out, r"kernel/credentials\.py:%d  loop\.sock_connect  " % (n - 2))
 
 
-class TheResidualClassIsStatedAndHeld(_Scope):
+UNSEEN_TEXT = ('\nimport socket\n\ndef _probe_param(sock, addr):\n    sock.connect(addr)\n    sock.sendto(b"x", addr)\n\n'
+               'class _ProbeHeld:\n    def __init__(self):\n        self.sock = socket.socket()\n        self.addr = None\n\n    def go(self):\n'
+               '        self.sock.connect(self.addr)\n        self.sock.sendto(b"x", self.addr)\n')
+
+
+class TheResidualClassIsStatedAndHeld(_SharedRun):
     """The one class the scan cannot see by construction is named, in the docstring and the table, beside a planted call
     it does not see: a connect and a sendto on a parameter socket and on an attribute-held socket run clean at the
-    committed counts, and the sentence that says so is present in both homes (extra6-2 of the third round)."""
+    committed counts, and the sentence that says so is present in both homes (extra6-2 of the third round). The calls are
+    appended to kernel/credentials.py in the shared clean run (the fifth round), whose other member is the copy-clean
+    control (TheCensusRunsFromTheSuite, which plants nothing): both assert the whole run clean and equal to the tree's,
+    which holds exactly when this plant is invisible, so a plant that became a site reds both."""
+
+    RUN = "clean"
+
+    @classmethod
+    def mutate(cls, cleanup):
+        _append("kernel/credentials.py", UNSEEN_TEXT, cleanup)
 
     def test_a_socket_primitive_on_a_parameter_or_attribute_receiver_is_not_a_site_and_the_sentence_says_so(self):
-        self.append("kernel/credentials.py",
-            '\nimport socket\n\ndef _probe_param(sock, addr):\n    sock.connect(addr)\n    sock.sendto(b"x", addr)\n\n'
-            'class _ProbeHeld:\n    def __init__(self):\n        self.sock = socket.socket()\n        self.addr = None\n\n    def go(self):\n'
-            '        self.sock.connect(self.addr)\n        self.sock.sendto(b"x", self.addr)\n')
-        rc, out, _ = inventory(scope_copy())
+        rc, out = self.rc, self.out
         self.assertClean(rc, out)
         rc2, out2, _ = tree_run()
         line = lambda text: re.sub(r"; \d+ files scanned.*$", "", next(ln for ln in text.splitlines() if ln.startswith("--- ")))
@@ -1232,17 +1421,11 @@ CLICK_RESIDUAL_CONDITION = ("download", "http or https", "this page's origin", "
 
 
 def _script_binding(name):
-    """The script's own value of a module constant, read by importing it in a child interpreter (never from its text, and never
-    in this process: tests/test_state_isolation_order.py reads every in-process load call as a load of romp code, and this
-    module loads none): the one source the docstring, the table cell and the test constants are held to."""
-    prog = ("import importlib.util, json, sys\n"
-            "spec = importlib.util.spec_from_file_location('network_inventory', sys.argv[1])\n"
-            "mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)\n"
-            "print(json.dumps(getattr(mod, sys.argv[2])))\n")
-    p = subprocess.run([sys.executable, "-c", prog, os.path.join(ROOT, INVENTORY), name], capture_output=True, text=True, timeout=60)
-    if p.returncode != 0:
-        raise AssertionError("%s could not be imported to read %s: %s" % (INVENTORY, name, p.stderr[-800:]))
-    return json.loads(p.stdout)
+    """The script's own value of a module constant, read from the module object script_module loads for the tree's script
+    (never from its text): the one source the docstring, the table cell and the test constants are held to. Before the
+    fifth round a child interpreter imported the script for this read, since the module then loaded nothing in-process;
+    the load now stands behind the state ratchet's floor at the module's head."""
+    return getattr(script_module(ROOT), name)
 
 
 class TheClickedLinkRoadIsPinned(_Scope):
@@ -1379,12 +1562,18 @@ SHEBANG_LINE = '    with open(path, "rb") as fh: first = fh.readline()   # a dot
 EARLY_RETURN = '    if "." in name: return None\n'
 
 
-def _line_of(path, needle):
-    """The 1-based line of the one line of `path` that carries `needle`; an anchor that is absent or repeated is a broken pin, not a pass."""
-    hits = [i + 1 for i, ln in enumerate(_lines(path)) if needle in ln]
+def _line_in(lines, needle, where):
+    """The 1-based line of the one line among `lines` that carries `needle`; an anchor that is absent or repeated in `where` is
+    a broken pin, not a pass."""
+    hits = [i + 1 for i, ln in enumerate(lines) if needle in ln]
     if len(hits) != 1:
-        raise AssertionError("the anchor %r occurs %d times in %s, not once" % (needle, len(hits), path))
+        raise AssertionError("the anchor %r occurs %d times in %s, not once" % (needle, len(hits), where))
     return hits[0]
+
+
+def _line_of(path, needle):
+    """The 1-based line of the one line of the file at `path` that carries `needle` (_line_in)."""
+    return _line_in(_lines(path), needle, path)
 
 
 class TheEchoRuleScansTheLiveRemainder(_SharedRun):
@@ -1513,34 +1702,92 @@ class TheConnectionFamilyIsReadThroughItsBindings(_SharedRun):
                            "COUNTS per_key ui/romp-timeline-view.js:http.request: the committed count is 2, this run found None")
 
 
-class TheServedPagesAreScanned(_SharedRun):
+SERVED_KEY = ("tests/test_price_feed_census.py", "the served pass over the planted kernel.py")   # parse_cache.derived's key
+SERVED_PLANT_LINES = (("fetch", 'fetch("https://example.invalid/probe");'), ("alert", "}else{alert('Pull from '+h+' failed');}"),
+                      ("import", "import x from 'example-pkg';"), ("settings_def", "def _settings_page():"),
+                      ("settings_anchor", SETTINGS_ANCHOR.strip()), ("probe_read", '    return (UI / "probe.html").read_text()'),
+                      ("fstring", 'fetch(\'https://example.invalid/f\')'), ("slot", '"<script>fetch(\'%s\')</script>" % p'),
+                      ("body_param", 'return self._send(200, body, "text/html")'))   # the plants' lines, located by content once all have landed
+
+
+def _served_build():
+    """The served pass over kernel/kernel.py with TheServedPagesAreScanned's plants applied to its TEXT, in memory and never to
+    the copy (the fifth round, 2026-09-23, on the reviewer's cost ruling; a shared run over a planted copy before): the planted
+    text parsed once (this build; the clean text's parse is tests/parse_cache.py's), the script's Scan over that tree for the
+    routes (and kernel.py's Python sites and PROGRAM lines, which the plants leave as they are), served_texts over those
+    routes with the tree's file list (its "a file the walk covers" check), and the pass spliced into the tree's one Result
+    (_tree) in place of kernel/kernel.py's own contributions, then the script's figures, problems and render_sites over the
+    spliced Result: (the plants' lines by content, (exit code, stdout)) as a run over a copy carrying the same plants prints
+    them, so the class's cases read the pass as they read a run. The splice is exact by construction of the script's scan():
+    a file contributes sites (Site.file), DOM lines (their rel), stylesheets (their rel), problem lines naming it and its
+    entry in served; each of kernel/kernel.py's is replaced by the planted text's, files and skipped are the tree's
+    (kernel.py is still a file), and the sites are re-sorted as scan sorts them. Held here: the tree's run served
+    kernel/kernel.py alone (a second file with routes would need the splice widened; refused, not assumed) and the script
+    has the served pass at all (a script without it, the archive of the reviewed head, is refused by name, so every case
+    of the class reds with this message and not with an error). Residual: scan()'s walk-time gate over kernel.py's Python
+    imports is not re-run over the planted text (the plants add no Python import; the tree's run gates the real ones)."""
+    mod = script_module(ROOT)
+    for name in ("Result", "Scan", "served_texts", "Site"):
+        if not hasattr(mod, name):
+            raise AssertionError("the census script has no served pass (%s is not defined in %s): the pages the kernel serves and its "
+                                 "service worker's script are outside the scan" % (name, INVENTORY))
+    base = _tree()
+    if base.res.served != [KERNEL_PATH]:
+        raise AssertionError("the served pass reads one file at this head, %s; the tree's run served %r, and the splice replaces that "
+                             "file's contributions alone" % (KERNEL_PATH, base.res.served))
+    text = _replace_text(KERNEL, BOOT_ANCHOR, BOOT_ANCHOR + BOOT_PLANTS, KERNEL_PATH)
+    text = _replace_text(text, SETTINGS_ANCHOR, SETTINGS_PLANT + SETTINGS_ANCHOR, KERNEL_PATH)
+    text = _replace_text(text, CHAT_BRANCH, ROUTE_PLANTS + CHAT_BRANCH, KERNEL_PATH)
+    text = _replace_text(text, SEND_ANCHOR, SEND_PLANT + SEND_ANCHOR, KERNEL_PATH)
+    text = text + ("" if text.endswith("\n") else "\n") + PROBE_PAGE_DEF   # appended as _append lands a block
+    lines = text.splitlines()
+    at = {name: _line_in(lines, needle, KERNEL_PATH + " (planted)") for name, needle in SERVED_PLANT_LINES}
+    tree = ast.parse(text, filename=KERNEL_PATH)
+    res = mod.Result()
+    res.files, res.skipped = list(base.res.files), base.res.skipped
+    sc = mod.Scan(KERNEL_PATH, res)
+    sc.visit(tree)
+    mod.served_texts(KERNEL_PATH, tree, sorted(sc.routes, key=lambda r: r[0].lineno), res)
+    merged = mod.Result()
+    merged.files, merged.skipped = res.files, res.skipped
+    merged.sites = [x for x in base.res.sites if x.file != KERNEL_PATH] + res.sites
+    merged.dom = [d for d in base.res.dom if d[0] != KERNEL_PATH] + res.dom
+    merged.served_files = [f for f in base.res.served_files if f[0] != KERNEL_PATH] + res.served_files
+    merged.problems = [p for p in base.res.problems if KERNEL_PATH + ":" not in p] + res.problems
+    merged.served = [r for r in base.res.served if r != KERNEL_PATH] + res.served
+    merged.sites.sort(key=mod.Site.tuple)
+    run = _run_of(mod, ROOT, merged)
+    tail = ("\n".join(run.problems) + "\n") if run.problems else ""
+    return at, (1 if run.problems else 0, run.listing + tail)
+
+
+def served_pass():
+    """The served pass (_served_build), built once per process and the same object after (parse_cache.derived under SERVED_KEY,
+    the collector off for the build): (the plants' lines, (exit code, stdout))."""
+    return PC.derived(SERVED_KEY, _served_build)
+
+
+class TheServedPagesAreScanned(_Scope):
     """The pages the kernel serves and its service worker's script are scanned as browser text (the fourth round, fresh-1): the
     routes' `_send` calls with a text/html or text/javascript literal are followed through kernel.py's syntax tree to the constants
-    they inline, and each piece goes through line_scan keyed kernel/kernel.py plus tool. Planted in a copy of kernel/kernel.py: a
-    third-party fetch, a second socket and a second opener in _TIMELINE_BOOT (the fetch UNCLASSIFIED, the two rowed tools moving
-    their keys' counts: the keyed-by-tool residual), a brace-led alert and an import statement there (the narrowed import gate),
-    a sendBeacon in the settings page's template (UNCLASSIFIED at the template's own lines), a route serving a file the walk does
-    not scan and a method serving text/html from a parameter (each a SERVED line by name), an f-string page (its fetch
-    UNCLASSIFIED: the branch executed) and a page whose fetch URL is a Python format slot (the computed class). At the tree the
-    shim's and the shell's sockets, the boot's dead opener and the worker's clients.openWindow list on local-kernel, the four
-    fetches whose route literal a caller passes list as computed, and the four pane stylesheets are named, not scanned. A run of
-    its own: its import plant would join the credentials run's IMPORT set, which that run's case holds equal to its own lines."""
+    they inline, and each piece goes through line_scan keyed kernel/kernel.py plus tool. Planted in kernel/kernel.py's text (the
+    served pass, served_pass; a run over a planted copy before the fifth round): a third-party fetch, a second socket and a
+    second opener in _TIMELINE_BOOT (the fetch UNCLASSIFIED, the two rowed tools moving their keys' counts: the keyed-by-tool
+    residual), a brace-led alert and an import statement there (the narrowed import gate), a sendBeacon in the settings page's
+    template (UNCLASSIFIED at the template's own lines), a route serving a file the walk does not scan and a method serving
+    text/html from a parameter (each a SERVED line by name), an f-string page (its fetch UNCLASSIFIED: the branch executed) and
+    a page whose fetch URL is a Python format slot (the computed class). At the tree the shim's and the shell's sockets, the
+    boot's dead opener and the worker's clients.openWindow list on local-kernel, the four fetches whose route literal a caller
+    passes list as computed, and the four pane stylesheets are named, not scanned. The pass is the class's alone: its import
+    plant would join the credentials run's IMPORT set, which that run's case holds equal to its own lines; the served-pass
+    mutation (M21) is a run of its own over the copy, as every script mutation is."""
 
-    RUN = "served"
-
-    @classmethod
-    def mutate(cls, cleanup):
-        _replace("kernel/kernel.py", BOOT_ANCHOR, BOOT_ANCHOR + BOOT_PLANTS, cleanup)
-        _replace("kernel/kernel.py", SETTINGS_ANCHOR, SETTINGS_PLANT + SETTINGS_ANCHOR, cleanup)
-        _replace("kernel/kernel.py", CHAT_BRANCH, ROUTE_PLANTS + CHAT_BRANCH, cleanup)
-        _replace("kernel/kernel.py", SEND_ANCHOR, SEND_PLANT + SEND_ANCHOR, cleanup)
-        _append("kernel/kernel.py", PROBE_PAGE_DEF, cleanup)
-        path = os.path.join(scope_copy(), "kernel", "kernel.py")   # every plant landed: the lines by content
-        cls.at.update({"fetch": _line_of(path, 'fetch("https://example.invalid/probe");'), "alert": _line_of(path, "}else{alert('Pull from '+h+' failed');}"),
-                       "import": _line_of(path, "import x from 'example-pkg';"), "settings_def": _line_of(path, "def _settings_page():"),
-                       "settings_anchor": _line_of(path, SETTINGS_ANCHOR.strip()), "probe_read": _line_of(path, '    return (UI / "probe.html").read_text()'),
-                       "fstring": _line_of(path, 'fetch(\'https://example.invalid/f\')'), "slot": _line_of(path, '"<script>fetch(\'%s\')</script>" % p'),
-                       "body_param": _line_of(path, 'return self._send(200, body, "text/html")')})
+    def setUp(self):
+        """The pass, built on the first case's setUp in the process and parse_cache's memo after (served_pass): the plants' lines
+        by content in self.at, the pass's exit code and stdout in self.rc and self.out, the names a shared run's cases read.
+        In setUp and not setUpClass, so a pass that refuses (a script with no served pass, the archive of the reviewed head) is
+        each case's own failure with the assertion's message, never an error at the class's setup."""
+        self.at, (self.rc, self.out) = served_pass()
 
     def test_a_third_party_fetch_in_the_timeline_boot_is_unclassified(self):
         n, out = self.at["fetch"], self.out

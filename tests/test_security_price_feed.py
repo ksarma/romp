@@ -116,8 +116,11 @@ copies of extension.ts.
 
 Text only: the behaviour is pinned in tests/test_price_feed_off.py (the kernel), the reference's prose in
 tests/test_reference_price_feed.py. The documents and the sources are read as files; nothing loads romp
-code, so no state root is minted (the table case runs scripts/network-inventory.py, a standard-library scan
-of the tree, by subprocess). Every case asserts SECURITY.md's text FIRST, so a run over a tree without the
+code. The table cases read tests/test_price_feed_census.py's tree run (since the fifth round, 2026-09-23:
+the census script's one in-process scan of the tree under --table, shared with that module in a serial run;
+a child running the script here before it), and the binding reads import the script in a child interpreter
+as before; the state root minted in this process is the census module's, the state ratchet's floor for its
+in-process load of the script. Every case asserts SECURITY.md's text FIRST, so a run over a tree without the
 paragraph fails at that assertion and never at a missing symbol or a script that lacks the flag.
 """
 import json
@@ -129,6 +132,12 @@ import unittest
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
+if __package__:                                       # under pytest tests/ is a package: the census module's tree derivation
+    from . import test_price_feed_census as census    # (tree_run) is the one this module's table cases read
+else:                                                 # a direct run of this file: the module by name from its own directory
+    if HERE not in sys.path:
+        sys.path.insert(0, HERE)
+    import test_price_feed_census as census
 
 
 def _read(*parts):
@@ -415,22 +424,23 @@ def _pydef(src, name):
 
 
 def _table():
-    """The rows of `python3 scripts/network-inventory.py --table`, run once over ROOT: a list of (label, kind, cells) with
-    the label and its kind from the first cell and `cells` the other four (where, trigger and cadence, what is sent, off
-    switch), header and separator dropped. Parsed from stdout whatever the exit status: the gates (a count that drifted,
-    a site with no road) are tests/test_price_feed_census.py's finding, and this module's is the section."""
+    """The rows of `python3 scripts/network-inventory.py --table` over ROOT, read from tests/test_price_feed_census.py's
+    tree_run("--table") (the census script's one in-process scan of the tree, the same object that module's cases read in
+    a serial run; a child interpreter ran the script here before the fifth round): a list of (label, kind, cells) with the
+    label and its kind from the first cell and `cells` the other four (where, trigger and cadence, what is sent, off
+    switch), header and separator dropped. Parsed from the table whatever the exit status: the gates (a count that
+    drifted, a site with no road) are tests/test_price_feed_census.py's finding, and this module's is the section."""
     if not _TABLE:
-        p = subprocess.run([sys.executable, os.path.join(ROOT, INVENTORY), "--table", ROOT],
-                           capture_output=True, text=True, timeout=120)
+        rc, table, err = census.tree_run("--table")
         rows = []
-        for line in p.stdout.splitlines():
+        for line in table.splitlines():
             if not line.startswith("| ") or line.startswith("| road |") or line.startswith("|---"):
                 continue
             cells = [c.strip() for c in line.strip().strip("|").split(" | ")]
             label = cells[0]
             kind = label[label.rfind("(") + 1:-1] if label.endswith(")") else ""
             rows.append((label, kind, cells[1:]))
-        _TABLE.append((rows, p.returncode, p.stderr[-2000:]))
+        _TABLE.append((rows, rc, err[-2000:]))
     return _TABLE[0]
 
 
