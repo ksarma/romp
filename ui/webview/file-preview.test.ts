@@ -194,6 +194,29 @@ test("stripRemoteLoads's paint arm on the inert tree: a url() to another origin 
 });
 
 
+test("the notice card's strip passes no base (feed.ts noticeBodyNodes), so its paint arm removes a relative and a root-relative same-origin reference and keeps an absolute same-origin one, url(#g) and a data: URL: a disclosed residual that fails closed", () => {
+  // guards the statement of a disclosed residual, so it is stated rather than incidental: the notice card hands
+  // stripRemoteLoads an empty base, under which no relative URL resolves, and the paint arm fails closed on what it cannot
+  // resolve. sanitizeMd's own pass resolves against document.baseURI and keeps these references; this strip then removes
+  // them. The same empty base already costs a notice body its relative, same-origin and data: images (the element walk);
+  // passing the page's URL fixes both and is the notice card's own follow-up. When that lands, the call-site assertion
+  // below goes red: retire this test and the residual's line in the ledger entry with it.
+  const rel = fakeEl("rect", { fill: "url(plots/own.svg#p)" });
+  const rootRel = fakeEl("rect", { fill: "url(/plots/own.svg#p)" });
+  const abs = fakeEl("rect", { fill: "url(" + ORIGIN + "/plots/own.svg#p)" });
+  const frag = fakeEl("rect", { fill: "url(#g)" });
+  const data = fakeEl("rect", { fill: "url(data:image/svg+xml,%3Csvg%2F%3E)" });
+  const root = fakeEl("body", {}, [fakeEl("svg", {}, [rel, rootRel, abs, frag, data])]);
+  assert.equal(stripRemoteLoads(asRoot(root), ORIGIN, ""), 2, "with no base the relative and the root-relative reference cannot resolve and are removed, failing closed");
+  assert.deepEqual([rel, rootRel, abs, frag, data].map((e) => e.getAttribute("fill")),
+    [null, null, "url(" + ORIGIN + "/plots/own.svg#p)", "url(#g)", "url(data:image/svg+xml,%3Csvg%2F%3E)"],
+    "the absolute same-origin reference, the same-document one and the data: URL stay, because none needs a base");
+  const FEED = require("node:fs").readFileSync(require("node:path").resolve(process.cwd(), "..", "ui", "webview", "feed.ts"), "utf8") as string;
+  assert.deepEqual(FEED.match(/^\s*stripRemoteLoads\(.*$/gm), ['    stripRemoteLoads(clean, (typeof window !== "undefined" && window.location ? window.location.origin : ""), "");'],
+    "the notice card's one strip call still passes an empty base: the residual this test states is live (red when the follow-up passes the page's URL: retire this test and the ledger entry's line)");
+});
+
+
 test("a remote session's preview fetches ride the host relay with the bare sid, as the inline images do (T364)", () => {
   // the popover asked the LOCAL origin for a remote session's file and got the wrong kernel's answer; the route is the
   // one preview.ts builds for an inline image: /remote/<host>/file with the sid the remote kernel knows
