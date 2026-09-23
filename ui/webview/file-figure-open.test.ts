@@ -204,7 +204,8 @@ test("the sheets: the control rests transparent over the figure's corner with a 
     // DERIVED from the parsed rules by the attribute the decision sets (data-fv-figweb, file-view.ts dressFigureMark), never a typed
     // count; its selector names the img's mark and not the control's class, so it stands outside the set below by that set's own bound
     // and is held here in full, and byte-equal across the two sheets by fileview-parity.test.ts's heads; the executed read is
-    // file-figure-open-browser.test.ts's under-the-floor case (on hover on a fine pointer, and at rest under touch emulation)
+    // file-figure-open-browser.test.ts's two under-the-floor cases (on hover on a fine pointer, and at rest under touch emulation
+    // with no hover ever over the picture, a case of its own so the leg's red over the undressed picture reaches the at-rest read)
     const mark = cssRules(css).filter((r) => /data-fv-figweb/.test(r.selector));
     assert.deepEqual(mark.filter((r) => !underScreen(r.chain)).map(renderRule), [], name + ": no rule naming the mark outside a screen-only at-rule: a print, where hover is none, would show the at-rest dress (a property pin over the derived population)");
     assert.deepEqual(mark.filter((r) => underScreen(r.chain)).map(renderRule), [

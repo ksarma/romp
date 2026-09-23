@@ -1028,14 +1028,14 @@ test("a landing under a press on the Outline BUTTON (PR review round 2): the lan
 // rule against credential-shaped literals in fixtures)
 test("a picture from the web whose address carries credentials, and one whose address carries a written port, painted with the host loaded: the picture's title is the address with the username and password taken out and the port kept (shownAddress), after the author's title when one stands; the control's title PROPERTY and aria-label name the host with its port (targetHost), with the web class; the local picture keeps the one word set and no title. file-figure-open.test.ts pins the call site's spelling alone, so this executed case is what holds the strip: red under a `return href;` body (a property pin over the paint)", async (t) => {
   const cred = new URL("http://example.test/p.svg"); cred.username = "user"; cred.password = "pass";
-  assert.match(cred.href, /^http:\/\/user:pass@example\.test\/p\.svg$/, "the assembled address carries the credentials");
+  assert.deepEqual([cred.username, cred.password, cred.host, cred.pathname], ["user", "pass", "example.test", "/p.svg"], "the assembled address carries the credentials (read back as its parts: the whole is spelled nowhere in this file, not as a pattern either)");
   loadGatedHost("example.test", doc as unknown as ParentNode);   // the host on no list: lifted for this document before the paint (remoteHost keys on the hostname, so the ported address is lifted with it)
   t.after(() => { forgetLoadedHosts(); });   // a module-level set: cleared, so no other case paints example.test unlisted
   const o = await open(REPORT, '# R\n\n<img src="' + cred.href + '" alt="cred">\n\n<img src="http://example.test:8080/q.svg" alt="port" title="Figure 9">\n\n![local](figs/plot.svg)\n', t);
   const imgs = o.body.querySelector(".fileview-md")!.querySelectorAll("img");
   assert.deepEqual(imgs.map((i) => i.getAttribute("alt")), ["cred", "port", "local"], "the three pictures painted, none gated");
   assert.deepEqual(imgs.map((i) => i.getAttribute("title")), ["Opens in a new tab: http://example.test/p.svg", "Figure 9\nOpens in a new tab: http://example.test:8080/q.svg", null],
-    "the picture's title: the address with its credentials emptied (never user:pass@ in a tooltip), the port kept, the author's title first on its own line; the local picture none");
+    "the picture's title: the address with its credentials emptied (never the username or the password in a tooltip), the port kept, the author's title first on its own line; the local picture none");
   const controls = imgs.map((i) => { const n = i.nextSibling; return n instanceof El && n.hasAttribute("data-fv-figopen") ? n : null; });
   assert.ok(controls.every((c) => c !== null), "a control after each picture (a stand-in is decided from its source: no floor, no state)");
   const words = ["Open the picture in a new tab at example.test", "Open the picture in a new tab at example.test:8080", "Open the picture"];

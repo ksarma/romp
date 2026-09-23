@@ -25,12 +25,13 @@
 // file review's round 12, correctness-1 with ui-1: the three readers of "whose click is this" read one predicate); one relayed
 // address carries a written port, which the control's words keep (URL.host, so two servers on one name read apart; the file
 // review's round 12, fresh-2); a remote picture under the floor (20 by 20, from the second server) wears no control, carries the
-// address in its title and wears the outbound mark on the picture itself, on hover on a fine pointer and at rest under CDP touch
-// emulation (hover none), where a tap opens the tab at the address, the popup and the second server's log read, and the mark's
-// colour is the control's border colour under both themes (the file review's round 12, fresh-1 with tests-2). Red over
+// address in its title and wears the outbound mark on the picture itself, on hover on a fine pointer in one case and, in a case
+// of its own under CDP touch emulation (hover none) with no hover ever over it, at rest, where a tap opens the tab at the address,
+// the popup and the second server's log read, and the mark's colour is the control's border colour under both themes (the file
+// review's round 12, fresh-1 with tests-2). Red over
 // the unchanged viewer at the first control assertion (no control exists), the outbound
 // case red at the head before it, where the two controls presented one surface, and the link-shapes case red at the round-12
-// head, where the title and the control read any anchor while the click did not, and the under-the-floor case red at that head too, where no rule dressed the picture. Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid and example.test addresses,
+// head, where the title and the control read any anchor while the click did not, and the two under-the-floor cases red at that head too, the hover read and the at-rest read, where no rule dressed the picture. Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid and example.test addresses,
 // /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -645,28 +646,35 @@ const under = (page: any): Promise<{ hoverNone: boolean; coarse: boolean; imgs: 
   };
 });
 
-test("in a browser: a remote picture under the floor (20 by 20, from the second server) wears no control and carries the address in its title (the executed read of the property file-figure-open.test.ts and file-view-figure-shapes.test.ts pin by spelling); the picture itself wears the outbound mark, the control's dashed dress as an outline: on a fine pointer on hover alone, and on a coarse pointer (CDP touch emulation, hover none) at rest, so the tap's open is visible before it happens, its colour the control's border colour in the dark theme and in the light one; the tap opens the tab at the address (the popup and the second server's log, never a window.open stub) and the viewer stays; the loaded picture beside it keeps its control and wears no mark (the file review's round 12, fresh-1 with tests-2)", { timeout: 240000 }, async (t) => {
+/** The tiny report open in the chat modal at 900 by 600: the report's remote pictures relayed to the second server (`second`), the
+ *  first local figure loaded, the fv-load click lifting the host, then every figure loaded and out of its placeholder; no control is
+ *  waited for, since the badge gets none. Shared by the two under-the-floor cases, each on a page of its own: Chromium's
+ *  (hover: none) follows touch emulation and does not revert, and the at-rest read must never follow a hover. */
+async function openTiny(browser: any, second: { port: number }): Promise<{ page: any; errors: string[] }> {
+  const before = async (pg: any): Promise<void> => {
+    await pg.context().route((u: URL) => u.href.startsWith(WEB + "/"), async (route: any) => {
+      const a = await fromSecond(second.port, new URL(route.request().url()).pathname);
+      return route.fulfill({ status: a.status, contentType: a.type, body: a.body });
+    });
+  };
+  const o = await openViewer(browser, "chat", 900, 600, {
+    docs: TINY_DOCS, before,
+    serve: (u) => { const p = u.pathname === "/file" ? u.searchParams.get("path") || "" : ""; return TINY_DOCS[p] !== undefined && /\.svg$/.test(p) ? { status: 200, type: "image/svg+xml", body: TINY_DOCS[p] } : null; },
+  });
+  await o.page.waitForFunction(() => { const i = document.querySelectorAll(".fileview-md img")[0] as HTMLImageElement; return i.complete && i.naturalWidth > 0; }, null, { timeout: 10000 });
+  await o.page.click('[data-act="fv-load"]');
+  await o.page.waitForFunction(() => Array.from(document.querySelectorAll(".fileview-md img")).every((i) => !i.closest('[data-act="fv-load"]') && (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalWidth > 0), null, { timeout: 10000 });
+  await frames(o.page, 3);
+  return o;
+}
+test("in a browser: a remote picture under the floor (20 by 20, from the second server) wears no control and carries the address in its title (the executed read of the property file-figure-open.test.ts and file-view-figure-shapes.test.ts pin by spelling); the picture itself wears the outbound mark, the control's dashed dress as an outline, on a fine pointer on hover alone, gone with the pointer and the box unchanged; the loaded picture beside it keeps its control and wears no mark (the file review's round 12, fresh-1 with tests-2)", { timeout: 240000 }, async (t) => {
   const served: string[] = [];
   const second = await secondServer(served, { "/tiny.svg": [20, 20] });
   try {
     await inBrowser(t, async (browser) => {
-      const before = async (pg: any): Promise<void> => {
-        await pg.context().route((u: URL) => u.href.startsWith(WEB + "/"), async (route: any) => {
-          const a = await fromSecond(second.port, new URL(route.request().url()).pathname);
-          return route.fulfill({ status: a.status, contentType: a.type, body: a.body });
-        });
-      };
-      const { page, errors } = await openViewer(browser, "chat", 900, 600, {
-        docs: TINY_DOCS, before,
-        serve: (u) => { const p = u.pathname === "/file" ? u.searchParams.get("path") || "" : ""; return TINY_DOCS[p] !== undefined && /\.svg$/.test(p) ? { status: 200, type: "image/svg+xml", body: TINY_DOCS[p] } : null; },
-      });
-      await page.waitForFunction(() => { const i = document.querySelectorAll(".fileview-md img")[0] as HTMLImageElement; return i.complete && i.naturalWidth > 0; }, null, { timeout: 10000 });
-      await page.click('[data-act="fv-load"]');
-      // every figure loaded and out of its placeholder; no control is waited for: the badge gets none
-      await page.waitForFunction(() => Array.from(document.querySelectorAll(".fileview-md img")).every((i) => !i.closest('[data-act="fv-load"]') && (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalWidth > 0), null, { timeout: 10000 });
-      await frames(page, 3);
+      const { page, errors } = await openTiny(browser, second);
       const rest = await under(page);
-      assert.equal(rest.hoverNone, false, "a fine pointer before the emulation");
+      assert.equal(rest.hoverNone, false, "a fine pointer");
       assert.deepEqual(rest.imgs.map((x) => x.alt), ["local", "build", "big"], "the three figures");
       const badge = rest.imgs[1], big = rest.imgs[2];
       assert.ok(badge.w < 48 && badge.h < 48 && badge.w > 0, "the badge is under the floor on both sides: " + badge.w + " by " + badge.h);
@@ -684,14 +692,26 @@ test("in a browser: a remote picture under the floor (20 by 20, from the second 
       await page.mouse.move(5, 5);
       await frames(page, 2);
       assert.equal((await under(page)).imgs[1].outline, "none", "and gone with the pointer");
-      // no hover (a touch device): Chromium's (hover: none) follows touch emulation and does not revert, so this half is last
+      assert.deepEqual(errors, [], "no page errors");
+      await page.close();
+    });
+  } finally { await second.close(); }
+});
+test("in a browser, under CDP touch emulation (hover none, a coarse pointer) enabled after the load and before any read, the pointer never over the picture: the remote picture under the floor wears the outbound mark AT REST, so the tap's open is visible before it happens, the mark's colour the control's border colour in the dark theme and in the light one, and the loaded picture beside it keeps its control visible at rest with no mark of its own; the tap opens the tab at the address (the popup and the second server's log, never a window.open stub) and the viewer stays (the file review's round 12, fresh-1: the at-rest read in a case of its own, so the leg's red over the undressed picture reaches it, where the case above, the hover read first, stops at the hover)", { timeout: 240000 }, async (t) => {
+  const served: string[] = [];
+  const second = await secondServer(served, { "/tiny.svg": [20, 20] });
+  try {
+    await inBrowser(t, async (browser) => {
+      const { page, errors } = await openTiny(browser, second);
       const cdp = await page.context().newCDPSession(page);
       await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
       await frames(page, 2);
       const touch = await under(page);
       assert.deepEqual([touch.hoverNone, touch.coarse], [true, true], "hover none and a coarse pointer under the emulation");
+      assert.deepEqual(touch.imgs.map((x) => x.alt), ["local", "build", "big"], "the three figures");
+      assert.deepEqual([touch.imgs[1].control, touch.imgs[1].title], [false, WEB_LINE(WEB + "/tiny.svg")], "the badge: no control under the floor, the address in its title");
       // FAILS BEFORE: outline none, the tap's open shown nowhere
-      assert.deepEqual([touch.imgs[1].mark, touch.imgs[1].outline, touch.imgs[1].outlineWidth], [true, "dashed", "1px"], "at rest on a coarse pointer the badge wears the mark: the open is visible before the tap");
+      assert.deepEqual([touch.imgs[1].mark, touch.imgs[1].outline, touch.imgs[1].outlineWidth], [true, "dashed", "1px"], "at rest on a coarse pointer, no pointer ever over it, the badge wears the mark: the open is visible before the tap");
       assert.deepEqual([touch.imgs[2].controlOpacity, touch.imgs[2].outline], ["0.8", "none"], "the picture with a control: the control visible at rest, no mark on the picture");
       // one colour token for the two dresses (the owner's call with the ruling): the mark's outline colour is the control's border
       // colour, in the dark theme and, with body.theme-light, in the light one; the two themes resolve it apart, so the read is not one value twice

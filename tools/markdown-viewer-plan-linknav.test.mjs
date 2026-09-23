@@ -447,6 +447,24 @@ test('hostSheets control: a % inside a trailing comment or inside a later litera
   const d = tempTree(pySrc('def _spin(cid):', '    return ("<style>a{b:c}</style>"   # 100% of the pane', '            "<div style=\'width:50%\'>" + cid + "</div>")', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
   try { assert.deepEqual(hostSheets(d).map((x) => [x.name, x.css]), [['kernel/kernel.py _spin', 'a{b:c}']]); } finally { fs.rmSync(d, { recursive: true, force: true }); }
 });
+// The blanking had read two-quote pieces alone: a triple-quoted literal after the closing literal holding an odd number of its own
+// quote kind, or a literal continued over an escaped line end, paired its last quote with a later literal's first, and the run's
+// operator between them was blanked with the text, so the run decoded silently, the direction the scan exists to refuse (the
+// file review's round 12, kernel-1 with extra8-1; the blanking widened in the author's closing pass after those fixes). Two
+// shapes red before the triple-quoted and the continued form joined the blanking, and a control holding that the two forms are
+// blanked whole (red before too: each was refused as formatted, the % inside the literal read as the operator).
+test('hostSheets: a helper <style> run formatted by a % after a triple-quoted literal holding an odd number of double quotes, with a later double-quoted literal in the body, fails by name rather than decoding to its placeholders (the file review\'s round 12, kernel-1 with extra8-1; the blanking widened in the author\'s closing pass after those fixes: read as two-quote pieces, the triple-quoted literal paired its last quote with the next literal\'s first and the operator between them was blanked; a property pin over a synthetic tree, red before the triple-quoted form joined the blanking)', () => {
+  const d = tempTree(pySrc('def _spin(cid):', '    s = ("<style>a{b:%s}</style>"', '         """<div class="x>hi</div>"""', '         "<b>{}</b>") % (cid,)', '    t = "z"', '    return s + t', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.throws(() => hostSheets(d), /_spin.*formatted/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+test('hostSheets: a helper <style> run formatted by a % after a literal continued over an escaped line end, with a later double-quoted literal in the body, fails by name rather than decoding to its placeholders (the file review\'s round 12, kernel-1 with extra8-1; the blanking widened in the author\'s closing pass after those fixes: the escape had not taken the line end, so the broken literal\'s closing quote paired with the next literal\'s first; a property pin over a synthetic tree, red before the continued form joined the blanking)', () => {
+  const d = tempTree(pySrc('def _spin(cid):', '    s = ("<style>a{b:%s}</style>"', '         "<div>\\', '         x</div>") % (cid,)', '    t = "z"', '    return s + t', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.throws(() => hostSheets(d), /_spin.*formatted/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+test('hostSheets control: a % inside a triple-quoted literal or inside a literal continued over an escaped line end after the closing literal is not the operator, so the run decodes as before (the file review\'s round 12, kernel-1 with extra8-1; the blanking widened in the author\'s closing pass after those fixes: the two forms are blanked whole; a property pin over a synthetic tree, red before the two forms joined the blanking, where each was refused as formatted)', () => {
+  const d = tempTree(pySrc('def _spin(cid):', '    return ("<style>a{b:c}</style>"', '            """<div class="x>50%</div>"""', '            "<div>50%\\', '            </div>")', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.deepEqual(hostSheets(d).map((x) => [x.name, x.css]), [['kernel/kernel.py _spin', 'a{b:c}']]); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
 test('hostSheets: a helper <style> run holding a second block fails by name rather than reading the markup between the blocks as a sheet (the file review\'s round 11, extra7-1; a property pin over a synthetic tree, red before the refusal)', () => {
   const d = tempTree(pySrc('def _spin(cid):', '    return "<style>a{b:c}</style><div></div><style>d{e:f}</style>"', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
   try { assert.throws(() => hostSheets(d), /_spin/); } finally { fs.rmSync(d, { recursive: true, force: true }); }

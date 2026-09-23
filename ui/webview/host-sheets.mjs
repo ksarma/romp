@@ -154,14 +154,20 @@ const all = (re, text) => { const out = []; let m; re.lastIndex = 0; while ((m =
  *  concatenates read by pyStringConstant, in the order the served HTML has them; a helper with no def in the strict shape, a
  *  `<style` outside such a run, any other token in the run, a run that does not decode to one block (a second `</style>` inside
  *  it), a prefix letter on the opening literal (an f-, r- or b-string) and a `%` or `.format(` standing anywhere after the closing
- *  literal in the helper's body outside a string literal or a comment (the remainder scanned with its double- and single-quoted
- *  literals and its `#` comments blanked, so the operator applied to the run's parenthesised expression, the kernel's house
- *  shape, is refused wherever it stands, and a `%` in arithmetic after the run is refused too, loudly; the bound is the helper's
+ *  literal in the helper's body outside a string literal or a comment (the remainder scanned with its string literals, the
+ *  double- and single-quoted, the triple-quoted and a literal continued over an escaped line end, and its `#` comments blanked,
+ *  so the operator applied to the run's parenthesised expression, the kernel's house shape, is refused wherever it stands, and a `%` in arithmetic after the run is refused too, loudly; the bound is the helper's
  *  body, not the return statement, whose end in text would take a second reader to find) fail by name, since each decodes to text
  *  the page does not serve (the file review's round 11, extra6-1 with extra7-1, kernel-1 and tests-1: the pane spinner's block,
  *  `_pane_spin`'s with _LOADER_CSS folded in, served with the chat, feed, sessions and waiting pages, had been outside the read
  *  with every pin green; the three formatted shapes had decoded silently; and round 12, kernel-1 with extra8-1: the operator had
- *  been refused only right after the literal, so the house shape decoded to its placeholders silently). */
+ *  been refused only right after the literal, so the house shape decoded to its placeholders silently; the triple-quoted and
+ *  the continued form joined the blanking in the author's closing pass after those fixes, since read as two-quote pieces a
+ *  triple-quoted literal holding an odd number of its own quote kind, or a literal broken over an escaped line end, standing
+ *  before a later literal had paired its last quote with that literal's first, and the operator between them was blanked with
+ *  the run's text, so the run decoded silently). Outside the blanking, disclosed and not read: an f-string nesting its own quote
+ *  kind inside its braces (Python 3.12's grammar), whose inner quotes pair the same wrong way; no helper at this head writes one
+ *  after a run. */
 function helperStyle(kernel, lines, name) {
   const head = new RegExp('^def ' + name + '\\([^)]*\\):\\n', 'm').exec(kernel);
   if (!head) fail(name + ' is called by a page body and is no module-level def this reader has a rule for');
@@ -171,13 +177,15 @@ function helperStyle(kernel, lines, name) {
   if (open < 0 || close < 0 || close < open) fail(name + ' writes a <style> in a form this reader has no rule for (not a run of literals from "<style> to </style>")');
   if (open > 0 && /\w/.test(text[open - 1])) fail(name + "'s <style> literal carries a prefix letter (an f-, r- or b-string), whose text is not what Python serves");
   // the remainder of the helper's body after the closing literal (defBody's text, the bound: the return statement's end in text
-  // would take paren tracking, a second reader to get wrong, and over-refusal fails loudly, this module's policy), its double- and
-  // single-quoted literals and its `#` comments blanked in one left-to-right pass, so a `'` inside a double-quoted JS literal is
-  // literal text and a `%` inside a literal or a comment is not read: a `%` or `.format(` anywhere in what remains is the run
+  // would take paren tracking, a second reader to get wrong, and over-refusal fails loudly, this module's policy), its string
+  // literals (the triple-quoted first, then the double- and single-quoted, an escaped character inside any of them a line end
+  // included, so a literal continued over a backslash is one piece) and its `#` comments blanked in one left-to-right pass, so a
+  // `'` inside a double-quoted JS literal is literal text and a `%` inside a literal or a comment is not read: a `%` or `.format(`
+  // anywhere in what remains is the run
   // formatted, the operator applied to the run's parenthesised expression the kernel's house shape (`("..." "...") % (...)`, the
   // `%` on its own line inside the parens, a trailing comment before the `)`), and the run decodes to its placeholders, not what
   // the page serves (the file review's round 12, kernel-1 with extra8-1: the read had refused the operator only right after the literal)
-  const rest = text.slice(close + '</style>"'.length).replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|#[^\n]*/g, ' ');
+  const rest = text.slice(close + '</style>"'.length).replace(/"""(?:\\[\s\S]|(?!""")[\s\S])*"""|'''(?:\\[\s\S]|(?!''')[\s\S])*'''|"(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|#[^\n]*/g, ' ');
   if (/%|\.format\(/.test(rest)) fail(name + "'s <style> run is formatted by a % or .format() operator standing after its closing literal (anywhere in the helper's body outside a literal or a comment), so its text is not what the page serves");
   const run = text.slice(open, close + '</style>"'.length);
   let out = '';
