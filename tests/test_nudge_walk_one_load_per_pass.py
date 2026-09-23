@@ -3716,10 +3716,14 @@ class TheCountersOneSite(unittest.TestCase):
         counter's copy of the assembled class of _LIMITS: a name completed at run time, by any transform _door_text does not
         undo, from constants none of which reads as it whole or carries it whole into a subscript key, a listed lookup or a dict
         read ('_NUDGE' + '_WALK_STATS', a join, an interpolating f-string, a %-format, the result handed to getattr, setattr,
-        operator.attrgetter, vars() or a module's __dict__); a spelling in escape sequences alone, in a module whose text holds
-        the name in no case; and a write that reaches the dict with no spelling of its name at all (a function in another kernel
-        module that finds the dict through sys.modules by its keys, a scan of globals().values() for a dict holding the
-        counter's keys) are outside this census and outside any static census. Execution on the driven roads is what catches
+        operator.attrgetter, vars() or a module's __dict__); a constant that carries the name whole, a statement naming the
+        counter say, to a callee the clause does not list, as the doors' needle-keeping constant at an unlisted callable is of
+        that class (exec bound to another name, functools.partial(exec, ...), code.InteractiveInterpreter(...).runsource,
+        builtins.__dict__['exec']; a verifier of the contained-name clause planted each in the kernel or the judge, a real write
+        with this case green); a spelling in escape sequences alone, in a module whose text holds the name in no case; and a
+        write that reaches the dict with no spelling of its name at all (a function in another kernel module that finds the dict
+        through sys.modules by its keys, a scan of globals().values() for a dict holding the counter's keys) are outside this
+        census, and the last outside any static census. Execution on the driven roads is what catches
         such a write: a case that drives a road and asserts memos.nudgeWalk.loads on that pass, against the walk's recorded
         calls or an exact figure, reds on the extra write, and a write on a road no case drives is caught by nothing here."""
         self._the_named_def("_auto_nudge_session", km._auto_nudge_session, "_auto_nudge_session")
