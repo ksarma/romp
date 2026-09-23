@@ -2576,24 +2576,30 @@ print(json.dumps(out))
         and a CI runner's 3.14t parsed the 100000 levels and raised JSONDecodeError at the end, so the child parses the same
         bytes in the same interpreter (nested_parse_raises) and the line and the mark must name the class that parse raised; a
         parse that returns fails this case, naming the interpreter and the depth. That the product catches both classes is
-        pinned once, by test_the_writers_previous_read_and_the_reader_catch_both_classes_a_nested_parse_can_raise."""
+        pinned once, by test_the_writers_previous_read_and_the_reader_catch_both_classes_a_nested_parse_can_raise. The check
+        that the parse raised requires a class name, an identifier, and the line and the mark are read for the class in the
+        "(<class>: " slot the product fills from the exception it caught (the reviewer's verifier at the twenty-fifth commit,
+        the twenty-sixth): with nested_parse_raises made to return the empty name for a parse that returns, a check reading
+        only "not None" passed, and the empty name is found in every line."""
         L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
         for shape, got in self.got.items():
             with self.subTest(shape=shape):
                 raised, depth, version = got["deepParse"]
-                self.assertIsNotNone(raised, "json.loads returned on the document nested %d deep on %s: the case's premise, a "
-                                     "file the parse cannot read, is gone" % (depth, version))
+                self.assertTrue(isinstance(raised, str) and raised.isidentifier(), "json.loads returned on the document nested "
+                                "%d deep on %s (derived %r, not a class name): the case's premise, a file the parse cannot read, "
+                                "is gone" % (depth, version, raised))
                 read = got["deepRead"]
                 self.assertEqual((self._v(read, "nobody"), self._v(read, "other")), (UNPARSABLE, UNPARSABLE),
                                  "nesting past the parser's depth: the unparsable arm for every sid (a reader catching ValueError "
                                  "alone raises RecursionError out of the ladder, recorded as 'raised')")
                 self.assertEqual(len(read["log"]), 1, "said once: %r" % read["log"])
-                self.assertIn(raised, read["log"][0], "the line says what failed, the class this interpreter's parse raised")
+                self.assertIn("(%s: " % raised, read["log"][0], "the line says what failed, the class this interpreter's parse "
+                              "raised")
                 wrote = got["deepWritten"]
                 self.assertNotEqual(self._v(wrote, "nobody"), RULE_5, "a file the writer cannot read whole: a sid nothing names "
                                     "is never rule 5's while the mark stands (the twenty-second commit)")
-                self.assertIn(raised, (wrote["mark"] or {}).get("cause", ""), "the document is marked with the cause, the class "
-                              "this interpreter's parse raised: %r" % wrote["mark"])
+                self.assertIn("(%s: " % raised, (wrote["mark"] or {}).get("cause", ""), "the document is marked with the cause, "
+                              "the class this interpreter's parse raised: %r" % wrote["mark"])
                 self.assertEqual((self._v(wrote, "nobody"), self._v(wrote, "other")), (CARRY_LOST(wrote["mark"]), RULE_4),
                                  "the writer replaced the file (a previous-read catching ValueError alone fails every write); a sid "
                                  "nothing names is not established while the mark stands")
