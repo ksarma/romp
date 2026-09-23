@@ -8686,9 +8686,11 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word, given on 2026-09-22
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools,
-upstream or tests alone (51 files, the ledger entry's where line; run 2026-09-23 at the head that carries the fixes ruled in the
-file review's round 13 and the merge of the fork's main after them, where the merge-base is 6cf6839ba, the fork's main the branch
-merged after those fixes, its tip the merge of the fork's batch PR 906, and the listing is the branch's whole delta over it; under ui the listing lies in ui/webview but for ui/test-code-only.ts, the comment stripper, which the case fixes brought
+upstream or tests alone (51 files, the ledger entry's where line; run 2026-09-23 at the head that carries the painted-contrast ask of
+2026-09-23 and the merge of the fork's main after it, where the merge-base is fa3ef54b5, the fork's main the branch merged after
+that ask, its tip the merge of the fork's batch PR 907, and the listing is the branch's whole delta over it; the run at the head
+that carries the fixes ruled in the file review's round 13 and the merge of the fork's main after them, from the merge-base
+6cf6839ba, the fork's main the branch merged after those fixes, its tip the merge of the fork's batch PR 906, listed the same 51; under ui the listing lies in ui/webview but for ui/test-code-only.ts, the comment stripper, which the case fixes brought
 into the delta (its header's reader roster names file-figure-open.test.ts as its sixth reader; the file review's round 13,
 extra7-1), so the run at the head that carries the dress fixes alone among them, from the merge-base de06b8718, the fork's main the
 branch merged before the file review's round 13, listed 50; the run at the
