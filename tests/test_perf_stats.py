@@ -379,7 +379,7 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["memos"]), {"pass", "shared", "chain", "nudgeGate", "nudgeWalk", "convergeDeclined", "sessionsListing", "cleared", "courierSkip", "backref", "captions", "goalArchive", "plannerSkip", "ghostDropped",
                                               "bgTops", "liftGate", "intrMarks", "deadWait", "tickSeen", "statesOverlay", "lanes", "spendTree", "summaryAnchor",
                                               "judgingBand",   # the judging band's per-row memo and horizon cursor (2026-09-16)
-                                              "subagentTree",   # the subagents directory walk memo (2026-09-16): served vs walked, roots held
+                                              "subagentTree",   # the subagents directory walk memo (2026-09-16): its counters, the _SUBAGENT_TREE_STATS comment in kernel/kernel.py
                                               "chatMergeSets", "chatPostal", "chatLedger", "chatFoldTasks",   # the chat build's fixed-cost memos (2026-09-09)
                                               "chatSig",   # the chat signature pass's counters (stage 1 of the chat-signature design, 2026-09-18)
                                               "outlineProvisional",   # the Outline's provisional-row ledger memo, parse-free (plans/outline-pane-provisional-row.md, 2026-09-15)

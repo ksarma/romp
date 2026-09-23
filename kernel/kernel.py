@@ -2206,7 +2206,7 @@ class _PerfStats:
                           ("lanes", _lanes_memo_report),   # the timeline's per-lane segment memo, live lanes; the dead lanes beside
                           ("judgingBand", _judging_band_report),   # the judging band's per-row memo and horizon cursor (2026-09-16)
                           ("spendTree", _spend_tree_memo_report),   # the spend guard's subagent-tree memos: bytes against their bound
-                          ("subagentTree", _subagent_tree_memo_report),   # the subagents directory walk memo (2026-09-16): served vs walked
+                          ("subagentTree", _subagent_tree_memo_report),   # the subagents directory walk memo (2026-09-16): its counters, the _SUBAGENT_TREE_STATS comment
                           ("summaryAnchor", _summary_anchor_memo_report),   # the brief line's text-atom landings (T388): bytes against their bound
                           # the chat build's fixed-cost memos (2026-09-09): the live merge's transcript-side
                           # sets, the fold's sealed postal cards, the ledger's goal-tree walk, the task fold
@@ -35693,8 +35693,8 @@ def _subagent_trees_forget(alive):
 
 
 def _subagent_tree_memo_report():
-    """/perf memos.subagentTree: hit and miss (trees served by validation against trees walked: how many validations and
-    walks the process paid), served (reads a cycle scope answered from the pair it held, no stat: how many reads the scope
+    """/perf memos.subagentTree: hit and miss (trees vouched for by validation against trees walked: how many validations
+    and walks the process paid), served (reads a cycle scope answered from the pair it held, no stat: how many reads the scope
     absorbed; _subagent_tree's early return alone moves it; a read answered a tree, validated, walked or served, lands in
     exactly one of the three and a read answered no tree moves none, the rule, its edges and the tests that execute it
     stated once at _SUBAGENT_TREE_STATS; since 2026-09-21, round 1 of #882's fresh-3, before which those reads moved no
