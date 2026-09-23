@@ -553,17 +553,23 @@ on the picture on a mouse or trackpad, and a drag draws a rectangle unless it st
 the button, which takes the press), a Cmd-click (Ctrl on Windows and Linux) on the picture
 while the panel is closed, or on the button at any time, opens the picture in a browser
 tab, and a picture from the web opens its address in a new tab, as a link to that site
-does, and the button and the picture both show that before the click: the button's
+does (from the keyboard, Enter or Space on its button opens it only while the button is
+on the screen), and the button and the picture both show that before the click: the button's
 tooltip says it opens a new tab at the address's host, its border is dashed and its glyph
-is an arrow leaving a box, and the picture's own tooltip shows the address, on a line
-after the author's title when there is one; a figure waiting behind its host's box gets
+is an arrow leaving a box, and the picture's own tooltip shows the address without its
+sign-in part, query and fragment, on a line after the author's title when there is one; a
+click on a picture in a fold's title line (a `<details>` block's summary, or the title of
+a callout written `[!note]-` or `[!note]+`) opens or closes the fold and opens nothing,
+with or without Cmd, and a picture from the web there shows no address in its tooltip,
+while its button, where it has one, still opens it; a figure waiting behind its host's box gets
 its button once it has loaded, as does
 one still on its way (a click on it before then opens nothing), and once the browser has
 answered for a picture, four kinds have none: a picture that failed to load, which opens
 nothing either; a `data:` picture, whose bytes are written into the file itself and which
 does not open; a picture smaller than 48 pixels on either side (a badge, an inline icon),
-which the button would cover, and which a plain click still opens when no link holds it (a
-small picture from the web has the dashed border itself, on a mouse or trackpad while the
+which the button would cover, and which a plain click still opens when neither a link nor
+a fold's title line holds it (a small picture from the web outside such a line has the
+dashed border itself, on a mouse or trackpad while the
 pointer is over it, and at all times on a phone or tablet and on a laptop with a
 touchscreen, since a finger gets no tooltip); and a picture inside a link that holds more
 than the picture (a caption beside
