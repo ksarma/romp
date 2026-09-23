@@ -4744,8 +4744,11 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
         appends = [c for c in _walk(finder) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "append"
                    and isinstance(c.func.value, ast.Name) and c.func.value.id == "out"]
         # the append sites are the whole population: every use of `out` in the def is its binding, one of those appends or a read in
-        # the return, so a branch adding to the list under another spelling (out.extend, out += [...], an alias of the list) reds here
-        # (this pass: the shape check below reads out.append sites and would miss such a branch as the derivation missed a computed label)
+        # the return, the one binding is `out = []` and the one return `return sorted(out)`, so a branch adding to the list under
+        # another spelling (out.extend, out += [...], an alias made from out) reds here, as does a second list merged at the return or
+        # bound to out (this pass: the shape check below reads out.append sites and would miss such a branch as the derivation missed a
+        # computed label; review round 8, extra5-4: the return admitted any Name and the bindings any target named out, so
+        # `return sorted(out + extra)` and `extra = []` then `out = extra` each passed with the finder reporting a form no row lists)
         accounted = ({id(c.func.value) for c in appends}
                      | {id(t) for a in _walk(finder) if isinstance(a, ast.Assign) for t in a.targets if isinstance(t, ast.Name)}
                      | {id(n) for r in _walk(finder) if isinstance(r, ast.Return) for n in _walk(r) if isinstance(n, ast.Name)})
@@ -4754,7 +4757,27 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
         self.assertEqual(other, [], "every use of out in the finder's def is its binding, an out.append call (held to the tuple shape below) "
                                     "or a read in the return statement; a use of another kind, by line in this file and text: %r, adds to or "
                                     "rebinds the list under a spelling the forms derivation does not read (out.extend, out += [...], an alias "
-                                    "of the list): write it as out.append of a literal tuple" % other)
+                                    "made from out): write it as out.append of a literal tuple" % other)
+        returns = [ast.unparse(r.value) if r.value is not None else None for r in _walk(finder) if isinstance(r, ast.Return)]
+        self.assertEqual(returns, ["sorted(out)"], "the finder's def has one return, of exactly sorted(out), by ast.unparse, so what it "
+                                                   "reports is the list the forms derivation reads; its returns: %r (a second list merged "
+                                                   "at the return carries rows the derivation does not read)" % returns)
+        # the bindings of out: every node naming out in an identifier field its class declares (_IDENTIFIER_FIELDS, the jd rule's
+        # read), other than a read in Load context, spelled by the first line of ast.unparse of the innermost statement holding it
+        inner = {}
+        for stmt in _walk(finder):                     # a parent is yielded before its descendants, so the last write is the innermost
+            if isinstance(stmt, ast.stmt):
+                for n in _walk(stmt):
+                    inner[id(n)] = stmt
+        bindings = [ast.unparse(inner[id(n)]).splitlines()[0] for n in _walk(finder)
+                    for field in _IDENTIFIER_FIELDS.get(type(n), ())
+                    for x in (getattr(n, field, None) if isinstance(getattr(n, field, None), list) else [getattr(n, field, None)])
+                    if x == "out" and not isinstance(getattr(n, "ctx", None), ast.Load)]
+        self.assertEqual(bindings, ["out = []"], "out is named other than by a read once in the finder's def, by exactly out = [], by "
+                                                 "ast.unparse of its statement, so the list the appends fill is the list returned; the "
+                                                 "statements naming out other than by a read: %r (out bound to another list, `out = extra`, "
+                                                 "returns rows appended under the other name, which the forms derivation does not read)"
+                                                 % bindings)
         unread = [(start - 1 + c.lineno, ast.unparse(c)) for c in appends
                   if not (len(c.args) == 1 and isinstance(c.args[0], ast.Tuple) and len(c.args[0].elts) > 2
                           and isinstance(c.args[0].elts[2], ast.Constant) and isinstance(c.args[0].elts[2].value, str))]
