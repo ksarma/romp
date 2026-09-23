@@ -26,8 +26,13 @@ recorded, nothing is noted absent, no counter moves, each reader answers its sta
 marker, and the next call after the fault clears validates the standing entry; (11) such a fault excludes its own tree
 from the agent-file walk and nothing else: a file under a readable sibling's tree is found, memoized and answered with no
 fault passed to the caller while the own tree, a sibling sorted before it or an entry whose type cannot be read faults,
-and with the file nowhere the lookup answers None with the fault and memoizes nothing. Red-first on (1), the jobs-pass
-half of (6), (9), (10) and (11). Synthetic fixtures only: placeholder ids, invented text, a temp directory."""
+and with the file nowhere the lookup answers None with the fault and memoizes nothing; (12) the fail-closed answers
+beside the own root's (FailClosedRoads): a sibling's tree that cannot be read and a project directory that cannot be
+listed each reach the caller as a fault, memoize nothing and tell a running chat build the read is unreadable, whose
+recorded key the next signature's re-stat differs from once the fault clears, when the lookup recovers; the feed key's
+component for an unreadable root with no entry standing is the unreadable marker; and ENOTDIR at a root is absence (a
+boundary guard). Red-first on (1), the jobs-pass half of (6), (9), (10) and (11); (12) is red under a mutant per road.
+Synthetic fixtures only: placeholder ids, invented text, a temp directory."""
 import contextlib
 import errno
 import json
@@ -580,26 +585,10 @@ class UnreadableRoot(_Tree):
         self._the_next_call_reads_again(root, m, row, cmd)
 
 
-class FaultExcludesItsOwnTree(_Tree):
-    """A fault excludes the tree that raised it and nothing else (round 2 of #882, group A: correctness-1, regression-1,
-    extra5-1). An agent's file under a readable sibling session's tree (a /clear fork's fsid) is found, memoized and answered
-    with no fault passed to the caller while another tree the walk looks through cannot be read: the own subagents tree, a
-    sibling's sorted before the holder, or a project-directory entry sorted before the holder whose type cannot be read
-    (pathlib's is_dir raising). RED FIRST: from the fail-closed change of 2026-09-21 until this one the agent-file walk
-    answered through _subagent_walk_unreadable at the first such tree, before it looked through the trees sorted after it,
-    so the lookup answered None with the fault and memoized nothing (the viewer said the transcript was missing, the
-    awaiting box attributed no launches, the Agent card showed no steps) for as long as the unrelated tree stayed
-    unreadable, where the walk before the fail-closed change found and memoized the file; and _subagent_file's gate
-    discarded a found file whenever any fault occurred, so a fix to the walk alone did not reach the caller. Each road is
-    driven under a real EACCES (a directory at mode 000; skipped as root, whom permission bits do not bind) and under an EIO
-    by mock. The is_dir road exists where pathlib's is_dir re-raises an errno other than ENOENT, ENOTDIR, EBADF and ELOOP,
-    which is through 3.12, the kernel's interpreter; from 3.13 is_dir is os.path.isdir, which answers False on any OSError,
-    and on 3.10 pathlib stats through the os.stat it bound at import, so the EIO mock is not seen there: each is_dir case
-    asserts its interpreter's behaviour first, and where is_dir does not raise the entry is skipped at both heads. Two
-    controls hold at both heads: an unreadable sibling sorted after the holder is never reached, and with the file nowhere
-    (no holder) the lookup answers None with the fault, memoizes nothing and tells the running chat build the tree is
-    unreadable, on every call while the fault lasts: the fail-closed rule's cost, which _subagent_tree's docstring states
-    with the no-holder cases as its witness."""
+class _Walk(_Tree):
+    """The agent-file walk's fixture (no cases of its own): AID_FORK's lookup key forgotten around each case, a sibling
+    session's subagents tree in the project directory, a fault on one tree, and the lookup under a running chat build's
+    dependency scope. FaultExcludesItsOwnTree and FailClosedRoads share it."""
 
     def setUp(self):
         super().setUp()
@@ -650,6 +639,38 @@ class FaultExcludesItsOwnTree(_Tree):
         with mock.patch.object(os, "lstat", eio):
             yield
 
+    def _lookup(self):
+        """AID_FORK's lookup under a running chat build's dependency scope: (answer, the caller's faults, the build's notes)."""
+        faults, deps = [], {"task_outs": [], "postal_any": False}
+        km._chat_dep_scope.deps = deps
+        try:
+            got = km._subagent_file(str(self.tpath), AID_FORK, faults)
+        finally:
+            km._chat_dep_scope.deps = None
+        return got, faults, deps["task_outs"]
+
+
+class FaultExcludesItsOwnTree(_Walk):
+    """A fault excludes the tree that raised it and nothing else (round 2 of #882, group A: correctness-1, regression-1,
+    extra5-1). An agent's file under a readable sibling session's tree (a /clear fork's fsid) is found, memoized and answered
+    with no fault passed to the caller while another tree the walk looks through cannot be read: the own subagents tree, a
+    sibling's sorted before the holder, or a project-directory entry sorted before the holder whose type cannot be read
+    (pathlib's is_dir raising). RED FIRST: from the fail-closed change of 2026-09-21 until this one the agent-file walk
+    answered through _subagent_walk_unreadable at the first such tree, before it looked through the trees sorted after it,
+    so the lookup answered None with the fault and memoized nothing (the viewer said the transcript was missing, the
+    awaiting box attributed no launches, the Agent card showed no steps) for as long as the unrelated tree stayed
+    unreadable, where the walk before the fail-closed change found and memoized the file; and _subagent_file's gate
+    discarded a found file whenever any fault occurred, so a fix to the walk alone did not reach the caller. Each road is
+    driven under a real EACCES (a directory at mode 000; skipped as root, whom permission bits do not bind) and under an EIO
+    by mock. The is_dir road exists where pathlib's is_dir re-raises an errno other than ENOENT, ENOTDIR, EBADF and ELOOP,
+    which is through 3.12, the kernel's interpreter; from 3.13 is_dir is os.path.isdir, which answers False on any OSError,
+    and on 3.10 pathlib stats through the os.stat it bound at import, so the EIO mock is not seen there: each is_dir case
+    asserts its interpreter's behaviour first, and where is_dir does not raise the entry is skipped at both heads. Two
+    controls hold at both heads: an unreadable sibling sorted after the holder is never reached, and with the file nowhere
+    (no holder) the lookup answers None with the fault, memoizes nothing and tells the running chat build the tree is
+    unreadable, on every call while the fault lasts: the fail-closed rule's cost, which _subagent_tree's docstring states
+    with the no-holder cases as its witness."""
+
     @contextlib.contextmanager
     def _untyped_entry(self, how):
         """A project-directory entry sorted before the holder whose type cannot be read, yielded. "eacces": a symlink into a
@@ -690,16 +711,6 @@ class FaultExcludesItsOwnTree(_Tree):
         expect = sys.version_info < (3, 13) and (how == "eacces" or sys.version_info >= (3, 11))
         self.assertEqual(raised, expect, "premise: Path.is_dir %s on this interpreter under the %s fault"
                          % ("raises" if expect else "does not raise", how))
-
-    def _lookup(self):
-        """AID_FORK's lookup under a running chat build's dependency scope: (answer, the caller's faults, the build's notes)."""
-        faults, deps = [], {"task_outs": [], "postal_any": False}
-        km._chat_dep_scope.deps = deps
-        try:
-            got = km._subagent_file(str(self.tpath), AID_FORK, faults)
-        finally:
-            km._chat_dep_scope.deps = None
-        return got, faults, deps["task_outs"]
 
     def _found(self, got, faults, notes, holder_file, why):
         self.assertEqual(got, holder_file, why)
@@ -832,6 +843,172 @@ class FaultExcludesItsOwnTree(_Tree):
 
     def test_control_no_holder_with_a_sibling_unreadable_answers_none_with_the_fault_and_memoizes_nothing_eacces(self):
         self._no_holder("sibling", "eacces")
+
+
+class FailClosedRoads(_Walk):
+    """The fail-closed answers that no case executed until round 2 of #882 (group C, tests-1): the agent-file walk's fault on
+    a sibling's tree, the project directory's listing that could not be made, the walk's _TREE_UNREADABLE note to a running
+    chat build on both of those roads, _subagent_dirs_ident's marker for an unreadable root with no memo entry standing, and
+    ENOTDIR at a root, which is absence. UnreadableRoot above reaches the own root alone, with its entries standing. Not red
+    first: each answer was in the kernel before these cases. Each case is red, at the head that added it, under a mutant
+    that takes its road's fault for absence or drops its answer: the sibling's fault not recorded, the listing's fault not
+    recorded, the walk's note not made, the marker answered as the missing root's (None,), ENOTDIR moved to the unreadable
+    side. The sibling and listing cases each assert, under the fault, the caller's faults, no memo entry and the note under
+    an open chat dependency scope; then, after the fault clears, that the key the build recorded differs from the next
+    signature's re-stat (_chat_sig_deps, the chat cache's own evaluation: the tab is rebuilt) and the recovery (the file
+    found and memoized with no fault, and the rebuilt record equal to the next re-stat, so the tab settles). The file found
+    after the fault clears would not pin the sibling road alone: under a real EACCES the stamp stat of the unreadable root
+    fails too, so a walk that took the fault for absence would memoize its miss under (root, None), which no later stamp
+    equals, and the memo would walk again and find the file on its own; under the EIO mock only the lstat faults, and that
+    walk's miss would stand. Each road is driven under a real EACCES (skipped as root, whom permission bits do not bind)
+    and under an EIO by mock."""
+
+    ERR = {"eio": "OSError", "eacces": "PermissionError"}   # the type name the walk passes to the caller's faults
+
+    @contextlib.contextmanager
+    def _unlistable(self, how):
+        """The project directory cannot be listed inside the block while every path under it still reads. "eacces": the
+        directory at mode 0311 (search and write, no read: a real fault; lstat and stat under it still work); "eio": os.listdir
+        and os.scandir of that directory raising EIO by mock, every other call reading. Path.iterdir lists through os.listdir
+        (3.11, 3.12) or os.scandir (3.13 on); 3.10's pathlib lists through the os.listdir it bound at import, which the mock
+        does not reach, so the EIO variant asserts that first and is skipped there."""
+        proj = str(self.proj)
+        if how == "eacces":
+            if os.geteuid() == 0:
+                self.skipTest("permission bits do not bind root: no EACCES to drive")
+            os.chmod(proj, 0o311)
+            try:
+                with self.assertRaises(PermissionError, msg="premise: the real fault this case drives, on the listing alone"):
+                    list(self.proj.iterdir())
+                os.lstat(str(self.subdir))                          # premise: a path under the directory still reads
+                yield
+            finally:
+                os.chmod(proj, 0o755)
+            return
+
+        def eio(real):
+            def f(p=".", *a, **k):
+                if not isinstance(p, int) and os.fsdecode(p) == proj:
+                    raise OSError(errno.EIO, "input/output error")
+                return real(p, *a, **k)
+            return f
+        with mock.patch.object(os, "listdir", eio(os.listdir)), mock.patch.object(os, "scandir", eio(os.scandir)):
+            try:
+                list(self.proj.iterdir())
+                seen = False
+            except OSError:
+                seen = True
+            if not seen:
+                self.assertLess(sys.version_info, (3, 11), "premise: Path.iterdir reaches the mocked os.listdir or os.scandir "
+                                                           "on every interpreter but 3.10")
+                self.skipTest("3.10's pathlib lists through the os.listdir it bound at import: the EIO mock is not seen")
+            yield
+
+    def _rebuilt_then_settles(self, notes, where, holder_file):
+        """After the fault clears. The key the build recorded for `where` is _TREE_UNREADABLE, and the next signature's
+        re-stat of the same record differs from it, so the chat tab is rebuilt; the rebuilt tab's lookup finds the file, with
+        no fault, memoizes it, and records keys equal to the next re-stat, so the tab is not rebuilt again."""
+        rec = {"task_outs": list(notes), "pl_pending": [], "postal_any": False}
+        restat = km._chat_sig_deps(SID, rec)[0]
+        i = list(notes).index((where, km._TREE_UNREADABLE))
+        self.assertEqual(restat[i][0], where, "premise: the re-stat evaluates the record's own entries, in order")
+        self.assertIsNotNone(restat[i][1], "premise: %s stats again once the fault cleared" % where)
+        self.assertNotEqual(restat[i], notes[i],
+                            "the next signature's re-stat of %r differs from the key the build recorded for it (_TREE_UNREADABLE), "
+                            "so the signature moves and the tab that showed the file missing is rebuilt" % where)
+        got, faults, notes2 = self._lookup()
+        self.assertEqual(got, holder_file, "recovery: the rebuilt tab's lookup finds the file once the fault cleared")
+        self.assertEqual(faults, [], "with no fault passed to the caller")
+        self.assertEqual(km._SUBAGENT_FILE_CACHE[self.fork_key][1], holder_file, "and memoizes it")
+        rec2 = {"task_outs": list(notes2), "pl_pending": [], "postal_any": False}
+        self.assertEqual(km._chat_sig_deps(SID, rec2)[0], tuple(notes2),
+                         "the rebuilt tab's record equals the next signature's re-stat: the tab settles, rebuilt once")
+
+    # ── the sibling road: the agent's file under the one tree that cannot be read ─────────────────────────────────────
+    def _sibling_road(self, how):
+        hold, holder_file = self._sibling(SID_HOLD, holder=True)
+        with self._unreadable(hold, how):
+            got, faults, notes = self._lookup()
+            self.assertIsNone(got, "the file lies under the one tree the walk could not read: nothing found")
+            self.assertEqual(faults, [self.ERR[how]],
+                             "the sibling's fault reaches the caller: the lookup could not be made, which is not a miss (a walk "
+                             "that took the fault for absence passes no fault and memoizes the miss)")
+            self.assertNotIn(self.fork_key, km._SUBAGENT_FILE_CACHE,
+                             "nothing memoized under the sibling's fault, so the next lookup walks again")
+            self.assertIn((hold, km._TREE_UNREADABLE), notes,
+                          "the running chat build is told the sibling's tree is unreadable, under a key no stat equals, so the tab "
+                          "is rebuilt next cycle: %r" % (notes,))
+        self._rebuilt_then_settles(notes, hold, holder_file)
+
+    def test_a_siblings_tree_that_cannot_be_read_is_a_fault_with_no_memo_and_an_unreadable_note_and_re_arms_the_tab_eio(self):
+        self._sibling_road("eio")
+
+    def test_a_siblings_tree_that_cannot_be_read_is_a_fault_with_no_memo_and_an_unreadable_note_and_re_arms_the_tab_eacces(self):
+        self._sibling_road("eacces")
+
+    # ── the listing road: the project directory cannot be listed, the file under a readable sibling ────────────────────
+    def _listing_road(self, how):
+        _hold, holder_file = self._sibling(SID_HOLD, holder=True)
+        proj = str(self.proj)
+        with self._unlistable(how):
+            got, faults, notes = self._lookup()
+            self.assertIsNone(got, "the file lies under a sibling the walk reaches only through the listing: nothing found")
+            self.assertEqual(faults, [self.ERR[how]],
+                             "the listing's fault reaches the caller: a listing that could not be made is not a project "
+                             "directory with no siblings (a walk that took it for absence passes no fault and memoizes the miss)")
+            self.assertNotIn(self.fork_key, km._SUBAGENT_FILE_CACHE,
+                             "nothing memoized under the listing's fault, so the next lookup walks again")
+            self.assertIn((proj, km._TREE_UNREADABLE), notes,
+                          "the running chat build is told the project directory could not be listed, under a key no stat "
+                          "equals, so the tab is rebuilt next cycle: %r" % (notes,))
+        self._rebuilt_then_settles(notes, proj, holder_file)
+
+    def test_a_project_directory_that_cannot_be_listed_is_a_fault_with_no_memo_and_an_unreadable_note_and_re_arms_the_tab_eio(self):
+        self._listing_road("eio")
+
+    def test_a_project_directory_that_cannot_be_listed_is_a_fault_with_no_memo_and_an_unreadable_note_and_re_arms_the_tab_eacces(self):
+        self._listing_road("eacces")
+
+    # ── _subagent_dirs_ident's marker and ENOTDIR at the root ───────────────────────────────────────────────────────────
+    def test_the_feed_keys_component_for_an_unreadable_root_with_no_entry_standing_is_the_unreadable_marker(self):
+        """_subagent_dirs_ident for a root whose lstat fails for a reason other than absence, its memo entry popped first
+        (UnreadableRoot answers this reader from the standing entry): (d,) with identity _TREE_UNREADABLE, never the missing
+        root's (d,), (None,), so an unreadable tree is not keyed as an absent one, and the component moves once the root
+        reads."""
+        root = str(self.subdir)
+        km._subagent_dirs(root)
+        self.assertIsNotNone(km._SUBAGENT_TREES.pop(root, None), "premise: an entry stood, and is popped")
+        with self._unreadable(root, "eio"):
+            got = km._subagent_dirs_ident(SID, root)
+        self.assertEqual(got, ((root,), (km._TREE_UNREADABLE,)),
+                         "the feed key's component for an unreadable root with no entry standing is the unreadable marker, not "
+                         "the missing root's ((d,), (None,)): %r" % (got,))
+        self.assertNotEqual(km._subagent_dirs_ident(SID, root), got, "and the component moves once the root reads")
+
+    def test_enotdir_at_the_root_is_absence_answered_empty_with_the_entry_popped_a_boundary_guard(self):
+        """A boundary guard, green before the fail-closed change and since, by design: ENOTDIR on the root's own lstat (a
+        regular file where the session directory above the root should be) is absence, answered ((), ()) with the memo entry
+        popped and its eviction recorded, as ENOENT is. The fail-closed change of 2026-09-21 kept ENOTDIR on the absence side,
+        and the `except OSError` before it read ENOTDIR as absence too, so this case cannot fail before that change; it turns
+        red if a later change moves ENOTDIR to the unreadable side (a raise, the entry kept)."""
+        root = str(self.subdir)
+        km._subagent_dirs(root)
+        self.assertIn(root, km._SUBAGENT_TREES, "premise: the entry stands")
+        sess = self.subdir.parent
+        shutil.rmtree(str(sess))
+        sess.write_text("")                                         # a regular file where the session directory was
+        with self.assertRaises(NotADirectoryError, msg="premise: the root's lstat fails with ENOTDIR"):
+            os.lstat(root)
+        g0 = km._SUBAGENT_TREES_GEN[0]
+        try:
+            got = km._subagent_tree(root)
+        except km._SubagentTreeUnreadable as e:
+            self.fail("ENOTDIR at the root was answered as a root that could not be read (%s); it is absence, nothing at the "
+                      "root" % (e,))
+        self.assertEqual(got, ((), ()), "ENOTDIR at the root is absence: ((), ())")
+        self.assertNotIn(root, km._SUBAGENT_TREES, "and the entry is popped, as for a missing root")
+        self.assertEqual((km._SUBAGENT_TREES_GEN[0] - g0, km._SUBAGENT_ROOT_EVICTED.get(root)), (1, km._SUBAGENT_TREES_GEN[0]),
+                         "and its eviction is recorded (the generation moved by one, the table naming the root at that value)")
 
 
 if __name__ == "__main__":
