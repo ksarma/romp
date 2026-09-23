@@ -969,8 +969,9 @@ class MissPathRoads(_World):
         per candidate place, one per directory: G x S x DSIB candidate stats and S x DSIB + G x S x W_sib lstats on the
         sibling directories. The steady cycle (the ghosts' memo hits): no sibling tree is read, and each lookup's re-check
         of the walk's stamps pays one own stat per sibling directory, taken by the first lookup and held under root None,
-        so S x DSIB stats per cycle whatever G and M, all in dirStats. Red under a kernel that re-reads a sibling's tree per
-        walk (miss G x S) or holds nothing for the re-check (G x (1 + M) x S x DSIB)."""
+        so S x DSIB stats per cycle whatever G and M, all in dirStats. Red in the cold cycle under a kernel that reads a
+        sibling's tree again for every walk (miss G x S) and under one that holds no own stat (each lookup's re-check paying
+        its own stats, dirStats past (D - 1) + 1 + S)."""
         S, DSIB, G = 2, 4, 2
         sibs = self._sibling_trees(S, DSIB)
         roots = list(sibs)
@@ -3096,8 +3097,6 @@ class DependencyKey(_World):
                          "premise: the chat build saw the A agents and the new row, and its lookup walked and missed")
         deps = rec["deps"]
         recorded = dict(deps["task_outs"])
-        for dirs in sib_dirs:
-            self.assertEqual([p for p in dirs if p not in recorded], [], "premise: every directory of each sibling tree is recorded")
         b = km._chat_sig_stats_report()["stats"]
         with km._chat_sig_scope():
             touts = km._chat_sig_deps(SID, deps)[0]
@@ -3107,6 +3106,8 @@ class DependencyKey(_World):
                          "memos.chatSig stats over one evaluation of the tab's record, and the paths it recorded: %r; keyed on D + 1 + "
                          "S x D + K = %d + 1 + %d x %d + %d = %d each, one re-stat per recorded path every cycle; one key per sibling "
                          "root, the base's form, is D + 1 + S + K = %d" % ((n, len(recorded)), D, S, D, K, want, D + 1 + S + K))
+        for dirs in sib_dirs:
+            self.assertEqual([p for p in dirs if p not in recorded], [], "every directory of each sibling tree is among them")
         self.assertEqual(touts, tuple(deps["task_outs"]), "premise: nothing moved since the build, so the re-stat equals the record")
         wf = sib_dirs[-1][-1]
         os.mkdir(os.path.join(wf, "late"))                    # a directory created under a sibling's workflow directory
