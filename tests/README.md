@@ -126,7 +126,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   import, a dead loopback URL); a check over the table itself holds every licence to
   a per-write condition and every temporary one to a since date and a named item.
   The two floor modules, `tests/conftest.py` and `tests/__init__.py`, are the one
-  home of run-wide values and are licensed wholesale. A write whose keys the scan
+  home of run-wide values and are licensed wholesale, except for the five names a
+  module-level write of which is the leak itself (the postal peers, port, client-only
+  and host, and the sessions-file seam): of those a floor module may write only
+  upstream's client-only floor of "1". A write whose keys the scan
   cannot read fails the test naming the file and line rather than passing unread. A
   module-level `pop` is outside that pin: unset is the production default and what a
   clean shell gives every module.

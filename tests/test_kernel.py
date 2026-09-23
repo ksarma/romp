@@ -8555,6 +8555,21 @@ class PostalPeerTunnels(unittest.TestCase):
         # the call's duration the process is client-only with peers off and names a port nothing can bind, so no bus is
         # ever started (2026-09-10: a hermetic bus reached the machine's fixed port from exactly this test while the real
         # bus was down for a restart); restored after, whatever the outcome
+        # The revive runs on a thread, so the restore waits for it to END: an Event set when the revive returns, whether
+        # the kernel's revive runs the ensure or returns before it. Without the wait the restore won the race, the
+        # ensure's child inherited the restored environment, which names no port, and its first act, a ping, dialled the
+        # machine's fixed bus port (the reviewer's verification of round 2 on fork PR #894). The test asserts nothing
+        # about what the revive does, only that the refusal kicks it and that it ends before the restore.
+        import threading
+        revive_ended = threading.Event()
+        real_revive = km._revive_postal_bus
+
+        def revive():
+            try:
+                real_revive()
+            finally:
+                revive_ended.set()
+        km._revive_postal_bus = revive
         env_saved = {k: os.environ.get(k) for k in ("ROMP_POSTAL_CLIENT_ONLY", "ROMP_POSTAL_PEERS", "ROMP_POSTAL_PORT")}
         os.environ.update(ROMP_POSTAL_CLIENT_ONLY="1", ROMP_POSTAL_PEERS="0", ROMP_POSTAL_PORT="1")
         try:
@@ -8562,11 +8577,14 @@ class PostalPeerTunnels(unittest.TestCase):
                              "postal down → False, never an exception (the supervisor must survive)")
         finally:
             km.BUS_PORT = saved
+            ended = revive_ended.wait(60)   # an ensure the revive runs forks its child while the trio holds, not after the restore
+            km._revive_postal_bus = real_revive
             for k, v in env_saved.items():
                 if v is None:
                     os.environ.pop(k, None)
                 else:
                     os.environ[k] = v
+        self.assertTrue(ended, "the refusal kicks the bus revive, and the revive ends before the environment is restored")
 
 
 class CheckinMechanics(unittest.TestCase):
