@@ -259,7 +259,8 @@ test("the ring hues stay apart in BOTH themes, every pair: rings against rings f
 // clear 3:1 over the ground it paints on: the control's own background, composed the same way, for the worst picture beneath it (every
 // grey and the eight corners of the colour cube), or the page for the mark, whose 1px offset shows the page between its dashes. The
 // states: the web control at rest, alone and inside a dead link; the control revealed by the pointer over its picture or by a keyboard
-// focus inside a dead link (the focus is composed here alone: in the browser Chromium's focus ring covers the border row); the accent
+// focus inside a dead link (a focus as its opacities compose it: where the ring stands is the sheets' focus rule, 2px off the border,
+// which this model does not read, its spelling held by file-figure-open.test.ts's closed set and its paint read in the leg); the accent
 // border with the pointer on the control inside a dead link, against the hover wash; the mark, alone and inside a dead link. Every
 // failing state is collected and asserted once, so a red names them all. Red at 61d69cba1, where the web control rested at 0.8 and a
 // dead link's 0.7 dimmed the dress inside it. The read is a model with a stated bound: a rule reaches the dress here when its selector
@@ -324,7 +325,7 @@ test("the outbound dress PAINTED: every state from which a gesture opens the out
     for (const [name, blk] of [["dark", props(block(css, ":root {"))], ["light", props(block(css, "body.theme-light {"))]] as const) {
       const bg = rgbOf(blk.get("--bg")!, [30, 30, 30])!;
       for (const [state, ratio] of dressStates(css, themeOf(blk, bg))) t.diagnostic(`${sheet} ${name}: ${state} paints ${ratio.toFixed(3)}:1`);
-      for (const [state, ratio] of dressStates(css, themeOf(blk, bg))) if (ratio < 3) fails.push(`${sheet} ${name}: ${state} paints ${ratio.toFixed(3)}:1, under the 3:1 floor for the only sign of the outbound state`);
+      for (const [state, ratio] of dressStates(css, themeOf(blk, bg))) if (ratio < 3) fails.push(`${sheet} ${name}: ${state} paints ${ratio.toFixed(3)}:1, under the 3:1 floor for the outbound dress's line`);
     }
     // the VS Code bound, restated from the painted value: the dark --bg is the editor's background (var(--vscode-editor-background,
     // ...)), the light block's a literal; the token's states clear 3:1 on every neutral editor ground from the fallback up to #404040,

@@ -5005,18 +5005,28 @@ body.filebrowse-open { overflow: hidden; }
    #333 picture, 2.46:1 on a VS Code editor ground of #404040). At 1 its own background, var(--bg), is the ground its dashes read
    against, on the line's inner side and in every gap between them, over any picture; over a picture the line's outer side is the
    author's pixels, which no colour of the dress can clear for every picture, so the dress is held to the ground the sheet controls. A
-   dead link (a.fv-dead) holding the dress, the web control after a captioned picture or the mark on a picture under the floor, dims its
-   words by colour and not by opacity, under `screen`, so a print keeps the opacity: the anchor's opacity 0.7 dimmed everything inside
-   it, the dress included (by pixels over the leg's picture, 2.47:1 dark and 2.40:1 light for the control at rest, 2.82:1 light for the
-   mark and for the control the pointer reveals), while an href-less dead link (a host with a port, a refused scheme, an empty target)
-   owns no click, so a tap, a click and Enter open the tab from inside it (file-view.ts FIGURE_LINK_SET); a dead section link keeps its
-   href, owns its click and holds no dress inside it. Its picture stands at full ink with the dress, its dotted underline, help cursor
-   and title still say it is dead, and a dead link with no dress keeps the opacity, pixel for pixel. So every state from which a gesture
-   opens the tab, inside a dead link too, paints the dress at the token's own ratio in both themes (4.83:1 dark, 4.90:1 light), read by
-   pixels in file-figure-open-browser.test.ts (paintedRatio) and composed from the declared opacities in theme-parity.test.ts; in VS
-   Code, whose editor ground the dark theme's --bg follows, the dress clears 3:1 on a neutral editor ground up to #404040 (3.00:1) and
-   falls under at #414141 (2.96:1), and on a light one from #efefef (3.00:1) (the painted-contrast ask of 2026-09-23). Byte-equal in
-   both sheets (fileview-parity.test.ts); laid out in file-figure-open-browser.test.ts. */
+   keyboard focus reveals the web control too, and its focus ring stands 2px off its border (the focus rule below): drawn where the
+   browser draws it, the ring covered the border row and the row inside it, so no pixel of the dashed line showed, and at 1px off it
+   still covered the border row. A dead link (a.fv-dead) holding the dress, the web control after a captioned picture or the mark on a
+   picture under the floor, dims by colour and not by opacity, under `screen`, so a print keeps the opacity: the anchor's opacity 0.7
+   dimmed everything inside it, the dress included (by pixels over the leg's picture, 2.47:1 dark and 2.40:1 light for the control at
+   rest, at its own 0.8 times the anchor's 0.7, and 2.82:1 light at the anchor's 0.7 alone for the mark and for the control the pointer
+   reveals), while an href-less dead link (a host with a port, a refused scheme, an empty target) owns no click, so a tap, a click and
+   Enter open the tab from inside it (file-view.ts FIGURE_LINK_SET); a dead section link keeps its href, owns its click and holds no
+   dress inside it. Its picture stands at full ink with the dress, the words that take the link's colour are dimmed by it, and a child
+   the sheet colours itself, bold words or inline code, keeps its own ink; its dotted underline, help cursor and title still say it is
+   dead, and a dead link with no dress keeps the opacity, pixel for pixel. So every state from which a gesture opens the tab, inside a
+   dead link too, paints the dress at the token's own ratio in both themes (4.83:1 dark, 4.90:1 light), and the family's accent border
+   under the pointer at 7.87:1 dark and 3.79:1 light against its hover wash, read by pixels in file-figure-open-browser.test.ts
+   (paintedRatio) and composed from the declared opacities in theme-parity.test.ts; in VS Code, whose editor ground the dark theme's
+   --bg follows, the token's states clear 3:1 on a neutral editor ground up to #404040 (3.00:1) and fall under at #414141 (2.96:1), and
+   on a light one from #efefef (3.00:1), while the accent, the button family's colour and not the editor's, reads 1.35:1 under the dark
+   theme on a light editor ground, as every accent hover there does. While the button is held, the family's press cue scales it to 0.96
+   and its 1px line spreads over two pixel rows, at best 2.74:1 dark and 1.79:1 light against its own ground over a clear picture: the
+   press is inside the gesture, the open fires on the release, and the state before it, the accent border under the pointer or the
+   dress at rest on touch, shows where the open goes (the leg's fine-pointer case holds the press and reads the cue on the control, the
+   witness of this residual). All of it the painted-contrast ask of 2026-09-23. Byte-equal in both sheets (fileview-parity.test.ts);
+   laid out in file-figure-open-browser.test.ts. */
 .fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }
 .fileview-md .fv-figopen:hover { background: var(--bg) linear-gradient(var(--accent-wash), var(--accent-wash)); }
 .fileview-md .fv-figopen-left { float: left; }
@@ -5025,10 +5035,11 @@ body.filebrowse-open { overflow: hidden; }
 .fileview-md .fv-figopen-web:not(:hover) { border-color: var(--outbound-line); }
 @media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible { opacity: 1; } }
 @media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen { opacity: 0.8; } }   /* touch, and a coarse pointer beside a hovering one (a touchscreen laptop): no hover state to reveal it, so keep it visible; never print */
-@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen-web { opacity: 1; } }   /* the web control at rest at full, where a local one keeps 0.8: its dashed line is the only sign before a tap that the open leaves the page (the comment above); never print */
+@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen-web { opacity: 1; } }   /* the web control at rest at full, where a local one keeps 0.8: at 0.8 the picture under it showed through its dashed line (the comment above); never print */
+@media screen { .fileview-md .fv-figopen-web:focus-visible { outline-offset: 2px; } }   /* the focus ring 2px off the web control's border, so its dashed line shows under a keyboard focus (the comment above) */
 @media screen { .fileview-md img[data-fv-figweb]:hover { outline: 1px dashed var(--outbound-line); outline-offset: 1px; } }
 @media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md img[data-fv-figweb] { outline: 1px dashed var(--outbound-line); outline-offset: 1px; } }   /* touch, and a coarse pointer beside a hovering one: a picture under the floor has no control and its tooltip never shows to a finger, so the mark stands at rest; never print */
-@media screen { .fileview-md a.fv-dead:has(.fv-figopen-web), .fileview-md a.fv-dead:has(img[data-fv-figweb]) { opacity: 1; color: color-mix(in srgb, currentColor 70%, transparent); } }   /* a dead link holding the outbound dress dims its words by colour, not by opacity, which dimmed the dress inside it (the comment above); print keeps the opacity */
+@media screen { .fileview-md a.fv-dead:has(.fv-figopen-web), .fileview-md a.fv-dead:has(img[data-fv-figweb]) { opacity: 1; color: color-mix(in srgb, currentColor 70%, transparent); } }   /* a dead link holding the outbound dress dims by colour, not by opacity, which dimmed the dress inside it (the comment above); print keeps the opacity */
 .fileview-md :not(pre) > code {
   font-family: var(--mono, ui-monospace, monospace); font-size: 0.92em;
   color: var(--code-fg, #e1c08d); background: var(--code-bg, rgba(217, 119, 87, 0.10));

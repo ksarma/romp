@@ -4745,8 +4745,8 @@ const FIGTITLE_MARK = "data-fv-figtitle";
  *  attribute, never a class: the sanitizer keeps an author's `class` and lets no data-* attribute through, so no authored picture
  *  wears the mark. The outline wears the outbound dress's own token (var(--outbound-line), a grey clearing 3:1 over the page in both
  *  themes; the file review's round 13, ui-1 with extra6-1), the one the control's dashed border wears at rest, so the two dresses are
- *  one colour (the owner's call with that ruling). Inside a dead link, from which a tap opens the tab too (no click of its own, not in
- *  FIGURE_LINK_SET), the mark paints at the token's own ratio, since a dead link holding the dress dims its words by colour and not by
+ *  one colour (the owner's call with that ruling). Inside an href-less dead link, from which a tap opens the tab too (no click of its
+ *  own, not in FIGURE_LINK_SET), the mark paints at the token's own ratio, since a dead link holding the dress dims by colour and not by
  *  opacity (the sheets' rule; read by pixels in file-figure-open-browser.test.ts's paintedRatio, and composed from the declared
  *  opacities in theme-parity.test.ts; the painted-contrast ask of 2026-09-23, where the anchor's opacity 0.7 had painted it at 2.82:1
  *  in the light theme). */
@@ -5122,12 +5122,13 @@ export function figureLinkOf(from: Element): Element | null {
  *  href (`<a id="fig1">` around a captioned picture) are NOT in the set: no click of theirs owns the figure, so a captioned
  *  picture inside one keeps its control, after the picture inside the anchor, and its title (the file review's round 12,
  *  correctness-1 with ui-1: read as ANY anchor, as its round 2 had it, the control and the title were both withheld while the
- *  plain click opened the remote picture's tab, nothing on the surface saying so; inside a dead link the control inherits the
- *  anchor's help cursor, and it inherited the anchor's opacity too, kept by the owner with that ruling, until the painted-contrast
- *  ask of 2026-09-23: at 0.8 x 0.7 the web control at rest read 2.47:1 dark and 2.40:1 light by pixels over the leg's #333 picture,
- *  so a dead link holding the outbound dress now dims its words by colour and not by opacity, styles.css's figure rules, and the
- *  control inside it paints at the token's own ratio; a local control inside one keeps the anchor's opacity). A link holding the
- *  figure alone IS the anchor (figureAnchor climbed it) and is not read. */
+ *  plain click opened the remote picture's tab, nothing on the surface saying so; inside a dead link the picture and its caption
+ *  take the anchor's help cursor while the control keeps the button family's pointer, and the control inherited the anchor's
+ *  opacity, kept by the owner with that ruling, until the painted-contrast ask of 2026-09-23: at 0.8 x 0.7 the web control at rest
+ *  read 2.47:1 dark and 2.40:1 light by pixels over the leg's #333 picture, so a dead link holding the outbound dress now dims by
+ *  colour and not by opacity, styles.css's figure rules, and the control inside it paints at the token's own ratio; a local control
+ *  inside a dead link that holds no web dress keeps the anchor's opacity). A link holding the figure alone IS the anchor
+ *  (figureAnchor climbed it) and is not read. */
 function linkAbove(anchor: Element): Element | null {
   const p = anchor.parentElement;
   return p ? figureLinkOf(p) : null;

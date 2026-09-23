@@ -103,9 +103,10 @@ const RULES = [
   // the picture's own outbound mark for a web picture with no control (the file review's round 12, fresh-1): the two one-line screen
   // blocks keyed on the img's attribute, byte-equal in both sheets (file-figure-open.test.ts derives the set by the attribute)
   "@media screen { .fileview-md img[data-fv-figweb]:hover {", "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md img[data-fv-figweb] {",
-  // the web control's full opacity at rest and the dead link holding the dress, dimming its words by colour (the painted-contrast ask of
-  // 2026-09-23): two more one-line screen blocks held byte for byte
-  "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen-web {", "@media screen { .fileview-md a.fv-dead:has(.fv-figopen-web), .fileview-md a.fv-dead:has(img[data-fv-figweb]) {",
+  // the web control's full opacity at rest, its focus ring off its border, and the dead link holding the dress, dimming by colour (the
+  // painted-contrast ask of 2026-09-23): three more one-line screen blocks held byte for byte
+  "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen-web {", "@media screen { .fileview-md .fv-figopen-web:focus-visible {",
+  "@media screen { .fileview-md a.fv-dead:has(.fv-figopen-web), .fileview-md a.fv-dead:has(img[data-fv-figweb]) {",
   ".fileview-cm {", ".fileview-cm .cm-editor {", ".fileview-editor {",
   ".fileview-dir-link {", ".fileview-dir-link:hover {",
   // links inside a shown file (file-view-links.ts): the light dress on a URL anchor and a path link, and the Markdown link that names a file

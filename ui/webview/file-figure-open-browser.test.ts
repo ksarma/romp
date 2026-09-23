@@ -35,10 +35,13 @@
 // a dead link, the control revealed by the pointer over its picture, its accent border under the pointer and the mark on hover; each
 // at least 3:1 against the ground the sheet controls, the control's own background (the colour of the gaps between its dashes) or,
 // for the mark, the page in its offset ring. Over a picture the line's outer side is the author's pixels, which no colour of the dress
-// clears for every picture, so the read is not against them, and the touch case asserts that pixel is the picture's own fill. A
-// keyboard focus is not read by pixels: Chromium's focus ring covers the control's border row, and theme-parity.test.ts composes
-// that state from the declared opacities. Those reads red at 61d69cba1, where a dead link's opacity 0.7 dimmed the dress inside it
-// and the web control rested at 0.8 (the painted-contrast ask of 2026-09-23). Red over
+// clears for every picture, so the read is not against them, and the touch case asserts that pixel is the picture's own fill. On a
+// fine pointer the control under a keyboard focus inside a dead link is read by pixels too, its focus ring standing 2px off the
+// border (the sheets' focus rule: drawn where the browser draws it, the ring covered the border row and the row inside it), and the
+// press on it is held, where the family's press cue scales the control and resamples its line, the witness of the residual the
+// sheets' comment states; the touch case reads the captioned dead link's words taking the link's dimmed colour and its bold words
+// and inline code keeping their own ink, the witness of the other. Those reads red at 61d69cba1, where a dead link's opacity 0.7
+// dimmed the dress inside it and the web control rested at 0.8 (the painted-contrast ask of 2026-09-23). Red over
 // the unchanged viewer at the first control assertion (no control exists), the outbound
 // case red at the head before it, where the two controls presented one surface, and the link-shapes case red at the round-12
 // head, where the title and the control read any anchor while the click did not, and the two under-the-floor cases red at that head too, the hover read and the at-rest read, where no rule dressed the picture. Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid and example.test addresses,
@@ -657,11 +660,12 @@ test("in a browser: a LOADED remote picture inside an author's named anchor or a
 // cases below read as painted (paintedRatio)
 const TINY_TEXT = "# Report\n\n![local](figs/plot.svg)\n\n" + PARA(1) + "\n\n![build](" + WEB + "/tiny.svg)\n\n" + PARA(2) + "\n\n![big](" + WEB + "/pic.svg)\n\n" + PARA(3) + "\n\n"
   // a remote picture inside a dead host:port link (fv-dead, the href removed), bare (its control after the anchor), captioned (its
-  // control inside the anchor, after the picture) and under the floor (the mark on the picture, inside the anchor); a dead link owns
-  // no click, so a tap, a click or Enter opens the tab from inside it (the link-shapes case, and the tap in the touch case), and the
+  // control inside the anchor, after the picture, its caption carrying bold words and inline code) and under the floor (the mark on
+  // the picture, inside the anchor); a dead link owns no click, so a tap or a click opens the tab from inside it (the link-shapes
+  // case's click, the fine-pointer case's press on the control and the touch case's tap), and Enter on its control too, and the
   // dress there must paint at 3:1 too (the painted-contrast ask of 2026-09-23)
   + "[![deadbare](" + WEB + "/deadbare.svg)](localhost:8080)\n\n" + PARA(4) + "\n\n"
-  + "[![deadcap](" + WEB + "/deadcap.svg) a caption beside the dead link](localhost:8080)\n\n" + PARA(5) + "\n\n[![deadbuild](" + WEB + "/deadtiny.svg)](localhost:8080)\n\n" + PARA(6) + "\n";
+  + "[![deadcap](" + WEB + "/deadcap.svg) a caption beside the **dead** link and its `code`](localhost:8080)\n\n" + PARA(5) + "\n\n[![deadbuild](" + WEB + "/deadtiny.svg)](localhost:8080)\n\n" + PARA(6) + "\n";
 const TINY_DOCS: Record<string, string> = { [REPORT]: TINY_TEXT, [PLOT]: svg("#456") };
 type Under = { alt: string; w: number; h: number; control: boolean; controlOpacity: string | null; controlBorder: string | null; title: string | null; mark: boolean; outline: string; outlineWidth: string; outlineColor: string; border: string };
 /** The figures as the reader sees them: the box, the control after the img with its opacity and border colour, the title, the
@@ -822,7 +826,7 @@ async function paintedLegible(page: any, where: string, fails: string[], note: (
     const opac = " (opacities on the way: " + (p.opacities.join(", ") || "none") + ")";
     note("painted, " + where + ": " + what + " " + p.dash + " over " + p.ground + ", " + p.ratio.toFixed(3) + ":1" + opac);
     // FAILS BEFORE (61d69cba1): inside a dead link the control at 0.8 x 0.7 and the mark at 0.7; on a VS Code ground at #404040 the control at 0.8 too
-    if (clears && p.ratio < 3) fails.push(where + ": " + what + " paints " + p.dash + " over " + p.ground + ", " + p.ratio.toFixed(3) + ":1, under the 3:1 floor for the only sign of the outbound state" + opac);
+    if (clears && p.ratio < 3) fails.push(where + ": " + what + " paints " + p.dash + " over " + p.ground + ", " + p.ratio.toFixed(3) + ":1, under the 3:1 floor for the outbound dress's line" + opac);
     if (!clears && p.ratio >= 3) fails.push(where + ": " + what + " paints " + p.dash + " over " + p.ground + ", " + p.ratio.toFixed(3) + ":1, past the stated bound, where it should fall under 3:1 (the bound is stated exact)" + opac);
   }
   await page.evaluate((y: number) => { (document.querySelector(".fileview-body") as HTMLElement).scrollTop = y; }, top);
@@ -902,7 +906,9 @@ test("in a browser: a remote picture under the floor (20 by 20, from the second 
       // picture reveals its control, over the picture under the floor the mark stands, and on the revealed control its border turns
       // the family's accent over the hover wash, each inside the anchor; a click opens the tab from each (the link-shapes case), so
       // each paints at 3:1 in both themes, every failing read collected and asserted once at the end (FAILS BEFORE, 61d69cba1: the
-      // anchor's opacity 0.7 over the whole dress, 2.82:1 light for the reveal and the mark, about 2.56:1 light for the accent border)
+      // anchor's opacity 0.7 over the whole dress, 2.82:1 light for the reveal and the mark, 2.58:1 light by pixels for the accent
+      // border, 2.55:1 composed); and the control under a keyboard focus inside the dead link, whose Enter opens the tab too, read by
+      // pixels with the focus ring 2px off its border (FAILS BEFORE the sheets' focus rule: the ring covers the border row)
       const fails: string[] = [];
       const imgAt = (alt: string) => page.evaluate((alt: string) => { const i = Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt) as HTMLElement; i.scrollIntoView({ block: "center" }); const r = i.getBoundingClientRect(); return { x: r.left + r.width * 0.3, y: r.top + r.height * 0.7 }; }, alt);
       const deadCtl = "deadcap";   // the captioned dead link's picture, whose control stands right after it inside the anchor
@@ -927,6 +933,24 @@ test("in a browser: a remote picture under the floor (20 by 20, from the second 
         await frames(page, 2);
         assert.equal(await page.evaluate((alt: string) => getComputedStyle((Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt)!.nextElementSibling as HTMLElement)).borderTopColor, deadCtl), await tokenColour(page, "--accent"), theme + " theme: the pointer on the control inside the dead link: its border is the family's accent (the state read next)");
         push(theme, "the accent border with the pointer on the control inside a dead link, against the hover wash", await paintedRatio(page, "deadcap", "control", "hover"));
+        if (theme === "dark") {
+          // the press, a residual the sheets' comment states and this its witness: while the button is held the family's press cue
+          // scales it to 0.96, which resamples the 1px line over two pixel rows (under 3:1 at its best pixel over a clear picture), and
+          // the release opens the tab from inside the dead link; the state before the press, the accent border read above, is the
+          // one that shows where the open goes. A change that takes the cue off the control reds here, and the disclosure moves with it
+          const opened = page.context().waitForEvent("page", { timeout: 10000 }).catch(() => null);
+          await page.mouse.down();
+          const cue = "matrix(0.96, 0, 0, 0.96, 0, 0)";
+          const held = await page.waitForFunction(([alt, want]: [string, string]) => { const t = getComputedStyle((Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt)!.nextElementSibling as HTMLElement)).transform; return t === want ? t : false; }, [deadCtl, cue], { timeout: 3000 }).then((h: any) => h.jsonValue()).catch(() => page.evaluate((alt: string) => getComputedStyle((Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt)!.nextElementSibling as HTMLElement)).transform, deadCtl));
+          await page.mouse.up();
+          const pressedTab = await opened;
+          assert.equal(held, cue, "the press on the control inside the dead link: the family's press cue scales it (" + held + "), the residual's premise");
+          assert.ok(pressedTab, "the release on the control inside the dead link opens a tab (none opened in 10 s)");
+          await pressedTab.waitForLoadState().catch(() => null);
+          assert.equal(pressedTab.url(), WEB + "/deadcap.svg", "the tab the press opens is the picture's address (the popup's URL)");
+          assert.equal(await base(page), "report.md", "the viewer stays on the report");
+          await pressedTab.close();
+        }
         // the mark on hover
         await page.mouse.move(5, 5);
         const m = await imgAt("deadbuild");
@@ -935,10 +959,21 @@ test("in a browser: a remote picture under the floor (20 by 20, from the second 
         await page.waitForFunction(() => getComputedStyle(Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === "deadbuild")!).outlineStyle === "dashed", null, { timeout: 5000 });
         await frames(page, 2);
         push(theme, "the mark on hover inside a dead link", await paintedRatio(page, "deadbuild", "mark", "hover"));
+        // the control under a keyboard focus inside the dead link, the pointer off every picture so the focus alone reveals it: a
+        // read that finds no dress on the line (the focus ring over it) is collected as a failure with the rest
+        await page.mouse.move(5, 5);
+        await frames(page, 2);
+        await page.keyboard.press("Shift");   // a key pressed last, so the focus below is a keyboard's (Chromium's :focus-visible heuristic for a script focus)
+        assert.equal(await page.evaluate((alt: string) => { const c = Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt)!.nextElementSibling as HTMLElement; c.focus({ preventScroll: true }); return c.matches(":focus-visible"); }, deadCtl), true, theme + " theme: the control inside the dead link holds a keyboard focus (:focus-visible)");
+        await page.waitForFunction((alt: string) => getComputedStyle((Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt)!.nextElementSibling as HTMLElement)).opacity === "1", deadCtl, { timeout: 5000 });
+        const focusRead = await paintedRatio(page, "deadcap", "control").catch((e: Error) => e);
+        if (focusRead instanceof Error) fails.push(theme + " theme: the control under a keyboard focus inside a dead link: no dress on its line as painted (" + focusRead.message.split("\n")[0] + ")");
+        else push(theme, "the control under a keyboard focus inside a dead link", focusRead);
+        await page.evaluate(() => (document.activeElement as HTMLElement).blur());
       }
       await page.mouse.move(5, 5);
       await page.evaluate(() => document.body.classList.remove("theme-light"));
-      assert.deepEqual(fails, [], "every hover state a click opens the tab from inside a dead link paints the dress at 3:1:\n" + fails.join("\n"));
+      assert.deepEqual(fails, [], "every state a click or a key opens the tab from inside a dead link, on a fine pointer, paints the dress at 3:1:\n" + fails.join("\n"));
       assert.deepEqual(errors, [], "no page errors");
       await page.close();
     });
@@ -1030,6 +1065,20 @@ test("in a browser, under CDP touch emulation (hover none, a coarse pointer) ena
       assert.deepEqual(fails, [], "every state a tap opens the tab from paints the dress at 3:1, and the VS Code bound is exact:\n" + fails.join("\n"));
       // the web control at rest at full opacity (a local one keeps 0.8), read after the painted reads so their red comes first
       assert.equal(touch.imgs[2].controlOpacity, "1", "the web control visible at rest at full opacity");
+      // the dead link's words, a residual the sheets' comment states and this its witness: the rule dims the anchor's colour, so the
+      // caption's words that take it are dimmed (the colour carries the 70 percent), while its bold words and inline code, which the
+      // sheet colours itself, keep their own ink with no opacity under 1 on the way; a change that dims them too reds here, and the
+      // disclosure moves with it. Read after the painted reads, so their red comes first over the old sheet, whose 0.7 opacity dimmed
+      // the words and left their colour whole
+      const caption = await page.evaluate(() => {
+        const a = Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === "deadcap")!.closest("a")!;
+        const chain = (e: Element | null): string[] => { const o: string[] = []; for (; e; e = e.parentElement) { const v = getComputedStyle(e).opacity; if (v !== "1") o.push(e.localName + " " + v); } return o; };
+        const strong = a.querySelector("strong"), code = a.querySelector("code");
+        return { dead: a.classList.contains("fv-dead") && !a.hasAttribute("href"), anchor: getComputedStyle(a).color, strong: strong && getComputedStyle(strong).color, code: code && getComputedStyle(code).color, opac: [chain(strong), chain(code)] };
+      });
+      assert.equal(caption.dead, true, "the captioned picture stands inside an href-less dead link");
+      assert.match(caption.anchor, /\/ 0\.7\)$/, "the dead link's own words take its colour dimmed to 70 percent (" + caption.anchor + ")");
+      assert.deepEqual([caption.strong, caption.code, caption.opac], [await tokenColour(page, "--fg"), await tokenColour(page, "--code-fg"), [[], []]], "the caption's bold words and inline code keep the sheet's own ink, with no opacity under 1 on the way");
       assert.deepEqual(errors, [], "no page errors");
       await page.close();
     });
