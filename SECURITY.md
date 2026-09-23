@@ -123,15 +123,25 @@ UID can read.
   when the host is on the gear's list, those references load, and such a request
   can send the page's origin: the exception to the `Referer` rule in the trust
   model above. An `.svg` opened in its own tab (on the web dashboard, a Cmd,
-  Ctrl or middle click on a path link to it in a viewed file) is served by the
-  kernel's `/file` route, and by its `/remote/<host>/file` relay, as a document
-  whose `Content-Security-Policy` is `sandbox` and four fetch directives:
-  `default-src 'none'`, `img-src data: blob:`, `style-src 'unsafe-inline'` and
-  `font-src data:`. It runs no script and loads nothing its markup names from
-  any host (no image, stylesheet, font, frame, video or paint reference), while
-  an embedded `data:` image and an inline style still render
-  (`kernel/kernel.py`, checked in the browser by
-  `tests/test_svg_tab_policy_browser.py`). One renderer writes into that
+  Ctrl or middle click on a path link to it in a viewed file) does not become
+  a document. The kernel's `/file` route and its `/remote/<host>/file` relay
+  answer the tab, and a frame, an object or an embed, with a small page that
+  shows the file in an `<img>`. An SVG drawn as an image runs no script and
+  loads nothing its markup names, while its embedded `data:` images and inline
+  styles still render. This has a cost: in that tab the SVG's own links do not
+  open and its text cannot be selected. The SVG bytes that every other request
+  gets (the page's `<img>`, the viewer, the chat's thumbnails) still carry a
+  `Content-Security-Policy` of `sandbox` and four fetch directives
+  (`default-src 'none'`, `img-src data: blob:`, `style-src 'unsafe-inline'` and
+  `font-src data:`), a second layer for anything that still loads them as a
+  document. That policy alone was not enough: in Firefox a paint reference to a
+  `data:` SVG document fetched that document's `@import`, and in WebKit a
+  `preconnect` link opened a connection to its host.
+  `tests/test_svg_tab_policy_browser.py` opens the tab in Chromium, Firefox and
+  WebKit (Playwright's builds, not Safari) and finds no request and no
+  connection to another host; a `dns-prefetch` lookup is not visible to it. CI
+  runs its Chromium leg only, and the Firefox and WebKit legs run where those
+  engines are installed, under `ROMP_BROWSER_ENGINES`. One renderer writes into that
   sanitized DOM after DOMPurify has run: KaTeX. The sanitizer keeps only color
   in an inline `style`, and
   KaTeX's layout is inline style, so a formula's TeX passes through DOMPurify

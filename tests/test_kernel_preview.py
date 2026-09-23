@@ -5,7 +5,9 @@ load real bytes from `GET /file?path=…`, existence- and extension-gated.
 Drives the REAL Handler over HTTP (the test_kernel_ws_auth.py pattern). Synthetic only — temp files,
 no session state touched.
 """
+import html
 import os
+import re
 import tempfile
 import threading
 import unittest
@@ -590,21 +592,21 @@ SVG_WITH_SCRIPT = (b'<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1
 
 
 class SvgSandboxPolicy(unittest.TestCase):
-    """An SVG on the media allowlist is ALSO a document: when a tab navigates to /file?path=x.svg the
-    browser parses it as a page and runs its inline <script> at the kernel's origin, with the dashboard's
-    session cookie attached. The own-tab opener (ui/webview/preview.ts openFileTab) hands the route ANY
-    path on a modified click since the PDF-only gate came off, so an agent-written .svg gets there in one
-    gesture (the 1204 review, 2026-09-10). nosniff cannot help: the type is declared, and image/svg+xml is
-    the scriptable one. Every image/svg+xml response therefore carries SVG_DOCUMENT_POLICY, on all three
-    success shapes (200, HEAD, 206): `sandbox` (a sandboxed document runs no script and has an opaque
-    origin) and, since 2026-09-23, four fetch directives in the same value, because `sandbox` stops scripts
-    and not loads: the tab fetched every host its markup named. default-src 'none' refuses those fetches,
-    and img-src data: blob:, style-src 'unsafe-inline' and font-src data: keep an exported figure's inline
-    raster, styles and fonts. The pins compare the whole list of policies the response carries, so a weakened
-    value (`sandbox allow-scripts`, a dropped directive, a host added) fails; tests/test_svg_tab_policy_browser.py
-    holds what the value does in Chromium. An <img> load creates no document and reads no policy, so the
-    chat's thumbnails, the viewer's inline preview and the lightbox keep rendering. Ordinary media and text
-    carry no sandbox and no fetch directive."""
+    """An SVG on the media allowlist is ALSO a document: a tab that navigated to /file?path=x.svg parsed it
+    as a page and ran its inline <script> at the kernel's origin. The own-tab opener (ui/webview/preview.ts
+    openFileTab) hands the route ANY path on a modified click since the PDF-only gate came off, so an
+    agent-written .svg gets there in one gesture (the 1204 review, 2026-09-10). nosniff cannot help: the
+    type is declared, and image/svg+xml is the scriptable one. Since 2026-09-23 such a tab gets the
+    image-mode page instead (SvgImageMode below), and the bytes keep SVG_DOCUMENT_POLICY on all three
+    success shapes (200, HEAD, 206) as a second layer, for a road that still makes them a document:
+    `sandbox` (a sandboxed document runs no script and has an opaque origin) and four fetch directives in
+    the same value, because `sandbox` stops scripts and not loads. default-src 'none' refuses those
+    fetches, and img-src data: blob:, style-src 'unsafe-inline' and font-src data: keep an exported
+    figure's inline raster, styles and fonts. The pins compare the whole list of policies the response
+    carries, so a weakened value (`sandbox allow-scripts`, a dropped directive, a host added) fails. An
+    <img> load creates no document and reads no policy, so the chat's thumbnails, the viewer's inline
+    preview and the lightbox keep rendering. Ordinary media and text carry no sandbox and no fetch
+    directive."""
 
     @classmethod
     def setUpClass(cls):
@@ -681,6 +683,147 @@ class SvgSandboxPolicy(unittest.TestCase):
         self.assertTrue(msg.get("Content-Type", "").startswith("text/plain"), msg.get("Content-Type"))
         self.assertNotIn("sandbox", self._csp(msg), self._csp(msg))
         self.assertNotIn("default-src", self._csp(msg), self._csp(msg))
+
+
+# The image-mode page's policy and the Vary every svg answer carries, written out like SVG_DOCUMENT_POLICY above
+# (kernel.py _SVG_IMAGE_PAGE_POLICY and _SVG_VARY), and the Accept values two engines send: Firefox's navigation and
+# image load, which carry text/html and do not.
+SVG_IMAGE_PAGE_POLICY = ("sandbox allow-same-origin; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; "
+                         "base-uri 'none'; form-action 'none'")
+SVG_VARY = "Sec-Fetch-Dest, Accept"
+NAV_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+IMG_ACCEPT = "image/avif,image/webp,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5"
+
+
+class SvgImageMode(unittest.TestCase):
+    """Image mode (2026-09-23, kernel.py _svg_image_page and _svg_as_document): a request that would make an svg a
+    DOCUMENT gets a small page that holds the file in an <img> of the same route with raw=1, since an svg drawn as an
+    image loads nothing external and the policy on the bytes cannot stop every load a document makes (a data: SVG paint
+    document's @import in Firefox, a preconnect in WebKit: tests/test_svg_tab_policy_browser.py). Sec-Fetch-Dest decides
+    when present (document, iframe, frame, object, embed, fencedframe); without it an Accept naming text/html does, the
+    road of a dashboard on plain http, which sends no Sec-Fetch-* header. Every other request keeps today's bytes and
+    headers, and every svg answer, page or bytes, carries Vary on the two deciding headers. The page is built from the
+    parsed query: the path, sid and pin, never the token, every value escaped. The relay's arm is
+    tests/test_kernel_remote_file_relay.py's."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
+        cls.port = cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.svg = os.path.join(cls.tmp.name, "chart.svg")
+        with open(cls.svg, "wb") as f:
+            f.write(SVG_WITH_SCRIPT)
+        cls.odd = os.path.join(cls.tmp.name, 'q"><b>x&y.svg')   # a file name that is markup, for the page's escaping
+        with open(cls.odd, "wb") as f:
+            f.write(SVG_WITH_SCRIPT)
+        cls.png = os.path.join(cls.tmp.name, "plot.png")
+        with open(cls.png, "wb") as f:
+            f.write(PNG)
+        cls.md = os.path.join(cls.tmp.name, "notes.md")
+        with open(cls.md, "w") as f:
+            f.write("# notes\n\nplain text\n")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.tmp.cleanup()
+
+    def _req(self, path, headers=None, method="GET", extra=""):
+        url = "http://127.0.0.1:%d/file?path=%s&sid=%s&token=%s%s" % (
+            self.port, urllib.parse.quote(path, safe=""), "11111111-2222-3333-4444-555555555555", TOKEN, extra)
+        req = urllib.request.Request(url, method=method, headers=headers or {})
+        try:
+            with urllib.request.urlopen(req, timeout=3) as r:
+                return r.status, r.headers, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers, e.read()
+
+    def _img(self, body):
+        """The page's <img> sources, unescaped: the page runs no script, so its markup is what the browser loads."""
+        return [html.unescape(m) for m in re.findall(r'<img\b[^>]*\bsrc="([^"]*)"', body.decode("utf-8"))]
+
+    def _assert_page(self, code, msg, body, where, path=None, pin=None):
+        path = self.svg if path is None else path
+        self.assertEqual((code, msg.get("Content-Type")), (200, "text/html; charset=utf-8"),
+                         "%s: the image-mode page, not the svg as a document" % where)
+        self.assertEqual(sorted(msg.get_all("Content-Security-Policy") or []), sorted([SVG_IMAGE_PAGE_POLICY, "frame-ancestors 'self'"]),
+                         "%s: the page's policy beside _send's framing one, exactly" % where)
+        self.assertEqual(msg.get_all("Vary"), [SVG_VARY], where)
+        self.assertEqual(msg.get("Cache-Control"), "no-cache", where)
+        self.assertEqual(msg.get("X-Content-Type-Options"), "nosniff", where)
+        self.assertNotIn(b"<script", body, "%s: the svg's markup never reaches the page" % where)
+        self.assertNotIn(TOKEN.encode(), body, "%s: the page carries no token" % where)
+        self.assertNotIn(b"token", body, where)
+        srcs = self._img(body)
+        self.assertEqual(len(srcs), 1, "%s: one <img>: %r" % (where, srcs))
+        u = urllib.parse.urlsplit(srcs[0])
+        want = {"path": [path], "sid": ["11111111-2222-3333-4444-555555555555"], "raw": ["1"]}
+        if pin:
+            want["pin"] = [pin]
+        self.assertEqual((u.scheme, u.netloc, u.path, urllib.parse.parse_qs(u.query)), ("", "", "/file", want),
+                         "%s: the <img> reads this route for the same path, sid and pin, plus raw=1: %r" % (where, srcs[0]))
+
+    def test_a_request_that_makes_the_svg_a_document_gets_the_page(self):
+        for how, headers, extra in (
+                ("a navigation (Sec-Fetch-Dest document)", {"Sec-Fetch-Dest": "document", "Accept": NAV_ACCEPT}, ""),
+                ("a navigation to the raw=1 URL: raw is no way around the page", {"Sec-Fetch-Dest": "document", "Accept": NAV_ACCEPT}, "&raw=1"),
+                ("a plain-http navigation (no Sec-Fetch-Dest, text/html Accept)", {"Accept": NAV_ACCEPT}, ""),
+                ("an iframe", {"Sec-Fetch-Dest": "iframe", "Accept": NAV_ACCEPT}, ""),
+                ("a frame", {"Sec-Fetch-Dest": "frame"}, ""),
+                ("an object", {"Sec-Fetch-Dest": "object"}, ""),
+                ("an embed", {"Sec-Fetch-Dest": "embed"}, ""),
+                ("a fenced frame", {"Sec-Fetch-Dest": "fencedframe"}, "")):
+            with self.subTest(how):
+                code, msg, body = self._req(self.svg, headers, extra=extra)
+                self._assert_page(code, msg, body, how)
+
+    def test_the_page_escapes_the_name_and_carries_the_pin(self):
+        code, msg, body = self._req(self.odd, {"Sec-Fetch-Dest": "document"})
+        self._assert_page(code, msg, body, "a file name that is markup", path=self.odd)
+        self.assertIn(b"<title>q&quot;&gt;&lt;b&gt;x&amp;y.svg</title>", body, "the title is the escaped basename")
+        self.assertNotIn(b'"><b>', body, "no markup of the name's own reaches the page")
+        pin = "0" * 64 + ".svg"      # shape-valid; no blob behind it, so the live file answers, as for an evicted pin
+        code, msg, body = self._req(self.svg, {"Sec-Fetch-Dest": "document"}, extra="&pin=" + pin)
+        self._assert_page(code, msg, body, "a pinned mention", pin=pin)
+
+    def test_every_other_request_keeps_the_svg_bytes(self):
+        # the controls: what the page's <img>, the viewer's fetch, the chip's HEAD, a Range retry and curl get, unchanged
+        # but for Vary (pinned on its own below)
+        for how, headers, method, want in (
+                ("an image load", {"Sec-Fetch-Dest": "image", "Accept": IMG_ACCEPT}, "GET", 200),
+                ("an image load with a navigation's Accept: the destination decides", {"Sec-Fetch-Dest": "image", "Accept": NAV_ACCEPT}, "GET", 200),
+                ("a fetch()", {"Sec-Fetch-Dest": "empty", "Accept": "*/*"}, "GET", 200),
+                ("a plain-http image load", {"Accept": IMG_ACCEPT}, "GET", 200),
+                ("a plain-http fetch()", {"Accept": "*/*"}, "GET", 200),
+                ("no headers at all (curl)", {}, "GET", 200),
+                ("a HEAD a navigation would send", {"Sec-Fetch-Dest": "document", "Accept": NAV_ACCEPT}, "HEAD", 200),
+                ("a Range retry", {"Sec-Fetch-Dest": "image", "Range": "bytes=1-"}, "GET", 206)):
+            with self.subTest(how):
+                code, msg, body = self._req(self.svg, headers, method=method)
+                self.assertEqual((code, msg.get("Content-Type")), (want, "image/svg+xml"), how)
+                self.assertEqual(body, {"HEAD": b"", "GET": SVG_WITH_SCRIPT[1:] if want == 206 else SVG_WITH_SCRIPT}[method], how)
+                self.assertIn(SVG_DOCUMENT_POLICY, msg.get_all("Content-Security-Policy") or [], "%s: the bytes keep their policy" % how)
+
+    def test_every_svg_answer_varies_on_the_deciding_headers(self):
+        for how, headers, method in (("the page", {"Sec-Fetch-Dest": "document"}, "GET"),
+                                     ("the bytes", {"Sec-Fetch-Dest": "image"}, "GET"),
+                                     ("the HEAD", {}, "HEAD"),
+                                     ("the 206", {"Range": "bytes=1-"}, "GET")):
+            with self.subTest(how):
+                _, msg, _ = self._req(self.svg, headers, method=method)
+                self.assertEqual(msg.get_all("Vary"), [SVG_VARY], how)
+
+    def test_no_other_type_gets_a_page_or_a_vary(self):
+        # a PNG is never a document; text is served as text/plain; a missing svg is the 404 prose
+        nav = {"Sec-Fetch-Dest": "document", "Accept": NAV_ACCEPT}
+        for how, path, want, ctype in (("a PNG", self.png, 200, "image/png"),
+                                       ("a markdown file", self.md, 200, "text/plain; charset=utf-8"),
+                                       ("a missing svg", os.path.join(self.tmp.name, "gone.svg"), 404, "text/plain")):
+            with self.subTest(how):
+                code, msg, _ = self._req(path, nav)
+                self.assertEqual((code, msg.get("Content-Type"), msg.get_all("Vary")), (want, ctype, None), how)
 
 
 if __name__ == "__main__":

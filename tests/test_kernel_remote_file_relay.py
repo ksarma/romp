@@ -13,10 +13,13 @@ These tests run the real Handler against a fake "remote kernel" (an HTTP server 
 /file and records what it was asked). Synthetic only: host name `gpu1`, invented tokens, no
 session state touched.
 """
+import html
 import os
+import re
 import socket
 import threading
 import unittest
+import urllib.parse
 import urllib.request
 import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -49,6 +52,14 @@ SVG_BYTES = (b'<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1">'
 # weaker one the fake remote sends for its .svg, which a relay that mirrored the remote's header would pass on.
 SVG_DOCUMENT_POLICY = "sandbox; default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:"
 REMOTE_WEAK_POLICY = "sandbox allow-scripts; default-src *"
+# Image mode's page policy and the Vary on every svg answer (kernel.py _SVG_IMAGE_PAGE_POLICY and _SVG_VARY, written out
+# as tests/test_kernel_preview.py writes them), and the Accept values of Firefox's navigation and image load.
+SVG_IMAGE_PAGE_POLICY = ("sandbox allow-same-origin; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; "
+                         "base-uri 'none'; form-action 'none'")
+SVG_VARY = "Sec-Fetch-Dest, Accept"
+NAV_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+IMG_ACCEPT = "image/avif,image/webp,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5"
+SID = "11111111-2222-3333-4444-555555555555"
 # the download fixture: NUL-ridden, off every view allowlist, and BIGGER than one relay stream chunk,
 # so the pass-through provably crosses a chunk boundary intact
 BIN_BYTES = bytes(range(256)) * ((km._DOWNLOAD_CHUNK // 256) + 60)
@@ -59,6 +70,7 @@ class _FakeRemoteFileHandler(BaseHTTPRequestHandler):
     path=/tmp/plot.png and BIN_BYTES for path=/tmp/data.bin&download=1 (recording the request
     lines), 404s anything else."""
     requests = []               # class-level: the recorded request lines
+    ranges = []                 # ...and the Range header each one carried (None when it carried none)
     ctype = "image/png"         # what this remote CLAIMS the bytes are (a hostile one lies)
     dl_ctype = "application/octet-stream"          # …and the download-side claims (a hostile one lies)
     dl_disp = 'attachment; filename="data.bin"'
@@ -67,6 +79,7 @@ class _FakeRemoteFileHandler(BaseHTTPRequestHandler):
 
     def _serve(self, head):
         _FakeRemoteFileHandler.requests.append(self.path)
+        _FakeRemoteFileHandler.ranges.append(self.headers.get("Range"))
         if "download=1" in self.path and "data.bin" in self.path:
             self.send_response(200)
             self.send_header("Content-Type", _FakeRemoteFileHandler.dl_ctype)
@@ -201,6 +214,7 @@ class RemoteFileRelay(unittest.TestCase):
         self.fake = ThreadingHTTPServer(("127.0.0.1", 0), _FakeRemoteFileHandler)
         threading.Thread(target=self.fake.serve_forever, daemon=True).start()
         _FakeRemoteFileHandler.requests = []
+        _FakeRemoteFileHandler.ranges = []
         _FakeRemoteFileHandler.ctype = "image/png"
         _FakeRemoteFileHandler.dl_ctype = "application/octet-stream"
         _FakeRemoteFileHandler.dl_disp = 'attachment; filename="data.bin"'
@@ -533,11 +547,13 @@ class RemoteFileRelay(unittest.TestCase):
         # disposition) from the requested extension and discards the remote's, so the local route's SVG
         # defence (tests/test_kernel_preview.py SvgSandboxPolicy: a tab navigated to an SVG runs its inline
         # script at the serving origin, and loads every host its markup names) has to be restated here, from
-        # OUR mime: a remote session's .svg opened in its own tab is a document at this kernel's origin,
-        # cookie and all (the 1204 review, 2026-09-10; the fetch directives, 2026-09-23). The remote sends a
-        # weaker policy of its own (REMOTE_WEAK_POLICY), so the whole list of policies is compared: a relay that
-        # mirrored the remote's header, or restated a weakened one, fails. All three success shapes; a remote
-        # PNG carries none. tests/test_svg_tab_policy_browser.py opens a tab on this arm in Chromium.
+        # OUR mime: the bytes a remote session's .svg is served as would be a document at this kernel's origin
+        # wherever something still made them one (the 1204 review, 2026-09-10; the fetch directives, 2026-09-23;
+        # a tab gets the image-mode page since, the tests below). The remote sends a weaker policy of its own
+        # (REMOTE_WEAK_POLICY), so the whole list of policies is compared: a relay that mirrored the remote's
+        # header, or restated a weakened one, fails. All three success shapes; a remote PNG carries none.
+        # tests/test_svg_tab_policy_browser.py opens a tab on this arm in Chromium, and in Firefox and WebKit when
+        # ROMP_BROWSER_ENGINES names them.
         self._register("gpu1", self.fake.server_address[1])
         csp = lambda msg: "; ".join(msg.get_all("Content-Security-Policy") or [])
         for method, headers, want, policies in (("GET", None, 200, [SVG_DOCUMENT_POLICY, "frame-ancestors 'self'"]),
@@ -552,6 +568,79 @@ class RemoteFileRelay(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertNotIn("sandbox", csp(msg), csp(msg))
         self.assertNotIn("default-src", csp(msg), csp(msg))
+
+
+    def _page_img(self, body):
+        return [html.unescape(m) for m in re.findall(r'<img\b[^>]*\bsrc="([^"]*)"', body.decode("utf-8"))]
+
+    def test_a_navigation_to_a_remote_svg_gets_the_image_mode_page_built_before_the_token(self):
+        # Image mode on the relay (kernel.py _svg_image_page): the remote never sees the browser's Sec-Fetch-Dest or
+        # Accept, so this side decides, and builds the page from the BROWSER's query before it writes the remote's token
+        # into that query: the page carries neither token, and its <img> is this relay's own route for the same path and
+        # sid plus raw=1. The remote is still asked, once, with its own token and no Range (a page has no bytes to
+        # resume), so a file it does not have stays its 404 (the next test).
+        self._register("gpu1", self.fake.server_address[1])
+        path = "/remote/gpu1/file?path=%2Ftmp%2Fchart.svg&sid=" + SID + "&token=whatever-the-browser-sent"
+        for how, headers in (("a navigation (Sec-Fetch-Dest document)", {"Sec-Fetch-Dest": "document", "Accept": NAV_ACCEPT}),
+                             ("a plain-http navigation (no Sec-Fetch-Dest, text/html Accept)", {"Accept": NAV_ACCEPT}),
+                             ("a navigation that carries a Range", {"Sec-Fetch-Dest": "document", "Range": "bytes=1-"}),
+                             ("an object", {"Sec-Fetch-Dest": "object"})):
+            with self.subTest(how):
+                _FakeRemoteFileHandler.requests, _FakeRemoteFileHandler.ranges = [], []
+                status, body, msg = self._get_msg(path, headers=headers)
+                self.assertEqual((status, msg.get("Content-Type")), (200, "text/html; charset=utf-8"),
+                                 "%s: the image-mode page, not the remote's svg as a document" % how)
+                self.assertEqual(sorted(msg.get_all("Content-Security-Policy") or []),
+                                 sorted([SVG_IMAGE_PAGE_POLICY, "frame-ancestors 'self'"]), how)
+                self.assertEqual(msg.get_all("Vary"), [SVG_VARY], how)
+                for leak in (b"token", REMOTE_TOKEN.encode(), b"whatever-the-browser-sent", b"<script"):
+                    self.assertNotIn(leak, body, "%s: %r is not in the page" % (how, leak))
+                srcs = self._page_img(body)
+                self.assertEqual(len(srcs), 1, (how, srcs))
+                u = urllib.parse.urlsplit(srcs[0])
+                self.assertEqual((u.scheme, u.netloc, u.path, urllib.parse.parse_qs(u.query)),
+                                 ("", "", "/remote/gpu1/file", {"path": ["/tmp/chart.svg"], "sid": [SID], "raw": ["1"]}),
+                                 "%s: the <img> reads this relay for the same path and sid, plus raw=1: %r" % (how, srcs[0]))
+                self.assertEqual(len(_FakeRemoteFileHandler.requests), 1, how)
+                self.assertIn("token=" + REMOTE_TOKEN, _FakeRemoteFileHandler.requests[0], "%s: the remote was asked with its own token" % how)
+                self.assertEqual(_FakeRemoteFileHandler.ranges, [None], "%s: no Range is forwarded for a page" % how)
+
+    def test_a_navigation_to_a_missing_remote_svg_gets_the_remotes_404(self):
+        # a control: the page is served only when the remote has the file, so a missing one reaches the tab as the remote's
+        # verdict, unchanged by image mode
+        self._register("gpu1", self.fake.server_address[1])
+        status, body, msg = self._get_msg("/remote/gpu1/file?path=%2Ftmp%2Fgone.svg&sid=" + SID,
+                                          headers={"Sec-Fetch-Dest": "document", "Accept": NAV_ACCEPT})
+        self.assertEqual((status, msg.get("Content-Type")), (404, "text/plain"))
+        self.assertNotIn(b"<img", body)
+
+    def test_every_other_request_for_a_remote_svg_keeps_the_bytes(self):
+        # the controls: the page's own <img> (raw=1), an image load, a navigation's HEAD and a Range retry get the remote's
+        # bytes under the relay's own policy, as before image mode (Vary is pinned on its own, next)
+        self._register("gpu1", self.fake.server_address[1])
+        base = "/remote/gpu1/file?path=%2Ftmp%2Fchart.svg&sid=" + SID
+        for how, extra, headers, method, want, body_want in (
+                ("the page's <img>", "&raw=1", {"Sec-Fetch-Dest": "image", "Accept": IMG_ACCEPT}, "GET", 200, SVG_BYTES),
+                ("an image load", "", {"Sec-Fetch-Dest": "image", "Accept": IMG_ACCEPT}, "GET", 200, SVG_BYTES),
+                ("a HEAD a navigation would send", "", {"Sec-Fetch-Dest": "document", "Accept": NAV_ACCEPT}, "HEAD", 200, b""),
+                ("a Range retry", "", {"Sec-Fetch-Dest": "image", "Range": "bytes=1-"}, "GET", 206, SVG_BYTES[1:])):
+            with self.subTest(how):
+                status, body, msg = self._get_msg(base + extra, method=method, headers=headers)
+                self.assertEqual((status, msg.get("Content-Type"), body), (want, "image/svg+xml", body_want), how)
+                self.assertIn(SVG_DOCUMENT_POLICY, msg.get_all("Content-Security-Policy") or [], how)
+
+    def test_every_remote_svg_answer_varies_on_the_deciding_headers(self):
+        self._register("gpu1", self.fake.server_address[1])
+        base = "/remote/gpu1/file?path=%2Ftmp%2Fchart.svg&sid=" + SID
+        for how, headers, method in (("the page", {"Sec-Fetch-Dest": "document"}, "GET"),
+                                     ("the bytes", {"Sec-Fetch-Dest": "image"}, "GET"),
+                                     ("the HEAD", {}, "HEAD"),
+                                     ("the 206", {"Range": "bytes=1-"}, "GET")):
+            with self.subTest(how):
+                _, _, msg = self._get_msg(base, method=method, headers=headers)
+                self.assertEqual(msg.get_all("Vary"), [SVG_VARY], how)
+        _, _, msg = self._get_msg("/remote/gpu1/file?path=%2Ftmp%2Fplot.png", headers={"Sec-Fetch-Dest": "document"})
+        self.assertEqual(msg.get_all("Vary"), None, "a PNG varies on nothing")
 
 
 if __name__ == "__main__":
