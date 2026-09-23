@@ -142,11 +142,15 @@ const THIS_MODULE = "ui/webview/linknav-records-attribution.test.ts";
 
 /** The files the branch created: an existence roster (each must be in road 1's population) whose files are judged in full,
  *  every unit of them, where the tree rule's predicate selects units by their vocabulary. Road 2 prints the diff's added
- *  files beside it where it runs, for a human to compare. */
+ *  files beside it where it runs, for a human to compare. The two sheet readers, css-rules and host-sheets, each with its
+ *  types file, joined this list in the fixes for the file review's round 12, extra7-2: created after the list was written,
+ *  they had been judged under the keyed rule like a shared file, so a round of no review in them was never faulted. */
 export const CREATED = [
   "tests/test_guide_trail_chords_and_figure_button.py",
   "tools/markdown-viewer-plan-linknav-review.test.mjs",
   "tools/markdown-viewer-plan-linknav.test.mjs",
+  "ui/webview/css-rules.d.mts",
+  "ui/webview/css-rules.mjs",
   "ui/webview/file-figure-open-browser.test.ts",
   "ui/webview/file-figure-open.test.ts",
   "ui/webview/file-trail-browser.test.ts",
@@ -159,6 +163,8 @@ export const CREATED = [
   "ui/webview/file-view-figure-shapes-browser.test.ts",
   "ui/webview/file-view-figure-shapes.test.ts",
   "ui/webview/file-view-figure-state-browser.test.ts",
+  "ui/webview/host-sheets.d.mts",
+  "ui/webview/host-sheets.mjs",
   "ui/webview/linknav-records-attribution.test.ts",
   "ui/webview/source-units.ts",
   "upstream/2026-09-19-linknav-trail-back-forward.md",
@@ -371,9 +377,13 @@ export function judgeUnit(text: string, reviews: Reviews, keyed = false, left?: 
   // a fixlist of the file review filed, the roster's with the parenthetical's, both derived (the companion had read the
   // parenthetical alone, so a label followed by correctness-N, ui-N or kernel-N, families the roster files and the parenthetical
   // does not name, passed), judged under the same nearest-review rule: a property, the shape faulted wherever it stands. The
-  // window stops at a sentence or clause end and at a bracket.
+  // window crosses an open bracket and a colon, the joins the roster road reads for a numbered citation, and stops at a
+  // sentence or clause end (a full stop, a semicolon, a close bracket) and at a digit-bearing round phrase, so a round named
+  // by its number between the label and an id is that round's citation, judged by the roster road (the file review's round 12,
+  // extra7-1: the window had stopped at the bracket and the colon, so a label followed by an id in a bracket or after a colon
+  // was judged by nothing).
   const landingFamilies = [...new Set([...reviews.fileIds, ...families])];
-  const landingRe = new RegExp("\\blanding\\s+round\\b[^.;:()]{0,80}?\\b(?:" + landingFamilies.join("|") + ")\\d*-\\d+\\b", "gi");
+  const landingRe = new RegExp("\\blanding\\s+round\\b(?:(?!\\bround(?:-|\\s+)\\d)[^.;)]){0,80}?\\b(?:" + landingFamilies.join("|") + ")\\d*-\\d+\\b", "gi");
   for (const m of text.matchAll(landingRe)) {
     if (!ours(nearest(m.index!, kept), m.index!)) continue;
     faults.push({ at: m.index!, fault: quoteAt(m) + ": cites a finding as the landing round's alone, a label with no round's digits that the landing round and its second read share (read for every family a fixlist of the file review filed: " + landingFamilies.join(", ") + "); write the file review's round by its number, with the id kept" });
@@ -668,6 +678,8 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
   assert.equal(landingOnly(LR + ", tests-" + n(2) + " found it", two).length, 1, "a landing-round label followed by a family of the parenthetical is faulted (a property pin)");
   assert.equal(landingOnly(LR + "'s second read, tests-" + n(2) + " found it", two).length, 1, "and with a phrase between the label and the id (a property pin)");
   assert.equal(landingOnly(LR + ", rules-" + n(1) + " found it", two).length, 1, "and by a family the roster files that the parenthetical does not name (a property pin over the derived families, red while the companion read the parenthetical alone)");
+  assert.equal(landingOnly(LR + " (tests-" + n(2) + ") found it", two).length, 1, "and with the id in a bracket after the label, a join the roster road reads for a numbered citation (the file review's round 12, extra7-1: a property pin, red while the window stopped at the bracket)");
+  assert.equal(landingOnly(LR + ": tests-" + n(2) + " found it", two).length, 1, "and with the id after a colon, the other join the roster road reads (the file review's round 12, extra7-1: a property pin, red while the window stopped at the colon)");
   assert.deepEqual(landingOnly(R3 + ", rules-" + n(1) + " found it", two), [], "a round named by its digits is no landing-round label (the roster road judges it)");
   const beyond = [...new Set([...r.filed.values()].flatMap((s) => [...s].map((id) => id.slice(0, id.lastIndexOf("-")))))].filter((f) => !r.fileIds.includes(f));
   assert.ok(beyond.length >= 1, "the real roster files families the parenthetical does not name: " + JSON.stringify(beyond));

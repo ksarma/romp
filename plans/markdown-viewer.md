@@ -8383,8 +8383,8 @@ serving) and the extension's webview links, the chat's and the feed's sheets car
 rule naming the class; outside it, bounds the homes state and do not read: a rule whose selector would match the element
 without naming the class, katex's vendored sheet that both dress sheets import, the rules a template writes into its own
 page (the settings page's transparent background, the too-large notice's body rule, the extension's zoom rule), and the
-style element a script creates after the page is served (palette.ts's and shortcuts-modal.ts's elements, the shim's
-notices' cssText); the print block is pinned whole, and the in-flight print follow-on adds
+style element a script creates after the page is served (palette.ts's and shortcuts-modal.ts's elements, the timeline
+view's own, the shim's notices' cssText); the print block is pinned whole, and the in-flight print follow-on adds
 lines inside it). A figure the author
 floated with `align` stacks sideways: the control floats with it, a left float's at the top-right corner as before, a
 right float's at the top-LEFT corner (`fv-figopen-left`, `fv-figopen-right`: a later right float sits left of the

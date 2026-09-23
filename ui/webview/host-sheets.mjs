@@ -48,9 +48,9 @@
 // styles.css and feed.css, inlined into the bundles by esbuild; third-party, under node_modules, outside the tree), the rules a
 // template writes into its own HTML (the settings page's transparent background, the too-large notice's body rule, the
 // extension's zoom rule), the style element a script creates after the page is served (palette.ts's and shortcuts-modal.ts's
-// elements, the shim's notices set through style.cssText), and the landing shell (`_landing`, not a page function: its boot
-// splash and notice blocks inline _LOADER_CSS, _STALE_CSS, _UPD_CSS and _RDRIFT_CSS, and the panes it frames are documents of
-// their own).
+// elements, the timeline view's own, the shim's notices set through style.cssText), and the landing shell (`_landing`, not a
+// page function: its boot splash and notice blocks inline _LOADER_CSS, _STALE_CSS, _UPD_CSS and _RDRIFT_CSS, and the panes it
+// frames are documents of their own).
 // A plain module with no dependency beyond node's fs and path, imported by the .ts tests through the webview test bundle
 // (ui/webview/host-sheets.d.mts types it) and by tools/*.test.mjs directly; it lives under ui/ for the reason
 // ui/webview/css-rules.mjs states in its header.
