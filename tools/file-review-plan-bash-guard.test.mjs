@@ -875,6 +875,11 @@ test("round 6, thirteenth commit: decision 47 and the hook header record the emp
   assert.equal(under.length, 137, `the class has its rows in the table (${under.length})`);
   for (const [prefix, n] of [['ep', 30], ['sp', 31], ['sb', 16], ['zs', 60]]) assert.equal(under.filter((l) => l.includes(`['RT-${prefix}-`)).length, n, `the ${prefix} population has ${n} rows`);
   assert.ok(!under.some((l) => /\['RT-sb-(list|head)-/.test(l)), 'no residual row binds a positional list outside this shell\'s frame (refused since round 7\'s nineteenth commit)');
+  // round 7's twentieth commit (the reviewer's verifier on the nineteenth): the ledger entry's count of the stale-candidate and known-set rows is
+  // derived here, never typed: the sp and sb populations the table holds sum to the figure the entry states
+  const ledgerCount = read('upstream', '2026-09-18-track-guard-non-literal-targets.md').match(/(\d+) rows since round 7's nineteenth commit rebound a `set` or `shift` so placed to values not read/);
+  assert.ok(ledgerCount, "the ledger entry states the stale-candidate and known-set rows' count beside the nineteenth commit's rebinding");
+  assert.equal(Number(ledgerCount[1]), under.filter((l) => l.includes("['RT-sp-")).length + under.filter((l) => l.includes("['RT-sb-")).length, `the ledger's figure is the sp and sb populations' sum (${ledgerCount[1]})`);
   for (const id of ['RT-printf-v-unset-head', 'RT-cat-procsub-pipe', 'RT-procsub-function-cat']) assert.ok(guardTest.includes(`['${id}', `), `the witnessed member ${id} is a row`);
   assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
 });

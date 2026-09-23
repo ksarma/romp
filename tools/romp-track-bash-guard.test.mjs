@@ -10563,7 +10563,7 @@ test("round 7, nineteenth commit, the rows: a `set` or `shift` in a subshell, a 
       ['S19-source-procsub-subshell', 'nad', S1 + "(source <(echo 'set -- other.md'))" + CP, BZ, IN('`source`', W_BODY)],
       ['S19-splice-subshell', 'nad', S1 + 's=set; ($s -- other.md)' + CP, A, ['text', `stands in ${W_BODY}, and ${NOT_OWN}`]],
       ['S19-splice-and-false', 'nad', S1 + 's=set; false && $s -- other.md' + CP, A, ['text', `stands in ${W_AND}, and ${NOT_OWN}`]],
-      ['S19-emulate-subshell', 'nad', S1 + "(emulate sh -c 'set -- other.md')" + CP, A, IN('`emulate -c`', W_BODY)],
+      ['S19-emulate-subshell', 'nad', S1 + "(emulate sh -c 'set -- other.md')" + CP, A, ['text', 'an earlier `emulate -c` text runs in zsh alone (bash and dash find no `emulate`), and ' + NOT_OWN]],   // round 7's twentieth commit: the emulate road's own door (THE CONDITIONAL TEXT) names the road before the frame's question is asked; the verdict unchanged
       // `shift` so placed
       ['S19-shift-subshell', 'nad', 'set -- report.md other.md; (shift)' + CP, A, IN(SHIFT, W_BODY)],
       ['S19-shift-and-false', 'nad', 'set -- report.md other.md; false && shift' + CP, A, IN(SHIFT, W_AND)],
@@ -10709,8 +10709,287 @@ test("round 7, nineteenth commit, the rows: a `set` or `shift` in a subshell, a 
     assert.ok(hook.includes("if (cmd && cmd.wrapped) return { ok: false, where: `behind the wrapper"), 'a wrapped `set` or `shift` binds values not read (behaviour: S19-set-wrap-*, S19-shift-wrap-*)');
     assert.ok(hook.includes("if (name === 'set' && positionalsApply()) { const ops = setOperands(asSpelled); if (ops) rebindHere(seg, idx, cmd, '`set`',") && hook.includes("rebindHere(seg, idx, cmd, '`shift`',"), 'both binds go through the door (behaviour: S19-set-*, S19-shift-*)');
     assert.ok(hook.includes("(opts.rebind || bindPositionals)(sub.positionals, sub.positionalsWhy)"), "an in-place text's list is adopted through the caller's door (behaviour: S19-eval-subshell, S19-splice-subshell, S19-emulate-subshell, S19-source-*)");
-    for (const site of ["{ adopt: name === 'eval', trapMove: name === 'trap', rebind: (ws, why) => rebindHere(seg, idx, cmd, '`eval`', ws, why) }", "{ adopt: true, rebind: (ws, why) => rebindHere(seg, idx, null, `\\`${seg.words[at].raw}\\``, ws, why) }", "{ adopt: true, rebind: (ws, why) => rebindHere(seg, idx, cmd, '`emulate -c`', ws, why) }", "{ adopt: true, rebind: (ws, why) => rebindHere(seg, idx, cmd, `\\`${name} -C\\``, ws, why) }", "{ adopt: true, rebind: (ws, why) => rebindHere(seg, idx, cmd, `\\`${name}\\``, ws, why) }"]) assert.ok(hook.includes(site), `the adoption site carries the door: ${site}`);
-    assert.equal((hook.match(/\{ adopt: /g) || []).length, (hook.match(/\{ adopt: [^{}]*rebind: \(ws, why\) => rebindHere\(/g) || []).length, 'every adoption site in the hook carries the door (a new `adopt: true` without one reds here)');
+    const SITE_MSG = 'the adoption site carries a door (the frame door, or THE CONDITIONAL TEXT\'s since round 7\'s twentieth commit; the head splice\'s door is chosen by the text\'s kind, pinned in "round 7, twentieth commit, the rows")';
+    for (const site of ["{ adopt: name === 'eval', trapMove: name === 'trap', rebind: (ws, why) => rebindHere(seg, idx, cmd, '`eval`', ws, why) }", "{ adopt: true, rebind: door }", "{ adopt: true, rebind: () => rebindConditional(`\\`${name} -C\\``, `callback runs in bash alone, once per \\`-c\\` count of lines read (an input of fewer lines never runs it; zsh and dash find no \\`${name}\\`)`) }", "{ adopt: true, rebind: (ws, why) => rebindHere(seg, idx, cmd, `\\`${name}\\``, ws, why) }"]) assert.ok(hook.includes(site), `${SITE_MSG}: ${site}`);
+    assert.ok(hook.includes("{ adopt: true, rebind: shell === 'zsh' ? (ws, why) => rebindHere(seg, idx, cmd, '`emulate -c`', ws, why) : () => rebindConditional('`emulate -c`', 'text runs in zsh alone (bash and dash find no `emulate`)') }"), `${SITE_MSG}: the emulate site (on its own line: the legs scan reads a literal list spelling a shell as a shell leg)`);
+    assert.equal((hook.match(/\{ adopt: /g) || []).length, (hook.match(/\{ adopt: [^{}]*rebind: (?:\(ws, why\) => rebindHere\(|door \}|shell === 'zsh' \? \(ws, why\) => rebindHere\([^:]*: \(\) => rebindConditional\(|\(\) => rebindConditional\()/g) || []).length, 'every adoption site in the hook carries one of the two doors (a new `adopt: true` without one reds here; the twentieth commit added the conditional door)');
     assert.ok(hook.includes("if (g.positionals) bindPositionals(UNKNOWN_POSITIONALS, `an earlier ${g.positionals} stands in ${how}") && hook.includes("if (g.positionals) frames[frames.length - 1].positionals = g.positionals;"), 'a `{ }` group notes the bind and its closer settles or hands it on (behaviour: S19-set-group-pipe, S19-set-group-bg, S19-set-group-nested-pipe, S19-shift-group-pipe, S19-eval-group-pipe)');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+// Round 7's twentieth commit (2026-09-23; the reviewer's verifier on the nineteenth commit, by execution): THE CONDITIONAL TEXT. The nineteenth
+// commit's door asked WHERE a `set` or `shift` stands (the frame); four roads to an in-place text answered "this shell's own frame" while the
+// shells differ on WHETHER the text runs at all: zsh's `emulate -c` (bash and dash find no emulate), bash's `mapfile -C` and `readarray -C`
+// callback (run once per `-c` count of lines read: `</dev/null` reads none, so no shell runs it), an alias this command defines on an earlier
+// line (dash alone expands it through `-c`; bash and zsh parse the string whole; zsh and dash expand it inside an eval, bash under
+// `expand_aliases`) and a head splice of a text of several words (`s='set -- other.md'; $s`: bash and dash split it and run the set, zsh runs one
+// word it does not find; `"$s"` is one word to every shell and runs nothing; a head that may be empty, `$c set -- other.md` with `$c` never
+// valued, is the same question). So `set -- report.md; emulate sh -c 'set -- other.md'; cp ../base/report.md $1` from docs/ was allowed while bash
+// and dash copied onto the tracked file (the round-5 head refused `$1` as not literal), and the same through each road, with `shift`, on the head
+// and script roads, in every write form and cwd. The fix binds values not read through such a road, the road named, whatever the frame, by the
+// reasoning the frame door applies to `command`, `builtin` and `time`; eval's text and a sourced text (every shell runs them in place), a splice
+// of one word and an `emulate -c` inside a script the walk knows is zsh's keep the frame door. The rows below are the population derived over the
+// four roads (every variant measured), `set` and `shift`, the target, head and script roads, twelve write forms, the root, scratch/, notes/ (the
+// existing note and a new one), a cwd in no project (B2, allowed at every head) and another project's file, both spellings of the splice and the
+// braced and default-word forms, the frame around a conditional text, and the controls; each measured at the round-5 head, at the nineteenth
+// commit and at the fixed tree through the hook as a process, then unguarded in the three shells (r7-a2-measure-pop.log in the notes).
+test("round 7, twentieth commit, the rows: a `set` or `shift` inside an `emulate -c` text, a `mapfile -C` or `readarray -C` callback, an alias this command defines or a head splice of a text of several words (or of a head that may be empty) rebinds this shell's positional parameters to values not read, the road named, so a later positional target, command name or script is refused as the round-5 head refused it; eval's text, a sourced text, a splice of one word and an `emulate -c` under a known zsh keep the bind; the roads still read what they write", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const BD = ['bash', 'dash'];
+    const BZ = ['bash', 'zsh'];
+    const ZD = ['zsh', 'dash'];
+    const Z = ['zsh'];
+    const B = ['bash'];
+    const D = ['dash'];
+    const N = [];
+    const NOT_OWN = "whether it rebinds this shell's positional parameters is not known";
+    // the reason names the road: `an earlier <label> <how>, and whether it rebinds this shell's positional parameters is not known`
+    const EMU = ['text', 'an earlier `emulate -c` text runs in zsh alone (bash and dash find no `emulate`), and ' + NOT_OWN];
+    const MAP = ['text', 'an earlier `mapfile -C` callback runs in bash alone, once per `-c` count of lines read (an input of fewer lines never runs it; zsh and dash find no `mapfile`), and ' + NOT_OWN];
+    const MAPR = ['text', 'an earlier `readarray -C` callback runs in bash alone, once per `-c` count of lines read (an input of fewer lines never runs it; zsh and dash find no `readarray`), and ' + NOT_OWN];
+    const ALIAS = (raw) => ['text', 'an earlier `' + raw + '` is an alias this command defines, which dash expands through `-c` and bash and zsh do not (zsh and dash expand it from a file or a pipe, bash under `expand_aliases`), and ' + NOT_OWN];
+    const SPLICE = (raw) => ['text', 'an earlier `' + raw + '` stands for a text of several words, which some shells split into a command and others run as one word they do not find (a quoted spelling is one word to every shell), and ' + NOT_OWN];
+    const VANISH = (raw) => ['text', 'an earlier `' + raw + '` is a command name holding an expansion this command never gives a value, which may be empty, so whether the words after it run as a command of their own is not known, and ' + NOT_OWN];
+    const NOT_LIT = ['text', 'not a literal path'];   // dd's `of=` and a here-string carry the positional's plain refusal, no road named (a labelling route of their own; the verdict right)
+    // [id, cwd, command, the shells that write (measured), the verdict ('allow', 'name', or ['text', a substring of the reason]), the verdict from a
+    // cwd in no project ('allow' unless given; null: the row's own cwd is that cwd)]
+    // 1. the target road, `set`, from docs/: every variant of each road (refused at the round-5 head, allowed at the nineteenth commit while the
+    // shells named copied onto the tracked file; the default-word and `${=s}` spellings and the quoted substitution refuse by name at both, the
+    // unquoted substitution and backtick are split by every shell, the lexer splitting them too: allowed, no shell writes)
+    // 2. `shift` through each road (the list holds the tracked name first: a shell that shifts copies onto other.md, one that does not onto report.md)
+    // 3. the head road (the list holds the command name; allowed at the round-5 head and the nineteenth commit while the shells named copied)
+    // 4. the script road: the positional inside a `bash -c`, `sh -c` or eval text, or a here-string (refused at every head by the here-string's own rule)
+    // 5. every write form per road family (the target road, `set`, from docs/)
+    // 6. the cwds: the root, scratch/, notes/ (the existing note and a new one), a cwd in no project with absolute paths (B2: allowed at every head,
+    // the shells named writing, the residual the property states), another project's file from docs/, a cd before the bind
+    // 7. the frame around a conditional text: a piped group, a `&&` list, a subshell inside the text (refused at the nineteenth commit already)
+    // 8. controls: eval's text and the sourced texts keep the bind (allowed, no shell writes: every shell runs them, dash parsing no here-string or
+    // process substitution and so running nothing), a splice of one word (every shell runs it), the same-line alias (no shell expands it: refused
+    // by name, every shell writes), the plain binds, the roads still read for what they write (refused by name, the shell that runs the text
+    // writing), `emulate -c` inside a script handed to zsh (the frame door: allowed, no shell writes), and under bash (refused, every shell
+    // writes), `mapfile -C` under bash (`</dev/null`: refused, every shell writes), an alias under dash (the cost the rule charges: refused, no
+    // shell writes) and a splice under zsh (refused, every shell writes)
+    const rows = [
+      ["S20-emulate-set", "nad", "set -- report.md; emulate sh -c 'set -- other.md'; cp ../base/report.md $1", BD, EMU],
+      ["S20-emulate-R-set", "nad", "set -- report.md; emulate -R sh -c 'set -- other.md'; cp ../base/report.md $1", BD, EMU],
+      ["S20-emulate-L-set", "nad", "set -- report.md; emulate -L sh -c 'set -- other.md'; cp ../base/report.md $1", A, EMU],
+      ["S20-emulate-zsh-set", "nad", "set -- report.md; emulate zsh -c 'set -- other.md'; cp ../base/report.md $1", BD, EMU],
+      ["S20-emulate-csh-set", "nad", "set -- report.md; emulate csh -c 'set -- other.md'; cp ../base/report.md $1", BD, EMU],
+      ["S20-emulate-dq-set", "nad", "set -- report.md; emulate sh -c \"set -- other.md\"; cp ../base/report.md $1", BD, EMU],
+      ["S20-mapfile-devnull-set", "nad", "set -- report.md; mapfile -C 'set -- other.md #' -c 1 </dev/null; cp ../base/report.md $1", A, MAP],
+      ["S20-readarray-devnull-set", "nad", "set -- report.md; readarray -C 'set -- other.md #' -c 1 </dev/null; cp ../base/report.md $1", A, MAPR],
+      ["S20-mapfile-herestring-set", "nad", "set -- report.md; mapfile -C 'set -- other.md #' -c 1 <<< a; cp ../base/report.md $1", Z, MAP],
+      ["S20-readarray-herestring-set", "nad", "set -- report.md; readarray -C 'set -- other.md #' -c 1 <<< a; cp ../base/report.md $1", Z, MAPR],
+      ["S20-mapfile-heredoc-set", "nad", "set -- report.md; mapfile -C 'set -- other.md #' -c 1 <<EOF\na\nEOF\ncp ../base/report.md $1", ZD, MAP],
+      ["S20-mapfile-procsub-set", "nad", "set -- report.md; mapfile -C 'set -- other.md #' -c 1 < <(echo a); cp ../base/report.md $1", Z, MAP],
+      ["S20-mapfile-file-set", "nad", "set -- report.md; mapfile -C 'set -- other.md #' -c 1 < ../base/report.md; cp ../base/report.md $1", ZD, MAP],
+      ["S20-mapfile-glued-set", "nad", "set -- report.md; mapfile -tC 'set -- other.md #' -c 1 </dev/null; cp ../base/report.md $1", A, MAP],
+      ["S20-mapfile-c2-herestring-set", "nad", "set -- report.md; mapfile -C 'set -- other.md #' -c 2 <<< a; cp ../base/report.md $1", BZ, MAP],
+      ["S20-mapfile-nohash-set", "nad", "set -- report.md; mapfile -C 'set -- other.md' -c 1 <<< a; cp ../base/report.md $1", Z, MAP],
+      ["S20-alias-nextline-set", "nad", "alias s='set -- other.md'\nset -- report.md; s; cp ../base/report.md $1", BZ, ALIAS("s")],
+      ["S20-alias-nextline-dq-set", "nad", "alias s=\"set -- other.md\"\nset -- report.md; s; cp ../base/report.md $1", BZ, ALIAS("s")],
+      ["S20-alias-own-lines-set", "nad", "alias s='set -- other.md'\nset -- report.md\ns\ncp ../base/report.md $1", BZ, ALIAS("s")],
+      ["S20-alias-eval-set", "nad", "set -- report.md; alias s='set -- other.md'; eval s; cp ../base/report.md $1", B, ALIAS("s")],
+      ["S20-alias-eval-dq-set", "nad", "set -- report.md; alias s='set -- other.md'; eval \"s\"; cp ../base/report.md $1", B, ALIAS("s")],
+      ["S20-alias-suffix-set", "nad", "alias -s md='set -- other.md'\nset -- report.md; x.md; cp ../base/report.md $1", A, ALIAS("x.md")],
+      ["S20-alias-global-set", "nad", "alias -g s='set -- other.md'\nset -- report.md; s; cp ../base/report.md $1", BZ, ALIAS("s")],
+      ["S20-alias-two-lines-before-set", "nad", "alias s='set -- other.md'\n:\nset -- report.md; s; cp ../base/report.md $1", BZ, ALIAS("s")],
+      ["S20-splice-var-set", "nad", "set -- report.md; s='set -- other.md'; $s; cp ../base/report.md $1", Z, SPLICE("$s")],
+      ["S20-splice-var-quoted-set", "nad", "set -- report.md; s='set -- other.md'; \"$s\"; cp ../base/report.md $1", A, SPLICE("\"$s\"")],
+      ["S20-splice-var-braced-set", "nad", "set -- report.md; s='set -- other.md'; ${s}; cp ../base/report.md $1", Z, SPLICE("${s}")],
+      ["S20-splice-var-braced-quoted-set", "nad", "set -- report.md; s='set -- other.md'; \"${s}\"; cp ../base/report.md $1", A, SPLICE("\"${s}\"")],
+      ["S20-splice-var-dq-set", "nad", "set -- report.md; s=\"set -- other.md\"; $s; cp ../base/report.md $1", Z, SPLICE("$s")],
+      ["S20-splice-set-dashdash", "nad", "set -- report.md; s='set --'; $s other.md; cp ../base/report.md $1", Z, SPLICE("$s")],
+      ["S20-splice-set-dashdash-quoted", "nad", "set -- report.md; s='set --'; \"$s\" other.md; cp ../base/report.md $1", A, SPLICE("\"$s\"")],
+      ["S20-splice-default-word-set", "nad", "set -- report.md; ${s:-set -- other.md}; cp ../base/report.md $1", Z, 'name'],
+      ["S20-splice-default-word-quoted-set", "nad", "set -- report.md; \"${s:-set -- other.md}\"; cp ../base/report.md $1", A, 'name'],
+      ["S20-splice-trailing-blank-set", "nad", "set -- report.md; s='set '; $s -- other.md; cp ../base/report.md $1", Z, SPLICE("$s")],
+      ["S20-splice-leading-blank-set", "nad", "set -- report.md; s=' set'; $s -- other.md; cp ../base/report.md $1", Z, SPLICE("$s")],
+      ["S20-splice-tab-set", "nad", "set -- report.md; s=\"$(printf 'set\\t--\\tother.md')\"; $s; cp ../base/report.md $1", Z, SPLICE("$s")],
+      ["S20-splice-newline-set", "nad", "set -- report.md; s='set\n-- other.md'; $s; cp ../base/report.md $1", Z, SPLICE("$s")],
+      ["S20-splice-var-zsh-eq-set", "nad", "set -- report.md; s='set -- other.md'; ${=s}; cp ../base/report.md $1", N, 'name'],
+      ["S20-splice-cmdsub-set", "nad", "set -- report.md; $(echo 'set -- other.md'); cp ../base/report.md $1", N, 'allow'],
+      ["S20-splice-cmdsub-quoted-set", "nad", "set -- report.md; \"$(echo 'set -- other.md')\"; cp ../base/report.md $1", A, 'name'],
+      ["S20-splice-backtick-set", "nad", "set -- report.md; `echo 'set -- other.md'`; cp ../base/report.md $1", N, 'allow'],
+      ["S20-vanish-head-set", "nad", "set -- report.md; $c set -- other.md; cp ../base/report.md $1", N, VANISH("$c")],
+      ["S20-vanish-head-braced-set", "nad", "set -- report.md; ${c} set -- other.md; cp ../base/report.md $1", N, VANISH("${c}")],
+      ["S20-vanish-head-glued-set", "nad", "set -- report.md; ${c}set -- other.md; cp ../base/report.md $1", N, VANISH("${c}set")],
+      ["S20-emulate-shift", "nad", "set -- report.md other.md; emulate sh -c shift; cp ../base/report.md $1", BD, EMU],
+      ["S20-emulate-shift-1", "nad", "set -- report.md other.md; emulate sh -c 'shift 1'; cp ../base/report.md $1", BD, EMU],
+      ["S20-mapfile-shift-devnull", "nad", "set -- report.md other.md; mapfile -C shift -c 1 </dev/null; cp ../base/report.md $1", A, MAP],
+      ["S20-mapfile-shift-herestring", "nad", "set -- report.md other.md; mapfile -C 'shift 1 #' -c 1 <<< a; cp ../base/report.md $1", Z, MAP],
+      ["S20-readarray-shift-devnull", "nad", "set -- report.md other.md; readarray -C 'shift 1 #' -c 1 </dev/null; cp ../base/report.md $1", A, MAPR],
+      ["S20-alias-shift-nextline", "nad", "alias s='shift'\nset -- report.md other.md; s; cp ../base/report.md $1", BZ, ALIAS("s")],
+      ["S20-alias-shift-1-nextline", "nad", "alias s='shift 1'\nset -- report.md other.md; s; cp ../base/report.md $1", BZ, ALIAS("s")],
+      ["S20-alias-shift-eval", "nad", "set -- report.md other.md; alias s=shift; eval s; cp ../base/report.md $1", B, ALIAS("s")],
+      ["S20-splice-shift", "nad", "set -- report.md other.md; s='shift 1'; $s; cp ../base/report.md $1", Z, SPLICE("$s")],
+      ["S20-splice-shift-quoted", "nad", "set -- report.md other.md; s='shift 1'; \"$s\"; cp ../base/report.md $1", A, SPLICE("\"$s\"")],
+      ["S20-splice-shift-braced", "nad", "set -- report.md other.md; s='shift 1'; ${s}; cp ../base/report.md $1", Z, SPLICE("${s}")],
+      ["S20-vanish-head-shift", "nad", "set -- report.md other.md; $c shift; cp ../base/report.md $1", N, VANISH("$c")],
+      ["S20-head-emulate", "nad", "set -- cp; emulate sh -c 'set -- ls'; $1 ../base/report.md report.md", BD, EMU],
+      ["S20-head-mapfile-devnull", "nad", "set -- cp; mapfile -C 'set -- ls #' -c 1 </dev/null; $1 ../base/report.md report.md", A, MAP],
+      ["S20-head-alias-nextline", "nad", "alias s='set -- ls'\nset -- cp; s; $1 ../base/report.md report.md", BZ, ALIAS("s")],
+      ["S20-head-splice", "nad", "set -- cp; s='set -- ls'; $s; $1 ../base/report.md report.md", Z, SPLICE("$s")],
+      ["S20-head-splice-quoted", "nad", "set -- cp; s='set -- ls'; \"$s\"; $1 ../base/report.md report.md", A, SPLICE("\"$s\"")],
+      ["S20-head-emulate-shift", "nad", "set -- cp ls; emulate sh -c shift; $1 ../base/report.md report.md", BD, EMU],
+      ["S20-head-alias-shift", "nad", "alias s=shift\nset -- cp ls; s; $1 ../base/report.md report.md", BZ, ALIAS("s")],
+      ["S20-head-splice-shift", "nad", "set -- cp ls; s='shift 1'; $s; $1 ../base/report.md report.md", Z, SPLICE("$s")],
+      ["S20-script-bash-emulate", "nad", "set -- report.md; emulate sh -c 'set -- other.md'; bash -c \"cp ../base/report.md $1\"", BD, EMU],
+      ["S20-script-eval-emulate", "nad", "set -- report.md; emulate sh -c 'set -- other.md'; eval \"cp ../base/report.md $1\"", BD, EMU],
+      ["S20-script-sh-emulate", "nad", "set -- report.md; emulate sh -c 'set -- other.md'; sh -c \"cp ../base/report.md $1\"", BD, EMU],
+      ["S20-script-herestring-emulate", "nad", "set -- report.md; emulate sh -c 'set -- other.md'; bash <<< \"cp ../base/report.md $1\"", B, NOT_LIT],
+      ["S20-script-bash-mapfile", "nad", "set -- report.md; mapfile -C 'set -- other.md #' -c 1 </dev/null; bash -c \"cp ../base/report.md $1\"", A, MAP],
+      ["S20-script-eval-mapfile", "nad", "set -- report.md; mapfile -C 'set -- other.md #' -c 1 </dev/null; eval \"cp ../base/report.md $1\"", A, MAP],
+      ["S20-script-bash-alias", "nad", "alias s='set -- other.md'\nset -- report.md; s; bash -c \"cp ../base/report.md $1\"", BZ, ALIAS("s")],
+      ["S20-script-eval-alias", "nad", "alias s='set -- other.md'\nset -- report.md; s; eval \"cp ../base/report.md $1\"", BZ, ALIAS("s")],
+      ["S20-script-bash-splice", "nad", "set -- report.md; s='set -- other.md'; $s; bash -c \"cp ../base/report.md $1\"", Z, SPLICE("$s")],
+      ["S20-script-eval-splice", "nad", "set -- report.md; s='set -- other.md'; $s; eval \"cp ../base/report.md $1\"", Z, SPLICE("$s")],
+      ["S20-script-eval-splice-quoted", "nad", "set -- report.md; s='set -- other.md'; \"$s\"; eval \"cp ../base/report.md $1\"", A, SPLICE("\"$s\"")],
+      ["S20-script-sh-splice", "nad", "set -- report.md; s='set -- other.md'; $s; sh -c \"cp ../base/report.md $1\"", Z, SPLICE("$s")],
+      ["S20-w-emulate-mv", "nad", "set -- report.md; emulate sh -c 'set -- other.md'; mv ../base/report.md $1", BD, EMU],
+      ["S20-w-emulate-install", "nad", "set -- report.md; emulate sh -c 'set -- other.md'; install ../base/report.md $1", BD, EMU],
+      ["S20-w-emulate-ln-sf", "nad", "set -- report.md; emulate sh -c 'set -- other.md'; ln -sf ../base/report.md $1", BD, EMU],
+      ["S20-w-emulate-tee", "nad", "set -- report.md; emulate sh -c 'set -- other.md'; echo x | tee $1", BD, EMU],
+      ["S20-w-emulate-sed-i", "nad", "set -- report.md; emulate sh -c 'set -- other.md'; sed -i 's/NA/X/' $1", BD, EMU],
+      ["S20-w-emulate-redir", "nad", "set -- report.md; emulate sh -c 'set -- other.md'; echo x > $1", BD, EMU],
+      ["S20-w-emulate-append", "nad", "set -- report.md; emulate sh -c 'set -- other.md'; echo x >> $1", BD, EMU],
+      ["S20-w-emulate-clobber", "nad", "set -- report.md; emulate sh -c 'set -- other.md'; echo x >| $1", BD, EMU],
+      ["S20-w-emulate-both", "nad", "set -- report.md; emulate sh -c 'set -- other.md'; echo x &> $1", BD, EMU],
+      ["S20-w-emulate-cat-redir", "nad", "set -- report.md; emulate sh -c 'set -- other.md'; cat ../base/report.md > $1", BD, EMU],
+      ["S20-w-emulate-dd", "nad", "set -- report.md; emulate sh -c 'set -- other.md'; dd if=../base/report.md of=$1 2>/dev/null", BD, NOT_LIT],
+      ["S20-w-emulate-cp-R", "nad", "set -- report.md; emulate sh -c 'set -- other.md'; cp -R ../base/report.md $1", BD, EMU],
+      ["S20-w-mapfile-mv", "nad", "set -- report.md; mapfile -C 'set -- other.md #' -c 1 </dev/null; mv ../base/report.md $1", A, MAP],
+      ["S20-w-mapfile-install", "nad", "set -- report.md; mapfile -C 'set -- other.md #' -c 1 </dev/null; install ../base/report.md $1", A, MAP],
+      ["S20-w-mapfile-ln-sf", "nad", "set -- report.md; mapfile -C 'set -- other.md #' -c 1 </dev/null; ln -sf ../base/report.md $1", A, MAP],
+      ["S20-w-mapfile-tee", "nad", "set -- report.md; mapfile -C 'set -- other.md #' -c 1 </dev/null; echo x | tee $1", A, MAP],
+      ["S20-w-mapfile-sed-i", "nad", "set -- report.md; mapfile -C 'set -- other.md #' -c 1 </dev/null; sed -i 's/NA/X/' $1", A, MAP],
+      ["S20-w-mapfile-redir", "nad", "set -- report.md; mapfile -C 'set -- other.md #' -c 1 </dev/null; echo x > $1", A, MAP],
+      ["S20-w-mapfile-append", "nad", "set -- report.md; mapfile -C 'set -- other.md #' -c 1 </dev/null; echo x >> $1", A, MAP],
+      ["S20-w-mapfile-clobber", "nad", "set -- report.md; mapfile -C 'set -- other.md #' -c 1 </dev/null; echo x >| $1", A, MAP],
+      ["S20-w-mapfile-both", "nad", "set -- report.md; mapfile -C 'set -- other.md #' -c 1 </dev/null; echo x &> $1", A, MAP],
+      ["S20-w-mapfile-cat-redir", "nad", "set -- report.md; mapfile -C 'set -- other.md #' -c 1 </dev/null; cat ../base/report.md > $1", A, MAP],
+      ["S20-w-mapfile-dd", "nad", "set -- report.md; mapfile -C 'set -- other.md #' -c 1 </dev/null; dd if=../base/report.md of=$1 2>/dev/null", A, NOT_LIT],
+      ["S20-w-mapfile-cp-R", "nad", "set -- report.md; mapfile -C 'set -- other.md #' -c 1 </dev/null; cp -R ../base/report.md $1", A, MAP],
+      ["S20-w-splice-mv", "nad", "set -- report.md; s='set -- other.md'; $s; mv ../base/report.md $1", Z, SPLICE("$s")],
+      ["S20-w-splice-install", "nad", "set -- report.md; s='set -- other.md'; $s; install ../base/report.md $1", Z, SPLICE("$s")],
+      ["S20-w-splice-ln-sf", "nad", "set -- report.md; s='set -- other.md'; $s; ln -sf ../base/report.md $1", Z, SPLICE("$s")],
+      ["S20-w-splice-tee", "nad", "set -- report.md; s='set -- other.md'; $s; echo x | tee $1", Z, SPLICE("$s")],
+      ["S20-w-splice-sed-i", "nad", "set -- report.md; s='set -- other.md'; $s; sed -i 's/NA/X/' $1", Z, SPLICE("$s")],
+      ["S20-w-splice-redir", "nad", "set -- report.md; s='set -- other.md'; $s; echo x > $1", Z, SPLICE("$s")],
+      ["S20-w-splice-append", "nad", "set -- report.md; s='set -- other.md'; $s; echo x >> $1", Z, SPLICE("$s")],
+      ["S20-w-splice-clobber", "nad", "set -- report.md; s='set -- other.md'; $s; echo x >| $1", Z, SPLICE("$s")],
+      ["S20-w-splice-both", "nad", "set -- report.md; s='set -- other.md'; $s; echo x &> $1", Z, SPLICE("$s")],
+      ["S20-w-splice-cat-redir", "nad", "set -- report.md; s='set -- other.md'; $s; cat ../base/report.md > $1", Z, SPLICE("$s")],
+      ["S20-w-splice-dd", "nad", "set -- report.md; s='set -- other.md'; $s; dd if=../base/report.md of=$1 2>/dev/null", Z, NOT_LIT],
+      ["S20-w-splice-cp-R", "nad", "set -- report.md; s='set -- other.md'; $s; cp -R ../base/report.md $1", Z, SPLICE("$s")],
+      ["S20-w-alias-mv", "nad", "alias s='set -- other.md'\nset -- report.md; s; mv ../base/report.md $1", BZ, ALIAS("s")],
+      ["S20-w-alias-install", "nad", "alias s='set -- other.md'\nset -- report.md; s; install ../base/report.md $1", BZ, ALIAS("s")],
+      ["S20-w-alias-ln-sf", "nad", "alias s='set -- other.md'\nset -- report.md; s; ln -sf ../base/report.md $1", BZ, ALIAS("s")],
+      ["S20-w-alias-tee", "nad", "alias s='set -- other.md'\nset -- report.md; s; echo x | tee $1", BZ, ALIAS("s")],
+      ["S20-w-alias-sed-i", "nad", "alias s='set -- other.md'\nset -- report.md; s; sed -i 's/NA/X/' $1", BZ, ALIAS("s")],
+      ["S20-w-alias-redir", "nad", "alias s='set -- other.md'\nset -- report.md; s; echo x > $1", BZ, ALIAS("s")],
+      ["S20-w-alias-append", "nad", "alias s='set -- other.md'\nset -- report.md; s; echo x >> $1", BZ, ALIAS("s")],
+      ["S20-w-alias-clobber", "nad", "alias s='set -- other.md'\nset -- report.md; s; echo x >| $1", BZ, ALIAS("s")],
+      ["S20-w-alias-both", "nad", "alias s='set -- other.md'\nset -- report.md; s; echo x &> $1", BZ, ALIAS("s")],
+      ["S20-w-alias-cat-redir", "nad", "alias s='set -- other.md'\nset -- report.md; s; cat ../base/report.md > $1", BZ, ALIAS("s")],
+      ["S20-w-alias-dd", "nad", "alias s='set -- other.md'\nset -- report.md; s; dd if=../base/report.md of=$1 2>/dev/null", BZ, NOT_LIT],
+      ["S20-w-alias-cp-R", "nad", "alias s='set -- other.md'\nset -- report.md; s; cp -R ../base/report.md $1", BZ, ALIAS("s")],
+      ["S20-cwd-root-emulate", "na", "set -- docs/report.md; emulate sh -c 'set -- scratch/other.md'; cp base/report.md $1", BD, EMU],
+      ["S20-cwd-scratch-emulate", "nas", "set -- ../docs/report.md; emulate sh -c 'set -- other.md'; cp ../base/report.md $1", BD, EMU],
+      ["S20-cwd-notes-emulate", "nan", "set -- n1.md; emulate sh -c 'set -- ../scratch/other.md'; cp ../base/report.md $1", BD, EMU],
+      ["S20-cwd-notes-new-emulate", "nan", "set -- n2.md; emulate sh -c 'set -- ../scratch/other.md'; cp ../base/report.md $1", BD, EMU],
+      ["S20-cwd-out-b2-emulate", "out", "set -- {NA}/docs/report.md; emulate sh -c 'set -- {NA}/scratch/other.md'; cp {NA}/base/report.md $1", BD, 'allow', null],
+      ["S20-cwd-web-from-docs-emulate", "nad", "set -- {WEB}/docs/report.md; emulate sh -c 'set -- other.md'; cp {WEB}/base/report.md $1", BD, EMU],
+      ["S20-cwd-cd-notes-emulate", "nad", "cd ../notes; set -- n1.md; emulate sh -c 'set -- ../scratch/other.md'; cp ../base/report.md $1", BD, EMU],
+      ["S20-cwd-root-mapfile", "na", "set -- docs/report.md; mapfile -C 'set -- scratch/other.md #' -c 1 </dev/null; cp base/report.md $1", A, MAP],
+      ["S20-cwd-scratch-mapfile", "nas", "set -- ../docs/report.md; mapfile -C 'set -- other.md #' -c 1 </dev/null; cp ../base/report.md $1", A, MAP],
+      ["S20-cwd-notes-mapfile", "nan", "set -- n1.md; mapfile -C 'set -- ../scratch/other.md #' -c 1 </dev/null; cp ../base/report.md $1", A, MAP],
+      ["S20-cwd-notes-new-mapfile", "nan", "set -- n2.md; mapfile -C 'set -- ../scratch/other.md #' -c 1 </dev/null; cp ../base/report.md $1", A, MAP],
+      ["S20-cwd-out-b2-mapfile", "out", "set -- {NA}/docs/report.md; mapfile -C 'set -- {NA}/scratch/other.md #' -c 1 </dev/null; cp {NA}/base/report.md $1", A, 'allow', null],
+      ["S20-cwd-web-from-docs-mapfile", "nad", "set -- {WEB}/docs/report.md; mapfile -C 'set -- other.md #' -c 1 </dev/null; cp {WEB}/base/report.md $1", A, MAP],
+      ["S20-cwd-cd-notes-mapfile", "nad", "cd ../notes; set -- n1.md; mapfile -C 'set -- ../scratch/other.md #' -c 1 </dev/null; cp ../base/report.md $1", A, MAP],
+      ["S20-cwd-root-splice", "na", "set -- docs/report.md; s='set -- scratch/other.md'; $s; cp base/report.md $1", Z, SPLICE("$s")],
+      ["S20-cwd-scratch-splice", "nas", "set -- ../docs/report.md; s='set -- other.md'; $s; cp ../base/report.md $1", Z, SPLICE("$s")],
+      ["S20-cwd-notes-splice", "nan", "set -- n1.md; s='set -- ../scratch/other.md'; $s; cp ../base/report.md $1", Z, SPLICE("$s")],
+      ["S20-cwd-notes-new-splice", "nan", "set -- n2.md; s='set -- ../scratch/other.md'; $s; cp ../base/report.md $1", Z, SPLICE("$s")],
+      ["S20-cwd-out-b2-splice", "out", "set -- {NA}/docs/report.md; s='set -- {NA}/scratch/other.md'; $s; cp {NA}/base/report.md $1", Z, 'allow', null],
+      ["S20-cwd-web-from-docs-splice", "nad", "set -- {WEB}/docs/report.md; s='set -- other.md'; $s; cp {WEB}/base/report.md $1", Z, SPLICE("$s")],
+      ["S20-cwd-cd-notes-splice", "nad", "cd ../notes; set -- n1.md; s='set -- ../scratch/other.md'; $s; cp ../base/report.md $1", Z, SPLICE("$s")],
+      ["S20-cwd-root-alias", "na", "alias s='set -- scratch/other.md'\nset -- docs/report.md; s; cp base/report.md $1", BZ, ALIAS("s")],
+      ["S20-cwd-scratch-alias", "nas", "alias s='set -- other.md'\nset -- ../docs/report.md; s; cp ../base/report.md $1", BZ, ALIAS("s")],
+      ["S20-cwd-notes-alias", "nan", "alias s='set -- ../scratch/other.md'\nset -- n1.md; s; cp ../base/report.md $1", BZ, ALIAS("s")],
+      ["S20-cwd-notes-new-alias", "nan", "alias s='set -- ../scratch/other.md'\nset -- n2.md; s; cp ../base/report.md $1", BZ, ALIAS("s")],
+      ["S20-cwd-out-b2-alias", "out", "alias s='set -- {NA}/scratch/other.md'\nset -- {NA}/docs/report.md; s; cp {NA}/base/report.md $1", BZ, 'allow', null],
+      ["S20-cwd-web-from-docs-alias", "nad", "alias s='set -- other.md'\nset -- {WEB}/docs/report.md; s; cp {WEB}/base/report.md $1", BZ, ALIAS("s")],
+      ["S20-cwd-cd-notes-alias", "nad", "alias s='set -- ../scratch/other.md'\ncd ../notes; set -- n1.md; s; cp ../base/report.md $1", BZ, ALIAS("s")],
+      ["S20-emulate-group-pipe", "nad", "set -- report.md; { emulate sh -c 'set -- other.md'; } | cat; cp ../base/report.md $1", A, EMU],
+      ["S20-mapfile-group-pipe", "nad", "set -- report.md; { mapfile -C 'set -- other.md #' -c 1 </dev/null; } | cat; cp ../base/report.md $1", A, MAP],
+      ["S20-splice-group-pipe", "nad", "set -- report.md; { s='set -- other.md'; $s; } | cat; cp ../base/report.md $1", A, SPLICE("$s")],
+      ["S20-alias-and-false", "nad", "alias s='set -- other.md'\nset -- report.md; false && s; cp ../base/report.md $1", A, ALIAS("s")],
+      ["S20-emulate-subshell-in-text", "nad", "set -- report.md; emulate sh -c '(set -- other.md)'; cp ../base/report.md $1", A, EMU],
+      ["S20-ctl-eval-plain", "nad", "set -- report.md; eval 'set -- other.md'; cp ../base/report.md $1", N, 'allow'],
+      ["S20-ctl-eval-dq", "nad", "set -- report.md; eval \"set -- other.md\"; cp ../base/report.md $1", N, 'allow'],
+      ["S20-ctl-eval-shift", "nad", "set -- report.md other.md; eval shift; cp ../base/report.md $1", N, 'allow'],
+      ["S20-ctl-source-herestring", "nad", "set -- report.md; . /dev/stdin <<< 'set -- other.md'; cp ../base/report.md $1", N, 'allow'],
+      ["S20-ctl-source-heredoc", "nad", "set -- report.md; . /dev/stdin <<EOF\nset -- other.md\nEOF\ncp ../base/report.md $1", N, 'allow'],
+      ["S20-ctl-source-procsub", "nad", "set -- report.md; source <(echo 'set -- other.md'); cp ../base/report.md $1", N, 'allow'],
+      ["S20-ctl-splice-single", "nad", "set -- report.md; s=set; $s -- other.md; cp ../base/report.md $1", N, 'allow'],
+      ["S20-ctl-splice-single-quoted", "nad", "set -- report.md; s=set; \"$s\" -- other.md; cp ../base/report.md $1", N, 'allow'],
+      ["S20-ctl-splice-single-braced", "nad", "set -- report.md; s=set; ${s} -- other.md; cp ../base/report.md $1", N, 'allow'],
+      ["S20-ctl-splice-single-shift", "nad", "set -- report.md other.md; s=shift; $s; cp ../base/report.md $1", N, 'allow'],
+      ["S20-ctl-splice-single-shift-quoted", "nad", "set -- report.md other.md; s=shift; \"$s\"; cp ../base/report.md $1", N, 'allow'],
+      ["S20-ctl-alias-sameline", "nad", "set -- report.md; alias s='set -- other.md'; s; cp ../base/report.md $1", A, 'name'],
+      ["S20-ctl-plain", "nad", "set -- report.md; set -- other.md; cp ../base/report.md $1", N, 'allow'],
+      ["S20-ctl-plain-shift", "nad", "set -- report.md other.md; shift; cp ../base/report.md $1", N, 'allow'],
+      ["S20-ctl-emulate-write", "nad", "emulate sh -c 'cp ../base/report.md report.md'", Z, 'name'],
+      ["S20-ctl-mapfile-write", "nad", "mapfile -C 'cp ../base/report.md report.md #' -c 1 <<< a", B, 'name'],
+      ["S20-ctl-alias-write", "nad", "alias c='cp ../base/report.md report.md'\nc", D, 'name'],
+      ["S20-ctl-splice-write", "nad", "s='cp ../base/report.md report.md'; $s", BD, 'name'],
+      ["S20-ctl-splice-write-quoted", "nad", "s='cp ../base/report.md report.md'; \"$s\"", N, 'name'],
+      ["S20-ctl-emulate-under-zsh", "nad", "zsh -c \"set -- report.md; emulate sh -c 'set -- other.md'; cp ../base/report.md \\$1\"", N, 'allow'],
+      ["S20-ctl-emulate-under-bash", "nad", "bash -c \"set -- report.md; emulate sh -c 'set -- other.md'; cp ../base/report.md \\$1\"", A, EMU],
+      ["S20-ctl-mapfile-under-bash", "nad", "bash -c \"set -- report.md; mapfile -C 'set -- other.md #' -c 1 </dev/null; cp ../base/report.md \\$1\"", A, MAP],
+      ["S20-ctl-alias-under-dash", "nad", "dash -c \"alias s='set -- other.md'\nset -- report.md; s; cp ../base/report.md \\$1\"", N, ALIAS("s")],
+      ["S20-ctl-splice-under-zsh", "nad", "zsh -c \"set -- report.md; s='set -- other.md'; \\$s; cp ../base/report.md \\$1\"", A, SPLICE("$s")],
+    ];
+    const judge = (id, cwd, raw, writers, expect, outside = 'allow') => {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      w.build();
+      const h = w.hook(cmd, at);
+      assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error: ${h.reason.split('\n')[0]}`);
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      if (outside != null) {
+        w.build();
+        const o = w.hook(cmd, w.cwds.out);
+        assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
+      }
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    };
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect, outside] of rows) { judge(id, cwd, raw, writers, expect, outside); n++; }
+    assert.equal(n, 181);
+    // where the code lives (the rows above prove what it does)
+    const hook = fs.readFileSync(HOOK, 'utf8');
+    assert.ok(hook.includes("const rebindConditional = (label, how) => {") && hook.includes("bindPositionals(UNKNOWN_POSITIONALS, `an earlier ${label} ${how}, and whether it rebinds this shell's positional parameters is not known`);"), "THE CONDITIONAL TEXT's door binds values not read, the road named, whatever the frame (behaviour: every refused S20 row)");
+    assert.ok(hook.includes("{ adopt: true, rebind: shell === 'zsh' ? (ws, why) => rebindHere(seg, idx, cmd, '`emulate -c`', ws, why) : () => rebindConditional('`emulate -c`', 'text runs in zsh alone (bash and dash find no `emulate`)') }"), 'the emulate site takes the conditional door, the frame door under a known zsh (behaviour: S20-emulate-*, S20-ctl-emulate-under-zsh)');
+    assert.ok(hook.includes("{ adopt: true, rebind: () => rebindConditional(`\\`${name} -C\\``, `callback runs in bash alone, once per \\`-c\\` count of lines read (an input of fewer lines never runs it; zsh and dash find no \\`${name}\\`)`) }"), 'the mapfile and readarray site takes the conditional door (behaviour: S20-mapfile-*, S20-readarray-*)');
+    assert.ok(hook.includes("const door = conditional ? () => rebindConditional(label, conditional) : (ws, why) => rebindHere(seg, idx, null, label, ws, why);") && hook.includes("const conditional = kind === 'alias' ? ") && hook.includes(": kind === 'vanish' ? ") && hook.includes(": kind === 'text' && /\\s/.test(text) ? "), 'the head splice picks its door by the kind of text: an alias, a head that may be empty, a text with a blank (behaviour: S20-alias-*, S20-vanish-*, S20-splice-*; the one-word splice keeps the frame door: S20-ctl-splice-single*)');
+    assert.equal((hook.match(/headTexts\.push\(\{/g) || []).length, (hook.match(/headTexts\.push\(\{[^}]*\bkind: /g) || []).length, 'every head text carries its kind (a new push without one reds here)');
+    assert.ok((hook.match(/headTexts\.push\(\{/g) || []).length >= 8, 'the head texts are pushed at their eight roads');
+    assert.ok(hook.includes("if (role === 'head') { const v = vanishedHeadTexts(w); if (v.length) { if (meta) meta.vanished = true; return v.map((t) => t.replace(/\\n+/g, ' ')); } }") && hook.includes("kind: meta.vanished ? 'vanish' : 'text'"), "THE VANISHED HEAD TEXT's reading is marked by scriptTexts and tagged where it is pushed (behaviour: S20-vanish-head-glued-set, whose head word does not vanish whole)");
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
