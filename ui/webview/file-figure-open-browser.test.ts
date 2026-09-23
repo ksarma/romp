@@ -652,7 +652,9 @@ test("in a browser: a LOADED remote picture inside an author's named anchor or a
 // keyed on the mark the decision sets, at rest where hover is none or any pointer is coarse and on hover otherwise, in the outbound
 // dress's own token, var(--outbound-line), the one the control's dashed border wears at rest; the file review's round 13, ui-1 with
 // extra6-1 and extra7-2: the button family's hairline it first wore read 1.35:1 dark and 1.25:1 light, and (hover: none) alone
-// dressed nothing on a touchscreen laptop, whose primary pointer hovers)
+// dressed nothing on a touchscreen laptop, whose primary pointer hovers). Since the painted-contrast ask of 2026-09-23 the report
+// also holds a remote picture in each shape of an href-less dead link, bare, captioned and under the floor, whose dress the three
+// cases below read as painted (paintedRatio)
 const TINY_TEXT = "# Report\n\n![local](figs/plot.svg)\n\n" + PARA(1) + "\n\n![build](" + WEB + "/tiny.svg)\n\n" + PARA(2) + "\n\n![big](" + WEB + "/pic.svg)\n\n" + PARA(3) + "\n\n"
   // a remote picture inside a dead host:port link (fv-dead, the href removed), bare (its control after the anchor), captioned (its
   // control inside the anchor, after the picture) and under the floor (the mark on the picture, inside the anchor); a dead link owns
@@ -694,7 +696,11 @@ function contrastOver(fg: string, ground: string): number {
 const tokenColour = (page: any, token: string): Promise<string> => page.evaluate((tok: string) => { const el = document.createElement("span"); el.style.color = "var(" + tok + ")"; document.querySelector(".fileview-md")!.appendChild(el); const c = getComputedStyle(el).color; el.remove(); return c; }, token);
 /** The mark's outline and the control's border, one colour, and that colour at least 3:1 over the first opaque ground (the legibility
  *  floor for a line that is the only sign of a state, WCAG 1.4.11): the file review's round 13, ui-1 with extra6-1, where the family's
- *  10 percent hairline read 1.35:1 dark and 1.25:1 light, present in the DOM as a faint ring under the floor on a 20 px badge. */
+ *  10 percent hairline read 1.35:1 dark and 1.25:1 light, present in the DOM as a faint ring under the floor on a 20 px badge. It reads
+ *  the token's computed colour over the first opaque ground, not the paint: no element opacity enters it (the web control's own, a
+ *  dead link's around the dress), so it holds the token alone, and it stayed green over the old sheet while the dress inside a dead
+ *  link painted 2.47:1 dark and 2.40:1 light; the painted read, through every opacity on the way, is paintedRatio (the
+ *  painted-contrast ask of 2026-09-23). */
 async function oneLegibleColour(page: any, r: { imgs: Under[] }, theme: string): Promise<void> {
   assert.equal(r.imgs[1].outlineColor, r.imgs[2].controlBorder, theme + " theme: the mark's outline colour is the control's border colour, one token (" + r.imgs[1].outlineColor + ")");
   const ground = await groundOf(page);

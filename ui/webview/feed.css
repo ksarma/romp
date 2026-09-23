@@ -1978,8 +1978,24 @@ a.fileview-gh-note { border-style: dashed; }
    still wins on the control), so the two dresses are one colour. Both at-rest rules key on `(hover: none)` OR `(any-pointer: coarse)`,
    `screen` written on both queries (css-rules' underScreen reads a list member by member): `hover` describes the PRIMARY pointer, and a
    touchscreen laptop's is a hovering trackpad, so neither dress stood there at rest while a finger's tap opened the tab (the section
-   snapshot action's precedent; the file review's round 13, extra7-2). Byte-equal in both sheets (fileview-parity.test.ts); laid out in
-   file-figure-open-browser.test.ts. */
+   snapshot action's precedent; the file review's round 13, extra7-2). The web control rests at FULL opacity where a local one keeps
+   0.8, as the section snapshot action stands at full where hover is none or any pointer is coarse: at 0.8 the picture under the control
+   showed through its background and its line alike, so the line's painted ratio followed the picture (read by pixels over the leg's
+   #333 picture, 2.46:1 on a VS Code editor ground of #404040). At 1 its own background, var(--bg), is the ground its dashes read
+   against, on the line's inner side and in every gap between them, over any picture; over a picture the line's outer side is the
+   author's pixels, which no colour of the dress can clear for every picture, so the dress is held to the ground the sheet controls. A
+   dead link (a.fv-dead) holding the dress, the web control after a captioned picture or the mark on a picture under the floor, dims its
+   words by colour and not by opacity, under `screen`, so a print keeps the opacity: the anchor's opacity 0.7 dimmed everything inside
+   it, the dress included (by pixels over the leg's picture, 2.47:1 dark and 2.40:1 light for the control at rest, 2.82:1 light for the
+   mark and for the control the pointer reveals), while an href-less dead link (a host with a port, a refused scheme, an empty target)
+   owns no click, so a tap, a click and Enter open the tab from inside it (file-view.ts FIGURE_LINK_SET); a dead section link keeps its
+   href, owns its click and holds no dress inside it. Its picture stands at full ink with the dress, its dotted underline, help cursor
+   and title still say it is dead, and a dead link with no dress keeps the opacity, pixel for pixel. So every state from which a gesture
+   opens the tab, inside a dead link too, paints the dress at the token's own ratio in both themes (4.83:1 dark, 4.90:1 light), read by
+   pixels in file-figure-open-browser.test.ts (paintedRatio) and composed from the declared opacities in theme-parity.test.ts; in VS
+   Code, whose editor ground the dark theme's --bg follows, the dress clears 3:1 on a neutral editor ground up to #404040 (3.00:1) and
+   falls under at #414141 (2.96:1), and on a light one from #efefef (3.00:1) (the painted-contrast ask of 2026-09-23). Byte-equal in
+   both sheets (fileview-parity.test.ts); laid out in file-figure-open-browser.test.ts. */
 .fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }
 .fileview-md .fv-figopen:hover { background: var(--bg) linear-gradient(var(--accent-wash), var(--accent-wash)); }
 .fileview-md .fv-figopen-left { float: left; }

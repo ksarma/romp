@@ -8166,7 +8166,9 @@ rule on. The file review's rounds are numbered by the maintainer, and a record n
 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 and 13 are the rounds the convention enumerates, this list the one home of the enumeration
 (ui/webview/linknav-records-attribution.test.ts reads its allowed set from this list and faults a numbered round the list
 lacks, so a round the maintainer rules next is added here first, and with it the ids its fixlist filed, in the roster
-paragraph after this one; the fixlists and rulings themselves are kept outside the repo in the maintainer's notes). In that numbering rounds 1 to 6 are the delta rounds, each reading what changed since the round before
+paragraph after this one; the fixlists and rulings themselves are kept outside the repo in the maintainer's notes). The
+maintainer's painted-contrast ask of 2026-09-23, found while staging the head that carried the fixes for the file review's
+round 13, is not one of those rounds and carries no number: a record names it as the painted-contrast ask of 2026-09-23. In that numbering rounds 1 to 6 are the delta rounds, each reading what changed since the round before
 (the records here cite rounds 1 to 5 among them); round 7 read the whole PR at one head before landing and is also named the
 file review's landing round, its fixlist carrying its own ids (fresh-N, rules-N, regression-N, tests-N and extra-N with a
 digit before the hyphen), none of the author's family; round 8 read the whole PR again at the head that carried the fixes
@@ -8495,7 +8497,12 @@ plain click still opens them where no link holds them, and a picture from the we
 itself, an outline the sheets key on the mark the decision sets right after the title (`data-fv-figweb`, `dressFigureMark`), on
 hover on a fine pointer and at rest where hover is none or any pointer is coarse, in the outbound dress's own token, `--outbound-line`,
 the one the control's dashed border wears at rest (the file review's round 13, ui-1 with extra6-1), so a tap's open is shown before it
-happens where the title is no surface; the file review's round 12, fresh-1), measured from the loaded picture's laid-out box while it is in
+happens where the title is no surface; the file review's round 12, fresh-1; the web control rests at full opacity where the at-rest rule
+stands, a local one at 0.8, and a dead link holding either dress dims its words by colour and not by opacity, since an href-less dead link
+owns no click and a tap, a click or Enter opens the tab from inside it, so every state a gesture opens the tab from paints the dress at the
+token's own ratio in both themes, read by pixels and composed from the declared opacities, and in VS Code on a neutral editor ground up
+to #404040 and on a light one from #efefef; the painted-contrast ask of 2026-09-23, where at 0.8 the control read 2.46:1 by pixels on a
+VS Code editor ground of #404040 and, at 0.8 x 0.7 inside a captioned dead link, 2.47:1 dark and 2.40:1 light), measured from the loaded picture's laid-out box while it is in
 the document, else its own size (`figureBox`, `figureTooSmall`; a loaded figure alone has a box to measure, `figureState`), read wherever the
 decision runs: in a browser a picture the browser is still fetching at the paint (mdBlock, `addFigureControls`) gets none
 then, and its load or its error (`armFigureControls`) runs the decision with the picture's size known; a picture the
@@ -8839,7 +8846,10 @@ ui/webview/fileview-parity.test.ts (the control's rules byte-equal in both sheet
 correctness-5, the Outline button's census on parsed rules over every sheet a page of either host loads) and
 ui/webview/file-view-outline.test.ts (the same census, in the file review's round 10, correctness-5),
 ui/webview/theme-parity.test.ts (the outbound line's pair, --outbound-line over --bg at 3 to 1 in both themes of both sheets, and
-feed's evaluated count moved with it, in the file review's round 13, ui-1 with extra6-1),
+feed's evaluated count moved with it, in the file review's round 13, ui-1 with extra6-1; and beside the pair, since the painted-contrast
+ask of 2026-09-23, a test of the dress as painted, every state a gesture opens the tab from composed from the opacities the sheets declare
+over the worst picture and on the VS Code editor grounds either side of the stated bound, whose executed twin is the open leg's
+paintedRatio, the dress read off screenshots of the real page under touch emulation, on a touchscreen laptop and on a fine pointer),
 ui/webview/anchor-map-fallback-markup.test.ts (the stand-in's control list), and in the review
 ui/webview/file-view-notice.test.ts (its Escape cases run every keydown handler an open registers in the document's
 order, the capture phase first, since the trail's listener is an open's newest registration, and the close hooks'

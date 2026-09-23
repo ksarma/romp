@@ -88,7 +88,9 @@ const PAIRS: Array<[string, string, number]> = [
   ["--outbound-line", "--bg", 3],                    // the viewer's outbound dress (the web control's dashed border at rest, the under-floor web picture's dashed
                                                      // outline): a LINE, the only sign of the outbound state on touch, so 3:1 on the page in both themes, a property
                                                      // pin by ratio (the file review's round 13, ui-1 with extra6-1: the 10 percent hairline it wore read 1.35:1 dark
-                                                     // and 1.25:1 light)
+                                                     // and 1.25:1 light). This row is the token alone, over the page with nothing between: the dress as PAINTED,
+                                                     // through the opacities the sheet declares on the way, is the last test here, which equals this pair once
+                                                     // every opacity on the way is 1 (the painted-contrast ask of 2026-09-23)
   // (--st-compacting-fg on --st-compacting-bg is deliberately NOT paired: the dark teal + white pairing predates
   // this file and sits at 2.49:1, and decision 3 of the 2026-09-08 notice audit keeps dark byte-identical; the
   // light re-ink — #0F766E, 4.30:1 on the card, white on it 5.47:1 — is pinned by value in notice-vocab.test.ts)
