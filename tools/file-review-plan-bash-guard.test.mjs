@@ -287,7 +287,7 @@ test('decision 47 records the walk-around lens second pass, each family tied to 
   assert.ok(d47.includes('a glued short form\n    (`sort -oFILE`)') || d47.includes('a glued short form (`sort -oFILE`)'));
   // since the third pass env -S is refused outright (WRAPPER_OPT's `refuse`), never read as a shell string
   assert.ok(d47.includes('`env -S`/`--split-string` runs a shell string') && hook.includes("refuse: { short: 'S', long: ['split-string'] }"));
-  assert.ok(/else if \(\/\^-o\.\/\.test\(t\)\) add\(sliceWord\(args\[k\], 2\), 'sort -o'\)/.test(hook), 'sort reads a glued -o');
+  assert.ok(hook.includes('function sortTargets(args)') && hook.includes('if (j < t.length - 1) targets.push(sliceWord(a, j + 1));'), 'sort reads a glued -o (and the -uo cluster: the reviewer\'s extra4-1, round 7\'s twenty-sixth commit)');
   // (2) assignment forms, since the third pass the bare identifier anywhere (bareExpandedNames)
   assert.ok(d47.includes('as an lvalue in any form the shells offer') && hook.includes('function bareExpandedNames(segments)'));
   // (3) in-command prefix mutations

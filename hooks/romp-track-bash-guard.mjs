@@ -3391,8 +3391,30 @@ function copyTargets(args, cwd, verb) {
   return { targets: out };
 }
 
+// THE WRITER'S LONG OPTIONS (round 7 of fork PR #780 review, twenty-sixth commit; the reviewer's extra4-1): the exact
+// known long options of the writers whose target GNU getopt_long could turn on through a `--` option the guard did not read.
+// A modeled writer that recognised only the exact spelling of a target-changing option accepted getopt_long's unambiguous
+// prefix abbreviations without seeing the target (`sed --in 's/x/y/' report.md` edited report.md in place in bash, zsh and
+// dash while the guard read no `-i`, and `sort --out=report.md base/report.md`, `sort --o=report.md ..` and the `-uo FILE`
+// cluster wrote the file while the guard read no output; measured 2026-09-23). The ruling is an EXACT table (sed's and
+// sort's, matching COPY_OPT's rule (f) convention for cp, mv, install and ln), refusing any unrecognised `--` option BY
+// NAME, so an abbreviation of an option (a script-giver's `--e`, `--fi`, `--fil`; in-place's `--in`, `--i`) or a target's
+// (`--out`, `--o`) is refused rather than read as a flag, never a re-implementation of getopt_long's prefix matching.
+// `argShort`/`flagShort` and `argLong` follow COPY_OPT for the short letters that take a value and the long options that
+// need a separate word. Every name is a real option of GNU sed 4.x and GNU coreutils sort 9.x on this box (`sed --help`,
+// `sort --help`).
+const SED_OPT = {
+  knownLong: new Set(['debug', 'expression', 'file', 'follow-symlinks', 'help', 'in-place', 'line-length', 'null-data', 'posix', 'quiet', 'regexp-extended', 'sandbox', 'separate', 'silent', 'unbuffered', 'version']),
+};
+const SORT_OPT = {
+  argShort: 'STtko',                       // -S SIZE, -T DIR, -t SEP, -k KEYDEF, -o FILE (its glued rest, or the next word)
+  flagShort: 'bcCdfghiMmnRrsuVz',          // the flags (-c/-C take an optional arg glued only)
+  argLong: new Set(['batch-size', 'buffer-size', 'compress-program', 'field-separator', 'files0-from', 'key', 'output', 'parallel', 'random-source', 'sort', 'temporary-directory']),
+  knownLong: new Set(['batch-size', 'buffer-size', 'check', 'compress-program', 'debug', 'dictionary-order', 'field-separator', 'files0-from', 'general-numeric-sort', 'help', 'human-numeric-sort', 'ignore-case', 'ignore-leading-blanks', 'ignore-nonprinting', 'key', 'merge', 'month-sort', 'numeric-sort', 'output', 'parallel', 'random-sort', 'random-source', 'reverse', 'sort', 'stable', 'temporary-directory', 'unique', 'version', 'version-sort', 'zero-terminated']),
+};
 // sed: every file operand when -i / --in-place is given (the script is the first operand unless
-// -e or -f supplied it).
+// -e or -f supplied it); { unknown } when a `--` option the exact table does not know is met, so the caller refuses it by
+// name (its abbreviations could turn on -i or a script-giver the guard would not see). Returns { targets } or { unknown }.
 function sedTargets(args) {
   let inPlace = false;
   let scriptGiven = false;
@@ -3404,7 +3426,11 @@ function sedTargets(args) {
     if (a.text === '-l' || a.text === '--line-length') { k++; continue; }
     if (a.text.startsWith('--expression=') || a.text.startsWith('--file=')) { scriptGiven = true; continue; }
     if (a.text === '--in-place' || a.text.startsWith('--in-place=')) { inPlace = true; continue; }
-    if (a.text.startsWith('--')) continue;
+    if (a.text.startsWith('--') && a.text.length > 2) {
+      const name = a.text.slice(2).split('=')[0];   // an exact known-long-option table, never getopt_long prefix matching (the reviewer's extra4-1)
+      if (!SED_OPT.knownLong.has(name)) return { unknown: a.text };
+      continue;   // a known flag (the value-taking long forms are handled above)
+    }
     if (a.text.startsWith('-') && a.text.length > 1) {
       // a cluster: -ni, -Ei, -i.bak, -ne 's/x/y/' (e and f take the next word as the script)
       const letters = a.text.slice(1);
@@ -3417,8 +3443,8 @@ function sedTargets(args) {
     }
     operands.push(a);
   }
-  if (!inPlace) return [];
-  return scriptGiven ? operands : operands.slice(1);
+  if (!inPlace) return { targets: [] };
+  return { targets: scriptGiven ? operands : operands.slice(1) };
 }
 
 // THE SED SCRIPT (round 6's third commit, 2026-09-21): the files a literal sed script writes through `w FILE`, `W FILE` and the `w FILE`
@@ -3511,6 +3537,47 @@ function sedScriptWrites(args, bodiesOf = null) {
     if (r.unread != null && !unread) unread = { word: w, why: `its sed script ${w.raw} reaches the command \`${r.unread}\`, which I do not read, before its end` };
   }
   return { targets, unread };
+}
+
+// sort: the files it writes through `-o FILE` / `--output=FILE` (the reviewer's extra4-1). The glued short form
+// (`sort -oFILE`) and the short cluster (`sort -uo FILE`: -u is unique, the trailing `o` takes the next word) are read the
+// way sort's own getopt reads them, and a `--` option the exact table (SORT_OPT) does not know is refused by name (its
+// abbreviations, `--out`, `--o`, could be `--output` consuming or gluing a target, which the guard would not see). `--` ends
+// the options: sort's later operands are input files, not writes. Returns { targets } or { unknown }.
+function sortTargets(args) {
+  const targets = [];
+  for (let k = 0; k < args.length; k++) {
+    const a = args[k];
+    const t = a.text;
+    if (t === '--') break;
+    if (t.startsWith('--') && t.length > 2) {
+      const eq = t.indexOf('=');
+      const name = eq < 0 ? t.slice(2) : t.slice(2, eq);
+      if (name === 'output') { if (eq < 0) { if (args[k + 1]) targets.push(args[k + 1]); k++; } else targets.push(sliceWord(a, eq + 1)); continue; }
+      if (!SORT_OPT.knownLong.has(name)) return { unknown: t };   // an exact table, never getopt_long prefix matching
+      if (eq < 0 && SORT_OPT.argLong.has(name)) k++;              // a value option's separate word
+      continue;
+    }
+    if (t.startsWith('-') && t.length > 1) {
+      let unknown = null;
+      for (let j = 1; j < t.length; j++) {
+        const ch = t[j];
+        if (ch === 'o') {   // -oFILE (glued) or -o FILE / -uo FILE (the trailing o takes the next word)
+          if (j < t.length - 1) targets.push(sliceWord(a, j + 1));
+          else if (args[k + 1]) { targets.push(args[k + 1]); k++; }
+          break;
+        }
+        if (SORT_OPT.argShort.includes(ch)) { if (j === t.length - 1) k++; break; }   // its glued rest, or the next word, is the value
+        if (SORT_OPT.flagShort.includes(ch)) continue;
+        unknown = '-' + ch;
+        break;
+      }
+      if (unknown) return { unknown };
+      continue;
+    }
+    // an input file operand: sort reads it, never writes it
+  }
+  return { targets };
 }
 
 // perl: every file operand when -i is among its switches (the program is the first operand unless
@@ -6316,6 +6383,12 @@ function extractIn(command, ctx) {
     const p = resolveLiteral(w.text, dir);
     if (!p) return;
     if (p.unresolvable) { cannotRead(w, how, { kind: 'unresolvable', text: p.unresolvable }); return; }
+    // THE PROC TARGET (the reviewer's extra6-3): a literal target under /proc or /dev/fd that the hook can only resolve
+    // through its OWN process, not the shell's, is refused as a target it cannot read rather than resolved to the wrong file.
+    // Recorded with no marks so inPlayFor asks the cwd's project (the shell's, where /proc/self/cwd lands), never the /proc
+    // path's own directory (which the hook cannot search for an unreadable pid, and which is not where the shell writes anyway).
+    const proc = unreadableProcTarget(p.path);
+    if (proc) { cannotRead(word(w.raw, false, w.raw), how, { kind: 'procTarget', text: proc }); return; }
     targets.push({ path: p.path, how: how + viaOf() });
   };
   // THE UNREAD OPERAND (round 7 of fork PR #780 review, twenty-fifth commit, 2026-09-23; the reviewer's Q1 as ruled in section B of the round-6 rulings,
@@ -7669,7 +7742,17 @@ function extractIn(command, ctx) {
         for (const a of args) if (!(a.text.startsWith('-') && a.text.length > 1)) add(a, 'tee');
         break;
       case 'dd':
-        for (const a of args) if (a.text.startsWith('of=')) add(word(a.text.slice(3), a.literal, a.raw, { glob: a.glob, marks: a.marks && a.marks.slice(3) }), 'dd');
+        for (const a of args) if (a.text.startsWith('of=')) {
+          add(word(a.text.slice(3), a.literal, a.raw, { glob: a.glob, marks: a.marks && a.marks.slice(3) }), 'dd');
+          // THE TILDE AFTER `=` (round 7 of fork PR #780 review, twenty-sixth commit; the reviewer's extra4-2): bash expands a
+          // leading `~` after the `=` of an assignment-shaped argument, so `dd of=~/..` writes through HOME while dash and zsh
+          // keep the `~` literal (measured 2026-09-23: bash writes, zsh and dash do not). The literal-path reading above stands
+          // beside this one, reusing plainValue; a tracked file under EITHER reading refuses, since bash may be the shell that runs.
+          if (a.literal && a.text[3] === '~') {
+            const { value } = plainValue(a, 2);   // eq at index 2 (`of=`); plainValue resolves a leading `~/`, `~`, `~+`, `~-` through HOME/PWD/OLDPWD
+            if (value != null && value !== a.text.slice(3)) add(word(value, true, a.raw), 'dd of=~');
+          }
+        }
         break;
       case 'sponge': case 'truncate':
         for (let k = 0; k < args.length; k++) {
@@ -7679,16 +7762,21 @@ function extractIn(command, ctx) {
           add(a, name);
         }
         break;
-      case 'sort':
-        for (let k = 0; k < args.length; k++) {
-          const t = args[k].text;
-          if (t === '-o' || t === '--output') add(args[k + 1], 'sort -o');
-          else if (t.startsWith('--output=')) add(sliceWord(args[k], 9), 'sort -o');
-          else if (/^-o./.test(t)) add(sliceWord(args[k], 2), 'sort -o');   // the glued short form `-oFILE` (the walk-around lens second pass, family 1; shuf -o stays out of model, its writer contract)
-        }
+      case 'sort': {
+        // sortTargets reads `-o`/`--output` (glued, separate and the `-uo FILE` cluster) and refuses a `--` option its exact
+        // table does not know (the reviewer's extra4-1); rule (f)'s convention, with the operands recorded as candidates too
+        const rs = sortTargets(args);
+        if (rs.unknown) { const why = { kind: 'unknownOption', option: rs.unknown }; cannotRead(word(rs.unknown, false, rs.unknown), 'sort', why); for (const c of optionCandidates(args)) cannotRead(c, 'sort', why); }
+        else for (const w of rs.targets) add(w, 'sort -o');
         break;
+      }
       case 'sed': {
-        for (const w of sedTargets(args)) add(w, 'sed -i');
+        const st = sedTargets(args);
+        // rule (f) (the reviewer's extra4-1): a `--` option the exact table does not know (an abbreviation of `--in-place`,
+        // `--expression` or `--file` GNU getopt_long accepts) refuses the command by name, since it may turn on in-place
+        // editing or a script-giver the guard would not see; the operands are recorded too, so a tracked one refuses from any cwd
+        if (st.unknown) { const why = { kind: 'unknownOption', option: st.unknown }; cannotRead(word(st.unknown, false, st.unknown), 'sed', why); for (const c of optionCandidates(args)) cannotRead(c, 'sed', why); break; }
+        for (const w of st.targets) add(w, 'sed -i');
         // sed's `w` and `W` commands and the `w` flag of `s` write the file they name (round 6's third commit: `sed -n 'w report.md'
         // ../base/report.md` and `sed 's/x/y/w report.md' ..` wrote the tracked file in every shell while the guard read sed as a writer
         // through `-i` alone); the files are read off every literal script word (sedScriptWrites), a script the reader cannot parse to its end
@@ -8093,6 +8181,23 @@ function trackedIn(root, file, closures) {
   let closure = closures.get(root);
   if (!closure) { closure = trackedClosure(root); closures.set(root, closure); }
   return closure.has(rel);
+}
+
+// A LITERAL TARGET THE HOOK CANNOT READ THROUGH ITS OWN PROCESS (round 7 of fork PR #780 review, twenty-sixth commit; the
+// reviewer's extra6-3): a path under `/proc/self/`, `/proc/thread-self/` or `/proc/<pid>/`, or a numbered descriptor
+// (`/dev/fd/N`, `/proc/self/fd/N`, `/proc/<pid>/fd/N`), leads through THE HOOK'S OWN process, not the shell's. The hook runs
+// where the kernel runs it, not the shell's cwd, so `/proc/self/cwd/report.md` resolved by realpathSync in the hook's process
+// is not where the shell writes it, and `/proc/self/root`, `/proc/<pid>/cwd` and a reopened descriptor are the hook's, not
+// the shell's, too. Such a target is one the guard cannot read (never resolved through realpathSync here), so it refuses while
+// a project is in play (the same as any unreadable target) rather than resolving to the wrong file and allowing. The standard
+// streams are exempt (descriptors 0, 1 and 2: `/dev/fd/1`, `/proc/self/fd/2` and the like are `/dev/stdout`/`/dev/stderr`
+// writes allowed today; a write to a stream is not a write to a file). Returns the reason, or null when the path is not one of
+// these or names an exempt descriptor. `p` is the target as the hook would open it (an absolute, folded path).
+function unreadableProcTarget(p) {
+  const fd = /^\/dev\/fd\/([0-9]+)(?:\/|$)/.exec(p) || /^\/proc\/(?:self|thread-self|[0-9]+)\/fd\/([0-9]+)(?:\/|$)/.exec(p);
+  if (fd) return Number(fd[1]) <= 2 ? null : 'names a numbered descriptor open in my own process, not the shell\'s, so I cannot read which file it leads to';
+  if (/^\/proc\/(?:self|thread-self|[0-9]+)(?:\/|$)/.test(p)) return `is under \`${p.match(/^\/proc\/[^/]+/)[0]}\`, which leads through my own process, not the shell's, so I cannot read where it points`;
+  return null;
 }
 
 // The path the kernel opens for `file`: every symlink in it resolved (the native realpath, which
@@ -8861,6 +8966,13 @@ function judge(command, cwd) {
         + `expansion whose value may be empty or unset, or a pattern that may match nothing), so how many operands it runs with, and which file it would `
         + `write, is not known, and ${where} tracks files whose changes are recorded for me to accept or reject. Spell the operands out as literal `
         + `words: outside that project the command then runs as usual, and a tracked file takes its change through track-edit instead:\n${TRACK_EDIT}`;
+    }
+    if (u.why && u.why.kind === 'procTarget') {
+      // THE PROC TARGET (the reviewer's extra6-3): a target under /proc or /dev/fd leads through the hook's own process, not the shell's
+      return `This command is blocked here: its ${u.how} names ${u.raw}, which ${u.why.text}, so I cannot tell which file the write `
+        + `lands on, and ${where} tracks files whose changes are recorded for me to accept or reject. Spell the target as its real `
+        + `path: outside that project the command then runs as usual, and a tracked file takes its change through track-edit `
+        + `instead:\n${TRACK_EDIT}`;
     }
     if (u.why && u.why.kind === 'unresolvable') {
       return `This command is blocked here: its ${u.how} names ${u.raw}, and ${u.why.text}, a directory on that path, is one I cannot `

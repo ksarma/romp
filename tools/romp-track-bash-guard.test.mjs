@@ -12416,3 +12416,153 @@ test("round 7, twenty-fifth commit, the rows: every row of the ninth residual cl
     assert.ok(hook.indexOf('const own = judgeUnresolved(unresolved);') > 0 && hook.indexOf('const own = judgeUnresolved(unresolved);') < hook.indexOf('for (const t of q1Targets) {'), "THE UNREAD OPERAND speaks after the command's own reading, so a refusal the reading gives keeps its account (behaviour: the rows of earlier commits whose reasons are pinned, HD-default-word among them)");
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
+
+// ── round 7 of fork PR #780 review, twenty-sixth commit (2026-09-23): the reviewer's extra4-1, extra4-2 and extra6-3 ──
+//
+// Three writers the guard misread. extra4-1: a modeled writer whose target GNU getopt_long turns on through a `--` option
+// the guard read only in its exact spelling accepted the option's unambiguous prefix abbreviations without seeing the target
+// (`sed --in 's/x/y/' report.md` edited in place, `sort --out=report.md ..`, `sort --o=report.md ..` and the `-uo FILE`
+// cluster wrote the file, in bash, zsh and dash, while the guard allowed). The fix is an EXACT known-long-option table per
+// writer (SED_OPT, SORT_OPT), refusing any unrecognised `--` option BY NAME (its abbreviations, the script-givers' `--e`,
+// `--fi`, `--fil` and in-place's `--in`, `--i` among them) and reading sort's `-uo` short cluster the way sort's getopt does,
+// never getopt_long prefix matching. extra4-2: bash expands a leading `~` after the `=` of an assignment-shaped argument, so
+// `dd of=~/..` writes through HOME while zsh and dash keep the `~` literal (measured); the fix ADDS bash's tilde reading
+// beside the literal-path reading, reusing plainValue, and a tracked file under EITHER reading refuses. extra6-3: a literal
+// target under `/proc/self/`, `/proc/thread-self/`, `/proc/<pid>/`, `/dev/fd/` or `/proc/<...>/fd/` leads through the hook's
+// OWN process, not the shell's, so `/proc/self/cwd/report.md` resolved here is not where the shell writes it; the fix refuses
+// it as a target the guard cannot read (never resolved through realpathSync in the hook's process), the standard streams
+// (descriptors 0, 1, 2) exempt. Each row runs through the hook as a process from its cwd (and from a cwd in no project, where
+// a relative operand names no tracked file), then unguarded in bash, zsh and dash over a fresh world, the writers pinned
+// (r7-d26-*.log in the notes). The reviewers' correction on extra6-3 stands: the test world must NOT spawn the hook with the
+// row's cwd (that would HIDE the class, since /proc/self/cwd would then resolve to the payload cwd inside the hook's process);
+// its absence is pinned below.
+test("round 7, twenty-sixth commit, the rows: a modeled writer's `--` option not in its exact table refuses by name (sed's and sort's abbreviations of --in-place/--expression/--file/--output) and sort's `-uo FILE` cluster names its output; `dd of=~/..` refuses under bash's tilde-after-`=` reading beside the literal one; a literal target under /proc or /dev/fd (bar the standard streams) is one the guard cannot read; each with the shells that write", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const B = ['bash'];
+    const N = [];
+    const RECOGNISE = ['text', 'which I do not recognise'];   // rule (f): a `--` (or short) option the exact table does not know
+    const OWN_PROCESS = ['text', 'my own process'];           // extra6-3: /proc or /dev/fd resolved through the hook's own process
+    const toolPresent = (p) => _spawnSync('sh', ['-c', `command -v ${p}`], { encoding: 'utf8' }).status === 0;
+    // [id, cwd, command, the shells that write (measured), the verdict ('allow', 'name', or ['text', a substring]), the verdict
+    // from a cwd in no project ('allow' unless given; null: not asked, the target is absolute via `~`/`$HOME`, refused anywhere),
+    // the program the row needs besides the shells]
+    const rows = [
+      // extra4-1: sed. The abbreviations getopt_long accepts, refused by name (a false-refusal cost where the abbreviation
+      // does not write, as `--fi`, `--fil` alone read a script from a file, is on the safe side); the exact options still work.
+      ["E41-sed-in", "nad", "sed --in 's/O/X/' report.md", A, RECOGNISE, 'allow', 'sed'],
+      ["E41-sed-i", "nad", "sed --i 's/O/X/' report.md", A, RECOGNISE, 'allow', 'sed'],
+      ["E41-sed-inpl-bak", "nad", "sed --in-pl=.bak 's/O/X/' report.md", A, RECOGNISE, 'allow', 'sed'],
+      ["E41-sed-e-eq", "nad", "sed --e='s/O/X/' -i report.md", A, RECOGNISE, 'allow', 'sed'],
+      ["E41-sed-exp-eq", "nad", "sed --exp='s/O/X/' -i report.md", A, RECOGNISE, 'allow', 'sed'],
+      ["E41-sed-in-nan", "nan", "sed --in 's/O/X/' n1.md", A, RECOGNISE, 'allow', 'sed'],
+      ["E41-sed-in-na", "na", "sed --in 's/O/X/' docs/report.md", A, RECOGNISE, 'allow', 'sed'],
+      ["E41-sed-fi", "nad", "sed --fi report.md", N, RECOGNISE, 'allow', 'sed'],
+      ["E41-sed-fil", "nad", "sed --fil report.md", N, RECOGNISE, 'allow', 'sed'],
+      ["E41-sed-in-place-ctl", "nad", "sed --in-place 's/O/X/' report.md", A, 'name', 'allow', 'sed'],
+      ["E41-sed-i-short-ctl", "nad", "sed -i 's/O/X/' report.md", A, 'name', 'allow', 'sed'],
+      ["E41-sed-exp-full-ctl", "nad", "sed --expression='s/O/X/' -i report.md", A, 'name', 'allow', 'sed'],
+      ["E41-sed-posix-ctl", "nad", "sed --posix -i 's/O/X/' report.md", A, 'name', 'allow', 'sed'],
+      ["E41-sed-untracked-ctl", "nad", "sed --in-place 's/O/X/' ../scratch/keep.md", N, 'allow', 'allow', 'sed'],
+      // extra4-1: sort. The abbreviations of --output (glued and separate), the `-uo`/`-zuo` clusters, and unknown `--`/short
+      // options refused; the exact `-o`/`--output` and the known flags/value options still work.
+      ["E41-sort-out-eq", "nad", "sort --out=report.md ../base/report.md", A, RECOGNISE, 'allow', 'sort'],
+      ["E41-sort-o-eq", "nad", "sort --o=report.md ../base/report.md", A, RECOGNISE, 'allow', 'sort'],
+      ["E41-sort-outp-eq", "nad", "sort --outp=report.md ../base/report.md", A, RECOGNISE, 'allow', 'sort'],
+      ["E41-sort-out-sep", "nad", "sort --out report.md ../base/report.md", A, RECOGNISE, 'allow', 'sort'],
+      ["E41-sort-uo", "nad", "sort -uo report.md ../base/report.md", A, 'name', 'allow', 'sort'],
+      ["E41-sort-uo-glued", "nad", "sort -uoreport.md ../base/report.md", A, 'name', 'allow', 'sort'],
+      ["E41-sort-zuo", "nad", "sort -zuo report.md ../base/report.md", A, 'name', 'allow', 'sort'],
+      ["E41-sort-uo-nan", "nan", "sort -uo n1.md ../base/report.md", A, 'name', 'allow', 'sort'],
+      ["E41-sort-uo-na", "na", "sort -uo docs/report.md base/report.md", A, 'name', 'allow', 'sort'],
+      ["E41-sort-o-sep-ctl", "nad", "sort -o report.md ../base/report.md", A, 'name', 'allow', 'sort'],
+      ["E41-sort-o-glued-ctl", "nad", "sort -oreport.md ../base/report.md", A, 'name', 'allow', 'sort'],
+      ["E41-sort-output-full-ctl", "nad", "sort --output=report.md ../base/report.md", A, 'name', 'allow', 'sort'],
+      ["E41-sort-o-untracked-ctl", "nad", "sort -o ../scratch/s.md ../base/report.md", N, 'allow', 'allow', 'sort'],
+      ["E41-sort-debug-ctl", "nad", "sort --debug ../base/report.md", N, 'allow', 'allow', 'sort'],
+      ["E41-sort-key-o-ctl", "nad", "sort --key=1 -o report.md ../base/report.md", A, 'name', 'allow', 'sort'],
+      ["E41-sort-t-o-ctl", "nad", "sort -t: -o report.md ../base/report.md", A, 'name', 'allow', 'sort'],
+      ["E41-sort-frob", "nad", "sort --frobnicate ../base/report.md", N, RECOGNISE, 'allow', 'sort'],
+      ["E41-sort-short-Q", "nad", "sort -Q ../base/report.md", N, RECOGNISE, 'allow', 'sort'],
+      // extra4-2: dd of=~ (bash writes through HOME, zsh and dash keep the `~` literal); the tilde reading is absolute, so it
+      // refuses from any cwd (outside=null). `~+` is PWD-relative, so from a cwd in no project it lands outside every project.
+      ["E42-dd-tilde", "nad", "dd if=../base/report.md of=~/../notes-api/docs/report.md", B, 'name', null, 'dd'],
+      ["E42-dd-tilde-plus", "nad", "dd if=../base/report.md of=~+/report.md", B, 'name', 'allow', 'dd'],
+      ["E42-dd-home-ctl", "nad", "dd if=../base/report.md of=$HOME/../notes-api/docs/report.md", A, 'name', null, 'dd'],
+      ["E42-dd-plain-ctl", "nad", "dd if=../base/report.md of=report.md", A, 'name', 'allow', 'dd'],
+      ["E42-dd-tilde-untracked-ctl", "nad", "dd if=../base/report.md of=~/keep.md", N, 'allow', 'allow', 'dd'],
+      // extra6-3: /proc and /dev/fd targets the hook cannot read through its own process; the standard streams exempt.
+      ["E63-cp-proc-self-cwd", "nad", "cp ../base/report.md /proc/self/cwd/report.md", A, OWN_PROCESS, 'allow'],
+      ["E63-cp-proc-thread-self-cwd", "nad", "cp ../base/report.md /proc/thread-self/cwd/report.md", A, OWN_PROCESS, 'allow'],
+      ["E63-mv-proc-self-cwd", "nad", "mv ../base/report.md /proc/self/cwd/report.md", A, OWN_PROCESS, 'allow'],
+      ["E63-dd-proc-self-cwd", "nad", "dd if=../base/report.md of=/proc/self/cwd/report.md", A, OWN_PROCESS, 'allow', 'dd'],
+      ["E63-redir-proc-self-cwd", "nad", "echo x > /proc/self/cwd/report.md", A, OWN_PROCESS, 'allow'],
+      ["E63-sort-proc-self-cwd", "nad", "sort -o /proc/self/cwd/report.md ../base/report.md", A, OWN_PROCESS, 'allow', 'sort'],
+      ["E63-install-proc-self-cwd", "nad", "install ../base/report.md /proc/self/cwd/report.md", A, OWN_PROCESS, 'allow', 'install'],
+      ["E63-tee-proc-self-cwd", "nad", "echo x | tee /proc/self/cwd/report.md", A, OWN_PROCESS, 'allow', 'tee'],
+      ["E63-cp-proc-digits-cwd", "nad", "cp ../base/report.md /proc/1/cwd/report.md", N, OWN_PROCESS, 'allow'],
+      ["E63-cp-proc-self-root", "nad", "cp ../base/report.md /proc/self/root/tmp/x.md", N, OWN_PROCESS, 'allow'],
+      ["E63-cp-dev-fd3", "nad", "cp ../base/report.md /dev/fd/3", N, OWN_PROCESS, 'allow'],
+      ["E63-cp-proc-self-fd3", "nad", "cp ../base/report.md /proc/self/fd/3", N, OWN_PROCESS, 'allow'],
+      ["E63-redir-dev-fd3", "nad", "echo x > /dev/fd/3", N, OWN_PROCESS, 'allow'],
+      // a cost, disclosed: the guard cannot read /proc/self/cwd, so it refuses any name under it while a project is in play,
+      // an untracked one (docs/other.md) included; the remedy (the real path) is in the reason
+      ["E63-cp-proc-self-cwd-other", "nad", "cp ../base/report.md /proc/self/cwd/other.md", N, OWN_PROCESS, 'allow'],
+      // the exemption: descriptors 0, 1 and 2 are the standard streams (/dev/stdout, /dev/stderr), allowed as before
+      ["E63-cp-dev-fd1-ctl", "nad", "cp ../base/report.md /dev/fd/1", N, 'allow', 'allow'],
+      ["E63-cp-dev-fd0-ctl", "nad", "cp ../base/report.md /dev/fd/0", N, 'allow', 'allow'],
+      ["E63-cp-proc-self-fd2-ctl", "nad", "cp ../base/report.md /proc/self/fd/2", N, 'allow', 'allow'],
+      ["E63-cp-proc-self-fd0-ctl", "nad", "cp ../base/report.md /proc/self/fd/0", N, 'allow', 'allow'],
+      ["E63-echo-dev-stdout-ctl", "nad", "echo x > /dev/stdout", N, 'allow', 'allow'],
+      ["E63-echo-dev-fd1-ctl", "nad", "echo x > /dev/fd/1", N, 'allow', 'allow'],
+      ["E63-echo-dev-fd2-ctl", "nad", "echo x > /dev/fd/2", N, 'allow', 'allow'],
+    ];
+    const judge = (id, cwd, raw, writers, expect, outside = 'allow', program = null) => {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      w.build();
+      const h = w.hook(cmd, at);
+      assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error: ${h.reason.split('\n')[0]}`);
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!h.reason.includes(String.fromCharCode(0x2014)) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      if (outside != null) {
+        w.build();
+        const o = w.hook(cmd, w.cwds.out);
+        assert.equal(o.status, 0, `${id}: from a cwd in no project the relative operand names no tracked file: ${cmd}: ${o.reason}`);
+      }
+      if (program && !toolPresent(program)) { console.error(`NOT RUN: real ${program} is not on this runner, so its evidence leg did not run: ${id}`); return; }
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    };
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect, outside, program] of rows) { judge(id, cwd, raw, writers, expect, outside, program); n++; }
+    assert.equal(n, rows.length);
+    assert.equal(rows.length, 58, 'the population: 32 extra4-1 (sed 14, sort 18), 5 extra4-2, 21 extra6-3');
+    assert.equal(rows.filter((r) => r[0].startsWith('E41-')).length, 32);
+    assert.equal(rows.filter((r) => r[0].startsWith('E42-')).length, 5);
+    assert.equal(rows.filter((r) => r[0].startsWith('E63-')).length, 21);
+    // where the code lives (the rows above prove what it does; each pin names the rows that red without it)
+    const hook = fs.readFileSync(HOOK, 'utf8');
+    assert.ok(hook.includes('const SED_OPT = {') && hook.includes('const SORT_OPT = {') && hook.includes('if (!SED_OPT.knownLong.has(name)) return { unknown: a.text };') && hook.includes('if (!SORT_OPT.knownLong.has(name)) return { unknown: t };'), 'extra4-1: exact known-long-option tables, refusing an unrecognised `--` option by name (behaviour: E41-sed-in, E41-sed-e-eq, E41-sort-out-eq, E41-sort-outp-eq, E41-sort-out-sep, E41-sort-frob)');
+    assert.ok(hook.includes('function sortTargets(args)') && hook.includes("if (SORT_OPT.argShort.includes(ch))") && hook.includes("if (ch === 'o') {   // -oFILE (glued) or -o FILE / -uo FILE (the trailing o takes the next word)"), 'extra4-1: sort reads its short cluster, the trailing `o` taking the next word (behaviour: E41-sort-uo, E41-sort-uo-glued, E41-sort-zuo, E41-sort-short-Q)');
+    assert.ok(hook.includes("if (a.literal && a.text[3] === '~') {") && hook.includes("const { value } = plainValue(a, 2);") && hook.includes("if (value != null && value !== a.text.slice(3)) add(word(value, true, a.raw), 'dd of=~');"), 'extra4-2: dd of= gains bash\'s tilde-after-`=` reading beside the literal one, reusing plainValue (behaviour: E42-dd-tilde, E42-dd-tilde-plus)');
+    assert.ok(hook.includes('function unreadableProcTarget(p) {') && hook.includes('const proc = unreadableProcTarget(p.path);') && hook.includes("if (fd) return Number(fd[1]) <= 2 ? null :"), 'extra6-3: a literal target under /proc or /dev/fd (bar descriptors 0-2) is one the guard cannot read (behaviour: E63-cp-proc-self-cwd, E63-cp-dev-fd3, E63-cp-dev-fd1-ctl)');
+    assert.ok(hook.includes("if (proc) { cannotRead(word(w.raw, false, w.raw), how, { kind: 'procTarget', text: proc }); return; }"), 'extra6-3: the proc target is recorded with no marks so inPlayFor asks the cwd\'s project, never the /proc path (behaviour: E63-cp-proc-digits-cwd refuses by the class, not the pid\'s permission error)');
+    // extra6-3, the reviewers' correction: the test world spawns the hook with NO cwd option, so a /proc/self/cwd row exposes
+    // the class (were the hook spawned with the row's cwd, /proc/self/cwd would resolve to the payload cwd inside the hook's
+    // process and the row would refuse for the wrong reason, hiding the defect). Pin its absence.
+    const thisSrc = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
+    const hookHelper = thisSrc.split('\n').find((l) => l.includes('const hook = (cmd, cwd) => { const r = spawnSync(process.execPath, [HOOK]'));
+    assert.ok(hookHelper && !/cwd:/.test(hookHelper), 'extra6-3: the test world hook spawn passes no cwd option (both refuters ruled that spawning with the row\'s cwd would hide the class)');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
