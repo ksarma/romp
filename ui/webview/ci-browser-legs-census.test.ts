@@ -94,7 +94,14 @@
 // callee the walker knows no loader for, class none with no refusal before round 7 and refused by THE SAFETY NET since, beside the
 // literal control, the controls of the clause's own reading and the boundaries the census header states; and Promise.allSettled
 // over a name an array holding a shared inBrowser call was bound to, or over a spread of that name, swallow [] before and after,
-// the two witnesses the review's round 7 added to the rule the census header's swallow clause states), every one is red under
+// the two witnesses the review's round 7 added to the rule the census header's swallow clause states; and a specifier spelled with
+// a script suffix, read since round 7 by the bundler's mapping: a .cjs or .mjs spelling that names no file, read as the .ts beside it
+// before (the launcher bound, class shared, gap null, no refusal) where the bundler loads the .cts or the .mts twin, which launches
+// Firefox, the .cjs row in a plants root of its own since the main tree's .cjs twin stands at that spelling; a .js spelling whose
+// .tsx the bundler loads and a .jsx spelling of the launcher, each refused as naming no file before; a .jsx module loaded as spelled,
+// skipped as no script before, class none with no refusal; a .js spelling beside a declaration file alone, read as the
+// declaration before, which the bundler never loads; and a .js spelling with a .js beside the launcher, bound as the launcher
+// before round 7 when the .ts came first), every one is red under
 // the census before round 6 (the module at the round-5 head) unless the table names it held with its reason, and the same test holds
 // the table to that statement. A module
 // whose classification throws for any other reason is refused by name and the census goes on, executed over a synthetic root by a
@@ -323,7 +330,10 @@ test("the roster plus the exclusions whose source is present equals the census's
   t.diagnostic("rosterable by the gate: " + count((r) => rosterGap(r) === null) + "; legs importing the launcher and never calling it: " + count((r) => !!r.launcherImported && r.sharedCalls === 0) + "; shared calls whose rejection is swallowed (a try with a catch, .catch, .then's second argument or Promise.allSettled; admitted, reported): " + count((r) => (r.swallow || []).length > 0) + "; legs with a skip or todo: " + count((r) => (r.skipTodo || []).length > 0) + "; own launches: " + recs.reduce((n, r) => n + (r.launches || []).length, 0) + " sites in " + count((r) => (r.launches || []).length > 0) + " modules");
 });
 
-/** What each planted form is: the fixture's file under tests/fixtures/browser-legs-plants/<dir>, and the verdict the census
+/** What each planted form is: the fixture's file under tests/fixtures/browser-legs-plants/<dir> (under <root>/<dir> when the row
+ *  names a root: a plants root of its own, a directory of the fixture tree beside ui/ and vscode-extension/ with its own stub
+ *  launcher, read by census() over that root, for a shape the main tree cannot carry; p370's .cjs spelling reaches a .cts only where
+ *  no .cjs stands, and the main tree's .cjs twin, p348 and p349, stands there), and the verdict the census
  *  gives it. `gap` is a substring of rosterGap's sentence (null: the gate passes); `refused` a substring of the refusal, with the
  *  line; `strictRefused`: refused under --strict-computed, where computed names are not folded. The round-1 findings each plant
  *  answers are named beside it. A round-3 row (p38 to p88) also says whether it discriminates against the census before round 3
@@ -336,7 +346,7 @@ test("the roster plus the exclusions whose source is present equals the census's
  *  the plants (the PR's notes) and is not re-run here. */
 type Held = `${"a stated residual boundary" | "the no-refusal half of a pair whose partner reds" | "a guard of round 3's own scoping" | "a shape another plant carries" | "a pin of an arm no plant carried"}: ${string}`;
 type Plant = {
-  dir: string; file: string; leg: boolean; cls: string; gap: string | null; engines?: string[]; playwright?: string[];
+  dir: string; root?: string; file: string; leg: boolean; cls: string; gap: string | null; engines?: string[]; playwright?: string[];
   launches?: string[]; skipTodo?: string[]; swallow?: number[]; refused?: string; strictRefused?: boolean; launcherImported?: boolean;
   holds?: Held; carried?: `a shape another plant carries: ${string}`;
 };
@@ -1062,6 +1072,29 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p367-r7c-c10-chained-plus-const-require-control.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["firefox"], launches: [".launch("], launcherImported: false, holds: "the no-refusal half of a pair whose partner reds: p332 (a const bound to the package's name and handed to a callee the walker knows no loader for, refused by the bound-name clause): a const bound to the package's name, read inside a + chain that initializes a second const a require loads, is own Firefox with no refusal before and after round 7, the clause climbing the + operand to the chain's root and accounting the reference through the second name (the row holds no playwright field: the census before round 6 joined the chain with a slash, the spelling p285 and its kin carry)" }, // c10: const PKG = PW; const SPEC = PKG + "-core"; require(SPEC)
   { dir: W, file: "p368-r7c-c20-bound-names-in-a-cycle-control.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, holds: "the no-refusal half of a pair whose partner reds: p338 (a let bound to the package's name by an assignment and read as a foreign callee's argument, refused by the bound-name clause): two lets bound to each other in a cycle, let a = \"playwright\"; let b = a; a = b, with no other reference, are class none with no refusal before and after round 7, the clause's recursion ending at the name it has already read (without that guard the census throws on this row)" }, // c20
   { dir: W, file: "p369-r7c-d1-destructured-declaration-target.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p369-r7c-d1-destructured-declaration-target.test.ts:3: " + NET_HEAD + NET_BOUND_TARGET("[head]") + NET_NO_REACH }, // d1: const [head] = PW handed to a foreign callee (before round 7: class none, no refusal)
+  // B, the bundler's mapping (correctness-1, the maintainer's answer after the round's first build): resolveSpec and candidatesOf read
+  // a script spelling as the bundler does, the file at the spelled path first, then its rewrite, a .js or .jsx as the .ts then the
+  // .tsx, a .cjs as the .cts, a .mjs as the .mts, where the round's first build read a .cjs or .mjs that names no file as the .ts
+  // beside it. p370, a .cjs spelling in the plants root no-cjs-twin (in the main tree the .cjs twin, p348 and p349, is the file the
+  // bundler loads for that spelling), whose launcher has a real-viewer-leg.cts beside it that launches Firefox, and p371, the .mjs
+  // spelling beside the main tree's launcher and its real-viewer-leg.mts: class shared, gap null, no refusal before round 7 (a
+  // Firefox leg rostered as a Chromium one), refused by the twin's content since. p372, a .js spelling whose .tsx the bundler loads
+  // (no .ts beside it; the .tsx carries JSX and parses as TSX alone), and p373, a .jsx spelling of the launcher: each refused as
+  // naming no file before, read as the .tsx and bound as the launcher since. p374, a .jsx module loaded as spelled: skipped as no
+  // script before (class none, no refusal), read since. p375, a .js spelling beside a declaration file alone: read as the declaration
+  // before, which the bundler never loads, and refused as naming no file since. Each red under the census before round 6 and under
+  // the round's first build alike. And p376, in no-cjs-twin, a .js spelling with a real-viewer-leg.js beside that root's launcher,
+  // which launches Firefox: the spelled path first, so the .js is read and not the launcher (bound as the launcher before round 7,
+  // when the .ts came first, and read as the .js since the round's first build); with the .cts beside the main tree's .cjs twin it
+  // holds the spelled path first at both roads under the bundler's mapping, where a .cjs never reaches the launcher's .ts. The
+  // parity test after resolveLocal's bases test holds each planted specifier's file equal to the bundler's.
+  { dir: W, root: "no-cjs-twin", file: "p370-r7b-m1-cts-beside-the-launcher.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p370-r7b-m1-cts-beside-the-launcher.test.ts:2: loads ui/webview/real-viewer-leg.cts, which names a playwright package (playwright)" }, // m1: require("./real-viewer-leg.cjs"), no .cjs beside the launcher, a .cts there (before round 7: class shared, gap null, no refusal, bound as the launcher)
+  { dir: W, file: "p371-r7b-m2-mts-beside-the-launcher.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p371-r7b-m2-mts-beside-the-launcher.test.ts:2: loads ui/webview/real-viewer-leg.mts, which names a playwright package (playwright)" }, // m2: import { inBrowser } from "./real-viewer-leg.mjs", no .mjs beside the launcher, a .mts there (before round 7: class shared, gap null, no refusal)
+  { dir: W, file: "p372-r7b-m3-js-spelling-reaches-a-tsx.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p372-r7b-m3-js-spelling-reaches-a-tsx.test.ts:2: loads ui/webview/bundler-tsx-helper.tsx, which names a playwright package (playwright)" }, // m3: require("./bundler-tsx-helper.js") with the .tsx alone (before round 7: loads ./bundler-tsx-helper.js, which names no file)
+  { dir: W, file: "p373-r7b-m4-jsx-spelling-of-the-launcher.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true }, // m4: import { inBrowser } from "./real-viewer-leg.jsx" (before round 7: loads ./real-viewer-leg.jsx, which names no file)
+  { dir: W, file: "p374-r7b-m5-jsx-module-loaded-as-spelled.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p374-r7b-m5-jsx-module-loaded-as-spelled.test.ts:2: loads ui/webview/bundler-jsx-helper.jsx, which names a playwright package (playwright)" }, // m5: require("./bundler-jsx-helper.jsx") (before round 7: class none, no refusal, the .jsx skipped as no script)
+  { dir: W, file: "p375-r7b-m6-js-spelling-with-a-declaration-file-alone.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p375-r7b-m6-js-spelling-with-a-declaration-file-alone.test.ts:2: loads ./bundler-dts-only.js, which names no file in the tree" }, // m6: require("./bundler-dts-only.js") beside bundler-dts-only.d.ts alone (before round 7: class none, no refusal, the declaration read)
+  { dir: W, root: "no-cjs-twin", file: "p376-r7b-m7-js-file-beside-the-launcher.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p376-r7b-m7-js-file-beside-the-launcher.test.ts:2: loads ui/webview/real-viewer-leg.js, which names a playwright package (playwright)" }, // m7: require("./real-viewer-leg.js") with a real-viewer-leg.js beside the launcher (before round 7: class shared, gap null, no refusal, bound as the launcher, the .ts first)
 ];
 const bundleOf = (p: Plant): string => "out-tests/" + p.dir + "/" + p.file.replace(/\.test\.ts$/, ".test.js");
 
@@ -1335,15 +1368,22 @@ test("every planted form under tests/fixtures/browser-legs-plants is classified 
     for (const w of underReads) assert.ok(named.includes(w), w + " is missing from " + home + ": every swallow under-read the plant table holds (" + JSON.stringify(underReads) + ") is named there as (" + w + "), so a disclosed residual keeps its named witness in both homes the owner's call 3 named. Holds the property");
     for (const w of named) assert.ok(underReads.includes(w), home + " names (" + w + "), which is no swallow under-read of the plant table (" + JSON.stringify(underReads) + "): a witness named in prose is a row with swallow [] and holds a stated residual boundary. Holds the property");
   }
-  // the table and the fixture tree name the same files
-  const onDisk = [W, "vscode-extension/src"].flatMap((d) => fs.readdirSync(path.join(PLANTS, d)).filter((f) => f.endsWith(".test.ts")).map((f) => d + "/" + f)).sort();
-  assert.deepEqual(onDisk, PLANT_TABLE.map((p) => p.dir + "/" + p.file).sort(), "the plant table names every fixture and no other (a fixture added without a row is a plant with no expected outcome)");
+  // the table and the fixture tree name the same files. A plants root of its own is every directory of the fixture tree beside ui/
+  // and vscode-extension/ (the relative-node-modules subtree aside, which a test of its own reads over a synthetic root), derived
+  // from the tree, so a root added without rows, or rows naming a root that is not there, is red here and no plant goes unread
+  const ownRoots = fs.readdirSync(PLANTS, { withFileTypes: true }).filter((e) => e.isDirectory() && !["ui", "vscode-extension", "relative-node-modules"].includes(e.name)).map((e) => e.name).sort();
+  assert.deepEqual(ownRoots, [...new Set(PLANT_TABLE.flatMap((p) => (p.root ? [p.root] : [])))].sort(), "every directory of the fixture tree beside ui/ and vscode-extension/ (relative-node-modules aside) is a plants root of its own that rows name, and every root a row names is such a directory");
+  for (const o of ownRoots) assert.ok(fs.existsSync(path.join(PLANTS, o, "ui", "webview", "real-viewer-leg.ts")), "the plants root " + o + " carries its own stub ui/webview/real-viewer-leg.ts for its plants to import");
+  const onDisk = [W, "vscode-extension/src"].flatMap((d) => fs.readdirSync(path.join(PLANTS, d)).filter((f) => f.endsWith(".test.ts")).map((f) => d + "/" + f))
+    .concat(ownRoots.flatMap((o) => [W, "vscode-extension/src"].filter((d) => fs.existsSync(path.join(PLANTS, o, d))).flatMap((d) => fs.readdirSync(path.join(PLANTS, o, d)).filter((f) => f.endsWith(".test.ts")).map((f) => o + "/" + d + "/" + f)))).sort();
+  assert.deepEqual(onDisk, PLANT_TABLE.map((p) => (p.root ? p.root + "/" : "") + p.dir + "/" + p.file).sort(), "the plant table names every fixture and no other (a fixture added without a row is a plant with no expected outcome)");
   assert.ok(fs.existsSync(STUB_LAUNCHER), "the fixture tree carries a stub ui/webview/real-viewer-leg.ts for the plants to import");
-  const c = census(PLANTS);
-  const strict = census(PLANTS, { strictComputed: true });
+  // one census per root, the main tree's first; a row is judged by its own root's
+  const runs = new Map(["", ...ownRoots].map((o) => [o, { c: census(path.join(PLANTS, o)), strict: census(path.join(PLANTS, o), { strictComputed: true }) }] as [string, { c: ReturnType<Census["census"]>; strict: ReturnType<Census["census"]> }]));
   for (const p of PLANT_TABLE) {
+    const { c, strict } = runs.get(p.root || "") as { c: ReturnType<Census["census"]>; strict: ReturnType<Census["census"]> };
     const bundle = bundleOf(p), r = c.byBundle.get(bundle);
-    const at = p.dir + "/" + p.file + ": ";
+    const at = (p.root ? p.root + "/" : "") + p.dir + "/" + p.file + ": ";
     assert.ok(r, at + "the census read the module");
     if (p.refused) {
       assert.ok(r.refusals.some((x) => x.includes(p.refused as string)), at + "refused with file and line; expected a refusal containing " + JSON.stringify(p.refused) + ", got " + JSON.stringify(r.refusals) + ((p.refused as string).includes(SHADOW_REFUSAL) ? " (this row holds the SENTENCE through SHADOW_REFUSAL: a reword of the module's shadow refusal moves that constant and this row too)" : ""));
@@ -1375,10 +1415,13 @@ test("every planted form under tests/fixtures/browser-legs-plants is classified 
     const names = engineNames(r);
     assert.deepEqual(names, (p.engines || r.engines || []).filter((e) => e !== "chromium").map((e) => (e === "firefox" ? "Firefox" : "WebKit")), at + "engine names");
   }
-  // with every plant in neither file, the census names exactly the plants that are legs
-  const expectedLegs = PLANT_TABLE.filter((p) => p.leg).map(bundleOf).sort();
-  assert.deepEqual(c.legs, expectedLegs, "the plants the census calls legs");
-  assert.equal(c.refusals.length, PLANT_TABLE.filter((p) => p.refused).length, "one refusal per refused plant: " + JSON.stringify(c.refusals));
+  // with every plant in neither file, the census names exactly the plants that are legs, per root
+  for (const [o, { c }] of runs) {
+    const rows = PLANT_TABLE.filter((p) => (p.root || "") === o), where = o ? " (the plants root " + o + ")" : "";
+    const expectedLegs = rows.filter((p) => p.leg).map(bundleOf).sort();
+    assert.deepEqual(c.legs, expectedLegs, "the plants the census calls legs" + where);
+    assert.equal(c.refusals.length, rows.filter((p) => p.refused).length, "one refusal per refused plant" + where + ": " + JSON.stringify(c.refusals));
+  }
   // the census header states the third residual beside the other two: a browser reached without spelling a playwright package or
   // the launcher is unread by the walker, class none, no refusal. A text pin on the header's prose (its // lines joined, since the
   // sentence wraps): it holds that the header names the three forms and the outcome, not that the walker behaves so; the CLASS is
@@ -1431,6 +1474,69 @@ test("resolveLocal's two fallback bases (the repo root and vscode-extension/) re
   // the boundary the comment states: the beside resolution is the module's own relative path and is not clamped, so a specifier
   // that genuinely climbs out of the checkout names the outside file by its spelling (here through the sibling, read as itself)
   assert.deepEqual(resolveLocal(plant, "../../../ui/outside-helper", root), { abs: sibling }, "the beside resolution (the module's own relative path) may name a file outside the checkout and is stated, not clamped: ../../../ui/outside-helper from root/ui/webview names the sibling");
+});
+
+test("the census resolves each planted specifier to the file the bundler loads (correctness-1, the review's round 7, the maintainer's condition on the bundler's mapping): for every relative string specifier a plant loads by a form the bundler resolves when it bundles (an import or export declaration that is not type-only, an import = require, a require or import() call on a literal), a metafile build of a one-line entry beside the plant, with esbuild.js testBuild's platform, format, resolveExtensions and nodePaths and every file it resolves loaded empty, names the file the bundler loads, and resolveLocal, the census's local road over the one table resolveSpec reads too, names the same file, or both name none; the rows the mapping's arms name are in the population, so it cannot pass empty; before the mapping a .cjs or .mjs spelling that named no file was read as the .ts beside it, which this reds naming p370 and p371", async (t) => {
+  // Holds the PROPERTY that the census and the bundler resolve alike, derived from the bundler's own resolution and never from a
+  // table kept here: a rewrite the census reads otherwise (the round's first build read a .cjs or .mjs as the .ts beside it, where
+  // the bundler reads the .cts or the .mts and never the .ts) reds naming the plant, the census's file and the bundler's. The census
+  // side is resolveLocal, the local road's resolver over candidatesOf; resolveSpec, the launcher's road, reads the same table
+  // (rewritesOf) and its reading is executed by the rows p370, p371, p373 and p376, which red when it binds or misses the launcher
+  // otherwise. A specifier a plant builds at run time (a path call, a createRequire-bound loader) is resolved by node when the
+  // test runs, not by the bundler, and is outside this population.
+  const census = await load();
+  const ts = census.loadTypescript();
+  const req = createRequire(path.join(EXT, "package.json"));
+  const esbuild = req("esbuild");
+  const cfg = req(path.join(EXT, "esbuild.js")).testBuild();
+  const ENTRY = "bundler-parity-entry.js";
+  const lit = (e: any): string | null => (e && (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) ? e.text : null);
+  const specsOf = (file: string): { spec: string; line: number }[] => {
+    const sf = ts.createSourceFile(file, read(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const out: { spec: string; line: number }[] = [];
+    const visit = (n: any): void => {
+      let s: string | null = null;
+      if (ts.isImportDeclaration(n) && !(n.importClause && n.importClause.isTypeOnly)) s = lit(n.moduleSpecifier);
+      else if (ts.isExportDeclaration(n) && n.moduleSpecifier && !n.isTypeOnly) s = lit(n.moduleSpecifier);
+      else if (ts.isImportEqualsDeclaration(n) && ts.isExternalModuleReference(n.moduleReference)) s = lit(n.moduleReference.expression);
+      else if (ts.isCallExpression(n) && n.arguments.length > 0 && ((ts.isIdentifier(n.expression) && n.expression.text === "require") || n.expression.kind === ts.SyntaxKind.ImportKeyword)) s = lit(n.arguments[0]);
+      if (s !== null && s.startsWith(".")) out.push({ spec: s, line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1 });
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+    return out;
+  };
+  const checked = new Set<string>(), mismatches: string[] = [];
+  let specifiers = 0;
+  for (const p of PLANT_TABLE) {
+    const id = (/^p\d+/.exec(p.file) || [""])[0], root = path.join(PLANTS, p.root || ""), dir = path.join(root, p.dir), file = path.join(dir, p.file);
+    for (const { spec, line } of specsOf(file)) {
+      const cr = census.resolveLocal(file, spec, root);
+      const censusFile = cr === null ? null : "ambiguous" in cr ? "two files (" + cr.ambiguous.map((a) => path.relative(root, a)).join(" and ") + ")" : path.relative(root, cr.abs);
+      let bundlerFile: string | null = null;
+      try {
+        const res = await esbuild.build({ stdin: { contents: "require(" + JSON.stringify(spec) + ");\n", resolveDir: dir, sourcefile: ENTRY, loader: "js" }, bundle: true, write: false, metafile: true, platform: cfg.platform, format: cfg.format, resolveExtensions: cfg.resolveExtensions, nodePaths: cfg.nodePaths, logLevel: "silent", absWorkingDir: root, outdir: path.join(root, "out-parity"),
+          plugins: [{ name: "resolve-only", setup(b: any) { b.onLoad({ filter: /.*/ }, () => ({ contents: "", loader: "js" })); } }] });
+        const inputs = Object.keys(res.metafile.inputs).filter((k) => path.resolve(root, k) !== path.join(dir, ENTRY));
+        assert.equal(inputs.length, 1, id + " loads " + spec + ": the bundler's metafile holds the entry and the one file the specifier names, got " + JSON.stringify(Object.keys(res.metafile.inputs)));
+        bundlerFile = path.relative(root, path.resolve(root, inputs[0]));
+      } catch (e) {
+        // the bundler's own "cannot resolve" is its reading that no file answers the spelling; any other failure is no reading, red
+        if (!/Could not resolve/.test(String((e as Error).message))) throw e;
+      }
+      checked.add(id);
+      specifiers++;
+      if (censusFile !== bundlerFile) mismatches.push(id + " (" + (p.root ? p.root + "/" : "") + p.dir + "/" + p.file + ":" + line + ") loads " + spec + ": the census resolves " + (censusFile === null ? "no file" : censusFile) + ", the bundler loads " + (bundlerFile === null ? "no file (it cannot resolve the specifier)" : bundlerFile));
+    }
+  }
+  // the population, derived from the plants and required to hold the rows the mapping's arms name: the .js spelling of the launcher
+  // (p23), the .cjs twin at its own spelling (p348) and the .mjs driver at its own (p236), the .cjs and .mjs spellings that name no
+  // file (p370, p371), the .js spelling of a .tsx (p372), the .jsx spelling of the launcher (p373), the .jsx module as spelled (p374)
+  // and the .js spelling beside a declaration file alone (p375), the .js spelling with a .js beside the launcher (p376), and the
+  // extensionless spelling every launcher plant carries (p01)
+  for (const id of ["p01", "p23", "p236", "p348", "p370", "p371", "p372", "p373", "p374", "p375", "p376"]) assert.ok(checked.has(id), "the parity population holds " + id + ", a row the bundler's mapping names, so the comparison reads the specifiers it is about (" + checked.size + " rows checked). Holds the property");
+  t.diagnostic("bundler parity: " + specifiers + " specifiers over " + checked.size + " plant rows, " + mismatches.length + " resolved otherwise by the census");
+  assert.deepEqual(mismatches, [], "each planted specifier the bundler resolves names the file the census resolves, and a specifier the bundler cannot resolve names no file to the census: a census that reads another file than the bundler loads judges a module no test runs. Holds the property: " + mismatches.join(" | "));
 });
 
 test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminate against the census before round 3 and what the others hold: 45 red under that census (44 at round 3, and p74 since round 5's safety net refused a text that census passed), 6 hold one of four stated reasons instead (holds), and 3 of the 45 red on a property other than their section's and name the plant that carries it (carried); which of its 67 round-4 rows (p89 to p155) discriminate against the census before round 4: 62 red under that census and 5 hold a stated reason instead; and which of its round-5 rows (p156 to R5_LAST) discriminate against the census before round 5, the module at the round-4 head: every one red under it unless R5_HELD names it with its reason; and which of its round-6 rows (R6_FIRST to R6_LAST, p249 onward) discriminate against the census before round 6, the module at the round-5 head: every one red under it unless R6_HELD names it with its reason; the discrimination itself was established by running each earlier census over the plants, recorded in the PR's notes, and is not re-run here, since none of those censuses is in the tree at test time, so this test holds the TABLE's statement, not the fact", () => {
@@ -1505,7 +1611,7 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // ranges are held to abut: p246 to p248, the three plants of THE SAFETY NET's arms that had none, are the round-5 range's (refused
   // by the census before round 6, red under the census before round 5), so a moved R5_LAST alone cannot slide them into the round-6
   // population, whose statement (red under the census before round 6) would be false for them and which this test cannot re-run
-  const R6_FIRST = 249, R6_LAST = 369;
+  const R6_FIRST = 249, R6_LAST = 376;
   const R6_HELD = ["p252", "p260", "p261", "p266", "p275", "p276", "p277", "p278", "p279", "p290", "p291", "p297", "p298", "p303", "p304", "p305", "p308", "p309", "p310", "p311", "p326", "p334", "p341", "p342", "p345", "p346", "p353", "p363", "p365", "p366", "p367", "p368"];
   const R6_CARRIED: string[] = [];
   const inRound6 = (p: Plant) => num(p) >= R6_FIRST && num(p) <= R6_LAST;
@@ -1557,7 +1663,11 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // name bound to a name, returned from a function, held in an object literal that is a call's or new's argument, or standing in a
   // conditional's branch or a logical's operand as a callee's argument, handed to a callee the walker knows no loader for, p331 to
   // p333, p335 to p340, p343, p344, p350 to p352, p354 to p362, p364 and p369 (class none with no refusal before round 6 and at the round-6
-  // head, where the row expects THE SAFETY NET's sentence), unless R6_HELD names it with
+  // head, where the row expects THE SAFETY NET's sentence), and a specifier the bundler's mapping names, p370 to p376 (a .cjs or .mjs
+  // spelling, or a .js spelling with a .js beside the launcher, bound as the launcher, class shared, gap null, no refusal, a .js
+  // spelling of a .tsx and a .jsx spelling of the launcher refused as naming no file, a .jsx module skipped as no script and a
+  // declaration file read, before round 6 and at the round-6 head, where the row expects the twin's or the helper's content read,
+  // the launcher bound or the no-file sentence), unless R6_HELD names it with
   // holds set (the renamed-parameter control, the two name-position controls, the argument-position control, the five read-position
   // controls, the literal control and the path-call control of the literal chain, and, of the swallow read, the .finally and bare
   // .then controls, the Promise.all control, the wrapper-in-try residual and the never-awaited try boundary, and, from the closing
