@@ -202,8 +202,9 @@ def _nested_parse_raises(data):
 
 
 def _names_an_exception_class(name):
-    """True when `name`, the class _nested_parse_raises derived, names an exception class json.loads can raise, one of
-    builtins (RecursionError, ValueError, MemoryError) or of the json module (JSONDecodeError). The check that the
+    """True when `name`, the class _nested_parse_raises derived, names an exception class bound in builtins or in the
+    json module (json.loads raises RecursionError, ValueError, MemoryError or JSONDecodeError; the check accepts any such
+    class, and the cause assertion refuses every one of them when the parse returns). The check that the
     nested document's parse raised requires it (the reviewer's verifier at the twenty-sixth commit, the twenty-seventh).
     The twenty-sixth commit's check required an identifier, and a derivation made to return the name of the type of what
     a parse that returns produced passed it: a parse that returns None derived "NoneType". The writer fills the cause's
