@@ -164,7 +164,8 @@ jobs:
         # is an argv assembled one element at a time and any other call, string or in process, reached through a
         # name the census does not resolve (tuple unpacking, a conditional expression, a parameter default, a
         # class or instance attribute, getattr, importlib or runpy, a builtin or a module name such a star
-        # import rebinds, among others). The two plugin sets are not equal, and this
+        # import rebinds, a class body's call before the class binds that name, among others). The two plugin
+        # sets are not equal, and this
         # comment does not say they are: the box's
         # default run loads pytest-xdist's two plugins, which no cell installs. Nothing under tests/ is marked
         # anyio or imports the one thing the plugin serves, the SDK's own pytest-marked conformance suite

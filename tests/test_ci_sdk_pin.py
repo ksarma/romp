@@ -205,8 +205,10 @@ This module holds five things, and it never skips: a pin that skips reports gree
    than by an import or a plain or annotated assignment: tuple unpacking, a walrus, a conditional expression, a
    parameter default; an attribute of a class or an instance, `T.m` or `self.m`; getattr, importlib or runpy; beside a
    star import from a module the census does not read, a builtin name, read as the builtin, or a module name no scope
-   binds, read as that module (subprocess, os, shlex, asyncio, pytest, _pytest), which the star import may rebind;
-   among others); each of those named here has a case holding its outcome, no row. What the flag
+   binds, read as that module (subprocess, os, shlex, asyncio, pytest, _pytest), which the star import may rebind; a
+   call in a class body through a name the class binds, which the census reads as the class's binding, where the body
+   reads the name past the class until that binding runs; among others); each of those named here has a case holding
+   its outcome, no row. What the flag
    buys, in every pytest process the census and the population check read in which nothing loads the plugin again by its
    entry-point name or its module name (`-p anyio` or `-p anyio.pytest_plugin` after the flag on the line,
    PYTEST_PLUGINS in the environment, plugins= handed to pytest.main; both checks key on the flag's spelling and read
@@ -3060,9 +3062,11 @@ def _launchers_in(src, filename):
     call, string or in process, reached through a name this resolution does not reach and does not refuse, among them
     one bound other than by an import or a plain or annotated assignment (tuple unpacking, a walrus, a conditional
     expression, a parameter default), an attribute of a class or an instance (`T.m`, `self.m`), one reached through
-    getattr, importlib or runpy, and, beside a star import from a module the census does not read, a builtin name or a
-    module name no scope binds (UNBOUND_MODULES), read as the builtin or the module, which the star import may rebind;
-    and a string that spells pytest anywhere else (a script written to a file, an
+    getattr, importlib or runpy, beside a star import from a module the census does not read, a builtin name or a
+    module name no scope binds (UNBOUND_MODULES), read as the builtin or the module, which the star import may rebind,
+    and a call in a class body through a name the class binds, read as the class's binding, where the body reads the
+    name past the class until that binding runs (a class body's call of the module's pytest.main before the class
+    binds the name to something else gives no row; found closing the first verify pass, 2026-09-23); and a string that spells pytest anywhere else (a script written to a file, an
     exec; the suite's synthetic tool-call fixtures spell `uv run pytest -q` by the dozen), which is data, not a
     command."""
     base = os.path.basename(filename)
@@ -3265,7 +3269,8 @@ def _launchers_in(src, filename):
     # cannot resolve is named, never passed. Until then a comprehension in a class body, whose names Python looks up
     # past the class, read the class's binding, and a name a star import from an unread module brought read as unbound:
     # each gave no row where pytest.main ran. Its first verify pass found the same for a module binding such a star
-    # import rebinds (S4, S5, S9) and for a class body's binding (K5)
+    # import rebinds (S4, S5), and closing that pass found it for a module binding to a launcher the census reads (S9)
+    # and for a class body's binding (K5)
     unread_stars = sorted({"." * node.level + (node.module or "") for node in imports if isinstance(node, ast.ImportFrom)
                            and any(a.name == "*" for a in node.names) and (node.level or node.module not in CENSUS_STAR_MODULES)})
 
@@ -3702,9 +3707,9 @@ class ChildPytestLaunchers(unittest.TestCase):
          'from helpers_x import *\ndef go():\n    [0 for main in ()]\n    return main(["-q"])\n',
          "unparsed", "a name no scope here binds, in a module with a star import from helpers_x"),
         # a module binding does not hide the star import's names: the star import may rebind it (the first verify
-        # pass's S4 and S5, each silent until then; S9, a binding to a launcher the census reads, called with an argv
-        # that is not pytest, gave no row either while the star import's pytest.main ran), and neither does a class
-        # body's binding, which the body reads past until it runs (K5)
+        # pass's S4 and S5, each silent until then; closing that pass, S9, a binding to a launcher the census reads,
+        # called with an argv that is not pytest, gave no row either while the star import's pytest.main ran), and
+        # neither does a class body's binding, which the body reads past until it runs (K5, found closing the pass)
         ("a module default rebound by such a star import (S4)", 'main = None\nfrom helpers_x import *\ndef go():\n    return main(["-q"])\n',
          "unparsed", "a name the module binds, in a module with a star import from helpers_x"),
         ("a module import rebound by such a star import (S5)",
@@ -3798,9 +3803,15 @@ class ChildPytestLaunchers(unittest.TestCase):
         ("pytest.main as a class attribute reached through self", 'import pytest\nclass T:\n    m = staticmethod(pytest.main)\n'
          '    def go(self):\n        return self.m(["-q"])\n'),
         # beside a star import from a module the census does not read, a builtin name is read as the builtin and a
-        # module name no scope binds as that module, and the star import may rebind either (the first verify pass)
+        # module name no scope binds as that module, and the star import may rebind either (found closing the first
+        # verify pass)
         ("a builtin name a star import from an unread module may rebind", 'from helpers_x import *\ndef go():\n    return print(["-q"])\n'),
         ("a module name a star import from an unread module may rebind", 'from helpers_x import *\nsubprocess.run(["-q"])\n'),
+        # a class body reads a name past the class until the class binds it, and the census reads the class's binding
+        # (K1, found closing the first verify pass; reading both, or refusing the call, reds the first-iterable case
+        # in test_a_name_the_resolution_reads_is_not_refused)
+        ("a class body's call before the class binds the name", 'from pytest import main\nclass T:\n    out = main(["-q"])\n'
+         '    from json import loads as main\n'),
     )
 
     def test_each_form_outside_the_read_gives_no_row(self):
