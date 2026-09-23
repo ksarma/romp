@@ -2746,10 +2746,19 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `load_goals` under `goals.loads`; the first two reached from the look's wake
   legs and from the wake sweep, `_dead_wait_block` from the look's dormant-owner
   branch in `_wake_goal`, since its other caller, `_dead_wait_sweep`, runs only
-  with the toggle on) and the wake sweep after the per-session loop
-  (`_awaiting_wake_outcomes`, called outside the toggle guard, one shared load
-  per wake record it owns that `memos.nudgeWalk.loads` does not count), which
-  runs after the walk in the same pass, not on it.
+  with the toggle on), the relay's read of each store it has queued entries for
+  (`_relay_store`, reached through `_relay_tick`, a `load_goals` under
+  `goals.loads`, called outside the toggle guard after the walk in the same
+  pass: at most one per queued sid per pass, none while that sid's quiet key
+  stands unchanged and no hold of its has ended (a quiet key is held only after
+  a pass over that sid left nothing to do until the key moves or a hold ends,
+  and is the store file, the postal log and the queue entries by mtime and
+  size, and whether the sid is alive); a dead worker's queued sid is read too,
+  since `_relay_store` loads before `_relay_entry`'s alive check) and the wake
+  sweep after the per-session loop (`_awaiting_wake_outcomes`, called outside
+  the toggle guard, one shared load per wake record it owns that
+  `memos.nudgeWalk.loads` does not count), which runs after the walk in the
+  same pass, not on it.
 - `caches`: one block per cache the kernel, the judge and the event model keep,
   each an exact occupancy (a `len()` or a sum of `len()`s under the cache's
   lock; nothing estimated): `jsonl` with `entries`, `file_bytes` and `records`

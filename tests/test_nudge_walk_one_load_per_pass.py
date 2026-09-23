@@ -2662,7 +2662,8 @@ class _WalkHarness(unittest.TestCase):
         self.assertEqual(writer, [], "zero plain load_goals from any caller during the pass, the whole tick (condition 7 in ruling A's "
                                      "wording says the decision path; this window is wider), by function, file and line; the shared door's "
                                      "own fallback into load_goals is the shared door's read, skipped by code identity and counted under "
-                                     "goal_io loads as a hand-off, never here: %s" % "; ".join(writer))
+                                     "goal_io loads as a hand-off, never here; the fixture queues no relay, which is why the relay's "
+                                     "_relay_store, a load_goals per queued sid after the walk, shows no load here: %s" % "; ".join(writer))
         handoffs = sum(s1[k] - s0[k] for k in SHARED_HANDOFF_KEYS)
         self.assertEqual(g1 - g0, handoffs,
                          "the writer door's own counter, goal_io loads, moves once per load_goals call (the loader's first line), and the "
@@ -5352,7 +5353,8 @@ class Docs(unittest.TestCase):
                       "`_wake_goal`", "at most one per stamped top whose dead-man is due, per look",
                       "the writers' own loads at their write moments", "`_mark_nudge_failed`", "`_file_wake_answer`", "`_dead_wait_block`",
                       "the first two reached from the look's wake legs and from the wake sweep", "from the look's dormant-owner branch",
-                      "only with the toggle on",
+                      "only with the toggle on", "`_relay_store`",
+                      "at most one per queued sid per pass, none while that sid's quiet key stands unchanged and no hold of its has ended",
                       "`_awaiting_wake_outcomes`", "runs after the walk in the same pass, not on it"):
             self.assertIn(words, jobs, "the jobs paragraph states condition 7 per mechanism, scoped to the two loaders it bounds, names "
                                        "the store's other readers on the pass as a class with its members, their bounds and each writer's "
