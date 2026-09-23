@@ -34,8 +34,9 @@ stat _dir_stamp holds in the scope keyed by directory under root None (dirStats 
 where the cost term as stated before the owner's pass before round 2 of #882, per agent, predicted (D - 1) + G; the term's
 one home is _subagent_tree_memo_report's docstring); the scope is closed after the cycle; the bound's counts are backed by a
 census, by call class, of the filesystem calls under the tree made through the classes the spy wraps (os.stat, os.lstat,
-os.scandir, os.listdir, os.access, os.readlink, os.open, os.walk, io.open; a class outside that set, os.statvfs say, is outside
-the census, the exclusions stated in _Spy's docstring) pinned by equality, {lstat: D, stat: A} over the cycle and {} on each
+os.scandir, os.listdir, os.access, os.readlink, os.open, os.walk, io.open, io.FileIO, and every call given a dir_fd as its
+own entry; a class outside that set, os.statvfs say, is outside the census, the roads it leaves open stated in _Spy's
+docstring and witnessed in (8)) pinned by equality, {lstat: D, stat: A} over the cycle and {} on each
 served path (the tree read, the stamp, the agent-file hit), so a read through a wrapped class the counts do not see fails by
 name (the owner's pass before round 2 of #882: a guarded listing on the served path left the module green); and a read
 outside any cycle (a handler thread's) still pays per call, with dirStats now counting the stats of both validators;
@@ -99,7 +100,11 @@ witnessed. (7) The sum over roots: three alive
 sessions with trees of unequal size and unequal agent counts, read in one pusher cycle and in one jobs pass with the reads
 interleaved, cost the sum over their roots of D_r lstats (each root its own D_r), 0 stats and one fold per agent (the sum
 over the sessions of A_s), so the total directories decide the cycle's cost and not their split over roots (the derived
-cost sentence's pin in the tree; a lab lifted from this world measured the same at more sizes outside the repo).
+cost sentence's pin in the tree; a lab lifted from this world measured the same at more sizes outside the repo). (8) The
+census's own roads (round 2 of #882, extra6-2), executed on the tree under the spy: each road the spy closes (a
+non-normalized or relative spelling of the root, a call given a dir_fd, io.FileIO) is counted, and each road it leaves
+open (a DirEntry from a listing of the root's parent, a path outside the tree, an os class outside CLASSES, a bare
+descriptor, a symlinked spelling, pathlib on 3.10) has an executed witness whose census is {}.
 
 Every count is derived from D and A in the test, never written out. The cycle's jobs that read the tree through
 mechanisms of their own (the fold checkpoint writer's realpath per checkpointed file, the spend guard's window-file
@@ -176,39 +181,66 @@ class _Spy:
     """os.stat and os.lstat counted per calling thread by what the path is: one of the tree's directories (`dir_stat`,
     `dir_lstat`), a file under the tree (`file_stat`: the agent files and sidecars), or elsewhere (uncounted); and beside
     those counts a CENSUS, by call class, of the filesystem calls under the tree made through the classes it wraps
-    (`tree_calls`, CLASSES): os.stat, os.lstat, os.scandir, os.listdir, os.access, os.readlink, os.open, os.walk and
-    io.open (builtins.open is the same function and is patched too), keyed by the class's name, for every path that is the
-    root or lies under it, directories and files alike. The counts key on what the bound derives (D lstats, A file stats);
-    the census is pinned by EQUALITY where the bound's cases and the served paths run (_assert_bound, the served-paths
-    case), so a read of the tree through a wrapped class the counts do not see, a listing, an access, an open, a file's
-    lstat, fails closed by the class's name (the owner's
-    pass before round 2 of #882: the spy saw os.stat and os.lstat alone, and a guarded os.scandir on the served tree path
-    left the module green). The patch is the os module's attribute, which is what the kernel, os.path and, from 3.12,
-    pathlib look up at call time (pathlib on 3.10 binds the os functions at import, outside the census; the kernel runs
-    on 3.12). Not in the census, stated: a DirEntry's stat or is_dir, reached only from a scandir the census counts by
-    the directory listed (a listing on a served path is seen; what is done with its entries is not), any call on a
-    path outside the tree (the project directory), and any os call class not in CLASSES (os.statvfs, the xattr reads,
-    os.pathconf: a read through one of them on a served path is not seen; the owner's pass before round 2 of #882 planted
-    os.statvfs on the served tree read and the module stayed green, where os.listdir, os.readlink and os.path.exists
-    planted there each red by the class's name)."""
+    (`tree_calls`, CLASSES): os.stat, os.lstat, os.scandir, os.listdir, os.access, os.readlink, os.open, os.walk, io.open
+    (builtins.open is the same function and is patched too) and io.FileIO, keyed by the class's name, for every path that
+    is the root or lies under it, directories and files alike. The counts key on what the bound derives (D lstats, A file
+    stats); the census is pinned by EQUALITY where the bound's cases and the served paths run (_assert_bound, the
+    served-paths case), so a read of the tree through a wrapped class the counts do not see, a listing, an access, an
+    open, a file's lstat, fails closed by the class's name (the owner's pass before round 2 of #882: the spy saw os.stat
+    and os.lstat alone, and a guarded os.scandir on the served tree path left the module green). The patch is the os
+    module's attribute (io's for io.open and io.FileIO), which is what the kernel, os.path and the pathlib of 3.12 and
+    3.14 look up at call time; the kernel runs on 3.12.
+
+    Which spellings the census places (round 2 of #882, extra6-2: a reviewer's reads planted on the served paths through a
+    `//` or `/./` spelling of the root, a dir_fd, io.FileIO and a DirEntry of the root's parent each left both modules
+    green): a path is normalized lexically before the test, os.path.abspath (a relative
+    path joined to the working directory, then os.path.normpath), so `<sid>//subagents`, `<sid>/./subagents` and a
+    relative spelling are the root; never os.path.realpath, which would call the patched os.lstat and count itself. A call
+    given a dir_fd is its own census entry, `<class>(dir_fd)`, wherever its path points, since a path relative to a
+    descriptor cannot be placed without reading the descriptor: such a call is counted on the safe side. Each of those
+    roads, and io.FileIO, has a red control in SpyRoads asserting that the census counts it (test_closed_road_...), and a
+    read through one of them on a served path fails that path's {} pin by its entry's name (the served-paths case in
+    BoundPerCycleAndPerPass, and _assert_bound's equality over a cycle).
+
+    Not in the census, stated, each with an executed witness in SpyRoads that makes the call under the spy on the
+    fixture's tree and pins tree_calls() == {}, so a spy change that closes or widens the road turns it red: a DirEntry's
+    stat or is_dir taken from a listing of the root's parent (the session directory, outside the tree; a listing of the
+    root or below is counted, by the directory listed, and what is done with its entries is not),
+    test_open_road_a_direntry_from_a_listing_of_the_roots_parent; any call on a path outside the tree, the project
+    directory and the transcript, test_open_road_a_path_outside_the_tree; an os call class not in CLASSES, os.statvfs,
+    os.listxattr, os.pathconf, test_open_road_an_os_call_class_outside_the_wrapped_set; a bare descriptor, os.stat(fd),
+    os.listdir(fd), os.scandir(fd), on a descriptor opened outside the window (an os.open of a path under the tree is
+    counted when it runs), test_open_road_a_bare_descriptor; a symlinked spelling, a path through a link to the session
+    directory (normalization is lexical), test_open_road_a_symlinked_spelling_of_the_root; and pathlib on 3.10, which
+    calls the os functions it bound at import (the pathlib of 3.12 and 3.14 looks them up at call time and is counted),
+    test_open_road_pathlib_on_3_10. The owner's pass before round 2 of #882 had planted os.statvfs on the served tree read
+    and the module stayed green, where os.listdir, os.readlink and os.path.exists planted there each red by the class's
+    name."""
     KEYS = ("dir_stat", "dir_lstat", "file_stat")
-    CLASSES = ("stat", "lstat", "scandir", "listdir", "access", "readlink", "open", "walk")   # the os functions wrapped; io.open beside them
+    CLASSES = ("stat", "lstat", "scandir", "listdir", "access", "readlink", "open", "walk")   # the os functions wrapped; io.open and io.FileIO beside them
 
     def __init__(self, dirset, root):
-        self.dirset, self.tree, self.root, self.by, self.census = dirset, str(root), str(root) + os.sep, {}, {}
+        tree = os.path.normpath(str(root))
+        self.dirset, self.tree, self.root, self.by, self.census = dirset, tree, tree + os.sep, {}, {}
 
     def _c(self):
         return self.by.setdefault(threading.get_ident(), dict.fromkeys(self.KEYS, 0))
 
-    def _seen(self, cls, p):
-        """One call of class `cls` on `p`: counted in this thread's census when `p` is a path (not a descriptor) that is the
-        root or lies under it."""
+    def _seen(self, cls, p, dir_fd=None):
+        """One call of class `cls` on `p`, counted in this thread's census when `p`, normalized lexically (os.path.abspath),
+        is the root or lies under it; a call given a dir_fd, wherever `p` points, under `<cls>(dir_fd)`. A bare descriptor
+        is not a path and is not counted (the class docstring)."""
+        if dir_fd is not None:
+            c = self.census.setdefault(threading.get_ident(), {})
+            c[cls + "(dir_fd)"] = c.get(cls + "(dir_fd)", 0) + 1
+            return
         if p is None or isinstance(p, int):
             return
         try:
             s = os.fsdecode(p)
         except TypeError:
             s = str(p)
+        s = os.path.abspath(s)
         if s == self.tree or s.startswith(self.root):
             c = self.census.setdefault(threading.get_ident(), {})
             c[cls] = c.get(cls, 0) + 1
@@ -217,12 +249,12 @@ class _Spy:
         spy = self
 
         def w(*a, **k):
-            spy._seen(cls, a[0] if a else k.get("path", k.get("top")))
+            spy._seen(cls, a[0] if a else k.get("path", k.get("top")), k.get("dir_fd"))
             return real(*a, **k)
         return w
 
     def __enter__(self):
-        real_stat, real_lstat, real_open, spy = os.stat, os.lstat, io.open, self
+        real_stat, real_lstat, real_open, real_fileio, spy = os.stat, os.lstat, io.open, io.FileIO, self
 
         def st(p, *a, **k):
             s = str(p)
@@ -230,21 +262,27 @@ class _Spy:
                 spy._c()["dir_stat"] += 1
             elif s.startswith(spy.root):
                 spy._c()["file_stat"] += 1
-            spy._seen("stat", p)
+            spy._seen("stat", p, k.get("dir_fd"))
             return real_stat(p, *a, **k)
 
         def lst(p, *a, **k):
             if str(p) in spy.dirset:
                 spy._c()["dir_lstat"] += 1
-            spy._seen("lstat", p)
+            spy._seen("lstat", p, k.get("dir_fd"))
             return real_lstat(p, *a, **k)
 
         def opn(f, *a, **k):
             spy._seen("io.open", f)
             return real_open(f, *a, **k)
+
+        class FileIO(real_fileio):                        # a subclass: io.FileIO stays a class inside the window
+            def __init__(self, file, *a, **k):
+                spy._seen("io.FileIO", file)
+                super().__init__(file, *a, **k)
         self._patches = [mock.patch.object(os, "stat", st), mock.patch.object(os, "lstat", lst)]
         self._patches += [mock.patch.object(os, cls, self._wrapped(cls, getattr(os, cls))) for cls in self.CLASSES[2:]]
-        self._patches += [mock.patch.object(io, "open", opn), mock.patch.object(builtins, "open", opn)]
+        self._patches += [mock.patch.object(io, "open", opn), mock.patch.object(builtins, "open", opn),
+                          mock.patch.object(io, "FileIO", FileIO)]
         for p in self._patches:
             p.start()
         return self
@@ -553,11 +591,11 @@ class _World(unittest.TestCase):
                          "os.stat on the agent files over one %s: %d; expected A = %d, one launch fold per agent per cycle "
                          "(_awaiting_nest's launches held in the scope); before it was CALLS x A = %d" % (what, t["file_stat"], A, CALLS * A))
         self.assertEqual(c, {"lstat": D, "stat": A},
-                         "filesystem calls under the tree over one %s, by call class (the census wraps os.%s and io.open, on every "
-                         "path that is the root or under it): %r; keyed on equality with {lstat: D = %d, stat: A = %d}, the one "
-                         "validation's lstats and the A agent-file stats and nothing else, so a read of the tree through any other "
-                         "class, or one more of these, fails here by the class's name (a guarded listing, an access or an open on a "
-                         "served path moves none of the counts above)" % (what, ", ".join(_Spy.CLASSES), c, D, A))
+                         "filesystem calls under the tree over one %s, by call class (the census wraps os.%s, io.open and io.FileIO on "
+                         "every path that is the root or under it, and counts every call given a dir_fd): %r; keyed on equality with "
+                         "{lstat: D = %d, stat: A = %d}, the one validation's lstats and the A agent-file stats and nothing else, "
+                         "so a read of the tree through any other class, or one more of these, fails here by the class's name (a "
+                         "guarded listing, an access or an open on a served path moves none of the counts above)" % (what, ", ".join(_Spy.CLASSES), c, D, A))
         self.assertIsNotNone(rec.get("scope"), "the %s opened the subagents-tree scope on its thread (_subagent_scope_open)" % what)
         self.assertTrue(getattr(km._live_scope, "subtrees", None) is None,
                         "the scope ends with the %s (_subagent_scope_close in its finally): the slot still holds a scope" % what)
@@ -672,23 +710,23 @@ class BoundPerCycleAndPerPass(_World):
         hold, each of the three served paths runs under the spy's census on its own: the tree read _subagent_tree answers
         from the held pair, the stamp _dir_stamp answers from the held stamps, and the agent-file hit _subagent_file answers
         from its memo with its stamp re-check served. Each makes no filesystem call of any class the census wraps on any
-        path that is the root or under it, keyed on the census == {} per path, so a new call class on a served path fails
-        here by its name and by the path it ran on."""
+        path that is the root or under it and no call given a dir_fd, keyed on the census == {} per path, so a new call
+        class on a served path fails here by its name and by the path it ran on."""
         root, aid, sd = str(self.sub), self.aids[0], self.dirs[3]
         sc = self._open()
         km._subagent_tree(root)                              # the hold: the cycle's one validation, its stamps indexed
         self.assertIn(root, sc["trees"], "premise: the pair is held")
         self.assertIn(sd, sc["stamps"], "premise: the directory's stamp is held, indexed from the tree")
         self.assertIsNotNone(km._SUBAGENT_FILE_CACHE.get((self.path, aid), (None, None))[1], "premise: the agent's file is memoized (setUp's warm read)")
-        classes = "os.%s and io.open" % ", ".join(_Spy.CLASSES)
+        classes = "os.%s, io.open and io.FileIO on the root or under it, or any call given a dir_fd" % ", ".join(_Spy.CLASSES)
         b = self._stats()
         with self._spy() as sp:
             pair = km._subagent_tree(root)
         self.assertIs(pair, sc["trees"][root][0], "premise: the tree read was answered the held pair")
         self.assertEqual(self._delta(b)["served"], 1, "premise: the read moved served")
         self.assertEqual(sp.tree_calls(), {},
-                         "filesystem calls under the tree on the served tree read, by class: %r; keyed on {} (no call of any class the "
-                         "census wraps, %s, on the root or under it); a listing, an access or an open on this path shows here by name"
+                         "filesystem calls under the tree on the served tree read, by class: %r; keyed on {} (no call the census counts: "
+                         "%s); a listing, an access or an open on this path shows here by name"
                          % (sp.tree_calls(), classes))
         with self._spy() as sp:
             st = km._dir_stamp(sd)
@@ -2555,6 +2593,136 @@ class SumOverRoots(_World):
 
     def test_one_jobs_pass_over_three_sessions_costs_the_sum_over_their_roots(self):
         self._cycle_over("jobs pass", km._jobs_cycle, "_auto_nudge_tick")
+
+
+class SpyRoads(_World):
+    """The census's own roads (round 2 of #882, extra6-2), each executed on this world's tree under the spy, outside any
+    kernel code: the roads the spy closes, each counted (a red control: a spy change that reopens one turns its case red),
+    and the roads it leaves open, each an executed witness whose green is tree_calls() == {} (a spy change that closes or
+    widens one turns its case red, and the _Spy docstring's list is corrected with it). _Spy's docstring names each case."""
+
+    CLOSED = ("the census counts this road: a read through it on a served path fails that path's {} pin by the entry's name; "
+              "a spy change that stops counting it reds here")
+    OPEN = ("the road stays open, as _Spy's docstring states: the census does not see it; a spy change that closes or widens it "
+            "reds here, and the docstring's list of roads it does not see is corrected with it")
+
+    # ── roads the spy closes ──────────────────────────────────────────────────────────────────────────────────────────
+    def test_closed_road_a_non_normalized_spelling_of_the_root(self):
+        root = str(self.sub)
+        parent, base = os.path.split(root)
+        spellings = (parent + os.sep + os.sep + base, parent + os.sep + "." + os.sep + base,
+                     root + os.sep + "workflows" + os.sep + "..")
+        expect = sorted(os.listdir(root))
+        with self._spy() as sp:
+            got = [sorted(os.listdir(x)) for x in spellings]
+        self.assertEqual(got, [expect] * len(spellings), "premise: each spelling names the root")
+        self.assertEqual(sp.tree_calls(), {"listdir": len(spellings)},
+                         "filesystem calls under the tree over %d listings of the root under spellings os.path.normpath maps to it "
+                         "(%s), by class: %r; keyed on {listdir: %d}: %s"
+                         % (len(spellings), ", ".join(("//", "/./", "workflows/..")), sp.tree_calls(), len(spellings), self.CLOSED))
+
+    def test_closed_road_a_relative_spelling_of_the_root(self):
+        rel = os.path.relpath(str(self.sub))
+        self.assertFalse(os.path.isabs(rel), "premise: a relative spelling")
+        with self._spy() as sp:
+            os.listdir(rel)
+        self.assertEqual(sp.tree_calls(), {"listdir": 1},
+                         "filesystem calls under the tree over a listing of the root spelled relative to the working directory, by "
+                         "class: %r; keyed on {listdir: 1}: %s" % (sp.tree_calls(), self.CLOSED))
+
+    def test_closed_road_a_call_given_a_dir_fd(self):
+        parent, base = os.path.split(str(self.sub))
+        pfd = os.open(parent, os.O_RDONLY)                        # the session directory, outside the tree, opened outside the window
+        self.addCleanup(os.close, pfd)
+        with self._spy() as sp:
+            st = os.stat(base, dir_fd=pfd, follow_symlinks=False)
+            fd = os.open(base, os.O_RDONLY, dir_fd=pfd)
+            os.close(fd)
+        self.assertTrue(stat.S_ISDIR(st.st_mode), "premise: the descriptor-relative stat reached the root")
+        self.assertEqual(sp.tree_calls(), {"open(dir_fd)": 1, "stat(dir_fd)": 1},
+                         "filesystem calls over a stat and an open of the root relative to its parent's descriptor, by class: %r; keyed "
+                         "on {open(dir_fd): 1, stat(dir_fd): 1}, each call given a dir_fd its own entry wherever it points: %s"
+                         % (sp.tree_calls(), self.CLOSED))
+
+    def test_closed_road_io_fileio(self):
+        f = os.path.join(self.dirs[2], "agent-%s.jsonl" % self.aids[0])
+        self.assertTrue(os.path.isfile(f), "premise: an agent file under the tree")
+        with self._spy() as sp:
+            io.FileIO(f).close()
+        self.assertEqual(sp.tree_calls(), {"io.FileIO": 1},
+                         "filesystem calls under the tree over an io.FileIO open of an agent file, by class: %r; keyed on "
+                         "{io.FileIO: 1}: %s" % (sp.tree_calls(), self.CLOSED))
+
+    # ── roads the spy leaves open, each witnessed ─────────────────────────────────────────────────────────────────────
+    def test_open_road_a_direntry_from_a_listing_of_the_roots_parent(self):
+        parent, base = os.path.split(str(self.sub))
+        with self._spy() as sp:
+            with os.scandir(parent) as it:
+                ents = [e for e in it if e.name == base]
+            self.assertEqual(len(ents), 1, "premise: the parent's listing holds the root's entry")
+            self.assertTrue(stat.S_ISDIR(ents[0].stat(follow_symlinks=False).st_mode) and ents[0].is_dir(follow_symlinks=False),
+                            "premise: the entry's stat and is_dir were taken")
+        self.assertEqual(sp.tree_calls(), {}, "the root's DirEntry from a listing of its parent: %r; %s" % (sp.tree_calls(), self.OPEN))
+
+    def test_open_road_a_path_outside_the_tree(self):
+        proj = os.path.dirname(self.path)
+        with self._spy() as sp:
+            os.stat(proj)
+            self.assertIn(os.path.basename(self.path), os.listdir(proj), "premise: the project directory was listed")
+            with open(self.path) as fh:
+                self.assertTrue(fh.read(), "premise: the transcript was read")
+        self.assertEqual(sp.tree_calls(), {}, "a stat and a listing of the project directory and a read of the transcript: %r; %s"
+                         % (sp.tree_calls(), self.OPEN))
+
+    def test_open_road_an_os_call_class_outside_the_wrapped_set(self):
+        root, ran = str(self.sub), []
+        with self._spy() as sp:
+            os.statvfs(root); ran.append("statvfs")
+            os.pathconf(root, "PC_NAME_MAX"); ran.append("pathconf")
+            if hasattr(os, "listxattr"):
+                try:
+                    os.listxattr(root)
+                except OSError:                                 # a filesystem without extended attributes: the call still reached it
+                    pass
+                ran.append("listxattr")
+        self.assertIn("statvfs", ran)
+        self.assertEqual(sp.tree_calls(), {}, "%s of the root: %r; %s" % (", ".join("os." + r for r in ran), sp.tree_calls(), self.OPEN))
+
+    def test_open_road_a_bare_descriptor(self):
+        root = str(self.sub)
+        fd = os.open(root, os.O_RDONLY)                           # opened outside the window: an os.open of the path inside it is counted
+        self.addCleanup(os.close, fd)
+        expect = sorted(os.listdir(root))
+        with self._spy() as sp:
+            st, names = os.stat(fd), sorted(os.listdir(fd))
+            with os.scandir(fd) as it:
+                list(it)
+        self.assertTrue(stat.S_ISDIR(st.st_mode) and names == expect, "premise: the descriptor is the root, stat'd and listed")
+        self.assertEqual(sp.tree_calls(), {}, "os.stat, os.listdir and os.scandir on a descriptor of the root: %r; %s"
+                         % (sp.tree_calls(), self.OPEN))
+
+    def test_open_road_a_symlinked_spelling_of_the_root(self):
+        sess = os.path.dirname(str(self.sub))
+        alias = os.path.join(self.td.name, "alias")
+        os.symlink(sess, alias)
+        via = os.path.join(alias, os.path.basename(str(self.sub)))
+        self.assertEqual(os.path.realpath(via), os.path.realpath(str(self.sub)), "premise: the spelling names the root")
+        with self._spy() as sp:
+            os.listdir(via)
+            os.stat(via)
+        self.assertEqual(sp.tree_calls(), {}, "a listing and a stat of the root through a link to its session directory: %r; %s"
+                         % (sp.tree_calls(), self.OPEN))
+
+    def test_open_road_pathlib_on_3_10(self):
+        root = Path(str(self.sub))
+        with self._spy() as sp:
+            self.assertTrue(stat.S_ISDIR(root.stat().st_mode), "premise: pathlib stat'd the root")
+        if sys.version_info < (3, 11):
+            self.assertEqual(sp.tree_calls(), {}, "Path.stat of the root on %s, whose pathlib calls the os.stat it bound at import: "
+                             "%r; %s" % (sys.version.split()[0], sp.tree_calls(), self.OPEN))
+        else:
+            self.assertEqual(sp.tree_calls(), {"stat": 1}, "Path.stat of the root on %s, whose pathlib looks os.stat up at call time: "
+                             "%r; keyed on {stat: 1}: this interpreter's pathlib is counted" % (sys.version.split()[0], sp.tree_calls()))
 
 
 if __name__ == "__main__":
