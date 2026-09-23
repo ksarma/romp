@@ -30,12 +30,17 @@
 // the popup and the second server's log read, and the mark's colour is the control's border colour under both themes (the file
 // review's round 12, fresh-1 with tests-2). The outbound dress is read as PAINTED too (paintedRatio: a screenshot of the real page,
 // so every opacity on the way, the element's own and every ancestor's, is in the pixels): at rest under touch emulation and on the
-// touchscreen laptop, the web control alone, after a bare dead link and inside a captioned one, and the mark alone and inside a dead
-// link, in both themes, and in the touch case on the VS Code editor grounds either side of the stated bound; on a fine pointer, inside
-// a dead link, the control revealed by the pointer over its picture, its accent border under the pointer and the mark on hover; each
-// at least 3:1 against the ground the sheet controls, the control's own background (the colour of the gaps between its dashes) or,
-// for the mark, the page in its offset ring. Over a picture the line's outer side is the author's pixels, which no colour of the dress
-// clears for every picture, so the read is not against them, and the touch case asserts that pixel is the picture's own fill. On a
+// touchscreen laptop, the web control alone, after a bare dead link and inside a captioned one, and the mark alone, inside a dead
+// link, inside a ==highlight==, in a table header, in an even table row and in a note callout, in both themes, and in the touch case
+// on the VS Code editor grounds either side of the stated bound; on a fine pointer, inside a dead link, the control revealed by the
+// pointer over its picture, its accent border under the pointer and the mark on hover, and the mark on hover on those four grounds
+// too; each at least 3:1 against the ground the sheet controls: for the control its own background (the colour of the gaps between
+// its dashes), and for the mark the ground its ring gives it, read by the worst dash-to-ring ratio, every dash pixel on all four sides
+// against the pixel one step toward the picture and one step away and the dash against every gap pixel (markWorst; the file review's
+// round 14, correctness-2 with extra5-1 and extra5-2: the one ground pixel read before, in the offset above the picture, passed the
+// dark highlight at 4.83:1 while its dashes painted 2.40:1 against the tint on both sides). Over a picture the control's outer side is
+// the author's pixels, which no colour of the dress clears for every picture, so the read is not against them, and the touch case
+// asserts that pixel is the picture's own fill. On a
 // fine pointer the control under a keyboard focus inside a dead link is read by pixels too, its focus ring standing 2px off the
 // border (the sheets' focus rule: drawn where the browser draws it, the ring covered the border row and the row inside it). The
 // control inside the captioned dead link is read HELD PRESSED too, in each of the three cases and both themes, by pixels while the
@@ -45,7 +50,14 @@
 // light, red here over the sheets without that rule). The touch case reads the captioned dead link's words taking the link's dimmed
 // colour and its bold words and inline code keeping their own ink, the witness of the residual the sheets' comment states. Those
 // reads red at 61d69cba1, where a dead link's opacity 0.7 dimmed the dress inside it and the web control rested at 0.8 (the
-// painted-contrast ask of 2026-09-23). Red over
+// painted-contrast ask of 2026-09-23). The mark's four grounds red over the sheets before its ring of var(--bg): the dark highlight
+// at 2.40:1 at rest under touch, at rest on the laptop and on hover on the fine pointer, and on the VS Code editor grounds the
+// highlight, the table header, the even row and the callout at #404040, the highlight and the callout at #efefef, and the header and
+// the even row at #eeeeee, where they read 3.00:1 past the bound the sheets state; the worst read reds a 2px ring too, on the dark
+// highlight, whose outer side keeps the tint. The ring's neighbour pin (ringCoversNoNeighbour) reads a glyph glued to a picture under the floor before
+// and after it in a paragraph, a highlight and a table cell, and two glued badges, against the same page with the ring taken off,
+// at rest under touch and on hover on the fine pointer, in both themes: green over the sheets before the ring by design, with no ring
+// to cover anything, and red over a bare 3px ring with no margin beside it (the file review's round 14, correctness-2). Red over
 // the unchanged viewer at the first control assertion (no control exists), the outbound
 // case red at the head before it, where the two controls presented one surface, and the link-shapes case red at the round-12
 // head, where the title and the control read any anchor while the click did not, and the two under-the-floor cases red at that head too, the hover read and the at-rest read, where no rule dressed the picture. Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid and example.test addresses,
@@ -669,8 +681,21 @@ const TINY_TEXT = "# Report\n\n![local](figs/plot.svg)\n\n" + PARA(1) + "\n\n![b
   // case's click, the press on the control the three painted cases hold and the touch case's tap), and Enter and Space on its
   // control too, and the dress there must paint at 3:1 too (the painted-contrast ask of 2026-09-23)
   + "[![deadbare](" + WEB + "/deadbare.svg)](localhost:8080)\n\n" + PARA(4) + "\n\n"
-  + "[![deadcap](" + WEB + "/deadcap.svg) a caption beside the **dead** link and its `code`](localhost:8080)\n\n" + PARA(5) + "\n\n[![deadbuild](" + WEB + "/deadtiny.svg)](localhost:8080)\n\n" + PARA(6) + "\n";
+  + "[![deadcap](" + WEB + "/deadcap.svg) a caption beside the **dead** link and its `code`](localhost:8080)\n\n" + PARA(5) + "\n\n[![deadbuild](" + WEB + "/deadtiny.svg)](localhost:8080)\n\n" + PARA(6) + "\n\n"
+  // the grounds the mark's line read against before its ring (the file review's round 14, correctness-2 with extra5-1 and extra5-2),
+  // each a remote picture under the floor: inside a ==highlight==, in a table header, in an even table row and in a note callout
+  + "A sentence ==![hl](" + WEB + "/hl.svg)== highlighted.\n\n"
+  + "| head ![th](" + WEB + "/th.svg) | b |\n|---|---|\n| x | y |\n| z ![even](" + WEB + "/even.svg) | w |\n\n"
+  + "> [!note]\n> note words ![conote](" + WEB + "/conote.svg) here\n\n" + PARA(7) + "\n\n"
+  // the neighbour pin's scenes (ringCoversNoNeighbour): a glyph glued to a picture under the floor before and after it in a paragraph,
+  // a highlight and a table cell of an even row, and two badges glued to each other
+  + "word![ngp](" + WEB + "/ngp.svg)word\n\n==ab![ngh](" + WEB + "/ngh.svg)cd==\n\n"
+  + "| h1 | h2 |\n|---|---|\n| s | t |\n| q![ngt](" + WEB + "/ngt.svg)q | r |\n\n"
+  + "![nb1](" + WEB + "/nb1.svg)![nb2](" + WEB + "/nb2.svg) badges\n\n" + PARA(8) + "\n";
 const TINY_DOCS: Record<string, string> = { [REPORT]: TINY_TEXT, [PLOT]: svg("#456") };
+/** The tiny report's figures in order, and the second server's sizes for its remote pictures under the floor (20 by 20 each). */
+const TINY_ALTS = ["local", "build", "big", "deadbare", "deadcap", "deadbuild", "hl", "th", "even", "conote", "ngp", "ngh", "ngt", "nb1", "nb2"];
+const TINY_SIZES: Record<string, [number, number]> = Object.fromEntries(["tiny", "deadtiny", "hl", "th", "even", "conote", "ngp", "ngh", "ngt", "nb1", "nb2"].map((n) => ["/" + n + ".svg", [20, 20] as [number, number]]));
 type Under = { alt: string; w: number; h: number; control: boolean; controlOpacity: string | null; controlBorder: string | null; title: string | null; mark: boolean; outline: string; outlineWidth: string; outlineColor: string; border: string };
 /** The figures as the reader sees them: the box, the control after the img with its opacity and border colour, the title, the
  *  mark attribute, and the computed outline and border; with the media the page is under and the badge's centre. */
@@ -747,18 +772,21 @@ function decodePng(buf: Buffer): { width: number; height: number; bpp: number; d
   }
   return { width, height, bpp, data: out };
 }
-type Painted = { ratio: number; dash: string; ground: string; outer: string | null; opacities: string[] };
+type Painted = { ratio: number; dash: string; ground: string; outer: string | null; opacities: string[]; at?: string };
 /** The dress's line as PAINTED, read off a screenshot of the real page, so every opacity the compositor applied is in the pixels, the
  *  element's own and every ancestor's, and so is the picture under a control whose opacity is under 1, which oneLegibleColour's
  *  computed colours never read. The line: the control's border rows and columns past its 6 px radius, or the mark's outline ring,
- *  1 px out past its 1 px offset. The ground it is read against is the one the sheet controls: the control's own background (its
- *  padding pixel, left + 2 at the vertical middle, the colour of the line's inner side and of every gap between its dashes) or, for
- *  the mark, the offset ring (the page beneath, which shows between the outline's dashes too); over a picture the line's outer side
- *  is the author's pixels, which no colour of the dress can clear for every picture, so `outer` (the pixel three rows above the
- *  control's top border, clear of any smoothing at the border's edge and inside the picture, whose top the control sits 6px below) is
- *  returned for the case's witness and never read against. The dash is the most frequent colour on the line that is
+ *  1 px out past its 1 px offset. The control's line is read against the ground the sheet controls, its own background (its padding
+ *  pixel, left + 2 at the vertical middle, the colour of the line's inner side and of every gap between its dashes); over a picture
+ *  the line's outer side is the author's pixels, which no colour of the dress can clear for every picture, so `outer` (the pixel three
+ *  rows above the control's top border, clear of any smoothing at the border's edge and inside the picture, whose top the control sits
+ *  6px below) is returned for the case's witness and never read against. The dash is the most frequent colour on the line that is
  *  not the ground; the ground must appear among the line's pixels (the gaps) and the dash cover at least a quarter of them, so a
- *  stray pixel cannot carry the read. Every element on the way whose computed opacity is not 1 is listed for the message. `alt`
+ *  stray pixel cannot carry the read. The mark's line is read by the worst dash-to-ring ratio (markWorst: every dash pixel against the
+ *  pixel one step toward the picture and one step away, whatever paints there, and the dash against every gap pixel, with the worst
+ *  read's place in `at`), since the one ground pixel this read took for it, in the offset above the picture, passed the dark theme's
+ *  ==highlight== at 4.83:1 while the dashes painted 2.40:1 against its tint on both sides (the file review's round 14, correctness-2
+ *  with extra5-1 and extra5-2). Every element on the way whose computed opacity is not 1 is listed for the message. `alt`
  *  names the picture; the control is the one after it (inside a captioned anchor) or after its anchor. A read at rest scrolls the
  *  element to the centre first and asserts the pointer is over neither the picture nor its control (a scroll moves the page under a
  *  resting pointer, and the hover would reveal the control: the first run of this read over the old sheet read a control the
@@ -791,18 +819,12 @@ async function paintedRatio(page: any, alt: string, kind: "control" | "mark", mo
   const at = (x: number, y: number): number[] => { const k = ((y - oy) * png.width + (x - ox)) * png.bpp; return [png.data[k], png.data[k + 1], png.data[k + 2]]; };
   const rgb = (c: number[]) => "rgb(" + c.join(", ") + ")";
   const L = Math.round(r.left), T = Math.round(r.top), R = Math.round(r.right), B = Math.round(r.bottom);
+  if (kind === "mark") return { ...markWorst(at, L, T, R, B, alt), outer: null, opacities: r.opacities };
   const line: number[][] = [];
-  let ground: number[], outer: number[] | null = null;
-  if (kind === "control") {
-    for (let x = L + 6; x <= R - 7; x++) line.push(at(x, T), at(x, B - 1));
-    for (let y = T + 6; y <= B - 7; y++) line.push(at(L, y), at(R - 1, y));
-    ground = at(L + 2, Math.round((T + B) / 2));
-    outer = at(Math.round((L + R) / 2), T - 3);
-  } else {
-    for (let x = L - 2; x <= R + 1; x++) line.push(at(x, T - 2), at(x, B + 1));
-    for (let y = T - 2; y <= B + 1; y++) line.push(at(L - 2, y), at(R + 1, y));
-    ground = at(Math.round((L + R) / 2), T - 1);
-  }
+  for (let x = L + 6; x <= R - 7; x++) line.push(at(x, T), at(x, B - 1));
+  for (let y = T + 6; y <= B - 7; y++) line.push(at(L, y), at(R - 1, y));
+  const ground = at(L + 2, Math.round((T + B) / 2));
+  const outer = at(Math.round((L + R) / 2), T - 3);
   const counts = new Map<string, number>();
   for (const p of line) counts.set(rgb(p), (counts.get(rgb(p)) || 0) + 1);
   const g = rgb(ground);
@@ -812,11 +834,68 @@ async function paintedRatio(page: any, alt: string, kind: "control" | "mark", mo
   const seen = (dash ? "its modal colour " + dash + " against " + g + " at " + contrastOver(dash, g).toFixed(3) + ":1; " : "") + "the line read " + Array.from(counts).map(([c, n]) => c + " x" + n).join(", ");
   assert.ok((counts.get(g) || 0) > 0, alt + ": the " + kind + "'s ground " + g + " appears among its line's pixels, the gaps between the dashes (" + seen + ")");
   assert.ok(most * 4 >= line.length, alt + ": the " + kind + "'s dash covers at least a quarter of its line's " + line.length + " pixels, so a stray pixel cannot carry the read (" + seen + ")");
-  return { ratio: contrastOver(dash, g), dash, ground: g, outer: outer && rgb(outer), opacities: r.opacities };
+  return { ratio: contrastOver(dash, g), dash, ground: g, outer: rgb(outer), opacities: r.opacities };
 }
+/** The mark's line by the worst dash-to-ring ratio (the file review's round 14, correctness-2 with extra5-1 and extra5-2), over the
+ *  outline ring's pixels (1 px out past the 1 px offset from the picture's box L, T, R, B, on all four sides and at the corners), each
+ *  with the pixel one step toward the picture and one step away, whatever paints there. The dash is the ring's most frequent colour;
+ *  a pixel within 6 per channel of it is a dash pixel, read against both of its neighbours, and every other pixel is a gap, read
+ *  against the dash, but for a dash end: Chromium spaces a 1px dashed outline fractionally and paints each dash end as a partial
+ *  pixel, a blend of the dash with the pixels beside it, so a pixel that fits such a blend (the dash's weight 0.06 to 0.94, the rest
+ *  from its inner and outer neighbours, each channel at most 7 off) is neither and is not read, the read's stated bound (read as a gap,
+ *  the plain page's dash ends would red a correct sheet at 1.48:1). paintedRatio's two guards stand here too: the dash covers at least
+ *  a quarter of the ring's pixels, so a stray pixel cannot carry the read, and a gap is among them, the ground the dash is read
+ *  against. Returns the worst ratio, the dash, the colour read against it there, and where: the side, and inner, outer or gap. */
+function markWorst(at: (x: number, y: number) => number[], L: number, T: number, R: number, B: number, alt: string): { ratio: number; dash: string; ground: string; at: string } {
+  const rgb = (c: number[]) => "rgb(" + c.join(", ") + ")";
+  type Pt = [number, number, number, number, number, number, string];   // the pixel, its neighbour toward the picture, its neighbour away from it, the side
+  const pts: Pt[] = [];
+  for (let x = L - 1; x <= R; x++) pts.push([x, T - 2, x, T - 1, x, T - 3, "top"], [x, B + 1, x, B, x, B + 2, "bottom"]);
+  for (let y = T - 1; y <= B; y++) pts.push([L - 2, y, L - 1, y, L - 3, y, "left"], [R + 1, y, R, y, R + 2, y, "right"]);
+  pts.push([L - 2, T - 2, L - 1, T - 1, L - 3, T - 3, "top-left corner"], [R + 1, T - 2, R, T - 1, R + 2, T - 3, "top-right corner"], [L - 2, B + 1, L - 1, B, L - 3, B + 2, "bottom-left corner"], [R + 1, B + 1, R, B, R + 2, B + 2, "bottom-right corner"]);
+  const counts = new Map<string, number>();
+  for (const [x, y] of pts) { const c = rgb(at(x, y)); counts.set(c, (counts.get(c) || 0) + 1); }
+  let dash = "", most = 0;
+  for (const [c, n] of counts) if (n > most) { dash = c; most = n; }
+  const tk = (dash.match(/\d+/g) || []).map(Number);   // the dash's channels
+  const nearDash = (p: number[]) => Math.max(Math.abs(p[0] - tk[0]), Math.abs(p[1] - tk[1]), Math.abs(p[2] - tk[2])) <= 6;
+  /** A blend of the dash with the inner and outer neighbours (p = a dash + b inner + c outer, a + b + c = 1), by least squares, or with
+   *  one of the two alone. */
+  const isEnd = (p: number[], pi: number[], po: number[]): boolean => {
+    const fits = (a: number, b: number) => { const c = 1 - a - b; return a >= 0.06 && a <= 0.94 && b >= -0.02 && c >= -0.02 && [0, 1, 2].every((k) => Math.abs(a * tk[k] + b * pi[k] + c * po[k] - p[k]) <= 7); };
+    const u = [0, 1, 2].map((k) => tk[k] - po[k]), v = [0, 1, 2].map((k) => pi[k] - po[k]), w = [0, 1, 2].map((k) => p[k] - po[k]);
+    const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const uu = dot(u, u), vv = dot(v, v), uv = dot(u, v), uw = dot(u, w), vw = dot(v, w), det = uu * vv - uv * uv;
+    if (Math.abs(det) > 1e-6 && fits((uw * vv - vw * uv) / det, (vw * uu - uw * uv) / det)) return true;
+    for (const g of [pi, po]) {
+      const tg = [0, 1, 2].map((k) => tk[k] - g[k]), n = dot(tg, tg);
+      if (n < 1) continue;
+      const a = dot(tg, [0, 1, 2].map((k) => p[k] - g[k])) / n;
+      if (a >= 0.06 && a <= 0.94 && [0, 1, 2].every((k) => Math.abs(a * tk[k] + (1 - a) * g[k] - p[k]) <= 7)) return true;
+    }
+    return false;
+  };
+  let worst = Infinity, where = "", against = "", dashes = 0, ends = 0, gaps = 0;
+  for (const [x, y, ix, iy, ox, oy, side] of pts) {
+    const p = at(x, y), pi = at(ix, iy), po = at(ox, oy);
+    if (nearDash(p)) {
+      dashes++;
+      for (const [q, step] of [[pi, "inner"], [po, "outer"]] as Array<[number[], string]>) { const v = contrastOver(rgb(p), rgb(q)); if (v < worst) { worst = v; where = side + " " + step; against = rgb(q); } }
+    } else if (isEnd(p, pi, po)) ends++;
+    else { gaps++; const v = contrastOver(dash, rgb(p)); if (v < worst) { worst = v; where = side + " gap"; against = rgb(p); } }
+  }
+  const seen = "its modal colour " + dash + ", " + dashes + " dash, " + ends + " dash-end and " + gaps + " gap pixels of " + pts.length + "; the ring read " + Array.from(counts).map(([c, n]) => c + " x" + n).join(", ");
+  assert.ok(most * 4 >= pts.length, alt + ": the mark's dash covers at least a quarter of its line's " + pts.length + " pixels, so a stray pixel cannot carry the read (" + seen + ")");
+  assert.ok(gaps > 0, alt + ": a gap between the mark's dashes is among its line's pixels, the ground the dash is read against (" + seen + ")");
+  return { ratio: worst, dash, ground: against, at: where + "; " + dashes + " dash, " + ends + " dash-end and " + gaps + " gap pixels" };
+}
+/** The grounds the mark's line read against before its ring of var(--bg), a picture under the floor on each (the file review's round
+ *  14, correctness-2 with extra5-1 and extra5-2): the tiny report's alt and the words for the ground. */
+const RING_GROUNDS: Array<[string, string]> = [["hl", "inside a highlight"], ["th", "in a table header"], ["even", "in an even table row"], ["conote", "in a note callout"]];
 /** The dresses at rest the touch and laptop cases read: the web control and the mark, each alone and inside a dead link (the tiny
- *  report's shapes), the control both after a bare dead link and inside a captioned one. */
-const DRESSES: Array<[string, "control" | "mark", string]> = [["big", "control", "the web control at rest"], ["deadbare", "control", "the web control at rest after a bare dead link"], ["deadcap", "control", "the web control at rest inside a captioned dead link"], ["build", "mark", "the mark at rest"], ["deadbuild", "mark", "the mark at rest inside a dead link"]];
+ *  report's shapes), the control both after a bare dead link and inside a captioned one, and the mark on RING_GROUNDS. */
+const DRESSES: Array<[string, "control" | "mark", string]> = [["big", "control", "the web control at rest"], ["deadbare", "control", "the web control at rest after a bare dead link"], ["deadcap", "control", "the web control at rest inside a captioned dead link"], ["build", "mark", "the mark at rest"], ["deadbuild", "mark", "the mark at rest inside a dead link"],
+  ...RING_GROUNDS.map(([alt, ground]): [string, "control" | "mark", string] => [alt, "mark", "the mark at rest " + ground])];
 /** Reads `reads` as painted (paintedRatio) and pushes onto `fails` each that is under 3:1 (or, with `clears` false, each that is not:
  *  a ground past the stated bound), so a case collects every failing read and asserts once at its end; returns the reads by alt, and
  *  hands each read to `note` (the case's test diagnostic, so the log carries every figure, green or red). The body's scroll is
@@ -829,14 +908,103 @@ async function paintedLegible(page: any, where: string, fails: string[], note: (
     const p = await paintedRatio(page, alt, kind);
     out.set(alt, p);
     const opac = " (opacities on the way: " + (p.opacities.join(", ") || "none") + ")";
-    note("painted, " + where + ": " + what + " " + p.dash + " over " + p.ground + ", " + p.ratio.toFixed(3) + ":1" + opac);
-    // FAILS BEFORE (61d69cba1): inside a dead link the control at 0.8 x 0.7 and the mark at 0.7; on a VS Code ground at #404040 the control at 0.8 too
-    if (clears && p.ratio < 3) fails.push(where + ": " + what + " paints " + p.dash + " over " + p.ground + ", " + p.ratio.toFixed(3) + ":1, under the 3:1 floor for the outbound dress's line" + opac);
-    if (!clears && p.ratio >= 3) fails.push(where + ": " + what + " paints " + p.dash + " over " + p.ground + ", " + p.ratio.toFixed(3) + ":1, past the stated bound, where it should fall under 3:1 (the bound is stated exact)" + opac);
+    const worst = p.at ? " (the worst read: " + p.at + ")" : "";
+    note("painted, " + where + ": " + what + " " + p.dash + " over " + p.ground + ", " + p.ratio.toFixed(3) + ":1" + worst + opac);
+    // FAILS BEFORE (61d69cba1): inside a dead link the control at 0.8 x 0.7 and the mark at 0.7; on a VS Code ground at #404040 the control at 0.8 too.
+    // FAILS BEFORE the ring (the file review's round 14, correctness-2 with extra5-1 and extra5-2): the mark inside the dark highlight,
+    // and on the VS Code grounds the mark on the tinted grounds of RING_GROUNDS, each read by the worst dash-to-ring ratio
+    if (clears && p.ratio < 3) fails.push(where + ": " + what + " paints " + p.dash + " over " + p.ground + ", " + p.ratio.toFixed(3) + ":1, under the 3:1 floor for the outbound dress's line" + worst + opac);
+    if (!clears && p.ratio >= 3) fails.push(where + ": " + what + " paints " + p.dash + " over " + p.ground + ", " + p.ratio.toFixed(3) + ":1, past the stated bound, where it should fall under 3:1 (the bound is stated exact)" + worst + opac);
   }
   await page.evaluate((y: number) => { (document.querySelector(".fileview-body") as HTMLElement).scrollTop = y; }, top);
   await frames(page, 2);
   return out;
+}
+/** The neighbour pin's scenes (the tiny report's last pictures): the alt of the picture whose ring is read, and the scene. */
+const NEIGHBOURS: Array<[string, string]> = [["ngp", "a paragraph"], ["ngh", "a highlight"], ["ngt", "a table cell"], ["nb2", "two glued badges"]];
+/** The ring covers no neighbouring ink (the file review's round 14, correctness-2 with extra5-1 and extra5-2): a box-shadow takes no
+ *  layout and paints with the picture in tree order, so a bare ring covers its width of whatever stands before the picture on its line.
+ *  For each scene of NEIGHBOURS, the picture's neighbours (the glyph glued before it and the one glued after it, or the badge glued
+ *  before the second badge) are read off a screenshot of the page as it is and of the same clip with every mark's box-shadow
+ *  overridden to none, the same page without the ring (the margin kept, so nothing moves), and a neighbour fails when a pixel whose
+ *  centre lies inside its rect changes, or an ink pixel of it does (a pixel of the reference more than 24 off the rect's modal colour
+ *  on a channel); a pixel only partly inside, in the rect's fractional edge column, is neither and is not read, the pin's stated bound
+ *  (the ring's edge meets a glued neighbour there). Guards: the picture wears the mark's outline as it is read (on hover, the pointer
+ *  over it, `hover` true; at rest otherwise), each neighbour is found, and the override takes the ring off (the picture's computed
+ *  box-shadow none under it) and moves nothing, so the second shot is the page without the ring (on the page's own ground the ring
+ *  paints the colour beneath it, and the clip's changed pixels, noted, can be none). Over sheets with no ring the two shots are one paint, a green by design; over a bare 3px ring with no margin
+ *  beside it the glyphs before the picture red. Each failure is pushed onto `fails`, each read handed to `note`; the scroll is restored. */
+async function ringCoversNoNeighbour(page: any, where: string, fails: string[], note: (m: string) => void, hover = false): Promise<void> {
+  type Rect = { left: number; top: number; right: number; bottom: number };
+  await page.mouse.move(5, 5);
+  const top = await page.evaluate(() => (document.querySelector(".fileview-body") as HTMLElement).scrollTop);
+  for (const [alt, scene] of NEIGHBOURS) {
+    const layout = (scroll: boolean): Promise<{ img: Rect; near: Record<string, Rect>; outline: string; shadow: string; hovered: boolean }> => page.evaluate(([alt, scroll]: [string, boolean]) => {
+      const img = Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt) as HTMLElement;
+      if (scroll) img.scrollIntoView({ block: "center" });
+      const box = (r: DOMRect) => ({ left: r.left, top: r.top, right: r.right, bottom: r.bottom });
+      const glyph = (node: Node | null, last: boolean) => { if (!node || node.nodeType !== 3 || !(node as Text).length) return null; const t = node as Text; const r = document.createRange(); r.setStart(t, last ? t.length - 1 : 0); r.setEnd(t, last ? t.length : 1); return box(r.getBoundingClientRect()); };
+      const near: Record<string, { left: number; top: number; right: number; bottom: number }> = {};
+      if (alt === "nb2") { const b = img.previousSibling; if (b && b.nodeType === 1 && (b as Element).getAttribute("alt") === "nb1") near["the badge before it"] = box((b as Element).getBoundingClientRect()); }
+      else { const b = glyph(img.previousSibling, true), a = glyph(img.nextSibling, false); if (b) near["the glyph before it"] = b; if (a) near["the glyph after it"] = a; }
+      const cs = getComputedStyle(img);
+      return { img: box(img.getBoundingClientRect()), near, outline: cs.outlineStyle, shadow: cs.boxShadow, hovered: img.matches(":hover") };
+    }, [alt, scroll]);
+    await layout(true);
+    await frames(page, 2);
+    let lay = await layout(false);
+    if (hover) {
+      await page.mouse.move((lay.img.left + lay.img.right) / 2, (lay.img.top + lay.img.bottom) / 2);
+      await page.waitForFunction((alt: string) => getComputedStyle(Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt)!).outlineStyle === "dashed", alt, { timeout: 5000 }).catch(() => null);
+      await frames(page, 2);
+      lay = await layout(false);
+    }
+    const names = Object.keys(lay.near);
+    assert.deepEqual(names, alt === "nb2" ? ["the badge before it"] : ["the glyph before it", "the glyph after it"], where + ": " + scene + ": the neighbours the scene glues to the picture are found");
+    assert.deepEqual([lay.outline, lay.hovered], ["dashed", hover], where + ": " + scene + ": the picture wears the mark's outline as the pin reads it" + (hover ? ", the pointer over it" : ", at rest"));
+    const rects = names.map((k) => [k, lay.near[k]] as [string, Rect]);
+    const xs = [lay.img.left - 12, lay.img.right + 12, ...rects.flatMap(([, r]) => [r.left - 2, r.right + 2])], ys = [lay.img.top - 12, lay.img.bottom + 12, ...rects.flatMap(([, r]) => [r.top - 2, r.bottom + 2])];
+    const cx = Math.max(0, Math.floor(Math.min(...xs))), cy = Math.max(0, Math.floor(Math.min(...ys))), cw = Math.ceil(Math.max(...xs)) - cx, ch = Math.ceil(Math.max(...ys)) - cy;
+    const shot = async () => decodePng(await page.screenshot({ clip: { x: cx, y: cy, width: cw, height: ch } }));
+    const withRing = await shot();
+    await page.evaluate(() => { const st = document.createElement("style"); st.id = "neighbour-pin-noring"; st.textContent = ".fileview-md img[data-fv-figweb] { box-shadow: none !important; }"; document.head.appendChild(st); });
+    await frames(page, 3);
+    const noRing = await shot();
+    const still = await layout(false);
+    await page.evaluate(() => document.getElementById("neighbour-pin-noring")!.remove());
+    await frames(page, 2);
+    assert.deepEqual([still.img, still.hovered, still.shadow], [lay.img, hover, "none"], where + ": " + scene + ": the override takes the ring off (the picture's computed box-shadow none under it), moves nothing, and the pointer's state holds between the two shots");
+    const px = (png: { width: number; bpp: number; data: Buffer }, x: number, y: number) => { const k = ((y - cy) * png.width + (x - cx)) * png.bpp; return [png.data[k], png.data[k + 1], png.data[k + 2]]; };
+    let clipChanged = 0;
+    for (let y = cy; y < cy + ch; y++) for (let x = cx; x < cx + cw; x++) { const a = px(withRing, x, y), b = px(noRing, x, y); if (a[0] !== b[0] || a[1] !== b[1] || a[2] !== b[2]) clipChanged++; }
+    for (const [k, r] of rects) {
+      const x0 = Math.floor(r.left), x1 = Math.ceil(r.right) - 1, y0 = Math.floor(r.top), y1 = Math.ceil(r.bottom) - 1;
+      const modes = new Map<string, number>();
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { const c = px(noRing, x, y).join(","); modes.set(c, (modes.get(c) || 0) + 1); }
+      let mode = "", mn = 0;
+      for (const [c, n] of modes) if (n > mn) { mode = c; mn = n; }
+      const mc = mode.split(",").map(Number);
+      let centre = 0, ink = 0, inkChanged = 0;
+      const seen: string[] = [];
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const a = px(withRing, x, y), b = px(noRing, x, y);
+        const isInk = Math.max(Math.abs(b[0] - mc[0]), Math.abs(b[1] - mc[1]), Math.abs(b[2] - mc[2])) > 24;
+        if (isInk) ink++;
+        if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) continue;
+        const inside = x + 0.5 > r.left && x + 0.5 < r.right && y + 0.5 > r.top && y + 0.5 < r.bottom;
+        if (inside) centre++;
+        if (isInk) inkChanged++;
+        if ((inside || isInk) && seen.length < 4) seen.push((x - x0) + "," + (y - y0) + " rgb(" + b.join(", ") + ") to rgb(" + a.join(", ") + ")");
+      }
+      const read = where + ": " + scene + ": " + k + " (" + (x1 - x0 + 1) * (y1 - y0 + 1) + " pixels, " + ink + " of them ink): " + centre + " changed with the centre inside, " + inkChanged + " ink pixels changed, the ring " + lay.shadow + ", " + clipChanged + " pixels of the clip changed by it";
+      note("neighbour, " + read);
+      if (centre > 0 || inkChanged > 0) fails.push(read + ": the ring covers neighbouring ink (" + seen.join("; ") + ")");
+    }
+    if (hover) await page.mouse.move(5, 5);
+  }
+  await page.mouse.move(5, 5);
+  await page.evaluate((y: number) => { (document.querySelector(".fileview-body") as HTMLElement).scrollTop = y; }, top);
+  await frames(page, 2);
 }
 /** The VS Code editor ground, which the dark theme's --bg follows (var(--vscode-editor-background, #1e1e1e)), set on the root as the
  *  editor's injected variable stands, or taken off with null; the controls' 0.12 s background ease awaited on the big picture's (bounded). */
@@ -933,13 +1101,13 @@ async function openTiny(browser: any, second: { port: number }): Promise<{ page:
 }
 test("in a browser: a remote picture under the floor (20 by 20, from the second server) wears no control and carries the address in its title (the executed read of the property file-figure-open.test.ts and file-view-figure-shapes.test.ts pin by spelling); the picture itself wears the outbound mark, the control's dashed dress as an outline, on a fine pointer on hover alone, gone with the pointer and the box unchanged; the loaded picture beside it keeps its control and wears no mark (the file review's round 12, fresh-1 with tests-2)", { timeout: 240000 }, async (t) => {
   const served: string[] = [];
-  const second = await secondServer(served, { "/tiny.svg": [20, 20], "/deadtiny.svg": [20, 20] });
+  const second = await secondServer(served, TINY_SIZES);
   try {
     await inBrowser(t, async (browser) => {
       const { page, errors } = await openTiny(browser, second);
       const rest = await under(page);
       assert.equal(rest.hoverNone, false, "a fine pointer");
-      assert.deepEqual(rest.imgs.map((x) => x.alt), ["local", "build", "big", "deadbare", "deadcap", "deadbuild"], "the six figures");
+      assert.deepEqual(rest.imgs.map((x) => x.alt), TINY_ALTS, "the tiny report's figures");
       const badge = rest.imgs[1], big = rest.imgs[2];
       assert.ok(badge.w < 48 && badge.h < 48 && badge.w > 0, "the badge is under the floor on both sides: " + badge.w + " by " + badge.h);
       // tests-2: the title of a remote picture under the floor, read off the real paint
@@ -984,7 +1152,7 @@ test("in a browser: a remote picture under the floor (20 by 20, from the second 
       const fails: string[] = [];
       const imgAt = (alt: string) => page.evaluate((alt: string) => { const i = Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt) as HTMLElement; i.scrollIntoView({ block: "center" }); const r = i.getBoundingClientRect(); return { x: r.left + r.width * 0.3, y: r.top + r.height * 0.7 }; }, alt);
       const deadCtl = "deadcap";   // the captioned dead link's picture, whose control stands right after it inside the anchor
-      const push = (theme: string, what: string, p: Painted) => { t.diagnostic("painted, " + theme + " theme: " + what + " " + p.dash + " over " + p.ground + ", " + p.ratio.toFixed(3) + ":1 (opacities on the way: " + (p.opacities.join(", ") || "none") + ")"); if (p.ratio < 3) fails.push(theme + " theme: " + what + " paints " + p.dash + " over " + p.ground + ", " + p.ratio.toFixed(3) + ":1, under the 3:1 floor (opacities on the way: " + (p.opacities.join(", ") || "none") + ")"); };
+      const push = (theme: string, what: string, p: Painted) => { const worst = p.at ? " (the worst read: " + p.at + ")" : ""; t.diagnostic("painted, " + theme + " theme: " + what + " " + p.dash + " over " + p.ground + ", " + p.ratio.toFixed(3) + ":1" + worst + " (opacities on the way: " + (p.opacities.join(", ") || "none") + ")"); if (p.ratio < 3) fails.push(theme + " theme: " + what + " paints " + p.dash + " over " + p.ground + ", " + p.ratio.toFixed(3) + ":1, under the 3:1 floor" + worst + " (opacities on the way: " + (p.opacities.join(", ") || "none") + ")"); };
       for (const theme of ["dark", "light"]) {
         await page.mouse.move(5, 5);
         await frames(page, 2);
@@ -1017,6 +1185,19 @@ test("in a browser: a remote picture under the floor (20 by 20, from the second 
         await page.waitForFunction(() => getComputedStyle(Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === "deadbuild")!).outlineStyle === "dashed", null, { timeout: 5000 });
         await frames(page, 2);
         push(theme, "the mark on hover inside a dead link", await paintedRatio(page, "deadbuild", "mark", "hover"));
+        // the mark on hover on the grounds its line read against before its ring of var(--bg), each by the worst dash-to-ring read (the
+        // file review's round 14, correctness-2 with extra5-1 and extra5-2; FAILS BEFORE the ring: the dark highlight at 2.40:1, its
+        // tint on both sides of the dashes), and the ring on hover covering no neighbouring ink (ringCoversNoNeighbour)
+        for (const [alt, ground] of RING_GROUNDS) {
+          await page.mouse.move(5, 5);
+          const g = await imgAt(alt);
+          await frames(page, 2);
+          await page.mouse.move(g.x, g.y);
+          await page.waitForFunction((alt: string) => getComputedStyle(Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt)!).outlineStyle === "dashed", alt, { timeout: 5000 });
+          await frames(page, 2);
+          push(theme, "the mark on hover " + ground, await paintedRatio(page, alt, "mark", "hover"));
+        }
+        await ringCoversNoNeighbour(page, theme + " theme, on hover on a fine pointer", fails, (m) => t.diagnostic(m), true);
         // the control under a keyboard focus inside the dead link, the pointer off every picture so the focus alone reveals it: a
         // read that finds no dress on the line (the focus ring over it) is collected as a failure with the rest
         await page.mouse.move(5, 5);
@@ -1034,7 +1215,7 @@ test("in a browser: a remote picture under the floor (20 by 20, from the second 
       }
       await page.mouse.move(5, 5);
       await page.evaluate(() => document.body.classList.remove("theme-light"));
-      assert.deepEqual(fails, [], "every state a click or a key opens the tab from inside a dead link, the press held included, on a fine pointer, paints the dress at 3:1:\n" + fails.join("\n"));
+      assert.deepEqual(fails, [], "every state a click or a key opens the tab from inside a dead link, the press held included, and the mark on hover on the grounds of a highlight, a table header, an even row and a callout, on a fine pointer, paint the dress at 3:1, and the ring on hover covers no neighbouring ink:\n" + fails.join("\n"));
       assert.deepEqual(errors, [], "no page errors");
       await page.close();
     });
@@ -1042,7 +1223,7 @@ test("in a browser: a remote picture under the floor (20 by 20, from the second 
 });
 test("in a browser, under CDP touch emulation (hover none, a coarse pointer) enabled after the load and before any read, the pointer over no picture until the case's closing press: the remote picture under the floor wears the outbound mark AT REST, so the tap's open is visible before it happens, the mark's colour the control's border colour in the dark theme and in the light one, and the loaded picture beside it keeps its control visible at rest with no mark of its own; the tap opens the tab at the address (the popup and the second server's log, never a window.open stub) and the viewer stays (the file review's round 12, fresh-1: the at-rest read in a case of its own, so the leg's red over the undressed picture reaches it, where the case above, the hover read first, stops at the hover); last, a mouse press held on the web control inside the captioned dead link paints its line at 3:1 in both themes and its release opens the tab (the painted-contrast ask of 2026-09-23)", { timeout: 240000 }, async (t) => {
   const served: string[] = [];
-  const second = await secondServer(served, { "/tiny.svg": [20, 20], "/deadtiny.svg": [20, 20] });
+  const second = await secondServer(served, TINY_SIZES);
   try {
     await inBrowser(t, async (browser) => {
       const { page, errors } = await openTiny(browser, second);
@@ -1051,7 +1232,7 @@ test("in a browser, under CDP touch emulation (hover none, a coarse pointer) ena
       await frames(page, 2);
       const touch = await under(page);
       assert.deepEqual([touch.hoverNone, touch.coarse], [true, true], "hover none and a coarse pointer under the emulation");
-      assert.deepEqual(touch.imgs.map((x) => x.alt), ["local", "build", "big", "deadbare", "deadcap", "deadbuild"], "the six figures");
+      assert.deepEqual(touch.imgs.map((x) => x.alt), TINY_ALTS, "the tiny report's figures");
       assert.deepEqual([touch.imgs[1].control, touch.imgs[1].title], [false, WEB_LINE(WEB + "/tiny.svg")], "the badge: no control under the floor, the address in its title");
       // FAILS BEFORE: outline none, the tap's open shown nowhere
       assert.deepEqual([touch.imgs[1].mark, touch.imgs[1].outline, touch.imgs[1].outlineWidth], [true, "dashed", "1px"], "at rest on a coarse pointer, no pointer ever over it, the badge wears the mark: the open is visible before the tap");
@@ -1081,7 +1262,7 @@ test("in a browser, under CDP touch emulation (hover none, a coarse pointer) ena
       // colour, in the dark theme and, with body.theme-light, in the light one; the two themes resolve it apart, so the read is not one
       // value twice; and that colour, composited over the first opaque ground, clears 3:1 in each theme (oneLegibleColour)
       await oneLegibleColour(page, touch, "dark");
-      // and as PAINTED, through every opacity on the way (paintedRatio), the five dresses at rest, every failing read collected and
+      // and as PAINTED, through every opacity on the way (paintedRatio), the dresses at rest (DRESSES), every failing read collected and
       // asserted once at the case's end, before the control's opacity value is read, so a run over the old sheet shows every clause's
       // red and not a spelling first (the painted-contrast ask of 2026-09-23)
       const fails: string[] = [];
@@ -1091,6 +1272,8 @@ test("in a browser, under CDP touch emulation (hover none, a coarse pointer) ena
       // the control's own background, the ground the sheet controls (read in both themes: a pixel the border's edge smoothed can
       // match the fill in one theme by chance, never in both)
       assert.equal(dark.get("big")!.outer, "rgb(51, 51, 51)", "dark theme: the pixel above the web control's top border is the picture's own fill");
+      // the ring at rest covers no neighbouring ink (the file review's round 14, correctness-2 with extra5-1 and extra5-2)
+      await ringCoversNoNeighbour(page, "dark theme, at rest under touch emulation", fails, (m) => t.diagnostic(m));
       // the theme flipped on the body; the control's border colour TRANSITIONS to the light value (.fileview-btn's 0.12 s
       // border-color ease) while the outline has no transition, so the light read waits for the control's transitionend (bounded)
       await page.evaluate(() => new Promise<void>((done) => { const c = document.querySelectorAll(".fileview-md img")[2].nextElementSibling as HTMLElement; c.addEventListener("transitionend", () => done(), { once: true }); setTimeout(done, 1500); document.body.classList.add("theme-light"); }));
@@ -1099,15 +1282,18 @@ test("in a browser, under CDP touch emulation (hover none, a coarse pointer) ena
       await oneLegibleColour(page, light, "light");
       const lightRead = await paintedLegible(page, "light theme", fails, (m) => t.diagnostic(m));
       assert.equal(lightRead.get("big")!.outer, "rgb(51, 51, 51)", "light theme: the pixel above the web control's top border is the picture's own fill");
+      await ringCoversNoNeighbour(page, "light theme, at rest under touch emulation", fails, (m) => t.diagnostic(m));
       assert.notEqual(light.imgs[1].outlineColor, touch.imgs[1].outlineColor, "the two themes resolve the token apart: " + light.imgs[1].outlineColor + " against " + touch.imgs[1].outlineColor);
       assert.deepEqual([light.imgs[1].mark, light.imgs[1].outline], [true, "dashed"], "the mark stands in the light theme too");
       await page.evaluate(() => document.body.classList.remove("theme-light"));
       await frames(page, 2);
       // the VS Code bound, by pixels (the painted-contrast ask of 2026-09-23): in the dark theme the ground is the editor's, and the
-      // five dresses clear 3:1 on a neutral editor ground up to #404040 and fall under at #414141, and on a light one from #efefef and
+      // dresses clear 3:1 on a neutral editor ground up to #404040 and fall under at #414141, and on a light one from #efefef and
       // not at #eeeeee, the bound the sheets' comment states (theme-parity.test.ts composes the same bound from the declared
       // opacities); at 61d69cba1 the control at rest fell under 3:1 from #303030 and the control inside a captioned dead link on
-      // every grey. Read here alone: the touchscreen laptop's case reads byte-identical pixels at rest
+      // every grey. Read here alone: the touchscreen laptop's case reads byte-identical pixels at rest. Before the mark's ring of
+      // var(--bg) the mark on the tinted grounds of RING_GROUNDS read under the bound it states, and past it at #eeeeee in a table
+      // (the file review's round 14, correctness-2 with extra5-2)
       for (const [grey, clears] of [["#404040", true], ["#414141", false], ["#efefef", true], ["#eeeeee", false]] as Array<[string, boolean]>) {
         await editorGround(page, grey);
         await paintedLegible(page, "dark theme on a VS Code editor ground " + grey, fails, (m) => t.diagnostic(m), clears);
@@ -1133,7 +1319,7 @@ test("in a browser, under CDP touch emulation (hover none, a coarse pointer) ena
       await pressedLegible(page, "deadcap", "light theme, a mouse press under touch emulation", fails, (m) => t.diagnostic(m));
       await page.evaluate(() => new Promise<void>((done) => { const c = document.querySelectorAll(".fileview-md img")[2].nextElementSibling as HTMLElement; c.addEventListener("transitionend", () => done(), { once: true }); setTimeout(done, 1500); document.body.classList.remove("theme-light"); }));
       await frames(page, 2);
-      assert.deepEqual(fails, [], "every state a tap or a press opens the tab from paints the dress at 3:1, and the VS Code bound is exact:\n" + fails.join("\n"));
+      assert.deepEqual(fails, [], "every state a tap or a press opens the tab from paints the dress at 3:1, the VS Code bound is exact, and the ring at rest covers no neighbouring ink:\n" + fails.join("\n"));
       // the web control at rest at full opacity (a local one keeps 0.8), read after the painted reads so their red comes first
       assert.equal(touch.imgs[2].controlOpacity, "1", "the web control visible at rest at full opacity");
       // the dead link's words, a residual the sheets' comment states and this its witness: the rule dims the anchor's colour, so the
@@ -1166,20 +1352,20 @@ const LAPTOP = "--blink-settings=availablePointerTypes=6,primaryPointerType=4,av
 const pointing = (page: any): Promise<{ hoverNone: boolean; hoverHover: boolean; pointerFine: boolean; anyCoarse: boolean }> => page.evaluate(() => { const m = (q: string) => matchMedia(q).matches; return { hoverNone: m("(hover: none)"), hoverHover: m("(hover: hover)"), pointerFine: m("(pointer: fine)"), anyCoarse: m("(any-pointer: coarse)") }; });
 test("in Chromium launched as a trackpad-plus-touchscreen laptop (hover: hover, pointer: fine, any-pointer: coarse), the pointer over no picture until the case's closing press: the remote picture under the floor wears the outbound mark AT REST and the loaded picture's control stands visible at rest, one legible colour in both themes, where a rule keyed on (hover: none) alone dressed neither; a finger's tap opens the tab at the address and the viewer stays (the file review's round 13, extra7-2: the hybrid twin of the touch case above); last, the trackpad's press held on the web control inside the captioned dead link paints its line at 3:1 in both themes and its release opens the tab (the painted-contrast ask of 2026-09-23)", { timeout: 240000 }, async (t) => {
   const served: string[] = [];
-  const second = await secondServer(served, { "/tiny.svg": [20, 20], "/deadtiny.svg": [20, 20] });
+  const second = await secondServer(served, TINY_SIZES);
   try {
     await inBrowser(t, async (browser) => {
       const { page, errors } = await openTiny(browser, second);
       const laptop = await pointing(page);
       assert.deepEqual([laptop.hoverNone, laptop.hoverHover, laptop.pointerFine, laptop.anyCoarse], [false, true, true, true], "the laptop: the primary pointer fine and hovering, a coarse pointer present (the context, asserted before the dress)");
       const rest = await under(page);
-      assert.deepEqual(rest.imgs.map((x) => x.alt), ["local", "build", "big", "deadbare", "deadcap", "deadbuild"], "the six figures");
+      assert.deepEqual(rest.imgs.map((x) => x.alt), TINY_ALTS, "the tiny report's figures");
       assert.deepEqual([rest.imgs[1].control, rest.imgs[1].title], [false, WEB_LINE(WEB + "/tiny.svg")], "the badge: no control under the floor, the address in its title");
       // FAILS BEFORE: outline none and the control at opacity 0, (hover: none) false on this laptop
       assert.deepEqual([rest.imgs[1].mark, rest.imgs[1].outline, rest.imgs[1].outlineWidth], [true, "dashed", "1px"], "at rest on the laptop, no pointer ever over it, the badge wears the mark: the finger's open is visible before the tap");
       assert.equal(rest.imgs[2].outline, "none", "the picture with a control: no mark on the picture");
       await oneLegibleColour(page, rest, "dark");
-      // the five dresses at rest as painted, collected and asserted at the case's end, before the opacity values (the touch case's
+      // the dresses at rest as painted (DRESSES), collected and asserted at the case's end, before the opacity values (the touch case's
       // reads, here on the laptop, where the at-rest rules key on the coarse pointer beside the hovering one)
       const fails: string[] = [];
       await paintedLegible(page, "dark theme", fails, (m) => t.diagnostic(m));

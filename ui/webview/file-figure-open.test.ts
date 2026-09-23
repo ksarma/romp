@@ -210,14 +210,19 @@ test("the sheets: the control rests transparent over the figure's corner with a 
     // count; its selector names the img's mark and not the control's class, so it stands outside the set below by that set's own bound
     // and is held here in full, and byte-equal across the two sheets by fileview-parity.test.ts's heads; the executed read is
     // file-figure-open-browser.test.ts's two under-the-floor cases (on hover on a fine pointer, and at rest under touch emulation
-    // with no hover ever over the picture, a case of its own so the leg's red over the undressed picture reaches the at-rest read)
+    // with no hover ever over the picture, a case of its own so the leg's red over the undressed picture reaches the at-rest read).
+    // Since the file review's round 14 (correctness-2 with extra5-1 and extra5-2) both outline rules carry the ring of var(--bg)
+    // under the outline, 3px, and a margin of the ring's width stands at rest under screen on every pointer, the set's first member,
+    // so the ring covers no neighbouring ink; the executed reads are the leg's worst dash-to-ring read (paintedRatio's mark branch)
+    // and its neighbour pin (ringCoversNoNeighbour)
     const mark = cssRules(css).filter((r) => /data-fv-figweb/.test(r.selector));
     assert.deepEqual(mark.filter((r) => !underScreen(r.chain)).map(renderRule), [], name + ": no rule naming the mark outside a screen-only at-rule: a print, where hover is none, would show the at-rest dress (a property pin over the derived population)");
     assert.deepEqual(mark.filter((r) => underScreen(r.chain)).map(renderRule), [
-      "@media screen { .fileview-md img[data-fv-figweb]:hover { outline: 1px dashed var(--outbound-line); outline-offset: 1px; } }",
-      "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md img[data-fv-figweb] { outline: 1px dashed var(--outbound-line); outline-offset: 1px; } }",
+      "@media screen { .fileview-md img[data-fv-figweb] { margin: 3px; } }",
+      "@media screen { .fileview-md img[data-fv-figweb]:hover { outline: 1px dashed var(--outbound-line); outline-offset: 1px; box-shadow: 0 0 0 3px var(--bg); } }",
+      "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md img[data-fv-figweb] { outline: 1px dashed var(--outbound-line); outline-offset: 1px; box-shadow: 0 0 0 3px var(--bg); } }",
       "@media screen { .fileview-md a.fv-dead:has(.fv-figopen-web), .fileview-md a.fv-dead:has(img[data-fv-figweb]) { opacity: 1; color: color-mix(in srgb, currentColor 70%, transparent); } }",
-    ], name + ": the rules naming the mark are exactly the hover rule and the at-rest rule where hover is none or any pointer is coarse, the control's dashed dress as an outline (an outline and not a border: a border on the img widens its box), and the dead link holding the dress, whose dimming moves off opacity so the dress inside it paints at the token's ratio (the painted-contrast ask of 2026-09-23; a property pin over the derived population, its count never typed)");
+    ], name + ": the rules naming the mark are exactly the margin at rest on every pointer, the hover rule and the at-rest rule where hover is none or any pointer is coarse, the control's dashed dress as an outline (an outline and not a border: a border on the img widens its box) over a ring of var(--bg) 3px wide, so both sides of every dash and the gaps read the page's own ground whatever stands behind the picture, the margin the ring's width so the ring covers no neighbouring ink (the file review's round 14, correctness-2 with extra5-1 and extra5-2: inside a highlight the dark theme's dashes read 2.40:1 against its tint, and a 2px ring left the line's outer side on it), and the dead link holding the dress, whose dimming moves off opacity so the dress inside it paints at the token's ratio (the painted-contrast ask of 2026-09-23; a property pin over the derived population, its count never typed)");
     assert.doesNotMatch(print, /data-fv-figweb/, name + ": the print block names the mark nowhere");
     // one colour token for the two dresses (the owner's call with that ruling): the mark's outline wears the token the control's dashed
     // border wears at rest, the outbound dress's own (the file review's round 13, ui-1 with extra6-1: the button family's hairline it
@@ -229,7 +234,9 @@ test("the sheets: the control rests transparent over the figure's corner with a 
     assert.notEqual(token![1], "--card-border", name + ": the token is the dress's own, not the button family's 10 percent hairline (a property pin over the derived token: the one name it may not be)");
     const onImg = mark.filter((r) => r.selector.split(",").every((sel) => /img\[data-fv-figweb\](?::hover)?$/.test(sel.trim())));   // the rules whose subject is the picture, not the dead link holding it
     assert.ok(onImg.length > 0, name + ": the rules dressing the picture itself are read (a derivation guard: an empty set is a broken read, not a clean sheet)");
-    for (const r of onImg) assert.match(r.body, new RegExp("outline: 1px dashed var\\(" + token![1] + "\\);"), name + ": the mark's outline wears " + token![1] + ", the token the control's dashed border wears at rest, so the two dresses are one colour (a property pin: the token derived from the control's rest rule)");
+    const outlined = onImg.filter((r) => /(?:^|;\s*)outline:/.test(r.body.trim()));   // the outline rules, not the margin that keeps their ring off the neighbours (the file review's round 14, correctness-2)
+    assert.ok(outlined.length > 0, name + ": the outline rules on the picture are read (a derivation guard: an empty set is a broken read, not a clean sheet)");
+    for (const r of outlined) assert.match(r.body, new RegExp("outline: 1px dashed var\\(" + token![1] + "\\);"), name + ": the mark's outline wears " + token![1] + ", the token the control's dashed border wears at rest, so the two dresses are one colour (a property pin: the token derived from the control's rest rule)");
     // the closed set over the control's rules, read as RULES (ui/webview/css-rules.mjs, the reader this home shares with
     // tools/markdown-viewer-plan-linknav.test.mjs: brace-matched over the comment-stripped sheet, each rule with the at-rules
     // enclosing it), so a rule written the sheets' own way, indented inside an at-rule block or on a grouped selector wrapped

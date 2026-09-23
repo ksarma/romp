@@ -8506,7 +8506,12 @@ figure's neighbours took the clicks meant for them, itself transparent): a figur
 plain click still opens them where no link holds them, and a picture from the web among them wears the control's dashed dress
 itself, an outline the sheets key on the mark the decision sets right after the title (`data-fv-figweb`, `dressFigureMark`), on
 hover on a fine pointer and at rest where hover is none or any pointer is coarse, in the outbound dress's own token, `--outbound-line`,
-the one the control's dashed border wears at rest (the file review's round 13, ui-1 with extra6-1), so a tap's open is shown before it
+the one the control's dashed border wears at rest (the file review's round 13, ui-1 with extra6-1), over a ring of the page's own ground
+under the outline, a box-shadow of `var(--bg)` 3px wide, so both sides of every dash and the gaps between them read that ground
+whatever the page paints behind the picture (inside a ==highlight== the dark theme's dashes had read 2.40:1 against its tint, and a
+table header, an even row or a callout fell under 3:1 on a VS Code editor ground inside the stated bound), with a margin of the ring's
+width at rest under screen on every pointer so the ring covers no neighbouring ink, a line holding such a picture up to 6px taller (the
+file review's round 14, correctness-2 with extra5-1 and extra5-2), so a tap's open is shown before it
 happens where the title is no surface; the file review's round 12, fresh-1; the web control rests at full opacity where the at-rest rule
 stands, a local one at 0.8, its focus ring stands 2px off its border so the dashed line shows under a keyboard focus, the button
 family's press cue is off on it since the release that opens the tab comes while it is held (under the cue the line spread over two

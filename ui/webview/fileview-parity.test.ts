@@ -103,6 +103,9 @@ const RULES = [
   // the picture's own outbound mark for a web picture with no control (the file review's round 12, fresh-1): the two one-line screen
   // blocks keyed on the img's attribute, byte-equal in both sheets (file-figure-open.test.ts derives the set by the attribute)
   "@media screen { .fileview-md img[data-fv-figweb]:hover {", "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md img[data-fv-figweb] {",
+  // the margin of the ring's width at rest on every pointer, so the ring of var(--bg) the two rules above carry under the outline
+  // covers no neighbouring ink (the file review's round 14, correctness-2 with extra5-1 and extra5-2), held byte for byte too
+  "@media screen { .fileview-md img[data-fv-figweb] {",
   // the web control's full opacity at rest, its focus ring off its border, its press cue off, and the dead link holding the dress,
   // dimming by colour (the painted-contrast ask of 2026-09-23): four more one-line screen blocks held byte for byte
   "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen-web {", "@media screen { .fileview-md .fv-figopen-web:focus-visible {",

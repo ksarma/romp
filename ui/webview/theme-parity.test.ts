@@ -257,11 +257,16 @@ test("the ring hues stay apart in BOTH themes, every pair: rings against rings f
 // tab (a tap, a click, Enter on the control; an href-less dead link owns no click, file-view.ts FIGURE_LINK_SET, so the states inside
 // one open the tab too) is composed here from the opacities the sheet DECLARES for the rules that reach the dress, and its line must
 // clear 3:1 over the ground it paints on: the control's own background, composed the same way, for the worst picture beneath it
-// (every grey and the eight corners of the colour cube), or the page for the mark, whose 1px offset shows the page between its
-// dashes. The states: the web control at rest, alone and inside a dead link; the control revealed by the pointer over its picture or
-// by a keyboard focus inside a dead link (a focus as its opacities compose it: where the ring stands is the sheets' focus rule, 2px
-// off the border, which this model does not read, its spelling held by file-figure-open.test.ts's closed set and its paint read in
-// the leg); the accent border with the pointer on the control inside a dead link, against the hover wash; the mark, alone and inside
+// (every grey and the eight corners of the colour cube), or the page's own ground for the mark, which the sheets' ring gives it: a
+// box-shadow of var(--bg) under the outline, 3px wide, so the pixel inside every dash, the pixel outside it and the gaps between the
+// dashes read var(--bg) whatever the page paints behind the picture (the file review's round 14, correctness-2 with extra5-1 and
+// extra5-2: before the ring the 1px offset showed that paint, and inside a ==highlight== the dark theme's dashes read 2.40:1 against
+// its tint by pixels, a ground this composition over --bg never saw). So the mark is composed over --bg only where the ring stands:
+// markRing reads it off the rules that dress the picture with its outline, each owed a box-shadow of var(--bg) at least 3px wide,
+// and a rule without one is a failure here beside the ratios. The states: the web control at rest, alone and inside a dead link;
+// the control revealed by the pointer over its picture or by a keyboard focus inside a dead link (a focus as its opacities compose
+// it: where the focus ring stands is the sheets' focus rule, 2px off the border, which this model does not read, its spelling held by
+// file-figure-open.test.ts's closed set and its paint read in the leg); the accent border with the pointer on the control inside a dead link, against the hover wash; the mark, alone and inside
 // a dead link. The control HELD PRESSED is not composed here and cannot be: what a press changes is a transform, the button family's
 // press cue (a scale to 0.96), and a scale is not an opacity (under it the 1px line was resampled over two pixel rows, a paint no
 // composition of colours computes). This model does not read the sheets' press rule, which takes that cue off the web control; its
@@ -303,6 +308,17 @@ function controlPainted(line: RGBf, ground: RGBf, bg: RGBf, o: number, a: number
   return worst;
 }
 const markPainted = (tok: RGBf, bg: RGBf, a: number): number => contrast(over(tok, bg, a), bg);
+/** The ring under the mark's outline, read off the sheet (the file review's round 14, correctness-2 with extra5-1 and extra5-2): every
+ *  rule that dresses the picture with the outline (its selector list carrying the hover spelling under screen or the bare spelling
+ *  under the at-rest query) declares a box-shadow of var(--bg) at least 3px wide, the 1px offset, the 1px line and the pixel outside
+ *  it, so markPainted's ground is the one the dashes paint on; returns what fails, or null. A rule reaching the picture under
+ *  another spelling is outside this read, the model's stated bound above, and the executed read is the leg's worst dash-to-ring read. */
+function markRing(css: string): string | null {
+  const outlined = cssRules(css).filter((r) => ((SCREEN(r.chain) && selectorList(r.selector).includes(".fileview-md img[data-fv-figweb]:hover")) || (AT_REST(r.chain) && selectorList(r.selector).includes(".fileview-md img[data-fv-figweb]"))) && /(?:^|;\s*)outline:/.test(r.body.trim()));
+  if (outlined.length < 2) return "the hover rule and the at-rest rule that dress the picture with the mark's outline are not both read (" + outlined.length + " found): a broken read, not a clean sheet";
+  const bare = outlined.filter((r) => { const m = /(?:^|;\s*)box-shadow:\s*0 0 0 (\d+)px var\(--bg\)\s*(?:;|$)/.exec(r.body.trim()); return !m || +m[1] < 3; });
+  return bare.length ? "the mark's outline stands on no ring of var(--bg) at least 3px wide in " + bare.map((r) => JSON.stringify((r.chain.join(" ") + " " + r.selector).trim())).join(" and ") + ", so its dashes read whatever the page paints behind the picture, not the --bg this model composes them over (a highlight's tint read 2.40:1 dark by pixels)" : null;
+}
 type Theme = { bg: RGBf; tok: RGBf; accent: RGBf; wash: RGBf };   // wash: --accent-wash already over bg, the control's hover background
 /** Every state from which a gesture opens the outbound tab, painted over the theme's ground, from the sheet's declared opacities; each
  *  with whether its line is the dress's token (the VS Code bound's states) or the family's accent under the pointer. */
@@ -327,6 +343,8 @@ test("the outbound dress PAINTED: every state from which a gesture opens the out
   for (const sheet of ["styles.css", "feed.css"]) {
     const css = read(sheet);
     const themeOf = (vars: Map<string, string>, bg: RGBf): Theme => ({ bg, tok: rgbOf(vars.get("--outbound-line")!, bg)!, accent: rgbOf(vars.get("--accent")!, bg)!, wash: rgbOf(vars.get("--accent-wash")!, bg)! });   // the wash composited over the ground (rgbOf), the hover background var(--bg) under the gradient
+    const ring = markRing(css);
+    if (ring) fails.push(sheet + ": " + ring);
     for (const [name, blk] of [["dark", props(block(css, ":root {"))], ["light", props(block(css, "body.theme-light {"))]] as const) {
       const bg = rgbOf(blk.get("--bg")!, [30, 30, 30])!;
       for (const [state, ratio] of dressStates(css, themeOf(blk, bg))) t.diagnostic(`${sheet} ${name}: ${state} paints ${ratio.toFixed(3)}:1`);
@@ -352,5 +370,5 @@ test("the outbound dress PAINTED: every state from which a gesture opens the out
       if (best >= 3) fails.push(`${sheet}: at ${hex(g)} the dress's best state paints ${best.toFixed(3)}:1, past the stated bound, where it should fall under 3:1 (the bound #404040 and the light one #efefef are stated exact)`);
     }
   }
-  assert.deepEqual(fails, [], "every state a gesture opens the outbound tab from paints the dress at 3:1, and the VS Code bound is exact:\n" + fails.join("\n"));
+  assert.deepEqual(fails, [], "every state a gesture opens the outbound tab from paints the dress at 3:1, the mark on its ring of var(--bg), and the VS Code bound is exact:\n" + fails.join("\n"));
 });
