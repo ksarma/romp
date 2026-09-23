@@ -4084,7 +4084,27 @@ def _remote_sids_document(now, previous):
     hub knows one machine by a name, so its word about the host now stands in the direct row and its earlier
     word under the same key, stamped with an id the direct row no longer carries, is superseded (a far bus
     restarted under a new id and heard here before the hub heard it leaves such a row, which the gate alone
-    would carry for the file's life once the hub moved to the new id, since the ids never agree again). The
+    would carry for the file's life once the hub moved to the new id, since the ids never agree again). A via
+    key carries TWO names, the hub's and the hub's name for the far host, and either changes with no restart
+    on either side (round 3 of fork PR #897, the reviewer's verifier, by execution through the real handler
+    and the real fold): this bus's own dial folds a hub heard first through its dial to us from the hostname
+    it declared under the alias the kernel dials (peer_exchange_apply, _drop_peer_name_dupes), and a hub's
+    own fold of the far host under the alias IT dials changes the `via` label it stamps. The hub's word is
+    then written under the new key, and the row under the old key, carried by key alone, would name a session
+    that has since ended for the file's life, heard=false, where rule 5 is due. So the carry drops a carried
+    via row by IDENTITY as well as by key: when the hub's bus is heard in this process under another name
+    (`renamed`: the previous file's row under the hub's old name carries a busId a heard row carries, the
+    same test that drops that row itself, so the two leave together, whatever the hub now says about the far
+    host, since a hub in the same process gossiping nothing about a host it gossiped before reports no
+    sessions there), and when a hub's current gossip at this write names the far host's bus, by viaBus,
+    under any name (`current_word`: the hub's word about that bus stands, as a via row under its current
+    name for the host or folded into the host's own row). A heard hub gossiping nothing about a far host
+    under the SAME name still leaves its via row carried (its silence is not a word about the host: a
+    restarted hub has not heard it yet). What no identity in the file reaches: a hub restarted under a new
+    bus id AND heard under another name leaves its old row and that row's via rows carried for the file's
+    life, a departed host's rows, the class the ruling leaves disclosed rather than closed by a timer; and a
+    hub that stamps no viaBus (from before the field) renaming a far host leaves its old-name row the same
+    way, there being no bus id to match the two names by. The
     gossip is never added to the direct row as a naming source: that would credit the host with a word it
     did not give. The residual, disclosed as a bound and not closed by a timer: a direct row heard and not
     held down whose roster is OLDER than the hub's gossip folds it, so a session started on that host since
@@ -4112,12 +4132,15 @@ def _remote_sids_document(now, previous):
                 row["sids"].append(str(pa["id"]))
         hosts[str(host)] = row
     folded = set()                                    # the via keys whose gossip folded into a direct row at this write
-    for host, st in peers.items():                    # ...then each hub's word about the far hosts it gossips
-        for pa in st.get("presence") or []:
+    current_word = set()                              # the (hub, far bus id) pairs the hubs' gossip names at this write, under
+    for host, st in peers.items():                    # whatever name each hub now calls the far host (the carry drops a via row
+        for pa in st.get("presence") or []:           # of the same pair under another far name: the hub's word moved with the name)
             far = pa.get("via")
             if not (pa.get("id") and far):
                 continue
             far, far_bus = str(far), str(pa.get("viaBus") or "")
+            if far_bus:
+                current_word.add((str(host), far_bus))
             if _direct_row_speaks(peers, far, far_bus):
                 folded.add(_remote_sids_via_key(host, far))
                 continue                              # heard directly, its link not held down: its own row speaks
@@ -4128,6 +4151,8 @@ def _remote_sids_document(now, previous):
             row["viaBus"] = row["viaBus"] or far_bus
             row["seenAt"] = max(row["seenAt"], int(st.get("seenAt") or 0))
     heard_bus = {row["busId"] for row in hosts.values() if row.get("busId")}
+    renamed = {key for key, prev in previous.items()  # the hosts whose bus this process heard under ANOTHER name: the same
+               if key not in hosts and prev.get("busId") and str(prev["busId"]) in heard_bus}   # test that drops their own rows below
     named = {s for row in hosts.values() for s in row["sids"]}
     for key, prev in previous.items():
         if key in hosts:
@@ -4135,10 +4160,15 @@ def _remote_sids_document(now, previous):
         if prev.get("busId") and prev["busId"] in heard_bus:
             continue                                  # the same bus, heard under its dialable name
         if prev.get("kind") == "via" and (key in folded
-                                          or _direct_row_speaks(peers, prev.get("host"), prev.get("viaBus"))):
-            continue                                  # the far host speaks for itself again, or the hub's current word
-        #                                                about it folded at this write: the hub's older word would name a
-        #                                                sid for the file's life (round 3 of fork PR #897)
+                                          or _direct_row_speaks(peers, prev.get("host"), prev.get("viaBus"))
+                                          or str(prev.get("via") or "") in renamed
+                                          or (prev.get("viaBus")
+                                              and (str(prev.get("via") or ""), str(prev["viaBus"])) in current_word)):
+            continue                                  # the far host speaks for itself again; or the hub's current word about
+        #                                                it folded at this write; or the hub's bus is heard under another name;
+        #                                                or the hub's current word names the far host's bus under another
+        #                                                name: the hub's older word would otherwise name a sid for the file's
+        #                                                life (round 3 of fork PR #897)
         row = dict(prev, heard=False)
         row.setdefault("kind", "peer")
         row.setdefault("expired", False)
