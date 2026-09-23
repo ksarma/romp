@@ -115,9 +115,10 @@ one among them), nothing said or marked for no file or a readable one, the mark 
 restart until the bus process that read the kernel's list of links at its start has heard every dialable PEERS host since
 it, kept while a linked host stays down, kept in a bus whose seed failed or whose link table is empty, kept when it is read
 in another shape or a stray byte hits a top-level key, and cleared, said once, on the ruled event, a host counting toward
-it only once heard (a mark at second 0 among them) and an origin-only row never counting; and the clearing's disclosed
-bound, a far host's session a restarted hub no longer names, in no row once the mark clears (the reviewer's verifier at the
-twenty-second commit).
+it only once heard (a mark at second 0 among them) and an origin-only row never counting; and the clear's first-start
+answer (the reviewer's verifier at the twenty-second commit, and the reviewer's ruling of 15:45Z): a session on a host that
+no linked host hears now is outside every source after the clear, as on a first start, a far host's session its hub, the
+one link, no longer hears in no row once the mark clears, the rows a first start writes.
 tests/test_dead_session_staleness.py ReaderFollowsTheWriter
 runs this writer and the judge's reader together over one root; tests/test_postal_bus_lifetime.py
 MonitorTick pins the poll's write. SYNTHETIC fixtures only: private synthetic sids, hostname TESTHOST."""
@@ -1533,18 +1534,21 @@ class Mirror(unittest.TestCase):
         self.assertIsNone(self._mark(), "the one link heard since the mark: cleared, the origin-only row no link")
 
     def test_a_cleared_mark_does_not_reach_a_far_host_a_restarted_hub_no_longer_names(self):
-        """Round 3 of fork PR #897, the reviewer's verifier at the twenty-second commit, by execution: the DISCLOSED bound of
-        the clearing (_remote_sids_lost_cleared, road (a)), pinned as it stands so a rule that closes it or widens it turns
-        this red. HUB, the one link, gossips FAR's session D; FAR is never linked here. With the file intact, a restart and
-        HUB heard again after its own restart, gossiping nothing about FAR: the carried via row names D, unreachable (the
-        carry keeps a hub's word while the hub says nothing about its far host). With the file made not JSON, the same road:
-        the mark clears once HUB is heard, and D is in no row while HUB vouches for absence, so the judge presumes D closed
-        by rule 5 (tests/test_dead_session_staleness.py ReaderFollowsTheWriter has the verdicts)."""
+        """Round 3 of fork PR #897, the reviewer's verifier at the twenty-second commit, by execution, and the reviewer's ruling
+        of 15:45Z (_remote_sids_lost_cleared): a session on a host that no linked host hears now is outside every source after
+        the clear, as on a first start. Pinned as ruled, so a rule that reaches the road or widens it turns this red. HUB, the
+        one link, gossips FAR's session D; FAR is never linked here. With the file intact, a restart and HUB heard again after
+        its own restart, gossiping nothing about FAR: the carried via row names D, unreachable (the carry keeps a hub's word
+        while the hub says nothing about its far host). With the file made not JSON, the same road: the mark clears once HUB
+        is heard, and D is in no row while HUB vouches for absence, so the judge presumes D closed by rule 5. With no file, a
+        first start, the same road writes the same rows (tests/test_dead_session_staleness.py ReaderFollowsTheWriter has the
+        verdicts, B the only link there too)."""
         gossip = lambda far_sids, bus_id: pm.peer_exchange_apply(HUB, {}, {
             "epoch": 1, "holds": [], "busId": bus_id, "presenceAnswered": True,
             "presence": [{"id": C, "name": "api"}] + [{"id": s, "name": "api", "via": FAR, "viaBus": "bus-far", "viaAnswered": True}
                                                       for s in far_sids]})
-        for road in ("intact", "lost"):
+        rows = {}
+        for road in ("intact", "lost", "first"):
             with self.subTest(road=road):
                 self.path.unlink(missing_ok=True)
                 self._restart()
@@ -1554,11 +1558,15 @@ class Mirror(unittest.TestCase):
                 self.assertEqual(self._vouch().get(VIA_FAR), (True, True, True), "HUB heard, its word about FAR names D")
                 if road == "lost":
                     self.path.write_text(self.path.read_text().replace('"sids"', '"sids"}', 1))
+                elif road == "first":
+                    self.path.unlink()                # no previous file: the restarted bus is a first start
                 self._restart()
                 pm.PEERS.clear()
                 self.assertTrue(self._seed([(HUB, "up")]), "the restarted bus's seed read the list")
                 if road == "lost":
                     self.assertIsNotNone(self._mark(), "the seed's write read the file made not JSON and marked the document")
+                elif road == "first":
+                    self.assertIsNone(self._mark(), "a first start's seed writes no mark: nothing was lost")
                 gossip([], "bus-hub-2")               # HUB restarted since: heard, gossiping nothing about FAR
                 vouch = self._vouch()
                 if road == "intact":
@@ -1567,8 +1575,11 @@ class Mirror(unittest.TestCase):
                                      "the intact file: the via row carried, naming D, unreachable, beside HUB vouching")
                 else:
                     self.assertEqual((self._mark(), VIA_FAR in self._rows(), vouch.get(HUB)), (None, False, (True, True, True)),
-                                     "THE DISCLOSED BOUND: the mark cleared once HUB was heard, and D is in no row while HUB "
-                                     "vouches for absence (where the intact file carries the via row naming D)")
+                                     "AS ON A FIRST START (%s): no mark, and D, which no linked host hears now, is in no row "
+                                     "while HUB vouches for absence (where the intact file carries the via row naming D)" % road)
+                    rows[road] = (self._rows(), vouch)
+        self.assertEqual(rows.get("lost", "no lost road"), rows.get("first", "no first road"), "the lost file, once the mark "
+                         "clears, and a first start write the same rows with the same flags")
 
     def test_a_standing_mark_survives_a_mark_of_another_shape_and_a_stray_byte_inside_a_top_level_key(self):
         """Round 3 of fork PR #897, the twenty-second commit: a mark read back as written is carried as written; a mark in a

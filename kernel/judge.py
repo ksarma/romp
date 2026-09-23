@@ -19541,10 +19541,11 @@ def _presumed_closed_verdict(sid, now):
     the sid, but the bus's LOST-CARRY MARK stands ("carry-lost", its cause and its second: the bus could not
     read its previous file whole, so a session a lost row named is in no row; round 3 of fork PR #897, the
     reviewer's ruling of 14:57Z, the twenty-second commit), which the bus clears once it has heard every host
-    its kernel links to since. Once it clears, a live session a lost row named on a far host that no heard hub
-    names now (its hub restarted since hearing it), or on a host the kernel no longer links, is in no row and
-    answers rule 5 while another host vouches: the bound disclosed at postal_service.py _remote_sids_lost_cleared
-    (the reviewer's verifier at the twenty-second commit), witnessed by ReaderFollowsTheWriter. The rule is
+    its kernel links to since. After the clear the mirror knows what a fresh bus knows, and rule 5 there is the
+    design's first-start answer (the reviewer's ruling of 15:45Z, the twenty-fourth commit): a session on a host
+    that no linked host hears now is outside every source after the clear, as on a first start, and answers rule
+    5 while a host vouches for absence (postal_service.py _remote_sids_lost_cleared states it; ReaderFollowsTheWriter
+    witnesses it with a hub the only link, restarted and no longer hearing its far host). The rule is
     two-sided (round 2 of fork PR #897, the reviewer's ruling): a heard host vouches for presence; a host
     vouches for absence only when its link is known up,
     so a heard host with no link state answers cannot-determine for a sid it does not name, as a down host

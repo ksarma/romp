@@ -3927,8 +3927,9 @@ def _remote_sids_previous(path, now):
     cause and the second of the write, said once in the bus log (_remote_sids_lost). While the mark stands the judge
     answers NOT ESTABLISHED where rule 5 would presume a session closed (kernel/judge.py _presumed_closed_verdict,
     "carry-lost"), and rule 4 still answers for a sid a reachable host names. Every write carries the mark, across a
-    restart too, until it is cleared (_remote_sids_lost_cleared has the rule, its bound and the lost rows the clearing does
-    not reach, a far host's session that a restarted hub no longer names among them). Until this commit such a
+    restart too, until it is cleared (_remote_sids_lost_cleared has the rule, its bound and what the mirror knows once it
+    clears: a session on a host that no linked host hears now is outside every source after the clear, as on a first
+    start; the reviewer's ruling of 15:45Z, the twenty-fourth commit). Until this commit such a
     file carried nothing and the judge said "no reachable host names it" for a sid whose row was lost: a false rule 5
     under a loud log line, which the reviewer refused. The witnesses: tests/test_postal_remote_sids_mirror.py (each file
     above) and tests/test_dead_session_staleness.py ReaderFollowsTheWriter (the one-byte case, the byte-order mark and
@@ -4052,7 +4053,7 @@ def _remote_sids_lost_cleared(lost):
     the document (_remote_sids_document); until the twenty-third commit such a row, or no row at all, read as second 0,
     so a mark whose second is 0, which the carry and the judge's reader both accept, cleared with no host heard (the
     reviewer's verifier, by execution). The event is the exchange that makes the last of them heard; the write after it
-    drops the mark and says so once in the bus log, naming what the clearing does not reach (below).
+    drops the mark and says so once in the bus log, stating what the mirror knows after the clear (below).
     Why that set: a heard host's own row is rebuilt from memory at every write, and so is its current word about the
     hosts it gossips, which covers every far host the hub has heard in ITS current process (a bus forgets no host it
     has heard until it restarts, and gossips each one's last roster whatever that host's link), so once every host the
@@ -4070,26 +4071,36 @@ def _remote_sids_lost_cleared(lost):
     this process; a sid nothing names answers cannot-determine meanwhile, never rule 5. Under the legacy singleton scheme
     the seed does not run and the bus holds no list of links, so the mark stands for the life of the state root and rule
     5 answers cannot-determine there, as it did before 2026-09-22.
-    WHAT THE CLEARING DOES NOT REACH, disclosed and not closed (the reviewer's verifier at the twenty-second commit, by
-    execution through this writer and the judge's reader; that commit stated as fact that a hub re-gossips its via rows
-    on its next exchange, which is false for a hub that has restarted): the lost rows no heard linked host rebuilds. They
-    are (a) a hub's word about a far host (a via row) when the hub has restarted since it last heard that far host and
-    has not heard it in its new process, so it gossips nothing about it; (b) the rows of a host the kernel no longer
-    holds a link to (a departed host, directly held or a hub, heard by an earlier process), its via rows included; and
-    (c) the whitespace list of a bus from before 2026-09-22, for its sids on a host of (a) or (b). A lost heartbeat row
-    is not among them: in peer mode it names a local session, which rules 1 and 2 of the judge's ladder answer from its
-    local transcript before the mirror is read (the premise the mirror's one release rests on: _remote_sids_document),
-    and under the legacy scheme the mark never clears. Once the mark clears, a
-    live session one of those rows named is in no row, and while another host vouches for absence the judge presumes it
-    closed by rule 5 (True, 5, no-reachable-host-names-it), where the intact file's carried row would answer
+    AFTER THE CLEAR, AS ON A FIRST START (round 3 of fork PR #897, the reviewer's ruling of 15:45Z, the twenty-fourth
+    commit, which settled the bound the twenty-third commit left to the reviewer; the twenty-second commit stated as fact
+    that a hub re-gossips its via rows on its next exchange, which is false for a hub that has restarted). Once the mark
+    clears the mirror knows what a fresh bus knows, and rule 5 there is the design's first-start answer: a session on a
+    host that no linked host hears now is outside every source after the clear, as on a first start. A linked host
+    hears now itself and every far host it has heard in its current process, and the clear requires every linked host
+    heard since the mark, so after the clear the file holds each linked host's own sessions and its word about each
+    such far host, that host's last roster (above). The lost rows the clear does not rebuild are (a) a hub's word about a far host (a via row) when the
+    hub has restarted since it last heard that far host and has not heard it in its new process; (b) the rows of a host
+    the kernel no longer holds a link to (a departed host, directly held or a hub, heard by an earlier process), its via
+    rows included; and (c) the whitespace list of a bus from before 2026-09-22, for its sids on a host of (a) or (b). A
+    session one of them named is named again by any linked host that hears its host now (another hub's via row, rule 4),
+    and is outside every source only when none does. A lost heartbeat row is not among them: in peer mode it names a
+    local session, which rules 1 and 2 of the judge's ladder answer from its local transcript before the mirror is read
+    (the premise the mirror's one release rests on: _remote_sids_document), and under the legacy scheme the mark never
+    clears. While a host vouches for absence the judge presumes a session outside every source closed by rule 5 (True,
+    5, no-reachable-host-names-it), as it does on a first start, where the intact file's carried row would answer
     named-by-unreachable-host until an event about that far host (the carry keeps a via row whose hub gossips nothing
     about its far host: _remote_sids_document). No event this bus receives names a far host whose row was lost, and a
-    rule that matched the intact carry would never clear, which the ruling's clearing event excludes, so the reviewer
-    rules on this bound. The witness, by execution through this writer and the judge's reader in one interpreter:
-    tests/test_dead_session_staleness.py ReaderFollowsTheWriter,
-    test_a_cleared_mark_does_not_reach_a_far_hosts_session_a_restarted_hub_no_longer_names (road (a): the intact file
-    answers named-by-unreachable-host and the lost file, once the mark clears, rule 5); at the writer,
-    tests/test_postal_remote_sids_mirror.py test_a_cleared_mark_does_not_reach_a_far_host_a_restarted_hub_no_longer_names."""
+    rule that matched the intact carry would never clear, which the ruling's clearing event excludes. The witnesses, by
+    execution through this writer and the judge's reader in one interpreter: tests/test_dead_session_staleness.py
+    ReaderFollowsTheWriter,
+    test_a_hub_the_only_link_restarted_clears_the_mark_and_its_far_hosts_session_answers_rule_5_as_on_a_first_start (the
+    ruled road: a hub the only link, restarted and no longer hearing its far host, heard; the mark clears and the far
+    host's session answers rule 5 while the hub, the one row, vouches for absence, the rows and verdicts a first start
+    over the same link writes and answers), and
+    test_a_cleared_mark_does_not_reach_a_far_hosts_session_a_restarted_hub_no_longer_names (the contrast beside a second
+    link: the intact file answers named-by-unreachable-host); at the writer, tests/test_postal_remote_sids_mirror.py
+    test_a_cleared_mark_does_not_reach_a_far_host_a_restarted_hub_no_longer_names (the lost file and a first start write
+    the same rows)."""
     if not _PEERS_SEEDED[0]:
         return False
     links = [h for h, p in list(PEERS.items()) if p.get("port")]
@@ -4357,8 +4368,9 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
           bad byte in the previous file costs one sid, never the document; a previous file this process cannot
           read whole carries no row and marks the document, so the judge answers cannot-determine where rule 5
           would fire until every host the kernel links to is heard: _remote_sids_previous, the reviewer's ruling
-          of 14:57Z, the twenty-second commit of round 3 of fork PR #897; the lost rows that clearing does not
-          reach are disclosed at _remote_sids_lost_cleared);
+          of 14:57Z, the twenty-second commit of round 3 of fork PR #897; after that clearing a session on a host
+          that no linked host hears now is outside every source, as on a first start: _remote_sids_lost_cleared,
+          the reviewer's ruling of 15:45Z);
       (2) an expired legacy heartbeat was pruned from the file, so a tunnel drop or a stalled peer longer
           than HEARTBEAT_TTL removed a live session's sid: the row stays, marked expired, unreachable, and a
           beat from the session (the event) makes it reachable again; a session that has ended beats no more,
@@ -4578,9 +4590,9 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     doc = {"v": 2, "busStarted": BUS_EPOCH, "writtenAt": int(now), "hosts": hosts}
     if lost is not None and _remote_sids_lost_cleared(lost):
         _remote_sids_say("the remote-sids mirror's lost-carry mark of %s is cleared: every host the kernel holds a link to "
-                         "has been heard since; a session a lost row named on a far host that no heard hub names now (its hub "
-                         "restarted since hearing it) or on a host the kernel no longer links is in no row, and the judge's "
-                         "rule 5 can presume it closed" % time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(lost["at"])))
+                         "has been heard since; a session on a host that no linked host hears now is outside every source "
+                         "after the clear, as on a first start, and the judge's rule 5 can presume it closed while a host "
+                         "vouches for absence" % time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(lost["at"])))
         lost = None
     if lost is not None:
         doc[REMOTE_SIDS_LOST] = lost                  # carried by every write until cleared (_remote_sids_lost_cleared)
