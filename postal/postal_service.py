@@ -1487,7 +1487,15 @@ def _record_heartbeat(sid, name):
     back so a local session's MCP can stop heartbeating (2026-09-06: every local beat cost the kernel
     three GET /sessions for a no-op). An UNANSWERED listing (kernel mid-restart) is False and records
     the beat exactly as before — the answer is derived from the listing only, never from the
-    client's claim, so a remote session never hears "local" and never stops."""
+    client's claim, so a remote session never hears "local" and never stops.
+
+    The beat recorded here reaches the deadness mirror as its own row (_remote_sids_document, kind
+    heartbeat): under the legacy singleton scheme a remote session's only presence, vouching for absence
+    by its TTL; in peer mode a local session's beat filed during a listing blink, which vouches for
+    presence alone (round 3 of fork PR #897, the reviewer's ruling). The entry is never popped when a
+    later listing calls the sid local: the mirror's carry would re-file the missing key from the previous
+    file as a row heard by nobody, for the file's life (the reviewer's refuters, by execution), so the
+    row stays as recorded, heard, naming its sid."""
     local = False
     if sid and _safe_id(sid):
         rows, answered = local_agents_checked(threads=True)
@@ -3965,8 +3973,9 @@ def _source_link_up(key, row):
     this bus's dial has folded the peer there; its declared hostname before that, which the kernel does not
     dial, so False); for a far host gossiped through a hub (kind via) the HUB's, since a hub the kernel holds up
     and has heard since carries fresh word about everyone it gossips, and a hub with no link state does not;
-    False for a legacy heartbeat or the legacy list, which have no link at all (the heartbeat vouches by its own
-    TTL instead: _remote_sids_document, `vouchesAbsence`). The link is one of the two gates on absence there; the
+    False for a legacy heartbeat or the legacy list, which have no link at all (under the legacy singleton scheme
+    the heartbeat vouches by its own TTL instead; in peer mode it vouches for presence alone: _remote_sids_document,
+    `vouchesAbsence`). The link is one of the two gates on absence there; the
     other is the row's `answered` bit, an answered listing behind the roster."""
     kind = row.get("kind")
     if kind == "via":
@@ -4064,9 +4073,22 @@ def _remote_sids_document(now, previous):
                names (rule 4); computed HERE, the one home of the gate. A cached roster vouches for presence
                too: the sessions it names were live at the last answered listing, and the roster is stale
                only about a session started since, which is an absence claim
-      vouchesAbsence  heard and not expired and answered and (linkUp, or a legacy heartbeat, which has no link and
-               vouches by its own TTL as before): the source vouches for the ABSENCE of a sid it does not name
-               (rule 5's precondition). A heard source with no link state is reachable and does not vouch for
+      vouchesAbsence  heard and not expired and answered and (linkUp, or a heartbeat row under the LEGACY singleton
+               scheme, not peers_on() at this write, which has no link and vouches by its own TTL as before): the
+               source vouches for the ABSENCE of a sid it does not name (rule 5's precondition). In peer mode (the
+               default) a heartbeat row vouches for presence alone (round 3 of fork PR #897, the reviewer's ruling):
+               the beats that reach HEARTBEATS there are LOCAL sessions' beats, filed as remote presence by
+               _record_heartbeat while this kernel's listing did not answer (a remote session's presence arrives
+               through the exchange, and a local session stops beating once its bus calls it local), so such a row
+               names a session of this machine and says nothing about any other host. Counted as vouching, one such
+               beat let a restarted bus that had heard no host presume every sid nothing named closed within the
+               beat's TTL, and let a blink's phantom vouch while a peer's link was down (the reviewer's refuters, by
+               execution). The scheme is read at each write (peers_on, a test seam), never stored on the row; the
+               reader sees only the flag, and a peer-mode heartbeat row reads "no link state" among its causes, the
+               literal fact. The entry is never popped once a later listing calls the sid local: the carry below
+               re-files a key missing from memory from the previous file as a row heard by nobody, a phantom for the
+               file's life, so the refused retirement would have made things worse (the reviewer's refuters). A heard
+               source with no link state is reachable and does not vouch for
                absence: it answers cannot-determine for a sid it does not name, as a down host does (round 2 of
                fork PR #897, the reviewer's ruling: a source vouches for absence only when its link is known
                up); so does a heard source whose last exchange served a cached roster, whatever its link: a
@@ -4081,7 +4103,8 @@ def _remote_sids_document(now, previous):
     sid a reachable source names is live on another host (rule 4); a sid no source names is presumed closed
     only when a source vouches for absence (rule 5); a sid only an unreachable source names, or a mirror in
     which no source vouches for absence, is cannot-determine (its reason naming each source with why it cannot
-    vouch, the cached roster among the causes: "listing unanswered"). The kernel's link state decides both (round 2 of
+    vouch, the cached roster among the causes: "listing unanswered"; a peer-mode heartbeat row: "no link state").
+    The kernel's link state decides both (round 2 of
     fork PR #897, the reviewer's ruling): a session started on a host after its last heard roster is in no
     roster, so a host counted as vouching for absence while its link is down, or while the kernel has never
     reported it up, would let rule 5 presume that session closed; a host that is down cannot vouch for
@@ -4238,14 +4261,17 @@ def _remote_sids_document(now, previous):
             if not row["sids"]:
                 continue
         hosts[key] = row
-    for key, row in hosts.items():
+    legacy = not peers_on()                           # the legacy singleton scheme, read at this write: a heartbeat row
+    for key, row in hosts.items():                    # vouches for absence by its TTL there and there alone
         row["sids"] = sorted({str(s) for s in row["sids"]})
         row["linkDown"] = _source_link_down(key, row)         # the link state at THIS write, heard or carried
         row["linkUp"] = _source_link_up(key, row)             # ...known up, and the host heard since it last dropped
         row["reachable"] = bool(row["heard"] and not row["expired"] and not row["linkDown"])   # vouches for presence
         row["vouchesAbsence"] = bool(row["heard"] and not row["expired"] and row["answered"]    # ...and for absence only
-                                     and (row["linkUp"] or row["kind"] == "heartbeat"))         # with the link known up and
-        #                                                                                          an answered listing
+                                     and (row["linkUp"]                                         # with the link known up and
+                                          or (row["kind"] == "heartbeat" and legacy)))          # an answered listing; in peer
+        #                                                                                          mode a beat is a local session's
+        #                                                                                          (round 3 of fork PR #897)
     return {"v": 2, "busStarted": BUS_EPOCH, "writtenAt": int(now), "hosts": hosts}
 
 
@@ -4259,7 +4285,8 @@ def _write_remote_sids():
     reads them: `reachable` (heard, not expired, its link not held down by the kernel: the source vouches
     for the PRESENCE of the sids it names) and `vouchesAbsence` (heard, not expired, its roster an ANSWERED
     listing, and its link KNOWN UP, a dialable PEERS row up and the host heard since the link last dropped,
-    or a legacy heartbeat within its TTL: the source vouches for the ABSENCE of a sid it does not name). A
+    or, under the legacy singleton scheme alone, a heartbeat within its TTL: the source vouches for the ABSENCE
+    of a sid it does not name). A
     heard source with no link state, a host the kernel never notified or a far bus under the hostname it
     declares before this bus's own dial has folded it under the alias the kernel notifies, vouches for
     presence alone (round 2 of fork PR #897, the reviewer's ruling), and so does a heard source whose last
@@ -4284,8 +4311,12 @@ def _write_remote_sids():
     every recorded heartbeat, every peer exchange, (since 2026-09-06) every _monitor poll, and every
     kernel /peer notify (peer_update: a link transition changes reachability, so the mirror follows it at
     once rather than at the next poll). In peer mode (the default) a local session's beats end once its
-    bus confirms it local, and remote presence arrives through the peer exchange, which writes here. In
-    legacy singleton mode the beats continue; the poll-time write is the backstop for a hub whose local
+    bus confirms it local, and remote presence arrives through the peer exchange, which writes here; a
+    beat recorded in that mode landed while the listing did not answer and is a local session's, so its
+    row vouches for presence alone (round 3 of fork PR #897, the reviewer's ruling; _remote_sids_document
+    reads peers_on at each write). In
+    legacy singleton mode the beats continue and each row vouches for absence by its TTL; the poll-time
+    write is the backstop for a hub whose local
     sessions have all gone quiet while a dead remote's beat ages past its TTL. Under _REMOTE_SIDS_LOCK:
     the write reads the file it replaces, and the heartbeat, exchange, monitor and notify threads all
     write."""

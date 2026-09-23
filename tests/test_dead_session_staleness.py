@@ -27,8 +27,10 @@ flag, and the two cannot-determine reasons that turn on a source's state name th
 each unreachable (the fourth commit). Since the fifth commit the rule is two-sided (the reviewer's ruling): a
 heard host that is not held down vouches for the PRESENCE of the sids it names (`reachable`, rule 4), and a
 host vouches for the ABSENCE of a sid it does not name (`vouchesAbsence`, rule 5's precondition) only when
-its link is KNOWN UP (a dialable PEERS row up and the host heard since the link last dropped; a legacy
-heartbeat within its TTL vouches as before, having no link), so a heard host with no link state (a host the
+its link is KNOWN UP (a dialable PEERS row up and the host heard since the link last dropped; a heartbeat
+within its TTL vouches as before, having no link, under the bus's legacy singleton scheme alone: in peer mode, the
+default, a beat that reaches the bus's table is a local session's filed during a listing blink and its row vouches
+for presence alone, round 3 of fork PR #897), so a heard host with no link state (a host the
 kernel never notified, a far bus filed under the hostname it declares before this bus's own dial folds it
 under the alias the kernel dials) answers cannot-determine for a sid it does not name, as a down host does.
 Since round 3 a hub's word about a host this bus also holds directly is never discarded (the reviewer's ruling):
@@ -114,6 +116,8 @@ BLINKED = "a11f0001-1111-4222-8333-000000000016"     # a session started on HOST
 #                                                      exchange served the last answered rows, which do not name it
 HUB_NAMED = "a11f0001-1111-4222-8333-000000000017"   # a session started on HOST2 during a later blink that the hub, its own exchange
 #                                                      with HOST2 answered, names while HOST2's row here is still the cache
+BLINK_BEAT = "a11f0001-1111-4222-8333-000000000018"  # a LOCAL session whose beat lands while THIS bus's kernel listing does not answer:
+#                                                      the recorder files it as remote presence (the blink), a heartbeat row in peer mode
 
 RULE_5 = (True, 5, "no-reachable-host-names-it")               # the ladder's verdicts, (closed, rule, why), as
 RULE_4 = (False, 4, "named-by-reachable-host")                 # _presumed_closed_verdict spells them; a fixture
@@ -156,7 +160,7 @@ def _mirror():
     return d / "remote-sids"
 
 
-def _row(sids, heard=True, expired=False, kind="peer", link_down=False, link_up=False, answered=True):
+def _row(sids, heard=True, expired=False, kind="peer", link_down=False, link_up=False, answered=True, legacy=False):
     """One presence-source row as the bus writes it: the roster it last reported, whether the bus heard
     it in its current process, whether its presence expired, whether the kernel holds its link down (or
     has since it was heard), whether the kernel holds its link up and it was heard since the link last
@@ -164,8 +168,10 @@ def _row(sids, heard=True, expired=False, kind="peer", link_down=False, link_up=
     carried, False while its kernel listing did not answer and the exchange served the last answered rows;
     True for a legacy heartbeat, its own answer; round 3 of fork PR #897), and the writer's two flags the
     reader's verdict reads: `reachable`, heard and not expired and not linkDown (it vouches for the presence
-    of the sids it names), and `vouchesAbsence`, heard and not expired and answered and (linkUp, or a legacy
-    heartbeat, which vouches by its TTL) (it vouches for the absence of a sid it does not name).
+    of the sids it names), and `vouchesAbsence`, heard and not expired and answered and (linkUp, or a heartbeat
+    under the bus's legacy singleton scheme, `legacy`, which vouches by its TTL there; in peer mode, the writer's
+    default and this fixture's, a heartbeat row vouches for presence alone, round 3 of fork PR #897) (it vouches
+    for the absence of a sid it does not name).
     postal_service.py _remote_sids_document computes both; a fixture row restates the rules so the reader is
     held to reading the flags, not recomputing them: a heard, unexpired, link-down row is unreachable, a
     heard, unexpired peer row with no link state (link_up False, the default here: a host the kernel never
@@ -175,7 +181,8 @@ def _row(sids, heard=True, expired=False, kind="peer", link_down=False, link_up=
     of both flags."""
     return {"kind": kind, "sids": sorted(sids), "heard": heard, "expired": expired, "linkDown": link_down,
             "linkUp": link_up, "answered": answered, "reachable": heard and not expired and not link_down,
-            "vouchesAbsence": heard and not expired and answered and (link_up or kind == "heartbeat"), "seenAt": NOW - 5}
+            "vouchesAbsence": heard and not expired and answered and (link_up or (kind == "heartbeat" and legacy)),
+            "seenAt": NOW - 5}
 
 
 def _bus_wrote(hosts):
@@ -340,6 +347,27 @@ class PresumedClosed(World):
         # the host that names it is heard but its beat expired (the legacy TTL): unreachable the same way
         _bus_wrote({"heartbeat:" + DEAD: _row([DEAD], heard=True, expired=True, kind="heartbeat"), HOST2: _row([], link_up=True)})
         self.assertEqual(self._verdict(DEAD), LOST("heartbeat:" + DEAD + " (expired)"), "an expired beat is unreachable, not absent")
+        # a live beat in PEER MODE, the bus's default (round 3 of fork PR #897, the reviewer's ruling): the writer withholds
+        # its absence vouch, since a beat that reaches the bus's table there is a local session's, filed as remote presence
+        # during a listing blink; the reader reads the flag: rule 4 for the sid it names, cannot-determine for one it does
+        # not, the reason naming the beat with the literal fact (a reader vouching a heartbeat by its kind answers rule 5)
+        _bus_wrote({"heartbeat:" + DEAD: _row([DEAD], kind="heartbeat")})
+        self.assertEqual(self._verdict(DEAD), RULE_4, "the beat's row is reachable: the sid it names is live")
+        self.assertEqual(self._verdict(REMOTE), NO_VOUCH("heartbeat:" + DEAD + " (no link state)"),
+                         "a peer-mode beat vouches for presence alone: cannot-determine for a sid it does not name, the reason "
+                         "naming the beat (until this commit the row vouched by its TTL in both schemes, and a restarted bus "
+                         "that had heard no host answered rule 5 here within the beat's TTL)")
+        # the same beat under the legacy singleton scheme, where it is a remote session's only presence: it vouches by its TTL
+        _bus_wrote({"heartbeat:" + DEAD: _row([DEAD], kind="heartbeat", legacy=True)})
+        self.assertEqual(self._verdict(REMOTE), RULE_5, "legacy keeps TTL vouching (round 1's ruling): rule 5")
+        self.assertEqual(self._verdict(DEAD), RULE_4)
+        # the blink phantom beside a host the kernel holds down (the refuter's adjacent road): nothing vouches, both named
+        _bus_wrote({"heartbeat:" + DEAD: _row([DEAD], kind="heartbeat"), HOST: _row([], link_down=True)})
+        self.assertEqual(self._verdict(REMOTE), NO_VOUCH(HOST + " (link down)", "heartbeat:" + DEAD + " (no link state)"),
+                         "a peer-mode beat beside a down host: no source vouches for absence (the TTL vouch let the beat settle "
+                         "a sid while the only peer was down)")
+        _bus_wrote({"heartbeat:" + DEAD: _row([DEAD], kind="heartbeat"), HOST2: _row([], link_up=True)})
+        self.assertEqual(self._verdict(REMOTE), RULE_5, "...beside a host with its link up: rule 5; the beat is not a gate on the mirror")
         # the host that names it is heard, not expired, and the kernel holds its link down (round 2 of fork PR #897,
         # the reviewer's ruling): unreachable the same way; the reader reads the writer's `reachable`, not heard
         _bus_wrote({HOST: _row([DEAD], link_down=True), HOST2: _row([], link_up=True)})
@@ -500,7 +528,11 @@ class ReaderFollowsTheWriter(unittest.TestCase):
     reader (_presumed_closed) run in one fresh interpreter over one temp root, under each of the two
     root shapes the constants bind from (XDG_STATE_HOME, and ROMP_STATE_DIR, which outranks it), and the
     bus's document is read back and its rows asserted, so the fixtures' restatement of the shape
-    (_bus_wrote) is held to the writer here. Fourteen phases, in the order a bus lives them:
+    (_bus_wrote) is held to the writer here. The phases, in the order a bus lives them (the five heartbeat
+    phases under the LEGACY singleton scheme, ROMP_POSTAL_PEERS=0 set in the child's environment before the
+    first write and read back through peers_on, since round 3 of fork PR #897: a heartbeat row vouches for
+    absence there alone; the switch is popped before the peer phases, and the peer-mode beat has a phase of
+    its own below):
       first write   one live remote heartbeat; a sid nothing knows is presumed closed (rule 5), the
                     heartbeating one is not (rule 4);
       restart       a second bus process over the same root (a fresh module object: empty HEARTBEATS and
@@ -665,6 +697,26 @@ class ReaderFollowsTheWriter(unittest.TestCase):
                     word, never rule 5 (a carry letting the cached row speak drops the row, and the second hub's vouch
                     settles a live session). B's exchange that answers, naming the session, is the event: B speaks, the via
                     row is dropped by the carry, and the hub's next exchange folds;
+      the peer-mode beat  a heartbeat row vouches for absence under the legacy singleton scheme alone (round 3 of fork
+                    PR #897, the reviewer's ruling on its refuters' finding). In peer mode, the default, the beats that
+                    reach the bus's table are LOCAL sessions' beats, filed as remote presence by the real recorder
+                    (_record_heartbeat) while this kernel's listing does not answer. A twelfth restart over an emptied
+                    mirror (the previous file removed, so the reasons name the beat and the one peer alone), in peer
+                    mode (the child's environment carries no switch; read back); the listing does not answer (the seam
+                    unset, the kernel route pointed at a loopback port nothing listens on); a local session's beat
+                    arrives through the real recorder, which files it and writes: the beat's sid is rule 4's, and a
+                    sid nothing names is cannot-determine, the reason naming the beat with no link state (until this
+                    commit the row vouched by its TTL in both schemes, and rule 5 presumed every sid nothing named closed
+                    within 90 s of the beat, on a bus that had heard no host). B heard with its link up: rule 5 by B's
+                    vouch, the beat no gate on the mirror; the kernel's down notify for B: cannot-determine, the reason
+                    naming B down and the beat (the blink phantom vouching while a peer's link is down, the refuter's
+                    adjacent road; the TTL vouch answered rule 5 here). The same rows under the legacy scheme
+                    (ROMP_POSTAL_PEERS=0 set, read back, the writer run again): rule 5, the beat a remote session's only
+                    presence there vouching by its TTL whatever B's link; the switch popped and the writer run again:
+                    cannot-determine again. Then the listing answers naming the beating session: the recorder calls it
+                    local and keeps the key, so the row stays heard and its sid rule 4's (the refused retirement, a pop,
+                    leaves the carry to re-file the key from the previous file as a row heard by nobody, the sid
+                    cannot-determine by its own earlier beat for the file's life);
       legacy shape  the whitespace list a bus before 2026-09-22 wrote, at the bus's path: the reader
                     answers cannot-determine for the sid it does not name AND for the one it does, and
                     says once in the judge's log that the file is not the shape the bus writes; it is
@@ -721,7 +773,7 @@ class ReaderFollowsTheWriter(unittest.TestCase):
 import contextlib, io, json, os, sys, time
 (tests_dir, bin_dir, remote, remote2, dead, host_a, host_b, carried, other, alias, declared, far_sid, hub, gossiped, later,
  collided, ended, decl_named, spoke_kept, spoke_gone, hub_declared, spoke, spoke_declared, hub2, spoke_new, blinked,
- hub_named) = sys.argv[1:28]
+ hub_named, blink_beat) = sys.argv[1:29]
 sys.path.insert(0, tests_dir)
 from romp_load import load_source
 pm = load_source("romp_postal_oneroot", os.path.join(bin_dir, "romp-postal-service"))
@@ -745,7 +797,9 @@ out = {"busState": str(pm.STATE), "judgeState": str(jd.STATE), "busFile": str(bu
        "discovered": len(jd.discover(now)) + len(jd.discover(now, window=now)),
        "beforeWrite": ask(dead)}
 pm.STATE.mkdir(parents=True, exist_ok=True)
-pm.HEARTBEATS[remote] = ("web", now)               # the first bus process hears one live remote session
+os.environ["ROMP_POSTAL_PEERS"] = "0"              # the heartbeat phases run under the LEGACY singleton scheme, where a beat is a
+out["schemeAtFirstWrite"] = pm.peers_on()          # remote session's only presence and its row vouches by its TTL (round 3 of fork
+pm.HEARTBEATS[remote] = ("web", now)               # PR #897); the first bus process hears one live remote session
 pm._write_remote_sids()
 out["first"] = phase()
 out["firstRow"] = json.loads(bus_file.read_text())["hosts"].get("heartbeat:" + remote) if bus_file.exists() else None
@@ -773,6 +827,8 @@ def exchange(bus, host, sids, bus_id=""):          # one exchange landing: what 
     if bus_id:
         bus.PEER_STATE[host]["busId"] = bus_id
     bus._write_remote_sids()
+os.environ.pop("ROMP_POSTAL_PEERS", None)          # peer mode, the default, for the peer phases (the child's environment carries no
+out["schemeAtPeerPhases"] = pm2.peers_on()         # switch of its own); pm2's heartbeat rows are carried from the next restart on
 exchange(pm2, host_a, [carried])                   # host A's exchange names its sid in the running bus
 out["peerHeard"] = peer_phase()
 def notify(bus, host, up):                         # the kernel's /peer notify, through the real handler, which writes the mirror itself
@@ -1041,6 +1097,32 @@ req, status = b_dials_us(pm12)
 out["cacheHubWordReleased"] = cache_hub_phase(pm12, req)   # the event: B speaks, the carried via row is dropped
 our_dial_lands(pm12, [other, blinked, hub_named], spoke, [spoke_kept])   # the hub heard at last: its word folds
 out["cacheHubWordFolds"] = cache_hub_phase(pm12, req)
+# THE PEER-MODE BEAT (round 3 of fork PR #897, the reviewer's ruling): a twelfth restart over an EMPTIED mirror (the previous file
+# removed, so the reasons name the beat and the one peer alone), in peer mode; this bus's own listing does not answer; a local
+# session's beat arrives through the REAL recorder and is filed as remote presence: the blink
+bus_file.unlink(missing_ok=True)
+pm13, out["restartMemory12"] = restarted("romp_postal_oneroot_restarted_twelfth", pm12)
+pm13.KERNEL_BASE = "http://127.0.0.1:9"           # with the seam unset the listing fetch goes here, where nothing listens: unanswered
+listing_blinks()
+def beat_phase(bus):                               # the seven-flag rows, the verdicts for a sid nothing names and for the beating sid,
+    return link_phase({"beat": verdict(blink_beat), "scheme": bus.peers_on(),   # the scheme read back, and whether the key is kept
+                       "keyKept": blink_beat in bus.HEARTBEATS})
+out["beatRecordedLocal"] = pm13._record_heartbeat(blink_beat, "web")   # False: the listing did not answer; the beat is filed, the mirror written
+out["peerBeat"] = beat_phase(pm13)
+notify(pm13, host_b, True)
+exchange(pm13, host_b, [other], bus_id="bus-b2")   # B heard with its link up: the one source vouching for absence
+out["peerBeatBesideUp"] = beat_phase(pm13)
+notify(pm13, host_b, False)                        # the kernel holds B's link down: the beat is the only row not held down
+out["peerBeatBesideDown"] = beat_phase(pm13)
+os.environ["ROMP_POSTAL_PEERS"] = "0"              # the same rows under the legacy singleton scheme: the beat vouches by its TTL
+pm13._write_remote_sids()
+out["legacyBeatBesideDown"] = beat_phase(pm13)
+os.environ.pop("ROMP_POSTAL_PEERS", None)          # peer mode again: the scheme is read at each write, nothing stored on the row
+pm13._write_remote_sids()
+out["peerBeatAgain"] = beat_phase(pm13)
+listing_answers([blink_beat])                      # the kernel answers: the beating session is local
+out["beatConfirmedLocal"] = pm13._record_heartbeat(blink_beat, "web")   # True; the key is kept (the refused pop leaves a carried phantom)
+out["peerBeatLocal"] = beat_phase(pm13)
 bus_file.write_text(remote + "\n")                 # the shape a bus before 2026-09-22 wrote
 err = io.StringIO()
 with contextlib.redirect_stderr(err):
@@ -1057,7 +1139,7 @@ out["controlOldPathOnly"] = ask(dead)
 print(json.dumps(out))
 """, HERE, BIN, REMOTE, REMOTE2, DEAD, HOST, HOST2, CARRIED, OTHER, ALIAS, DECLARED, FARSID, HUB, GOSSIPED, LATER, COLLIDED,
                               ENDED, DECL_NAMED, SPOKE_KEPT, SPOKE_GONE, HUB_DECLARED, SPOKE, SPOKE_DECLARED, HUB2, SPOKE_NEW, BLINKED,
-                              HUB_NAMED],
+                              HUB_NAMED, BLINK_BEAT],
                              capture_output=True, text=True, env=full,
                              cwd=str(home), timeout=120)
         assert out.returncode == 0, "%s child failed: %s" % (shape, out.stderr[-2000:])
@@ -1085,19 +1167,25 @@ print(json.dumps(out))
                                  "row heard and not expired (the fixtures' _bus_wrote restates this shape)" % got["busFile"])
                 row = dict(got["firstRow"] or {})
                 self.assertIsInstance(row.pop("seenAt", None), int, "seenAt, the beat's time")
+                self.assertEqual((got["schemeAtFirstWrite"], got["schemeAtPeerPhases"]), (False, True),
+                                 "the heartbeat phases ran under the legacy singleton scheme and the peer phases under peer "
+                                 "mode, each read back through the bus's own peers_on (MOVED under ROMP_POSTAL_PEERS=0 in "
+                                 "round 3 of fork PR #897: a heartbeat row vouches for absence there alone)")
                 self.assertEqual(row, {"kind": "heartbeat", "sids": [REMOTE], "heard": True, "expired": False,
                                        "linkDown": False, "linkUp": False, "answered": True, "reachable": True,
                                        "vouchesAbsence": True, "name": "web"},
-                                 "the row's fields as the writer spells them, the seven flags among them (a legacy heartbeat "
-                                 "has no link and vouches for absence by its TTL, and is its own answer): the fixtures' _row "
-                                 "restates every one, and the reader requires the seven")
+                                 "the row's fields as the writer spells them, the seven flags among them (a heartbeat under "
+                                 "the legacy scheme has no link and vouches for absence by its TTL, and is its own answer): "
+                                 "the fixtures' _row restates every one (legacy=True for this row), and the reader requires "
+                                 "the seven")
 
     def test_rule_5_fires_for_a_sid_nothing_knows_once_the_bus_has_written(self):
         for shape, got in self.got.items():
             with self.subTest(shape=shape):
                 self.assertFalse(got["beforeWrite"], "no mirror file yet: cannot determine, conservative")
                 self.assertTrue(got["first"]["fire"], "the bus wrote %s; the judge's read must be that file: rule 5 "
-                                "presumes a sid nothing knows closed" % got["busFile"])
+                                "presumes a sid nothing knows closed (the heartbeat phases run under the legacy singleton "
+                                "scheme, where a beat vouches for absence; MOVED there in round 3 of fork PR #897)" % got["busFile"])
 
     def test_rule_4_holds_the_sid_the_bus_names_open(self):
         for shape, got in self.got.items():
@@ -1816,6 +1904,68 @@ print(json.dumps(out))
                 folds = got["cacheHubWordFolds"]
                 self.assertNotIn(VIA_B, folds["hosts"], "the hub heard at last: its word folds, B speaks")
                 self.assertEqual((self._v(folds, "hubNamed"), self._v(folds, "nobody")), (RULE_4, RULE_5))
+
+    def test_a_peer_mode_beat_vouches_for_presence_alone_and_the_legacy_scheme_keeps_its_ttl_vouch(self):
+        """Round 3 of fork PR #897, the reviewer's ruling on its refuters' finding (the peer-mode beat phase of the class
+        docstring): the real recorder files a local session's beat as remote presence while this bus's listing does not
+        answer, and in peer mode that row vouches for presence alone, so a restarted bus that has heard no host answers
+        cannot-determine for a sid nothing names, not rule 5; the same beat beside a peer the kernel holds down vouches for
+        nothing (the blink phantom); under the legacy singleton scheme the same rows vouch by the TTL, as ruled in round 1;
+        and the recorder keeps the key once the listing calls the sid local (the refused pop). The verdicts first, then the
+        rows, on both root shapes."""
+        L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
+        beat = self.HB + BLINK_BEAT
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                self.assertEqual(got["restartMemory12"], {"heartbeats": 0, "peers": 0, "links": 0, "freshObject": True},
+                                 "the twelfth restart is a fresh module object, its memory and its link table empty")
+                self.assertIs(got["beatRecordedLocal"], False,
+                              "the listing did not answer: the beat is recorded, never called local from the client's claim")
+                p = got["peerBeat"]
+                self.assertIs(p["scheme"], True, "peer mode, read back through the bus's own peers_on")
+                self.assertEqual(self._v(p, "nobody"), NO_VOUCH(beat + " (no link state)"),
+                                 "THE RULED ROAD: a restarted bus in peer mode with one live local beat and no host heard answers "
+                                 "cannot-determine for a sid nothing names, the reason naming the beat (a writer vouching a "
+                                 "heartbeat by its TTL whatever the scheme answers (True, 5, no-reachable-host-names-it) here, "
+                                 "within 90 s of a local session's beat filed during a listing blink)")
+                self.assertEqual(self._v(p, "beat"), RULE_4, "the beating sid is named by a reachable row")
+                self.assertEqual(p["hosts"], {beat: L(True, False, False, False, True, False, [BLINK_BEAT])},
+                                 "the recorder's own write: one row, heard, reachable, vouching for presence alone")
+                up = got["peerBeatBesideUp"]
+                self.assertEqual((self._v(up, "nobody"), self._v(up, "beat"), self._v(up, "other")), (RULE_5, RULE_4, RULE_4),
+                                 "B heard with its link up vouches: rule 5 for a sid nothing names; the beat is not a gate on the "
+                                 "mirror, and its sid stays rule 4's")
+                down = got["peerBeatBesideDown"]
+                self.assertEqual(self._v(down, "nobody"), NO_VOUCH(HOST2 + " (link down)", beat + " (no link state)"),
+                                 "THE BLINK PHANTOM beside a down peer: nothing vouches for absence (the TTL vouch answered rule 5 "
+                                 "here while the only peer's link was down, the refuter's adjacent road)")
+                self.assertEqual((down["hosts"][beat], down["hosts"][HOST2]),
+                                 (L(True, False, False, False, True, False, [BLINK_BEAT]), L(True, False, True, False, False, False, [OTHER])),
+                                 "the beat reachable and vouching for presence alone; B held down")
+                legacy = got["legacyBeatBesideDown"]
+                self.assertIs(legacy["scheme"], False, "the legacy singleton scheme, read back")
+                self.assertEqual(self._v(legacy, "nobody"), RULE_5,
+                                 "LEGACY KEEPS TTL VOUCHING (round 1's ruling): the beat, a remote session's only presence there, "
+                                 "vouches for absence whatever B's link (a writer withholding the vouch in both schemes answers "
+                                 "cannot-determine here; one reading the switch inverted vouched in peer mode and not here)")
+                self.assertEqual(legacy["hosts"][beat], L(True, False, False, False, True, True, [BLINK_BEAT]))
+                again = got["peerBeatAgain"]
+                self.assertEqual((again["scheme"], self._v(again, "nobody")),
+                                 (True, NO_VOUCH(HOST2 + " (link down)", beat + " (no link state)")),
+                                 "the scheme is read at each write and nothing is stored on the row: peer mode again, "
+                                 "cannot-determine again")
+                self.assertIs(got["beatConfirmedLocal"], True, "the listing answered naming the session: local")
+                local = got["peerBeatLocal"]
+                self.assertIs(local["keyKept"], True,
+                              "THE REFUSED RETIREMENT: the recorder keeps the key once the listing calls the sid local (a pop "
+                              "leaves the carry to re-file it from the previous file as a row heard by nobody)")
+                self.assertNotEqual(local["hosts"].get(beat), L(False, False, False, False, False, False, [BLINK_BEAT]),
+                                    "the row is never a carried phantom of the session's own earlier beat")
+                self.assertNotEqual(self._v(local, "beat"), LOST(beat + " (not heard)"),
+                                    "...and its sid is never cannot-determine by that phantom for the file's life")
+                self.assertEqual((local["hosts"][beat], self._v(local, "beat")),
+                                 (L(True, False, False, False, True, False, [BLINK_BEAT]), RULE_4),
+                                 "the row stays as recorded, heard, naming its sid")
 
     def test_a_mirror_of_the_legacy_shape_is_cannot_determine_and_said_once(self):
         for shape, got in self.got.items():

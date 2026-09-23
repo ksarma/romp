@@ -9,8 +9,9 @@ the link last dropped), `answered` (the roster is an ANSWERED listing: the `pres
 exchange carried, False while its kernel listing did not answer and the exchange served the last answered rows;
 a hub stamps the FAR host's bit on its gossip, `viaAnswered`; a legacy heartbeat is its own answer), `reachable`
 (heard and not expired and not linkDown: the source vouches for the PRESENCE of the sids it names, rule 4),
-`vouchesAbsence` (heard and not expired and answered and linkUp, or a legacy heartbeat within its TTL: the source
-vouches for the ABSENCE of a sid it does not name, rule 5's precondition), `sids`. The reader presumes a sid
+`vouchesAbsence` (heard and not expired and answered and linkUp, or a heartbeat within its TTL under the legacy
+singleton scheme alone, ROMP_POSTAL_PEERS=0, peers_on() read at the write: the source vouches for the ABSENCE of a
+sid it does not name, rule 5's precondition), `sids`. The reader presumes a sid
 closed only when a source vouches for absence and none names it. Two roads to a false settle closed here, at the
 writer:
   (1) a bus restarted from empty memory wrote its first mirror from that memory, naming nobody: every key
@@ -28,7 +29,13 @@ reachable again on its first heartbeat or exchange heard with the link up, not o
 replaces the PEER_STATE row and with it the mark the down notify set: _link_down), and vouches for absence
 from that exchange (_link_up: PEERS up and heard since). A far host gossiped through a hub follows the hub's
 link; a source with no link state (no dialable PEERS row: never notified, an origin-only trust row, or a name
-the kernel does not dial) vouches for presence alone; a legacy heartbeat has no link and vouches by its TTL.
+the kernel does not dial) vouches for presence alone; a heartbeat has no link and vouches by its TTL under the
+legacy singleton scheme alone: in peer mode (the default, which this module runs under) a beat that reaches the bus's
+table is a local session's, filed as remote presence by _record_heartbeat while the kernel's listing did not answer,
+and its row vouches for presence alone (round 3 of fork PR #897, the reviewer's ruling: counted as vouching, such a
+beat let a restarted bus that had heard no host presume every sid nothing named closed within the beat's TTL, and let
+a blink's phantom vouch while a peer's link was down); the entry is never popped once the listing calls the sid local,
+since the carry would re-file the missing key as a row heard by nobody.
 The gate reaches a peer's row under the name it is filed under, and the kernel notifies the ALIAS it dials:
 the dialer's fold files there, the dialed side's handler files a far bus under the name it DECLARES until a
 row under a dialable name carries its busId (_canon_peer_name), so before this bus's own dial has folded the
@@ -75,7 +82,12 @@ which a direct row speaks for nothing about a session started on its host since,
 session stands as a via row beside the cached row, carrying the far host's bit as the hub stamped it, and with the hub
 not heard the carried via row stands beside the cached row, until the far host's exchange that answers, the event (at
 the eleventh commit the gate read heard and not held down alone, the hub's word folded into the cached row, and the
-hub, vouching for absence, let rule 5 presume a live session closed for one exchange interval of the far host).
+hub, vouching for absence, let rule 5 presume a live session closed for one exchange interval of the far host); and
+the heartbeat row's scheme gate (round 3 of fork PR #897, the reviewer's ruling): a beat through the real recorder
+during a listing blink in peer mode vouching for presence alone, nothing vouching beside a peer the kernel holds down,
+the same rows under ROMP_POSTAL_PEERS=0 vouching by the TTL, and the recorder keeping its key once the listing calls
+the sid local (a pop leaves a carried phantom); the four earlier heartbeat pins of this module that asserted the TTL
+vouch are re-pinned to peer mode's presence alone, each saying so.
 tests/test_dead_session_staleness.py ReaderFollowsTheWriter
 runs this writer and the judge's reader together over one root; tests/test_postal_bus_lifetime.py
 MonitorTick pins the poll's write. SYNTHETIC fixtures only: private synthetic sids, hostname TESTHOST."""
@@ -255,6 +267,13 @@ class Mirror(unittest.TestCase):
         pm._PRESENCE_SERVE_WARNED[0] = False
         twin.unlink(missing_ok=True)
 
+    def _legacy_scheme(self):
+        """The legacy singleton scheme for the rest of this test: ROMP_POSTAL_PEERS=0, the switch peers_on reads at call
+        time, put back as found; the mode is read back through the product's own reader, never assumed."""
+        self.addCleanup(restore_env, "ROMP_POSTAL_PEERS", os.environ.get("ROMP_POSTAL_PEERS"))
+        os.environ["ROMP_POSTAL_PEERS"] = "0"
+        self.assertFalse(pm.peers_on(), "the legacy scheme is on for this test")
+
     def test_the_document_shape(self):
         pm.HEARTBEATS[A] = ("web", self.now)
         self._peer(HOST, [{"id": B, "name": "api"}], bus_id="bus-1")
@@ -263,11 +282,14 @@ class Mirror(unittest.TestCase):
         self.assertEqual(sorted(doc), ["busStarted", "hosts", "v", "writtenAt"])
         self.assertEqual((doc["v"], doc["busStarted"]), (2, pm.BUS_EPOCH), "the writing process's boot second")
         self.assertIsInstance(doc["writtenAt"], int)
+        self.assertTrue(pm.peers_on(), "peer mode, the default this module runs under")
         self.assertEqual(doc["hosts"][HB + A], {"kind": "heartbeat", "sids": [A], "heard": True, "expired": False,
                                                  "linkDown": False, "linkUp": False, "answered": True, "reachable": True,
-                                                 "vouchesAbsence": True, "seenAt": int(self.now), "name": "web"},
-                         "a legacy heartbeat has no link and vouches for absence by its TTL alone; the session's own beat is "
-                         "its own answer (answered), so no listing gates it")
+                                                 "vouchesAbsence": False, "seenAt": int(self.now), "name": "web"},
+                         "a heartbeat row in peer mode: no link, and the TTL vouch belongs to the legacy scheme, so it vouches "
+                         "for presence alone (RE-PINNED in round 3 of fork PR #897 from the TTL vouch, which "
+                         "test_a_heartbeat_row_vouches_for_absence_under_the_legacy_scheme_alone pins under ROMP_POSTAL_PEERS=0); "
+                         "the session's own beat is its own answer (answered), so no listing gates it")
         self.assertEqual(doc["hosts"][HOST], {"kind": "peer", "sids": [B], "heard": True, "expired": False,
                                               "linkDown": False, "linkUp": False, "answered": True, "reachable": True,
                                               "vouchesAbsence": False, "seenAt": int(self.now - 5), "busId": "bus-1"},
@@ -282,6 +304,55 @@ class Mirror(unittest.TestCase):
         self.assertEqual(self._rows(), {HB + A: (True, True, [A]), HB + B: (True, False, [B])},
                          "the expired beat's row stays, marked expired, roster kept: unreachable, not absent (the shape "
                          "until 2026-09-22 pruned it, the second road of fork PR #897's round 1)")
+
+    def test_a_heartbeat_row_vouches_for_absence_under_the_legacy_scheme_alone(self):
+        """Round 3 of fork PR #897, the reviewer's ruling on its refuters' finding (by execution): in peer mode, the default,
+        the beats that reach HEARTBEATS are LOCAL sessions' beats, filed as remote presence by _record_heartbeat while this
+        kernel's listing did not answer (a remote session's presence arrives through the exchange, and a local session stops
+        beating once its bus calls it local), so a heartbeat row there names a session of this machine and says nothing about
+        any other host: it vouches for presence alone. Counted as vouching by its TTL, as every heartbeat row was until this
+        commit, one such beat let a restarted bus that had heard no host presume every sid nothing named closed within the
+        beat's TTL, and let a blink's phantom vouch while a peer's link was down. Under the legacy singleton scheme
+        (ROMP_POSTAL_PEERS=0) the beats are a remote session's only presence and the row vouches by its TTL as ruled in
+        round 1. The scheme is read at each write (peers_on), so the same rows flip with the switch and nothing is stored on
+        the row. The beat arrives through the REAL recorder under a listing that does not answer, as in the blink. The
+        refused retirement: popping the HEARTBEATS entry once the listing calls the sid local leaves the carry to re-file
+        the missing key from the previous file as a row heard by nobody, a phantom for the file's life (the refuters, by
+        execution); the recorder keeps the key. The composition with the reader's verdicts is
+        tests/test_dead_session_staleness.py ReaderFollowsTheWriter (the peer-mode beat phase)."""
+        self.assertTrue(pm.peers_on(), "peer mode, the default this module runs under")
+        self._local_listing_unanswered()                      # the kernel mid-restart: the listing does not answer
+        self.assertFalse(pm._record_heartbeat(A, "web"), "the listing did not answer, so the beat is recorded as remote "
+                         "presence (never called local from the client's claim)")
+        self.assertIn(A, pm.HEARTBEATS, "the recorder filed the beat")
+        self.assertEqual((self._reach()[HB + A], self._vouch()[HB + A], self._answered()[HB + A]),
+                         ((True, False, False, True, [A]), (True, False, False), True),
+                         "THE RULED CLAUSE: in peer mode the beat's row is heard, reachable, its own answer, and vouches for "
+                         "presence alone (a writer vouching a heartbeat by its TTL whatever the scheme says (True, False, True) "
+                         "here, and a restarted bus that has heard no host presumes every sid nothing names closed within the "
+                         "beat's TTL); the recorder's own write, nothing else wrote")
+        self._peer(HOST, [{"id": B, "name": "api"}])          # a peer heard, then the kernel holds its link down
+        self._notify(HOST, up=False)
+        self.assertEqual(self._vouch(), {HB + A: (True, False, False), HOST: (False, False, False)},
+                         "THE BLINK PHANTOM beside a down peer: no row vouches for absence, so a sid nothing names is "
+                         "cannot-determine (the TTL vouch made the beat vouch here while the peer was down, and rule 5 fired)")
+        self._local_listing_answered([{"id": A, "name": "web"}])   # the kernel answers: the beating session is local
+        self.assertTrue(pm._record_heartbeat(A, "web"), "the listing answered and holds the sid: local")
+        self.assertIn(A, pm.HEARTBEATS, "THE REFUSED RETIREMENT: the recorder keeps the key (a pop leaves the carry to "
+                      "re-file it from the previous file as a row heard by nobody)")
+        self.assertNotEqual(self._rows().get(HB + A), (False, False, [A]),
+                            "the row is never a carried phantom of the session's own earlier beat (heard False, its sid "
+                            "cannot-determine by it for the file's life): the outcome of the refused pop")
+        self.assertEqual(self._rows()[HB + A], (True, False, [A]), "the row stays as recorded, heard, naming its sid")
+        self._legacy_scheme()                                 # the same rows under the legacy singleton scheme
+        pm._write_remote_sids()
+        self.assertEqual(self._vouch(), {HB + A: (True, False, True), HOST: (False, False, False)},
+                         "LEGACY KEEPS TTL VOUCHING (round 1's ruling): the beat, a remote session's only presence there, vouches "
+                         "for absence by its TTL whatever any peer's link (a writer withholding the vouch in both schemes says "
+                         "(True, False, False) here; one reading the switch inverted vouched in peer mode and not here)")
+        pm.HEARTBEATS[B] = ("api", self.now - pm.HEARTBEAT_TTL - 1)   # a beat past its TTL under the legacy scheme
+        pm._write_remote_sids()
+        self.assertEqual(self._vouch()[HB + B], (False, False, False), "expired: unreachable, vouching for nothing, as before")
 
     def test_a_peers_own_rows_under_its_name_and_its_gossip_as_a_via_row_under_the_hub_and_the_far_host(self):
         self._peer(HUB, [{"id": A, "name": "web"}, {"id": B, "name": "api", "via": FAR, "viaBus": "far-bus"}], bus_id="hub-bus")
@@ -877,9 +948,10 @@ class Mirror(unittest.TestCase):
         pm._write_remote_sids()
         self.assertEqual(self._reach(), {HB + A: (True, False, False, True, [A]), HOST: (True, False, False, True, [B])},
                          "heard, its link never reported down: reachable")
-        self.assertEqual(self._vouch(), {HB + A: (True, False, True), HOST: (True, False, False)},
-                         "the beat vouches for absence by its TTL; the heard host with no link state vouches for presence "
-                         "alone (a writer computing vouchesAbsence as reachable says True here)")
+        self.assertEqual(self._vouch(), {HB + A: (True, False, False), HOST: (True, False, False)},
+                         "the beat, in peer mode, and the heard host with no link state both vouch for presence alone (a "
+                         "writer computing vouchesAbsence as reachable says True for both; the beat's pin RE-PINNED in round "
+                         "3 of fork PR #897 from the TTL vouch, which belongs to the legacy scheme)")
         self._notify(HOST, up=False)                       # the kernel's down notify; no other write follows it
         self.assertEqual(self._reach(), {HB + A: (True, False, False, True, [A]), HOST: (True, False, True, False, [B])},
                          "the notify's own write: the host is marked link-down and unreachable at once, its roster kept "
@@ -1056,10 +1128,11 @@ class Mirror(unittest.TestCase):
                                          FAR: (True, False, False, True, [C])},
                          "no dialable PEERS row: never notified, origin-only, or a heartbeat key no row can match; "
                          "each heard and not held down, so each vouches for the presence of the sids it names")
-        self.assertEqual(self._vouch(), {HB + A: (True, False, True), HOST: (True, False, False), FAR: (True, False, False)},
-                         "the beat vouches for absence by its TTL, having no link; the never-notified host and the "
-                         "origin-only host have no link state and vouch for presence alone (a writer requiring a link of "
-                         "a heartbeat says False for the beat; one vouching by heard alone says True for the hosts)")
+        self.assertEqual(self._vouch(), {HB + A: (True, False, False), HOST: (True, False, False), FAR: (True, False, False)},
+                         "the beat, in peer mode, has no link and no TTL vouch (RE-PINNED in round 3 of fork PR #897 from the "
+                         "TTL vouch, the legacy scheme's); the never-notified host and the origin-only host have no link state: "
+                         "all three vouch for presence alone (a writer vouching a heartbeat by its TTL whatever the scheme says "
+                         "True for the beat; one vouching by heard alone says True for the hosts)")
         # a down notify for a host this process has not heard: its carried row is unreachable already (heard false),
         # and now also says the kernel holds its link down
         self._restart()
@@ -1304,7 +1377,8 @@ class Mirror(unittest.TestCase):
         """A restart over a mirror the round-2 shape wrote (six flags, no `answered`): the carried row gets the bit False,
         the restricted side, and a bool, so the reader's shape check passes the row; carried, it vouches for nothing
         anyway (heard being the first condition of both flags), and the host's exchange in this process replaces the row
-        with its own bit. A legacy heartbeat is its own answer, and a row kept across processes keeps its bit."""
+        with its own bit. A legacy heartbeat is its own answer (answered True; in peer mode it vouches for presence
+        alone all the same), and a row kept across processes keeps its bit."""
         self.path.write_text(json.dumps({"v": 2, "busStarted": 1, "writtenAt": 1, "hosts": {
             HOST: {"kind": "peer", "sids": [B], "heard": True, "expired": False, "linkDown": False, "linkUp": True,
                    "reachable": True, "vouchesAbsence": True, "seenAt": 1}}}) + "\n")
@@ -1318,8 +1392,9 @@ class Mirror(unittest.TestCase):
         self.assertEqual(self._answered()[HOST], True, "the host's exchange in this process: its own bit")
         pm.HEARTBEATS[A] = ("web", self.now)
         pm._write_remote_sids()
-        self.assertEqual((self._vouch()[HB + A], self._answered()[HB + A]), ((True, False, True), True),
-                         "a legacy heartbeat is its own answer: no listing gates it, and it vouches by its TTL")
+        self.assertEqual((self._vouch()[HB + A], self._answered()[HB + A]), ((True, False, False), True),
+                         "a legacy heartbeat is its own answer: no listing gates it; in peer mode it vouches for presence alone "
+                         "(RE-PINNED in round 3 of fork PR #897 from the TTL vouch, the legacy scheme's)")
         self._restart()
         pm._write_remote_sids()
         self.assertEqual((self._answered()[HOST], self._answered()[HB + A], self._vouch()[HOST]), (True, True, (False, False, False)),

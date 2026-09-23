@@ -19378,7 +19378,9 @@ def _remote_sids_mirror():
     [...], "heard": bool, "expired": bool, "linkDown": bool, "linkUp": bool, "reachable": bool,
     "vouchesAbsence": bool, ...}: `reachable` says the source vouches for the PRESENCE of the sids it names,
     `vouchesAbsence` that it vouches for the ABSENCE of a sid it does not name, which a source does only
-    when its link is known up, or it is a legacy heartbeat within its TTL, and its roster is an ANSWERED
+    when its link is known up, or it is a heartbeat within its TTL under the bus's legacy singleton scheme
+    (in peer mode, the default, a heartbeat row vouches for presence alone; round 3 of fork PR #897), and
+    its roster is an ANSWERED
     listing, `answered`, the seventh flag: False while the host's kernel listing did not answer and its
     exchange served the last answered rows, whose silence about a session started there since is no word;
     round 3 of fork PR #897); this reader follows both. The seven booleans are required per row: a row
@@ -19423,8 +19425,10 @@ Deadness = collections.namedtuple("Deadness", "closed rule why")
 #           no-mirror, mirror-unparsable, named-by-unreachable-host, no-host-vouches-absence. The rule is
 #           two-sided (round 2 of fork PR #897, the reviewer's ruling): a heard source that is not held
 #           down vouches for the PRESENCE of the sids it names (`reachable`), and a source vouches for the
-#           ABSENCE of a sid it does not name (`vouchesAbsence`) only when its link is known up (or it is a
-#           legacy heartbeat within its TTL) AND its roster is an answered listing (`answered`; round 3 of
+#           ABSENCE of a sid it does not name (`vouchesAbsence`) only when its link is known up (or, under
+#           the bus's legacy singleton scheme, it is a legacy heartbeat within its TTL; in peer mode a
+#           heartbeat row vouches for presence alone and reads "no link state" among the causes, the literal
+#           fact) AND its roster is an answered listing (`answered`; round 3 of
 #           fork PR #897: a host serving its last answered rows through a kernel blink says nothing about a
 #           session started there since). Unreachable is one arm whatever made the source so (not heard
 #           since the bus started, expired, its link held down by the kernel), and the two arms that turn
@@ -19447,8 +19451,11 @@ def _source_causes(rows):
     so it vouches for presence alone whatever its link, round 3 of fork PR #897), sorted by key; "no source" for
     an empty table. The last two are causes only for a row that would otherwise vouch (heard, not expired, not
     held down): a carried or a down row's bits are its last process's or predate the drop, and the first causes
-    say why it cannot vouch. Both can hold at once, in the fixed order. A legacy heartbeat, `answered` True and
-    vouching by its TTL, reaches neither."""
+    say why it cannot vouch. Both can hold at once, in the fixed order. A heartbeat row under the bus's legacy
+    singleton scheme, `answered` True and vouching by its TTL, reaches neither; in peer mode the writer withholds
+    its vouch (a beat filed there is a local session's, recorded during a listing blink; round 3 of fork PR #897,
+    the reviewer's ruling) and the row reads "no link state", the literal fact: a heartbeat has no link, and the
+    TTL exception belongs to the legacy scheme."""
     parts = []
     for key in sorted(rows):
         row = rows[key]
@@ -19487,8 +19494,12 @@ def _presumed_closed_verdict(sid, now):
          listing (`answered`, the writer's seventh flag: the `presenceAnswered` its exchange carried, False
          while its kernel listing did not answer and the exchange served the last answered rows; round 3 of
          fork PR #897, the reviewer's ruling), and its link KNOWN UP: a dialable PEERS row the kernel holds up
-         and the host heard since the link last dropped (`linkUp`), or a legacy heartbeat within its TTL,
-         which has no link and vouches by the TTL as before; a far host gossiped through a hub vouches by the
+         and the host heard since the link last dropped (`linkUp`), or, under the bus's legacy singleton
+         scheme, a legacy heartbeat within its TTL, which has no link and vouches by the TTL as before (in peer
+         mode, the default, a heartbeat row vouches for presence alone: the beats that reach the bus's table
+         there are local sessions' beats filed as remote presence during a listing blink, so its sids are rule
+         4's and a sid it does not name is cannot-determine by it; round 3 of fork PR #897, the reviewer's
+         ruling); a far host gossiped through a hub vouches by the
          hub's link and by its own bit, which the hub stamps on the gossip.
     Cannot determine, False, in four arms: no mirror file (the bus has not written under this root); a
     mirror not in the bus's shape (said once in this process's log; never read as an empty roster); the
