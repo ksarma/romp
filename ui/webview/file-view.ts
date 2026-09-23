@@ -5096,8 +5096,8 @@ function figureTooSmall(img: Element): boolean {
 }
 /** The links whose click owns a figure inside them, ONE selector for the three readers of "whose click is this" (the figures'
  *  click listener's yield, dressFigureTitle's withholding of the picture's address line, linkAbove's withholding of the
- *  control): an anchor with an href (a web address of the markdown, `[![alt](src)](https://...)`, which linkMarkdownAnchors
- *  leaves its href and the links listener leaves to the browser), a URL link and a section link (URL_LINK_CLASS,
+ *  control): an anchor with an href (a web address of the markdown, `[![alt](src)](https://...)`, whose href the local-anchor
+ *  pass leaves in place and the links listener leaves to the browser), a URL link and a section link (URL_LINK_CLASS,
  *  FRAG_LINK_CLASS, the links listener's own), and a path link (`[data-act="openpath"]`, its href taken off at mark time).
  *  NOT in the set, so a figure's click inside one stays the figure's: a dead link (file-view-links.ts DEAD_LINK_CLASS with its
  *  href removed: a host with a port, a refused scheme, an empty target) and an author's named anchor (`<a name>`, `<a id>`,

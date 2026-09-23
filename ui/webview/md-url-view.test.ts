@@ -383,7 +383,7 @@ test("a `#fragment` anchor is stamped fv-anchor and gets NO _blank in a URL docu
   assert.match(MD_FN, /\} else \{\n(?:\s*\/\/[^\n]*\n)*\s*box\.querySelectorAll\(LINK_SEL\)\.forEach\(\(node\) => \{\n\s*const a = node as HTMLElement \| SVGElement;\n\s*if \(linkHref\(a\)\.startsWith\("#"\)\) \{ a\.dataset\.act = "fv-anchor"; return; \}\n\s*a\.setAttribute\("target", "_blank"\);\n\s*a\.setAttribute\("rel", "noopener"\);/);
   const finalLoop = MD_FN.slice(MD_FN.lastIndexOf('box.querySelectorAll(LINK_SEL)'));   // every link element, not only <a href>
   assert.ok(finalLoop.includes('a.dataset.act = "fv-anchor"'), "stamped in the arm every non-file document takes: a URL, or no location at all");
-  assert.ok(!finalLoop.includes("linkMarkdownAnchors"), "…and never over a local file's anchors, which the module sorted in the other arm");
+  assert.ok(!codeOnly(finalLoop).includes("linkMarkdownAnchors"), "…and never over a local file's anchors, which the module sorted in the other arm (read over the code alone, as the order pins are: a comment that names the pass is not a call of it, and a docstring placed after the loop made this pin red once)");
 });
 
 test("scrollToFragment: decode, then the ONE lookup (an id, an <a name>, the heading whose slug it is) inside THIS rendered box, scrollIntoView; nothing found → inert", () => {
