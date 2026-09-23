@@ -199,6 +199,8 @@ test("the sheets: the control rests transparent over the figure's corner with a 
     assert.match(css, /\n\.fileview-md \.fv-figopen-web \{ border-style: dashed; \}\n/, name + ": the web control's dress, the gate's dashed border for a figure from another host (the file review's round 11, ui-1 with extra8-1; a sentence pin on the rule's spelling, and the closed set below holds the property over the parsed rules)");
     assert.match(css, /\n@media screen \{ \.fileview-md :hover \+ \.fv-figopen, \.fileview-md \.fv-figopen:hover, \.fileview-md \.fv-figopen:focus-visible \{ opacity: 1; \} \}\n/, name + ": the reveal, screen only");
     assert.match(css, /\n@media screen and \(hover: none\), screen and \(any-pointer: coarse\) \{ \.fileview-md \.fv-figopen \{ opacity: 0\.8; \} \}/, name + ": no hover, or a coarse pointer beside a hovering one, keeps it visible, screen written on both queries (the file review's round 13, extra7-2: `hover` is the primary pointer's, and a touchscreen laptop's hovers; a sentence pin on the at-rule's spelling, the closed set below holds the property)");
+    assert.match(css, /\n@media screen and \(hover: none\), screen and \(any-pointer: coarse\) \{ \.fileview-md \.fv-figopen-web \{ opacity: 1; \} \}/, name + ": the web control at rest at full opacity, after the 0.8 rule and of its specificity, so it wins: at 0.8 the picture under the control showed through its background and its dashed line, the only sign of the outbound state before a tap (the painted-contrast ask of 2026-09-23: at 0.8 the line read 2.46:1 on a VS Code editor ground of #404040 over the leg's picture, and fell under 3:1 from #282828 over the worst picture; a sentence pin, the painted read is file-figure-open-browser.test.ts's paintedRatio and the composed one theme-parity.test.ts's)");
+    assert.match(css, /\n@media screen \{ \.fileview-md a\.fv-dead:has\(\.fv-figopen-web\), \.fileview-md a\.fv-dead:has\(img\[data-fv-figweb\]\) \{ opacity: 1; color: color-mix\(in srgb, currentColor 70%, transparent\); \} \}/, name + ": a dead link holding the outbound dress (the web control after a captioned picture, or the mark) dims its words by colour, not by opacity, which dimmed the dress to 2.47:1 dark and 2.40:1 light for the control at rest over the leg's picture and 2.82:1 light for the mark, while a tap, a click and Enter open the tab from inside it (a sentence pin on the rule's spelling; the closed sets below hold the property)");
     const print = css.slice(css.indexOf("\n@media print {"), css.indexOf("\n}", css.indexOf("\n@media print {")));
     assert.doesNotMatch(print, /fv-figopen/, name + ": the print block names it nowhere");
     // the picture's own outbound mark for a web picture with no control (the file review's round 12, fresh-1): a second closed set,
@@ -212,7 +214,8 @@ test("the sheets: the control rests transparent over the figure's corner with a 
     assert.deepEqual(mark.filter((r) => underScreen(r.chain)).map(renderRule), [
       "@media screen { .fileview-md img[data-fv-figweb]:hover { outline: 1px dashed var(--outbound-line); outline-offset: 1px; } }",
       "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md img[data-fv-figweb] { outline: 1px dashed var(--outbound-line); outline-offset: 1px; } }",
-    ], name + ": the rules naming the mark are exactly the hover rule and the at-rest rule where hover is none or any pointer is coarse, the control's dashed dress as an outline (an outline and not a border: a border on the img widens its box; a property pin over the derived population, its count never typed)");
+      "@media screen { .fileview-md a.fv-dead:has(.fv-figopen-web), .fileview-md a.fv-dead:has(img[data-fv-figweb]) { opacity: 1; color: color-mix(in srgb, currentColor 70%, transparent); } }",
+    ], name + ": the rules naming the mark are exactly the hover rule and the at-rest rule where hover is none or any pointer is coarse, the control's dashed dress as an outline (an outline and not a border: a border on the img widens its box), and the dead link holding the dress, whose dimming moves off opacity so the dress inside it paints at the token's ratio (the painted-contrast ask of 2026-09-23; a property pin over the derived population, its count never typed)");
     assert.doesNotMatch(print, /data-fv-figweb/, name + ": the print block names the mark nowhere");
     // one colour token for the two dresses (the owner's call with that ruling): the mark's outline wears the token the control's dashed
     // border wears at rest, the outbound dress's own (the file review's round 13, ui-1 with extra6-1: the button family's hairline it
@@ -222,7 +225,9 @@ test("the sheets: the control rests transparent over the figure's corner with a 
     const token = rest && /^border-color: var\((--[\w-]+)\);$/.exec(rest.body.trim());
     assert.ok(token, name + ": the web control's rest rule and its border token, scoped off :hover so .fileview-btn:hover's accent border still wins on the control (the two rules share a specificity and this one is later in the sheet; a property pin: the token is read off the rule and never typed here)");
     assert.notEqual(token![1], "--card-border", name + ": the token is the dress's own, not the button family's 10 percent hairline (a property pin over the derived token: the one name it may not be)");
-    for (const r of mark) assert.match(r.body, new RegExp("outline: 1px dashed var\\(" + token![1] + "\\);"), name + ": the mark's outline wears " + token![1] + ", the token the control's dashed border wears at rest, so the two dresses are one colour (a property pin: the token derived from the control's rest rule)");
+    const onImg = mark.filter((r) => r.selector.split(",").every((sel) => /img\[data-fv-figweb\](?::hover)?$/.test(sel.trim())));   // the rules whose subject is the picture, not the dead link holding it
+    assert.ok(onImg.length > 0, name + ": the rules dressing the picture itself are read (a derivation guard: an empty set is a broken read, not a clean sheet)");
+    for (const r of onImg) assert.match(r.body, new RegExp("outline: 1px dashed var\\(" + token![1] + "\\);"), name + ": the mark's outline wears " + token![1] + ", the token the control's dashed border wears at rest, so the two dresses are one colour (a property pin: the token derived from the control's rest rule)");
     // the closed set over the control's rules, read as RULES (ui/webview/css-rules.mjs, the reader this home shares with
     // tools/markdown-viewer-plan-linknav.test.mjs: brace-matched over the comment-stripped sheet, each rule with the at-rules
     // enclosing it), so a rule written the sheets' own way, indented inside an at-rule block or on a grouped selector wrapped
@@ -246,7 +251,9 @@ test("the sheets: the control rests transparent over the figure's corner with a 
     assert.deepEqual(control.filter((r) => underScreen(r.chain)).map(renderRule), [
       "@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible { opacity: 1; } }",
       "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen { opacity: 0.8; } }",
-    ], name + ": the rules under a screen-only at-rule are the reveal and the at-rest rule (no hover, or any coarse pointer; a property pin over the parsed rules)");
+      "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen-web { opacity: 1; } }",
+      "@media screen { .fileview-md a.fv-dead:has(.fv-figopen-web), .fileview-md a.fv-dead:has(img[data-fv-figweb]) { opacity: 1; color: color-mix(in srgb, currentColor 70%, transparent); } }",
+    ], name + ": the rules under a screen-only at-rule are the reveal, the at-rest rule (no hover, or any coarse pointer), the web control's full opacity at rest and the dead link holding the dress, whose selector names the class inside :has() (a property pin over the parsed rules)");
   }
 });
 

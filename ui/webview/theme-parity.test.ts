@@ -8,6 +8,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { cssRules } from "./css-rules.mjs";   // the outbound dress's painted pin (the last test): the opacities the sheet declares, read as parsed rules with their at-rules
 
 const read = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 
@@ -245,4 +246,103 @@ test("the ring hues stay apart in BOTH themes, every pair: rings against rings f
   }
   // the light value itself, so a re-ink is a deliberate change here and in feed.css (tab-rings.test.ts pins the two sheets equal)
   assert.match(block(css, "body.theme-light {"), /--st-ask-bg: #504100; --st-ask-fg: #ffffff;/);
+});
+
+// THE OUTBOUND DRESS, PAINTED (the painted-contrast ask of 2026-09-23). The pair in PAIRS reads --outbound-line over --bg as if
+// nothing stood between them; the dress is painted through element opacities, the web control's own at rest and a dead link's
+// (a.fv-dead) around a dress inside it, and the control paints its own background, var(--bg), under its line, so at an opacity under
+// 1 the picture beneath the control shows through its line and its ground alike. Each state from which a gesture opens the outbound
+// tab (a tap, a click, Enter on the control; an href-less dead link owns no click, file-view.ts FIGURE_LINK_SET, so the states inside
+// one open the tab too) is composed here from the opacities the sheet DECLARES for the rules that reach the dress, and its line must
+// clear 3:1 over the ground it paints on: the control's own background, composed the same way, for the worst picture beneath it (every
+// grey and the eight corners of the colour cube), or the page for the mark, whose 1px offset shows the page between its dashes. The
+// states: the web control at rest, alone and inside a dead link; the control revealed by the pointer over its picture or by a keyboard
+// focus inside a dead link (the focus is composed here alone: in the browser Chromium's focus ring covers the border row); the accent
+// border with the pointer on the control inside a dead link, against the hover wash; the mark, alone and inside a dead link. Every
+// failing state is collected and asserted once, so a red names them all. Red at 61d69cba1, where the web control rested at 0.8 and a
+// dead link's 0.7 dimmed the dress inside it. The read is a model with a stated bound: a rule reaches the dress here when its selector
+// list carries one of the spellings named below (split at top-level commas), under the at-rules named; a rule reaching the dress under
+// another spelling is outside this read, and the executed read is file-figure-open-browser.test.ts's paintedRatio, pixels off the real
+// paint under touch emulation, on a touchscreen laptop and on a fine pointer.
+function selectorList(sel: string): string[] {
+  const out: string[] = []; let depth = 0, from = 0;
+  for (let i = 0; i < sel.length; i++) { const c = sel[i]; if (c === "(") depth++; else if (c === ")") depth--; else if (c === "," && depth === 0) { out.push(sel.slice(from, i).trim()); from = i + 1; } }
+  out.push(sel.slice(from).trim());
+  return out;
+}
+/** The opacity the LAST rule reaching `spellings` under a chain `chainOk` accepts declares (sheet order: the spellings a caller
+ *  names share one specificity), or null when no such rule declares one. */
+function declaredOpacity(css: string, spellings: string[], chainOk: (chain: string[]) => boolean): number | null {
+  let v: number | null = null;
+  for (const r of cssRules(css)) {
+    if (!chainOk(r.chain) || !selectorList(r.selector).some((s) => spellings.includes(s))) continue;
+    const m = /(?:^|;\s*)opacity:\s*([\d.]+)\s*(?:;|$)/.exec(r.body.trim());
+    if (m) v = parseFloat(m[1]);
+  }
+  return v;
+}
+const AT_REST = (chain: string[]) => chain.length === 1 && /\(hover: none\)/.test(chain[0]) && /\(any-pointer: coarse\)/.test(chain[0]);
+const SCREEN = (chain: string[]) => chain.length === 1 && chain[0] === "@media screen";
+const TOP = (chain: string[]) => chain.length === 0;
+type RGBf = [number, number, number];
+const over = (a: RGBf, b: RGBf, t: number): RGBf => [0, 1, 2].map((i) => a[i] * t + b[i] * (1 - t)) as RGBf;
+const PICTURES: RGBf[] = [...Array.from({ length: 256 }, (_, g) => [g, g, g] as RGBf), ...[0, 1, 2, 3, 4, 5, 6, 7].map((k) => [k & 1 ? 255 : 0, k & 2 ? 255 : 0, k & 4 ? 255 : 0] as RGBf)];
+/** The control's line `line` over its own ground `ground` (var(--bg), or the hover wash over it), the control at opacity `o` over a
+ *  picture, the lot inside an anchor at opacity `a` over the page `bg`: the worst ratio over PICTURES (at o = 1 the picture drops out). */
+function controlPainted(line: RGBf, ground: RGBf, bg: RGBf, o: number, a: number): number {
+  let worst = Infinity;
+  for (const p of (o === 1 ? [bg] : PICTURES)) worst = Math.min(worst, contrast(over(over(line, p, o), bg, a), over(over(ground, p, o), bg, a)));
+  return worst;
+}
+const markPainted = (tok: RGBf, bg: RGBf, a: number): number => contrast(over(tok, bg, a), bg);
+type Theme = { bg: RGBf; tok: RGBf; accent: RGBf; wash: RGBf };   // wash: --accent-wash already over bg, the control's hover background
+/** Every state from which a gesture opens the outbound tab, painted over the theme's ground, from the sheet's declared opacities; each
+ *  with whether its line is the dress's token (the VS Code bound's states) or the family's accent under the pointer. */
+function dressStates(css: string, t: Theme): Array<[string, number, "token" | "accent"]> {
+  const rest = declaredOpacity(css, [".fileview-md .fv-figopen", ".fileview-md .fv-figopen-web"], AT_REST);
+  const reveal = declaredOpacity(css, [".fileview-md .fv-figopen:hover", ".fileview-md :hover + .fv-figopen", ".fileview-md .fv-figopen:focus-visible"], SCREEN);
+  // the dead link around a dress: the rule keyed on the dress it holds outranks the plain dead rule (a :has() adds its argument's weight)
+  const deadHolding = declaredOpacity(css, [".fileview-md a.fv-dead:has(.fv-figopen-web)", ".fileview-md a.fv-dead:has(img[data-fv-figweb])"], SCREEN);
+  const dead = deadHolding !== null ? deadHolding : declaredOpacity(css, [".fileview-md a.fv-dead"], TOP);
+  assert.ok(rest !== null && reveal !== null && dead !== null, "the three opacities are read off the sheet (rest " + rest + ", reveal " + reveal + ", dead link " + dead + "): a read that finds none is broken, not clean");
+  return [
+    ["the web control at rest (touch, or a coarse pointer beside a hovering one) at " + rest, controlPainted(t.tok, t.bg, t.bg, rest!, 1), "token"],
+    ["the web control at rest inside a dead link, " + rest + " x " + dead, controlPainted(t.tok, t.bg, t.bg, rest!, dead!), "token"],
+    ["the web control revealed by the pointer over its picture or by a keyboard focus inside a dead link, " + reveal + " x " + dead, controlPainted(t.tok, t.bg, t.bg, reveal!, dead!), "token"],
+    ["the mark on a picture under the floor (at rest, or on hover)", markPainted(t.tok, t.bg, 1), "token"],
+    ["the mark inside a dead link, at " + dead, markPainted(t.tok, t.bg, dead!), "token"],
+    ["the accent border with the pointer on the control inside a dead link, against the hover wash, " + reveal + " x " + dead, controlPainted(t.accent, t.wash, t.bg, reveal!, dead!), "accent"],
+  ];
+}
+test("the outbound dress PAINTED: every state from which a gesture opens the outbound tab, composed from the opacities the sheet declares (the web control's own at rest, a dead link's around the dress) over the ground it paints on (the control's own background over the worst picture, the page for the mark), clears 3:1 in both themes of both sheets, the accent border under the pointer inside a dead link among them; and in the dark theme, whose ground follows the VS Code editor, the token's states clear on every neutral editor ground up to #404040 and none past it, and from #efefef on a light one (the painted-contrast ask of 2026-09-23)", (t) => {
+  const fails: string[] = [];
+  for (const sheet of ["styles.css", "feed.css"]) {
+    const css = read(sheet);
+    const themeOf = (vars: Map<string, string>, bg: RGBf): Theme => ({ bg, tok: rgbOf(vars.get("--outbound-line")!, bg)!, accent: rgbOf(vars.get("--accent")!, bg)!, wash: rgbOf(vars.get("--accent-wash")!, bg)! });   // the wash composited over the ground (rgbOf), the hover background var(--bg) under the gradient
+    for (const [name, blk] of [["dark", props(block(css, ":root {"))], ["light", props(block(css, "body.theme-light {"))]] as const) {
+      const bg = rgbOf(blk.get("--bg")!, [30, 30, 30])!;
+      for (const [state, ratio] of dressStates(css, themeOf(blk, bg))) t.diagnostic(`${sheet} ${name}: ${state} paints ${ratio.toFixed(3)}:1`);
+      for (const [state, ratio] of dressStates(css, themeOf(blk, bg))) if (ratio < 3) fails.push(`${sheet} ${name}: ${state} paints ${ratio.toFixed(3)}:1, under the 3:1 floor for the only sign of the outbound state`);
+    }
+    // the VS Code bound, restated from the painted value: the dark --bg is the editor's background (var(--vscode-editor-background,
+    // ...)), the light block's a literal; the token's states clear 3:1 on every neutral editor ground from the fallback up to #404040,
+    // and at #414141 even their best (the token at full over the ground) falls under, so the stated bound is exact; on a light editor
+    // ground from #efefef up, and not at #eeeeee. The accent border is the button family's hover colour, not the dress's token, and is
+    // held above on each theme's own ground. The leg reads the same bound by pixels (file-figure-open-browser.test.ts).
+    const dark = props(block(css, ":root {"));
+    assert.match(dark.get("--bg")!, /^var\(--vscode-editor-background, #1e1e1e\)$/, sheet + ": the dark ground follows the editor");
+    const onGrey = (g: number) => dressStates(css, themeOf(dark, [g, g, g])).filter(([, , k]) => k === "token");
+    const hex = (g: number) => "#" + g.toString(16).padStart(2, "0").repeat(3);
+    for (const g of [...Array.from({ length: 0x40 - 0x1e + 1 }, (_, i) => 0x1e + i), ...Array.from({ length: 0xff - 0xef + 1 }, (_, i) => 0xef + i)]) {
+      const [state, worst] = onGrey(g).reduce((w, s) => (s[1] < w[1] ? s : w));
+      if (worst < 3) fails.push(`${sheet}: on a VS Code editor ground ${hex(g)} the dress paints ${worst.toFixed(3)}:1 at its worst state (${state}), under the stated bound of #404040 (dark) or #efefef (light)`);
+    }
+    for (const g of [0x40, 0xef]) t.diagnostic(`${sheet}: on a VS Code editor ground ${hex(g)} the token's worst state paints ${Math.min(...onGrey(g).map(([, r]) => r)).toFixed(3)}:1`);
+    for (const g of [0x41, 0xee]) {
+      const best = Math.max(...onGrey(g).map(([, r]) => r));
+      t.diagnostic(`${sheet}: at ${hex(g)} the token's best state paints ${best.toFixed(3)}:1`);
+      if (best >= 3) fails.push(`${sheet}: at ${hex(g)} the dress's best state paints ${best.toFixed(3)}:1, past the stated bound, where it should fall under 3:1 (the bound #404040 and the light one #efefef are stated exact)`);
+    }
+  }
+  assert.deepEqual(fails, [], "every state a gesture opens the outbound tab from paints the dress at 3:1, and the VS Code bound is exact:\n" + fails.join("\n"));
 });
