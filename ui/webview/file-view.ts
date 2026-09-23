@@ -4184,7 +4184,11 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // of plans/file-review.md: one holding an inline start tag with no end tag in it (`## Results <b>`), which the rule
   // above renders as literal text, so the slug takes the tag's characters too (md-results-b), where GitHub reads the
   // tag as HTML (results).
-  const clean = sanitizeMd(dirty, mintHeadingIds);   // the sanitized <body>: DOMPurify's own document's, which never loads (below)
+  // `remoteRefs: "keep"`: the one sanitizeMd caller that keeps a paint reference to another origin (an svg's `fill="url(...)"`
+  // and its kin) in the body. The sanitizer's paint pass removes one for every other caller (md-sanitize.ts); this body is
+  // gated before the adoption instead (gateRemoteFigures, below, which moves the reference aside behind a click that names
+  // its host and restores it), and a strip here would delete what that click restores.
+  const clean = sanitizeMd(dirty, mintHeadingIds, { remoteRefs: "keep" });   // the sanitized <body>: DOMPurify's own document's, which never loads (below)
   // Fenced blocks: highlight only a language the fence NAMES and this bundle registers (the same no-guessing rule as
   // langFor; an unnamed block stays plain rather than being painted at random). Then, for EVERY fence, named or not, the
   // chat's own dress (code-block.ts): the per-line rows that number the lines and make a soft-wrap read distinctly from a
