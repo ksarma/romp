@@ -2903,6 +2903,13 @@ class ChildPytestLaunchers(unittest.TestCase):
         self.assertEqual(_launchers_in('import os\nname = "x"\nok = os.path.basename(name) in ("pytest", "py.test")\nbad = name not in ["pytest", "-q"]\n', "t.py"), [],
                          "the right operand of an in test is a set of names, not an argv")
         self.assertEqual(_launchers_in("def f():\n    return 1\n", "t.py"), [])
+        # a name a function binds itself is that function's, as Python looks it up: a local assignment or import of the
+        # same name hides the module's launcher there, so the call runs something else and gives no row (the scope
+        # lookup, review round 4's verify, 2026-09-23)
+        self.assertEqual(_launchers_in('import os\nfrom subprocess import run\n\ndef helper():\n    run = os.getcwd\n'
+                                       '    return run("pytest -q")\n', "t.py"), [], "a local assignment hides the module's name")
+        self.assertEqual(_launchers_in('from subprocess import run\n\ndef helper():\n    from json import loads as run\n'
+                                       '    return run("pytest -q")\n', "t.py"), [], "a local import hides the module's name")
         # a module the interpreter cannot parse is one unparsed row, never a silent skip
         rows = _launchers_in("def f(:\n    pass\n", "t.py")
         self.assertEqual([(r["kind"], r["flag"]) for r in rows], [("module", False)])
