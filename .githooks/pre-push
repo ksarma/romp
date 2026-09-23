@@ -137,28 +137,41 @@
 # (round 6 found five own= reads and the ref list publishing under a tool
 # that exited 0 printing nothing, each shown by a real push; 2026-09-22).
 # BEGIN generated block (tests/pre-push-reads-header.sh; edit the table)
-# The bound of each sibling fact, stated once: a marker AHEAD of an answer
-# bounds its start alone and says nothing of its end, so wholeness needs a
-# TAIL marker (the message log asks for one after the message, since round 8),
-# a count (the diff's awk records the lines it printed) or a byte count (a tag
-# capture against the object's size); the diff's git stage holds a head marker
-# alone (the commit's own sha, asked for by --always in place of
-# --no-commit-id), since git prints no tail for a diff, and its awk's count
-# bounds the awk's stage (a log answering the marker and part of the message
-# passed the rest unread; the round 7 refuter, 2026-09-23). And a read whose
-# answer is its STATUS alone gates nothing where exit 0 is the PERMISSIVE
-# verdict, since a silent tool exits 0: the chosen-address match runs no tool
-# since round 8, and the ancestry of a pushed commit is read since round 8b2
-# as the commit git merge-base names, which must be the pushed commit itself
-# (under --is-ancestor a git silent on it and on the commit listing published
-# a middle commit's banned line through a real push of a ref update;
-# 2026-09-23).
+# The bound of each sibling fact, stated once: a fact that bounds an answer's
+# START (a head marker, a non-empty answer, the first word naming the object,
+# an emptiness compared with a size) says nothing of its END, so each read's
+# line below states both, and its row in tests/pre-push-reads.tsv names a case
+# that cuts the real answer short, exit 0, through a real push, or the reason
+# no cut applies (round 8b3: the commit listing cut to its tip, the added
+# lines to their marker, the addresses inside the committed address, a symlink
+# target to ten bytes, the symlink listing inside a link's mode, the -z
+# listing inside a hidden file's record, the repository root to a main clone's
+# path and the chosen addresses to a prefix of one each published through a
+# real push while its row stated a fact, and an awk silent on the scanner
+# log's ERR line, an own= read whose row said safe, published a credential
+# beside a scanner that counted a commit whole with its credential file
+# unread; the r8b2 audit and round 8b3, 2026-09-23). The END is held by a TAIL
+# marker the read asks for after its answer (the message and address logs, the
+# diff's second --stdin line, the root's work-tree line), by a count or a byte
+# count read apart (the commit count, a size, a count the tool records), by a
+# terminator each item needs (a NUL, the newline after an address, the tab
+# that ends a listing entry's size column), by equality with a whole name or
+# word, or by a verdict any answer under exit 0 gives already; a cut digit run
+# is another number, so a count compared with an independent one bounds
+# itself. And a read whose answer is its STATUS alone gates nothing where exit
+# 0 is the PERMISSIVE verdict, since a silent tool exits 0: the chosen-address
+# match runs no tool since round 8, and the ancestry of a pushed commit is
+# read since round 8b2 as the commit git merge-base names, which must be the
+# pushed commit itself (under --is-ancestor a git silent on it and on the
+# commit listing published a middle commit's banned line through a real push
+# of a ref update; 2026-09-23).
 # What stays own=, and why a tool silent there publishes nothing by itself: a
 # read whose empty answer is the object's own, with no sibling fact to hold it
-# against. Each such read's line below says why an empty or short exit-0
+# against. Each such read's line below says why an empty or cut-short exit-0
 # answer there refuses or publishes nothing, and its row in
 # tests/pre-push-reads.tsv names the case that shows it with the tool silent
-# through a real push. The greps among them answer by their status alone (-q),
+# through a real push and the case that shows it with the answer cut short, or
+# why no cut applies. The greps among them answer by their status alone (-q),
 # and there exit 0 is the hit, the strict side; the chosen-address MATCH was a
 # third such grep until round 8, where exit 0 was the PERMISSIVE verdict and a
 # grep silent with exit 0 made every stamped address chosen, publishing a
@@ -169,191 +182,302 @@
 # this guarantee.
 # The paragraphs above and the two lists below are GENERATED from
 # tests/pre-push-reads.tsv by tests/pre-push-reads-header.sh, one row per read
-# of this file (its tag, its sibling fact or the reason an empty or short
-# answer there is the safe side, marked safe, and the case that drives it with
-# the tool silent through a real push); tests/pre-push-hook.bats fails when
-# the lines between the two marker lines differ from the generator's output by
-# a byte, when a judged_read tag has no row or a row no tag, when a read the
-# census finds outside judged_read is matched by no row's key or by two, and
-# when either list names anything but the tags of its kind, so none of it is
-# written by hand (round 5 found six reads of the second class the
+# of this file (its tag, its sibling fact with its end or the reason an empty
+# or cut-short answer there is the safe side, marked safe, the case that
+# drives it with the tool silent through a real push, and the case that drives
+# it with its answer cut short, or why no cut applies);
+# tests/pre-push-hook.bats fails when the lines between the two marker lines
+# differ from the generator's output by a byte, when a judged_read tag has no
+# row or a row no tag, when a read the census finds outside judged_read is
+# matched by no row's key or by two, when a row names no case for either
+# drive, and when either list names anything but the tags of its kind, so none
+# of it is written by hand (round 5 found six reads of the second class the
 # hand-written list had missed, each shown by a real push publishing a banned
 # line with nothing printed; 2026-09-22).
 # Reads gated by a sibling fact (gate=):
 #   the CONTENT grep of the tip
 #       the grep's own status: exit 0 is a match, so a match that lists no hit
-#       line is a short answer, refused naming the read
+#       line is a short answer, refused naming the read. Its end: any answer
+#       under exit 0 refuses: a hit line cut inside its path still names a
+#       hit, one cut inside the tip's name is an error line refused as an
+#       incomplete scan, and none at all is the short answer above
 #   the SYMLINK listing of the tip
 #       the SIZE of the tip's tree, read apart: an empty listing of a tree
-#       whose size is not 0 is short, refused naming the read and the size
+#       whose size is not 0 is short, refused naming the read and the size.
+#       Its end: the -z listing's whole entries, counted apart, against this
+#       listing's lines (a dropped line counts short), and each line a whole
+#       entry, a mode, a type, an object name, a tab and a path, a line that
+#       is none refused naming it (round 8b3: the last line, a link, cut
+#       inside its mode, published)
 #   the SIZE of the tip's tree
 #       a digit run, read beside an empty listing: 0 is the empty tree, the
-#       one tree with no entry, and any other answer refuses
+#       one tree with no entry, and any other answer refuses. Its end: asked
+#       only beside an empty listing, the empty tree's, whose size 0 has no
+#       proper prefix but the empty answer, a non-count refused
 #   the TYPE of the object the tip peels to
 #       the three types a peel can reach (blob, tree, commit): an empty answer
 #       or any other is refused naming the read, and peeled stays empty, read
-#       as not a blob
+#       as not a blob. Its end: the whole word, and no type word is a prefix
+#       of another, so a cut word is refused
 #   the SYMLINK TARGET of a link at the tip
-#       the blob's SIZE, read apart: an empty target of a blob whose size is
-#       not 0 is short, refused naming the link and the size
+#       the blob's SIZE, read apart for every target: a target whose byte
+#       count is not the size is short, refused naming the link and both
+#       numbers, an empty target of a blob whose size is not 0 among them. Its
+#       end: that byte count itself (round 8b3: a target cut to ten bytes
+#       published while the size was asked for an empty target alone)
 #   the SIZE of a symlink target blob
-#       a digit run, read beside an empty target: 0 is the empty blob, and any
-#       other answer refuses
+#       a digit run compared with the target's byte count: a non-count refuses
+#       naming both answers, and another number refuses naming both. Its end:
+#       a cut size is a prefix of its digits, another number than the byte
+#       count
 #   the COMMIT listing of a pushed ref
 #       the peeled type (a blob or a tree names no commit), a remote-tracking
 #       ref containing the commit, or on a ref update the ancestry: an empty
-#       listing none of them excuses is short, refused naming the read
+#       listing none of them excuses is short, refused naming the read. Its
+#       end: the COMMIT COUNT of the same range, read apart, against its line
+#       count, and each line a whole commit name, refused naming both answers
+#       (round 8b3: a listing cut to its tip published a middle commit's
+#       banned line, on a ref update and on a new branch)
+#   the COMMIT COUNT of a pushed ref
+#       a digit run compared with the commit listing's line count: a non-count
+#       refuses naming the read, and another number refuses naming both. Its
+#       end: a cut count is a prefix of its digits, another number than the
+#       listing's
 #   the REMOTE REFS containing the pushed commit
 #       safe: its empty answer withholds the agreement, so the empty listing
-#       it gates is refused as short unless the ancestry agrees
+#       it gates is refused as short unless the ancestry agrees. Its end: only
+#       its emptiness is read, so a cut answer that is not empty agrees as the
+#       whole one does, and one cut to nothing withholds the agreement
 #   the ANCESTRY of the pushed commit over the remote commit
 #       the commit git merge-base names, which must be the pushed commit
 #       itself (the best common ancestor of a commit and its descendant): an
 #       empty or non-hex answer is refused naming the read, and another commit
-#       leaves the empty listing refused as short
+#       leaves the empty listing refused as short. Its end: equality with the
+#       pushed commit's whole name, a hex run shorter than a whole name
+#       refused naming the read
 #   the PARENT COUNT of a commit
-#       the commit named first in the answer: a short answer leaves the count
-#       empty, refused naming the read
+#       the commit named first in the answer: an answer that does not begin
+#       with it is refused naming the read, and the count is left empty. Its
+#       end: a cut after the commit names fewer parents, never more, so a
+#       merge read as one parent or none meets no numstat row for its
+#       post-images, a short read refused, and its added lines are read in
+#       fewer columns, a superset of the lines in no parent (a cut inside the
+#       last parent's name counts that parent all the same)
 #   the ADDED LINES diff of a commit
-#       the marker line (--always: the commit's own sha ahead of the diff),
+#       the head marker (--always: the commit's own sha ahead of the diff),
 #       then the count the awk records: no marker, or no count, refuses naming
-#       the read
+#       the read. Its end: the TAIL marker, the commit's sha printed again
+#       after the diff for the second --stdin line (the commit as its own
+#       parent, an empty diff), without which the awk records untailed,
+#       refused naming the read (round 8b3: a diff cut to its marker line
+#       published)
 #   the LINE COUNT of the added lines
 #       a digit run compared with the awk's recorded count: a non-count or
-#       another number refuses
+#       another number refuses. Its end: a cut count is a prefix of its
+#       digits, another number than the awk's
 #   the ADDED LINES grep
 #       the grep's own status: exit 0 is a match, so a match that wrote no hit
-#       line is short, refused naming the read
+#       line is short, refused naming the read. Its end: any answer under exit
+#       0 refuses, the hit lines naming paths for the report alone
 #   the SORT of the paths a grep named
 #       the grep's hit lines in hand, which name at least one path: a sort
 #       answering nothing is refused naming it (a short sort shortens the
-#       report of a push the hit refuses already)
+#       report of a push the hit refuses already). Its end: a cut sort names
+#       fewer paths of a push the hit refuses already
 #   the ADDRESSES log of a commit
 #       the two role lines the format asks for (authored, committed): any
-#       other shape, an empty answer included, is refused naming the read
+#       other shape, an empty answer included, is refused naming the read. Its
+#       end: the TAIL marker the format asks for after them (end, a tab and
+#       the commit's own name, which no address holds), an answer without it
+#       refused naming its last line (round 8b3: a log cut inside the
+#       committed address published)
 #   the MESSAGE log of a commit
 #       the head marker and the tail marker the format asks for around the
-#       message: an answer missing either is refused naming the read
+#       message: an answer missing either is refused naming the read. Its end:
+#       the tail marker, the commit's own name, which no message can hold
 #   the MESSAGE grep
 #       the grep's own status: exit 0 is a match, so a match that printed no
-#       line is short, refused naming the read
+#       line is short, refused naming the read. Its end: any answer under exit
+#       0 refuses, the line numbers serving the report alone
 #   the TYPE of a pushed object
 #       the four object types: an empty answer or any other is refused naming
-#       the read
+#       the read. Its end: the whole word, and no type word is a prefix of
+#       another, so a cut word is refused
 #   the OBJECT of a tag
 #       the object's SIZE against the capture's BYTE COUNT: a capture of fewer
-#       bytes than the size is refused naming both numbers
+#       bytes than the size is refused naming both numbers. Its end: that byte
+#       count itself, cat-file -p printing a tag object as its raw bytes
 #   the SIZE of a tag object
 #       a digit run compared with the capture's byte count: a non-count
-#       refuses naming both answers
+#       refuses naming both answers. Its end: a cut size is a prefix of its
+#       digits, another number than the byte count
 #   the BYTE COUNT of a tag capture
 #       a digit run compared with the object's size: a non-count refuses
-#       naming both answers
+#       naming both answers. Its end: a cut count is a prefix of its digits,
+#       another number than the size
 #   the -z listing of the tip
 #       the symlink pass's entry count and the grep's read list: a listing
 #       that counts differently, or lacks a file the grep read, is refused
-#       naming the read
+#       naming the read. Its end: its WHOLE entries counted, each through the
+#       tab that ends its size column, so a record cut inside counts as none
+#       (round 8b3: a hidden file's record, the last, cut before its tab,
+#       published)
 #   the READ LIST of the grep of the tip
 #       safe: an empty read list sends every regular file with bytes at the
-#       tip to the byte judge, which refuses each text file as hidden
+#       tip to the byte judge, which refuses each text file as hidden. Its
+#       end: a cut list names fewer files as read, and each file it lost goes
+#       to the byte judge the same way
 #   the ENTRY COUNT of the -z listing
 #       a digit run compared with the symlink pass's entry count: a non-count
-#       or another number refuses
+#       or another number refuses. Its end: a cut count is a prefix of its
+#       digits, another number than the symlink pass's
 #   the TIP CANDIDATES join
 #       the -z listing's regular files with bytes less the grep's read list,
 #       counted apart: a join appending another number of rows refuses naming
-#       the three counts
+#       the three counts. Its end: the rows are counted by their NUL
+#       terminators, so a row cut inside counts as none
 #   the FILE COUNT of the -z listing
 #       a digit run before the candidate-count arithmetic: a non-count refuses
-#       naming both answers
+#       naming both answers. Its end: a cut count is a prefix of its digits,
+#       which changes the count expected, and the join's rows then differ from
+#       it
 #   the LINE COUNT of the read list
 #       a digit run before the candidate-count arithmetic: a non-count refuses
-#       naming both answers
+#       naming both answers. Its end: a cut count is a prefix of its digits,
+#       which changes the count expected, and the join's rows then differ from
+#       it
 #   the NEWLINE COUNT of a scratch listing
 #       a digit run before the newline test: a non-count refuses naming the
-#       read
+#       read. Its end: the one answer that passes is 0, whose only proper
+#       prefix is the empty answer, a non-count, and a larger count cut short
+#       is still not 0 or is empty, refused either way
 #   the REWRITE of a scratch listing
 #       the rewrite's byte count against its input's: a rewrite of fewer bytes
-#       refuses naming both numbers
+#       refuses naming both numbers. Its end: that byte count itself
 #   the BYTE COUNT of a scratch listing
 #       a digit run, the input's and the rewrite's: a non-count refuses naming
-#       the read
+#       the read. Its end: the two counts compared, a cut one a prefix of its
+#       digits, another number than the other's
 #   the CHANGED PATHS listing of a commit
 #       the paths its numstat rows or combined-patch sections name: a path
-#       they name that the listing lacks refuses naming the read and the path
+#       they name that the listing lacks refuses naming the read and the path.
+#       Its end: a record cut inside is dropped (each is read by its NUL), so
+#       its path is one the verdicts name and the listing lacks
 #   the COMBINED PATCH of a merge
 #       the merge's post-image paths joined against its sections: a post-image
 #       with no section that is no rename candidate is a short read, refused
-#       naming the path
+#       naming the path. Its end: a section cut away is that short read, and a
+#       section cut inside is a header alone, a candidate the byte judge reads
 #   the SECTION ROWS of a combined patch
 #       safe: an empty rows file leaves every post-image of the merge a short
-#       read at the join, refused naming the path
+#       read at the join, refused naming the path. Its end: a cut rows file
+#       lacks the row of some post-image, the same short read (a row cut
+#       inside names a path the listing lacks, refused too)
 #   the PER-PARENT listing of a merge
 #       safe: an empty per-parent listing names no deletion, so a moved
 #       post-image is no rename candidate and is a short read at the join,
-#       refused naming the path
+#       refused naming the path. Its end: a cut listing names fewer deletions,
+#       the same road for a post-image whose every deletion it lost
 #   the RENAME CANDIDATES of a merge
 #       safe: an empty candidates file leaves a moved post-image with no
-#       section a short read at the join, refused naming the path
+#       section a short read at the join, refused naming the path. Its end: a
+#       cut file names fewer candidates (a path cut inside names none), the
+#       same road
 #   the NUMSTAT of a commit
 #       the listing's post-image paths joined against its rows: a post-image
-#       with no numstat row is a short read, refused naming the path
+#       with no numstat row is a short read, refused naming the path. Its end:
+#       a row cut inside is dropped (each is read by its NUL), the same short
+#       read
 #   the EMPTY TREE name
-#       a non-empty answer: an empty one is refused naming the read
+#       a non-empty answer: an empty one is refused naming the read. Its end:
+#       a whole object name, a hex run as long as the commit's own (the same
+#       hash), a name cut short refused naming it before any numstat reads it
 #   the JOIN of the verdicts of a commit
 #       the count the join's awk records against the rows appended, counted by
-#       their NUL terminators: no count or another number refuses naming both
+#       their NUL terminators: no count or another number refuses naming both.
+#       Its end: a row cut inside has no terminator and counts as none
 #   the BYTE COUNTS of a hidden blob
 #       the blob's SIZE, read apart: a count of 0 bytes for a blob whose size
-#       is not 0 is short, refused naming both
+#       is not 0 is short, refused naming both. Its end: a cut read drops
+#       bytes and never adds a NUL, so a text blob stays text, refused as
+#       hidden, and a binary one can only lose its NUL, refused as hidden text
 #   the SIZE of a hidden blob
 #       a digit run, read beside a 0-byte count: 0 is the empty blob, and any
-#       other answer refuses
+#       other answer refuses. Its end: asked only beside a 0-byte count, the
+#       empty blob's, whose size 0 has no proper prefix but the empty answer,
+#       a non-count refused
 #   the REPOSITORY ROOT
 #       a non-empty answer: an empty one leaves no root to scan, refused
-#       naming the read
+#       naming the read. Its end: the TAIL line true that
+#       --is-inside-work-tree prints after the root, an answer without it
+#       refused naming its last line (round 8b3: a root cut to a main clone's
+#       path published a credential under that clone's configuration)
 #   the COUNT of commits with content to scan
 #       a digit run compared with the count the scanner reports: a non-count
-#       refuses naming the read, another number refuses naming both
+#       refuses naming the read, another number refuses naming both. Its end:
+#       a cut count is a prefix of its digits, another number than the
+#       scanner's
 #   the COLOUR STRIP of the scanner log
 #       safe: an empty strip leaves no count line to read, and the count arm
-#       refuses a log with none
+#       refuses a log with none. Its end: a strip cut ahead of the count line
+#       or inside it leaves none, the same refusal, and one cut after it loses
+#       no line the hook reads (the scanner logs its errors ahead of its
+#       count)
+#   the ERR line of the scanner log
+#       the answer is always a word: none for a log with no ERR line, or
+#       error, a tab and the first such line: an empty answer or any other is
+#       refused naming the read (round 8b3: read as own= until then, an awk
+#       silent here, beside a scanner that logged an error and counted a
+#       commit whole with its credential file unread, published the credential
+#       through a real push). Its end: the whole word none, no cut of which is
+#       an answer, or an error line, which refuses however short
 #   the COMMIT COUNT line of the scanner log
 #       the hook's own count of commits with content to scan: a missing count
-#       line refuses, and another number refuses naming both
+#       line refuses, and another number refuses naming both. Its end: a cut
+#       count is a prefix of its digits, another number than the hook's
 # Reads whose empty answer is the object's own (own=):
 #   the ADDRESS DOMAIN grep
 #       safe: the answer is the status alone (-q) and exit 0 is the hit, so a
-#       silent grep refuses the address, the strict side
+#       silent grep refuses the address, the strict side. Its end: the grep
+#       prints nothing, so there is no answer to cut
 #   the CHOSEN ADDRESSES of this clone
 #       safe: an empty answer chooses no address, so every stamped address is
-#       judged, a chosen banned-domain stamp included, the strict side
+#       judged, a chosen banned-domain stamp included, the strict side. Its
+#       end: an address counts only with the newline git ends it with, so a
+#       cut answer chooses fewer addresses, never a prefix of one (round 8b3:
+#       a cut to a prefix chose a stamped banned-domain address and published)
 #   the SYMLINK TARGET grep
 #       safe: the answer is the status alone (-q) and exit 0 is the hit, so a
-#       silent grep refuses the link, the strict side
+#       silent grep refuses the link, the strict side. Its end: the grep
+#       prints nothing, so there is no answer to cut
 #   the REPLACE REFS listing
 #       safe: the scans read with GIT_NO_REPLACE_OBJECTS=1 and the push
 #       transfers objects without replacement, so an empty listing over a
 #       clone that has a replace ref leaves the scans reading what the push
-#       transfers
+#       transfers. Its end: only its emptiness is read, so a cut answer that
+#       is not empty refuses as the whole one does, and one cut to nothing is
+#       the empty answer this reason covers
 #   the TIP LISTING join against the read list
 #       safe: its empty answer is one gate's clean verdict on the -z listing;
 #       silent, it disarms that gate while the listing and its other gates
-#       stand
+#       stand. Its end: its whole answer is empty whenever the listings it
+#       joins are whole, and a path it names cut short is not empty, refused
+#       as the whole one is
 #   the TIP BLOBS of the -z listing
 #       safe: emptied, it sends every per-commit candidate to the byte judge,
-#       the ones the tip holds included
+#       the ones the tip holds included. Its end: cut, it sends the candidates
+#       whose blobs it lost the same way
 #   the LISTING join of a commit against its verdicts
 #       safe: its empty answer is one gate's clean verdict on a commit's
 #       listing; silent, it disarms that gate while the listing and the
-#       verdicts it compares stand
-#   the ERR line of the scanner log
-#       safe: its empty answer is a log with no error, and the count line
-#       beside it (gate=) refuses a scan that came up short
+#       verdicts it compares stand. Its end: its whole answer is empty
+#       whenever the listing and the verdicts are whole, and a path it names
+#       cut short is not empty, refused as the whole one is
 #   the RANGE probe of the credential scan
 #       safe: its status alone decides (0 keeps the range, 128 widens it to
 #       all the tip reaches) and its answer is discarded, so a silent exit 0
-#       keeps the range the count and the scanner read
+#       keeps the range the count and the scanner read. Its end: its answer
+#       goes to /dev/null, so there is nothing to cut
 # END generated block
 #
 # Both content checks read what git calls TEXT: the tip's grep skips a blob
@@ -717,7 +841,17 @@ rev_range() {   # <local_sha> <remote_sha> → a rev-list argument list
 # diff-tree exiting 0 and printing nothing was read as a commit adding no
 # line, and a banned line in a one-parent middle commit published through a
 # real push; the round 7 refuters, 2026-09-23); the marker bounds the
-# answer's start alone (the header). The awk stage: the awk RECORDS the
+# answer's start alone (the header). Its END: the commit is given on
+# diff-tree's stdin (--stdin) twice, the second time as its own parent
+# (<rev> <rev>), an empty diff for which --always prints the sha a second
+# time, AFTER the diff: the tail marker. The awk records its count only when
+# the answer ends with that line, and the word untailed otherwise (no tail,
+# or a line after it), which the caller refuses naming the git read (a
+# diff-tree cut to its marker line, or cut before the added line, with exit
+# 0 published a middle commit's banned line through a real push; the r8b2
+# audit, 2026-09-23). No line of a diff is a commit's bare name: a content
+# line carries its column prefix and a header line its keyword, so the two
+# markers are the only such lines. The awk stage: the awk RECORDS the
 # count of lines it printed, at its end, in the file the caller names
 # (through the environment, never a -v operand: awk escape-processes a -v
 # value, and a path may carry a backslash pair; the sha is hex and travels
@@ -725,16 +859,18 @@ rev_range() {   # <local_sha> <remote_sha> → a rev-list argument list
 # difference, or no count at all, where an awk exiting 0 and printing
 # nothing was read as a commit adding no line and published its banned line
 # through a real push (the round 6 refuters, 2026-09-22).
-added_lines() {   # <rev> <parent count> <count file: the count of lines printed, written at the end; the word unmarked when the diff never printed the commit's sha>
-    git diff-tree -p -r -M -c --root --always --no-color "$1" | ROMP_COUNT_FILE=$3 awk -v n="$2" -v sha="$1" '
+added_lines() {   # <rev> <parent count> <count file: the count of lines printed, written at the end; the word unmarked when the diff never printed the commit's sha, untailed when it never printed it again after the diff>
+    git diff-tree -p -r -M -c --root --always --no-color --stdin <<< "$1"$'\n'"$1 $1" | ROMP_COUNT_FILE=$3 awk -v n="$2" -v sha="$1" '
         BEGIN { if (n < 1) n = 1; for (i = 0; i < n; i++) plus = plus "+"; count_file = ENVIRON["ROMP_COUNT_FILE"] }
         NR == 1 && $0 == sha             { marker = 1; next }
+        tail                             { after = 1; next }
+        marker && $0 == sha              { tail = 1; next }
         /^diff --(git|combined) /        { hdr = 1; next }
         hdr && /^\+\+\+ b\//             { f = substr($0, 7); next }
         hdr && /^\+\+\+ /                { f = $0; next }
         /^@@/                            { hdr = 0; next }
         !hdr && substr($0, 1, n) == plus { print f "\t" substr($0, n + 1); printed++ }
-        END { if (marker) print printed + 0 > count_file; else print "unmarked" > count_file }'
+        END { if (!marker) print "unmarked" > count_file; else if (!tail || after) print "untailed" > count_file; else print printed + 0 > count_file }'
 }
 
 # The addresses this clone publishes under BY CHOICE: user.email from any config
@@ -753,11 +889,21 @@ added_lines() {   # <rev> <parent count> <count file: the count of lines printed
 # to use was refused as "an address this clone is not configured to use", a
 # false cause with an inapplicable remedy (the round 6 refuters, by a real push,
 # 2026-09-22). Called in the shell, never in a substitution: the refusal's
-# counter and chosen_unread would be set in a subshell and lost.
+# counter and chosen_unread would be set in a subshell and lost. The answer's
+# END: git ends every address it prints with a newline, which the capture keeps
+# (-k), and an address counts only when that newline follows it: an answer cut
+# inside its last address leaves that address unterminated, and it is dropped
+# rather than chosen as the prefix it was cut to, so a cut answer chooses fewer
+# addresses, the strict side (a cut of dev@testhost.example.org to
+# dev@testhost.example chose the address a commit was stamped with, and its
+# banned domain went ungrepped through a real push; round 8b3, 2026-09-23).
 chosen_emails() {
+    local got
     chosen=""; chosen_unread=0
-    judged_read own="the CHOSEN ADDRESSES of this clone" 0,1 "the ADDRESSES this clone is configured to use could not be read (git config --get-all user.email exited {rc}), so whether a stamped address is one it chose is unknown" -q -- git config --get-all user.email || chosen_unread=$read_rc
-    chosen=$read_out$'\n'$(printf '%s\n' "${GIT_AUTHOR_EMAIL:-}" "${GIT_COMMITTER_EMAIL:-}" "${EMAIL:-}")
+    judged_read own="the CHOSEN ADDRESSES of this clone" 0,1 "the ADDRESSES this clone is configured to use could not be read (git config --get-all user.email exited {rc}), so whether a stamped address is one it chose is unknown" -q -k -- git config --get-all user.email || chosen_unread=$read_rc
+    got=$read_out
+    case "$got" in *$'\n') ;; *) got=${got%"${got##*$'\n'}"} ;; esac     # an unterminated last address is a cut one: dropped
+    chosen=$got$'\n'$(printf '%s\n' "${GIT_AUTHOR_EMAIL:-}" "${GIT_COMMITTER_EMAIL:-}" "${EMAIL:-}")
 }
 
 # Whether an address is one this clone chose: matched whole and
@@ -1392,7 +1538,15 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
                 # emptied or shortened listing would otherwise empty the tip's
                 # complement and its blob set, and a hidden text file at the tip, the
                 # remote already holding it, would be judged by nothing. Each count
-                # is a run of digits before -eq reads it.
+                # is a run of digits before -eq reads it. The record count bounds
+                # the listing's END only when it counts WHOLE entries, so the grep
+                # counts a line only through the tab that ends its size column (a
+                # mode, a type, an object name and a size ahead of it): a record
+                # cut inside counts as none, where grep -c . counted it, and a
+                # hidden text file whose record was the last one, cut before its
+                # tab, met neither the file count nor the join and published
+                # through a real push (round 8b3, 2026-09-23). A record cut after
+                # its tab keeps its object name whole and is judged by it.
                 tip_agreed=1            # cleared below when the listing lacks a file the grep read, or that comparison was refused: the candidate count is judged only on agreement, so a listing refused there is not refused again with a second cause
                 if [ "$listing_rc" -eq 0 ]; then
                     # grep -c exits 1 for a count of zero and prints it, so 0 and 1
@@ -1401,7 +1555,7 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
                     # and exits 2 (the count then agrees with the symlink pass, so
                     # the digit check and the comparison refuse nothing):
                     # tests/pre-push-hook.bats pins that shape through a real push.
-                    if judged_read gate="the ENTRY COUNT of the -z listing" 0,1 "the TREE of the tip of $local_ref (${local_sha:0:10}) could not be counted for the BINARY VERDICT check (grep -c exited {rc})" -- grep -c . "$scratch/listing.nl"; then
+                    if judged_read gate="the ENTRY COUNT of the -z listing" 0,1 "the TREE of the tip of $local_ref (${local_sha:0:10}) could not be counted for the BINARY VERDICT check (grep -c exited {rc})" -- grep -c "^[0-7]\{6\} [a-z][a-z]* [0-9a-f][0-9a-f]*  *[-0-9][0-9]*"$'\t' "$scratch/listing.nl"; then
                         count=$read_out
                         if [ -z "$count" ] || [ -n "${count//[0-9]/}" ] || [ -z "$tip_entries" ] || [ -n "${tip_entries//[0-9]/}" ]; then
                             unscanned "the TREE of the tip of $local_ref (${local_sha:0:10}) could not be counted for the BINARY VERDICT check (the -z listing's entries counted as \"$count\" and the symlink pass's as \"$tip_entries\", not two counts)"
@@ -1572,13 +1726,21 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
         # (a one-parent commit's type changes; a merge's rename candidates):
         # the empty tree against the commit's tree for those paths, each a
         # :(literal) pathspec. The empty tree's name is the hash algorithm's,
-        # read once from git (hash-object writes nothing).
+        # read once from git (hash-object writes nothing), and must be a WHOLE
+        # name, a hex run as long as the commit's own (the same hash): a name
+        # cut short is a prefix git may resolve to another object or to none,
+        # so it is refused naming the answer rather than handed to the numstat
+        # (the length bounds the answer's END; round 8b3, 2026-09-23).
         : > "$scratch/rows3"
         if [ -s "$scratch/tpaths" ]; then
             if [ -z "$empty_tree" ]; then
                 if judged_read gate="the EMPTY TREE name" 0 "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git hash-object, asked for the empty tree's name, exited {rc})" -- git hash-object -t tree --stdin < /dev/null; then
                     empty_tree=$read_out
-                    [ -n "$empty_tree" ] || { numstat_ok=0; unscanned "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git hash-object, asked for the empty tree's name, answered nothing)"; }
+                    case "$empty_tree" in
+                        '') numstat_ok=0; unscanned "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git hash-object, asked for the empty tree's name, answered nothing)" ;;
+                        *[!0-9a-f]*) numstat_ok=0; unscanned "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git hash-object, asked for the empty tree's name, answered \"$empty_tree\", not a whole object name as long as the commit's own)"; empty_tree="" ;;
+                        *) if [ "${#empty_tree}" -ne "${#rev}" ]; then numstat_ok=0; unscanned "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git hash-object, asked for the empty tree's name, answered \"$empty_tree\", not a whole object name as long as the commit's own)"; empty_tree=""; fi ;;
+                    esac
                 else
                     numstat_ok=0
                 fi
@@ -1954,6 +2116,7 @@ scan_identifiers() {
     local strings_file line grep_args local_ref local_sha _remote_ref remote_sha lines role email obj tagger chosen chosen_unread
     local rc errs hits listing link blob link_path target size revs rev n msg addrs inner kind tip_listed tip_entries rev_counts
     local peeled peeled_read fell_back agreed paths count linecount tag_read hdr
+    local revs_rc count_range listed cut_name target_bytes read_as whole_what
     local -a words
     strings_file="$(private_strings_file)"
     identifier_scan_armed || return 0
@@ -2092,34 +2255,56 @@ scan_identifiers() {
         # Its entry count, for the -z listing refuse_hidden_paths makes of the same
         # tree to agree with (the header's second class): the non-empty lines,
         # counted by the loop that reads each 120000 entry (an empty listing is
-        # one empty line to the herestring, counted as nothing).
+        # one empty line to the herestring, counted as nothing). That count
+        # bounds the listing's END by whole lines alone: a listing cut inside its
+        # last line counts that line all the same, so each line must be a WHOLE
+        # entry (a mode, a type, an object name, the tab and a path; a cut
+        # removes bytes from the end, so a line holding the tab and a path has
+        # its object name whole), a line that is none refused as a short listing
+        # naming the line (the last line a link cut inside its mode read as no
+        # link, its target unread, and the -z listing's count agreed, so a
+        # banned target the remote already held published through a real push;
+        # round 8b3, 2026-09-23).
         tip_entries=0
         while IFS= read -r -u 6 link; do
             [ -n "$link" ] || continue
             tip_entries=$((tip_entries + 1))
+            case "$link" in
+                [0-7][0-7][0-7][0-7][0-7][0-7]" "*" "*$'\t'?*) ;;
+                *) unscanned "the SYMLINKS of the tip of $local_ref (${local_sha:0:10}) were listed short (git ls-tree -r exited 0 and answered \"$link\" on a line that is no whole entry: a mode, a type, an object name, a tab and a path)"; continue ;;
+            esac
             case "$link" in "120000 "*) ;; *) continue ;; esac
             blob=${link#* * }; blob=${blob%%[[:space:]]*}
             link_path=${link#*$'\t'}
             # The target, with its trailing newlines kept (-k) so a target of a
             # newline alone is not read as empty. A blob that cannot be read is
             # refused, and its target counts as empty so the loop goes on to the
-            # next link. A target read as EMPTY under exit 0 is judged against the
-            # blob's SIZE (cat-file -s), the header's second class: a size that is
-            # not zero, or that could not be read, refuses the tip as unscanned
-            # naming the link, the empty answer and the size, since an empty
-            # answer is an empty target only when the blob is (emptiness compared,
-            # never byte counts; a cat-file -p answering nothing with a clean
-            # status published a link the remote already held whose target
-            # carried a banned string; the round 5 refuters, 2026-09-22).
+            # next link. EVERY target read under exit 0 is judged against the
+            # blob's SIZE (cat-file -s) by its own byte count, the shell's in the
+            # C locale (where a character is a byte), the header's second class:
+            # cat-file -p prints a blob as its bytes, so the two agree for every
+            # whole read, and a size that differs, or could not be read, refuses
+            # the tip as unscanned naming the link and both numbers (until round
+            # 8b3 the size was asked only for an EMPTY target, the round 5
+            # refuters' road, 2026-09-22, and a cat-file -p cut to its first ten
+            # bytes with exit 0 published a link the remote already held whose
+            # banned string lay past them, through a real push; the r8b2 audit,
+            # 2026-09-23). A target holding a NUL byte, which no file system
+            # gives a link, counts short here (the substitution drops the byte)
+            # and is refused.
             judged_read gate="the SYMLINK TARGET of a link at the tip" 0 "the SYMLINK TARGET of $link_path at the tip of $local_ref (${local_sha:0:10}) could not be read" -q -k -- git cat-file -p "$blob" || :
             target=$read_out
-            if [ "$read_rc" -eq 0 ] && [ -z "$target" ]; then
-                if judged_read gate="the SIZE of a symlink target blob" 0 "the SYMLINK TARGET of $link_path at the tip of $local_ref (${local_sha:0:10}) was read as empty while its SIZE could not be read (git cat-file -s exited {rc}), so whether the target is empty is unknown" -q -- git cat-file -s "$blob"; then
+            if [ "$read_rc" -eq 0 ]; then
+                target_bytes=$(LC_ALL=C; printf '%s' "${#target}")
+                if [ -z "$target" ]; then read_as="as empty"; whole_what=empty; else read_as="as $target_bytes bytes"; whole_what=whole; fi
+                if judged_read gate="the SIZE of a symlink target blob" 0 "the SYMLINK TARGET of $link_path at the tip of $local_ref (${local_sha:0:10}) was read $read_as while its SIZE could not be read (git cat-file -s exited {rc}), so whether the target is $whole_what is unknown" -q -- git cat-file -s "$blob"; then
                     size=$read_out
                     if [ -z "$size" ] || [ -n "${size//[0-9]/}" ]; then
-                        unscanned "the SYMLINK TARGET of $link_path at the tip of $local_ref (${local_sha:0:10}) was read as empty while its SIZE reads \"$size\" (git cat-file -s), not a size, so whether the target is empty is unknown"
-                    elif [ "$size" -ne 0 ]; then
+                        unscanned "the SYMLINK TARGET of $link_path at the tip of $local_ref (${local_sha:0:10}) was read $read_as while its SIZE reads \"$size\" (git cat-file -s), not a size, so whether the target is $whole_what is unknown"
+                    elif [ -z "$target" ] && [ "$size" -ne 0 ]; then
                         unscanned "the SYMLINK TARGET of $link_path at the tip of $local_ref (${local_sha:0:10}) was read as empty while git cat-file -s gives its size as $size bytes, so the read answered short (git cat-file -p exited 0)"
+                    elif [ "$size" -ne "$target_bytes" ]; then
+                        unscanned "the SYMLINK TARGET of $link_path at the tip of $local_ref (${local_sha:0:10}) was read as $target_bytes bytes while git cat-file -s gives its size as $size bytes, so one of the two reads answered short (git cat-file -p exited 0)"
                     fi
                 fi
             fi
@@ -2177,7 +2362,15 @@ scan_identifiers() {
         # read and the empty answer: a rev-list answering nothing with a clean
         # status published a middle commit's banned line through a real push, on
         # a new branch and on a ref update alike (the round 5 refuters,
-        # 2026-09-22).
+        # 2026-09-22). A listing that answered SOMETHING is judged at its END by
+        # a count read apart (the header's bound): git rev-list --count over the
+        # same range must equal the listing's line count, and each line must be
+        # a whole commit name (a hex run as long as the pushed commit's name),
+        # a count that differs or a line that is none refused as a short
+        # listing naming both answers (a rev-list cut to its first line, the
+        # pushed tip, with exit 0 published a middle commit's banned line
+        # through real pushes of a ref update and of a new branch alike; the
+        # r8b2 audit, 2026-09-23).
         fell_back=0
         # shellcheck disable=SC2046  # the range is deliberately word-split
         judged_read gate="the COMMIT listing of a pushed ref" 0,128 "the COMMITS of $local_ref (${local_sha:0:10}) could not be listed for the identifier scan (git rev-list exited {rc})" -q -- git rev-list $(rev_range "$local_sha" "$remote_sha") || :
@@ -2185,8 +2378,25 @@ scan_identifiers() {
             fell_back=1
             judged_read gate="the COMMIT listing of a pushed ref" 0 "the COMMITS of $local_ref (${local_sha:0:10}) could not be listed for the identifier scan (git rev-list exited {rc})" -- git rev-list "$local_sha" || :
         fi
-        revs=$read_out
-        if [ "$read_rc" -eq 0 ] && [ -z "$revs" ]; then
+        revs=$read_out; revs_rc=$read_rc
+        if [ "$revs_rc" -eq 0 ] && [ -n "$revs" ]; then
+            if [ "$fell_back" -eq 0 ]; then count_range=$(rev_range "$local_sha" "$remote_sha"); else count_range=$local_sha; fi
+            # shellcheck disable=SC2086  # the range is deliberately word-split
+            if judged_read gate="the COMMIT COUNT of a pushed ref" 0 "the COMMITS of $local_ref (${local_sha:0:10}) could not be counted for the identifier scan (git rev-list --count exited {rc})" -q -- git rev-list --count $count_range; then
+                listed=0; cut_name=""
+                for rev in $revs; do
+                    listed=$((listed + 1))
+                    case "$rev" in *[!0-9a-f]*) cut_name=$rev ;; *) [ "${#rev}" -eq "${#local_sha}" ] || cut_name=$rev ;; esac
+                done
+                if [ -z "$read_out" ] || [ -n "${read_out//[0-9]/}" ]; then
+                    unscanned "the COMMITS of $local_ref (${local_sha:0:10}) could not be counted for the identifier scan (git rev-list --count exited 0 and answered \"$read_out\", not a count)"
+                elif [ -n "$cut_name" ]; then
+                    unscanned "the COMMITS of $local_ref (${local_sha:0:10}) were listed short (git rev-list exited 0 and answered \"$cut_name\" on a line that is no whole commit name)"
+                elif [ "$listed" -ne "$read_out" ]; then
+                    unscanned "the COMMITS of $local_ref (${local_sha:0:10}) could not be listed whole for the identifier scan (git rev-list exited 0 and listed $listed where git rev-list --count of the same range counts $read_out, so one of the two answered short)"
+                fi
+            fi
+        elif [ "$revs_rc" -eq 0 ]; then
             peel_type "$local_ref" "$local_sha"
             case "$peeled" in
                 blob|tree) ;;           # no commit to list: the object's own empty answer
@@ -2198,9 +2408,15 @@ scan_identifiers() {
                     if [ "$agreed" -eq 0 ] && [ "$remote_sha" != "$zero" ] && [ "$fell_back" -eq 0 ]; then
                         if judged_read gate="the ANCESTRY of the pushed commit over the remote commit" 0,1 "the COMMITS of $local_ref (${local_sha:0:10}) were listed as none, and whether the pushed commit is an ancestor of the remote's ${remote_sha:0:10} could not be read (git merge-base exited {rc})" -q -- git merge-base "$local_sha" "$remote_sha"; then
                             if [ "$read_rc" -eq 0 ]; then
+                                # Another whole commit name is a real "not an
+                                # ancestor", the listing's refusal below; an
+                                # answer that is no whole name (empty, not hex, or
+                                # a hex run shorter than the pushed commit's
+                                # name, one cut short) is refused naming the read.
                                 case "$read_out" in
                                     "$local_sha") agreed=1 ;;
-                                    ''|*[!0-9a-f]*) unscanned "the COMMITS of $local_ref (${local_sha:0:10}) were listed as none, and whether the pushed commit is an ancestor of the remote's ${remote_sha:0:10} could not be read (git merge-base exited 0 and answered \"$read_out\", not a commit)" ;;
+                                    *[!0-9a-f]*) unscanned "the COMMITS of $local_ref (${local_sha:0:10}) were listed as none, and whether the pushed commit is an ancestor of the remote's ${remote_sha:0:10} could not be read (git merge-base exited 0 and answered \"$read_out\", not a commit)" ;;
+                                    *) [ "${#read_out}" -eq "${#local_sha}" ] || unscanned "the COMMITS of $local_ref (${local_sha:0:10}) were listed as none, and whether the pushed commit is an ancestor of the remote's ${remote_sha:0:10} could not be read (git merge-base exited 0 and answered \"$read_out\", not a commit)" ;;
                                 esac
                             fi
                         fi
@@ -2244,7 +2460,10 @@ scan_identifiers() {
                 # the diff's first line named the commit (--always, added_lines):
                 # after a read that exited 0, the word unmarked (a git that printed
                 # no marker: silent, or answering for no commit) is refused naming
-                # the git read, no count (an awk that never ran its program) or a
+                # the git read, and so is the word untailed (a git whose answer does
+                # not end with the commit's name printed again after the diff, the
+                # tail marker: an answer cut short; the r8b2 audit, 2026-09-23),
+                # no count (an awk that never ran its program) or a
                 # count other than the capture's line count (a stage that wrote
                 # less) is refused naming the awk and both numbers, where a git and
                 # an awk each exiting 0 and printing nothing were read as a commit
@@ -2259,6 +2478,8 @@ scan_identifiers() {
                     count=""; { IFS= read -r count || :; } < "$scratch/added.count"
                     if [ "$count" = unmarked ]; then
                         unscanned "the ADDED LINES of commit ${rev:0:10} could not be read (git diff-tree exited 0 and printed no line naming the commit, the marker --always asks for ahead of the diff, so the read answered short)"
+                    elif [ "$count" = untailed ]; then
+                        unscanned "the ADDED LINES of commit ${rev:0:10} were read short (git diff-tree exited 0 and its answer does not end with the line naming the commit, the tail marker its second --stdin line asks for after the diff)"
                     elif [ -z "$count" ] || [ -n "${count//[0-9]/}" ]; then
                         unscanned "the ADDED LINES of commit ${rev:0:10} could not be read (the diff's awk exited 0 and recorded \"$count\" as the count of lines it printed, not a count)"
                     elif judged_read gate="the LINE COUNT of the added lines" 0 "the ADDED LINES of commit ${rev:0:10} could not be counted (wc exited {rc})" -- wc -l < "$scratch/added"; then
@@ -2320,16 +2541,25 @@ scan_identifiers() {
             # process substitution, which gives the loop no status and loses a
             # counter set inside it) and its answer judged against the format asked
             # for: the two role lines, so an exit-0 answer of any other shape is
-            # short, refused as unscanned naming it; whatever was printed is judged
-            # either way. A herestring of an empty capture is one empty line.
-            judged_read gate="the ADDRESSES log of a commit" 0 "the ADDRESSES of commit ${rev:0:10} could not be read (git log exited {rc})" -- git log -1 --no-show-signature --format='authored%x09%ae%ncommitted%x09%ce' "$rev" || :
+            # short, refused as unscanned naming it, and then a TAIL marker (a
+            # newline, the word end, a tab and the commit's own name, which no
+            # address can hold), as the message log asks for one: an answer that
+            # holds the two roles and does not END with the tail marker is short
+            # too, refused naming its last line, since the role lines bound the
+            # answer's start alone (a log cut inside the committed address, exit
+            # 0, passed a banned domain through a real push; the r8b2 audit,
+            # 2026-09-23). Whatever was printed is judged either way, the tail
+            # marker set aside. A herestring of an empty capture is one empty line.
+            judged_read gate="the ADDRESSES log of a commit" 0 "the ADDRESSES of commit ${rev:0:10} could not be read (git log exited {rc})" -- git log -1 --no-show-signature --format='authored%x09%ae%ncommitted%x09%ce%nend%x09%H' "$rev" || :
             addrs=$read_out
             if [ "$read_rc" -eq 0 ]; then
                 case "$addrs" in
-                    authored$'\t'*$'\n'committed$'\t'*) ;;
+                    authored$'\t'*$'\n'committed$'\t'*$'\n'end$'\t'"$rev") ;;
+                    authored$'\t'*$'\n'committed$'\t'*) unscanned "the ADDRESSES of commit ${rev:0:10} were read short (git log exited 0 and answered \"${addrs##*$'\n'}\" on its last line, not the tail marker line the format asks for after the two roles)" ;;
                     *) unscanned "the ADDRESSES of commit ${rev:0:10} could not be read (git log exited 0 and answered \"$addrs\", not the two stamped roles)" ;;
                 esac
             fi
+            addrs=${addrs%$'\n'end$'\t'"$rev"}      # the tail marker is no address
             while IFS=$'\t' read -r role email; do
                 [ -n "$email" ] || continue
                 is_chosen "$email" "$chosen" && continue
@@ -2691,10 +2921,21 @@ scan_credentials() {
     # The repository root, for the scanner's argument list: a read that fails
     # or answers nothing leaves no root to scan, so the push is refused as
     # unscanned with the scanner's advice and the loop below reads no ref.
+    # The root's END: rev-parse is asked a second question after it
+    # (--is-inside-work-tree), whose answer, true in the work tree git runs
+    # the hook from, prints on a line after the root, the TAIL marker, so an
+    # answer that does not end with that line is a root cut short, refused
+    # naming the read (a root cut by four bytes named the main clone of a
+    # worktree whose path extends the clone's, where the scanner read the
+    # same commits under that clone's own .gitleaks.toml, one with no rule,
+    # and a credential published through a real push; round 8b3, 2026-09-23).
     root=""
-    if judged_read gate="the REPOSITORY ROOT" 0 "the REPOSITORY ROOT could not be read for the credential scan (git rev-parse exited {rc})" -- git rev-parse --show-toplevel; then
-        root=$read_out
-        [ -n "$root" ] || { unscanned "the REPOSITORY ROOT could not be read for the credential scan (git rev-parse exited 0 and answered nothing)"; failed_creds=1; }
+    if judged_read gate="the REPOSITORY ROOT" 0 "the REPOSITORY ROOT could not be read for the credential scan (git rev-parse exited {rc})" -- git rev-parse --show-toplevel --is-inside-work-tree; then
+        case "$read_out" in
+            '') unscanned "the REPOSITORY ROOT could not be read for the credential scan (git rev-parse exited 0 and answered nothing)"; failed_creds=1 ;;
+            ?*$'\n'true) root=${read_out%$'\n'true} ;;
+            *) unscanned "the REPOSITORY ROOT could not be read for the credential scan (git rev-parse exited 0 and answered \"${read_out##*$'\n'}\" on its last line, not the line true that --is-inside-work-tree asks for after the root)"; failed_creds=1 ;;
+        esac
     else
         failed_creds=1
     fi
@@ -2775,16 +3016,30 @@ scan_credentials() {
         if [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; then
             # The three reads of the log through judged_read: the colour strip
             # (its empty answer is judged by the count arm below, which refuses a
-            # log with no count line), the ERR line (its empty answer is the log's
-            # own: no error) and the count line (an empty answer refused below).
+            # log with no count line), the ERR line and the count line (an empty
+            # answer refused below). The ERR line's awk answers a WORD whatever
+            # the log holds: none for a log with no ERR line, or error, a tab and
+            # the first such line, so an empty or cut-short answer is neither and
+            # is refused naming the read (the gate's fact; an error line refuses
+            # however short). Until round 8b3 an empty answer was read as a log
+            # with no error, the count beside it the only backstop, and the count
+            # is not one: a scanner whose git wrote to stderr logged the error,
+            # scanned part of a commit's patch and counted that commit whole, so
+            # an awk silent here passed a credential through a real push (one push
+            # in six; six direct scans in twenty counted the commit with its
+            # credential file unread; round 8b3, 2026-09-23).
             plain=""; err=""; reported=""
             if judged_read gate="the COLOUR STRIP of the scanner log" 0 "the CREDENTIAL scan of $local_ref (${local_sha:0:10}) could not be judged: its log could not be read (sed exited {rc})" -- sed $'s/\e\\[[0-9;]*m//g' <<< "$log"; then
                 plain=$read_out
             else
                 failed_creds=1
             fi
-            if judged_read own="the ERR line of the scanner log" 0 "the CREDENTIAL scan of $local_ref (${local_sha:0:10}) could not be judged: its log could not be read for an error line (awk exited {rc})" -- awk '$2 == "ERR" { sub(/^[^ ]+ ERR /, ""); print; exit }' <<< "$plain"; then
-                err=$read_out
+            if judged_read gate="the ERR line of the scanner log" 0 "the CREDENTIAL scan of $local_ref (${local_sha:0:10}) could not be judged: its log could not be read for an error line (awk exited {rc})" -- awk '$2 == "ERR" { sub(/^[^ ]+ ERR /, ""); print "error\t" $0; found = 1; exit } END { if (!found) print "none" }' <<< "$plain"; then
+                case "$read_out" in
+                    none) ;;
+                    error$'\t'?*) err=${read_out#error$'\t'} ;;
+                    *) unscanned "the CREDENTIAL scan of $local_ref (${local_sha:0:10}) could not be judged: its log's error-line read answered \"$read_out\" (awk exited 0), neither the word none nor an error line"; failed_creds=1 ;;
+                esac
             else
                 failed_creds=1
             fi
