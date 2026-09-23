@@ -72,9 +72,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `tests/` in the forms its launcher census reads, and its docstring names what
   that census leaves unread: a pytest command in a string held in a variable or
   built with `%`, `+` or `.format`, a string anywhere else, an argv assembled one
-  element at a time, and an in-process pytest reached through `getattr`,
-  `importlib` or `runpy`). The two plugin sets are not equal: the box's default
-  run loads pytest-xdist's two plugins, which no cell installs. To execute the gated
+  element at a time, and an in-process pytest the census does not resolve by
+  name, through `getattr`, `importlib` or `runpy` among others). The two plugin
+  sets are not equal: the box's default run loads pytest-xdist's two plugins,
+  which no cell installs. To execute the gated
   tests from a plain venv, put romp's SDK venv on the path:
   `PYTHONPATH=~/.local/state/romp/sdkvenv/lib/python3.12/site-packages python3 -m
   pytest tests/test_sdk_backend.py -q -p no:anyio` (the venv `bin/romp-sdk-setup`

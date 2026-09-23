@@ -166,8 +166,9 @@ This module holds five things, and it never skips: a pin that skips reports gree
    right before `pytest`, after an interpreter head), an in-process call whose argv is not a literal (a name, or no
    argument, which reads sys.argv), and a module that does not parse under the running interpreter. A string anywhere
    else, or one held in a variable or built with %, + or .format, is outside the read, as is an argv assembled one
-   element at a time (append calls) and an in-process pytest reached through getattr, importlib or runpy; each of
-   those has a case holding its outcome, no row. What the flag buys, in every pytest process the census and the
+   element at a time (append calls) and an in-process pytest the census does not resolve by name (through getattr,
+   importlib or runpy, or a name bound other than by an import or an assignment, among others); each of those
+   named here has a case holding its outcome, no row. What the flag buys, in every pytest process the census and the
    population check read: anyio's plugin is absent from that process's plugin set as it is from the box's default
    run's. The sets are not equal, and nothing here says they are: the box's default run loads pytest-xdist's two plugins, which no cell
    installs. Verified by execution before this landed: a synthetic broken anyio/pytest_plugin.py in a CI-shaped venv
@@ -2152,8 +2153,8 @@ def _passes_flag(elts):
 def _launchers_in(src, filename):
     """The launchers, and the pytest commands the census cannot read as an argv, in one module's source. Each is a dict:
     file (the basename; child_pytest_launchers rewrites it relative to tests/), line, func (the enclosing function, else
-    '<module>'), kind (_argv_command's answer, "an argv literal" for a literal it reports unparsed, or the call that
-    got a string), argv (the constant elements in order, None for an expression), flag (_passes_flag), unparsed (None,
+    '<module>'), kind (_argv_command's answer, after the call's name for positional arguments; "an argv literal" for a
+    literal it reports unparsed; the call that got a string; or "<call> (in process)"), argv (the constant elements in order, None for an expression), flag (_passes_flag), unparsed (None,
     or why the command was not read as an argv).
     Read: every list or tuple literal in the module whose command is pytest (_argv_command: `-m pytest` after an
     interpreter head through interpreter options, pytest by name or path), wherever it is built: in the subprocess
@@ -2163,7 +2164,7 @@ def _launchers_in(src, filename):
     aside), and a call that runs pytest in this process (IN_PROCESS_CALLS: pytest.main, pytest.console_main and
     _pytest.config's two), a launcher whose argv is its first positional argument or args= and must carry the flag
     itself. Every call is known by its qualified name, whatever the module's own name for it: an import, an alias, or
-    a name assigned from it.
+    a name assigned from it; a module name the module never binds (a star import brought it) reads as itself.
     Unparsed, and red in ChildPytestLaunchers until spelled as an argv: a list or tuple literal that may run pytest and
     the census cannot tell (after an interpreter head, a -m whose module name is not a constant, or an element that is
     not a constant right before `pytest`; _argv_command's docstring); a constant string or f-string, written at the
@@ -2178,7 +2179,9 @@ def _launchers_in(src, filename):
     a set of names, not an argv, and is not read. Not read, stated as the residual and each pinned by a case with no
     row (test_each_form_outside_the_read_gives_no_row): an argv assembled one element at a time (append calls); a
     command string held in a variable or built with %, + or .format, a `-c` string held in a variable among them; an
-    in-process pytest reached through getattr, importlib or runpy; and a string that spells pytest anywhere else (a
+    in-process pytest this resolution does not reach by name, among them one reached through getattr, importlib or
+    runpy or bound to a name other than by an import or an assignment (a parameter default); and a string that
+    spells pytest anywhere else (a
     script written to a file, an exec; the suite's synthetic tool-call fixtures spell `uv run pytest -q` by the dozen),
     which is data, not a command."""
     base = os.path.basename(filename)
@@ -2613,6 +2616,7 @@ class ChildPytestLaunchers(unittest.TestCase):
         ("pytest.main reached through getattr", 'import pytest\ngetattr(pytest, "main")(["-q"])\n'),
         ("pytest.main reached through importlib", 'import importlib\nimportlib.import_module("pytest").main(["-q"])\n'),
         ("pytest run in process by runpy", 'import runpy\nrunpy.run_module("pytest", run_name="__main__")\n'),
+        ("pytest.main bound to a parameter default", 'import pytest\ndef nested(run=pytest.main):\n    return run(["-q"])\n'),
     )
 
     def test_each_form_outside_the_read_gives_no_row(self):

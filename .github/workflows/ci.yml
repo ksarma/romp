@@ -157,8 +157,9 @@ jobs:
         # a constant string or f-string written at the call and handed to subprocess, os.system or os.popen,
         # asyncio.create_subprocess_shell, shlex.split or a shell's -c is red until spelled as an argv; a string
         # anywhere else, or one held in a variable or built with %, + or .format, is outside the read, as is an
-        # argv assembled one element at a time and an in-process pytest reached through getattr, importlib or
-        # runpy). The two plugin sets are not equal, and this comment does not say they are: the box's
+        # argv assembled one element at a time and an in-process pytest the census does not resolve by name
+        # (through getattr, importlib or runpy, among others). The two plugin sets are not equal, and this
+        # comment does not say they are: the box's
         # default run loads pytest-xdist's two plugins, which no cell installs. Nothing under tests/ is marked
         # anyio or imports the one thing the plugin serves, the SDK's own pytest-marked conformance suite
         # claude_agent_sdk.testing, so the plugin does no work here; and blocked in every pytest process the
