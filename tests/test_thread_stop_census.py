@@ -4981,7 +4981,13 @@ def _sentences(text):
     before it (`devs.` is no `vs.`). THE RESIDUAL: the stop of an abbreviation NOT in the list (viz., approx., an initial)
     still ends a sentence here, and a count after it loses the word before it and passes, the quiet side; to close one, add
     its spelling without the stop to _ABBREVIATIONS. The other side is loud: a sentence that truly ends at `etc.` runs into
-    the next, so a count there is named, not missed. The last span is the text after its last sentence end."""
+    the next, so a count there is named, not missed. Both sides are WITNESSED, not held, by the literal-count pin
+    (test_no_literal_module_count_stands_in_any_of_the_three_homes; the shapes commented WITNESS): the loud shape, `the
+    modules etc. The sweep: bats 859 of 859.`, stands in its named loop (the count named although its own sentence has no
+    modules), the quiet shape, `the modules, viz. ... 5 of the N`, in its fine list (passes unseen), and beside it the case
+    boundary, the loud text with `Etc.`, whose upper-case spelling is not in the list, so its stop ends the sentence and
+    the count passes; a change here that closes or widens either road turns a witness red, so the disclosure and its
+    witness change together. The last span is the text after its last sentence end."""
     spans, start = [], 0
     for m in _SENTENCE_END.finditer(text):
         spans.append((start, m.end()))
@@ -5303,6 +5309,8 @@ class ThreadStopCensus(unittest.TestCase):
         at_head = tuple(p.replace("at that head", "at 2a354ab46") for p in bare)                                # the same count beside its head: exempt
         after_abbreviation = tuple("the census reads the modules%s the runtime oracle called by 5 of the %d" % (a, n)   # the word, a listed abbreviation's stop, the count: ONE sentence
                                    for a in (", i.e.", ", e.g.", ", the fixtures etc. and", ", cf.", " vs."))
+        loud_side = ("the census reads the modules etc. The sweep: bats 859 of 859.",)   # WITNESS (the loud side _sentences discloses): a TRUE sentence end at a listed
+        # abbreviation's stop joins the next sentence, so the next sentence's count is named although its own sentence has no modules; documented behaviour, witnessed, not held
         for planted in ("the listing of tests/test_*.py (module_paths; %d modules at this head, a figure the table prints" % n,
                         "call it: 5 test modules at this head (of %d, 2026-09-22: test_codex_backend" % n,
                         "the census reads the modules; the runtime oracle called by 5 of the %d" % n,
@@ -5310,7 +5318,7 @@ class ThreadStopCensus(unittest.TestCase):
                         "the tree table identical under both: the modules read (the count the table prints), the start rows by kind, the "
                         "tail-only stops, the unreadable listed, the stale allow entries, the bounded tail-only excused, ALLOW empty, the "
                         "informational product-start rows, the runtime oracle called by 5 of the %d;" % n,      # the historical ledger shape
-                        "a population of %d test modules" % (n + 63), "the modules (%d at this head)" % n) + bare + after_abbreviation:
+                        "a population of %d test modules" % (n + 63), "the modules (%d at this head)" % n) + bare + after_abbreviation + loud_side:
             named = _literal_module_counts(planted)
             self.assertTrue(named, planted)
             for name, text in homes:                              # the red in each home: the plant, and only the plant, is named
@@ -5322,7 +5330,10 @@ class ThreadStopCensus(unittest.TestCase):
                      "the census reads the modules. The sweep: bats 859 of 859; npm 8531 of 8531.",       # the word in the sentence BEFORE: a boundary
                      "the modules' derivation of 3995.9 s", "a budget of 250,000 objects for the modules",  # a decimal, a thousands comma, beside the word
                      "the census reads the modules, i.e. the files. The sweep: bats 859 of 859; npm 8531 of 8531.",  # a true stop after an abbreviation: the boundary
-                     "the modules' devs. The sweep: bats 859 of 859; npm 8531 of 8531."                     # a word that ends in vs: its stop ends the sentence
+                     "the modules' devs. The sweep: bats 859 of 859; npm 8531 of 8531.",                    # a word that ends in vs: its stop ends the sentence
+                     "the census reads the modules, viz. the runtime oracle called by 5 of the %d" % n,      # WITNESS (the quiet side _sentences discloses): an UNLISTED abbreviation's
+                     # stop still ends the sentence, so the count loses the word before it and passes unseen; adding "viz" to _ABBREVIATIONS names it and turns this line red
+                     "the census reads the modules Etc. The sweep: bats 859 of 859."                        # WITNESS (the case boundary): the loud shape spelt upper-case, not in the list, so its stop ends the sentence and the count passes
                      ) + at_head:
             self.assertEqual(_literal_module_counts(fine), [], "not a module count, yet named: %r" % fine)
 
