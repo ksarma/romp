@@ -3499,23 +3499,30 @@ class TheCountersOneSite(unittest.TestCase):
                                      "a second load per look (condition 7, the walk's bound)")
         bump = _bump_sites(km._auto_nudge_session)
         self.assertEqual(len(bump), 1, "the counter is bumped once, by one `_NUDGE_WALK_STATS[\"loads\"] += 1` statement")
-        self.assertEqual(bump[0], at[0] - 1, "on the line before the load, so the count covers a look that reaches the read whatever "
-                                             "the read does (a store, a fault, or a raise out of the look): bump at index %d, load at %d"
-                                             % (bump[0], at[0]))
-        self.assertEqual(_bump_sites(km._auto_nudge_session, before=at[0]), bump,
-                         "and the bump is an unconditional statement of the load's own statement list, the statement directly before "
-                         "the load's: a bump under a one-line `if` or `for`, or in another statement list, counts looks the read does not "
-                         "match (bump at index %d)" % bump[0])
-        self._the_named_def("_nudge_look_gated", km._nudge_look_gated, "_nudge_look_gated")
-        gated = [ln.strip() for _i, ln in _loader_sites(km._nudge_look_gated, "load_goals")]
-        self.assertEqual(gated, [], "the gate around the look reads no store: a skipped look loads through neither mechanism: %s" % "; ".join(gated))
-        self.assertIn("loads", km._NUDGE_WALK_STATS, "the counter is a key of the served block")
-        # the counter across the kernel: every reference to the Name classified, and exactly one write of the loads key
+        # the kernel's own text: the look's lines named by number, and the census across the kernel below
         name = "_NUDGE_WALK_STATS"
         src = Path(os.path.realpath(km.__file__)).read_text(encoding="utf-8")
         tree = ast.parse(src)
         nodes = list(_walk(tree))                     # the whole tree: a node no table classifies is refused before a reference is read
         lines = src.splitlines()
+        looks = [s for s in tree.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)) and s.name == "_auto_nudge_session"]
+        self.assertEqual(len(looks), 1, "kernel/kernel.py defines the look once at module level")
+        first = min([looks[0].lineno] + [d.lineno for d in looks[0].decorator_list])   # the first line inspect.getsource gives
+
+        def kline(i):                                 # an index of the look's source as the kernel's line number and text
+            return "line %d: %s" % (first + i, lines[first + i - 1].strip())
+        self.assertEqual(bump[0], at[0] - 1, "on the line before the load, so the count covers a look that reaches the read whatever "
+                                             "the read does (a store, a fault, or a raise out of the look): the bump at %s; the load at %s"
+                                             % (kline(bump[0]), kline(at[0])))
+        self.assertEqual(_bump_sites(km._auto_nudge_session, before=at[0]), bump,
+                         "and the bump is an unconditional statement of the load's own statement list, the statement directly before "
+                         "the load's: a bump under a one-line `if` or `for`, or in another statement list, counts looks the read does not "
+                         "match; the bump at %s" % kline(bump[0]))
+        self._the_named_def("_nudge_look_gated", km._nudge_look_gated, "_nudge_look_gated")
+        gated = [ln.strip() for _i, ln in _loader_sites(km._nudge_look_gated, "load_goals")]
+        self.assertEqual(gated, [], "the gate around the look reads no store: a skipped look loads through neither mechanism: %s" % "; ".join(gated))
+        self.assertIn("loads", km._NUDGE_WALK_STATS, "the counter is a key of the served block")
+        # the counter across the kernel: every reference to the Name classified, and exactly one write of the loads key
         admitted, loads_writes = set(), []
         displays = [s for s in tree.body if isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Name)
                     and s.targets[0].id == name and isinstance(s.value, ast.Dict)
@@ -3547,9 +3554,6 @@ class TheCountersOneSite(unittest.TestCase):
                                       "key, or a `dict(...)` copy; any other form (an alias, a key that is not a constant, a method that "
                                       "writes, a second definition) could write the counter where this census does not read: %s"
                                       % (name, "; ".join(outside)))
-        looks = [s for s in tree.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)) and s.name == "_auto_nudge_session"]
-        self.assertEqual(len(looks), 1, "kernel/kernel.py defines the look once at module level")
-        first = min([looks[0].lineno] + [d.lineno for d in looks[0].decorator_list])   # the first line inspect.getsource gives
         writes = ["line %d: %s" % (t.lineno, lines[t.lineno - 1].strip()) for t in loads_writes]
         self.assertEqual([t.lineno for t in loads_writes], [first + bump[0]],
                          "exactly one write of the \"loads\" key in kernel/kernel.py, the look's bump at line %d: a second write anywhere "
