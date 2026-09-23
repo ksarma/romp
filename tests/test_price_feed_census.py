@@ -1906,6 +1906,22 @@ class TheChatMediaRoadIsRowed(_Scope):
         self.assertEqual(cells[4], "none: no setting gates a message's media (the gear's Pictures from the web in files list gates a viewed file's figures, not the chat's)")
         self.assertTrue(os.path.isfile(os.path.join(ROOT, "ui", "webview", "chat-media-loads-browser.test.ts")), "the executed witness is in the tree")
 
+    def test_the_ledger_entrys_census_paragraph_carries_the_paint_reference_clause(self):
+        """The entry's census paragraph is the second home of the road's prose (the body quotes it byte for byte and the owner reads
+        it to decide the upstream offer), so it carries the paint-reference clause the section and the sent cell carry, one text,
+        and does not describe the road's requests as carrying no Referer without it (the reviewer's ruling of 2026-09-23 after the
+        executed fact check). Read from the paragraph that describes the road, outside the table block, which carries the cell."""
+        if not os.path.isdir(os.path.join(ROOT, "upstream")):
+            self.skipTest("no upstream/ ledger in this tree (the ledger is the fork's)")
+        with open(os.path.join(ROOT, LEDGER), encoding="utf-8") as f:
+            text = f.read()
+        prose = text.split(BEGIN, 1)[0] + text.split(END, 1)[-1]
+        paragraphs = [p for p in prose.split("\n") if "the chat-media road (a rendered message's media)" in p]
+        self.assertEqual(len(paragraphs), 1, "one paragraph of %s describes the chat-media road outside the table block" % LEDGER)
+        self.assertIn(CHAT_MEDIA_PAINT, paragraphs[0], "the entry's census paragraph carries the paint-reference clause the section and "
+                      "the sent cell carry: an inline svg's paint references are the one case whose request can carry the dashboard's "
+                      "address with the serve token in its Referer")
+
     def test_the_row_dropped_and_the_lookbehind_removed_leave_the_sites_unclassified_and_the_definition_a_site(self):
         """M22: the T row deleted and the JS entry's lookbehind removed in one scratch copy of the script."""
         self.replace(INVENTORY, CHAT_MEDIA_ROW, "")
