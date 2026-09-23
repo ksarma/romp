@@ -1005,6 +1005,7 @@ const MODULE_SUFFIX = /\.(ts|mts|cts|tsx|js|mjs|cjs|jsx)$/;   // the partitions'
 const TEST_OR_TYPES = /\.test\.([mc]?[tj]s|[tj]sx)$|\.d\.([mc]?ts|tsx)$/;   // the listing's tests-and-types class: a `.test.` file of any module suffix (`.ts`, `.mts`, `.cts`, `.tsx`, `.js`, `.mjs`, `.cjs`, `.jsx`) or a `.d.` file of a TypeScript one (`.d.ts`, `.d.mts`, `.d.cts`, `.d.tsx`), so a test of a JavaScript suffix is a test, not a module the unloaded equality below names (the maintainer's round 8 ruling, correctness-1); a disclosed residual: vscode-extension/esbuild.js's testBuild bundles `.test.ts` alone, so a test of any other suffix under ui/webview is a test no leg runs
 const STYLE_SUFFIX = /\.css$/;                                   // the styles class: the page stylesheets among the bundles' inputs, not modules
 const FIXTURE_DIR = /^ui\/webview\/anchor-map-fixtures\//;      // the listing's one non-module directory, the anchor map's fixtures (.md, .json, .py, .html, .csv, .svg, .css and a .gitattributes today); the listing tries it before every suffix class, so a file of a module or a stylesheet suffix under it is a fixture (the maintainer's round 8 ruling, correctness-1)
+const LISTING_CLASSES: Array<[string, RegExp]> = [["the anchor map's fixtures", FIXTURE_DIR], ["tests and types", TEST_OR_TYPES], ["modules", MODULE_SUFFIX], ["styles", STYLE_SUFFIX]];   // the directory listing's classes in the order the partition tries them, stated once: the census cell's listing call and the partition case at the end of this file read this list, so a reorder or a widened class shows in both (the closing lens over the author's pass after the maintainer's round 8 ruling: the order and the widened test suffixes had no tracked witness under ui/webview)
 /** A PARTITION, never a filter (the maintainer's round 7 ruling, extra7-1): every file goes to the first class whose test matches it, and a
  *  file no class takes is a red naming it and its suffix, so a file of a kind the census has not named (a `.tsx` module a page bundle loads,
  *  a stylesheet of a new suffix, a stray file in the directory) is loud where a suffix filter dropped it in silence. */
@@ -1181,8 +1182,10 @@ test("every module the page bundles load, read with the compiler: the only write
   // under it is a fixture whatever its suffix: a module-suffix file there is not a module and its stylesheet is not a page stylesheet), then
   // tests and types (a `.test.ts` is a module by suffix and is not listed), then modules, then styles; a file in none of the four reds naming
   // its suffix. The fixture directory came after modules before the maintainer's round 8 ruling (correctness-1), which filed a `.ts` under it
-  // as an unloaded module.
-  const parts = partition(filesUnder(path.resolve(ROOT, "ui", "webview")), [["the anchor map's fixtures", FIXTURE_DIR], ["tests and types", TEST_OR_TYPES], ["modules", MODULE_SUFFIX], ["styles", STYLE_SUFFIX]], "the files under ui/webview (recursive)");
+  // as an unloaded module. The list is LISTING_CLASSES, module-level, and the partition case at the end of this file runs a synthetic name of
+  // each class through it, the widened test suffixes and a module and a stylesheet under the fixture directory among them: no tracked file
+  // under the directory has those shapes, so that case is the tree's own witness of the order and of the widened regex.
+  const parts = partition(filesUnder(path.resolve(ROOT, "ui", "webview")), LISTING_CLASSES, "the files under ui/webview (recursive)");
   const listed = parts.modules;
   const UNLOADED = [   // under ui/webview, loaded by no page bundle: reached from tests, from one another and from the viewer bench under tools/, never from a page entry
     "ui/webview/feed-flip.ts",                   // the feed's FLIP-pass predicate, executed by feed-flip.test.ts
@@ -1450,4 +1453,21 @@ test("the reload restore's raw write of the persisted rs.top, on the tree: from 
   // the derivation the window check rests on, pinned after it so a plant in the window is named by the window's message
   assert.deepEqual([...setters].sort(), ["applyMeasure", "forgetAverage", "measureUnits", "untakeMeasure"], "the take state's writers, by owner from the tree, of any of its three fields in any form the tree can name (writesOf): the take, the reset, the park and the untake; a fifth is a new writer of the take state and belongs with the censuses above (outside this census by construction, the tree reading spellings and resolving no binding: a write through a computed key of any expression but a string literal or a non-literal Object.assign source or defineProperties map, a call through an alias of the callee, a write through an alias of the parked object; inside the ordering window every form but the alias of the parked object reaches land-active-keep.test.ts's accessors at run time, and by an owner outside the span that test lifts they are outside both halves, a residual the body names)");
   assert.ok(takers.has("landActive") && takers.has("renderWindowItems") && takers.has("scrollToAnchor") && takers.has("syncViewInner"), "the closure reaches the takers one and two hops out (the walk is not empty): " + [...takers].sort().join(", "));
+});
+
+test("the directory listing's partition on synthetic names of every class it names, through the census cell's own partition and class list (LISTING_CLASSES): a test of each JavaScript suffix the tests-and-types class was widened to (`.test.js`, `.test.jsx`, `.test.mjs`, `.test.cjs`) is a test, not a module; a `.ts` and a `.css` under the anchor map's fixture directory are fixtures, not a module and a page stylesheet, because that class is tried first; a module, a `.d.ts` and a stylesheet outside it keep their classes, and the `.test.ts` and `.test.tsx` the class took before are the controls; the message names each name whose class differs and the class found. No tracked file under ui/webview has the first six shapes, so the census cell is green under the old class order and under the old regex alike, and this case is the tree's witness of both (the closing lens over the author's pass after the maintainer's round 8 ruling: the plants carried the order and the widened suffixes, and no tracked file did)", () => {
+  // synthetic names (no file is read: partition reads names), repo-relative with forward slashes as filesUnder lists them; every name but the
+  // bare module and the bare stylesheet matches two classes (a fixture-directory file by its directory and by its suffix, a test or a `.d.ts`
+  // by the tests-and-types regex and by the module regex), so the first-match rule is what files them, and a partition that took the last
+  // match, or every match, reds here naming each name and what it was filed under
+  const NAMES: Array<[string, string]> = [
+    ["ui/webview/zz.test.js", "tests and types"], ["ui/webview/zz.test.jsx", "tests and types"], ["ui/webview/zz.test.mjs", "tests and types"], ["ui/webview/zz.test.cjs", "tests and types"],
+    ["ui/webview/anchor-map-fixtures/zz.ts", "the anchor map's fixtures"], ["ui/webview/anchor-map-fixtures/zz.css", "the anchor map's fixtures"],
+    ["ui/webview/zz.ts", "modules"], ["ui/webview/zz.d.ts", "tests and types"], ["ui/webview/zz.css", "styles"],
+    ["ui/webview/zz.test.ts", "tests and types"], ["ui/webview/zz.test.tsx", "tests and types"],
+  ];
+  const parts = partition(NAMES.map(([n]) => n), LISTING_CLASSES, "the partition case's synthetic names");
+  const found = Object.fromEntries(NAMES.map(([n]) => [n, Object.keys(parts).filter((k) => parts[k].includes(n)).join(" and ") || "no class"]));
+  const wrong = NAMES.filter(([n, k]) => found[n] !== k).map(([n, k]) => n + " is filed under " + found[n] + ", not " + k);
+  assert.deepEqual(found, Object.fromEntries(NAMES), "each synthetic name's class under the listing's partition (LISTING_CLASSES, the census cell's list in its order, tried first to last): " + (wrong.length ? wrong.join("; ") : "every name in its class"));
 });
