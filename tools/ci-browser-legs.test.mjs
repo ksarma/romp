@@ -38,9 +38,9 @@
 //     whole (timed out, or threw at load) by name; prints the lost-browser remedy beside a leg whose failure names the
 //     switch; and passes node's own failure status through. The two remedies that move a leg off the step, after an unrun
 //     leg and after a skip under the switch, take its line out of the roster, each read from the script's stderr. The
-//     reporter itself is executed here over synthetic bundles with a real node --test (the shapes above, and a name holding
-//     a tab and a newline), and so is the composition: the script with the real node and the real reporter over those
-//     shapes as rostered legs;
+//     reporter itself is executed here over synthetic bundles with a real node --test (the shapes above, a bundle that throws
+//     at load, and a name holding a tab and a newline), and so is the composition: the script with the real node and the
+//     real reporter over those shapes as rostered legs;
 //   - the phrase the script reads a lost browser by is a literal in ui/webview/real-viewer-leg.ts's source, the SHARED
 //     PHRASE between the helper and the script, so a reword on either side is red here rather than a remedy dropped in
 //     silence. That pin reads text and guards the phrase alone: that inBrowser FAILS with it under the switch and skips
@@ -531,10 +531,11 @@ function writeShapes(dir) {
     mixed: w('mixed', head + 'test("one real pass", () => {});\ntest("a swallowed failure", { todo: true }, () => { assert.fail("the leg is broken"); });\n'),
     describePass: w('describe-pass', head + 'describe("outer suite", () => { test("inner pass\\nwith a newline\\tand a tab", () => {}); });\n'),
     lost: w('lost', head + 'test("the launch", () => { assert.fail("' + SWITCH + ' is set and this leg cannot run: no playwright browser on this box"); });\n'),
+    loadThrow: w('load-throw', head + 'throw new Error("thrown at load");\n'),
   };
 }
 
-test('the reporter, executed with a real node --test over synthetic bundles: one line per result attributed to its file, a describe() as a suite, a skip and a todo as directives, a failure inside a todo as a fail, node\'s file-level result marked for a file that registered nothing, and a name\'s tab and newline written \\t and \\n', (t) => {
+test('the reporter, executed with a real node --test over synthetic bundles: one line per result attributed to its file, a describe() as a suite, a skip and a todo as directives, a failure inside a todo as a fail, node\'s file-level result marked for a file that registered nothing and for a file that threw at load, and a name\'s tab and newline written \\t and \\n', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cbl-rep-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.mkdirSync(path.join(dir, 'out-tests', 'ui', 'webview'), { recursive: true });
@@ -554,11 +555,17 @@ test('the reporter, executed with a real node --test over synthetic bundles: one
   assert.deepEqual(of(S.mixed), [['pass', 'test', '-', 'test', 'one real pass', '', '-'], ['fail', 'test', 'todo', 'test', 'a swallowed failure', 'the leg is broken', 'testCodeFailure']]);
   assert.deepEqual(of(S.describePass), [['pass', 'test', '-', 'test', 'inner pass\\nwith a newline\\tand a tab', '', '-'], ['pass', 'suite', '-', 'test', 'outer suite', '', '-']], 'the inner test first, then the suite; the name\'s newline and tab escaped');
   assert.deepEqual(of(S.lost), [['fail', 'test', '-', 'test', 'the launch', SWITCH + ' is set and this leg cannot run: no playwright browser on this box', 'testCodeFailure']]);
-  assert.equal(lines.length, 12, 'twelve results over the eight bundles and no other line: ' + JSON.stringify(lines));
+  // a file that threw at load is node's file-level result FAILING, and the file-level mark on it is the one input the script's
+  // file-failed-whole red reads in a real run (the post-run test above hands the script that row through the stub); the message
+  // is node's own (the throw's text goes to the file's stderr, not to the event), so it is read as present, not by its words
+  const thrown = of(S.loadThrow);
+  assert.deepEqual(thrown.map((f) => [f[0], f[1], f[2], f[3], f[4], f[6]]), [['fail', 'test', '-', 'file-level', S.loadThrow, 'testCodeFailure']], 'a file that threw at load is node\'s file-level result, failing, and marked file-level: ' + JSON.stringify(thrown));
+  assert.ok(thrown[0][5] !== '', 'the file-level failure carries node\'s message: ' + JSON.stringify(thrown));
+  assert.equal(lines.length, 13, 'thirteen results over the nine bundles and no other line: ' + JSON.stringify(lines));
   assert.ok(lines.every((f) => f.length === 8), 'eight fields per line');
 });
 
-test('the composition, executed: the script with the real node and the real reporter over the shapes as rostered legs reds todo-only, describe-none, nothing and a failure inside a todo by leg, names the skip, prints the lost-browser remedy, and passes a clean roster', (t) => {
+test('the composition, executed: the script with the real node and the real reporter over the shapes as rostered legs reds todo-only, describe-none, nothing and a failure inside a todo by leg, names the skip, prints the lost-browser remedy, reds a file that threw at load as failed as a whole, and passes a clean roster', (t) => {
   const { run, root } = syntheticTree(t);
   const S = writeShapes(path.join(root, 'vscode-extension'));
   // each shape's source in the tree, since the script refuses a line whose source is absent (the text decides nothing here)
@@ -570,7 +577,8 @@ test('the composition, executed: the script with the real node and the real repo
   const all = run(Object.values(S).join('\n') + '\n', { real: true });
   assert.equal(all.status, 1, 'node\'s exit 1 (the lost shape) is the script\'s; stderr: ' + all.err);
   for (const b of [S.todoBoth, S.describeNone, S.nothing, S.todoFail]) assert.ok(all.err.includes('ci-browser-legs: ' + b + ': no test of this leg passed in this run'), b + ' is red as unrun:\n' + all.err);
-  for (const b of [S.passSkip, S.mixed, S.describePass, S.lost]) assert.ok(!all.err.includes('ci-browser-legs: ' + b + ': no test of this leg passed'), b + ' is not called unrun:\n' + all.err);
+  for (const b of [S.passSkip, S.mixed, S.describePass, S.lost, S.loadThrow]) assert.ok(!all.err.includes('ci-browser-legs: ' + b + ': no test of this leg passed'), b + ' is not called unrun:\n' + all.err);
+  assert.ok(all.err.includes('ci-browser-legs: ' + S.loadThrow + ' failed as a whole (testCodeFailure: '), 'the composition reds the file that threw at load as failed as a whole, from the reporter\'s file-level mark on node\'s failing file-level result:\n' + all.err);
   assert.ok(all.err.includes('ci-browser-legs: ' + S.todoFail + ': \'a real failure inside a todo\' failed inside a todo (the leg is broken)') && all.err.includes('ci-browser-legs: ' + S.mixed + ': \'a swallowed failure\' failed inside a todo (the leg is broken)'), 'the composition reds the failure inside a todo by leg for the todo-fail and the mixed shapes:\n' + all.err);
   assert.ok(all.err.includes('skipped with ' + SWITCH + '=1: \'one skip\' # SKIP no browser # here (' + S.passSkip + ')'), 'the composition names the skip with its reason (a # inside it kept) and its leg:\n' + all.err);
   assert.ok(all.err.includes('ci-browser-legs: ' + S.lost + ': \'the launch\' failed under ' + SWITCH + '=1 because inBrowser could not launch (' + SWITCH + ' is set and this leg cannot run: no playwright browser on this box): the runner lost its browser: check the Chromium install step'), 'the composition prints the lost-browser remedy beside the leg whose failure names the switch:\n' + all.err);
