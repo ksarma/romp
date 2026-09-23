@@ -95,15 +95,23 @@ kind: a name or target in an argv that resolves to a declaration with no readabl
 loop or with target, an unpacking the scan cannot split) or to none at all (an attribute of an imported module,
 sys.executable most of all), a call of a function defined in the module or of a name no scope binds (a helper's
 return, a star import's), a passthrough's splatted argv, and a keywords splat a spawn is handed alone. What it does
-not list, by class, each held by a PLANT_TABLE row: an argv mutated by append, extend or insert (N29), a spawn
-function reached through functools.partial or getattr (N30), a spawn function outside the subprocess module
-(os.execv, os.posix_spawn, asyncio.create_subprocess_exec; N31), and a consumer call's arguments (a builtin, a
-function imported from any module, a helper of another test module included, or any method but the path-preserving
-ones: `os.path.relpath(K)`, `shutil.which(K)`, `K.replace(...)`; N32). The comparison case measures the split with
-the regex pair: it flags no call in the rows of the first three classes, which it missed as well; it flags a
-consumer call whose arguments spell the path or name a one-line binding it read, and a name bound on one line to a
-value the scan cannot read, and the comparison reds on each (N32 binds its path across two lines, which the regex
-misses too). The regex pair's other matches the scan does not read are the comparison's exclusions.
+not list, in the classes found so far, each held by a PLANT_TABLE row: an argv mutated by append, extend or insert
+(N29); a spawn function reached through functools.partial or getattr (N30); a spawn function outside the subprocess
+module (os.execv, os.posix_spawn, asyncio.create_subprocess_exec; N31), and the subprocess module's getoutput and
+getstatusoutput (N47); a star import's spawn functions other than Popen, which the scan reads by their spelling (N48);
+a program that starts a kernel other than romp-kernel and the CLI at bin/romp (bin/romp-serve, which execs
+romp-kernel; romp-manager up, which romp up execs; romp up found on PATH; N45); the CLI composed from its directory
+other than by a path function's arguments (an f-string, +, a Path division held in a name), or joined to its verb by
++ (N46); a comprehension flattening nested literal lists (N49); a mapping a %-template reads whole when the scan
+cannot read its values (a dict filled by subscript, locals(); N50); a class attribute bound outside the module's class
+bodies and methods (setattr on a class, a subclass of another module's base; N51); a self-reference through a loop
+target (N52); and a consumer call's arguments (a builtin, a function imported from any module, a helper of another
+test module included, or any method but the path-preserving ones: `os.path.relpath(K)`, `shutil.which(K)`,
+`K.replace(...)`; N32). A shape in none of these classes is unread by the same rule. The comparison case measures the
+split with the regex pair: the rows whose label says the regex missed them too carry no call it flags, and that is
+held; it flags a consumer call whose arguments spell the path or name a one-line binding it read, and a name bound on
+one line to a value the scan cannot read, and the comparison reds on each (N32 binds its path across two lines, which
+the regex misses too). The regex pair's other matches the scan does not read are the comparison's exclusions.
 
 Ruling point, the maintainers' to decide (2026-09-21): a child interpreter that load_sources the kernel
 (`[sys.executable, "-c", <program>]`) is read here as NOT a kernel process. It is the in-process shape one process
@@ -2116,6 +2124,38 @@ PLANT_TABLE = (
     ('N44 a -c child that load_sources the kernel, its program a str.join of lines and %r templates', 'no-spawn', None,
      'subprocess.run([sys.executable, "-c", "\\n".join(["import sys", "sys.path.insert(0, %r)" % HERE,\n'
      '                                                 "km = load_source(\'k\', %r)" % os.path.join(BIN, "romp-kernel")])])'),
+    ('N45 a program that starts a kernel other than romp-kernel and the CLI at bin/romp: bin/romp-serve, romp-manager up, '
+     'romp up found on PATH (the stated residual; the regex missed it too)', 'no-spawn', None,
+     'subprocess.Popen([os.path.join(BIN, "romp-serve")])\nsubprocess.Popen([os.path.join(BIN, "romp-manager"), "up"])\n'
+     'subprocess.Popen("ROMP_X=1 romp up", shell=True)'),
+    ("N46 the CLI composed from its directory other than by a path function's arguments, or joined to its verb by + (the "
+     "stated residual; the regex missed it too)", 'no-spawn', None,
+     'subprocess.Popen(f"ROMP_X=1 {BIN}/romp up", shell=True)\nsubprocess.Popen([BIN + "/romp", "up"])\n'
+     'ROMP = Path(BIN) / "romp"\nsubprocess.Popen([ROMP, "up"])\n'
+     'CLI = os.path.join(BIN, "romp")\nsubprocess.Popen("ROMP_X=1 " + CLI + " up", shell=True)'),
+    ("N47 the subprocess module's getoutput and getstatusoutput, outside the spawn functions (the stated residual; the regex "
+     "missed it too)", 'no-spawn', None,
+     'KERNEL = os.path.join(\n    BIN, "romp-kernel")\nsubprocess.getoutput("bin/romp-kernel --serve &")\n'
+     'subprocess.getstatusoutput(KERNEL + " --serve &")'),
+    ("N48 a star import's spawn functions other than Popen, read by their spelling (the stated residual; the regex missed it "
+     "too)", 'no-spawn', None,
+     'from subprocess import *\nKERNEL = os.path.join(\n    BIN, "romp-kernel")\nrun([KERNEL, "--serve"])\n'
+     'check_output(["bin/romp-kernel", "--version"])'),
+    ('N49 a comprehension flattening nested literal lists, the path bound across two lines (the stated residual; the regex '
+     'missed it too)', 'no-spawn', None,
+     'KERNEL = os.path.join(\n    BIN, "romp-kernel")\nsubprocess.run([a for p in ([sys.executable], [KERNEL]) for a in p])'),
+    ('N50 a mapping a %-template reads whole, its values unread: a dict filled by subscript, locals() (the stated residual; '
+     'the regex missed it too)', 'no-spawn', None,
+     'KERNEL = os.path.join(\n    BIN, "romp-kernel")\nARGS = {}\nARGS["k"] = KERNEL\n'
+     'subprocess.Popen("%(k)s --serve" % ARGS, shell=True)\ndef start():\n    k = KERNEL\n'
+     '    return subprocess.Popen("%(k)s --serve" % locals(), shell=True)'),
+    ("N51 a class attribute bound outside the module's class bodies and methods: setattr on a subclass, a subclass of "
+     "another module's base (the stated residual; the regex missed it too)", 'no-spawn', None,
+     'class Base:\n    SCRIPT = os.path.join(BIN, "romp-judge")\n    def setUp(self):\n        subprocess.Popen([sys.executable, self.SCRIPT])\n'
+     'class T(Base):\n    pass\nsetattr(T, "SCRIPT", os.path.join(BIN, "romp-kernel"))\n'
+     'from helpers import Base as ForeignBase\nclass U(ForeignBase):\n    SCRIPT = os.path.join(\n        BIN, "romp-kernel")'),
+    ('N52 a self-reference through a loop target (the stated residual; the regex missed it too)', 'no-spawn', None,
+     'KERNEL = os.path.join(\n    BIN, "romp-kernel")\ncmd = [sys.executable]\nfor cmd in (cmd + [KERNEL],):\n    subprocess.run(cmd)'),
     ('R1 a rebinding in one function', 'refused-loud', (4, 2, 3),
      'def t():\n    k = os.path.join(BIN, "romp-kernel")\n    k = [sys.executable, "-m", "pytest", "-k", "boot"]\n    subprocess.run(k)'),
     ('R2 two module-level bindings that disagree', 'refused-loud', (3, 1, 2),
