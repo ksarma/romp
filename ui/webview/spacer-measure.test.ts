@@ -1002,7 +1002,7 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
 const pkgRequire = createRequire(path.resolve(process.cwd(), "package.json"));   // vscode-extension/: esbuild.js and its esbuild, as editor-lazy.test.ts requires them
 const ROOT = path.resolve(process.cwd(), "..");
 const MODULE_SUFFIX = /\.(ts|mts|cts|tsx|js|mjs|cjs|jsx)$/;   // the partitions' module class: every suffix the compiler parses (a .tsx or .jsx under its own ScriptKind)
-const TEST_OR_TYPES = /\.(test|d)\.([mc]?ts|tsx)$/;             // the listing's tests-and-types class: a test of any module suffix (`.test.tsx` included) and a `.d.ts`
+const TEST_OR_TYPES = /\.(test|d)\.([mc]?ts|tsx)$/;             // the listing's tests-and-types class: a `.test.` or `.d.` file of a TypeScript suffix (`.ts`, `.mts`, `.cts`, `.tsx`); a test of a JavaScript suffix is listed as a module and reds the unloaded equality below by name
 const STYLE_SUFFIX = /\.css$/;                                   // the styles class: the page stylesheets among the bundles' inputs, not modules
 const FIXTURE_DIR = /^ui\/webview\/anchor-map-fixtures\//;      // the listing's one non-module directory, the anchor map's fixtures (.md, .json, .py, .html, .csv, .svg and a .gitattributes today)
 /** A PARTITION, never a filter (the maintainer's round 7 ruling, extra7-1): every file goes to the first class whose test matches it, and a
