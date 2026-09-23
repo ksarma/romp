@@ -31,6 +31,11 @@ its link is KNOWN UP (a dialable PEERS row up and the host heard since the link 
 heartbeat within its TTL vouches as before, having no link), so a heard host with no link state (a host the
 kernel never notified, a far bus filed under the hostname it declares before this bus's own dial folds it
 under the alias the kernel dials) answers cannot-determine for a sid it does not name, as a down host does.
+Since round 3 a hub's word about a host this bus also holds directly is never discarded (the reviewer's ruling):
+it folds into that host's own row only while the row is heard and not held down, and stands as a via row
+(via:<hub>/<far>) beside a held-down or a carried direct row, so a session the hub names on that host is rule 4's
+while the hub vouches and never rule 5's, and the via row is dropped once the host speaks again (the hub's word
+phase; at round 2's head the fold applied whatever the direct row's state, and rule 5 settled that session).
 The fixtures here write the bus's document shape (_bus_wrote) and every test that writes one
 asserts the ladder's verdict, the rule that answered and its reason, so a fixture at a path nothing
 reads turns its test red. SYNTHETIC fixtures only; private synthetic sids; hostname TESTHOST."""
@@ -69,6 +74,10 @@ CARRIED = "a11f0001-1111-4222-8333-000000000005"  # the sid HOST last named befo
 OTHER = "a11f0001-1111-4222-8333-000000000006"    # the sid HOST2 names: the first host the restarted bus hears
 FARSID = "a11f0001-1111-4222-8333-000000000007"   # the sid a far bus names when it dials us under its declared hostname
 ALIAS, DECLARED = "TESTHOST-alias", "TESTHOST-hostname"   # the name the kernel dials a far bus by, and the one it declares
+GOSSIPED = "a11f0001-1111-4222-8333-000000000008"  # a session started on HOST2 while the kernel holds its link down: the hub names it
+LATER = "a11f0001-1111-4222-8333-000000000009"    # a session started on HOST2 across a bus restart: the hub names it before HOST2 is heard
+HUB = "TESTHOST-hub"                              # a hub peered with HOST2 too, gossiping HOST2's sessions to us
+VIA_B = "via:" + HUB + "/" + HOST2                # the key of the hub's word about HOST2 (postal_service.py REMOTE_SIDS_VIA)
 
 RULE_5 = (True, 5, "no-reachable-host-names-it")               # the ladder's verdicts, (closed, rule, why), as
 RULE_4 = (False, 4, "named-by-reachable-host")                 # _presumed_closed_verdict spells them; a fixture
@@ -422,7 +431,7 @@ class ReaderFollowsTheWriter(unittest.TestCase):
     reader (_presumed_closed) run in one fresh interpreter over one temp root, under each of the two
     root shapes the constants bind from (XDG_STATE_HOME, and ROMP_STATE_DIR, which outranks it), and the
     bus's document is read back and its rows asserted, so the fixtures' restatement of the shape
-    (_bus_wrote) is held to the writer here. Nine phases, in the order a bus lives them:
+    (_bus_wrote) is held to the writer here. Ten phases, in the order a bus lives them:
       first write   one live remote heartbeat; a sid nothing knows is presumed closed (rule 5), the
                     heartbeating one is not (rule 4);
       restart       a second bus process over the same root (a fresh module object: empty HEARTBEATS and
@@ -485,6 +494,21 @@ class ReaderFollowsTheWriter(unittest.TestCase):
                     notify then holds both sids at cannot-determine (link down); the up notify alone changes
                     nothing; the far bus's next dial, canonicalized under the alias with the link up, is the
                     event: rule 5 and rule 4 again;
+      the hub's word  a hub's gossip about a host this bus also holds directly is never discarded (round 3 of
+                    fork PR #897, the reviewer's ruling). After a fifth restart host B is heard with its link up
+                    and a hub, notified up and heard, gossips B's roster: the gossip folds into B's row, which
+                    speaks (rule 4 for B's sid, rule 5 for a sid nothing names). The kernel's down notify for B,
+                    then the hub's next exchange naming a session started on B since: that sid is named by the
+                    hub's row, via:<hub>/<B>, beside B's held-down row, so it is rule 4's while the hub vouches
+                    (at round 2's head the gossip was folded because B had a dialable PEERS row, the sid was in no
+                    row, and the hub, vouching for absence, let rule 5 presume it closed: the false settle, a
+                    regression from round 1's head, which named every gossiped sid). The hub's down notify holds
+                    both sids at cannot-determine (the via row follows the hub's link); the hub heard again with
+                    its link up restores rule 4; B's exchange with its link up is the event that ends the via
+                    row: dropped by the carry, B speaks (rule 4 by B's own row). Then the same road with B's row
+                    CARRIED: a sixth restart, the kernel seeding B's link up, the hub heard before B naming a
+                    session started on B across the restart: rule 4 by the hub's row while B's carried word holds
+                    its own sids; B's exchange drops the via row, and the hub's next exchange folds again;
       legacy shape  the whitespace list a bus before 2026-09-22 wrote, at the bus's path: the reader
                     answers cannot-determine for the sid it does not name AND for the one it does, and
                     says once in the judge's log that the file is not the shape the bus writes; it is
@@ -539,7 +563,7 @@ class ReaderFollowsTheWriter(unittest.TestCase):
         # unaccounted (the sweep red of 2026-09-22).
         out = subprocess.run([sys.executable, "-c", r"""
 import contextlib, io, json, os, sys, time
-tests_dir, bin_dir, remote, remote2, dead, host_a, host_b, carried, other, alias, declared, far_sid = sys.argv[1:13]
+tests_dir, bin_dir, remote, remote2, dead, host_a, host_b, carried, other, alias, declared, far_sid, hub, gossiped, later = sys.argv[1:16]
 sys.path.insert(0, tests_dir)
 from romp_load import load_source
 pm = load_source("romp_postal_oneroot", os.path.join(bin_dir, "romp-postal-service"))
@@ -585,9 +609,11 @@ def verdict(sid):
     return list(jd._presumed_closed_verdict(sid, now))          # [closed, rule, why]: the verdict and its reason
 def peer_phase():
     return {"hosts": hosts(), "carried": verdict(carried), "other": verdict(other), "nobody": verdict(dead)}
-def exchange(bus, host, sids):                     # one exchange landing: what peer_exchange_handle/apply record, then write
+def exchange(bus, host, sids, bus_id=""):          # one exchange landing: what peer_exchange_handle/apply record, then write
     bus.PEER_STATE[host] = {"presence": [{"id": s, "name": "api"} for s in sids], "epoch": 1, "holds": [],
                             "seenAt": int(time.time())}
+    if bus_id:
+        bus.PEER_STATE[host]["busId"] = bus_id
     bus._write_remote_sids()
 exchange(pm2, host_a, [carried])                   # host A's exchange names its sid in the running bus
 out["peerHeard"] = peer_phase()
@@ -660,6 +686,40 @@ notify(pm5, alias, True)
 out["aliasUpUnheard"] = alias_phase(pm5)
 out["aliasRedialStatus"] = far_dials_us(pm5, [far_sid])   # the far bus dials again: canonicalized under the alias, the link up
 out["aliasUpHeard"] = alias_phase(pm5)
+# THE HUB'S WORD: a fifth restart; host B heard directly and held down, or carried, while a hub gossips a session started on B since
+pm6, out["restartMemory5"] = restarted("romp_postal_oneroot_restarted_fifth", pm5)
+def gossip(bus, sids):                             # the hub's exchange landing: one hop of gossip about host B, stamped with B's bus id
+    bus.PEER_STATE[hub] = {"presence": [{"id": s, "name": "api", "via": host_b, "viaBus": "bus-b"} for s in sids],
+                           "epoch": 1, "holds": [], "seenAt": int(time.time())}
+    bus._write_remote_sids()
+def hub_phase():
+    return link_phase({"gossiped": verdict(gossiped), "later": verdict(later)})
+notify(pm6, host_b, True)
+exchange(pm6, host_b, [other], bus_id="bus-b")     # B heard with its link up, naming its own sid
+notify(pm6, hub, True)
+gossip(pm6, [other])                               # the hub, up and heard, gossips B's roster as B reported it: folded, B speaks
+out["hubBUp"] = hub_phase()
+notify(pm6, host_b, False)                         # the kernel holds B's link down
+gossip(pm6, [other, gossiped])                     # the hub's next exchange names a session started on B since B's last exchange
+out["hubBDown"] = hub_phase()
+notify(pm6, hub, False)                            # the hub's link down too: its word follows its link
+out["hubBothDown"] = hub_phase()
+notify(pm6, hub, True)
+gossip(pm6, [other, gossiped])                     # the hub heard again with its link up
+out["hubUpBDown"] = hub_phase()
+notify(pm6, host_b, True)
+exchange(pm6, host_b, [other, gossiped], bus_id="bus-b")   # B's exchange with the link up: the event, B speaks again
+out["hubBBack"] = hub_phase()
+# the same road with B's row CARRIED: a sixth restart, the kernel seeding B's link up, the hub heard before B
+pm7, out["restartMemory6"] = restarted("romp_postal_oneroot_restarted_sixth", pm6)
+notify(pm7, host_b, True)                          # the seed: PEERS up for a host the new process has not heard
+notify(pm7, hub, True)
+gossip(pm7, [other, gossiped, later])              # the hub's exchange lands first, naming a session started on B across the restart
+out["hubBCarried"] = hub_phase()
+exchange(pm7, host_b, [other, gossiped, later], bus_id="bus-b")   # B heard with the link up: the via row is dropped, B speaks
+out["hubBCarriedThenHeard"] = hub_phase()
+gossip(pm7, [other, gossiped, later])              # the hub's next exchange: folded, B still speaks
+out["hubBHeardHubAgain"] = hub_phase()
 bus_file.write_text(remote + "\n")                 # the shape a bus before 2026-09-22 wrote
 err = io.StringIO()
 with contextlib.redirect_stderr(err):
@@ -674,7 +734,8 @@ out["oldPath"] = str(old_path)
 out["oldPathText"] = old_path.read_text()
 out["controlOldPathOnly"] = ask(dead)
 print(json.dumps(out))
-""", HERE, BIN, REMOTE, REMOTE2, DEAD, HOST, HOST2, CARRIED, OTHER, ALIAS, DECLARED, FARSID], capture_output=True, text=True, env=full,
+""", HERE, BIN, REMOTE, REMOTE2, DEAD, HOST, HOST2, CARRIED, OTHER, ALIAS, DECLARED, FARSID, HUB, GOSSIPED, LATER],
+                             capture_output=True, text=True, env=full,
                              cwd=str(home), timeout=120)
         assert out.returncode == 0, "%s child failed: %s" % (shape, out.stderr[-2000:])
         got = json.loads(out.stdout.strip().splitlines()[-1])
@@ -956,6 +1017,82 @@ print(json.dumps(out))
                 self.assertEqual((self._v(again, "far"), self._v(again, "nobody")), (RULE_4, RULE_5),
                                  "heard with the link up: the event; rule 4 and rule 5 again")
                 self.assertEqual(again["hosts"][ALIAS], L(True, False, False, True, True, True, [FARSID]))
+
+    def test_a_hubs_word_about_a_directly_held_host_stands_while_that_host_is_down_or_carried(self):
+        """Round 3 of fork PR #897, the reviewer's ruling: never discard a heard source's word. Host B is heard directly;
+        the kernel holds its link down; the hub, up and heard, names a session started on B since. That sid is named by
+        the hub's row (via:<hub>/<B>) beside B's held-down row: rule 4 while the hub vouches, never rule 5 (a writer
+        folding the gossip whatever B's row's state, the display fold, leaves the sid in no row, and the hub vouching for
+        absence lets rule 5 presume it closed: the false settle round 2 found, a regression from round 1's head). The
+        same with B's row carried after a restart; B's exchange with its link up ends the via row. The verdict and its
+        reason at every step, then the document, so a writer adding the gossip to B's own row (crediting a host with a
+        word it did not give) reds at the verdict, cannot-determine by B's down row instead of rule 4."""
+        L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
+        # every row of the file on this road, sorted by key as the reason sorts them: the carried peer hosts, the alias
+        # carried from the fourth restart's process, the hub, host B, the two carried heartbeats, the hub's word about B
+        carried = (self.HB + REMOTE + " (not heard, expired)", self.HB + REMOTE2 + " (not heard)")
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                self.assertEqual(got["restartMemory5"], {"heartbeats": 0, "peers": 0, "links": 0, "freshObject": True},
+                                 "the fifth restart is a fresh module object, its memory and its link table empty")
+                up = got["hubBUp"]
+                self.assertEqual((self._v(up, "other"), self._v(up, "gossiped"), self._v(up, "nobody")), (RULE_4, RULE_5, RULE_5),
+                                 "B heard with its link up and the hub gossiping B's roster as B reported it: the gossip folds "
+                                 "and B speaks; a session not yet started is rule 5's")
+                self.assertNotIn(VIA_B, up["hosts"], "B heard and not held down: no via row, its own row speaks")
+                down = got["hubBDown"]
+                self.assertEqual(self._v(down, "gossiped"), RULE_4,
+                                 "THE RULE: the kernel holds B's link down, and the hub, up and heard, names a session started on "
+                                 "B since B's last exchange: the hub's row names it, so it is live on another host, rule 4 (a "
+                                 "writer folding the gossip because B has a dialable PEERS row, whatever B's row's state, leaves "
+                                 "it in no row, and with the hub vouching for absence rule 5 presumes it closed: the false settle "
+                                 "round 2 found; at round 1's head the gossip was named)")
+                self.assertEqual(self._v(down, "other"), RULE_4, "B's own sid: named by the hub's row too, so rule 4 while B is down")
+                self.assertEqual(self._v(down, "nobody"), RULE_5, "the hub vouches for absence: a sid nothing names is rule 5's")
+                self.assertEqual(down["hosts"][HOST2], L(True, False, True, False, False, False, [OTHER]),
+                                 "B's row as the notify left it: held down, its last roster kept")
+                self.assertEqual(down["hosts"][VIA_B], L(True, False, False, True, True, True, sorted([OTHER, GOSSIPED])),
+                                 "the hub's word about B, under the colon key beside B's own row, following the hub's link: heard, "
+                                 "known up, vouching (a writer adding the gossip to B's row writes no such row)")
+                both = got["hubBothDown"]
+                self.assertEqual(self._v(both, "gossiped"), LOST(VIA_B + " (link down)"),
+                                 "the hub down too: its word follows its link, so the sid is held by that word, cannot-determine")
+                self.assertEqual(self._v(both, "other"), LOST(HOST2 + " (link down)", VIA_B + " (link down)"))
+                self.assertEqual(self._v(both, "nobody"),
+                                 NO_VOUCH(HOST + " (not heard)", ALIAS + " (not heard)", HUB + " (link down)", HOST2 + " (link down)",
+                                          *carried, VIA_B + " (link down)"),
+                                 "no source vouches: the reason names every row, the hub's word about B among them")
+                self.assertEqual(both["hosts"][VIA_B], L(True, False, True, False, False, False, sorted([OTHER, GOSSIPED])))
+                again = got["hubUpBDown"]
+                self.assertEqual((self._v(again, "gossiped"), self._v(again, "nobody")), (RULE_4, RULE_5),
+                                 "the hub heard again with its link up: its word vouches again")
+                back = got["hubBBack"]
+                self.assertEqual((self._v(back, "gossiped"), self._v(back, "other"), self._v(back, "nobody")), (RULE_4, RULE_4, RULE_5),
+                                 "B's exchange arriving with its link up is the event: B speaks for itself, rule 4 by its own row")
+                self.assertNotIn(VIA_B, back["hosts"],
+                                 "the via row is DROPPED by the carry once B speaks again (a writer that carries it leaves the "
+                                 "hub's older word about B naming a sid for the file's life)")
+                self.assertEqual(back["hosts"][HOST2], L(True, False, False, True, True, True, sorted([OTHER, GOSSIPED])))
+                # the same road with B's row carried
+                self.assertEqual(got["restartMemory6"], {"heartbeats": 0, "peers": 0, "links": 0, "freshObject": True})
+                car = got["hubBCarried"]
+                self.assertEqual(self._v(car, "later"), RULE_4,
+                                 "B carried and the kernel's seed holding its link up; the hub heard first names a session "
+                                 "started on B across the restart: rule 4 by the hub's row (a writer folding on the seeded "
+                                 "PEERS row leaves it in no row while the hub vouches: rule 5, the regression)")
+                self.assertEqual((self._v(car, "gossiped"), self._v(car, "other"), self._v(car, "nobody")), (RULE_4, RULE_4, RULE_5))
+                self.assertEqual(car["hosts"][HOST2], L(False, False, False, True, False, False, sorted([OTHER, GOSSIPED])),
+                                 "B's carried row: not heard, the seed's linkUp, vouching for nothing, its last roster kept (a "
+                                 "writer keying the via row by B's name overwrites it here)")
+                self.assertEqual(car["hosts"][VIA_B], L(True, False, False, True, True, True, sorted([OTHER, GOSSIPED, LATER])))
+                heard = got["hubBCarriedThenHeard"]
+                self.assertEqual((self._v(heard, "later"), self._v(heard, "nobody")), (RULE_4, RULE_5),
+                                 "B heard with its link up: rule 4 by B's own row")
+                self.assertNotIn(VIA_B, heard["hosts"], "dropped by the carry: B speaks")
+                self.assertEqual(heard["hosts"][HOST2], L(True, False, False, True, True, True, sorted([OTHER, GOSSIPED, LATER])))
+                folded = got["hubBHeardHubAgain"]
+                self.assertNotIn(VIA_B, folded["hosts"], "the hub's next exchange folds: B still speaks")
+                self.assertEqual((self._v(folded, "later"), self._v(folded, "nobody")), (RULE_4, RULE_5))
 
     def test_a_mirror_of_the_legacy_shape_is_cannot_determine_and_said_once(self):
         for shape, got in self.got.items():

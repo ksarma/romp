@@ -36,9 +36,13 @@ through the real handler, the real notify handler and the real fold; until the f
 for absence by heard alone, the road the fourth commit disclosed). Both recorders write the mirror after the
 busId fold (the fourth commit), so the fold's own write has one row per bus.
 Pinned here, by writing through the real writer and reading the file back: the document's shape; one
-source per heartbeat with its own TTL; a peer's own rows under its name and its gossip under the far host
-it speaks for, with gossip about a directly held host folded (the direct row speaks); a PEER_STATE row no
-exchange produced is not a source; the carry-forward across a restart and its release per host; the kernel's
+source per heartbeat with its own TTL; a peer's own rows under its name and its gossip as a via row under
+via:<hub>/<far>; the hub's word about a directly held host, folded into that host's own row only while the row
+is heard and not held down, matched by name or by bus id (the direct row speaks, and a session the gossip names
+that the row's older roster does not is in no row until the host's next exchange: the disclosed window and its
+event), standing beside a held-down or a carried direct row otherwise, carried like any key, and dropped by the
+carry once the direct host speaks again (round 3 of fork PR #897, the reviewer's ruling: never discard a heard
+source's word); a PEER_STATE row no exchange produced is not a source; the carry-forward across a restart and its release per host; the kernel's
 seed of a carried host's link up at a restart, which vouches for nothing until the host is heard; the fold
 of a carried row for a bus heard under its other name; the whitespace list of the shape until 2026-09-22
 carried as one legacy source and pruned as heard sources name its sids; a file of neither shape carrying
@@ -75,7 +79,11 @@ A = "a5a5a5a5-0001-4000-8000-000000000001"   # private synthetic sids, never the
 B = "a5a5a5a5-0002-4000-8000-000000000002"
 C = "a5a5a5a5-0003-4000-8000-000000000003"
 D = "a5a5a5a5-0004-4000-8000-000000000004"
+E = "a5a5a5a5-0005-4000-8000-000000000005"
 HOST, HUB, FAR = "TESTHOST", "TESTHOST-hub", "TESTHOST-far"
+FAR_ALIAS = "TESTHOST-far-alias"               # the name the kernel dials the far host by when the hub knows it as FAR
+VIA = "via:"                                   # the key of a hub's word about a far host, via:<hub>/<far> (pm.REMOTE_SIDS_VIA)
+VIA_FAR = VIA + HUB + "/" + FAR
 HB = "heartbeat:"                              # the key of a legacy heartbeat's row (pm.REMOTE_SIDS_HEARTBEAT)
 LEGACY = "legacy:list"                         # the key a whitespace-list mirror is carried under (pm.REMOTE_SIDS_LEGACY)
 
@@ -185,31 +193,137 @@ class Mirror(unittest.TestCase):
                          "the expired beat's row stays, marked expired, roster kept: unreachable, not absent (the shape "
                          "until 2026-09-22 pruned it, the second road of fork PR #897's round 1)")
 
-    def test_a_peers_own_rows_under_its_name_and_its_gossip_under_the_far_host(self):
+    def test_a_peers_own_rows_under_its_name_and_its_gossip_as_a_via_row_under_the_hub_and_the_far_host(self):
         self._peer(HUB, [{"id": A, "name": "web"}, {"id": B, "name": "api", "via": FAR, "viaBus": "far-bus"}])
         pm._write_remote_sids()
-        self.assertEqual(self._rows(), {HUB: (True, False, [A]), FAR: (True, False, [B])})
-        row = self._doc()["hosts"][FAR]
-        self.assertEqual((row["kind"], row["via"]), ("via", HUB), "gossip is keyed by the host it is about, the hub named")
-        # a hub that restarted and has not heard the far host yet gossips nothing about it: the far host's row
-        # is carried from the previous file, unreachable, instead of its sids vanishing (the road one hop out)
+        self.assertEqual(self._rows(), {HUB: (True, False, [A]), VIA_FAR: (True, False, [B])})
+        row = self._doc()["hosts"][VIA_FAR]
+        self.assertEqual((row["kind"], row["via"], row["host"], row["viaBus"]), ("via", HUB, FAR, "far-bus"),
+                         "the hub's word about the far host, keyed by both names under a colon no host name carries (so the "
+                         "far host's own row, if any, stands beside it): the hub in via, the far host and its bus id on the row")
+        # a hub that restarted and has not heard the far host yet gossips nothing about it: the via row is carried
+        # from the previous file, unreachable, instead of its sids vanishing (the road one hop out)
         self._peer(HUB, [{"id": A, "name": "web"}])
         pm._write_remote_sids()
-        self.assertEqual(self._rows(), {HUB: (True, False, [A]), FAR: (False, False, [B])})
+        self.assertEqual(self._rows(), {HUB: (True, False, [A]), VIA_FAR: (False, False, [B])})
 
-    def test_gossip_about_a_directly_held_host_is_folded_the_direct_row_speaks(self):
-        pm.PEERS[FAR] = {"port": 1, "up": True, "at": int(self.now)}          # the kernel's table: a direct link
-        self._peer(HUB, [{"id": B, "name": "api", "via": FAR, "viaBus": "far-bus"}])
-        self._peer(FAR, [{"id": C, "name": "tests"}], bus_id="far-bus")
+    def test_a_hubs_word_about_a_directly_held_host_folds_only_while_that_host_is_heard_and_not_held_down(self):
+        """The ruled condition (round 3 of fork PR #897, the reviewer's ruling): the gossip folds into the far host's own
+        row only when that row is heard in this process and the kernel does not hold its link down, matched by EITHER
+        identity, the name the hub uses for the host or the bus id it stamps on the gossip (the row may sit under the
+        alias the kernel dials). Until this round the writer folded it whenever the far host had a dialable PEERS row
+        or a heard row, whatever that row's state (_via_duplicate, the display fold), and the second half of this test
+        asserted the fold with the direct row CARRIED: the regression round 2 found by execution. The fold's residual
+        is witnessed here, disclosed as a bound with the event that closes it, not closed by a timer."""
+        self._notify(FAR, up=True)                                            # the kernel's table: a direct link, up
+        self._peer(FAR, [{"id": C, "name": "tests"}], bus_id="far-bus")       # heard in this process
+        self._peer(HUB, [{"id": B, "name": "api", "via": FAR, "viaBus": "far-bus"},
+                         {"id": C, "name": "tests", "via": FAR, "viaBus": "far-bus"}])
         pm._write_remote_sids()
         self.assertEqual(self._rows(), {HUB: (True, False, []), FAR: (True, False, [C])},
-                         "the far host's own word about its sessions, not the hub's gossip (_via_duplicate)")
-        # the direct host not yet heard in this process: the gossip is still folded, its row carried
-        self._restart()
-        self._peer(HUB, [{"id": B, "name": "api", "via": FAR, "viaBus": "far-bus"}])
+                         "heard and not held down: the far host's own word about its sessions, and no via row. THE RESIDUAL, "
+                         "disclosed as a bound: the hub names a session on the far host (B) that the far host's older roster "
+                         "does not, and that sid is in no row at this write, a window of one exchange interval of the far "
+                         "host, closed by its next exchange (the event), not by a timer")
+        self._peer(FAR, [{"id": B, "name": "api"}, {"id": C, "name": "tests"}], bus_id="far-bus")   # the event
         pm._write_remote_sids()
-        self.assertEqual(self._rows(), {HUB: (True, False, []), FAR: (False, False, [C])},
-                         "a directly held host speaks for itself, heard or carried; the hub's gossip about it is not a source")
+        self.assertEqual(self._rows(), {HUB: (True, False, []), FAR: (True, False, [B, C])},
+                         "the far host's next exchange names it")
+        # by name alone: a hub that predates viaBus stamps none, and the row under that name speaks
+        self._peer(HUB, [{"id": D, "name": "web", "via": FAR}])
+        pm._write_remote_sids()
+        self.assertEqual(self._rows(), {HUB: (True, False, []), FAR: (True, False, [B, C])},
+                         "matched by name: folded (a writer folding by bus id alone writes a via row here)")
+        # by bus id alone: the far host's row sits under the alias the kernel dials; the hub knows it by another name and
+        # stamps the bus id (the notify below writes the mirror itself, so the gossip and the alias row are in place first)
+        self._peer(HUB, [{"id": D, "name": "web", "via": FAR, "viaBus": "far-bus"}])
+        pm.PEER_STATE.pop(FAR)
+        pm.PEERS.pop(FAR)
+        self._peer(FAR_ALIAS, [{"id": B, "name": "api"}, {"id": C, "name": "tests"}], bus_id="far-bus")
+        self._notify(FAR_ALIAS, up=True)
+        self.assertEqual(self._rows(), {HUB: (True, False, []), FAR_ALIAS: (True, False, [B, C])},
+                         "matched by bus id: the row under the alias speaks, folded (a writer folding by name alone writes a "
+                         "via row under via:<hub>/<far> beside it); the row under the old name is gone, its bus heard under "
+                         "the alias")
+        # the negative that flipped: the direct row CARRIED after a restart speaks for nothing, and the hub's word stands
+        self._restart()
+        pm.PEERS.clear()
+        self._notify(FAR_ALIAS, up=True)                  # the kernel's seed: PEERS up for a host this process has not heard
+        self._peer(HUB, [{"id": D, "name": "web", "via": FAR, "viaBus": "far-bus"}])
+        pm._write_remote_sids()
+        self.assertEqual(self._rows(), {HUB: (True, False, []), FAR_ALIAS: (False, False, [B, C]), VIA_FAR: (True, False, [D])},
+                         "carried: the far host's last roster still protects B and C, unreachable, and the hub's word about a "
+                         "session started there since (D) stands as a via row (until this round the gossip was folded because "
+                         "a dialable PEERS row existed, D was in no row, and a vouching hub let rule 5 presume it closed: the "
+                         "regression round 2 found)")
+
+    def test_a_hubs_word_about_a_directly_held_host_stands_while_it_is_down_or_carried_and_yields_when_it_speaks_again(self):
+        """Round 3 of fork PR #897, the reviewer's ruling: never discard a heard source's word. The far host is heard
+        directly, then the kernel holds its link down while the hub, up and heard, names a session started on it since:
+        that sid must be named, by the hub's row, so the reader answers rule 4 while the hub vouches and never rule 5
+        (a writer folding the gossip whatever the direct row's state left it in no row, and the hub, vouching for
+        absence, let rule 5 presume it closed). The same with the direct row carried after a restart, the carried via
+        row persisting like any carried row. The far host's exchange arriving with its link up is the event that ends
+        the via row: dropped by the carry, the direct row speaks. The composition with the reader's verdicts is
+        tests/test_dead_session_staleness.py ReaderFollowsTheWriter (the hub's word phase)."""
+        gossip = lambda *sids: [{"id": A, "name": "web"}] + [{"id": s, "name": "api", "via": FAR, "viaBus": "far-bus"} for s in sids]
+        self._notify(FAR, up=True)
+        self._peer(FAR, [{"id": C, "name": "tests"}], bus_id="far-bus")
+        self._notify(HUB, up=True)
+        self._peer(HUB, gossip(C))
+        pm._write_remote_sids()
+        self.assertEqual(self._vouch(), {HUB: (True, True, True), FAR: (True, True, True)},
+                         "both heard with their links up: the gossip folds, the direct row speaks")
+        self._notify(FAR, up=False)                        # the kernel holds the far host's link down
+        self.assertEqual(self._reach()[FAR], (True, False, True, False, [C]), "held down: unreachable, its last roster kept")
+        self._peer(HUB, gossip(C, D))                      # the hub's next exchange: a session started on the far host since
+        pm._write_remote_sids()
+        self.assertEqual(self._reach(), {HUB: (True, False, False, True, [A]), FAR: (True, False, True, False, [C]),
+                                         VIA_FAR: (True, False, False, True, [C, D])},
+                         "THE RULE: the direct row is held down, so it speaks for nothing new, and the hub's word stands beside "
+                         "it as a via row naming the new session (D): the reader answers rule 4 for D by the hub's row (a "
+                         "writer folding the gossip whatever the direct row's state, the display fold, leaves D in no row here, "
+                         "and the hub vouching for absence lets rule 5 presume it closed; a writer adding the gossip to the "
+                         "direct row credits the far host with a word it did not give, and D is then held down with it)")
+        self.assertEqual(self._vouch()[VIA_FAR], (True, True, True), "the via row follows the hub's link: known up, heard")
+        row = self._doc()["hosts"][VIA_FAR]
+        self.assertEqual((row["kind"], row["via"], row["host"], row["viaBus"]), ("via", HUB, FAR, "far-bus"))
+        self._notify(HUB, up=False)                        # the hub's link down too: its word follows it
+        self.assertEqual((self._reach()[VIA_FAR], self._vouch()[VIA_FAR]),
+                         ((True, False, True, False, [C, D]), (False, False, False)),
+                         "a hub the kernel holds down carries no fresh word: the via row is link-down with it, roster kept")
+        self._notify(HUB, up=True)
+        self._peer(HUB, gossip(C, D))
+        pm._write_remote_sids()
+        self.assertEqual(self._vouch()[VIA_FAR], (True, True, True), "the hub heard again with its link up")
+        # the same road with the direct row CARRIED: a restart from this state; the first poll's write carries every row
+        self._restart()
+        pm.PEERS.clear()
+        pm._write_remote_sids()
+        self.assertEqual(self._reach(), {HUB: (False, False, False, False, [A]), FAR: (False, False, False, False, [C]),
+                                         VIA_FAR: (False, False, False, False, [C, D])},
+                         "a carried via row persists heard=false like any carried row: the hub's last word about the far host "
+                         "still names D (a carry that lets the CARRIED direct row speak drops it here, and D is in no row)")
+        self._notify(FAR, up=True)                         # the kernel's seed: both links up, nothing heard yet
+        self._notify(HUB, up=True)
+        self._peer(HUB, gossip(C, D, E))                   # the hub heard first: a further session on the far host
+        pm._write_remote_sids()
+        self.assertEqual(self._reach(), {HUB: (True, False, False, True, [A]), FAR: (False, False, False, False, [C]),
+                                         VIA_FAR: (True, False, False, True, [C, D, E])},
+                         "carried: the far host's last roster, not heard, still protects C; the hub's word names D and E (a "
+                         "writer folding on the seeded PEERS row leaves them in no row while the hub vouches: rule 5, the "
+                         "regression; a writer keying the via row by the far host's name overwrites the carried row and "
+                         "loses C, the far host's own last word)")
+        self.assertEqual(self._vouch()[FAR], (False, True, False), "the seed: linkUp and not heard, vouching for nothing")
+        self._peer(FAR, [{"id": C, "name": "tests"}, {"id": D, "name": "api"}, {"id": E, "name": "api"}], bus_id="far-bus")
+        pm._write_remote_sids()                            # the event: the far host's exchange arrives with its link up
+        self.assertEqual(self._reach(), {HUB: (True, False, False, True, [A]), FAR: (True, False, False, True, [C, D, E])},
+                         "the direct row speaks again: the gossip folds and the via row is DROPPED by the carry (a writer that "
+                         "carries it leaves the hub's older word naming D and E for the file's life, heard=false, and each "
+                         "would be cannot-determine by that row once the far host no longer names it)")
+        self._peer(HUB, gossip(C, D, E))                   # the hub's next exchange: folded, the direct row still speaks
+        pm._write_remote_sids()
+        self.assertEqual(sorted(self._reach()), sorted([HUB, FAR]), "no via row while the far host speaks for itself")
 
     def test_a_peer_state_row_no_exchange_produced_is_not_a_source(self):
         pm.PEER_STATE[HOST] = {"drift": "proto"}       # the setdefault shape a refusal or drift note leaves
@@ -441,35 +555,35 @@ class Mirror(unittest.TestCase):
         self._notify(HUB, up=True)
         self._peer(HUB, [{"id": A, "name": "web"}, {"id": B, "name": "api", "via": FAR, "viaBus": "far-bus"}])
         pm._write_remote_sids()
-        self.assertEqual(self._reach(), {HUB: (True, False, False, True, [A]), FAR: (True, False, False, True, [B])})
-        self.assertEqual(self._vouch(), {HUB: (True, True, True), FAR: (True, True, True)},
+        self.assertEqual(self._reach(), {HUB: (True, False, False, True, [A]), VIA_FAR: (True, False, False, True, [B])})
+        self.assertEqual(self._vouch(), {HUB: (True, True, True), VIA_FAR: (True, True, True)},
                          "the hub's link is known up and the hub heard: the far host vouches for absence by the hub's link "
                          "(a via row has no link of its own)")
         self._notify(HUB, up=False)
-        self.assertEqual(self._reach(), {HUB: (True, False, True, False, [A]), FAR: (True, False, True, False, [B])},
+        self.assertEqual(self._reach(), {HUB: (True, False, True, False, [A]), VIA_FAR: (True, False, True, False, [B])},
                          "the far host is reached through the hub: a hub the kernel holds down cannot carry fresh word "
                          "about it, so its row is link-down with the hub's, roster kept")
-        self.assertEqual(self._vouch(), {HUB: (False, False, False), FAR: (False, False, False)})
+        self.assertEqual(self._vouch(), {HUB: (False, False, False), VIA_FAR: (False, False, False)})
         self._notify(HUB, up=True)
         self._peer(HUB, [{"id": A, "name": "web"}, {"id": B, "name": "api", "via": FAR, "viaBus": "far-bus"}])
         pm._write_remote_sids()
-        self.assertEqual(self._reach(), {HUB: (True, False, False, True, [A]), FAR: (True, False, False, True, [B])},
+        self.assertEqual(self._reach(), {HUB: (True, False, False, True, [A]), VIA_FAR: (True, False, False, True, [B])},
                          "the hub's exchange with its link up: both reachable again")
-        self.assertEqual(self._vouch(), {HUB: (True, True, True), FAR: (True, True, True)}, "...and both vouching for absence")
+        self.assertEqual(self._vouch(), {HUB: (True, True, True), VIA_FAR: (True, True, True)}, "...and both vouching for absence")
 
     def test_a_far_host_gossiped_through_a_hub_the_kernel_never_notified_vouches_for_presence_alone(self):
         self.assertEqual(pm.PEERS, {}, "no notify has landed: the hub has no link state")
         self._peer(HUB, [{"id": A, "name": "web"}, {"id": B, "name": "api", "via": FAR, "viaBus": "far-bus"}])
         pm._write_remote_sids()
-        self.assertEqual(self._reach(), {HUB: (True, False, False, True, [A]), FAR: (True, False, False, True, [B])},
+        self.assertEqual(self._reach(), {HUB: (True, False, False, True, [A]), VIA_FAR: (True, False, False, True, [B])},
                          "heard, not held down: both vouch for the presence of the sids they name")
-        self.assertEqual(self._vouch(), {HUB: (True, False, False), FAR: (True, False, False)},
+        self.assertEqual(self._vouch(), {HUB: (True, False, False), VIA_FAR: (True, False, False)},
                          "a hub with no link state vouches for absence for nobody, and neither does the far host it "
                          "gossips (a via row vouching by its own presence, not the hub's link, says True here)")
         self._notify(HUB, up=True)
         self._peer(HUB, [{"id": A, "name": "web"}, {"id": B, "name": "api", "via": FAR, "viaBus": "far-bus"}])
         pm._write_remote_sids()
-        self.assertEqual(self._vouch(), {HUB: (True, True, True), FAR: (True, True, True)},
+        self.assertEqual(self._vouch(), {HUB: (True, True, True), VIA_FAR: (True, True, True)},
                          "the hub notified up and heard since: both vouch for absence")
 
     def test_a_source_the_kernel_never_notified_has_no_link_state_and_vouches_for_presence_alone(self):

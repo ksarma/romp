@@ -3745,7 +3745,10 @@ def _via_duplicate(pa, direct_bus):
     by bus id when the hub gossips it (viaBus, the nickname-proof identity), by name for a hub
     that predates the field. Duplicates are folded everywhere gossip is consumed: display
     (via_reach), addressing (peer_route), and the agent list — a direct link always wins over a
-    relay hop, and never renders beside it."""
+    relay hop, and never renders beside it. NOT the deadness mirror: _remote_sids_document has its own
+    gate (_direct_row_speaks), since a direct row that is carried or held down cannot speak for a
+    session started on its host since, and a dialable PEERS row alone says nothing about what runs
+    there now (round 3 of fork PR #897, the reviewer's ruling)."""
     far = pa.get("via")
     if not far:
         return False
@@ -3845,7 +3848,9 @@ _REMOTE_SIDS_LOCK = threading.Lock()   # one writer at a time: the write reads t
 _REMOTE_SIDS_SAID = set()              # a write failure is said once per distinct text in the bus log, not swallowed
 REMOTE_SIDS_LEGACY = "legacy:list"     # the source a whitespace-list mirror (the shape until 2026-09-22) is carried under
 REMOTE_SIDS_HEARTBEAT = "heartbeat:"   # a legacy heartbeat's source key, heartbeat:<sid>: one source per beat, each its own TTL
-# Both keys carry a colon, which _SAFE_ID_RE refuses, so no peer host name can collide with them.
+REMOTE_SIDS_VIA = "via:"               # a hub's word about a far host, via:<hub>/<far>: one source per hub and far host
+# All three keys carry a colon, which _SAFE_ID_RE refuses, so no peer host name can collide with them (and a host name
+# carries no slash, so the via key reads back as its two names).
 
 
 def _remote_sids_previous(path):
@@ -3937,7 +3942,8 @@ def _source_link_down(key, row):
     there and its declared hostname before that, a name with no link state: _link_down has the two-sided
     rule); for a far host gossiped through a hub (kind via) the HUB's, since the far host is reached through
     it and a hub the kernel holds down cannot carry fresh word about anyone (the hub the row names in `via`;
-    a second hub gossiping the same far host does not lift it, the conservative side); none for a legacy
+    a second hub gossiping the same far host is its own row under its own key, via:<hub>/<far>, following its
+    own link); none for a legacy
     heartbeat or the legacy list, whose keys carry a colon no PEERS row can match (heard and the TTL alone)."""
     kind = row.get("kind")
     if kind == "via":
@@ -3963,11 +3969,40 @@ def _source_link_up(key, row):
     return False
 
 
+def _remote_sids_via_key(hub, far):
+    """The mirror key of a hub's word about a far host, via:<hub>/<far> (REMOTE_SIDS_VIA): one source per hub and far
+    host, distinct from the far host's own row (a host name carries no colon), so the two stand side by side and
+    neither overwrites the other; a second hub gossiping the same far host is its own source under its own key,
+    following its own link."""
+    return REMOTE_SIDS_VIA + str(hub) + "/" + str(far)
+
+
+def _direct_row_speaks(peers, far, far_bus):
+    """The key of the heard peer row that SPEAKS FOR a far host at this write, or None. `peers` is the table of the
+    hosts heard in this bus process (the PEER_STATE rows with a seenAt: never a carried row); a row speaks for `far`
+    when it is filed under that name, or carries that bus id (`far_bus`, the viaBus a hub stamps on its gossip: the
+    identity that survives nickname drift, since the far host's own row may sit under the alias the kernel dials
+    rather than the name the hub knows it by), AND the kernel does not hold its link down under the name it is filed
+    under (_link_down). Both identities are tried: a hub that predates viaBus reaches the row by name, and a row
+    under another name is reached by bus id (a hub that predates viaBus gossiping a host peered here under another
+    name reaches no row by either, so its word stands as its own via row, as the display fold cannot fold it by
+    name either). A carried row (the previous process's word) and a heard row held down
+    speak for nothing here: their rosters predate the restart or the drop, and a session started on the far host
+    since is in neither, so the hub's fresher word about that host stands beside them as a via row
+    (_remote_sids_document; round 3 of fork PR #897, the reviewer's ruling: never discard a heard source's word)."""
+    far, far_bus = str(far or ""), str(far_bus or "")
+    for key, st in peers.items():
+        if (key == far or (far_bus and st.get("busId") == far_bus)) and not _link_down(str(key)):
+            return str(key)
+    return None
+
+
 def _remote_sids_document(now, previous):
     """The mirror's content, {"v": 2, "busStarted", "writtenAt", "hosts": {key: row}}: one row per PRESENCE
     SOURCE, the roster it last reported and whether THIS bus process can vouch for it.
-      key      a peer host by name (its own sessions); a far host by name, gossiped through a hub (kind
-               `via`, the hub named in `via`); a legacy heartbeat as heartbeat:<sid>; REMOTE_SIDS_LEGACY
+      key      a peer host by name (its own sessions); a hub's word about a far host as via:<hub>/<far> (kind
+               `via`, the hub in `via`, the far host in `host`, its bus id in `viaBus` when the hub stamped one;
+               _remote_sids_via_key); a legacy heartbeat as heartbeat:<sid>; REMOTE_SIDS_LEGACY
       sids     the session ids it named, sorted
       heard    a heartbeat or an exchange from it arrived in this bus process (never carried over a restart)
       expired  its presence is past HEARTBEAT_TTL; legacy heartbeats only: a peer's presence has no TTL, its
@@ -4013,15 +4048,35 @@ def _remote_sids_document(now, previous):
     Both are event-keyed; there is no grace period. Two folds keep one row per source: a carried row whose
     busId a heard row also carries is the same bus under a stale name (the event _drop_peer_name_dupes keys
     on) and is dropped; the legacy list loses each sid a heard source names (its owner has spoken) and is
-    dropped when empty. Gossip about a host this bus holds a direct link to is skipped (_via_duplicate: the
-    direct row speaks for it, heard or carried). A PEER_STATE row with no seenAt (a refusal or drift note,
-    no exchange landed) is not a source."""
+    dropped when empty. A PEER_STATE row with no seenAt (a refusal or drift note, no exchange landed) is not
+    a source.
+    A HUB'S WORD about a host this bus also holds directly is never discarded (round 3 of fork PR #897, the
+    reviewer's ruling). The gossip folds into the far host's own row ONLY when that row is heard in this
+    process and the kernel does not hold its link down, matched by either identity, the name the hub uses
+    for the host or the bus id it stamps on the gossip (viaBus), since the row may sit under the alias the
+    kernel dials (_direct_row_speaks): the direct row then speaks for the host and no via row is written.
+    Otherwise, the direct row carried from the previous file, or heard but held down, or absent, the hub's
+    word stands as a via row under via:<hub>/<far>, a key no host name can collide with, so the two rows
+    stand side by side: the direct row's last roster still protects the sids it named, and the hub's fresher
+    word names a session started on that host since (at round 2's head the gossip was folded whatever the
+    direct row's state, such a session was in no row, and a hub vouching for absence let rule 5 presume it
+    closed; at round 1's head every gossiped sid was named). The via row's link is the hub's
+    (_source_link_down, _source_link_up). A via row whose hub is not heard is carried like any key,
+    heard=false, and is DROPPED by the carry once the direct host speaks again (its exchange arriving with
+    its link not held down, the same gate), since its own row then names what runs there and the hub's older
+    word would otherwise name a sid for the file's life. The gossip is never added to the direct row as a
+    naming source: that would credit the host with a word it did not give. The residual, disclosed as a
+    bound and not closed by a timer: a direct row heard and not held down whose roster is OLDER than the
+    hub's gossip folds it, so a session started on that host since its last exchange is in no row until its
+    next exchange names it, a window of one exchange interval of that host, closed by that exchange (the
+    event). The display and routing consumers keep their own fold (_via_duplicate: a direct link wins over a
+    relay hop on screen and on the wire); the mirror does not use it, because what the reader weighs is each
+    source's word and whether this process can vouch for it."""
     hosts = {}
     for sid, (name, ts) in list(HEARTBEATS.items()):
         hosts[REMOTE_SIDS_HEARTBEAT + str(sid)] = {"kind": "heartbeat", "sids": [str(sid)], "heard": True,
                                                    "expired": now - ts >= HEARTBEAT_TTL, "seenAt": int(ts),
                                                    "name": name or "?"}
-    direct_bus = _direct_bus_ids()
     peers = {h: st for h, st in list(PEER_STATE.items()) if st.get("seenAt")}
     for host, st in peers.items():                    # every heard host's own rows first...
         row = {"kind": "peer", "sids": [], "heard": True, "expired": False, "seenAt": int(st.get("seenAt") or 0)}
@@ -4031,17 +4086,19 @@ def _remote_sids_document(now, previous):
             if pa.get("id") and not pa.get("via"):
                 row["sids"].append(str(pa["id"]))
         hosts[str(host)] = row
-    for host, st in peers.items():                    # ...then the far hosts each gossips, keyed by the far host
+    for host, st in peers.items():                    # ...then each hub's word about the far hosts it gossips
         for pa in st.get("presence") or []:
             far = pa.get("via")
-            if not (pa.get("id") and far) or _via_duplicate(pa, direct_bus):
+            if not (pa.get("id") and far):
                 continue
-            far = str(far)
-            if far in hosts and hosts[far]["kind"] != "via":
-                continue                              # heard directly: its own row speaks for it
-            row = hosts.setdefault(far, {"kind": "via", "sids": [], "heard": True, "expired": False,
-                                         "seenAt": 0, "via": str(host)})
+            far, far_bus = str(far), str(pa.get("viaBus") or "")
+            if _direct_row_speaks(peers, far, far_bus):
+                continue                              # heard directly, its link not held down: its own row speaks
+            row = hosts.setdefault(_remote_sids_via_key(host, far),
+                                   {"kind": "via", "sids": [], "heard": True, "expired": False, "seenAt": 0,
+                                    "via": str(host), "host": far, "viaBus": far_bus})
             row["sids"].append(str(pa["id"]))
+            row["viaBus"] = row["viaBus"] or far_bus
             row["seenAt"] = max(row["seenAt"], int(st.get("seenAt") or 0))
     heard_bus = {row["busId"] for row in hosts.values() if row.get("busId")}
     named = {s for row in hosts.values() for s in row["sids"]}
@@ -4050,6 +4107,9 @@ def _remote_sids_document(now, previous):
             continue
         if prev.get("busId") and prev["busId"] in heard_bus:
             continue                                  # the same bus, heard under its dialable name
+        if prev.get("kind") == "via" and _direct_row_speaks(peers, prev.get("host"), prev.get("viaBus")):
+            continue                                  # the far host speaks for itself again: the hub's older word about
+        #                                                it would name a sid for the file's life (round 3 of fork PR #897)
         row = dict(prev, heard=False)
         row.setdefault("kind", "peer")
         row.setdefault("expired", False)
