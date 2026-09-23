@@ -93,9 +93,9 @@ getattr, functools.partial; the ruling point below). The CLI as the command word
 assignments and the pass-through wrappers timeout, nohup, env, exec, command and sudo) with a literal verb bin/romp's
 dispatch has outside KERNEL_VERBS, while every verb in KERNEL_VERBS is one it dispatches; the element after a shell's -c
 program, a word xargs or parallel hands over and an expansion are never that verb. What no exclusion proves is named
-unless the scan lists it, and clean shapes pay for that: the CLI with a verb the dispatch lacks is named (N27), and a
-word collision inside a string is listed (N2 to N8), as is tests/test_chat_pages.py's -c child, whose program calls
-methods of values the scan cannot name.
+unless the scan lists it, and clean shapes pay for that: the CLI with a verb the dispatch lacks (N27) or behind another
+wrapper (stdbuf, N104) and a Python child behind env (N100) are named, and a word collision inside a string is listed
+(N2 to N8), as is tests/test_chat_pages.py's -c child, whose program calls methods of values the scan cannot name.
 
 Roads and residual, derived by one command (`python tests/test_hermetic_kernel_postal.py --roads [directory]`, one
 line per module the trio test reads, then the unresolved names, then a summary line with every count): a module's
@@ -2718,6 +2718,9 @@ PLANT_TABLE = (
      'KERNEL = os.path.join(BIN, "romp-kernel")\nsubprocess.Popen(["kernel", "--serve"], executable=globals()["KERNEL"])'),
     ('N103 a Python -c child whose argv, held in a name, starts the kernel through __import__ (a dynamic road, listed)', 'no-spawn', None,
      'cmd = [sys.executable, "-c", "__import__(\'subprocess\').run([\'bin/romp-kernel\'])"]\nsubprocess.run(cmd)'),
+    ("N104 the CLI with refresh behind stdbuf -oL, a wrapper exclusion (c) does not pass through, so the CLI is no "
+     'command word (the comparison names it)', 'no-spawn', None,
+     'subprocess.run(["stdbuf", "-oL", "bin/romp", "refresh"])'),
     ('R1 a rebinding in one function', 'refused-loud', (4, 2, 3),
      'def t():\n    k = os.path.join(BIN, "romp-kernel")\n    k = [sys.executable, "-m", "pytest", "-k", "boot"]\n    subprocess.run(k)'),
     ('R2 two module-level bindings that disagree', 'refused-loud', (3, 1, 2),
