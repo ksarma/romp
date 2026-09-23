@@ -4178,9 +4178,12 @@ grep_refusing() {   # <bash test over the shim's "$@">
     calls="$(sed -E 's/[[:space:]]+#.*$//' "$HOOK" | grep -vE '^[[:space:]]*#' | grep -E '(^|[[:space:]!&|;(])judged_read([[:space:]]|$)' | grep -v 'judged_read()' | grep -vcE 'judged_read (own|gate)="[^"]*"')" || true
     [ "$calls" = 0 ]
     [ "$(grep -cE '(^|[[:space:]!&|;(])judged_read (own|gate)="' "$HOOK")" -gt 40 ]      # the call sites are many: a regex that matched none would pass the count above for the wrong reason
-    # the header's lists: the indented names under each heading, until the first line that is not one
+    # the header's lists: the indented names under each heading, until the first line that is not one; a line
+    # indented deeper under a name is that read's fact, which the lists carry since round 8b2 (both generated
+    # from tests/pre-push-reads.tsv), and is no name
     listed="$(awk '/^# Reads gated by a sibling fact \(gate=\):$/ { m = "gate"; next }
                    /^# Reads whose empty answer is the object.s own \(own=\):$/ { m = "own"; next }
+                   m != "" && /^#    / { next }
                    m != "" && /^#   / { sub(/^#   /, ""); print m "=\"" $0 "\""; next }
                    m != "" { m = "" }' "$HOOK" | sort -u)"
     [ -n "$listed" ]
@@ -5450,7 +5453,9 @@ SHIM
 # of the hook, every judged_read call site and every command line the census above finds reading outside
 # the helper, each with the sibling fact that shows its answer whole or the reason an empty or cut-short
 # exit-0 answer there refuses or publishes nothing, and the case that drives the read with a silent or a
-# short tool through a real push. The cases below are the rows no earlier case drove that way: each puts a
+# short tool through a real push. The cases below were round 8b's, for rows it found no earlier case drove
+# that way (its audit found 35 rows still undriven; the round 8b2 section at the end of this file drives
+# every row, one case each, and the table names those): each puts a
 # tool first on the hook's PATH that, for ONE read's shape, exits 0 printing nothing (reading its stdin, as
 # the round 7 refuters' shims did) or answers short, pushes for real, and asserts the refusal the row names
 # and the remote unchanged. D of the same rulings adds one case per refusal arm the round 7 delta added
@@ -5460,7 +5465,7 @@ SHIM
 # a tool that reads its stdin inside a loop that read its list on stdin took the rest of the list, and a
 # second ref, a hidden file and a credential each published through a real push; the loops read on a
 # descriptor of their own now, and a census case holds every loop that runs a tool to that. The table case
-# at the end derives the reads from the hook's tags and census and fails on a read without a row, a row
+# after them derives the reads from the hook's tags and census and fails on a read without a row, a row
 # without a read, a row whose case names none, and a header block the generator does not print.
 tool_silent_on() {   # <tool> <bash test over the shim's "$@">: for that shape a <tool> that reads its stdin, prints nothing and exits 0 (the class's silent tool); the real one for every other shape
     local real real_cat
@@ -5806,68 +5811,1153 @@ stdin_loops_running_tools() {   # <bash file>: prints "<first line>-<last line>:
 # tests/pre-push-reads.tsv holds one row per tool read of the hook: every judged_read tag (gate= and own=)
 # and every read the census finds outside judged_read (its marker and array classes), each with the sibling
 # fact that shows a whole answer or the reason an empty or short exit-0 answer is the safe side there, and
-# the bats case that drives it (a silent or short shim through a real push, or, for a safe-side read, the
-# case that shows it refuses or stands down). The header's two lists are generated from the table
-# (tests/pre-push-reads-header.sh), never typed. The case below derives the read set from the hook's text
-# (the tags and the census) and reds on a read with no row, a row whose read is no read of the hook, a row
-# whose case names no case, and a hand edit of the generated header. The three named reds are executed here
-# over planted copies, so the pin's own sensitivity is shown, not assumed.
+# the case that drives THAT read with a silent tool keyed on its own shape through a real push (one case per
+# row, in the round 8b2 section at the end of this file). The block between the hook's two marker lines, the
+# bound and own= paragraphs and both lists with each read's fact, is generated from the table
+# (tests/pre-push-reads-header.sh), never typed. reads_table_check is the predicate over a hook, a table and
+# a generator; the case below runs it over the files in the tree and then over planted copies, so each red it
+# claims is executed rather than assumed: a planted read with no row, a row with no read, a row naming no
+# case, a row naming a case that pushes through no hook, a hand edit of a list, of a paragraph and of a row's
+# fact, a table whose outside rows are swapped (a real read's row dropped, a row for a read the hook does not
+# make added), a duplicated key, and a planted outside read with no row. Round 8b matched the outside reads
+# by COUNT, and the swapped table stayed green (the r8b audit, 2026-09-23); each row's key makes the match a
+# bijection, read by read.
 READS_TSV="$ROMP_DIR/tests/pre-push-reads.tsv"
 READS_HEADER_GEN="$ROMP_DIR/tests/pre-push-reads-header.sh"
-hook_header_block() {   # <hook file>: the header's gate= and own= list block, the lines the generator emits
-    awk '/^# Reads gated by a sibling fact \(gate=\):$/ { p = 1 }
-         p && (/^# Reads gated by a sibling fact \(gate=\):$/ || /^# Reads whose empty answer is the object.s own \(own=\):$/ || /^#   /) { print; next }
-         p && /^#   / { print; next }
-         p { exit }' "$1"
+READS_BEGIN='# BEGIN generated block (tests/pre-push-reads-header.sh; edit the table)'
+READS_END='# END generated block'
+hook_generated_block() {   # <hook file>: the lines between the two marker lines, each with its newline; nothing when either marker is missing
+    awk -v b="$READS_BEGIN" -v e="$READS_END" '$0 == b { p = 1; next } p && $0 == e { done = 1; exit } p { buf = buf $0 "\n" } END { if (done) printf "%s", buf }' "$1"
 }
-tsv_rows() { grep -vE '^#' "$READS_TSV"; }   # the data rows alone
+hook_with_block_of() {   # <hook file> <tsv> <out>: the hook with its generated block replaced by the generator's output for that table
+    bash "$READS_HEADER_GEN" "$2" > "$TEST_DIR/block-of.txt"
+    awk -v b="$READS_BEGIN" -v e="$READS_END" -v f="$TEST_DIR/block-of.txt" '$0 == b { print; while ((getline l < f) > 0) print l; skip = 1; next } $0 == e { skip = 0 } !skip { print }' "$1" > "$3"
+}
+reads_table_check() {   # <hook> <tsv> <generator> <dir of the pre-push-*.bats files>: prints the first disagreement and returns 1; returns 0 when the table and the hook agree
+    local hook=$1 tsv=$2 gen=$3 dir=$4 work line n kind read fact caseref key class file sub body text hits k
+    work=$(mktemp -d "$TEST_DIR/table.XXXXXX")
+    # the rows: printable ASCII and TAB alone (the generator folds by bytes), a prose row of three fields, a read row of six
+    if LC_ALL=C grep -q $'[^\t -~]' "$tsv"; then echo "the table holds a byte outside printable ASCII and TAB"; return 1; fi
+    while IFS= read -r line; do
+        case "$line" in '#'*|'') continue ;; esac
+        n=$(awk -F'\t' '{ print NF }' <<< "$line")
+        case "${line%%$'\t'*}" in
+            prose) [ "$n" -eq 3 ] || { echo "a prose row of $n fields: $line"; return 1; } ;;
+            gate|own|outside) [ "$n" -eq 6 ] || { echo "a read row of $n fields: $line"; return 1; } ;;
+            *) echo "a row of no known kind: $line"; return 1 ;;
+        esac
+    done < "$tsv"
+    # the header: the lines between the hook's marker lines are the generator's output, byte for byte
+    bash "$gen" "$tsv" > "$work/gen" || { echo "the generator failed"; return 1; }
+    hook_generated_block "$hook" > "$work/block"
+    [ -s "$work/block" ] || { echo "the hook holds no generated block between the two marker lines"; return 1; }
+    cmp -s "$work/gen" "$work/block" || { echo "the hook's generated block differs from the generator's output for the table"; return 1; }
+    # the tags: each kind's distinct judged_read names are the table's rows of that kind, one row each
+    for kind in gate own; do
+        grep -oE "judged_read $kind=\"[^\"]*\"" "$hook" | sed -E "s/^judged_read $kind=\"//; s/\"\$//" | sort -u > "$work/tags"
+        awk -F'\t' -v k="$kind" '$1 == k { print $2 }' "$tsv" | sort > "$work/rows"
+        [ -s "$work/tags" ] || { echo "the hook carries no $kind= tag"; return 1; }
+        sort -u "$work/rows" | cmp -s - "$work/rows" || { echo "a $kind= read has two rows"; return 1; }
+        cmp -s "$work/tags" "$work/rows" || { echo "the $kind= tags and the table's $kind rows differ: $(diff "$work/tags" "$work/rows" | grep '^[<>]' | head -n 2 | tr '\n' ' ')"; return 1; }
+    done
+    # each read row: its case resolves to one case title, that case pushes through the hook and checks the calls
+    # file its shim appends to, and its class is one its kind and its fact take
+    while IFS=$'\t' read -r kind read fact caseref key class; do
+        case "$kind" in gate|own|outside) ;; *) continue ;; esac
+        file=${caseref%%:*}; sub=${caseref#*:}
+        if [ "$file" = "$caseref" ] || [ ! -f "$dir/pre-push-$file.bats" ]; then echo "the case of $read names no bats file: $caseref"; return 1; fi
+        n=$(grep -c -F -- "$sub" "$dir/pre-push-$file.bats" || true)
+        [ "$n" -eq 1 ] || { echo "the case of $read matches $n lines: $sub"; return 1; }
+        grep -F -- "$sub" "$dir/pre-push-$file.bats" | grep -q '^@test ' || { echo "the case of $read names no case: $sub"; return 1; }
+        body=$(SUB=$sub awk 'index($0, ENVIRON["SUB"]) && /^@test / { p = 1 } p { print } p && /^}$/ { exit }' "$dir/pre-push-$file.bats")
+        [[ "$body" == *"_through_hook_with_shim"* ]] || { echo "the case of $read pushes through no hook: $sub"; return 1; }
+        [[ "$body" == *$'\n    fired '* ]] || { echo "the case of $read checks no calls file: $sub"; return 1; }
+        case "$kind:$class" in
+            gate:marker|gate:count|gate:size|gate:listing|gate:digits|gate:status|gate:answer)
+                [[ "$fact" != safe:* ]] || { echo "the row of $read gives a safe reason under the fact class $class"; return 1; } ;;
+            gate:strict|gate:join|gate:backstop|own:strict|own:transfer|own:disarm|own:backstop|own:probe)
+                [[ "$fact" == safe:* ]] || { echo "the row of $read gives no safe reason under the safe class $class"; return 1; } ;;
+            outside:report|outside:backstop) ;;
+            *) echo "the row of $read carries the class $class, which its kind does not take"; return 1 ;;
+        esac
+        if [ "$kind" = outside ]; then [ "$key" != - ] || { echo "the outside row of $read carries no key"; return 1; }; else [ "$key" = - ] || { echo "the $kind= row of $read carries a key"; return 1; }; fi
+    done < "$tsv"
+    # the reads outside judged_read: a bijection between the census's marker and array lines and the outside rows'
+    # keys, each line matched by exactly one key and each key matching exactly one line (read by read, never a count)
+    undeclared_reads "$hook" > "$work/census" || { echo "the census failed"; return 1; }
+    awk '$1 == "declared:" && ($2 == "marker" || $2 == "array") { print $3 }' "$work/census" > "$work/lines"
+    [ -s "$work/lines" ] || { echo "the census found no read outside judged_read"; return 1; }
+    awk -F'\t' '$1 == "outside" { print $5 }' "$tsv" > "$work/keys"
+    while IFS= read -r n; do
+        text=$(sed -n "${n}p" "$hook"); hits=0
+        while IFS= read -r k; do if [[ "$text" == *"$k"* ]]; then hits=$((hits + 1)); fi; done < "$work/keys"
+        [ "$hits" -eq 1 ] || { echo "the read outside judged_read at line $n is matched by $hits keys: ${text#"${text%%[![:space:]]*}"}"; return 1; }
+    done < "$work/lines"
+    while IFS= read -r k; do
+        hits=0
+        while IFS= read -r n; do if [[ "$(sed -n "${n}p" "$hook")" == *"$k"* ]]; then hits=$((hits + 1)); fi; done < "$work/lines"
+        [ "$hits" -eq 1 ] || { echo "the key $k matches $hits reads outside judged_read"; return 1; }
+    done < "$work/keys"
+    return 0
+}
 
-@test "every read of the hook has a row in tests/pre-push-reads.tsv and every row names a real read and an existing case (A.8, round 8b): the gate= and own= tags equal the table's gate and own reads, the census's outside reads are as many as the table's outside rows, and the hook's header block is the table's generated output byte for byte" {
+@test "every read of the hook has a row in tests/pre-push-reads.tsv, keyed to it, and every row names the case that drives THAT read through a real push (A.8, rounds 8b and 8b2): the predicate holds over the tree, the header block is the table's generated output byte for byte, and each red the predicate claims is executed over a planted copy" {
     [ -f "$READS_TSV" ]
     [ -x "$READS_HEADER_GEN" ]
-    # the header is generated, not typed: the hook's block equals the generator's output byte for byte
-    run bash "$READS_HEADER_GEN" "$READS_TSV"
+    run reads_table_check "$HOOK" "$READS_TSV" "$READS_HEADER_GEN" "$ROMP_DIR/tests"
+    [ "$output" = "" ]
     [ "$status" -eq 0 ]
-    gen="$output"
-    [ "$(hook_header_block "$HOOK")" = "$gen" ]
-    # the tags the hook carries, one per distinct gate=/own= name
-    tags_gate="$(grep -oE 'judged_read gate="[^"]*"' "$HOOK" | sed -E 's/^judged_read gate="//; s/"$//' | sort -u)"
-    tags_own="$(grep -oE 'judged_read own="[^"]*"' "$HOOK" | sed -E 's/^judged_read own="//; s/"$//' | sort -u)"
-    [ -n "$tags_gate" ] && [ -n "$tags_own" ]
-    rows_gate="$(tsv_rows | awk -F'\t' '$1 == "gate" { print $2 }' | sort -u)"
-    rows_own="$(tsv_rows | awk -F'\t' '$1 == "own" { print $2 }' | sort -u)"
-    # a read with no row, or a row whose read is no read of the hook: the set equality reds on either
-    [ "$tags_gate" = "$rows_gate" ]
-    [ "$tags_own" = "$rows_own" ]
-    # the outside reads: the census's marker and array declared lines, as many as the table's outside rows
-    run undeclared_reads "$HOOK"
-    [ "$status" -eq 0 ]
-    census_outside="$(grep -cE '^declared: (marker|array) ' <<< "$output")"
-    rows_outside="$(tsv_rows | awk -F'\t' '$1 == "outside"' | grep -c .)"
-    [ "$census_outside" -eq "$rows_outside" ]
-    [ "$rows_outside" -gt 0 ]
-    # every row's case names exactly one @test in the named file (a row whose case names no case reds)
-    while IFS=$'\t' read -r kind read fact caseref; do
-        case "$kind" in gate|own|outside) ;; *) continue ;; esac
-        file="${caseref%%:*}"; sub="${caseref#*:}"
-        [ "$file" != "$caseref" ]                          # the ref carries a file and a title
-        [ -f "$ROMP_DIR/tests/pre-push-$file.bats" ]
-        [ "$(grep -F -c -- "$sub" "$ROMP_DIR/tests/pre-push-$file.bats")" -eq 1 ]
-        [ "$(grep -F -- "$sub" "$ROMP_DIR/tests/pre-push-$file.bats" | grep -c '^@test ')" -eq 1 ]   # and that line is a case's title: a row naming a comment or an assertion names no case
-    done < "$READS_TSV"
-    # every data row has a case column (four tab fields)
-    while IFS= read -r row; do [ "$(awk -F'\t' '{print NF}' <<< "$row")" -eq 4 ]; done < <(tsv_rows)
+    P="$TEST_DIR/planted"; mkdir -p "$P"
+    # a planted read with no row: a judged_read call whose tag the table lacks
+    sed '2a judged_read gate="the PLANTED read with no row" 0 "the PLANTED read could not be made (a probe exited {rc})" -- git rev-parse HEAD' "$HOOK" > "$P/hook-read"
+    run reads_table_check "$P/hook-read" "$READS_TSV" "$READS_HEADER_GEN" "$ROMP_DIR/tests"
+    [ "$status" -ne 0 ]
+    [[ "$output" == "the gate= tags and the table's gate rows differ: < the PLANTED read with no row"* ]]
+    # a row with no read: a gate row the hook carries no tag for, the hook's block regenerated from that table
+    awk -F'\t' -v OFS='\t' '{ print } $2 == "the EMPTY TREE name" { $2 = "the PLANTED row with no read"; print }' "$READS_TSV" > "$P/tsv-row"
+    hook_with_block_of "$HOOK" "$P/tsv-row" "$P/hook-row"
+    run reads_table_check "$P/hook-row" "$P/tsv-row" "$READS_HEADER_GEN" "$ROMP_DIR/tests"
+    [ "$status" -ne 0 ]
+    [[ "$output" == "the gate= tags and the table's gate rows differ: > the PLANTED row with no read"* ]]
+    # a row naming no case
+    missing="zzsynth-no-case-$$-$RANDOM"                           # made here, so no line of this file carries it
+    MISSING=$missing awk -F'\t' -v OFS='\t' '$2 == "the EMPTY TREE name" { $4 = "hook:" ENVIRON["MISSING"] } { print }' "$READS_TSV" > "$P/tsv-no-case"
+    run reads_table_check "$HOOK" "$P/tsv-no-case" "$READS_HEADER_GEN" "$ROMP_DIR/tests"
+    [ "$status" -ne 0 ]
+    [ "$output" = "the case of the EMPTY TREE name matches 0 lines: $missing" ]
+    # a row naming a case that drives no read (the tags case above: it pushes nothing); its title assembled here, so this file carries it once
+    sub="the header's two lists of reads are "; sub="${sub}DERIVED from the tags"
+    SUB=$sub awk -F'\t' -v OFS='\t' '$2 == "the EMPTY TREE name" { $4 = "hook:" ENVIRON["SUB"] } { print }' "$READS_TSV" > "$P/tsv-no-push"
+    run reads_table_check "$HOOK" "$P/tsv-no-push" "$READS_HEADER_GEN" "$ROMP_DIR/tests"
+    [ "$status" -ne 0 ]
+    [ "$output" = "the case of the EMPTY TREE name pushes through no hook: $sub" ]
+    # a hand edit of a list, of a paragraph, and of a row's fact left ungenerated: the block differs from the generator's output
+    sed 's/^#   the EMPTY TREE name$/#   the EMPTY TREE name, edited by hand/' "$HOOK" > "$P/hook-list"
+    sed 's/^# The bound of each sibling fact, stated once:/# The bound of every sibling fact, stated once:/' "$HOOK" > "$P/hook-prose"
+    run cmp -s "$HOOK" "$P/hook-list"
+    [ "$status" -ne 0 ]                                            # each edit landed
+    run cmp -s "$HOOK" "$P/hook-prose"
+    [ "$status" -ne 0 ]
+    awk -F'\t' -v OFS='\t' '$2 == "the EMPTY TREE name" { $3 = $3 " (a fact edited in the table alone)" } { print }' "$READS_TSV" > "$P/tsv-fact"
+    run reads_table_check "$P/hook-list" "$READS_TSV" "$READS_HEADER_GEN" "$ROMP_DIR/tests"
+    [ "$status" -ne 0 ]
+    [ "$output" = "the hook's generated block differs from the generator's output for the table" ]
+    run reads_table_check "$P/hook-prose" "$READS_TSV" "$READS_HEADER_GEN" "$ROMP_DIR/tests"
+    [ "$status" -ne 0 ]
+    [ "$output" = "the hook's generated block differs from the generator's output for the table" ]
+    run reads_table_check "$HOOK" "$P/tsv-fact" "$READS_HEADER_GEN" "$ROMP_DIR/tests"
+    [ "$status" -ne 0 ]
+    [ "$output" = "the hook's generated block differs from the generator's output for the table" ]
+    # the swapped outside table: the core.bigFileThreshold read's row dropped and a row for a read the hook does not make
+    # added, the count unchanged (round 8b's count match stayed green on this table); the added row reuses the dropped
+    # row's case, read from the table
+    ref="$(awk -F'\t' '$5 == "git config core.bigFileThreshold" { print $4 }' "$READS_TSV")"
+    [ -n "$ref" ]
+    { grep -v -F "$(printf '\tgit config core.bigFileThreshold\t')" "$READS_TSV"; printf 'outside\tthe PLANTED configuration read\tfor the report alone: planted\t%s\tgit config core.zzsynthNoSuchKey\treport\n' "$ref"; } > "$P/tsv-swapped"
+    [ "$(grep -c $'^outside\t' "$P/tsv-swapped")" -eq "$(grep -c $'^outside\t' "$READS_TSV")" ]
+    run reads_table_check "$HOOK" "$P/tsv-swapped" "$READS_HEADER_GEN" "$ROMP_DIR/tests"
+    [ "$status" -ne 0 ]
+    [[ "$output" == "the read outside judged_read at line "*" is matched by 0 keys: threshold=\$(git config core.bigFileThreshold "* ]]
+    # a duplicated key: the rename source's row given the threshold read's key
+    awk -F'\t' -v OFS='\t' '$2 == "the rename source, for the report" { $5 = "git config core.bigFileThreshold" } { print }' "$READS_TSV" > "$P/tsv-dup"
+    run reads_table_check "$HOOK" "$P/tsv-dup" "$READS_HEADER_GEN" "$ROMP_DIR/tests"
+    [ "$status" -ne 0 ]
+    [[ "$output" == "the read outside judged_read at line "*" is matched by 2 keys: threshold=\$(git config core.bigFileThreshold "* ]]
+    # a planted read outside judged_read, declared at its site, with no row
+    sed '2a # outside judged_read: planted for the table case\
+zz_planted=$(git config core.zzsynthPlanted 2>/dev/null || true)' "$HOOK" > "$P/hook-outside"
+    run reads_table_check "$P/hook-outside" "$READS_TSV" "$READS_HEADER_GEN" "$ROMP_DIR/tests"
+    [ "$status" -ne 0 ]
+    [[ "$output" == "the read outside judged_read at line 4 is matched by 0 keys: zz_planted=\$(git config core.zzsynthPlanted"* ]]
+}
 
-    # the pin's own sensitivity, executed: a read with no row, a row naming no case, and a hand edit of the header
-    # (1) a planted judged_read tag with no row reds the tag set-equality
-    sed '1a judged_read gate="the PLANTED read with no row" 0 "the PLANTED read could not be made (a probe exited {rc})" -- git rev-parse HEAD' "$HOOK" > "$TEST_DIR/hook-plant-read.sh"
-    planted="$(grep -oE 'judged_read gate="[^"]*"' "$TEST_DIR/hook-plant-read.sh" | sed -E 's/^judged_read gate="//; s/"$//' | sort -u)"
-    [ "$planted" != "$tags_gate" ]                         # the plant is a tag the table lacks: the set-equality above would red
-    [[ "$planted" == *"the PLANTED read with no row"* ]]
-    # (2) a row whose case names no case: the resolver (the per-row grep above) finds zero matches for a title no case carries
-    local missing="zzsynth-no-such-case-$$-$RANDOM"
-    [ "$(grep -F -c -- "$missing" "$ROMP_DIR/tests/pre-push-hook.bats")" -eq 0 ]
-    # (3) a hand edit of the header: the generated block no longer equals the edited one
-    hook_header_block "$HOOK" | sed 's/the CONTENT grep of the tip/the CONTENT grep of the TIP hand-edited/' > "$TEST_DIR/header-edited.txt"
-    [ "$(cat "$TEST_DIR/header-edited.txt")" != "$gen" ]
+# ── round 8b2 (A.8, completed): every row of tests/pre-push-reads.tsv driven through a real push ──
+# Round 8b's audit found the table's case column true for 28 of its 63 reads: 27 rows named a case that
+# drove another read (or a failing shape, or no shim at all) and 8 ran the hook by hand. The cases below
+# are one per row, every row's read in the table order: each puts a tool first on the hook's PATH that,
+# for THAT read's argument shape alone (or its input, where two reads share a shape), appends the call
+# to a calls file of its own, reads its stdin, prints nothing and exits 0, pushes for real through
+# core.hooksPath to a bare remote, asserts the shim FIRED on that shape (a case whose shim never fires
+# witnesses nothing), then asserts what the row claims: for a gate row, the refusal naming that read
+# and the remote at its base or without the pushed ref; for a row whose reason is the safe side, the
+# refusal or the remote that never receives the banned content, by execution. Where a read is consulted
+# only beside another read's empty answer (the ANCESTRY, asked only when the commit listing is empty
+# and no remote-tracking ref contains the commit), the case silences both shapes of the one tool. The
+# table's case column names these cases; the table case after them holds the column to that.
+calls_silent_on() {   # <tool> <calls name> <bash test over the shim's "$@">: for that shape a <tool> that appends "<tool> <arguments>" to $TEST_DIR/calls.<name>, reads its stdin, prints nothing and exits 0; the real one for every other shape
+    local real real_cat
+    real="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v "$1")"
+    real_cat="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v cat)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if %s; then printf "%%s\\n" %q"$*" >> %q; %q > /dev/null; exit 0; fi\n' "$3" "$1 " "$TEST_DIR/calls.$2" "$real_cat"
+        printf 'exec %q "$@"\n' "$real"
+    } > "$TEST_DIR/shim/$1"
+    chmod 755 "$TEST_DIR/shim/$1"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+calls_silent_on_text() {   # <tool> <calls name> <fixed text>: the same, for a call whose arguments carry that text (an awk program, a sed script)
+    local real real_cat
+    real="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v "$1")"
+    real_cat="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v cat)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'marker=%q\n' "$3"
+        printf 'case "$*" in *"$marker"*) printf "%%s\\n" %q"$*" >> %q; %q > /dev/null; exit 0 ;; esac\n' "$1 " "$TEST_DIR/calls.$2" "$real_cat"
+        printf 'exec %q "$@"\n' "$real"
+    } > "$TEST_DIR/shim/$1"
+    chmod 755 "$TEST_DIR/shim/$1"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+calls_silent_on_input() {   # <tool> <calls name> <bash test over the shim's "$@"> <fixed text>: the same, for a call of that shape whose INPUT carries that text (two reads of one shape told apart by what they read); the real one, fed the same input, otherwise
+    local real
+    real="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v "$1")"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'marker=%q; in=%q\n' "$4" "$TEST_DIR/input.$2"
+        printf 'if %s; then\n' "$3"
+        printf '    cat > "$in"\n'
+        printf '    case "$(cat "$in")" in *"$marker"*) printf "%%s\\n" %q"$*" >> %q; exit 0 ;; esac\n' "$1 " "$TEST_DIR/calls.$2"
+        printf '    exec %q "$@" < "$in"\n' "$real"
+        printf 'fi\n'
+        printf 'exec %q "$@"\n' "$real"
+    } > "$TEST_DIR/shim/$1"
+    chmod 755 "$TEST_DIR/shim/$1"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+fired() {   # <calls name> <fixed text the shape carries>: the shim fired during the push, on that shape
+    [ -s "$TEST_DIR/calls.$1" ]
+    grep -q -F -- "$2" "$TEST_DIR/calls.$1"
+}
+r8b2_tag_naming_the_host() {   # a clean base on the remote (BASE) and an annotated tag over it whose message names the host; tag is the tag object's sha
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" tag -a v1 -m "release one" -m "cut on TESTHOST"
+    tag="$(git -C "$REPO" rev-parse refs/tags/v1)"
+}
+r8b2_merge_with_hidden_link() {   # a merge whose own change is a symlink under -diff carrying the string in its target, gone at the tip: only the combined patch's verdict can name it; sha is the merge
+    attributes 'link -diff'
+    merge_fixture
+    ln -s "seen on TESTHOST" "$REPO/link"
+    git -C "$REPO" add link
+    git -C "$REPO" commit -qm "the merge adds a link under -diff"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file link "remove it"
+}
+r8b2_big_file_in_middle_commit() {   # a base on the remote (BASE), then a text file over core.bigFileThreshold carrying the string, removed at the tip: hidden by its size, no attribute accounts for it; leak and blob are its commit and blob
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" config core.bigFileThreshold 100
+    big_text_file big.txt "seen on TESTHOST"
+    git -C "$REPO" add big.txt
+    git -C "$REPO" commit -qm "a text file over the threshold"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    blob="$(git -C "$REPO" rev-parse "$leak:big.txt")"
+    remove_file big.txt "remove it"
+}
+r8b2_binary_turned_text() {   # a base on the remote (BASE), a file binary by its bytes, then the same path as text carrying the string (leak), removed at the tip: the refused line names the previous version when the report reads it
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'ab\0cd\n' > "$REPO/thing"
+    git -C "$REPO" add thing
+    git -C "$REPO" commit -qm "a binary file"
+    commit_file thing "seen on TESTHOST" "now a text file carrying the string"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file thing "remove it"
+}
+r8b2_merge_text_onto_binary() {   # a merge moving a text file carrying the string onto a path a parent holds a binary file at, gone at the tip (BASE on the remote); merge is its sha
+    add_remote
+    printf 'ab\0cd\n' > "$REPO/bin.dat"
+    git -C "$REPO" add bin.dat
+    commit_file notes.txt "seen on TESTHOST" "a binary file and a text file"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" checkout -q -b side
+    commit_file side.txt "the web session's line" "side"
+    git -C "$REPO" checkout -q main
+    commit_file main.txt "the api session's line" "main side"
+    git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1
+    git -C "$REPO" mv -f notes.txt bin.dat
+    git -C "$REPO" commit -qm "merge side, notes.txt moved onto bin.dat"
+    merge="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file bin.dat "remove it"
+}
+r8b2_rename_twin() {   # a base on the remote (BASE), a file binary by its bytes, renamed and made text carrying the string (leak), removed at the tip, an explicit diff attribute on the new path
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    { printf 'line %s\n' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; printf 'x\0y\n'; } > "$REPO/old.txt"
+    git -C "$REPO" add old.txt
+    git -C "$REPO" commit -qm "a file binary by its bytes"
+    git -C "$REPO" mv old.txt new.txt
+    { printf 'line %s\n' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; printf 'seen on TESTHOST\n'; } > "$REPO/new.txt"
+    git -C "$REPO" add new.txt
+    git -C "$REPO" commit -qm "renamed and made text, the string in the change"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file new.txt "remove it"
+    attributes 'new.txt diff'
+}
+r8b2_credential_in_root_scanner_without_root() {   # the credential scan's count arm fed short: a root commit carrying a credential, a clean tip, log.showRoot false, and a scanner whose --root is stripped from its log options (it then reads the tip alone)
+    real_gitleaks
+    add_remote
+    commit_file probe.py "token = \"$(probe_token)\"" "a credential in the root commit"
+    commit_file clean.txt "nothing to see" "a clean tip"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" config log.showRoot false
+    gitleaks_without_root_option "$TEST_DIR/scanner-args"
+}
+
+@test "round 8b2 table case: the CONTENT grep of the tip: a git silent on the tip's content grep alone, through a real push of a branch whose tip inherits main's leak, is refused naming the short answer, and the remote never gets the branch" {
+    branch_inheriting_mains_leak
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    calls_silent_on git content-grep '[ "${1:-}" = grep ] && [ "${3:-}" = -i ]'
+    push_ref_through_hook_with_shim feature
+    fired content-grep "grep --no-color -i -I -l -F"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CONTENT of the tip of refs/heads/feature (${sha:0:10}) was scanned with no hit listed (git grep exited 0, a match, and printed no hit line), so the answer is short"* ]]
+    run remote_holds_ref refs/heads/feature
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the SYMLINK listing of the tip: a git silent on the symlink pass's plain ls-tree alone, through a real push of a branch whose tip inherits main's symlink leak, is refused on the tree's size, and the remote never gets the branch" {
+    branch_inheriting_mains_symlink_leak
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    calls_silent_on git plain-listing '[ "${1:-}" = ls-tree ] && [ "${2:-}" = -r ] && [ "$#" -eq 3 ]'
+    push_ref_through_hook_with_shim feature
+    fired plain-listing "ls-tree -r $sha"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the TREE of the tip of refs/heads/feature (${sha:0:10}) was listed as empty (git ls-tree -r exited 0 and printed no entry) while git cat-file -s gives its tree's size as "*" bytes, so the listing answered short"* ]]
+    run remote_holds_ref refs/heads/feature
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the SIZE of the tip's tree: a git silent on the tree's size read alone, over a tip at the EMPTY tree (the one tree whose listing is empty, so the size is asked), is refused naming the size read's non-count answer through a real push, and the remote never gets the branch" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    git -C "$REPO" checkout -q --orphan bare
+    git -C "$REPO" rm -rq --cached .
+    rm -f "$REPO/base.txt"
+    git -C "$REPO" commit -q --allow-empty -m "the empty tree"
+    bare="$(git -C "$REPO" rev-parse HEAD)"
+    calls_silent_on git tree-size '[ "${1:-}" = cat-file ] && [ "${2:-}" = -s ] && [[ "${3:-}" == *"^{tree}" ]]'
+    push_ref_through_hook_with_shim bare
+    fired tree-size "cat-file -s $bare^{tree}"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the TREE of the tip of refs/heads/bare (${bare:0:10}) was listed as empty while its SIZE reads \"\" (git cat-file -s), not a size, so whether the listing is whole is unknown"* ]]
+    run remote_holds_ref refs/heads/bare
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the TYPE of the object the tip peels to: a git silent on the peel's type read alone, over a tag of a blob (whose symlink listing exits 128, so the peel is asked), is refused naming the empty type through a real push, and the remote never gets the tag" {
+    add_remote
+    commit_file f.txt "plain" "base"
+    git -C "$REPO" push -q origin main
+    git -C "$REPO" tag -a blobtag "$(git -C "$REPO" rev-parse HEAD:f.txt)" -m "a tag of a blob"
+    t="$(git -C "$REPO" rev-parse refs/tags/blobtag)"
+    calls_silent_on git peel-type '[ "${1:-}" = cat-file ] && [ "${2:-}" = -t ] && [[ "${3:-}" == *"^{}" ]]'
+    push_ref_through_hook_with_shim refs/tags/blobtag
+    fired peel-type "cat-file -t $t^{}"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the TYPE of the object the tip of refs/tags/blobtag (${t:0:10}) peels to was read as \"\" (git cat-file -t exited 0), not an object type"* ]]
+    run remote_holds_ref refs/tags/blobtag
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the SYMLINK TARGET of a link at the tip: a git silent on the link's target read alone, through a real push of a branch whose tip inherits main's symlink leak, is refused on the blob's size, and the remote never gets the branch" {
+    branch_inheriting_mains_symlink_leak
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    blob="$(git -C "$REPO" rev-parse "$sha:node_modules")"
+    size="$(git -C "$REPO" cat-file -s "$blob")"
+    calls_silent_on git link-target "[ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = -p ] && [ \"\${3:-}\" = $blob ]"
+    push_ref_through_hook_with_shim feature
+    fired link-target "cat-file -p $blob"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the SYMLINK TARGET of node_modules at the tip of refs/heads/feature (${sha:0:10}) was read as empty while git cat-file -s gives its size as $size bytes, so the read answered short (git cat-file -p exited 0)"* ]]
+    run remote_holds_ref refs/heads/feature
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the SIZE of a symlink target blob: a git silent on the size read alone, over a link to the EMPTY blob (the one target read as empty, so the size is asked), is refused naming the size read's non-count answer through a real push, the remote at its base" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    empty="$(git -C "$REPO" hash-object -w --stdin < /dev/null)"
+    git -C "$REPO" update-index --add --cacheinfo "120000,$empty,elink"
+    git -C "$REPO" commit -qm "a link over the empty blob"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    calls_silent_on git link-size "[ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = -s ] && [ \"\${3:-}\" = $empty ]"
+    push_main_through_hook_with_shim
+    fired link-size "cat-file -s $empty"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the SYMLINK TARGET of elink at the tip of refs/heads/main (${sha:0:10}) was read as empty while its SIZE reads \"\" (git cat-file -s), not a size, so whether the target is empty is unknown"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the COMMIT listing of a pushed ref: a git silent on the range listing alone, through a real push of a NEW branch whose middle commit adds a banned line, is refused naming the empty listing, and the remote never gets the branch" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    commit_file leak.txt "seen on TESTHOST" "leak"
+    remove_file leak.txt "remove it"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    calls_silent_on git range-listing '[ "${1:-}" = rev-list ] && [ "${3:-}" = --not ]'
+    push_main_through_hook_with_shim
+    fired range-listing "rev-list $sha --not --remotes"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the COMMITS of refs/heads/main (${sha:0:10}) were listed as none (git rev-list exited 0 and printed nothing) while no remote-tracking ref contains the pushed commit and the ref is new on the remote, so the listing answered short"* ]]
+    run remote_holds_main
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the REMOTE REFS containing the pushed commit: a git silent on the --contains read alone, over a new branch at a commit the remote already holds (the one listing a real rev-list leaves empty), withholds the agreement: the push is refused naming the empty listing, and the remote never gets the branch" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    git -C "$REPO" branch again
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    calls_silent_on git contains '[ "${1:-}" = for-each-ref ] && [ "${3:-}" = --contains ]'
+    push_ref_through_hook_with_shim again
+    fired contains "for-each-ref --format=%(refname) --contains $sha refs/remotes/"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the COMMITS of refs/heads/again (${sha:0:10}) were listed as none (git rev-list exited 0 and printed nothing) while no remote-tracking ref contains the pushed commit and the ref is new on the remote, so the listing answered short"* ]]
+    run remote_holds_ref refs/heads/again
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the ANCESTRY of the pushed commit over the remote commit: a git silent on BOTH the range listing and the ancestry read (the read is asked only beside an empty listing, so one git silent on both is its shape), through a real push of a ref update whose middle commit adds a banned line, is refused naming the ancestry read's answer, and the remote stays at its base (round 8b2: under --is-ancestor the silent exit 0 WAS the ancestor answer and the leak published)" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file leak.txt "seen on TESTHOST" "leak"
+    remove_file leak.txt "remove it"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    calls_silent_on git ancestry '{ [ "${1:-}" = rev-list ] && [ "${3:-}" = --not ]; } || [ "${1:-}" = merge-base ]'
+    push_main_through_hook_with_shim
+    fired ancestry "rev-list $sha --not --remotes"
+    fired ancestry "merge-base "
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the COMMITS of refs/heads/main (${sha:0:10}) were listed as none, and whether the pushed commit is an ancestor of the remote's ${BASE:0:10} could not be read (git merge-base exited 0 and answered \"\", not a commit)"* ]]
+    [[ "$output" == *"romp pre-push: the COMMITS of refs/heads/main (${sha:0:10}) were listed as none (git rev-list exited 0 and printed nothing)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the PARENT COUNT of a commit: a git silent on rev-list --parents alone, through a real push of a middle-commit leak, is refused naming the empty answer, and the remote stays at its base" {
+    leak_in_middle_commit_after_base
+    calls_silent_on git parents '[ "${1:-}" = rev-list ] && [ "${2:-}" = --parents ]'
+    push_main_through_hook_with_shim
+    fired parents "rev-list --parents -n 1 $leak"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the ADDED LINES of commit ${leak:0:10} could not be read (git rev-list --parents exited 0 and answered \"\", not the commit and its parents)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the ADDED LINES diff of a commit: a git silent on the added-lines diff-tree alone (the --always shape), through a real push of a middle-commit leak, is refused naming the missing marker, and the remote stays at its base" {
+    leak_in_middle_commit_after_base
+    calls_silent_on git added-diff '[ "${1:-}" = diff-tree ] && [[ " $* " == *" --always "* ]]'
+    push_main_through_hook_with_shim
+    fired added-diff "diff-tree -p -r -M -c --root --always --no-color $leak"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the ADDED LINES of commit ${leak:0:10} could not be read (git diff-tree exited 0 and printed no line naming the commit, the marker --always asks for ahead of the diff, so the read answered short)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the LINE COUNT of the added lines: a wc silent on wc -l alone, through a real push of a clean commit, is refused naming the non-count, and the remote stays at its base" {
+    clean_tip_after_base
+    calls_silent_on wc line-count '[ "${1:-}" = -l ] && [ "$#" -eq 1 ]'
+    push_main_through_hook_with_shim
+    fired line-count "wc -l"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the ADDED LINES of commit ${sha:0:10} could not be counted (wc answered \"\", not a count)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the ADDED LINES grep: a grep silent on the added-lines shape alone (exit 0, a match, no line), through a real push of a middle-commit leak, is refused naming the short answer, and the remote stays at its base" {
+    leak_in_middle_commit_after_base
+    calls_silent_on grep added-grep '[ "${1:-}" = -a ] && [ "${2:-}" = -i ]'
+    push_main_through_hook_with_shim
+    fired added-grep "grep -a -i -F"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the ADDED LINES of commit ${leak:0:10} were grepped with no hit line listed (grep exited 0, a match, and printed no line), so the answer is short"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the SORT of the paths a grep named: a sort silent on sort -u alone (the credential scan off, so its own sort -u never runs), through a real push of a middle-commit leak, is refused naming the empty report, and the remote stays at its base" {
+    leak_in_middle_commit_after_base
+    calls_silent_on sort sort-paths '[ "${1:-}" = -u ] && [ "$#" -eq 1 ]'
+    push_main_through_hook_with_shim
+    fired sort-paths "sort -u"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the ADDED LINES of commit ${leak:0:10} could not be reported (sort exited 0 and answered nothing for the paths the grep named)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the ADDRESSES log of a commit: a git silent on the addresses log alone, through a real push of a commit stamped under a banned domain, is refused naming the empty answer, and the remote stays at its base" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    GIT_AUTHOR_EMAIL=dev@testhost.example GIT_COMMITTER_EMAIL=dev@testhost.example git -C "$REPO" commit -q --allow-empty -m "stamped under a banned domain"
+    c="$(git -C "$REPO" rev-parse HEAD)"
+    calls_silent_on git addresses '[ "${1:-}" = log ] && [[ "${4:-}" == --format=authored* ]]'
+    push_main_through_hook_with_shim
+    fired addresses "log -1 --no-show-signature --format=authored"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the ADDRESSES of commit ${c:0:10} could not be read (git log exited 0 and answered \"\", not the two stamped roles)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the MESSAGE log of a commit: a git silent on the message log alone, through a real push of a commit whose message body names the host, is refused naming the missing head marker, and the remote stays at its base" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" commit -q --allow-empty -m "a clean subject" -m "cut on TESTHOST"
+    c="$(git -C "$REPO" rev-parse HEAD)"
+    calls_silent_on git message-log '[ "${1:-}" = log ] && [[ "${4:-}" == --format=message* ]]'
+    push_main_through_hook_with_shim
+    fired message-log "log -1 --no-show-signature --format=message"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the MESSAGE of commit ${c:0:10} could not be read (git log exited 0 and answered \"\" on its first line, not the marker line the format asks for ahead of the message)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the MESSAGE grep: a grep silent on the message shape alone (exit 0, a match, no line), through a real push of a commit whose message names the host, is refused naming the short answer, and the remote stays at its base" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" commit -q --allow-empty -m "cut on TESTHOST"
+    c="$(git -C "$REPO" rev-parse HEAD)"
+    calls_silent_on grep message-grep '[ "${1:-}" = -in ]'
+    push_main_through_hook_with_shim
+    fired message-grep "grep -in -a -F"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the MESSAGE of commit ${c:0:10} was grepped with no hit line listed (grep exited 0, a match, and printed no line), so the answer is short"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the TYPE of a pushed object: a git silent on the pushed tag's type read alone, through a real push of a tag whose message names the host, is refused naming the empty type, and the remote never gets the tag" {
+    r8b2_tag_naming_the_host
+    calls_silent_on git object-type "[ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = -t ] && [ \"\${3:-}\" = $tag ]"
+    push_ref_through_hook_with_shim refs/tags/v1
+    fired object-type "cat-file -t $tag"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the TYPE of the object refs/tags/v1 pushes (${tag:0:10}) was read as \"\" (git cat-file -t exited 0), not an object type, so whether it is an annotated tag is unknown"* ]]
+    run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the OBJECT of a tag: a git silent on the tag object's read alone, through a real push of a tag whose message names the host, is refused on the object's size, and the remote never gets the tag" {
+    r8b2_tag_naming_the_host
+    size="$(git -C "$REPO" cat-file -s "$tag")"
+    calls_silent_on git tag-object "[ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = -p ] && [ \"\${3:-}\" = $tag ]"
+    push_ref_through_hook_with_shim refs/tags/v1
+    fired tag-object "cat-file -p $tag"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the OBJECT of tag refs/tags/v1 (${tag:0:10}) was read short (git cat-file -p exited 0 and its capture holds 0 bytes where git cat-file -s gives the object's size as $size), which ends the peel here"* ]]
+    run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the SIZE of a tag object: a git silent on the tag's size read alone, through a real push of a tag whose message names the host, is refused naming the two answers, and the remote never gets the tag" {
+    r8b2_tag_naming_the_host
+    size="$(git -C "$REPO" cat-file -s "$tag")"
+    calls_silent_on git tag-size "[ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = -s ] && [ \"\${3:-}\" = $tag ]"
+    push_ref_through_hook_with_shim refs/tags/v1
+    fired tag-size "cat-file -s $tag"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the OBJECT of tag refs/tags/v1 (${tag:0:10}) was captured while its SIZE reads \"\" (git cat-file -s) and the capture's BYTE COUNT \"$size\" (wc -c), not two counts"* ]]
+    run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the BYTE COUNT of a tag capture: a wc silent on wc -c over the tag capture alone (keyed on its input, which begins with the object line), through a real push of a tag whose message names the host, is refused naming the two answers, and the remote never gets the tag" {
+    r8b2_tag_naming_the_host
+    size="$(git -C "$REPO" cat-file -s "$tag")"
+    calls_silent_on_input wc tag-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ]' "object "
+    push_ref_through_hook_with_shim refs/tags/v1
+    fired tag-count "wc -c"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the OBJECT of tag refs/tags/v1 (${tag:0:10}) was captured while its SIZE reads \"$size\" (git cat-file -s) and the capture's BYTE COUNT \"\" (wc -c), not two counts"* ]]
+    run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the -z listing of the tip: a git silent on the verdict check's ls-tree -r -z -l alone, through a real push over a hidden file the remote holds at the tip, is refused on the symlink pass's entry count, and the remote stays at its base" {
+    hidden_file_on_remote_then_clean_commit
+    calls_silent_on git z-listing '[ "${1:-}" = ls-tree ] && [ "${3:-}" = -z ]'
+    push_main_through_hook_with_shim
+    fired z-listing "ls-tree -r -z -l $sha"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the TREE of the tip of refs/heads/main (${sha:0:10}) was listed short or long for the BINARY VERDICT check (git ls-tree -r -z -l exited 0 and listed 0 entries where the symlink pass's git ls-tree -r of the same tree listed 3)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the READ LIST of the grep of the tip: a git silent on the read list's grep alone, through a real push of a clean tip, sends every regular file with bytes to the byte judge, which refuses each text file as hidden (the safe side): the push is refused and the remote stays at its base" {
+    clean_tip_after_base
+    calls_silent_on git read-list '[ "${1:-}" = grep ] && [ "${5:-}" = -z ]'
+    push_main_through_hook_with_shim
+    fired read-list "grep --no-color -I -l -z -e  $sha --"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: base.txt at the tip of refs/heads/main (${sha:0:10}) is text that git calls binary although its diff attribute reads unspecified"* ]]
+    [[ "$output" == *"romp pre-push: clean.txt at the tip of refs/heads/main (${sha:0:10}) is text that git calls binary although its diff attribute reads unspecified"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the ENTRY COUNT of the -z listing: a grep silent on grep -c . over the rewritten -z listing alone, through a real push of a clean tip, is refused naming the non-count, and the remote stays at its base" {
+    clean_tip_after_base
+    calls_silent_on grep entry-count '[ "${1:-}" = -c ] && [ "${2:-}" = . ] && [[ "${3:-}" == */listing.nl ]]'
+    push_main_through_hook_with_shim
+    fired entry-count "listing.nl"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the TREE of the tip of refs/heads/main (${sha:0:10}) could not be counted for the BINARY VERDICT check (the -z listing's entries counted as \"\" and the symlink pass's as \"2\", not two counts)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the TIP CANDIDATES join: an awk silent on the tip candidates program alone, through a real push over a hidden file the remote holds at the tip, is refused naming the short join, and the remote stays at its base" {
+    hidden_file_on_remote_then_clean_commit
+    calls_silent_on_text awk tip-candidates 'printf "tip\t'
+    push_main_through_hook_with_shim
+    fired tip-candidates 'printf "tip\t'
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the TREE of the tip of refs/heads/main (${sha:0:10}) was joined short with the grep's read list for the BINARY VERDICT check (the join appended 0 candidate rows where the -z listing names 3 regular files with bytes and the grep's read list 2 of them, so the count expected is 1; awk and tr exited 0)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the FILE COUNT of the -z listing: a grep silent on grep -c -E over the rewritten -z listing alone, through a real push of a clean tip, is refused naming the non-count, and the remote stays at its base" {
+    clean_tip_after_base
+    calls_silent_on grep file-count '[ "${1:-}" = -c ] && [ "${2:-}" = -E ] && [[ "${4:-}" == */listing.nl ]]'
+    push_main_through_hook_with_shim
+    fired file-count "grep -c -E"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the TREE of the tip of refs/heads/main (${sha:0:10}) could not be counted for the BINARY VERDICT check (grep -c counted the -z listing's regular files with bytes as \"\" and the grep's read list as \"2\", not two counts)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the LINE COUNT of the read list: a grep silent on grep -c . over the rewritten read list alone, through a real push of a clean tip, is refused naming the non-count, and the remote stays at its base" {
+    clean_tip_after_base
+    calls_silent_on grep read-count '[ "${1:-}" = -c ] && [ "${2:-}" = . ] && [[ "${3:-}" == */read.nl ]]'
+    push_main_through_hook_with_shim
+    fired read-count "read.nl"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the TREE of the tip of refs/heads/main (${sha:0:10}) could not be counted for the BINARY VERDICT check (grep -c counted the -z listing's regular files with bytes as \"2\" and the grep's read list as \"\", not two counts)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the NEWLINE COUNT of a scratch listing: a wc silent on wc -c fed by a pipe alone (the newline test's pipeline; the byte counts read a file), through a real push of a clean tip, is refused naming the non-count, and the remote stays at its base" {
+    clean_tip_after_base
+    calls_silent_on wc newline-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ] && [ -p /dev/stdin ]'
+    push_main_through_hook_with_shim
+    fired newline-count "wc -c"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the LISTINGS of the tip of refs/heads/main (${sha:0:10}) could not be rewritten for the BINARY VERDICT check (the newline test's wc answered \"\" for listing, not a count)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the REWRITE of a scratch listing: a tr silent on the NUL-to-newline rewrite alone, through a real push of a clean tip, is refused naming the rewrite's byte count against its input's, and the remote stays at its base" {
+    clean_tip_after_base
+    n="$(git -C "$REPO" ls-tree -r -z -l "$sha" | wc -c | tr -d ' ')"
+    calls_silent_on tr rewrite '[ "$#" -eq 2 ] && [ "${1:-}" = '"'"'\0'"'"' ] && [ "${2:-}" = '"'"'\n'"'"' ]'
+    push_main_through_hook_with_shim
+    fired rewrite 'tr \0 \n'
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the LISTINGS of the tip of refs/heads/main (${sha:0:10}) could not be rewritten for the BINARY VERDICT check (the rewrite of listing wrote 0 bytes for $n read; tr exited 0)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the BYTE COUNT of a scratch listing: a wc silent on wc -c reading a file alone (the byte counts; the newline test's wc reads a pipe), through a real push of a clean tip, is refused naming the non-count, and the remote stays at its base" {
+    clean_tip_after_base
+    calls_silent_on wc byte-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ] && [ -f /dev/stdin ]'
+    push_main_through_hook_with_shim
+    fired byte-count "wc -c"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the LISTINGS of the tip of refs/heads/main (${sha:0:10}) could not be rewritten for the BINARY VERDICT check (the byte count's wc answered \"\" for listing, not a count)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the CHANGED PATHS listing of a commit: a git silent on the combined --raw -c listing alone, through a real push of a middle commit adding a hidden file, is refused on the path its numstat names, and the remote stays at its base" {
+    hidden_file_in_middle_commit_after_base
+    calls_silent_on git changed-paths '[ "${1:-}" = diff-tree ] && [[ " $* " == *" --raw "*" -c "* ]]'
+    push_main_through_hook_with_shim
+    fired changed-paths "diff-tree -r --raw --no-renames --root -c -z --no-commit-id $leak"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CHANGED PATHS of commit ${leak:0:10} were listed short for the BINARY VERDICT check (git diff-tree --raw exited 0 and its listing lacks notes.txt, a path git diff-tree --numstat answered for)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the COMBINED PATCH of a merge: a git silent on the combined patch alone (the --no-commit-id shape; the added-lines diff asks --always), through a real push of a merge adding a hidden link that carries the string, is refused naming the path with no verdict, and the remote stays at its base" {
+    r8b2_merge_with_hidden_link
+    calls_silent_on git combined-patch '[ "${1:-}" = diff-tree ] && [[ " $* " == *" -p "*" --no-commit-id "* ]]'
+    push_main_through_hook_with_shim
+    fired combined-patch "diff-tree -p -r -M -c --root --no-commit-id --no-color $sha"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the BINARY VERDICTS of commit ${sha:0:10} could not be read (git diff-tree -p -c, the merge's combined patch, printed no verdict for link, a path the merge changes)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the SECTION ROWS of a combined patch: an awk silent on the section parser alone, through a real push of a merge adding a hidden link that carries the string, leaves every merge path a short read at the join: refused naming the path, the remote at its base" {
+    r8b2_merge_with_hidden_link
+    calls_silent_on_text awk section-rows 'hdr && /^Binary files /'
+    push_main_through_hook_with_shim
+    fired section-rows "Binary files"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the BINARY VERDICTS of commit ${sha:0:10} could not be read (git diff-tree -p -c, the merge's combined patch, printed no verdict for link, a path the merge changes)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the PER-PARENT listing of a merge: a git silent on diff-tree --raw -m alone, through a real push of a merge moving content two parents held to a third path, leaves the moved path no rename candidate and so a short read at the join: refused naming it, the remote at its base" {
+    third_path_merge "nothing to see" pushed
+    third_path_committed
+    calls_silent_on git per-parent '[ "${1:-}" = diff-tree ] && [[ " $* " == *" --raw "*" -m "* ]]'
+    push_main_through_hook_with_shim
+    fired per-parent "diff-tree -r --raw --no-renames -m -z --no-commit-id $merge"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the BINARY VERDICTS of commit ${merge:0:10} could not be read (git diff-tree -p -c, the merge's combined patch, printed no verdict for b.txt, a path the merge changes)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the RENAME CANDIDATES of a merge: an awk silent on the rename candidates program alone, through a real push of a merge moving content two parents held to a third path, leaves the moved path a short read at the join: refused naming it, the remote at its base" {
+    third_path_merge "nothing to see" pushed
+    third_path_committed
+    calls_silent_on_text awk rename-candidates 'in gone) print'
+    push_main_through_hook_with_shim
+    fired rename-candidates 'in gone) print'
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the BINARY VERDICTS of commit ${merge:0:10} could not be read (git diff-tree -p -c, the merge's combined patch, printed no verdict for b.txt, a path the merge changes)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the NUMSTAT of a commit: a git silent on diff-tree --numstat alone, through a real push of a middle commit adding a hidden file, is refused naming the path the numstat did not answer for, and the remote stays at its base" {
+    hidden_file_in_middle_commit_after_base
+    calls_silent_on git numstat '[ "${1:-}" = diff-tree ] && [[ " $* " == *" --numstat "* ]]'
+    push_main_through_hook_with_shim
+    fired numstat "diff-tree -r --numstat -z --no-commit-id -M --root $leak"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the BINARY VERDICTS of commit ${leak:0:10} could not be read (git diff-tree --numstat answered for fewer paths than the commit changes and printed no verdict for notes.txt)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the EMPTY TREE name: a git silent on hash-object -t tree alone, through a real push of a type change, is refused naming the empty answer, and the remote stays at its base" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    type_change_to_symlink
+    calls_silent_on git empty-tree '[ "${1:-}" = hash-object ] && [ "${2:-}" = -t ] && [ "${3:-}" = tree ]'
+    push_main_through_hook_with_shim
+    fired empty-tree "hash-object -t tree --stdin"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the BINARY VERDICTS of commit ${sha:0:10} could not be read (git hash-object, asked for the empty tree's name, answered nothing)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the JOIN of the verdicts of a commit: an awk silent on the join's program alone, through a real push of a middle commit adding a hidden file, is refused naming the count its awk did not record, and the remote stays at its base" {
+    hidden_file_in_middle_commit_after_base
+    calls_silent_on_text awk verdict-join 'ENVIRON["ROMP_SHORT_FILE"]'
+    push_main_through_hook_with_shim
+    fired verdict-join 'ROMP_SHORT_FILE'
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the JOIN of commit ${leak:0:10}'s verdicts could not be made for the BINARY VERDICT check (its pipeline exited 0 and its awk recorded \"\" as the count of candidate rows it printed, not a count"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the BYTE COUNTS of a hidden blob: a git silent on the hidden blob's content read alone, through a real push of a middle commit adding a hidden file, is refused on the blob's size, and the remote stays at its base" {
+    hidden_file_in_middle_commit_after_base
+    calls_silent_on git blob-bytes "[ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = blob ] && [ \"\${3:-}\" = $blob ]"
+    push_main_through_hook_with_shim
+    fired blob-bytes "cat-file blob $blob"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CONTENT of notes.txt in commit ${leak:0:10}, which git calls binary and the identifier scan therefore skipped, was read as 0 bytes while git cat-file -s gives its size as $size bytes, so the read answered short (git cat-file blob exited 0)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the SIZE of a hidden blob: a git silent on the size read alone, over an EMPTY file under -diff in a middle commit (the one hidden blob read as 0 bytes, so the size is asked), is refused naming the size read's non-count answer through a real push, the remote at its base" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'empty.txt -diff\n' > "$REPO/.git/info/attributes"
+    : > "$REPO/empty.txt"
+    git -C "$REPO" add empty.txt
+    git -C "$REPO" commit -qm "an empty file under -diff"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    empty="$(git -C "$REPO" rev-parse "$leak:empty.txt")"
+    remove_file empty.txt "remove it"
+    calls_silent_on git blob-size "[ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = -s ] && [ \"\${3:-}\" = $empty ]"
+    push_main_through_hook_with_shim
+    fired blob-size "cat-file -s $empty"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CONTENT of empty.txt in commit ${leak:0:10}, which git calls binary and the identifier scan therefore skipped, was read as 0 bytes while its SIZE reads \"\" (git cat-file -s), not a size, so whether the blob is empty is unknown"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the REPOSITORY ROOT: a git silent on rev-parse --show-toplevel alone, through a real push of a credential under the real scanner, is refused naming the empty root, and the remote never gets the branch" {
+    real_gitleaks
+    add_remote
+    commit_file probe.py "token = \"$(probe_token)\"" "a credential"
+    calls_silent_on git repo-root '[ "${1:-}" = rev-parse ] && [ "${2:-}" = --show-toplevel ]'
+    push_main_through_hook_with_shim
+    fired repo-root "rev-parse --show-toplevel"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the REPOSITORY ROOT could not be read for the credential scan (git rev-parse exited 0 and answered nothing)"* ]]
+    run remote_holds_main
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the COUNT of commits with content to scan: an awk silent on the count's last program alone, beside a scanner git handed --max-count=1 (so the scan reads the clean tip alone), through a real push of a middle-commit credential, is refused naming the non-count, and the remote never gets the branch" {
+    real_gitleaks
+    add_remote
+    commit_file probe.py "token = \"$(probe_token)\"" "a credential in a middle commit"
+    commit_file clean.txt "nothing to see" "a clean tip"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    gitleaks_git_short
+    calls_silent_on_text awk commit-count '== "missing"'
+    push_main_through_hook_with_shim
+    fired commit-count '"missing"'
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the COMMITS of refs/heads/main (${sha:0:10}) could not be counted for the credential scan (the count read exited 0 and answered \"\", not a count)"* ]]
+    run remote_holds_main
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the COLOUR STRIP of the scanner log: a sed silent on the colour strip alone, through a real push of a credential under the real scanner, leaves no count line to read, and the count arm refuses the push: the remote never gets the branch" {
+    real_gitleaks
+    add_remote
+    commit_file probe.py "token = \"$(probe_token)\"" "a credential"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    calls_silent_on sed colour-strip '[[ "${1:-}" == *"m//g" ]]'
+    push_main_through_hook_with_shim
+    fired colour-strip "m//g"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan of refs/heads/main (${sha:0:10}) reported no commit count, so what it read is unknown"* ]]
+    run remote_holds_main
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the COMMIT COUNT line of the scanner log: an awk silent on the count line's program alone, through a real push of a credential under the real scanner, is refused naming the missing count, and the remote never gets the branch" {
+    real_gitleaks
+    add_remote
+    commit_file probe.py "token = \"$(probe_token)\"" "a credential"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    calls_silent_on_text awk count-line '$4 == "commits"'
+    push_main_through_hook_with_shim
+    fired count-line '$4 == "commits"'
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan of refs/heads/main (${sha:0:10}) reported no commit count, so what it read is unknown"* ]]
+    run remote_holds_main
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the ADDRESS DOMAIN grep: a grep silent on the domain grep alone (exit 0 IS the hit), through real pushes of a commit and of a tag stamped under a clean domain, refuses each address (the strict side): the remote at its base and without the tag" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    GIT_AUTHOR_EMAIL=dev@clean.example GIT_COMMITTER_EMAIL=dev@clean.example git -C "$REPO" commit -q --allow-empty -m "stamped clean"
+    c="$(git -C "$REPO" rev-parse HEAD)"
+    GIT_COMMITTER_EMAIL=dev@clean.example git -C "$REPO" tag -a v1 "$BASE" -m "release one"
+    t="$(git -C "$REPO" rev-parse refs/tags/v1)"
+    calls_silent_on_input grep domain '[ "${1:-}" = -qi ] && [ "${2:-}" = -F ]' "clean.example"
+    push_main_through_hook_with_shim
+    fired domain "grep -qi -F"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${c:0:10} is authored as <dev@clean.example>, an address this clone is not configured to use, whose domain carries a personal identifier"* ]]
+    at_base
+    rm -f "$TEST_DIR/calls.domain"
+    push_ref_through_hook_with_shim refs/tags/v1
+    fired domain "grep -qi -F"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: tag refs/tags/v1 (${t:0:10}) is tagged as <dev@clean.example>, an address this clone is not configured to use, whose domain carries a personal identifier"* ]]
+    run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the CHOSEN ADDRESSES of this clone: a git silent on config --get-all user.email alone chooses no address, so a banned-domain stamp the clone IS configured to use is judged (the strict side): the control push passes, the silenced one is refused, and the remote stays at its base" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" config user.email dev@testhost.example
+    GIT_AUTHOR_EMAIL=dev@testhost.example GIT_COMMITTER_EMAIL=dev@testhost.example git -C "$REPO" commit -q --allow-empty -m "stamped by the clone's own choice"
+    c="$(git -C "$REPO" rev-parse HEAD)"
+    mkdir -p "$TEST_DIR/shim"
+    push_main_through_hook_with_shim                              # the control: the clone chose the address, so it passes
+    [ "$status" -eq 0 ]
+    git -C "$TEST_DIR/remote.git" update-ref refs/heads/main "$BASE"
+    git -C "$REPO" update-ref refs/remotes/origin/main "$BASE"
+    calls_silent_on git chosen '[ "${1:-}" = config ] && [ "${2:-}" = --get-all ] && [ "${3:-}" = user.email ]'
+    push_main_through_hook_with_shim
+    fired chosen "config --get-all user.email"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${c:0:10} is authored as <dev@testhost.example>, an address this clone is not configured to use, whose domain carries a personal identifier"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the SYMLINK TARGET grep: a grep silent on the target grep alone (exit 0 IS the hit), through a real push of a branch whose tip holds a clean link the remote has, refuses the link (the strict side), and the remote never gets the branch" {
+    add_remote
+    ln -s ./base.txt "$REPO/link"
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" add link
+    git -C "$REPO" commit -qm "a clean link"
+    git -C "$REPO" push -q origin main
+    git -C "$REPO" checkout -q -b feature
+    commit_file c.txt "nothing to see" "clean"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    calls_silent_on_input grep link-grep '[ "${1:-}" = -qi ] && [ "${2:-}" = -F ]' "./base.txt"
+    push_ref_through_hook_with_shim feature
+    fired link-grep "grep -qi -F"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the tip of refs/heads/feature (${sha:0:10}) would publish a personal identifier"* ]]
+    [[ "$output" == *"in the SYMLINK TARGET of link -> ./base.txt"* ]]
+    run remote_holds_ref refs/heads/feature
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the REPLACE REFS listing: a git silent on the replace-ref listing alone, over a clone that HAS a replace ref, leaves the scans reading what the push transfers (both read with replacement off): a clean tip replaced by a leaking commit publishes the clean one and never the leak, and a leaking tip replaced by a clean commit is refused on its own leak" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file leak.txt "seen on TESTHOST" "leak"
+    L="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" reset -q --hard "$BASE"
+    commit_file clean.txt "nothing to see" "clean"
+    C="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" replace "$C" "$L"                               # the pushed tip C reads as the leaking L wherever replacement is on
+    calls_silent_on git replace-refs '[ "${1:-}" = for-each-ref ] && [[ "${3:-}" == refs/replace/* ]]'
+    push_main_through_hook_with_shim
+    fired replace-refs "for-each-ref --format=%(refname) refs/replace/"
+    [ "$status" -eq 0 ]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$C" ]
+    run git -C "$TEST_DIR/remote.git" cat-file -e "$L"
+    [ "$status" -ne 0 ]                                           # the leak never reached the remote
+    git -C "$REPO" replace -d "$C" > /dev/null
+    git -C "$TEST_DIR/remote.git" update-ref refs/heads/main "$BASE"
+    git -C "$REPO" update-ref refs/remotes/origin/main "$BASE"
+    git -C "$REPO" update-ref refs/heads/main "$L"
+    git -C "$REPO" replace "$L" "$C"                               # the pushed tip is L itself, reading as the clean C wherever replacement is on
+    rm -f "$TEST_DIR/calls.replace-refs"
+    push_main_through_hook_with_shim
+    fired replace-refs "for-each-ref --format=%(refname) refs/replace/"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the tip of refs/heads/main (${L:0:10}) would publish a personal identifier in:"* ]]
+    [[ "$output" == *"leak.txt"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the TIP LISTING join against the read list: an awk silent on that join alone disarms that one gate while the listing and its other gates stand: through a real push over a hidden file the remote holds at the tip, the file is still named and the remote stays at its base" {
+    hidden_file_on_remote_then_clean_commit
+    calls_silent_on_text awk tip-listing-join 'listed[substr($0, i + 1)] = 1'
+    push_main_through_hook_with_shim
+    fired tip-listing-join 'listed[substr($0, i + 1)] = 1'
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that its diff attribute (unset) hides from the identifier scan, so the push is refused rather than scanned"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the TIP BLOBS of the -z listing: an awk silent on the tip's blob set alone sends every per-commit candidate to the byte judge (the safe side): through a real push over a hidden file the remote holds at the tip, the file is still named and the remote stays at its base" {
+    hidden_file_on_remote_then_clean_commit
+    calls_silent_on_text awk tip-blobs 'f[1] == "120000") print f[3]'
+    push_main_through_hook_with_shim
+    fired tip-blobs 'print f[3]'
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that its diff attribute (unset) hides from the identifier scan, so the push is refused rather than scanned"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the LISTING join of a commit against its verdicts: an awk silent on that join alone disarms that one gate while the listing and the verdicts stand: through a real push of a middle commit adding a hidden file, the file is still named and the remote stays at its base" {
+    hidden_file_in_middle_commit_after_base
+    calls_silent_on_text awk listing-join 'listed[$0] = 1'
+    push_main_through_hook_with_shim
+    fired listing-join 'listed[$0] = 1'
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: notes.txt in commit ${leak:0:10} is text that its diff attribute (unset) hides from the identifier scan, so the push is refused rather than scanned"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the ERR line of the scanner log: an awk silent on the ERR line's program alone, beside a scanner git that writes a line to stderr (so the log carries an ERR line and the scan comes up short), leaves the count line to judge: the push is refused on the short count and the remote never gets the branch" {
+    real_gitleaks
+    add_remote
+    commit_file probe.py "token = \"$(probe_token)\"" "a credential"
+    commit_file slack.txt "slack = \"$(probe_slack)\"" "another credential"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    gitleaks_git_noisy
+    calls_silent_on_text awk err-line '$2 == "ERR"'
+    push_main_through_hook_with_shim
+    fired err-line '$2 == "ERR"'
+    [ "$status" -ne 0 ]
+    [[ "$output" != *"gitleaks logged an error"* ]]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan of refs/heads/main (${sha:0:10}) covered "*" of the 2 commits with content to scan"* ]]
+    run remote_holds_main
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the RANGE probe of the credential scan: a git silent on the probe alone (the identifier scan off, so its listing of the same shape never runs) keeps the range, whose count and scan still run: through a real push of a credential the scanner names it, and the remote never gets the branch" {
+    real_gitleaks
+    export ROMP_PRIVATE_STRINGS="$TEST_DIR/no-such-denylist"
+    add_remote
+    commit_file probe.py "token = \"$(probe_token)\"" "a credential"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    calls_silent_on git range-probe '[ "${1:-}" = rev-list ] && [ "${3:-}" = --not ]'
+    push_main_through_hook_with_shim
+    fired range-probe "rev-list $sha --not --remotes"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: BLOCKED. gitleaks found a credential in a pushed commit."* ]]
+    run remote_holds_main
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the log.showRoot configuration read: a git silent on config --type=bool log.showRoot alone reads as the key unset and costs the advice line alone: through a real push the short scan is refused by the count arm, the advice absent, and the remote never gets the branch" {
+    r8b2_credential_in_root_scanner_without_root
+    calls_silent_on git showroot '[ "${1:-}" = config ] && [ "${2:-}" = --type=bool ] && [ "${3:-}" = log.showRoot ]'
+    push_main_through_hook_with_shim
+    fired showroot "config --type=bool log.showRoot"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan of refs/heads/main (${sha:0:10}) covered 1 of the 2 commits with content to scan"* ]]
+    [[ "$output" != *"while log.showRoot is false"* ]]
+    run remote_holds_main
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the diff attribute of a hidden path (check-attr): a git silent on check-attr alone leaves the refused line's tail open (both remedies printed): through a real push of a hidden file carrying the string the push is refused and the remote never gets the branch" {
+    add_remote
+    attributes 'notes.txt -diff'
+    commit_file notes.txt "seen on TESTHOST" "a banned string in a -diff file"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    calls_silent_on git check-attr '[ "${1:-}" = check-attr ]'
+    push_main_through_hook_with_shim
+    fired check-attr "check-attr -z diff -- notes.txt"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that git calls binary although its diff attribute could not be read (git check-attr answered nothing for the path asked), so whether an attribute of its path accounts for the verdict is unknown"* ]]
+    run remote_holds_main
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the diff driver's binary key: a git silent on config --type=bool diff.<driver>.binary alone leaves the label at the two facts: through a real push of a middle commit hiding a file carrying the string behind a driver, the push is refused and the remote stays at its base" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'notes.txt diff=zzdrv\n' > "$REPO/.git/info/attributes"
+    git -C "$REPO" config diff.zzdrv.binary true
+    commit_file notes.txt "seen on TESTHOST" "a banned string in a file git calls binary by its driver"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file notes.txt "remove it"
+    calls_silent_on git driver-key '[ "${1:-}" = config ] && [ "${2:-}" = --type=bool ] && [[ "${3:-}" == diff.*.binary ]]'
+    push_main_through_hook_with_shim
+    fired driver-key "config --type=bool diff.zzdrv.binary"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: notes.txt in commit ${leak:0:10} is text that git calls binary although its diff attribute reads zzdrv, so no attribute of its path accounts for the verdict"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the SIZE of a hidden blob, for the report: a git silent on the report's cat-file -s alone leaves the size out of the two-fact line: through a real push of a middle commit adding a text file over core.bigFileThreshold carrying the string, the push is refused and the remote stays at its base" {
+    r8b2_big_file_in_middle_commit
+    calls_silent_on git report-size "[ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = -s ] && [ \"\${3:-}\" = $blob ]"
+    push_main_through_hook_with_shim
+    fired report-size "cat-file -s $blob"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: big.txt in commit ${leak:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict (the blob is  bytes; core.bigFileThreshold is 100 in this clone's configuration)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the core.bigFileThreshold read, for the report: a git silent on config core.bigFileThreshold alone reads as the key unset in the two-fact line: through a real push of a middle commit adding a text file over the threshold carrying the string, the push is refused and the remote stays at its base" {
+    r8b2_big_file_in_middle_commit
+    calls_silent_on git report-threshold '[ "${1:-}" = config ] && [ "${2:-}" = core.bigFileThreshold ]'
+    push_main_through_hook_with_shim
+    fired report-threshold "config core.bigFileThreshold"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: big.txt in commit ${leak:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict (the blob is "*" bytes; core.bigFileThreshold is not set in this clone's configuration)"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the parent count re-read from pcount, for the report: an awk silent on the pcount program alone leaves the previous version unread: through a real push of a commit turning a binary file into text carrying the string, the push is refused on the two-fact line and the remote stays at its base" {
+    r8b2_binary_turned_text
+    calls_silent_on_text awk pcount '$1 == r { print $2; exit }'
+    push_main_through_hook_with_shim
+    fired pcount '$1 == r'
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: thing in commit ${leak:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict (the blob is"* ]]
+    [[ "$output" != *"the previous version of the file"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the rename source, for the report: a git silent on the report's diff-tree --raw -M alone leaves the previous version unnamed: through a real push of a rename made text carrying the string, the push is refused on the two-fact line and the remote stays at its base" {
+    r8b2_rename_twin
+    calls_silent_on git rename-source '[ "${1:-}" = diff-tree ] && [[ " $* " == *" --raw -M -z --root --no-commit-id "* ]]'
+    push_main_through_hook_with_shim
+    fired rename-source "diff-tree -r --raw -M -z --root --no-commit-id $leak"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: new.txt in commit ${leak:0:10} is text that git calls binary although its diff attribute reads set, so no attribute of its path accounts for the verdict (the diff read it as a rename, so the attribute of the path it came from counted too) (the blob is"* ]]
+    [[ "$output" != *"the previous version of the file"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the previous version's bytes, one-parent, for the report: a git silent on the parent's version read alone leaves the two-fact line: through a real push of a commit turning a binary file into text carrying the string, the push is refused and the remote stays at its base" {
+    r8b2_binary_turned_text
+    calls_silent_on git prev-version "[ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = blob ] && [[ \"\${3:-}\" == $leak^:* ]]"
+    push_main_through_hook_with_shim
+    fired prev-version "cat-file blob $leak^:thing"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: thing in commit ${leak:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict (the blob is"* ]]
+    [[ "$output" != *"the previous version of the file"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the previous version's bytes, a merge parent, for the report: a git silent on each parent's version read alone leaves the two-fact line: through a real push of a merge moving a text file carrying the string onto a binary file's path, the push is refused and the remote stays at its base" {
+    r8b2_merge_text_onto_binary
+    calls_silent_on git parent-version "[ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = blob ] && [[ \"\${3:-}\" == $merge^* ]]"
+    push_main_through_hook_with_shim
+    fired parent-version "cat-file blob $merge^1:bin.dat"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: bin.dat in commit ${merge:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict (the blob is"* ]]
+    [[ "$output" != *"the previous version of the file"* ]]
+    at_base
+}
+
+@test "round 8b2 table case: the root-commit probe, for the advice line: a git silent on rev-list --max-parents=0 alone costs the advice line alone: through a real push the short scan is refused by the count arm, the advice absent, and the remote never gets the branch" {
+    r8b2_credential_in_root_scanner_without_root
+    calls_silent_on git root-probe '[ "${1:-}" = rev-list ] && [ "${2:-}" = --max-parents=0 ]'
+    push_main_through_hook_with_shim
+    fired root-probe "rev-list --max-parents=0 $sha --not --remotes"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan of refs/heads/main (${sha:0:10}) covered 1 of the 2 commits with content to scan"* ]]
+    [[ "$output" != *"while log.showRoot is false"* ]]
+    run remote_holds_main
+    [ "$status" -ne 0 ]
+}
+
+@test "round 8b2 table case: the scanner's argument list (gitleaks_args): the scanner run on it silent (exit 0, nothing logged) leaves no count line, and the count arm refuses: through a real push of a credential the remote never gets the branch" {
+    unset ROMP_NO_GITLEAKS
+    add_remote
+    commit_file probe.py "token = \"$(probe_token)\"" "a credential"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    mkdir -p "$TEST_DIR/scanner"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [ "${1:-}" = git ]; then printf "%%s\\n" "gitleaks $*" >> %q; cat > /dev/null; exit 0; fi\n' "$TEST_DIR/calls.scanner"
+        printf 'exit 1\n'
+    } > "$TEST_DIR/scanner/gitleaks"
+    chmod 755 "$TEST_DIR/scanner/gitleaks"
+    export ROMP_GITLEAKS="$TEST_DIR/scanner/gitleaks"
+    mkdir -p "$TEST_DIR/shim"
+    push_main_through_hook_with_shim
+    fired scanner "gitleaks git "
+    fired scanner "--no-banner --redact -v --exit-code 2"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan of refs/heads/main (${sha:0:10}) reported no commit count, so what it read is unknown"* ]]
+    run remote_holds_main
+    [ "$status" -ne 0 ]
 }
