@@ -8668,9 +8668,12 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word, given on 2026-09-22
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools,
-upstream or tests alone (48 files, the ledger entry's where line; run 2026-09-23 at the head that carries the fixes ruled in
-the file review's round 12, where the merge-base is de06b8718, the fork's main the branch merged after those fixes for the
-round that reads them, and the listing is the branch's whole delta over it; the run at the head that carries the fixes ruled in
+upstream or tests alone (50 files, the ledger entry's where line; run 2026-09-23 at the head that carries the dress fixes ruled
+in the file review's round 13 (ui-1, extra6-1 and extra7-2), where the merge-base is de06b8718, the fork's main the branch merged
+before that round, and the listing is the branch's whole delta over it; the run at the head that carries the fixes ruled in the
+file review's round 12, from the same merge-base de06b8718, listed 48, before ui/webview/theme-parity.test.ts and
+ui/webview/real-viewer-leg.ts joined the delta in those dress fixes (the outbound line's contrast pair, and the launch options the
+open leg's hybrid twin hands the shared launcher); the run at the head that carries the fixes ruled in
 the file review's round 11, from the merge-base 4ae3b6659, the fork's main the branch merged for the file review's round 12,
 listed the same 48; the run at the head that carries the fixes ruled in the file review's round 10, from the merge-base
 53f9f4aa3, the fork's main the branch merged for the file review's round 11, listed the same 48; the run at the head that
@@ -8815,7 +8818,7 @@ that step in the vscode-extension job and the switch (ROMP_BROWSER_LEGS_REQUIRE,
 ui/webview/browser-legs-require.ts): where the tree carries none of the four it holds this sentence, where it carries all
 four it holds every leg to a roster line outside the exclusions and the roster's own tree test to exist, and a tree with
 some of the four it refuses, naming them (the file review's round 8, extra8-2: the legs were the feature's evidence and none of them ran where
-landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Seventeen standing suites were re-aimed, not undone:
+landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Eighteen standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
 (the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
@@ -8823,6 +8826,8 @@ ui/webview/file-view-figure-error-browser.test.ts (the label readers step past t
 ui/webview/fileview-parity.test.ts (the control's rules byte-equal in both sheets, and in the file review's round 10,
 correctness-5, the Outline button's census on parsed rules over every sheet a page of either host loads) and
 ui/webview/file-view-outline.test.ts (the same census, in the file review's round 10, correctness-5),
+ui/webview/theme-parity.test.ts (the outbound line's pair, --outbound-line over --bg at 3 to 1 in both themes of both sheets, and
+feed's evaluated count moved with it, in the file review's round 13, ui-1 with extra6-1),
 ui/webview/anchor-map-fallback-markup.test.ts (the stand-in's control list), and in the review
 ui/webview/file-view-notice.test.ts (its Escape cases run every keydown handler an open registers in the document's
 order, the capture phase first, since the trail's listener is an open's newest registration, and the close hooks'
