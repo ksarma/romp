@@ -545,8 +545,9 @@ opens a tab, as any web address does, and the trail stands). A
 picture in a rendered file that comes from a file or a web address has an
 **Open the picture** button at its top-right corner (top-left for a picture floated to
 the right), shown while the pointer is over the picture or the button holds the keyboard
-focus, that opens the picture on its own in the viewer, with Back returning you to the
-file at that place; a plain click on the picture does the same while the Comments panel is
+focus, and at all times on a phone or tablet and on a laptop with a touchscreen, that
+opens the picture on its own in the viewer, with Back returning you to the file at that
+place; a plain click on the picture does the same while the Comments panel is
 closed (with the panel open, a click offers a comment as before, and so does a Cmd-click
 on the picture on a mouse or trackpad, and a drag draws a rectangle unless it starts on
 the button, which takes the press), a Cmd-click (Ctrl on Windows and Linux) on the picture
@@ -563,8 +564,9 @@ nothing either; a `data:` picture, whose bytes are written into the file itself 
 does not open; a picture smaller than 48 pixels on either side (a badge, an inline icon),
 which the button would cover, and which a plain click still opens when no link holds it (a
 small picture from the web has the dashed border itself, on a mouse or trackpad while the
-pointer is over it and on a phone or tablet at all times, since its tooltip never shows
-there); and a picture inside a link that holds more than the picture (a caption beside
+pointer is over it, and at all times on a phone or tablet and on a laptop with a
+touchscreen, since a finger gets no tooltip); and a picture inside a link that holds more
+than the picture (a caption beside
 it), where a click follows the link (a link with no address left, or an anchor that only
 marks a place, is not a link a click can follow, so a picture inside it keeps its button
 and its tooltip, and a plain click opens it), while a picture that is all its link holds
