@@ -725,13 +725,13 @@ class FaultExcludesItsOwnTree(_Walk):
     discarded a found file whenever any fault occurred, so a fix to the walk alone did not reach the caller. Each road is
     driven under a real EACCES (a directory at mode 000; skipped as root, whom permission bits do not bind) and under an EIO
     by mock. The is_dir road exists where pathlib's is_dir re-raises an errno other than ENOENT, ENOTDIR, EBADF and ELOOP,
-    which is through 3.12, the kernel's interpreter; from 3.13 is_dir is os.path.isdir, which answers False on any OSError,
-    and on 3.10 pathlib stats through the os.stat it bound at import, so the EIO mock is not seen there: each is_dir case
-    asserts its interpreter's behaviour first, and where is_dir does not raise the entry is skipped at both heads. Two
-    controls hold at both heads: an unreadable sibling sorted after the holder is never reached, and with the file nowhere
-    (no holder) the lookup answers None with the fault, memoizes nothing and tells the running chat build the tree is
-    unreadable, on every call while the fault lasts: the fail-closed rule's cost, which _subagent_tree's docstring states
-    with the no-holder cases as its witness."""
+    which is before 3.14, the kernel's interpreter among them; from 3.14 is_dir is os.path.isdir, which answers False on
+    any OSError, and on 3.10 pathlib stats through the os.stat it bound at import, so the EIO mock is not seen there: each
+    is_dir case asserts its interpreter's behaviour first, and where is_dir does not raise the case has no raise to drive
+    and passes at both heads. Two controls hold at both heads: an unreadable sibling sorted after the holder is never
+    reached, and with the file nowhere (no holder) the lookup answers None with the fault, memoizes nothing and tells the
+    running chat build the tree is unreadable, on every call while the fault lasts: the fail-closed rule's cost, which
+    _subagent_tree's docstring states with the no-holder cases as its witness."""
 
     @contextlib.contextmanager
     def _untyped_entry(self, how):
@@ -762,15 +762,16 @@ class FaultExcludesItsOwnTree(_Walk):
             yield entry
 
     def _is_dir_premise(self, entry, how):
-        """This interpreter's is_dir on the entry under the fault: it raises through 3.12 (from 3.13 it is os.path.isdir,
-        which answers False on any OSError), except that on 3.10 the EIO mock is not seen (pathlib bound os.stat at import,
-        and the entry is a readable directory)."""
+        """This interpreter's is_dir on the entry under the fault. Before 3.14 is_dir stats the entry and re-raises any errno
+        but ENOENT, ENOTDIR, EBADF and ELOOP: 3.10 raises under the EACCES, and its pathlib does not see the EIO mock (it
+        stats through the os.stat it bound at import, and the entry is a readable directory); 3.11 to 3.13 raise under both.
+        From 3.14 is_dir is os.path.isdir, which answers False on any OSError, so it raises under neither."""
         try:
             entry.is_dir()
             raised = False
         except OSError:
             raised = True
-        expect = sys.version_info < (3, 13) and (how == "eacces" or sys.version_info >= (3, 11))
+        expect = sys.version_info < (3, 14) and (how == "eacces" or sys.version_info >= (3, 11))
         self.assertEqual(raised, expect, "premise: Path.is_dir %s on this interpreter under the %s fault"
                          % ("raises" if expect else "does not raise", how))
 
