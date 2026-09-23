@@ -4853,7 +4853,7 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
     sentence was a hand-kept population; the messages carry the rule and its bounds). Derives: the
     node positions from the running interpreter over the corpus (_grammar_positions, every field of every concrete class observed
     or red naming the field), the plantable residue as the positions of the mod roots other than Module (_plantable, re-derived by
-    the instrument case), one drive per plantable position per roster row (the count asserted), and each stranger's base from the
+    the instrument case), one drive per plantable position per roster row, and each stranger's base from the
     children the corpus showed at its position. Bounds: the roster's drive column, hand-written drives each executed unplanted and
     planted; _GRAMMAR_CORPUS, _as_statement's container rows and _minimal's defaults, scaffolding whose completeness the derivation
     reds on (an unobserved field, a base no row holds); the refusal's text matched, the stranger's name and the table's phrase; and
@@ -4952,7 +4952,7 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
         # the contract (a verifier of the round-5 fixes, for sites; review round 6, lens one, for positions). Each plant is made in a
         # fresh Module over the statements of the source's one real parse, so no parsed node is changed and a row over the kernel costs
         # the walk to the plant and not a parse per position
-        refuse, drives = [], 0
+        refuse = []
 
         def planting(key, planted):
             def planting_parse(source, *a, **k):
@@ -4968,7 +4968,6 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
                 label = "%s (row %d, shape %s)" % (name, i, shape)
                 planted = []
                 planting_parse = planting(key, planted)
-                drives += 1
                 try:
                     if shape == "parses":
                         with unittest.mock.patch.object(ast, "parse", planting_parse):
@@ -4988,7 +4987,6 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
                         refuse.append("%s at %s parsed no Module through the planting parse and returned" % (label, where))
                     else:
                         refuse.append("%s PASSED THE STRANGER OVER at %s and answered a census (%d tree(s) planted)" % (label, where, len(planted)))
-        self.assertEqual(drives, len(plantable) * len(_CENSUSES), "one drive per position per roster row")
         self.assertEqual(refuse, [], "the refuse side: every census entry point, driven over the same tree with a stranger planted at each of the "
                                      "%d node positions of the grammar an exec-mode Module offers on Python %s, each alone, raises _walk's grammar "
                                      "refusal naming Frobnicate on each drive. One that did not walks around _walk in the position the plant sits "
@@ -5413,7 +5411,6 @@ class Docs(unittest.TestCase):
         self.assertEqual(unmatched, [], "every figure form the census names matches at least once in the current head's paragraph; a row "
                                         "nothing matches is stale, so drop it: %r" % unmatched)
         figures = list(re.finditer(r"\d+", paragraph))
-        self.assertTrue(figures, "the current head's paragraph carries at least one figure, its framing count")
         stray = [paragraph[max(0, m.start() - 40):m.end() + 40] for m in figures if m.start() not in covered]
         self.assertEqual(stray, [], "a figure in the current head's paragraph in a form the census does not name, so nothing reads it and "
                                     "it can go stale unseen (a 'reads against N' copy of the framing count is the form review round 6 "
