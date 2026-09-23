@@ -421,6 +421,32 @@ test('hostSheets: a helper <style> run formatted after its closing literal (a % 
   const d = tempTree(pySrc('def _spin(cid):', '    return "<style>%s</style>" % cid', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
   try { assert.throws(() => hostSheets(d), /_spin/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
 });
+// The formatted-run pin above, the file review's round 11, holds the operator right after the closing literal and no other stand:
+// the file review's round 12, kernel-1 with extra8-1, found the read decoding the kernel's house shape, `("..." "...") % (...)`,
+// silently to its placeholders. Four shapes the widened scan refuses (the remainder of the helper's body after the closing
+// literal, its literals and comments blanked), each red before it: the run decoded to `a{b:%s}` or `a{{b:{0}}}` and the sheet
+// joined the population with no throw. The control after them arms the blanking: a % inside a comment or a later literal is not
+// the operator.
+test('hostSheets: a helper <style> run formatted by a % applied after the closing paren of its parenthesised run fails by name, the kernel\'s house shape (the file review\'s round 12, kernel-1 with extra8-1: the read had refused the operator only right after the literal, so this run decoded to its placeholders silently; a property pin over a synthetic tree, red before the widened scan)', () => {
+  const d = tempTree(pySrc('def _spin(cid):', '    return ("<style>a{b:%s}</style>"', '            "<div>%s</div>") % (cid, cid)', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.throws(() => hostSheets(d), /_spin.*formatted/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+test('hostSheets: a helper <style> run formatted by a % on its own line inside the parens after further literals fails by name, the chat page\'s shape (the file review\'s round 12, extra8-1, the sibling a regex over the tail missed; a property pin over a synthetic tree, red before the widened scan)', () => {
+  const d = tempTree(pySrc('def _spin(cid):', '    return ("<style>a{b:%s}</style>"', '            "<div>%s</div>"', '            % (cid, cid))', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.throws(() => hostSheets(d), /_spin.*formatted/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+test('hostSheets: a helper <style> run formatted through a `)` on the line after a literal carrying a trailing # comment fails by name (the file review\'s round 12, extra8-1, the second sibling a regex over the tail missed; a property pin over a synthetic tree, red before the widened scan)', () => {
+  const d = tempTree(pySrc('def _spin(cid):', '    return ("<style>a{b:%s}</style>"', '            "<div>%s</div>"   # the pane', '            ) % (cid, cid)', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.throws(() => hostSheets(d), /_spin.*formatted/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+test('hostSheets: a helper <style> run formatted by .format() applied after the closing paren of its parenthesised run fails by name, the % shape\'s twin (the file review\'s round 12, kernel-1 with extra8-1; a property pin over a synthetic tree, red before the widened scan)', () => {
+  const d = tempTree(pySrc('def _spin(cid):', '    return ("<style>a{{b:{0}}}</style>"', '            "<div>{0}</div>").format(cid)', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.throws(() => hostSheets(d), /_spin.*formatted/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+test('hostSheets control: a % inside a trailing comment or inside a later literal after the closing literal is not the operator, so the run decodes as before (the file review\'s round 12, kernel-1 with extra8-1: the scan blanks literals and comments before it looks; a property pin over a synthetic tree, green before and after, red under a scan that does not blank)', () => {
+  const d = tempTree(pySrc('def _spin(cid):', '    return ("<style>a{b:c}</style>"   # 100% of the pane', '            "<div style=\'width:50%\'>" + cid + "</div>")', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.deepEqual(hostSheets(d).map((x) => [x.name, x.css]), [['kernel/kernel.py _spin', 'a{b:c}']]); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
 test('hostSheets: a helper <style> run holding a second block fails by name rather than reading the markup between the blocks as a sheet (the file review\'s round 11, extra7-1; a property pin over a synthetic tree, red before the refusal)', () => {
   const d = tempTree(pySrc('def _spin(cid):', '    return "<style>a{b:c}</style><div></div><style>d{e:f}</style>"', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
   try { assert.throws(() => hostSheets(d), /_spin/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
