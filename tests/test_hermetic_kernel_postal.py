@@ -3062,6 +3062,8 @@ class HermeticKernelPostal(unittest.TestCase):
                 ('subprocess.run(["bin/romp", "up"])', "bin/romp", "(c), an argv: up is a verb that starts a kernel"),
                 ('subprocess.Popen("bin/romp up", shell=True)', "bin/romp", "(c), a shell string: up is a verb that starts a kernel"),
                 ('subprocess.run("bin/romp", shell=True)', "bin/romp", "(c): the CLI with no word after it has no verb"),
+                ('subprocess.run("echo bin/romp help", shell=True)', "bin/romp", "(c): the CLI as an argument of another "
+                 "command, no command word"),
                 ('subprocess.run("bin/romp >/dev/null help", shell=True)', "bin/romp", "(c): the word after the CLI is a "
                  "redirection, no verb"),
                 ("subprocess.run(\"bin/romp help 'bin/romp' up\", shell=True)", "bin/romp", "(c): a CLI word that is no command "
@@ -3081,6 +3083,10 @@ class HermeticKernelPostal(unittest.TestCase):
             accounts = [x for _, m, x in _exclusion_accounts(plant, verbs_hold) if m == match]
             self.assertTrue(accounts and not any(accounts), "%s: the regex matches %r at a call and no exclusion takes it, "
                             "judged alone: %r for %s" % (what, match, accounts, plant))
+        watch = 'subprocess.run(["bin/romp", "watch", "--cmd", "bin/romp up"])'
+        self.assertEqual([x for _, m, x in _exclusion_accounts(watch, verbs_hold) if m == "bin/romp"], ["c", None],
+                         "(c) takes the CLI's match in its command word, whose verb watch starts no kernel, and not the "
+                         "match in a later element, which that verb does not cover (a command it is handed): " + watch)
         for plant, what in (('subprocess.run("bin/romp $VERB", shell=True)', "an expansion"),
                             ('subprocess.run("bin/romp ; true", shell=True)', "an operator"),
                             ('subprocess.run(["bin/romp", VERB])', "an element that is no string")):
