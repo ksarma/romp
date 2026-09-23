@@ -49,8 +49,14 @@ This module holds five things, and it never skips: a pin that skips reports gree
    the check: a run line that never spells pytest (a `$RUNNER` set elsewhere, `make test`, a YAML alias such as
    `run: *cmd` whose anchor another line carries), a pytest run by a script or action a step calls, and every other
    workflow file under .github/workflows/. The flag half
-   keys on the spelling `-p no:anyio` with one space, the switch half on the merged value reading 1, and their
-   messages say so. The pin below does not
+   keys on the spelling `-p no:anyio` with one space, the switch half on the merged value reading exactly 1 (a quoted
+   value read verbatim, so `"1 "` is not 1), and their messages say so. The switch half reads what the run text does
+   to the variable only by its spelling (round 4's ruling, 2026-09-23): a step whose run text spells ROMP_SDK_REQUIRE
+   anywhere other than as a VAR=value prefix on its pytest command (an unset, export, declare, env -u or assignment, on
+   an earlier line or before the command on its own line; a comment too), or whose job's other run texts spell it (a
+   write to $GITHUB_ENV sets it for the steps after), is `unparsed`, red until read, since the parser does not run the
+   shell. Outside that read: a write of the switch by a script or action a step calls, and a write to $GITHUB_ENV that
+   does not spell its name (a dump of the environment, a file copied in). The pin below does not
    catch a bad transitive release: a red that no commit explains is one, and the comment says so.
 2. The derivation, executed rather than read: the step's own sed run at the repo root prints one well-formed version
    equal to the constant read as a regex over the file (the installer's and the bats test's read) and as the attribute
@@ -722,8 +728,11 @@ def _top_sections(src):
 
 def _env_block(text, env_indent):
     """The `env:` mapping whose `env:` line sits at `env_indent` spaces: {name: value}, the value's surrounding quotes
-    stripped (`"1"` reads as `1`) and a trailing ` # comment` dropped. Comment and blank lines inside the block are
-    skipped. A value that is a `${{ }}` expression is kept as its text, which is never `1`: the safe side."""
+    stripped (`"1"` reads as `1`) and a trailing ` # comment` dropped. A quoted value is kept verbatim inside its quotes,
+    whitespace included, as YAML keeps it (`"1 "` reads as `1 `, which is not 1; both runtime readers of the switch
+    compare with == "1"); only an unquoted plain value is stripped (review round 4, 2026-09-23: the strip reached inside
+    quotes, and `"1 "` read as the switch on). Comment and blank lines inside the block are skipped. A value that is a
+    `${{ }}` expression is kept as its text, which is never `1`: the safe side."""
     pad = " " * env_indent
     m = re.search(r"^%senv:[ \t]*(?:#.*)?\n((?:%s .*\n|[ \t]*\n)+)" % (pad, pad), text, re.M)
     out = {}
@@ -731,7 +740,8 @@ def _env_block(text, env_indent):
         for line in m.group(1).splitlines():
             km = re.match(r"""^\s*([A-Za-z_][A-Za-z0-9_]*):[ \t]*(?:"([^"]*)"|'([^']*)'|([^#]*?))[ \t]*(?:#.*)?$""", line)
             if km:
-                out[km.group(1)] = next(v for v in km.groups()[1:] if v is not None).strip()
+                double, single, plain = km.group(2), km.group(3), km.group(4)
+                out[km.group(1)] = double if double is not None else single if single is not None else plain.strip()
     return out
 
 
@@ -874,8 +884,11 @@ def pytest_invocations(src, read=None):
     OTHER steps of the same job that carry this step's name: GitHub Actions does not require unique step names, and
     the listing and every report here key on (job, step name), so a shared name is `ambiguous` in verdict and red
     until one step is renamed; empty for a unique name and for an unnamed step, which cannot be listed); plus, for a
-    command that mentions pytest without being one the parser reads or a pip install, a dict with `unparsed` set
-    to the reason and args None. `read`, when a list is given, receives {first, last, text} for every command line the
+    command that mentions pytest without being one the parser reads or a pip install, and for a pytest command in a
+    step whose run text spells ROMP_SDK_REQUIRE other than as a VAR=value prefix on its pytest command, or whose job's
+    other run texts spell it (keyed on the spelling, comments included; the env merge reads the declared scopes, and
+    an unset, export or assignment in the shell, or a write to $GITHUB_ENV in an earlier step, changes what pytest
+    starts with), a dict with `unparsed` set to the reason and args None. `read`, when a list is given, receives {first, last, text} for every command line the
     parser read in a step's run, row or not (pytest_line_census judges the pip exclusion on that text).
     A text parse over the file's own indentation (top-level keys at column 0, jobs at 2, job keys at 4, steps at 6,
     step keys at 8, env keys and run block lines at 10), the way this file's other pins and tests/test_ci_bats_bound.py
@@ -905,6 +918,7 @@ def pytest_invocations(src, read=None):
         steps = list(STEP_START_RE.finditer(jtext))
         parsed = []
         job_runs = []
+        run_spellings, prefix_spellings, step_names = {}, {}, {}
         for k, sm in enumerate(steps):
             send = steps[k + 1].start() if k + 1 < len(steps) else len(jtext)
             # the `- ` of the list item spaced out, so every step key, the first included, sits at indent 8 and a
@@ -922,6 +936,7 @@ def pytest_invocations(src, read=None):
                 continue
             run_text = "".join(t + "\n" for _o, t, _e in lines)
             job_runs.append(run_text)
+            run_spellings[k], prefix_spellings[k], step_names[k] = run_text.count(SWITCH), 0, step
             j = 0
             while j < len(lines):
                 off, cmd, last = lines[j]
@@ -952,11 +967,31 @@ def pytest_invocations(src, read=None):
                     hit = PYTEST_CMD_RE.match(command)
                     if hit:
                         inv_env = dict(env)
-                        inv_env.update(INLINE_ENV_RE.findall(hit.group("env")))
+                        prefixes = INLINE_ENV_RE.findall(hit.group("env"))
+                        inv_env.update(prefixes)
+                        prefix_spellings[k] += sum(1 for name, _value in prefixes if name == SWITCH)
                         parsed.append(dict(base, env=inv_env, args=hit.group("args"), unparsed=None))
                     elif not PIP_INSTALL_RE.match(command):
                         parsed.append(dict(base, env=dict(env), args=None, unparsed="a form the parser does not read as a command"))
         for inv in parsed:
+            # what the run block does to the switch (review round 4, 2026-09-23): the env merge above reads the declared
+            # scopes alone, so a step whose run text spells the switch anywhere but as a VAR=value prefix on its pytest
+            # command (an unset, export, declare, env -u or assignment, on an earlier line or before the command on its
+            # own line), or whose job's other run texts spell it (a write to $GITHUB_ENV reaches the steps after it), is
+            # unparsed: the parser does not run the shell, so it cannot say what value pytest starts with
+            k = inv["step_index"]
+            if inv["unparsed"] is None:
+                others = [step_names[j] for j in sorted(run_spellings) if j != k and run_spellings[j]]
+                if run_spellings[k] > prefix_spellings[k]:
+                    inv["unparsed"] = ("the step's run text spells %s other than as a VAR=value prefix on its pytest command "
+                                       "(keyed on the spelling, comments included): an unset, export, declare, env -u or "
+                                       "assignment there sets what pytest runs with, whatever the env: scopes say" % SWITCH)
+                    inv["args"] = None
+                elif others:
+                    inv["unparsed"] = ("another step of the job spells %s in its run text (%s; keyed on the spelling, "
+                                       "comments included): a write to $GITHUB_ENV there sets it for the steps after, "
+                                       "whatever the env: scopes say" % (SWITCH, ", ".join(repr(o) for o in others)))
+                    inv["args"] = None
             inv["job_run"] = "".join(job_runs)
             inv["namesakes"] = sorted(o["line"] for o in parsed if o["step"] == inv["step"] and o["step_index"] != inv["step_index"]
                                       and inv["step"] != UNNAMED)
@@ -1079,7 +1114,9 @@ def invocations_by_key(found):
 
 def verdict(inv):
     """'ok': the args carry -p no:anyio and the env sets ROMP_SDK_REQUIRE to 1; 'listed': the flag, no switch, and
-    (job, step) in SWITCH_LISTED; 'unparsed': a pytest mention the parser did not read as a command; 'ambiguous': a
+    (job, step) in SWITCH_LISTED; 'unparsed': a pytest mention the parser did not read as a command, or a command whose
+    step spells the switch in its run text other than as a prefix on it, or whose job's other steps spell it in theirs
+    (pytest_invocations); 'ambiguous': a
     named step whose name another pytest-running step of the job shares, so the (job, step name) key names two steps
     (red whatever the invocations carry: a listing under that key would excuse the other step too); 'unlisted':
     anything else, the failure this check exists for (the flag missing has no listing that excuses it)."""
@@ -1468,9 +1505,70 @@ class PopulationCheckReds(unittest.TestCase):
         new = self._new(other)
         self.assertEqual([verdict(i) for i in new], ["unlisted"], "another variable's prefix is not the switch")
         self.assertEqual(new[0]["args"].strip(), "tests/test_a.py -q -p no:anyio")
-        # an export earlier in the block is not read into the env: the safe side, red rather than assumed
+        # an export earlier in the block is unparsed, not unlisted (review round 4, 2026-09-23): the parser does not run
+        # the shell, and an export writes whatever value it names, so the step reads red until the switch moves to an
+        # env: key or a prefix on the command. Until then an export of 1 read unlisted and called that the safe side,
+        # which held for 1 and not for an export of 0 after a step env of 1, which read ok
         export, first = self._with_step_in_shell_job('      - name: Exported (pytest)\n        run: |\n          export %s=1\n          python -m pytest tests/test_a.py -q -p no:anyio\n' % SWITCH)
-        self.assertEqual([verdict(i) for i in self._new(export)], ["unlisted"])
+        self.assertEqual([verdict(i) for i in self._new(export)], ["unparsed"])
+
+    def test_a_quoted_switch_value_is_read_verbatim_so_one_with_a_space_is_not_1(self):
+        # both runtime readers compare with == "1", and YAML keeps a quoted scalar's spaces: `"1 "` and `' 1'` reach
+        # pytest as "1 " and " 1", which turn the switch off. Until 2026-09-23 _env_block stripped inside the quotes and
+        # read both as 1, ok. An unquoted plain value is stripped, as YAML strips it, and still reads 1.
+        for value, read in (('"1 "', "1 "), ("' 1'", " 1")):
+            with self.subTest(value=value):
+                src, first = self._with_step_in_shell_job('      - name: Quoted switch (pytest)\n        env:\n          %s: %s\n'
+                                                          '        run: python -m pytest tests/test_a.py -q -p no:anyio\n' % (SWITCH, value))
+                new = self._new(src)
+                self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in new], [(read, "unlisted")], [_describe(i) for i in new])
+                self.assertIn("lacks ROMP_SDK_REQUIRE=1", _describe(new[0]))
+        for value in ('"1"', "'1'", "1", "1   # a trailing comment"):
+            with self.subTest(value=value):
+                src, first = self._with_step_in_shell_job('      - name: Quoted switch (pytest)\n        env:\n          %s: %s\n'
+                                                          '        run: python -m pytest tests/test_a.py -q -p no:anyio\n' % (SWITCH, value))
+                self.assertEqual([verdict(i) for i in self._new(src)], ["ok"], "the control: %s reads 1" % value)
+
+    def test_a_run_block_that_unsets_exports_or_assigns_the_switch_is_unparsed(self):
+        # tests-3 and extra4-3 (review round 4, 2026-09-23): with a step env of "1", an unset, an export of 0 or a bare
+        # assignment of 0 in the run text, on an earlier line or before the pytest command on its own line, read ok
+        # while the shell handed pytest no switch or 0. The switch spelled in the run text anywhere but as a prefix on
+        # the pytest command is unparsed now, and the message says it keys on the spelling
+        env = '        env:\n          %s: "1"\n' % SWITCH
+        for label, earlier, same_line in (
+                ("unset", "unset %s" % SWITCH, "unset %s && " % SWITCH),
+                ("an export of 0", "export %s=0" % SWITCH, "export %s=0; " % SWITCH),
+                ("a bare assignment of 0", "%s=0" % SWITCH, "%s=0 && " % SWITCH)):
+            for where, run in (("on an earlier line", "        run: |\n          %s\n          python -m pytest tests/test_a.py -q -p no:anyio\n" % earlier),
+                               ("on the pytest line", "        run: %spython -m pytest tests/test_a.py -q -p no:anyio\n" % same_line)):
+                with self.subTest(form=label, where=where):
+                    src, first = self._with_step_in_shell_job("      - name: Rewritten switch (pytest)\n" + env + run)
+                    new = self._new(src)
+                    self.assertEqual([verdict(i) for i in new], ["unparsed"], "%s %s: %r" % (label, where, [_describe(i) for i in new]))
+                    self.assertIn("spells ROMP_SDK_REQUIRE other than as a VAR=value prefix on its pytest command (keyed on "
+                                  "the spelling", _describe(new[0]))
+                    self.assertIn("python -m pytest tests/test_a.py", src.splitlines()[new[0]["line"] - 1], _describe(new[0]))
+        # the prefix on the command itself is read, and stays the one spelling that is not unparsed
+        src, first = self._with_step_in_shell_job("      - name: Prefixed switch (pytest)\n" + env +
+                                                  "        run: %s=0 python -m pytest tests/test_a.py -q -p no:anyio\n" % SWITCH)
+        self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in self._new(src)], [("0", "unlisted")])
+
+    def test_a_pytest_step_after_a_step_that_writes_the_switch_to_github_env_is_unparsed(self):
+        # a write to $GITHUB_ENV sets the variable for the steps after it, so a pytest step whose job's other run texts
+        # spell the switch is unparsed: here the job's env sets it to 1 and an earlier step writes 0, and the step read
+        # ok until 2026-09-23. The message names the step that spells it
+        setter = '      - name: Write the switch\n        run: echo "%s=0" >> "$GITHUB_ENV"\n' % SWITCH
+        runner = "      - name: After the write (pytest)\n        run: python -m pytest tests/test_a.py -q -p no:anyio\n"
+        src, first = self._with_step_in_shell_job(setter + runner)
+        src = self._with_shell_job_env(src)
+        new = self._new(src)
+        self.assertEqual([(i["step"], verdict(i)) for i in new], [("After the write (pytest)", "unparsed")], [_describe(i) for i in new])
+        self.assertEqual(src.splitlines()[new[0]["line"] - 1].strip(), "run: python -m pytest tests/test_a.py -q -p no:anyio")
+        self.assertIn("another step of the job spells ROMP_SDK_REQUIRE in its run text ('Write the switch'; keyed on the "
+                      "spelling", _describe(new[0]))
+        # the control: without the writing step the same job env makes it ok
+        control = self._with_shell_job_env(self._with_step_in_shell_job(runner)[0])
+        self.assertEqual([verdict(i) for i in self._new(control)], ["ok"])
 
     def test_the_switch_without_the_flag_and_the_flag_without_the_switch_are_both_unlisted(self):
         half_a = ('      - name: Half A (pytest)\n        env:\n          ROMP_SDK_REQUIRE: "1"\n'
