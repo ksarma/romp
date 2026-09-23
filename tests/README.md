@@ -68,8 +68,9 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   child or in process through `pytest.main`, block with `-p no:anyio`, so no
   pytest process that `tests/test_ci_sdk_pin.py` reads loads a plugin the box's
   default run does not, unless something loads anyio's plugin again by its
-  module name (`-p anyio.pytest_plugin`, `PYTEST_PLUGINS`, `plugins=` on
-  `pytest.main`), which the module does not read (the step's comment in
+  entry-point name or its module name (`-p anyio` or `-p anyio.pytest_plugin`
+  after the flag, `PYTEST_PLUGINS`, `plugins=` on `pytest.main`), which the
+  module does not read (the step's comment in
   `ci.yml` has the reasons and the measurement; the module holds the flag on
   both populations, the workflow's lines and the launchers under `tests/` in the
   forms its launcher census reads, and its docstring names what that census
@@ -89,7 +90,7 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   without it the header reads `anyio` beside `timeout` and the run loads a plugin
   that neither the box's default run nor any cell's pytest process that
   `tests/test_ci_sdk_pin.py` reads does, where nothing loads it again by its
-  module name.
+  entry-point or module name.
   Under pytest-xdist (`python3 -m pytest tests/ -n 4`) two import-time effects of
   `tests/test_host_transport.py` decide what a red means. It puts that same SDK venv
   on `sys.path` at import (the kernel's own idiom), and every worker imports every

@@ -149,25 +149,27 @@ jobs:
         # box venvs carry no anyio; the one box road that would load it, tests/README.md's PYTHONPATH recipe,
         # which puts that site on the path before pytest starts, passes the same flag), so no pytest process
         # the two checks below read loads a plugin the box's default run does not, unless something loads
-        # anyio's plugin again by its module name (-p anyio.pytest_plugin, PYTEST_PLUGINS, plugins= on
-        # pytest.main), which neither check reads: the flag is on both of this
-        # file's pytest lines and on every pytest the suite starts in the cell's interpreter in a form the
-        # launcher census reads (tests/test_ci_sdk_pin.py holds both populations, this file's by its population
+        # anyio's plugin again by its entry-point name or its module name (-p anyio or -p anyio.pytest_plugin
+        # after the flag, PYTEST_PLUGINS, plugins= on pytest.main), which neither check reads: the flag is on
+        # both of this file's pytest lines and on every pytest the suite starts in the cell's interpreter in a
+        # form the launcher census reads (tests/test_ci_sdk_pin.py holds both populations, this file's by its population
         # check and the suite's by its launcher census, which reads argv literals under tests/, the positional
         # arguments of asyncio.create_subprocess_exec and of the os.exec and os.spawn l forms, and an in-process
         # pytest.main, pytest.console_main or _pytest.config.main by name, alias or import: a pytest command in
         # a constant string or f-string written at the call and handed to subprocess, os.system or os.popen,
-        # asyncio.create_subprocess_shell, shlex.split or a shell's -c is red until spelled as an argv; a string
-        # anywhere else, or one held in a variable or built with %, + or .format, is outside the read, as is an
-        # argv assembled one element at a time and any call, string or in process, reached through a name the
-        # census does not resolve (tuple unpacking, a conditional expression, a parameter default, getattr,
-        # importlib or runpy, among others). The two plugin sets are not equal, and this
+        # asyncio.create_subprocess_shell, shlex.split or a shell's -c is red until spelled as an argv, and so is
+        # a call through a name it cannot resolve (in a comprehension in a class body that binds the name, or
+        # one a star import from a module it does not read may bring); a string anywhere else, or one held in a
+        # variable or built with %, + or .format, is outside the read, as is an argv assembled one element at a
+        # time and any other call, string or in process, reached through a name the census does not resolve
+        # (tuple unpacking, a conditional expression, a parameter default, a class or instance attribute,
+        # getattr, importlib or runpy, among others). The two plugin sets are not equal, and this
         # comment does not say they are: the box's
         # default run loads pytest-xdist's two plugins, which no cell installs. Nothing under tests/ is marked
         # anyio or imports the one thing the plugin serves, the SDK's own pytest-marked conformance suite
         # claude_agent_sdk.testing, so the plugin does no work here; and blocked in every pytest process the
-        # two checks read where nothing loads it again by module name, a bad anyio pytest plugin cannot fail
-        # one at pytest startup before a test runs.
+        # two checks read where nothing loads it again by its entry-point or module name, a bad anyio pytest
+        # plugin cannot fail one at pytest startup before a test runs.
         # Unblocked in a child it did: a synthetic broken anyio/pytest_plugin.py in a CI-shaped venv red tests
         # in each of the six modules whose pytest children lacked the flag, none of which imports the SDK
         # (2026-09-20, before the children gained it). A bad anyio itself, not its plugin, still surfaces
@@ -232,14 +234,17 @@ jobs:
           # than as that prefix (an unset, an export, an assignment), or whose job's other run blocks
           # spell it (a write to $GITHUB_ENV reaches the steps after), is red until read, and so is any
           # other line here that spells the switch outside an env: key line it reads (an aliased or flow
-          # env:, a quoted or spaced key, a continued value, a step's shell: or a job's defaults). Any
+          # env:, a quoted or spaced key, a continued or block-scalar value, a key-shaped line inside another
+          # key's block scalar, a step's shell: or a job's defaults). Any
           # write of the switch that does not spell its name is outside it: in a run block (env -i, an
           # indirect unset, a loop over the environment), in a shell: or defaults key, by a script or
           # action a step calls, or to $GITHUB_ENV. The check reads this file's text:
-          # every line here that spells pytest, outside a comment or a name: key and other than a pip
-          # install, is read as a command or is red until it is read, whatever its layout (its line
-          # census), and so is a job key it does not read; a run line that never spells pytest, a pytest
-          # run by a script or action a step calls, and the other workflow files are outside it.
+          # every line here that spells pytest, outside a comment or a name: key's own line and other than
+          # a pip install, is read as a command or is red until it is read, whatever its layout (its line
+          # census; a name continued onto a line that spells pytest is red there too: reword it), and so
+          # is a job key it does not read; it does not read YAML anchors, aliases or merge keys or a step
+          # in flow style, and each is red at its line; a run line that never spells pytest, a
+          # pytest run by a script or action a step calls, and the other workflow files are outside it.
           ROMP_SDK_REQUIRE: "1"
           # The free-threaded cell runs with the GIL off, stated rather than defaulted (a 't'
           # build disables it by default, and an extension that lacks free-threading support
