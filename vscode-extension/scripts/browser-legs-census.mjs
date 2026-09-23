@@ -109,15 +109,25 @@
 //              specifier that is not a string literal and folds through no closed form; a computed member with a name it
 //              cannot fold on a playwright or launcher binding or load (`require("playwright")[k]` where k folds through no
 //              closed form, bound or where it stands); the inBrowser binding used as a value, not called (an
-//              initializer `const f = inBrowser` and a default value `{ x = inBrowser }` included; the exempt uses are the
-//              NAME position of a declaration or import specifier and an assignment's target); the launcher's whole-module or
+//              initializer `const f = inBrowser` and a default value `{ x = inBrowser }` included; the exempt uses are the name,
+//              property-name and type positions listed for the module binding below, judged after the same peel); the launcher's whole-module or
 //              default binding handed on as a value (aliased, destructured, passed as an argument, called as a function or
 //              constructed with new, which the launcher's module is not, read for inBrowser
 //              without a call, `.bind` included, handed to a promise callback through .then, .catch or .finally, read for a
 //              default member, awaited into a name, or read as an operand of a conditional, logical or other binary expression
 //              on either side, `leg ?? null`, `null ?? leg`, `leg !== null`, where an assignment's target is the one exempt
-//              operand position; reading another member off it is not a hand-on, and the refusal names
-//              the position the line holds); the launcher loaded where it stands and handed on through .then, .catch,
+//              operand position, or aliased by a dotted name outside a type, `import ib = leg.inBrowser`; reading another member
+//              off it is not a hand-on, and the refusal names the position the line holds; the exempt positions, for the inBrowser
+//              binding, the module binding and the requireCjs loader alike, are a NAME position, where the identifier is what the
+//              parent declares or labels (a declaration, an import specifier or binding element, an assignment's target, and
+//              since round 5 a class member, an accessor, an interface member, an enum member or a type parameter spelled like the
+//              binding, and a label with its break or continue), a property name, and a type position (a type query, a type
+//              reference, and a dotted name whose chain roots in one, `leg.Opened`, `typeof leg.pageHtml`; the same dotted name
+//              under an import = declaration aliases a value and stays refused, the gate that keeps that alias from going silent);
+//              a computed name and a member's initializer are not name positions and stay refused; and the reference is read up
+//              through parentheses, !, as, satisfies and an angle-bracket type assertion before its position is judged, so
+//              `(leg satisfies object).pageHtml()` and `(<any>leg).pageHtml()` are member reads and `(requireCjs satisfies
+//              Function)(x)` is a call); the launcher loaded where it stands and handed on through .then, .catch,
 //              .finally or .default; the launcher's requireCjs loader handed on as a value, not called (the named import
 //              aliased to a name, or the member read off a whole-module or default binding or off the load where it stands
 //              without a call: a load made through the alias elsewhere is unread); any other loader the walker knows by name
@@ -166,8 +176,9 @@
 // promise members by name); a load in any other position (returned from a wrapper, passed as an argument, held in a class
 // field, an object property or an array, read for inBrowser without a call, read for a default member) is refused naming
 // the line and the position. (3) Every reference to a launcher binding that can carry inBrowser onward (the inBrowser
-// binding, the whole module, its default) is one the walker READ: a call it counted, the name position of a declaration, a
-// property name, a type position, the object of a member other than inBrowser, then, catch, finally or default, or a
+// binding, the whole module, its default) is one the walker READ: a call it counted, a name position (of a declaration, a class,
+// interface or enum member, an accessor, a type parameter or a label), a property name, a type position, the object of a member
+// other than inBrowser, then, catch, finally or default, or a
 // computed member it refused by name; a reference in any other position is refused as a value use by the
 // walker, and one the walker classified as neither is refused by the invariant itself. Each refusal names the line and what
 // was resolved. The invariant compares two states of the parse (what it resolved, what it recorded), so no string trips it
@@ -240,7 +251,9 @@
 // wrapper function's return value is not a launch to the walker; and the census reads a browser only through the playwright
 // packages it names (PW_PACKAGES, and a subpath) and the shared launcher, so a module that reaches one without spelling either
 // (another driver package such as puppeteer, a browser binary it spawns, a driver source whose package name arrives at run
-// time, `${process.env.PKG}`) is unread by the walker: class none, no refusal; the owner names the package in the source or
+// time, `${process.env.PKG}`, a driver held in a separate file of the tree that the test spawns by path, a spawn being no load
+// where an import of that same file is refused as loading a module that names the package) is unread by the walker: class
+// none, no refusal; the owner names the package in the source or
 // adds it to PW_PACKAGES. None is a spelling list: each is a rule with a stated boundary, planted with its outcome recorded
 // (tests/fixtures/browser-legs-plants), and the census test prints the counts the tree gives them (and how many modules of
 // the tree the test modules load it read).
@@ -912,7 +925,19 @@ export function classify(ts, file, src, opts = {}) {
   const carriesInBrowser = (b) => b !== null && b.module === "launcher" && (b.member === "inBrowser" || b.member === null || b.member === "default");
   /** The position a launcher binding is handed on in, for the refusal's parenthetical: read from the reference's parent so the
    *  sentence says what the line holds (a wording the round-2 review ruled on for another refusal: a message names what it
-   *  refuses, not a list of forms the line may lack). `q` is the reference up through parentheses, ! and as; `pp` its parent. */
+   *  refuses, not a list of forms the line may lack). `q` is the reference up through parentheses, !, as, satisfies and an
+   *  angle-bracket type assertion (up); `pp` its parent. */
+  /** A NAME position: the identifier is what the parent declares or labels, not a value it reads. A class member (a method, a
+   *  property, an accessor), an interface member (a property or method signature), an enum member or a type parameter spelled
+   *  like a tracked binding binds nothing of it; a label and its break or continue target are a label, not a value (those hang
+   *  off .label, not .name). Read by the requireCjs arm and the launcher value-use arm below (extra5-5, round 5); a computed name
+   *  (`[leg]() {}`) and a member's initializer (`x = leg`) are not name positions and stay refused. */
+  const isNamePos = (p, n) => ((ts.isMethodDeclaration(p) || ts.isPropertyDeclaration(p) || ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p) || ts.isPropertySignature(p) || ts.isMethodSignature(p) || ts.isEnumMember(p) || ts.isTypeParameterDeclaration(p)) && p.name === n) || ((ts.isLabeledStatement(p) || ts.isBreakStatement(p) || ts.isContinueStatement(p)) && p.label === n);
+  /** A dotted name (QualifiedName) is a type position ONLY when its chain roots in a type node (`leg.Opened` in a type reference,
+   *  `typeof leg.pageHtml` in a type query); the same node kind under `import ib = leg.inBrowser` aliases the binding as a VALUE,
+   *  and an ungated exemption there would leave that alias silent (class none with the never-calls gap, the call through ib
+   *  unread, no refusal): measured, so the gate is load-bearing. */
+  const isTypeQualifier = (p) => { if (!ts.isQualifiedName(p)) return false; let q = p; while (q.parent && ts.isQualifiedName(q.parent)) q = q.parent; return !!(q.parent && (ts.isTypeReferenceNode(q.parent) || ts.isTypeQueryNode(q.parent))); };
   const handedHow = (q, pp) => {
     if (!pp) return "in a position the walker does not read";
     if (ts.isPropertyAccessExpression(pp) || ts.isElementAccessExpression(pp)) {
@@ -933,6 +958,8 @@ export function classify(ts, file, src, opts = {}) {
     if (ts.isCallExpression(pp)) return pp.expression === q ? "called as a function, which the launcher's module is not: call its inBrowser" : "passed as an argument";
     if (ts.isArrayLiteralExpression(pp) || ts.isPropertyAssignment(pp) || ts.isShorthandPropertyAssignment(pp)) return "held in an array or an object literal";
     if (ts.isReturnStatement(pp) || ts.isArrowFunction(pp)) return "returned from a function";
+    // a dotted name outside a type (isTypeQualifier false): ts.SyntaxKind prints an alias for this kind, so it is named readably
+    if (ts.isQualifiedName(pp)) return "aliased by a dotted name outside a type (an import = declaration or another non-type position), which the walker does not follow: import the launcher and call its inBrowser";
     return "in a position the walker does not read (" + ts.SyntaxKind[pp.kind] + ")";
   };
   const walk3 = (n) => {
@@ -944,7 +971,7 @@ export function classify(ts, file, src, opts = {}) {
           // the launcher loaded as a statement of its own (`require(launcher);`): FOLLOWED, an import that calls nothing. A
           // binder position is bindLoaded's; the object of a member is followed below where the member is read; any other
           // position stays unfollowed and THE INVARIANT refuses it
-          let q = n; while (q.parent && (ts.isParenthesizedExpression(q.parent) || ts.isAwaitExpression(q.parent) || ts.isAsExpression(q.parent) || ts.isNonNullExpression(q.parent))) q = q.parent;
+          let q = n; while (q.parent && (ts.isParenthesizedExpression(q.parent) || ts.isAwaitExpression(q.parent) || ts.isAsExpression(q.parent) || ts.isNonNullExpression(q.parent) || ts.isSatisfiesExpression(q.parent) || ts.isTypeAssertionExpression(q.parent))) q = q.parent;
           if (q.parent && ts.isExpressionStatement(q.parent)) { followed.add(unwrap(n)); launcherImported.push(lineOf(n)); }
         }
         // a createRequire(...) call, the loader itself made where it stands: READ when a declaration binds it under a plain name
@@ -1000,9 +1027,9 @@ export function classify(ts, file, src, opts = {}) {
       // a member read off the launcher loaded where it stands, not a call (`require(launcher).EXT`; the call form is above):
       // FOLLOWED as an import when the member is another export; a read of inBrowser without a call, of a promise member or
       // of a default member hands it on and stays unfollowed, so THE INVARIANT refuses it
-      // (a requireCjs member is a loader callee when called, through parentheses, ! and as too, read by loaderCall; read without a
+      // (a requireCjs member is a loader callee when called, through parentheses, !, as, satisfies and an angle-bracket type assertion too, read by loaderCall; read without a
       // call it hands the loader on, and a load made through it elsewhere is unread: refused by name, the load followed by that refusal)
-      if (!(n.parent && ts.isCallExpression(n.parent) && n.parent.expression === n)) { const obj = unwrap(n.expression); const l = !ts.isIdentifier(obj) && loaderCall(obj); if (l && l.kind === "launcher") { const names = memberNames(n); let q = n; while (q.parent && (ts.isParenthesizedExpression(q.parent) || ts.isNonNullExpression(q.parent) || ts.isAsExpression(q.parent))) q = q.parent; const isCallee = q.parent && ts.isCallExpression(q.parent) && q.parent.expression === q; if (names !== null && names.includes("requireCjs")) { if (!isCallee) { followed.add(unwrap(obj)); refuse(n, "the launcher loaded where it stands and read for requireCjs without a call, so a load made through it elsewhere is unread: call requireCjs on the load where it is made"); } } else if (names !== null && !names.includes("inBrowser") && !names.some((x) => HANDOFF.has(x))) { followed.add(unwrap(obj)); launcherImported.push(lineOf(n)); } } }
+      if (!(n.parent && ts.isCallExpression(n.parent) && n.parent.expression === n)) { const obj = unwrap(n.expression); const l = !ts.isIdentifier(obj) && loaderCall(obj); if (l && l.kind === "launcher") { const names = memberNames(n); const q = up(n); const isCallee = q.parent && ts.isCallExpression(q.parent) && q.parent.expression === q; if (names !== null && names.includes("requireCjs")) { if (!isCallee) { followed.add(unwrap(obj)); refuse(n, "the launcher loaded where it stands and read for requireCjs without a call, so a load made through it elsewhere is unread: call requireCjs on the load where it is made"); } } else if (names !== null && !names.includes("inBrowser") && !names.some((x) => HANDOFF.has(x))) { followed.add(unwrap(obj)); launcherImported.push(lineOf(n)); } } }
     } else if (ts.isIdentifier(n)) {
       // a reference to a launcher binding (inBrowser, the whole module or its default) that the call arm did not resolve a call
       // through (calledThrough), and that is not a declaration name, a property name or an import clause: a value use, refused
@@ -1038,35 +1065,37 @@ export function classify(ts, file, src, opts = {}) {
         // parentheses, ! and as) or in a name, property or type position; any other use hands the loader on (`const r = requireCjs`),
         // and a load made through the alias is unread by the walker: refused by name
         const p = n.parent;
-        let q = n; while (q.parent && (ts.isParenthesizedExpression(q.parent) || ts.isNonNullExpression(q.parent) || ts.isAsExpression(q.parent))) q = q.parent;
+        const q = up(n);
         const called = q.parent && ts.isCallExpression(q.parent) && q.parent.expression === q;
-        const isDecl = p && (ts.isImportSpecifier(p) || (ts.isBindingElement(p) && (p.name === n || p.propertyName === n)) || (ts.isVariableDeclaration(p) && p.name === n) || (ts.isBinaryExpression(p) && p.left === n && isAssignmentOp(p)));
+        const isDecl = p && (isNamePos(p, n) || ts.isImportSpecifier(p) || (ts.isBindingElement(p) && (p.name === n || p.propertyName === n)) || (ts.isVariableDeclaration(p) && p.name === n) || (ts.isBinaryExpression(p) && p.left === n && isAssignmentOp(p)));
         const isPropName = p && ((ts.isPropertyAccessExpression(p) && p.name === n) || (ts.isPropertyAssignment(p) && p.name === n));
-        const isType = p && (ts.isTypeQueryNode(p) || ts.isTypeReferenceNode(p));
+        const isType = p && (ts.isTypeQueryNode(p) || ts.isTypeReferenceNode(p) || isTypeQualifier(p));
         if (!(called || isDecl || isPropName || isType)) refuse(n, "the launcher's requireCjs loader handed on as a value, not called (a load made through the alias is unread by the walker: call requireCjs where the load is made)");
       }
       if (carriesInBrowser(b)) {
         const p = n.parent;
         // the NAME position of a declaration is exempt, never its initializer: `const f = inBrowser` and `const { x = inBrowser } = o`
-        // hand the binding on as a value and are refused; a type position (`typeof inBrowser`, a type reference) binds nothing;
+        // hand the binding on as a value and are refused; so are the name positions isNamePos lists (a class, interface or enum
+        // member, an accessor, a type parameter, a label with its break or continue: the identifier is what they declare); a type
+        // position (`typeof inBrowser`, a type reference, a dotted name rooted in one) binds nothing;
         // of a binary expression only an ASSIGNMENT's left side is a name position (`leg ?? null` and `leg !== null` read the
         // binding as a value and fall through to the refusals below: an exemption on any left operand left them silent)
-        const isDecl = p && (ts.isImportSpecifier(p) || ts.isNamespaceImport(p) || ts.isImportClause(p) || ts.isImportEqualsDeclaration(p) || (ts.isBindingElement(p) && (p.name === n || p.propertyName === n)) || (ts.isVariableDeclaration(p) && p.name === n) || (ts.isBinaryExpression(p) && p.left === n && isAssignmentOp(p)));
+        const isDecl = p && (isNamePos(p, n) || ts.isImportSpecifier(p) || ts.isNamespaceImport(p) || ts.isImportClause(p) || ts.isImportEqualsDeclaration(p) || (ts.isBindingElement(p) && (p.name === n || p.propertyName === n)) || (ts.isVariableDeclaration(p) && p.name === n) || (ts.isBinaryExpression(p) && p.left === n && isAssignmentOp(p)));
         const isPropName = p && ((ts.isPropertyAccessExpression(p) && p.name === n) || (ts.isPropertyAssignment(p) && p.name === n));
-        const isType = p && (ts.isTypeQueryNode(p) || ts.isTypeReferenceNode(p));
+        const isType = p && (ts.isTypeQueryNode(p) || ts.isTypeReferenceNode(p) || isTypeQualifier(p));
         if (calledThrough.has(n) || isDecl || isPropName || isType) refRead.add(n);
         else if (b.member === "inBrowser") { refuse(n, "the launcher's inBrowser binding used as a value, not called (the walker cannot follow where it is called from)"); refRefused.add(n); }
         else {
-          // the whole module or its default: up through parentheses, ! and as, then the object of a member access is read when
+          // the whole module or its default: up through parentheses, !, as, satisfies and an angle-bracket type assertion, then the object of a member access is read when
           // the member is another export (not inBrowser, not then/catch/finally, not default) or when the computed-member arm
           // refused it by name (refusedRoots); an inBrowser member here was not called (else the call arm recorded this node),
           // so the binding is handed on: refused, the message naming the position the line holds (handedHow)
-          let q = n; while (q.parent && (ts.isParenthesizedExpression(q.parent) || ts.isNonNullExpression(q.parent) || ts.isAsExpression(q.parent))) q = q.parent;
+          const q = up(n);
           const pp = q.parent;
           let read = false, handed = true;
-          // (a requireCjs member is read when called, through parentheses, ! and as, the loader callee loaderCall accepts; read without
+          // (a requireCjs member is read when called, through parentheses, !, as, satisfies and an angle-bracket type assertion, the loader callee loaderCall accepts; read without
           // a call it hands the loader on, and handedHow names that form)
-          if (pp && (ts.isPropertyAccessExpression(pp) || ts.isElementAccessExpression(pp)) && pp.expression === q) { const names = memberNames(pp); if (names === null) { read = refusedRoots.has(n); handed = false; } else { let qq = pp; while (qq.parent && (ts.isParenthesizedExpression(qq.parent) || ts.isNonNullExpression(qq.parent) || ts.isAsExpression(qq.parent))) qq = qq.parent; const calledMember = qq.parent && ts.isCallExpression(qq.parent) && qq.parent.expression === qq; read = !names.includes("inBrowser") && !names.some((x) => HANDOFF.has(x)) && !(names.includes("requireCjs") && !calledMember); handed = !read; } }
+          if (pp && (ts.isPropertyAccessExpression(pp) || ts.isElementAccessExpression(pp)) && pp.expression === q) { const names = memberNames(pp); if (names === null) { read = refusedRoots.has(n); handed = false; } else { const qq = up(pp); const calledMember = qq.parent && ts.isCallExpression(qq.parent) && qq.parent.expression === qq; read = !names.includes("inBrowser") && !names.some((x) => HANDOFF.has(x)) && !(names.includes("requireCjs") && !calledMember); handed = !read; } }
           if (read) refRead.add(n);
           else if (handed) { refuse(n, "the launcher's module binding handed on as a value (" + handedHow(q, pp) + "), so the walker cannot follow where inBrowser is called from"); refRefused.add(n); }
           // a computed member no arm refused: left to THE INVARIANT below

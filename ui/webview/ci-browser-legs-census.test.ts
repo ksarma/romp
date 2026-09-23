@@ -42,7 +42,11 @@
 // string-typed parameter passed back to its own function, under which the census before round 5 died whole with a bare RangeError, so
 // those rows red as census(PLANTS) throwing rather than as a row mismatch, beside its non-cyclic control; then a helper's own engine,
 // skip or swallow, dropped before round 5 from the record of a test that calls inBrowser itself and folded into it since, beside the
-// direct, helper-only and non-launcher controls), every one
+// direct, helper-only and non-launcher controls; then the name positions (a class, interface or enum member, an accessor, a type
+// parameter, a label) and the satisfies or angle-bracket assertion peels under which the value-use arm refused a launcher binding
+// falsely before round 5, beside the computed-name and initializer controls that stay refused and the two whose sentence improved;
+// then the spawned-driver file, the third residual's stated boundary, beside its fork twin and the control that imports the driver
+// and is refused), every one
 // is red under the census before round 5 (the module at
 // the round-4 head) unless the table names it held with its reason, and the same test holds the table to that statement. A module
 // whose classification throws for any other reason is refused by name and the census goes on, executed over a synthetic root by a
@@ -324,6 +328,8 @@ const NET_DRIVER = "a playwright package specifier inside a string's text read a
 const NET_NMPW = "a relative path into node_modules naming a playwright package: \"../../vscode-extension/node_modules/playwright\"";
 const NET_READ_THROUGH = "the census read no engine and no launch through the playwright package it loads (playwright), so the load or its binding is handed on where the walker does not read and the engines and launches reached through it are unread: bind the load to a name in a statement of its own and launch on that name";
 const MORE = (n: number) => "; and " + n + " more mention" + (n > 1 ? "s" : "");
+/** The launcher value-use arm's sentence with the position handedHow names (the extra5-5 rows hold the position's text). */
+const HAND = (position: string) => "the launcher's module binding handed on as a value (" + position + ")";
 const VIA_COMPANION = (chain: string, companion: string, mention: string) => "loads " + chain + ", which the census cannot classify (" + companion + ":2: " + NET_HEAD + mention + NET_NO_REACH + ")";
 /** The round-5 FOLDS' sentences (the forms the net planted, read by the walker since the folds landed: each row that moved from the
  *  net's sentence to a fold's holds the fold's SENTENCE through these, and reds under the net-only module, whose sentence differs).
@@ -634,6 +640,45 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p212-qf1d-direct-engine-control.test.ts", leg: true, cls: "shared", gap: null, engines: ["firefox"], holds: "a shape another plant carries: p77 (an engine literal passed to inBrowser by the module itself), the direct half of p208's pair, green before and after round 5 with engines [firefox] read from the module's own call, which the fold does not touch" }, // qf1d: the direct-engine control
   { dir: W, file: "p213-qf1e-helper-only-control.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p213-qf1e-helper-only-control.test.ts:2: loads ui/webview/ff-helper.ts, which binds or calls the shared launcher's inBrowser", holds: "a shape another plant carries: p33 (a helper that calls the launcher, loaded by a test that never calls inBrowser itself), the helper-only twin of p208's import, refused before and after round 5: the fold is asked only of a walk that refused nothing, so this row pins that the refusal stands beside p208's fold of the same helper" }, // qf1e: the helper-only control
   { dir: W, file: "p214-qf1h-non-launcher-todo-prop-control.test.ts", leg: true, cls: "shared", gap: null, engines: [], skipTodo: [], holds: "a stated residual boundary: the fold's gate, a loaded module that neither binds nor calls the launcher carries nothing into the test's record; this row loads a UI helper whose { todo: t } object literal the walker's skip/todo read takes as a todo in the helper's own record, and stays class shared, gap null, skipTodo [] before and after round 5 (green before because nothing was folded, green after because the gate keeps the helper out; ungated, the fold put such a property on two importers of the tree, a record change the --tsv hides and the roster gate reds for a shared leg)" }, // qf1h: inBrowser(t, body) beside rows() from todo-prop-helper.ts, a UI helper that never touches the launcher and pushes { todo: t }: the walker's skip/todo read takes that property as a todo in the helper's own record, and the gate keeps it out of the test's (before: the same, nothing folded)
+  // extra5-5 (round 5): the launcher value-use arm refused a NAME position and a peeled satisfies or angle-bracket assertion as a
+  // hand-on, naming the node kind (a false refusal, never silent). p215 to p229 each hold a launcher namespace binding in such a
+  // position beside a counted leg.inBrowser call: refused at :3 under the census before round 5 with the kind in the sentence
+  // (MethodDeclaration, PropertyDeclaration, GetAccessor, SetAccessor, PropertySignature, MethodSignature, EnumMember,
+  // LabeledStatement with BreakStatement or ContinueStatement, FirstNode for the two dotted names, TypeParameter, SatisfiesExpression,
+  // TypeAssertionExpression, and the requireCjs loader's own sentence for p229), class shared with no refusal now: the rows red on
+  // a refusal they do not expect. The controls: p230 (a computed name) and p231 (a member's initializer) stay refused with the kind
+  // named, before and after (held: pins of handedHow's position-naming arm, which no earlier row carried); p232 (inBrowser read
+  // under satisfies without a call) and p233 (the import = alias, a dotted name outside a type) stay refused with a sentence that
+  // improved, so they red on the sentence; the type-node gate on the dotted name is load-bearing: under a blanket QualifiedName
+  // exemption p233 is class none with the never-calls gap and NO refusal while ib(t, ...) runs the launcher (measured, round 5).
+  { dir: W, file: "p215-e01-class-method.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true },            // class H { leg() {} }: a method's name spelled like the binding (before: refused, MethodDeclaration)
+  { dir: W, file: "p216-e02-class-property.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true },          // class H { leg = 1 }: a property's name (before: refused, PropertyDeclaration)
+  { dir: W, file: "p217-e03-get-accessor.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true },            // get leg() (before: refused, GetAccessor)
+  { dir: W, file: "p218-e04-set-accessor.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true },            // set leg(v) (before: refused, SetAccessor)
+  { dir: W, file: "p219-e05-property-signature.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true },      // interface Cfg { leg: string } (before: refused, PropertySignature)
+  { dir: W, file: "p220-e06-method-signature.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true },        // interface Cfg { leg(): void } (before: refused, MethodSignature)
+  { dir: W, file: "p221-e07-enum-member.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true },             // enum E { leg } (before: refused, EnumMember)
+  { dir: W, file: "p222-e08-label-break.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true },             // leg: for (;;) { break leg } (before: refused twice, LabeledStatement and BreakStatement)
+  { dir: W, file: "p223-e09-label-continue.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true },          // leg: for (...) { continue leg } (before: refused twice, LabeledStatement and ContinueStatement)
+  { dir: W, file: "p224-e10-type-qualifier.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true },          // const o: leg.Opened | null: a dotted name rooted in a type reference (before: refused, FirstNode)
+  { dir: W, file: "p225-e11-typeof-qualifier.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true },        // let f: typeof leg.pageHtml: a dotted name rooted in a type query (before: refused, FirstNode)
+  { dir: W, file: "p226-e12-type-parameter.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true },          // function g<leg>(x: leg): leg: a type parameter's name (before: refused, TypeParameter)
+  { dir: W, file: "p227-e13-satisfies-peel.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true },          // (leg satisfies object).pageHtml(): a member read through satisfies (before: refused, SatisfiesExpression)
+  { dir: W, file: "p228-e14-angle-assertion-peel.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true },    // (<any>leg).pageHtml(): a member read through an angle-bracket assertion (before: refused, TypeAssertionExpression)
+  { dir: W, file: "p229-e15-requirecjs-satisfies-peel.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true }, // (requireCjs satisfies Function)("node:path"): the loader called through satisfies (before: refused as handed on, not called)
+  { dir: W, file: "p230-c01-computed-name.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true, refused: "p230-c01-computed-name.test.ts:3: " + HAND("in a position the walker does not read (ComputedPropertyName)"), holds: "a pin of an arm no plant carried: handedHow's position-naming arm, which names the node kind of a position no other clause reads, refused this row's computed class-member name [leg]() at the round-4 head and refuses it now: a computed name is not a name position (the identifier is read as a value for the key), so the round-5 exemption does not reach it; no earlier row held that arm, so this row is green under the census before round 5 and pins the exemption's edge" }, // class H { [leg]() {} }: the control for the name-position exemption, refused before and after
+  { dir: W, file: "p231-c02-initializer.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true, refused: "p231-c02-initializer.test.ts:3: " + HAND("in a position the walker does not read (PropertyDeclaration)"), holds: "a pin of an arm no plant carried: handedHow's position-naming arm refused this row's class-member initializer x = leg at the round-4 head and refuses it now: the exemption is keyed on the member's NAME being the identifier (p.name === n), and an initializer hands the binding on; green under the census before round 5, a pin of the exemption's edge (a row spelling leg = leg would not discriminate, since refuse() dedupes two refusals of one line's text)" }, // class H { x = leg }: the control for the initializer, refused before and after
+  { dir: W, file: "p232-c03-satisfies-inbrowser-read.test.ts", leg: true, cls: "shared", gap: null, launcherImported: true, refused: "p232-c03-satisfies-inbrowser-read.test.ts:3: " + HAND("read for inBrowser without a call") }, // const x = (leg satisfies object).inBrowser: the peel reaches the member read, and the refusal names what the line holds (before: refused as a SatisfiesExpression position, the sentence the row does not hold)
+  { dir: W, file: "p233-c04-import-equals-alias.test.ts", leg: false, cls: "none", gap: "never calls its inBrowser through that import", launcherImported: true, refused: "p233-c04-import-equals-alias.test.ts:3: " + HAND("aliased by a dotted name outside a type (an import = declaration or another non-type position), which the walker does not follow: import the launcher and call its inBrowser") }, // import ib = leg.inBrowser; ib(t, ...): a dotted name rooted in no type node stays refused, readably (before: refused as FirstNode, the enum alias ts.SyntaxKind prints for QualifiedName); under a blanket QualifiedName exemption this row is silent
+  // correctness-4 (round 5): the third residual's stated boundary, a driver held in a separate file of the tree that the test spawns
+  // by path. A spawn is no load, so the file is unread: class none, no refusal, under the census before round 5 and now, and the
+  // header names the form beside the other three (the residual pin below holds the sentence). The companions spawn-driver.mjs
+  // (createRequire, require of playwright, a Chromium launch) and fork-driver.ts (a Firefox import and launch) are outside
+  // census() and this table's enumeration (not .test.ts). p236 imports the same driver the spawn test spawns and is refused as
+  // loading a module that names a playwright package: the boundary is exactly load against spawn.
+  { dir: W, file: "p234-c4a-spawn-driver-file.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, holds: "a stated residual boundary: the third residual's driver held in a separate file of the tree that the test spawns by path (spawnSync(process.execPath, [path.join(__dirname, the driver)]); a spawn is no load, so the file is unread), class none, no refusal, which the census before round 5 also gives; the spawn-reading capability was not taken in a landing round" }, // the spawned-driver file, a stated boundary
+  { dir: W, file: "p235-c4b-fork-url-driver.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, holds: "a stated residual boundary: the third residual's driver in a separate file, reached by fork(new URL(the driver, import.meta.url)), the second witness of the same rule (a fork is no load), class none, no refusal, which the census before round 5 also gives" }, // the fork-by-URL twin
+  { dir: W, file: "p236-c4z-imports-driver-control.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p236-c4z-imports-driver-control.test.ts:2: loads ui/webview/spawn-driver.mjs, which names a playwright package (playwright)", holds: "a shape another plant carries: p34 (a loaded module that names a playwright package, refused at the importer), the load half of p234's boundary: importing the driver the spawn test only spawns is refused before and after round 5, so the boundary is exactly load against spawn" }, // import "./spawn-driver.mjs": the control, refused before and after
 ];
 const bundleOf = (p: Plant): string => "out-tests/" + p.dir + "/" + p.file.replace(/\.test\.ts$/, ".test.js");
 
@@ -921,14 +966,15 @@ test("every planted form under tests/fixtures/browser-legs-plants is classified 
   // the launcher is unread by the walker, class none, no refusal. A text pin on the header's prose (its // lines joined, since the
   // sentence wraps): it holds that the header names the three forms and the outcome, not that the walker behaves so; the CLASS is
   // executed above by the p68 to p71 rows (a package name from the environment, another driver package, a package whose name
-  // contains a tracked spelling, a spawned binary), each class none with no refusal. The read is the module's LEADING comment
+  // contains a tracked spelling, a spawned binary) and by p234 and p235 (a driver file the test spawns by path or forks by URL,
+  // the form correctness-4 named in round 5), each class none with no refusal. The read is the module's LEADING comment
   // block, the // lines before its first line of code, so a sentence moved into a body comment does not satisfy it. Each of the
   // three assertions holds the SENTENCE: a reword of the header's prose moves the pin too.
   const moduleLines = read(MODULE).split("\n");
   const codeAt = moduleLines.findIndex((l) => !l.startsWith("//") && l.trim() !== "");
   const header = moduleLines.slice(0, codeAt < 0 ? moduleLines.length : codeAt).filter((l) => l.startsWith("//")).map((l) => l.replace(/^\/\/ ?/, "")).join(" ");
   assert.ok(header.includes("Three residuals, stated"), "the census header's leading comment block states three residuals (the string-typed parameter's fold, the non-loader call, and a browser reached without spelling a playwright package or the launcher); a header counting two has dropped the third, whose plants are the p68 to p71 rows above. A sentence moved into a body comment is not the header's. Holds the sentence: a reword moves this pin too");
-  for (const form of ["another driver package such as puppeteer", "a browser binary it spawns", "a driver source whose package name arrives at run time"]) assert.ok(header.includes(form), "the census header's leading comment block names the third residual's form " + JSON.stringify(form) + " (a text pin on the header's prose: the class that form takes is executed by the p68 to p71 rows above; holds the sentence: a reword of the form moves this pin too)");
+  for (const form of ["another driver package such as puppeteer", "a browser binary it spawns", "a driver source whose package name arrives at run time", "a driver held in a separate file of the tree that the test spawns by path"]) assert.ok(header.includes(form), "the census header's leading comment block names the third residual's form " + JSON.stringify(form) + " (a text pin on the header's prose: the class that form takes is executed by the p68 to p71 rows above and, for the spawned-driver file, by p234 and p235 beside their import control p236; holds the sentence: a reword of the form moves this pin too)");
   assert.ok(header.includes("is unread by the walker: class none, no refusal"), "the census header's leading comment block states the third residual's outcome, unread by the walker: class none, no refusal (the outcome the p68 to p71 rows record; holds the sentence: a reword moves this pin too)");
 });
 
@@ -1026,12 +1072,14 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // and the rows the round's folds add after them, p156 to R5_LAST, one row each, every one red under that census (class none with no
   // refusal, or a reach with engines [] and launches [] and no refusal, where the row expects a refusal; for p203 to p206, the census
   // over the plants throwing whole before it judges a row, the shape correctness-1 named; for p208 to p211, a loaded helper's engine,
-  // skip or swallow missing from the test's record, the field fresh-1's fold reads) unless R5_HELD names it with
+  // skip or swallow missing from the test's record, the field fresh-1's fold reads; for p215 to p229, a refusal the row does not
+  // expect, the value-use arm's false refusal of a name position or a peeled satisfies or type assertion, the shape extra5-5 named;
+  // for p232 and p233, the sentence of a refusal the row holds, which that census spelled by the node kind) unless R5_HELD names it with
   // holds set (a control, a pin of an arm no plant carried, a stated boundary); a round-5 builder who adds a row moves R5_LAST to it
   // and, when the row stays green under that census, adds it to R5_HELD with holds set (the round-4 population above is closed)
   const NOT_RERUN5 = " (the discrimination was established by running the census before round 5, the module at the round-4 head, over the plants, recorded in the PR's notes, and is not re-run here, since that census is not in the tree at test time: this assertion holds the table's statement, not the fact)";
-  const R5_FIRST = R4_LAST + 1, R5_LAST = 214;
-  const R5_HELD = ["p197", "p198", "p200", "p201", "p202", "p207", "p212", "p213", "p214"];
+  const R5_FIRST = R4_LAST + 1, R5_LAST = 236;
+  const R5_HELD = ["p197", "p198", "p200", "p201", "p202", "p207", "p212", "p213", "p214", "p230", "p231", "p234", "p235", "p236"];
   const R5_CARRIED: string[] = [];
   const inRound5 = (p: Plant) => num(p) >= R5_FIRST && num(p) <= R5_LAST;
   const r5 = PLANT_TABLE.filter(inRound5);
