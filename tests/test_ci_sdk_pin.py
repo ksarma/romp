@@ -133,25 +133,36 @@ This module holds five things, and it never skips: a pin that skips reports gree
    step installed anyio, and without the flag it auto-loads the plugin (on 2026-09-20, before the launchers gained the
    flag, one of nine passed it, while this docstring, ci.yml and tests/README.md said the cells' plugin set was the
    box's). The rule: every argv
-   under tests/ that runs pytest passes -p no:anyio or is in LAUNCHERS_LISTED with a reason (empty: pytest accepts the
-   flag where anyio is absent, so no launcher has had a reason to lack it), and the population is derived from the
-   modules' syntax by child_pytest_launchers, keyed on the argv PROPERTY and not a spelling: a list or tuple literal,
-   wherever it is built (in the call, in a helper that passes it on, in a variable extended later), whose command is
-   pytest (`-m pytest`, or `-mpytest` as one token, after an interpreter head through interpreter options only, the
-   head an expression or a python-named constant wherever it sits, so `python -B -m pytest`, the repo's own recipe,
-   and `uv run python -m pytest` read; `-m pytest` as the first two elements; pytest or py.test by name or path as
-   argv[0]; _argv_command's docstring is the rule). The flag check keys on the argv's constant elements (`-p` then `no:anyio`,
+   under tests/ that runs pytest, and every call under tests/ that runs pytest in the calling process, passes
+   -p no:anyio or is in LAUNCHERS_LISTED with a reason (empty: pytest accepts the flag where anyio is absent, so no
+   launcher has had a reason to lack it), and the population is derived from the modules' syntax by
+   child_pytest_launchers, keyed on the argv PROPERTY and not a spelling. It reads three forms (round 4's ruling,
+   2026-09-23, added the second and third). A list or tuple literal, wherever it is built (in the call, in a helper
+   that passes it on, in a variable extended later), whose command is pytest (`-m pytest`, or `-mpytest` as one token,
+   after an interpreter head through interpreter options only, the head an expression or a python-named constant
+   wherever it sits, so `python -B -m pytest`, the repo's own recipe, and `uv run python -m pytest` read; `-m pytest`
+   as the first two elements; pytest or py.test by name or path as argv[0]; _argv_command's docstring is the rule). The
+   positional arguments of asyncio.create_subprocess_exec and of the os.exec and os.spawn l forms (execl, execle,
+   execlp, execlpe, spawnl, spawnle, spawnlp, spawnlpe; a spawn form's mode and an e form's env set aside), read as
+   that argv. And a call of pytest.main or pytest.console_main, or of _pytest.config's main or console_main, by the
+   module's own name for it (an import, an alias, a name assigned from it): a pytest session in the calling process,
+   where plugin autoload runs again whatever flag the outer run was given, so its argv, the first positional argument
+   or args=, carries the flag itself. The flag check keys on the argv's constant elements (`-p` then `no:anyio`,
    or `-pno:anyio`), so a flag carried by a variable reads as absent, the safe side, and the message says so. The
    modules known to spawn pytest are asserted present, so an empty read is red, and there is no count to keep; the
    derivation case prints the listing (python -m pytest tests/test_ci_sdk_pin.py -q -p no:cacheprovider -p no:anyio
-   -k ChildPytestLaunchers -rP). The census reads argv literals, and that is its residual: a pytest command inside a
-   string handed to subprocess, os.system or shlex.split, or to a shell's -c (a `pytest.main(` call included), is
-   `unparsed` and red until it is spelled as an argv, as is an argv that may run pytest and the census cannot tell (a
-   `-m` whose module name is not a constant, an element that is not a constant right before `pytest`, after an
-   interpreter head), and a module that does not parse under the running interpreter is red the same way; an argv
-   assembled one element at a time (append calls) is outside the read. What the flag buys, in every pytest process a cell runs:
-   anyio's plugin is absent from that process's plugin set as it is from the box's default run's. The sets are not
-   equal, and nothing here says they are: the box's default run loads pytest-xdist's two plugins, which no cell
+   -k ChildPytestLaunchers -rP). What the census leaves unread is its residual. A pytest command in a constant string
+   or f-string written at the call and handed to subprocess (run, Popen, call, check_call, check_output, getoutput,
+   getstatusoutput), os.system or os.popen, asyncio.create_subprocess_shell, shlex.split or a shell's -c (a
+   `pytest.main(` call included) is `unparsed` and red until it is spelled as an argv, as is an argv that may run
+   pytest and the census cannot tell (a `-m` whose module name is not a constant, an element that is not a constant
+   right before `pytest`, after an interpreter head), an in-process call whose argv is not a literal (a name, or no
+   argument, which reads sys.argv), and a module that does not parse under the running interpreter. A string anywhere
+   else, or one held in a variable or built with %, + or .format, is outside the read, as is an argv assembled one
+   element at a time (append calls) and an in-process pytest reached through getattr, importlib or runpy; each of
+   those has a case holding its outcome, no row. What the flag buys, in every pytest process the census and the
+   population check read: anyio's plugin is absent from that process's plugin set as it is from the box's default
+   run's. The sets are not equal, and nothing here says they are: the box's default run loads pytest-xdist's two plugins, which no cell
    installs. Verified by execution before this landed: a synthetic broken anyio/pytest_plugin.py in a CI-shaped venv
    (the SDK pinned, the parent under the flag) red tests in each of the six modules that spawned unflagged children,
    none of which imports the SDK, and the same six were green with the flag on every launcher (2026-09-20).
@@ -2011,11 +2022,13 @@ class PopulationCheckReds(unittest.TestCase):
 
 # ---------------------------------------------------------------------------------------------------------------------
 # The launcher census (round 3's ruling, 2026-09-20; item 5 of the module docstring): every pytest the suite itself
-# spawns passes -p no:anyio. The workflow's flag blocks anyio's plugin in the step's own process; a pytest child a test
+# starts passes -p no:anyio. The workflow's flag blocks anyio's plugin in the step's own process; a pytest child a test
 # spawns is a new pytest process in the same interpreter, where the SDK step installed anyio, and without the flag it
-# auto-loads the plugin. On 2026-09-20, before the launchers gained the flag, one of nine passed it, and this module,
-# ci.yml and tests/README.md said the cells' plugin set was the box's. The rule now: every argv under tests/ that runs pytest
-# passes the flag or is in LAUNCHERS_LISTED with a reason. The population is derived from the modules' syntax by
+# auto-loads the plugin, as an in-process pytest.main does. On 2026-09-20, before the launchers gained the flag, one of
+# nine passed it, and this module, ci.yml and tests/README.md said the cells' plugin set was the box's. The rule now:
+# every argv under tests/ that runs pytest, and every in-process pytest.main (round 4's ruling, 2026-09-23), passes the
+# flag or is in LAUNCHERS_LISTED with a reason, in the forms _launchers_in reads; its docstring states what it leaves
+# unread. The population is derived from the modules' syntax by
 # child_pytest_launchers (its docstring and _launchers_in's are the rule); the derivation case prints the listing:
 #   python -m pytest tests/test_ci_sdk_pin.py -q -p no:cacheprovider -p no:anyio -k ChildPytestLaunchers -rP
 # ---------------------------------------------------------------------------------------------------------------------
@@ -2030,6 +2043,20 @@ PYTEST_IN_STRING_RE = re.compile(r"(?:^|[\s;&|(])(?:\S*python[0-9.]*\s+-m\s*pyte
 PYTHON_NAME_RE = re.compile(r"python[0-9.]*t?(?:\.exe)?")       # a python-named constant: python, python3, python3.12, python3.14t
 INTERPRETER_OPTS_WITH_VALUE = ("-X", "-W")                         # CPython options whose value is the next element
 SUBPROCESS_FUNCS = ("run", "Popen", "call", "check_call", "check_output")
+# The calls the census reads, by their qualified names (a module's own import and assignment names resolve to these):
+# a first argument that is an argv or a command string, with the keyword that argument may be passed by; the calls whose
+# positional arguments are the argv, with the slice of them that is (a spawn form's mode first and an e form's env last
+# are not); and the calls that run pytest in the calling process (round 4's ruling, 2026-09-23, F). The os v forms
+# (execv, spawnv, posix_spawn) take their argv as one list, which the literal walk reads wherever it is built.
+FIRST_ARG_CALLS = dict([("subprocess." + f, "args") for f in SUBPROCESS_FUNCS]
+                       + [("subprocess.getoutput", "cmd"), ("subprocess.getstatusoutput", "cmd"), ("os.system", "command"),
+                          ("os.popen", "cmd"), ("asyncio.create_subprocess_shell", "cmd"),
+                          ("asyncio.subprocess.create_subprocess_shell", "cmd")])
+POSITIONAL_ARGV_CALLS = {"asyncio.create_subprocess_exec": (0, None), "asyncio.subprocess.create_subprocess_exec": (0, None),
+                         "os.execl": (0, None), "os.execlp": (0, None), "os.execle": (0, -1), "os.execlpe": (0, -1),
+                         "os.spawnl": (1, None), "os.spawnlp": (1, None), "os.spawnle": (1, -1), "os.spawnlpe": (1, -1)}
+IN_PROCESS_CALLS = ("pytest.main", "pytest.console_main", "_pytest.config.main", "_pytest.config.console_main")
+UNBOUND_MODULES = ("subprocess", "os", "shlex", "asyncio", "pytest", "_pytest")   # a bare name the module never binds reads as itself
 SHELL_NAMES = ("sh", "bash", "dash", "zsh", "ksh")                 # an argv headed by one of these runs its -c string
 FLAG_ARGV = ("-p", "no:anyio")
 FLAG_ONE_TOKEN = "-pno:anyio"
@@ -2124,18 +2151,29 @@ def _launchers_in(src, filename):
     Read: every list or tuple literal in the module whose command is pytest (_argv_command: `-m pytest` after an
     interpreter head through interpreter options, pytest by name or path), wherever it is built: in the subprocess
     call, in a helper that passes it on, in a variable extended later, so a helper-built argv is counted.
+    Also read (round 4's ruling, 2026-09-23): the positional arguments of asyncio.create_subprocess_exec and of the
+    os.exec and os.spawn l forms, as an argv (POSITIONAL_ARGV_CALLS: a spawn form's mode and an e form's env set
+    aside), and a call that runs pytest in this process (IN_PROCESS_CALLS: pytest.main, pytest.console_main and
+    _pytest.config's two), a launcher whose argv is its first positional argument or args= and must carry the flag
+    itself. Every call is known by its qualified name, whatever the module's own name for it: an import, an alias, or
+    a name assigned from it.
     Unparsed, and red in ChildPytestLaunchers until spelled as an argv: a list or tuple literal that may run pytest and
     the census cannot tell (after an interpreter head, a -m whose module name is not a constant, or an element that is
-    not a constant right before `pytest`; _argv_command's docstring); a string handed to subprocess.run, Popen, call,
-    check_call or check_output (by the module's own names for them), to os.system or os.popen, or through shlex.split,
-    whose text spells a pytest command or a `pytest.main(` call (PYTEST_IN_STRING_RE); and an argv handed to those
-    calls whose command is not pytest but carries a pytest command inside one element: any element when the head is a
-    shell (SHELL_NAMES) run with -c, else a multi-word element (a `-c` string running pytest.main; a lone `pytest`
-    element is a package name on a pip line, or an argument). A module that does not parse is one unparsed row. A list
-    or tuple on the right of an `in` test is a set of names, not an argv, and is not read. Not read, stated as the
-    residual: an argv assembled one element at a time (append calls); a `-c` or shell string that is not a constant; a
-    string that spells pytest anywhere else (the suite's synthetic tool-call fixtures spell `uv run pytest -q` by the
-    dozen) is data, not a command."""
+    not a constant right before `pytest`; _argv_command's docstring); a constant string or f-string, written at the
+    call, handed to subprocess.run, Popen, call, check_call, check_output, getoutput or getstatusoutput, to os.system
+    or os.popen, or to asyncio.create_subprocess_shell (FIRST_ARG_CALLS, by position or by the call's own keyword), or
+    through shlex.split, whose text spells a pytest command or a `pytest.main(` call (PYTEST_IN_STRING_RE); an argv
+    handed to those calls, or given as the positional arguments above, whose command is not pytest but carries a
+    pytest command inside one element: any element when the head is a shell (SHELL_NAMES) run with -c, else a
+    multi-word element (a `-c` string running pytest.main; a lone `pytest` element is a package name on a pip line, or
+    an argument); and an in-process call whose argv is not a list or tuple literal (a name, or no argument at all, which
+    reads sys.argv). A module that does not parse is one unparsed row. A list or tuple on the right of an `in` test is
+    a set of names, not an argv, and is not read. Not read, stated as the residual and each pinned by a case with no
+    row (test_each_form_outside_the_read_gives_no_row): an argv assembled one element at a time (append calls); a
+    command string held in a variable or built with %, + or .format, a `-c` string held in a variable among them; an
+    in-process pytest reached through getattr, importlib or runpy; and a string that spells pytest anywhere else (a
+    script written to a file, an exec; the suite's synthetic tool-call fixtures spell `uv run pytest -q` by the dozen),
+    which is data, not a command."""
     base = os.path.basename(filename)
     try:
         tree = ast.parse(src, filename=filename)
@@ -2144,11 +2182,17 @@ def _launchers_in(src, filename):
                  "unparsed": "the module does not parse under this interpreter (%s), so nothing in it was read" % e.msg}]
     parents = {}
     membership = set()          # the right operands of `x in (...)` / `x not in [...]`: sets of names, never an argv
+    imports, assigns = [], []   # gathered in this walk, not walks of their own: walking every module is most of the
+                                # census's cost
     for parent in ast.walk(tree):
         for child in ast.iter_child_nodes(parent):
             parents[child] = parent
         if isinstance(parent, ast.Compare):
             membership.update(id(c) for c, op in zip(parent.comparators, parent.ops) if isinstance(op, (ast.In, ast.NotIn)))
+        elif isinstance(parent, (ast.Import, ast.ImportFrom)):
+            imports.append(parent)
+        elif isinstance(parent, (ast.Assign, ast.AnnAssign)) and isinstance(parent.value, (ast.Name, ast.Attribute)):
+            assigns.append((parent.targets if isinstance(parent, ast.Assign) else [parent.target], parent.value))
 
     def func_of(node):
         while node in parents:
@@ -2157,34 +2201,63 @@ def _launchers_in(src, filename):
                 return node.name
         return "<module>"
 
-    sp_mods, os_mods, shlex_mods, sp_names = {"subprocess"}, {"os"}, {"shlex"}, set()
-    for node in ast.walk(tree):
+    # what each name the module binds by import or by assignment stands for, as a dotted path: `import a.b` binds a,
+    # `import a.b as x` and `from a import b as x` bind x to a.b, and `m = pytest.main` binds m to what the right side
+    # names (one pass per assignment at most, so a chain of names resolves and `p = p.parent` cannot loop); a bare name
+    # the module never binds reads as itself
+    bound = {}
+    for node in imports:
         if isinstance(node, ast.Import):
             for a in node.names:
-                {"subprocess": sp_mods, "os": os_mods, "shlex": shlex_mods}.get(a.name, set()).add(a.asname or a.name)
-        elif isinstance(node, ast.ImportFrom) and node.module == "subprocess":
-            sp_names.update(a.asname or a.name for a in node.names if a.name in SUBPROCESS_FUNCS)
+                if a.asname:
+                    bound[a.asname] = a.name
+                else:
+                    top = a.name.split(".")[0]
+                    bound[top] = top
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for a in node.names:
+                if a.name != "*":
+                    bound[a.asname or a.name] = node.module + "." + a.name
 
-    def call_kind(call):
-        f = call.func
-        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name):
-            if f.value.id in sp_mods and f.attr in SUBPROCESS_FUNCS:
-                return "subprocess." + f.attr
-            if f.value.id in os_mods and f.attr in ("system", "popen"):
-                return "os." + f.attr
-        if isinstance(f, ast.Name) and f.id in sp_names:
-            return "subprocess." + f.id
-        return None
+    def dotted(expr):
+        attrs = []
+        while isinstance(expr, ast.Attribute):
+            attrs.append(expr.attr)
+            expr = expr.value
+        if not isinstance(expr, ast.Name):
+            return None
+        root = bound.get(expr.id, expr.id if expr.id in UNBOUND_MODULES else None)
+        return None if root is None else ".".join([root] + attrs[::-1])
+
+    for _ in range(len(assigns)):
+        changed = False
+        for targets, value in assigns:
+            path = dotted(value)
+            for t in targets:
+                if path is not None and isinstance(t, ast.Name) and bound.get(t.id) != path:
+                    bound[t.id] = path
+                    changed = True
+        if not changed:
+            break
 
     def is_shlex_split(node):
-        f = node.func if isinstance(node, ast.Call) else None
-        return isinstance(f, ast.Attribute) and f.attr == "split" and isinstance(f.value, ast.Name) and f.value.id in shlex_mods
+        return isinstance(node, ast.Call) and dotted(node.func) == "shlex.split"
 
     out = []
 
     def row(node, kind, elts, unparsed=None):
         out.append({"file": base, "line": node.lineno, "func": func_of(node), "kind": kind, "argv": [_str(e) for e in elts],
                     "flag": _passes_flag(elts), "unparsed": unparsed})
+
+    def element_command(node, what, elts):
+        """An argv whose command is not pytest but that carries a pytest command inside one element: any element when
+        the head is a shell run with -c, else a multi-word element (a `-c` string running pytest.main; a lone `pytest`
+        element is a package name on a pip line, or an argument)."""
+        c = [_str(e) for e in elts]
+        shell = bool(c) and c[0] is not None and os.path.basename(c[0]) in SHELL_NAMES and "-c" in c
+        hit = [t for t in c if t and PYTEST_IN_STRING_RE.search(t) and (shell or re.search(r"\s", t))]
+        if hit:
+            row(node, what, [], "a pytest command inside one element of the argv (%r), not read as the command" % hit[0])
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.List, ast.Tuple)):
@@ -2193,20 +2266,40 @@ def _launchers_in(src, filename):
                 row(node, kind, node.elts)
             elif unparsed:
                 row(node, "an argv literal", [], unparsed)
-        elif isinstance(node, ast.Call):
-            what = call_kind(node)
-            if what is None:
-                continue
+            continue
+        if not isinstance(node, ast.Call):
+            continue
+        what = dotted(node.func)
+        if what in IN_PROCESS_CALLS:
+            # a pytest session in this process: plugin autoload runs again inside it, whatever flag the outer run had,
+            # so its own argv must carry the flag (tests-4's refuter's probe: -p no:anyio inside the call blocked it)
             arg = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg == "args"), None)
+            kind = what + " (in process)"
+            if isinstance(arg, (ast.List, ast.Tuple)):
+                row(node, kind, arg.elts)
+            elif arg is None:
+                row(node, kind, [], "called with no argument, so its argv is sys.argv, which the census cannot read: not read "
+                                    "as a launcher until its argv is a list or tuple literal")
+            else:
+                row(node, kind, [], "its argv is not a list or tuple literal, so the census cannot read the flag: not read as a "
+                                    "launcher until it is one")
+        elif what in POSITIONAL_ARGV_CALLS:
+            lo, hi = POSITIONAL_ARGV_CALLS[what]
+            elts = node.args[lo:hi]
+            kind, unparsed = _argv_command(elts)
+            if kind:
+                row(node, "%s: %s" % (what, kind), elts)
+            elif unparsed:
+                row(node, "%s positional arguments" % what, [], unparsed)
+            else:
+                element_command(node, what, elts)
+        elif what in FIRST_ARG_CALLS:
+            arg = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg == FIRST_ARG_CALLS[what]), None)
             if arg is None:
                 continue
             if isinstance(arg, (ast.List, ast.Tuple)):
                 if _argv_command(arg.elts) == (None, None):      # a launcher or an unparsed argv has its row from the literal
-                    c = [_str(e) for e in arg.elts]
-                    shell = bool(c) and c[0] is not None and os.path.basename(c[0]) in SHELL_NAMES and "-c" in c
-                    hit = [t for t in c if t and PYTEST_IN_STRING_RE.search(t) and (shell or re.search(r"\s", t))]
-                    if hit:
-                        row(node, what, [], "a pytest command inside one element of the argv (%r), not read as the command" % hit[0])
+                    element_command(node, what, arg.elts)
             elif is_shlex_split(arg):
                 text = _text(arg.args[0]) if arg.args else None
                 if text is not None and PYTEST_IN_STRING_RE.search(text):
@@ -2249,10 +2342,11 @@ def _describe_launcher(r):
 
 
 class ChildPytestLaunchers(unittest.TestCase):
-    """Every pytest the suite itself spawns passes -p no:anyio, held on the population of launchers under tests/ (item
-    5 of the module docstring). A child pytest is a new pytest process in the cell's interpreter, where the SDK step
-    installed anyio; the workflow's flag reaches the step's own process alone, so a launcher without the flag auto-loads
-    the plugin there (on 2026-09-20, before the launchers gained the flag, eight of nine did, and a synthetic broken
+    """Every pytest the suite itself starts, as a child or in its own process, passes -p no:anyio, held on the
+    population of launchers under tests/ in the forms _launchers_in reads (item 5 of the module docstring). A child
+    pytest is a new pytest process in the cell's interpreter, where the SDK step installed anyio, and an in-process
+    pytest.main runs plugin autoload again; the workflow's flag reaches the step's own session alone, so a launcher
+    without the flag auto-loads the plugin there (on 2026-09-20, before the launchers gained the flag, eight of nine did, and a synthetic broken
     anyio/pytest_plugin.py in a CI-shaped venv red tests in each of the six modules that spawned them, none of which imports the SDK; the same six were green
     with the flag on every launcher, 2026-09-20). The population is derived by child_pytest_launchers, keyed on the argv
     property; the flag check keys on the argv's constant elements and its message says so; a launcher without the flag
@@ -2396,6 +2490,128 @@ class ChildPytestLaunchers(unittest.TestCase):
         rows = _launchers_in("def f(:\n    pass\n", "t.py")
         self.assertEqual([(r["kind"], r["flag"]) for r in rows], [("module", False)])
         self.assertIn("does not parse under this interpreter", rows[0]["unparsed"])
+
+    # round 4's ruling (2026-09-23, F): the calls that start a pytest process beside subprocess's five and os.system and
+    # os.popen, and the calls that run one in process. Until then each form below gave no row, parsed or unparsed, and the
+    # census read green over it (the refuters' synthetic sources); the four controls at the end had a row then and keep it.
+    STARTING_FORMS = (
+        # a command string, run through a shell: read as the string calls are
+        ("subprocess.getoutput", 'import subprocess\nsubprocess.getoutput("python -m pytest -q")\n', "unparsed", "a pytest command in a shell string"),
+        ("subprocess.getstatusoutput", 'import subprocess\nsubprocess.getstatusoutput("pytest tests -q")\n', "unparsed", "a pytest command in a shell string"),
+        ("getoutput imported by name, its cmd keyword", 'from subprocess import getoutput as out\nout(cmd="py.test -q")\n', "unparsed", "a pytest command in a shell string"),
+        ("asyncio.create_subprocess_shell", 'import asyncio\nasyncio.create_subprocess_shell("python3 -m pytest -q")\n', "unparsed", "a pytest command in a shell string"),
+        ("asyncio.subprocess.create_subprocess_shell", 'import asyncio.subprocess\nasyncio.subprocess.create_subprocess_shell("pytest -q")\n', "unparsed",
+         "a pytest command in a shell string"),
+        ("os.system imported by name, its command keyword", 'from os import system\nsystem(command="pytest -q")\n', "unparsed", "a pytest command in a shell string"),
+        # an argv passed as positional arguments: read as an argv literal is
+        ("asyncio.create_subprocess_exec", 'import asyncio, sys\nasyncio.create_subprocess_exec(sys.executable, "-m", "pytest", "-q")\n', False, "<interpreter> -m pytest"),
+        ("asyncio.create_subprocess_exec with the flag, aliased", 'import asyncio as aio, sys\naio.create_subprocess_exec(sys.executable, "-m", "pytest", "-p", "no:anyio")\n',
+         True, "<interpreter> -m pytest"),
+        ("create_subprocess_exec imported by name", 'import sys\nfrom asyncio import create_subprocess_exec as spawn\nspawn(sys.executable, "-B", "-mpytest")\n',
+         False, "<interpreter> -mpytest"),
+        ("asyncio.subprocess.create_subprocess_exec", 'import asyncio.subprocess, sys\nasyncio.subprocess.create_subprocess_exec(sys.executable, "-m", "pytest")\n',
+         False, "<interpreter> -m pytest"),
+        ("os.execl", 'import os, sys\nos.execl(sys.executable, sys.executable, "-m", "pytest", "-q")\n', False, "<interpreter> -m pytest"),
+        ("os.execlp, the console script by name, with the flag", 'import os\nos.execlp("pytest", "pytest", "-q", "-p", "no:anyio")\n', True, "pytest by name or path"),
+        ("os.execle, its env last", 'import os, sys\nos.execle(sys.executable, "python", "-m", "pytest", {"A": "1"})\n', False, "<interpreter> -m pytest"),
+        ("os.execlpe, its env last, the flag in one token", 'import os\nos.execlpe("python3", "python3", "-m", "pytest", "-pno:anyio", env)\n', True, "<interpreter> -m pytest"),
+        ("os.spawnl, its mode first", 'import os, sys\nos.spawnl(os.P_WAIT, sys.executable, sys.executable, "-m", "pytest")\n', False, "<interpreter> -m pytest"),
+        ("os.spawnlp", 'import os\nos.spawnlp(os.P_NOWAIT, "py.test", "py.test", "-q")\n', False, "pytest by name or path"),
+        ("os.spawnle, mode first and env last", 'import os, sys\nos.spawnle(os.P_WAIT, sys.executable, "python", "-m", "pytest", env)\n', False, "<interpreter> -m pytest"),
+        ("os.spawnlpe", 'import os\nos.spawnlpe(os.P_WAIT, "python3.12", "python3.12", "-m", "pytest", env)\n', False, "<interpreter> -m pytest"),
+        ("positional arguments whose -m module is a name", 'import asyncio, sys\nasyncio.create_subprocess_exec(sys.executable, "-m", mod)\n', "unparsed",
+         "a module name the census cannot read after -m"),
+        ("positional arguments running a shell's -c", 'import asyncio\nasyncio.create_subprocess_exec("bash", "-c", "pytest -q")\n', "unparsed",
+         "a pytest command inside one element of the argv"),
+        ("os.execl running a shell's -c", 'import os\nos.execl("/bin/sh", "sh", "-c", "python -m pytest")\n', "unparsed", "a pytest command inside one element of the argv"),
+        # in process: pytest.main or pytest.console_main by name, alias or import, and _pytest.config's main (tests-4's refuter)
+        ("pytest.main, the flag in its list", 'import pytest\npytest.main(["-q", "-p", "no:anyio"])\n', True, "pytest.main (in process)"),
+        ("pytest.main without the flag", 'import pytest\npytest.main(["-q", "tests/test_a.py"])\n', False, "pytest.main (in process)"),
+        ("pytest.main under an alias, args=", 'import pytest as pt\npt.main(args=["-q", "-pno:anyio"])\n', True, "pytest.main (in process)"),
+        ("from pytest import main, a tuple", 'from pytest import main\nmain(("-q",))\n', False, "pytest.main (in process)"),
+        ("from pytest import main as a name", 'from pytest import main as run_tests\nrun_tests(["-q", "-p", "no:anyio"])\n', True, "pytest.main (in process)"),
+        ("a name bound to pytest.main", 'import pytest\nm = pytest.main\nm(["-q"])\n', False, "pytest.main (in process)"),
+        ("a chain of names, bound in reverse order", 'import pytest\nb = a\na = pytest.main\nb(["-q"])\n', False, "pytest.main (in process)"),
+        ("_pytest.config.main", 'import _pytest.config\n_pytest.config.main(["-q"])\n', False, "_pytest.config.main (in process)"),
+        ("from _pytest import config", 'from _pytest import config\nconfig.main(["-q"])\n', False, "_pytest.config.main (in process)"),
+        ("from _pytest.config import main", 'from _pytest.config import main as cmain\ncmain(["-q", "-p", "no:anyio"])\n', True, "_pytest.config.main (in process)"),
+        ("pytest.main with a list the census cannot read", 'import pytest\npytest.main(argv)\n', "unparsed", "its argv is not a list or tuple literal"),
+        ("pytest.main with no argument", 'import pytest\npytest.main()\n', "unparsed", "no argument, so its argv is sys.argv"),
+        ("pytest.console_main", 'import pytest\npytest.console_main()\n', "unparsed", "no argument, so its argv is sys.argv"),
+        ("console_main imported by name", 'from pytest import console_main\nconsole_main()\n', "unparsed", "no argument, so its argv is sys.argv"),
+        ("_pytest.config.console_main", 'from _pytest.config import console_main\nconsole_main()\n', "unparsed", "no argument, so its argv is sys.argv"),
+        # a module name the module never binds reads as itself (a star import, a name injected), as before the ruling
+        ("subprocess never imported by name", 'from helpers import *\nsubprocess.run("pytest -q", shell=True)\n', "unparsed", "a pytest command in a shell string"),
+    )
+    # the argv each positional form reads, its elements joined by spaces (None for an expression): a spawn form's mode
+    # and an e form's env are not argv elements. Strings, not lists: a list here would be an argv literal this census reads.
+    POSITIONAL_ARGV = {"os.execle, its env last": "None python -m pytest",
+                       "os.execlpe, its env last, the flag in one token": "python3 python3 -m pytest -pno:anyio",
+                       "os.spawnl, its mode first": "None None -m pytest",
+                       "os.spawnle, mode first and env last": "None python -m pytest",
+                       "os.spawnlpe": "python3.12 python3.12 -m pytest"}
+    CONTROLS = (      # correctness-3's refuter's four, each read before the ruling
+        ("os.system", 'import os\nos.system("pytest -q")\n', "unparsed", "a pytest command in a shell string"),
+        ("subprocess.run of a string", 'import subprocess\nsubprocess.run("python -m pytest -q", shell=True)\n', "unparsed", "a pytest command in a shell string"),
+        ("an unflagged argv literal", 'import subprocess, sys\nsubprocess.run([sys.executable, "-m", "pytest", "-q"])\n', False, "<interpreter> -m pytest"),
+        ("create_subprocess_exec of a starred list literal", 'import asyncio, sys\nasyncio.create_subprocess_exec(*[sys.executable, "-m", "pytest"])\n',
+         False, "<interpreter> -m pytest"),
+    )
+
+    def _assert_one_row(self, label, src, want, what):
+        rows = _launchers_in(src, "test_synthetic_launcher.py")
+        self.assertEqual(len(rows), 1, "%s: one row expected, read %r" % (label, [_describe_launcher(r) for r in rows]))
+        r = rows[0]
+        if want == "unparsed":
+            self.assertIn(what, r["unparsed"] or "", _describe_launcher(r))
+            self.assertIn("not read as", _describe_launcher(r))
+        else:
+            self.assertIsNone(r["unparsed"], _describe_launcher(r))
+            self.assertIn(what, r["kind"], _describe_launcher(r))
+            self.assertEqual(r["flag"], want, _describe_launcher(r))
+            if label in self.POSITIONAL_ARGV:
+                self.assertEqual(" ".join(str(a) for a in r["argv"]), self.POSITIONAL_ARGV[label], _describe_launcher(r))
+
+    def test_every_call_that_starts_or_runs_pytest_is_read_in_each_form(self):
+        for label, src, want, what in self.STARTING_FORMS + self.CONTROLS:
+            with self.subTest(form=label):
+                self._assert_one_row(label, src, want, what)
+        self.assertEqual(set(self.POSITIONAL_ARGV) - {t[0] for t in self.STARTING_FORMS}, set(), "an argv expectation names no form")
+        # the name resolution runs one pass per assignment at most: a name assigned from itself terminates, with no row
+        self.assertEqual(_launchers_in('import os\np = os.path\np = p.parent\np = p.parent\n', "t.py"), [])
+        # the census against what it refuses, through the walk: an unflagged in-process pytest.main in a test module is
+        # named at its line as lacking the flag, and so would red test_every_launcher_passes_the_flag_or_is_listed...
+        d = tempfile.mkdtemp(prefix="census-walk-")
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        with open(os.path.join(d, "test_in_process.py"), "w") as f:
+            f.write('import pytest\n\ndef test_nested():\n    assert pytest.main(["-q", "sub"]) == 0\n')
+        rows = child_pytest_launchers(d)
+        self.assertEqual([_describe_launcher(r) for r in rows],
+                         ["tests/test_in_process.py:4 (test_nested): pytest.main (in process) ['-q', 'sub']  lacks -p no:anyio (keyed on the "
+                          "argv's constant elements: `-p` then `no:anyio`, or `-pno:anyio`)"])
+
+    # the residual, pinned by execution: each form outside the read gives no row (at the ruling's head and after it)
+    OUTSIDE_THE_READ = (
+        ("a command string held in a variable", 'import subprocess\ncmd = "python -m pytest -q"\nsubprocess.run(cmd, shell=True)\n'),
+        ("an f-string held in a variable", 'import subprocess, sys\ncmd = f"{sys.executable} -m pytest -q"\nsubprocess.run(cmd, shell=True)\n'),
+        ("a command built with %", 'import subprocess, sys\nsubprocess.run("%s -m pytest -q" % sys.executable, shell=True)\n'),
+        ("a command built with +", 'import os, sys\nos.system(sys.executable + " -m pytest -q")\n'),
+        ("a command built with .format", 'import subprocess, sys\nsubprocess.getoutput("{} -m pytest -q".format(sys.executable))\n'),
+        ("a shlex.split string held in a variable", 'import shlex, subprocess\ncmd = "pytest -q"\nsubprocess.run(shlex.split(cmd))\n'),
+        ("a shell's -c string held in a variable", 'import subprocess\nsubprocess.run(["bash", "-c", script])\n'),
+        ("a python -c string held in a variable", 'import subprocess, sys\ncode = "import pytest; pytest.main([])"\nsubprocess.run([sys.executable, "-c", code])\n'),
+        ("a string anywhere else: a script written to a file and run", 'import subprocess\nopen("run.sh", "w").write("pytest -q\\n")\nsubprocess.run(["bash", "run.sh"])\n'),
+        ("a string anywhere else: exec", 'exec("import pytest; pytest.main([])")\n'),
+        ("an argv assembled one element at a time", 'import subprocess, sys\nargv = [sys.executable]\nargv.append("-m")\nargv.append("pytest")\nsubprocess.run(argv)\n'),
+        ("pytest.main reached through getattr", 'import pytest\ngetattr(pytest, "main")(["-q"])\n'),
+        ("pytest.main reached through importlib", 'import importlib\nimportlib.import_module("pytest").main(["-q"])\n'),
+        ("pytest run in process by runpy", 'import runpy\nrunpy.run_module("pytest", run_name="__main__")\n'),
+    )
+
+    def test_each_form_outside_the_read_gives_no_row(self):
+        for label, src in self.OUTSIDE_THE_READ:
+            with self.subTest(form=label):
+                self.assertEqual(_launchers_in(src, "test_synthetic_launcher.py"), [], label)
 
     def test_the_walk_parses_a_module_whose_only_pytest_spelling_is_the_one_token_form(self):
         # child_pytest_launchers skips a module without a parse when its text spells no pytest; until 2026-09-21 that

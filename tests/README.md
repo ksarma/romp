@@ -64,12 +64,17 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   release, and one of those packages, anyio, ships a pytest plugin that every
   pytest process a cell runs would auto-load, which both pytest lines in `ci.yml`
   (the "Run pytest" step and the extension job's served-page step) and every
-  pytest child the suite spawns from a test block with `-p no:anyio`, so no pytest
-  process a cell runs loads a plugin the box's default run does not (the step's
-  comment in `ci.yml` has the reasons and the measurement; `tests/test_ci_sdk_pin.py`
+  pytest the suite starts from a test, as a child or in process through
+  `pytest.main`, block with `-p no:anyio`, so no pytest process that
+  `tests/test_ci_sdk_pin.py` reads loads a plugin the box's default run does not
+  (the step's comment in `ci.yml` has the reasons and the measurement; the module
   holds the flag on both populations, the workflow's lines and the launchers under
-  `tests/`). The two plugin sets are not equal: the box's default run loads
-  pytest-xdist's two plugins, which no cell installs. To execute the gated
+  `tests/` in the forms its launcher census reads, and its docstring names what
+  that census leaves unread: a pytest command in a string held in a variable or
+  built with `%`, `+` or `.format`, a string anywhere else, an argv assembled one
+  element at a time, and an in-process pytest reached through `getattr`,
+  `importlib` or `runpy`). The two plugin sets are not equal: the box's default
+  run loads pytest-xdist's two plugins, which no cell installs. To execute the gated
   tests from a plain venv, put romp's SDK venv on the path:
   `PYTHONPATH=~/.local/state/romp/sdkvenv/lib/python3.12/site-packages python3 -m
   pytest tests/test_sdk_backend.py -q -p no:anyio` (the venv `bin/romp-sdk-setup`
@@ -77,7 +82,8 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   it). The flag is there because this recipe is the one box road that WOULD load
   the plugin: `PYTHONPATH` is on `sys.path` before pytest discovers plugins, so
   without it the header reads `anyio` beside `timeout` and the run loads a plugin
-  that neither the box's default run nor any pytest process a cell runs does.
+  that neither the box's default run nor any cell's pytest process that
+  `tests/test_ci_sdk_pin.py` reads does.
   Under pytest-xdist (`python3 -m pytest tests/ -n 4`) two import-time effects of
   `tests/test_host_transport.py` decide what a red means. It puts that same SDK venv
   on `sys.path` at import (the kernel's own idiom), and every worker imports every

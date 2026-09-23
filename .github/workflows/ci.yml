@@ -147,16 +147,21 @@ jobs:
         # whose site joins sys.path at tests/test_host_transport.py's import, after plugin autoload, and the
         # box venvs carry no anyio; the one box road that would load it, tests/README.md's PYTHONPATH recipe,
         # which puts that site on the path before pytest starts, passes the same flag), so no pytest process
-        # a cell runs loads a plugin the box's default run does not: the flag is on both of this file's pytest
-        # lines and on every pytest child the suite spawns in the cell's interpreter (tests/test_ci_sdk_pin.py
-        # holds both populations, this file's by its population check and the children's by its launcher
-        # census, which reads argv literals under tests/: a pytest command in a string is red until spelled as
-        # an argv, and an argv assembled one element at a time is outside its read). The two plugin sets are
-        # not equal, and this comment does not say they are: the box's
+        # the two checks below read loads a plugin the box's default run does not: the flag is on both of this
+        # file's pytest lines and on every pytest the suite starts in the cell's interpreter in a form the
+        # launcher census reads (tests/test_ci_sdk_pin.py holds both populations, this file's by its population
+        # check and the suite's by its launcher census, which reads argv literals under tests/, the positional
+        # arguments of asyncio.create_subprocess_exec and of the os.exec and os.spawn l forms, and an in-process
+        # pytest.main, pytest.console_main or _pytest.config.main by name, alias or import: a pytest command in
+        # a constant string or f-string written at the call and handed to subprocess, os.system or os.popen,
+        # asyncio.create_subprocess_shell, shlex.split or a shell's -c is red until spelled as an argv; a string
+        # anywhere else, or one held in a variable or built with %, + or .format, is outside the read, as is an
+        # argv assembled one element at a time and an in-process pytest reached through getattr, importlib or
+        # runpy). The two plugin sets are not equal, and this comment does not say they are: the box's
         # default run loads pytest-xdist's two plugins, which no cell installs. Nothing under tests/ is marked
         # anyio or imports the one thing the plugin serves, the SDK's own pytest-marked conformance suite
-        # claude_agent_sdk.testing, so the plugin does no work here; and blocked in every pytest process a
-        # cell runs, a bad anyio pytest plugin cannot fail a run at pytest startup before a test runs.
+        # claude_agent_sdk.testing, so the plugin does no work here; and blocked in every pytest process the
+        # two checks read, a bad anyio pytest plugin cannot fail one at pytest startup before a test runs.
         # Unblocked in a child it did: a synthetic broken anyio/pytest_plugin.py in a CI-shaped venv red tests
         # in each of the six modules whose pytest children lacked the flag, none of which imports the SDK
         # (2026-09-20, before the children gained it). A bad anyio itself, not its plugin, still surfaces
@@ -244,7 +249,7 @@ jobs:
         # auto-load in this process and in every pytest child the suite spawns in this interpreter
         # (the launchers under tests/ pass the same flag); the SDK step's comment states the decision
         # and its measurement, and tests/test_ci_sdk_pin.py holds the flag on every pytest invocation
-        # in this file (its population check) and on every launcher under tests/ (its launcher census).
+        # in this file (its population check) and on the launchers under tests/ its launcher census reads.
         run: python -m pytest -q -p no:anyio --durations=10 --timeout=600 --timeout-method=thread
 
   shell:
