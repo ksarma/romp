@@ -2741,7 +2741,8 @@ def number_word_sites(source=None):
         raise AssertionError("the module binds no NUMBER_WORDS at module level: the sites would be derived against nothing")
     sites = []
     # every step of a walk pops a pair made from one Name node of the tree, and the seen set admits each pair once, so a
-    # walk that takes more steps than the tree has Names is looping over a cycle the guard no longer breaks
+    # walk that takes more steps than the tree has Names is looping over a cycle the guard no longer breaks; the raise is
+    # defensive, unreachable while the seen guard holds, and turns a lost guard into a named failure rather than a hang
     bound = sum(1 for n in ast.walk(tree) if isinstance(n, ast.Name)) + 1
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)):
@@ -3014,8 +3015,10 @@ class TheStatedLimitIsWorded(unittest.TestCase):
         """number_word_sites over this module: every subscript of NUMBER_WORDS, the receiver resolved to the module's
         table by the binding, sits inside number_word, so no count is spelled past the ceiling check (the round-8
         review found the three tree-count sites indexing the table bare). The derivation is proven over a synthetic
-        module first: the helper's own site, a bare site in another def, a site through two aliases and a
-        module-level site are the sites; a local of the same spelling, another table's subscript and a subscript of a
+        module first: the helper's own site, a bare site in another def, a site through two aliases, a module-level
+        site, and a site inside a comprehension, a lambda and a class body, each in a def and attributed to that def
+        (the walk up from the scope the subscript is read in to the enclosing def, which review round 9 found executed
+        by no test), are the sites; a local of the same spelling, another table's subscript and a subscript of a
         cyclic alias pair (walked once by the seen set; with the guard gone the walk's step bound raises, naming the
         names, so this pin reds instead of hanging, the gap this pass found) are not; a module with no NUMBER_WORDS
         raises."""
@@ -3053,12 +3056,30 @@ class TheStatedLimitIsWorded(unittest.TestCase):
 
 
             FIRST = NUMBER_WORDS[0]
+
+
+            def comprehended(n):
+                return [NUMBER_WORDS[i] for i in range(n)]
+
+
+            def lambdaed(n):
+                word = lambda i: NUMBER_WORDS[i]
+                return word(n)
+
+
+            def outer(n):
+                class Inner:
+                    WORD = NUMBER_WORDS[0]
+                return Inner
             ''')
-        self.assertEqual(number_word_sites(synthetic), [(6, "number_word"), (10, "bare"), (15, "aliased"), (33, None)],
+        self.assertEqual(number_word_sites(synthetic), [(6, "number_word"), (10, "bare"), (15, "aliased"), (33, None),
+                                                        (37, "comprehended"), (41, "lambdaed"), (47, "outer")],
                          "number_word_sites does not key on the binding: the helper's own site, the bare site, the site "
-                         "through two aliases and the module-level one are the sites, as (line, enclosing def); the "
-                         "local of the same spelling, the other table and the cyclic alias pair (walked once, by the seen "
-                         "set; a walk past the tree's name count raises instead) are not")
+                         "through two aliases and the module-level one are the sites, as (line, enclosing def), and so are "
+                         "the sites inside a comprehension, a lambda and a class body, each attributed to the def that "
+                         "holds it (the walk up to the enclosing def); the local of the same spelling, the other table "
+                         "and the cyclic alias pair (walked once, by the seen set; a walk past the tree's name count "
+                         "raises instead) are not")
         with self.assertRaisesRegex(AssertionError, "binds no NUMBER_WORDS"):
             number_word_sites("X = 1\n")
         sites = number_word_sites()
