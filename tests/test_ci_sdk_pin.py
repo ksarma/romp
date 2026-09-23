@@ -3172,7 +3172,8 @@ def _launchers_in(src, filename):
             root = root.value
         if not isinstance(root, ast.Name):
             return None
-        if in_class_comprehension(root) and resolve(root) != resolve(root, skip_class=True):
+        if isinstance(scope_of(root), ast.ClassDef) and in_class_comprehension(root) and resolve(root) != resolve(
+                root, skip_class=True):          # a comprehension's scope_of is the class around it: the cheap test first
             return ("a call through %r inside a comprehension or generator expression in a class body that binds the name: "
                     "Python looks the name up past the class there, and the census does not resolve that scope, so it is "
                     "not read as a launcher until the call moves out of the comprehension" % root.id)
