@@ -25,10 +25,12 @@
 # step's measured numbers.
 # Every grandfather reason, "existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers", is bound to commit ff436587f4e826e2450517517efdf0b3208c9359: a source that did not exist at that commit may not carry it; the bound reads the file's age, not what it did there, so a source that existed at that commit without a browser launch may carry it, and one that gained its launch later is rostered once it passes the gate, or carries the engine or embedded-driver form when one is true of it.
 # That commit is main at the roster's creation, and this line is the bound's one home: ui/webview/ci-browser-legs-census.test.ts
-# (the vscode-extension job) reads the commit and the sentence from here, fetches the commit at depth 1 when the checkout
-# lacks it (a fetch or object read that fails is a red naming the reason, never a pass), and refuses a row carrying the
-# sentence whose source is not in the tree at that commit; tools/ci-browser-legs.test.mjs (the Shell job, a depth-1
-# checkout that fetches nothing) holds this header to one such line and does not run that history read. Both read a reason
+# (the vscode-extension job) reads the commit and the sentence from here, fetches the commit at depth 1 only when the
+# checkout is itself shallow (CI's depth-1 checkout) and lacks it (a fetch or object read that fails is a red naming the
+# reason, never a pass; a full clone that lacks it takes a red naming the bound line, with no fetch, since a depth fetch would
+# make the whole store shallow), and refuses a row carrying the sentence whose source is not in the tree at that commit;
+# tools/ci-browser-legs.test.mjs (the Shell job, a depth-1 checkout that fetches nothing) holds this header to one such line
+# and does not run that history read. Both read a reason
 # as one of four forms: the grandfather sentence as quoted on the line above, whole and exact; an engine reason, "launches
 # <Firefox|WebKit|Firefox and WebKit>; the gating job installs Chromium only", a tail after the phrase allowed; the
 # embedded-driver sentence, whole and exact; or a pending line. A reason that is none of them is refused by name (there is

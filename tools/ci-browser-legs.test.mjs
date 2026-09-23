@@ -475,7 +475,8 @@ test('the exclusions header binds the grandfather reason to one commit, in one l
     assert.equal(v.kind, null, what + ' is refused: ' + JSON.stringify(reason));
     assert.ok(v.refusal.startsWith('the reason is AMBIGUOUS'), what + ': refused as ambiguous: ' + v.refusal);
   }
-  // the history read itself (git cat-file -e <sha>:<source> for each row, after a depth-1 fetch when the clone lacks the commit)
+  // the history read itself (git cat-file -e <sha>:<source> for each row, after a depth-1 fetch only when the clone is shallow and
+  // lacks the commit; a full clone lacking it is a red hold-off naming the bound line, no fetch)
   // is ' + path.relative(REPO, CENSUS_TEST) + '\'s: this module states it does not run it, so a green here is the header\'s shape alone
   assert.ok(read(CENSUS_TEST).includes('is bound to commit'), path.relative(REPO, CENSUS_TEST) + ' reads the bound line (a presence pin: the executed check lives there, in the vscode-extension job, and this module does not run it because the Shell job\'s depth-1 checkout lacks commit ' + sha + ' and fetches nothing)');
 });

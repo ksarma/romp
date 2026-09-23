@@ -13,8 +13,10 @@
 // passes the gate, the engine form or the embedded-driver sentence for a leg the gating job cannot run, the gate's own remedy
 // for a Chromium-only leg that misses it, no line for a module that is no leg; a leg in neither file is red with the same
 // derived remedy). The grandfather reason is bound, in one header line,
-// to the roster's creation commit: this test reads the commit from the header, fetches it at depth 1 when the checkout lacks it
-// (a fetch that fails is a red hold-off, never a pass) and refuses a row carrying the sentence whose source is not in the tree at
+// to the roster's creation commit: this test reads the commit from the header, fetches it at depth 1 only when the checkout is
+// itself shallow (CI's depth-1 checkout) and lacks it (a fetch that fails is a red hold-off, never a pass; a full clone that lacks
+// it takes a red naming the bound line, with no fetch, since a depth fetch would make the whole store shallow, and a scratch-clone
+// test drives both arms) and refuses a row carrying the sentence whose source is not in the tree at
 // that commit. tools/ci-browser-legs.test.mjs, in CI's Shell job with
 // no node_modules, holds the parse-free half (file shape, duplicates, both files, reasons, the ci.yml pins) and runs the script
 // over synthetic trees with a stub node that answers the census call from a table; the script's reading of the REAL census is
@@ -695,6 +697,37 @@ test("scope equals walk, by execution: the entry points esbuild.js testBuild com
   assert.deepEqual(scopeDiff(four, new Set(four.keys())), { builtNotRead: null, readNotBuilt: null }, "equal sets: neither sentence");
 });
 
+/** git over one store: the real-rows test below reads the checkout's store (REPO); the scratch-clone test after it reads stores it made. */
+function gitIn(repo: string): (args: string[]) => { status: number | null; stdout: string; stderr: string } {
+  return (args: string[]) => spawnSync("git", ["-C", repo, ...args], { encoding: "utf8", timeout: 120000 });
+}
+
+/** The exclusions header's bound line named by its 1-based line number, for a verdict: derived from the text (the line that opens
+ *  "# Every grandfather reason, "), never a constant, so a header that gains a line above it moves the name with it. */
+function boundLineAt(text: string): string {
+  return EXCLUDED + " line " + (text.split("\n").findIndex((l) => l.startsWith("# Every grandfather reason, ")) + 1);
+}
+
+/** Whether the bound commit can be read in the store: verdict null when it is present, or when it was fetched at depth 1 into a
+ *  SHALLOW store (CI's depth-1 checkout, the one place this test fetches); otherwise the hold-off sentence, a red never a pass.
+ *  The fetch is gated on `git rev-parse --is-shallow-repository` printing true. A full store is never fetched into: every commit
+ *  that carries this test descends from the bound (main at the roster's creation is the branch point), so a full store that lacks
+ *  the bound holds a checkout the bound is not an ancestor of, which means the header's bound line names the wrong commit; and a
+ *  --depth fetch into a full store writes .git/shallow and makes the WHOLE store shallow, for every worktree that shares it (measured
+ *  in a scratch store: a full clone lacking the commit, fetched at depth 1, reads --is-shallow-repository true after, the fetched
+ *  commit parentless). A store whose shape read prints anything but "true" (an older git, an error) is treated as full: no fetch,
+ *  the hold-off, the restricted side. `fetched` says whether the depth-1 fetch ran. */
+function boundReadable(git: (args: string[]) => { status: number | null; stdout: string; stderr: string }, sha: string, boundAt: string): { verdict: string | null; fetched: boolean } {
+  if (git(["cat-file", "-e", sha]).status === 0) return { verdict: null, fetched: false };
+  const shallow = git(["rev-parse", "--is-shallow-repository"]).stdout.trim();
+  if (shallow !== "true") return { verdict: boundAt + ": the bound commit " + sha + " is not in this clone and the clone is not shallow (git rev-parse --is-shallow-repository printed " + JSON.stringify(shallow) + "), so the commit is not an ancestor of this checkout and the bound line names a commit that is not main at the roster's creation: fix the line (no fetch is made into a full store, since a depth-1 fetch would make the whole store shallow); a red hold-off, not a pass", fetched: false };
+  const fetch = git(["fetch", "--depth=1", "origin", sha]);
+  if (fetch.status !== 0) return { verdict: boundAt + ": the grandfather check could not run: commit " + sha + " is not in this shallow clone and `git fetch --depth=1 origin " + sha + "` failed (exit " + fetch.status + "): " + fetch.stderr.trim() + "; the bound cannot be read here, so this is a red hold-off, not a pass", fetched: false };
+  const have = git(["cat-file", "-e", sha]);
+  if (have.status !== 0) return { verdict: boundAt + ": the grandfather check could not run: after `git fetch --depth=1 origin " + sha + "` into this shallow clone the commit is still not readable (git cat-file -e exit " + have.status + "): " + have.stderr.trim() + "; a red hold-off, not a pass", fetched: false };
+  return { verdict: null, fetched: true };
+}
+
 /** The verdict on one grandfather row's history read, git's `cat-file -e <sha>:<rel>` result: null when the source is in the tree at
  *  the bound (exit 0); the remedy sentence naming the row when git says the path is not in that commit (exit 128 with either of
  *  git's two wordings, "does not exist in" for a path not on disk and "exists on disk, but not in" for a source added later); the
@@ -707,22 +740,18 @@ function boundVerdict(where: string, sha: string, rel: string, r: { status: numb
   return where + ": the grandfather check could not read " + sha + ":" + rel + " (git cat-file -e exit " + r.status + ": " + r.stderr.trim() + "); a red hold-off, not a pass";
 }
 
-test("every grandfather row's source existed at the commit the exclusions header binds the reason to: the header holds one bound line; the commit is fetched at depth 1 when the checkout lacks it, and a fetch or object read that fails is a red hold-off naming the reason, never a pass; a source absent at that commit is refused with the remedy; the bound line says it reads the file's age, not what the file did there; the per-row verdict is one function, boundVerdict, driven here over synthetic git results (exit 0, 128 with each of git's two wordings, 128 with another message, another status) and over two reads through git itself at the bound (a path never in the tree, a source added after the bound)", async (t) => {
+test("every grandfather row's source existed at the commit the exclusions header binds the reason to: the header holds one bound line; the commit is fetched at depth 1 only when the checkout is itself shallow and lacks it, a fetch or object read that fails is a red hold-off naming the reason, never a pass, and a full clone that lacks it is a red hold-off naming the bound line with no fetch (boundReadable, driven over scratch clones by the next test); a source absent at that commit is refused with the remedy; the bound line says it reads the file's age, not what the file did there; the per-row verdict is one function, boundVerdict, driven here over synthetic git results (exit 0, 128 with each of git's two wordings, 128 with another message, another status) and over two reads through git itself at the bound (a path never in the tree, a source added after the bound)", async (t) => {
   const { ENGINE_PHRASE, EMBEDDED_PHRASE } = await load();
   const text = read(path.join(EXT, EXCLUDED));
   const { sentence, sha, embedded } = headerOf(text);
   const boundLine = text.split("\n").find((l) => l.startsWith("# Every grandfather reason, ")) as string;
   assert.ok(boundLine.includes("reads the file's age, not what it did there"), "the bound line names its residual: a source present at the commit without a browser launch may carry the reason (the bound reads the file's age); one that gained its launch later is rostered once it passes the gate, or carries the engine or embedded-driver form when one is true of it");
-  const git = (args: string[]) => spawnSync("git", ["-C", REPO, ...args], { encoding: "utf8", timeout: 120000 });
-  let have = git(["cat-file", "-e", sha]);
-  if (have.status !== 0) {
-    const shallow = git(["rev-parse", "--is-shallow-repository"]).stdout.trim();
-    const fetch = git(["fetch", "--depth=1", "origin", sha]);
-    assert.equal(fetch.status, 0, "the grandfather check could not run: commit " + sha + " is not in this clone (shallow: " + shallow + ") and `git fetch --depth=1 origin " + sha + "` failed (exit " + fetch.status + "): " + fetch.stderr.trim() + "; the bound cannot be read here, so this is a red hold-off, not a pass");
-    have = git(["cat-file", "-e", sha]);
-    assert.equal(have.status, 0, "the grandfather check could not run: after `git fetch --depth=1 origin " + sha + "` the commit is still not readable (git cat-file -e exit " + have.status + "): " + have.stderr.trim() + "; a red hold-off, not a pass");
-    t.diagnostic("fetched commit " + sha + " at depth 1 (the clone lacked it; shallow: " + shallow + ")");
-  }
+  const git = gitIn(REPO);
+  // the bound's readability, gated on the store's shape (boundReadable: a shallow checkout that lacks it is fetched at depth 1, a
+  // full one is never fetched into and takes the hold-off naming the bound line by its number, derived from the text)
+  const bound = boundReadable(git, sha, boundLineAt(text));
+  if (bound.verdict !== null) assert.fail(bound.verdict);
+  if (bound.fetched) t.diagnostic("fetched commit " + sha + " at depth 1 into the shallow checkout (the clone lacked it)");
   const kinds = parseExcluded(text).filter((e) => e.reason !== null).map((e) => ({ e, v: reasonKind(e.reason as string, sentence, ENGINE_PHRASE, embedded) }));
   assert.deepEqual(kinds.filter(({ v }) => v.kind === null).map(({ e, v }) => EXCLUDED + " line " + e.n + " (" + e.bundle + "): " + (v as { refusal: string }).refusal + "; the reason reads: " + e.reason), [], "every reason is one of the four closed forms before history is read for the grandfather rows (a misspelt exemption is refused here by name, never read as a reason of its own)");
   const rows = kinds.filter(({ v }) => v.kind === "grandfather").map(({ e }) => e);
@@ -756,6 +785,51 @@ test("every grandfather row's source existed at the commit the exclusions header
   assert.ok(later.status === 128 && /exists on disk, but not in/.test(later.stderr), "git at the bound over ui/webview/real-viewer-leg-switch.test.ts, a source on disk that was added after the bound (a witness of a newer source: the bound the header names, " + sha.slice(0, 9) + ", predates that test, so a bound moved past its addition reds this assertion for a fixture reason, not a defect; pick a source newer than the bound then): exit 128 with 'exists on disk, but not in': exit " + later.status + ": " + later.stderr.trim());
   const laterVerdict = boundVerdict(AT, sha, "ui/webview/real-viewer-leg-switch.test.ts", later);
   assert.ok(laterVerdict !== null && laterVerdict.includes("ui/webview/real-viewer-leg-switch.test.ts is not in the tree at that commit"), "a source added after the bound, through git itself: the remedy naming that source: " + laterVerdict);
+});
+
+test("the bound fetch is gated on the store's shape (regression-3, round 5): boundReadable driven over scratch clones with their own .git under the temp dir, made and removed here: a shallow clone that lacks the bound fetches it at depth 1, reads it and stays shallow; a full clone that lacks it is NOT fetched into (no .git/shallow written, no FETCH_HEAD, the store non-shallow, the commit still absent) and takes the hold-off naming the bound line and saying the line is wrong; a full clone that holds it reads it with no fetch; and in the shallow clone a fetch of a commit the remote lacks is the fetch-failed hold-off, never a pass", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cbl-bound-gate-"));
+  try {
+    const sh = (cwd: string, args: string[]) => { const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 120000 }); assert.equal(r.status, 0, "git " + args.join(" ") + " in " + cwd + ": " + r.stderr); return r.stdout.trim(); };
+    const remote = path.join(root, "remote.git"), work = path.join(root, "work"), full = path.join(root, "full"), shallow = path.join(root, "shallow");
+    // three fixture facts found by execution (git 2.43): the bare remote takes --initial-branch=main since the pushes go to main
+    // (else the remote HEAD names another branch and every clone comes up empty and non-shallow); the clones go over file:// URLs
+    // since git ignores --depth for a clone by local path (its local-transport shortcut would give a full clone named shallow);
+    // and the remote holds two commits before the shallow clone is taken, since a depth-1 clone whose tip is the root commit cuts
+    // nothing and reports --is-shallow-repository false
+    sh(root, ["init", "--bare", "-q", "--initial-branch=main", remote]);
+    sh(root, ["clone", "-q", remote, work]);
+    for (const [k, v] of [["user.name", "t"], ["user.email", "t@example.invalid"]]) sh(work, ["config", k, v]);
+    const commit = (body: string) => { fs.writeFileSync(path.join(work, "a.txt"), body + "\n"); sh(work, ["add", "a.txt"]); sh(work, ["commit", "-q", "-m", body]); sh(work, ["push", "-q", "origin", "HEAD:refs/heads/main"]); return sh(work, ["rev-parse", "HEAD"]); };
+    const one = commit("one"); commit("two");
+    sh(root, ["clone", "-q", "file://" + remote, full]);
+    sh(root, ["clone", "-q", "--depth=1", "file://" + remote, shallow]);
+    assert.equal(sh(shallow, ["rev-parse", "--is-shallow-repository"]), "true", "the fixture's shallow clone is shallow (a path remote, or a one-commit remote, would have given a full clone)");
+    assert.equal(sh(full, ["rev-parse", "--is-shallow-repository"]), "false", "the fixture's full clone is full");
+    const bound = commit("three");   // the bound: pushed after both clones were taken, so neither holds it
+    const AT = boundLineAt(read(path.join(EXT, EXCLUDED)));   // the label the real-rows test passes, derived the same way
+    // the shallow clone lacking the bound: fetched at depth 1 and readable, the store shallow as it was
+    const s = boundReadable(gitIn(shallow), bound, AT);
+    assert.deepEqual(s, { verdict: null, fetched: true }, "a shallow clone lacking the bound fetches it at depth 1 and reads it: " + s.verdict);
+    assert.equal(gitIn(shallow)(["cat-file", "-e", bound]).status, 0, "the bound is readable in the shallow clone after the fetch");
+    assert.equal(sh(shallow, ["rev-parse", "--is-shallow-repository"]), "true", "the shallow clone stays shallow");
+    // the full clone lacking the bound: no fetch, the hold-off naming the bound line and saying the line is wrong, the store untouched
+    const f = boundReadable(gitIn(full), bound, AT);
+    assert.ok(f.verdict !== null && f.verdict.startsWith(AT + ": the bound commit " + bound + " is not in this clone and the clone is not shallow (git rev-parse --is-shallow-repository printed \"false\")") && f.verdict.includes("the bound line names a commit that is not main at the roster's creation: fix the line") && f.verdict.includes("no fetch is made into a full store") && f.verdict.endsWith("a red hold-off, not a pass"), "a full clone lacking the bound: the hold-off names the bound line, says the line is wrong and that no fetch is made, never a pass: " + f.verdict);
+    assert.equal(f.fetched, false, "and reports no fetch");
+    assert.ok(!fs.existsSync(path.join(full, ".git", "shallow")), "no .git/shallow was written into the full clone");
+    assert.ok(!fs.existsSync(path.join(full, ".git", "FETCH_HEAD")), "no fetch ran in the full clone (a clone writes no FETCH_HEAD; a fetch, failed or not, does)");
+    assert.equal(sh(full, ["rev-parse", "--is-shallow-repository"]), "false", "the full clone stays non-shallow");
+    assert.notEqual(gitIn(full)(["cat-file", "-e", bound]).status, 0, "the bound stays absent from the full clone (nothing was fetched)");
+    // the full clone holding the commit: read with no fetch
+    const p = boundReadable(gitIn(full), one, AT);
+    assert.deepEqual(p, { verdict: null, fetched: false }, "a full clone holding the bound reads it with no fetch");
+    assert.ok(!fs.existsSync(path.join(full, ".git", "FETCH_HEAD")), "still no fetch in the full clone");
+    // the shallow clone asked for a commit the remote lacks: the fetch fails and the verdict is the fetch-failed hold-off
+    const absent = "0123456789abcdef0123456789abcdef01234567";
+    const a = boundReadable(gitIn(shallow), absent, AT);
+    assert.ok(a.verdict !== null && a.verdict.startsWith(AT + ": the grandfather check could not run: commit " + absent + " is not in this shallow clone and `git fetch --depth=1 origin " + absent + "` failed (exit ") && a.verdict.endsWith("a red hold-off, not a pass") && a.fetched === false, "a shallow clone whose depth-1 fetch fails: the hold-off naming the fetch and its exit, never a pass: " + a.verdict);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test("an exclusions reason is exactly one of four closed forms: the grandfather sentence as quoted, an engine reason with the phrase (a tail allowed), the embedded-driver sentence, a pending line; every variant of the exemption (a letter, a punctuation mark, a space, the word grandfather, an inflection, a paraphrase) is refused by name, and a reason that reads as one form while carrying another's phrase, or an engine reason whose tail names a second engine, is refused as ambiguous", async () => {
@@ -1109,14 +1183,14 @@ test("the script's --list-legs is the census's legs and its --check is green ove
   const { census, rosterGap, engineNames, classOf } = await load();
   const c = census(REPO);
   const list = spawnSync("bash", [SCRIPT, "--list-legs"], { cwd: EXT, encoding: "utf8" });
-  assert.equal(list.status, 0, list.stderr);
+  assert.equal(list.status, 0, "the script's --list-legs exits 0 over the tree; stderr:\n" + list.stderr);
   assert.deepEqual(list.stdout.split("\n").filter(Boolean).sort(), c.legs, "the script lists the census's legs (it runs the same module; the script prints them in the census's walk order over LEG_DIRS and census() returns them sorted, so the two are compared sorted)");
   const check = spawnSync("bash", [SCRIPT, "--check"], { cwd: EXT, encoding: "utf8" });
-  assert.equal(check.status, 0, check.stderr);
-  assert.match(check.stdout, /^ci-browser-legs: the roster and the tree agree: \d+ rostered, \d+ browser legs in the census/m, check.stdout);
+  assert.equal(check.status, 0, "the script's --check is green over the tree, exit 0; stderr:\n" + check.stderr);
+  assert.match(check.stdout, /^ci-browser-legs: the roster and the tree agree: \d+ rostered, \d+ browser legs in the census/m, "--check prints the agreement line with the rostered and census counts; stdout:\n" + check.stdout);
   assert.equal(check.stderr, "", "nothing on stderr when the files and the tree agree");
   const tsv = spawnSync(process.execPath, [MODULE, "--tsv"], { cwd: EXT, encoding: "utf8" });
-  assert.equal(tsv.status, 0, tsv.stderr);
+  assert.equal(tsv.status, 0, "the CLI's --tsv exits 0 over the tree; stderr:\n" + tsv.stderr);
   const rows = tsv.stdout.split("\n").filter(Boolean).map((l) => l.split("\t"));
   assert.equal(rows.length, c.byBundle.size, "one row per module read");
   for (const [bundle, flag, gap, engines, cls] of rows) {
@@ -1157,11 +1231,11 @@ test("the script's reading of the real census over a synthetic root: an aliased 
   const rest = P02 + "\tlaunches on its own\n" + P25 + "\tlaunches on its own\n" + P20 + "\tskips on its own\n" + P19 + "\tlaunches WebKit; the gating job installs Chromium only\n";
   const ok = run(P01 + "\n", rest);
   assert.equal(ok.status, 0, "an aliased caller of the shared launcher is rosterable under the parsed gate; stderr: " + ok.stderr);
-  assert.match(ok.stdout, /the roster and the tree agree: 1 rostered, 5 browser legs in the census/, ok.stdout);
+  assert.match(ok.stdout, /the roster and the tree agree: 1 rostered, 5 browser legs in the census/, "the aliased caller rostered beside four exclusions: the agreement line names 1 rostered and 5 browser legs; stdout:\n" + ok.stdout);
   const refused = (r: ReturnType<typeof run>, ...needles: string[]) => {
     assert.equal(r.status, 1, "exit 1; stderr: " + r.stderr);
     for (const n of needles) assert.ok(r.stderr.includes(n), "stderr names " + JSON.stringify(n) + ":\n" + r.stderr);
-    assert.ok(r.stderr.includes("no leg ran"), r.stderr);
+    assert.ok(r.stderr.includes("no leg ran"), "a refused run says no leg ran; stderr:\n" + r.stderr);
   };
   refused(run(P01 + "\n" + P10 + "\n", rest), ROSTER + " line 2: '" + P10 + "' names no browser leg: ui/webview/p10-block-comment-mention.test.ts imports ui/webview/real-viewer-leg.ts and never calls its inBrowser through that import: call it, or remove the line");
   refused(run(P01 + "\n" + P25 + "\n", P02 + "\tlaunches on its own\n" + P20 + "\tskips on its own\n" + P19 + "\tlaunches WebKit; the gating job installs Chromium only\n"), ROSTER + " line 2: '" + P25 + "' does not launch through the one shared launcher (loads playwright itself (playwright): inBrowser owns the one playwright read a rostered leg needs): only inBrowser reads ROMP_BROWSER_LEGS_REQUIRE");
@@ -1178,11 +1252,11 @@ test("a rostered leg reaching an engine the gating job does not install is red n
   const { run } = syntheticRoot(t, ["p01-alias.test.ts", "p09b-destructured-firefox-bare-webkit.test.ts"]);
   const P01 = B("p01-alias.test.ts"), P09B = B("p09b-destructured-firefox-bare-webkit.test.ts");
   const r = run(P01 + "\n" + P09B + "\n", "");
-  assert.equal(r.status, 1, r.stderr);
+  assert.equal(r.status, 1, "a roster line whose source launches on its own (p09b) is red, exit 1; stderr:\n" + r.stderr);
   // the gate is read first (the leg never imports the launcher); the engine verdict is what the exclusions reason must carry
-  assert.ok(r.stderr.includes(ROSTER + " line 2: '" + P09B + "' does not launch through the one shared launcher"), r.stderr);
+  assert.ok(r.stderr.includes(ROSTER + " line 2: '" + P09B + "' does not launch through the one shared launcher"), "the roster gate names line 2 and the shared-launcher property; stderr:\n" + r.stderr);
   const excluded = run(P01 + "\n", P09B + "\tlaunches Firefox and WebKit; the gating job installs Chromium only\n");
-  assert.equal(excluded.status, 0, excluded.stderr);
+  assert.equal(excluded.status, 0, "the same leg excluded with the two-engine form is green, exit 0; stderr:\n" + excluded.stderr);
 });
 
 test("the script's reading of the real census over a pending line: allowed while the source is absent (counted on the agreement line); red naming no PR; once the source is present, red with the remedy derived from the source (a shared Chromium leg to the roster; an engine leg keeps the line with the engine form; a non-leg importer removes the line; an embedded driver keeps the line with the header's sentence; the fifth class, a Chromium-only leg that misses the gate, is the next test's) and never as in neither; and promotionOf, this file's copy of that rule, prints the script's sentence for each class", async (t) => {
@@ -1197,7 +1271,7 @@ test("the script's reading of the real census over a pending line: allowed while
   const rest = P19 + "\tlaunches WebKit; the gating job installs Chromium only\n" + P26 + "\tloads playwright in a child process it drives from a string; the switch never reaches it\n";
   const absent = run(P01 + "\n", rest + ABSENT + "\tpending #999: a leg an open PR brings\n");
   assert.equal(absent.status, 0, "a pending line naming an absent source is allowed; stderr: " + absent.stderr);
-  assert.match(absent.stdout, /the roster and the tree agree: 1 rostered, 3 browser legs in the census, 1 pending lines naming absent sources/, absent.stdout);
+  assert.match(absent.stdout, /the roster and the tree agree: 1 rostered, 3 browser legs in the census, 1 pending lines naming absent sources/, "the agreement line counts the pending line naming an absent source; stdout:\n" + absent.stdout);
   const refused = (r: ReturnType<typeof run>, ...needles: string[]) => {
     assert.equal(r.status, 1, "exit 1; stderr: " + r.stderr);
     for (const n of needles) assert.ok(r.stderr.includes(n), "stderr names " + JSON.stringify(n) + ":\n" + r.stderr);
@@ -1237,7 +1311,7 @@ test("the fifth remedy class, executed in the script and in promotionOf: a pendi
   assert.ok(!gate.stderr.includes("is in neither"), "the arrived leg is not also called missing from both files:\n" + gate.stderr);
   // the same two legs in neither file: each red carries the remedy its source derives
   const neither = run(P01 + "\n", "");
-  assert.equal(neither.status, 1, neither.stderr);
+  assert.equal(neither.status, 1, "two legs in neither file are red, exit 1; stderr:\n" + neither.stderr);
   assert.ok(neither.stderr.includes("browser leg '" + P04 + "' is in neither " + ROSTER + " nor " + EXCLUDED + ": pass the roster gate (the source loads playwright itself (playwright)"), "the gate's remedy for the both-class leg:\n" + neither.stderr);
   assert.ok(neither.stderr.includes("browser leg '" + P19 + "' is in neither " + ROSTER + " nor " + EXCLUDED + ": add it to " + EXCLUDED + " with a tab and the engine form its header admits, \"launches WebKit; the gating job installs Chromium only\""), "the engine form for the WebKit leg:\n" + neither.stderr);
   assert.ok(!neither.stderr.includes("or to the exclusions with a tab and a reason"), "no bare add-or-exclude:\n" + neither.stderr);
@@ -1248,9 +1322,9 @@ test("a form the census cannot classify stops the script with the file and line,
   const { run } = syntheticRoot(t, ["p01-alias.test.ts", "p27-parse-error.test.ts"]);
   const P01 = B("p01-alias.test.ts");
   const r = run(P01 + "\n", "");
-  assert.equal(r.status, 1, r.stderr);
-  assert.ok(r.stderr.includes("browser-legs-census: REFUSED ui/webview/p27-parse-error.test.ts:4: the parser reports a diagnostic"), r.stderr);
-  assert.ok(r.stderr.includes("the census refused a form it cannot classify (above, with file and line)") && r.stderr.includes("nothing else was judged and no leg ran"), r.stderr);
+  assert.equal(r.status, 1, "a parse-error plant stops the script, exit 1; stderr:\n" + r.stderr);
+  assert.ok(r.stderr.includes("browser-legs-census: REFUSED ui/webview/p27-parse-error.test.ts:4: the parser reports a diagnostic"), "the refusal names the file, the line and the parser diagnostic; stderr:\n" + r.stderr);
+  assert.ok(r.stderr.includes("the census refused a form it cannot classify (above, with file and line)") && r.stderr.includes("nothing else was judged and no leg ran"), "the script says the census refused a form and that nothing else was judged and no leg ran; stderr:\n" + r.stderr);
   assert.ok(!r.stderr.includes("is in neither"), "nothing else is judged over a refusal:\n" + r.stderr);
   // no compiler: a copy of the module under a vscode-extension with no node_modules
   const bare = fs.mkdtempSync(path.join(os.tmpdir(), "cbl-bare-"));
@@ -1265,11 +1339,11 @@ test("a form the census cannot classify stops the script with the file and line,
   const cli = spawnSync(process.execPath, [path.join(bare, "vscode-extension", "scripts", "browser-legs-census.mjs"), "--tsv"], { cwd: path.join(bare, "vscode-extension"), encoding: "utf8" });
   assert.equal(cli.status, 1, "exit 1, not a refusal (2) and not a census: " + cli.stderr);
   assert.equal(cli.stdout, "", "nothing judged: no module line, not even the leg that is there");
-  assert.ok(cli.stderr.includes("the typescript compiler is not installed under vscode-extension/node_modules") && cli.stderr.includes("npm ci") && cli.stderr.includes("Shell job") && cli.stderr.includes("tools/ci-browser-legs.test.mjs"), cli.stderr);
+  assert.ok(cli.stderr.includes("the typescript compiler is not installed under vscode-extension/node_modules") && cli.stderr.includes("npm ci") && cli.stderr.includes("Shell job") && cli.stderr.includes("tools/ci-browser-legs.test.mjs"), "without the compiler the CLI names the missing typescript, npm ci, the Shell job and tools/ci-browser-legs.test.mjs; stderr:\n" + cli.stderr);
   fs.writeFileSync(path.join(bare, "vscode-extension", ROSTER), B("p01-alias.test.ts") + "\n");
   fs.writeFileSync(path.join(bare, "vscode-extension", EXCLUDED), "");
   const sh = spawnSync("bash", [path.join(bare, "vscode-extension", "scripts", "ci-browser-legs.sh"), "--check"], { cwd: path.join(bare, "vscode-extension"), encoding: "utf8" });
-  assert.equal(sh.status, 1, sh.stderr);
-  assert.ok(sh.stderr.includes("the typescript compiler is not installed") && sh.stderr.includes("the census did not run (exit 1, above), so nothing was judged and no leg ran"), sh.stderr);
+  assert.equal(sh.status, 1, "without the compiler the script exits 1; stderr:\n" + sh.stderr);
+  assert.ok(sh.stderr.includes("the typescript compiler is not installed") && sh.stderr.includes("the census did not run (exit 1, above), so nothing was judged and no leg ran"), "the script says the compiler is missing and the census did not run, so nothing was judged and no leg ran; stderr:\n" + sh.stderr);
   assert.equal(sh.stdout, "", "no agreement line and no legs listed");
 });
