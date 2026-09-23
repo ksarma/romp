@@ -4607,3 +4607,251 @@ awk_refusing_join() {   # an awk that exits 2 with a line on stderr for the join
         [ "$(ls -1 "$TMPDIR" | grep -c '^romp-pre-push\.')" -eq 0 ]
     done
 }
+
+# ── round 7: the exit-0 empty-answer class closed for real ──────────────────
+# Round 6's refuters drove every read tagged own= with a tool exiting 0 and
+# printing nothing, through real pushes: five of them and the ref list itself
+# published (the tip's candidate join under a silent awk or tr, the join of a
+# commit's verdicts under either, the added-lines diff under a silent awk, the
+# message grep under a silent grep, a tag's tagger and message under a silent
+# awk, and every ref of a push under a silent cat), and a capture file that
+# could not be opened published too, bash's own error line the only sign. The
+# hook now reads the ref list and the tag object by the shell alone, gates each
+# candidate join on a count (in hand for the tip: the listing's regular files
+# with bytes less the grep's read list; recorded by the join's own awk for a
+# commit), gates the added-lines diff on the count its awk records, refuses a
+# match that printed no hit line for the message and the added-lines greps,
+# and opens every capture file once to a descriptor before the command runs,
+# refusing a failed open whatever the expected set. The cases below are those
+# reads, each through a real push with the shim that published at the round 6
+# text and the remote asserted to hold nothing new; the last two are the
+# capture open, through a push and as a unit over the helper's two branches.
+# The message grep's and the tag's cases are in pre-push-message.bats and
+# pre-push-identity.bats, beside the reads they drive.
+grep_silent() {   # <bash test over the shim's "$@">: a grep exiting 0 (a match) and printing nothing for that shape, the real grep otherwise
+    local real_grep
+    real_grep="$(command -v grep)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if %s; then cat > /dev/null; exit 0; fi\n' "$1"
+        printf 'exec %q "$@"\n' "$real_grep"
+    } > "$TEST_DIR/shim/grep"
+    chmod 755 "$TEST_DIR/shim/grep"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+awk_silent_on_program() {   # <text of an awk program>: an awk exiting 0 and printing nothing when its arguments carry that text, the real awk for every other program
+    local real_awk
+    real_awk="$(command -v awk)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'real_awk=%q; marker=%q\n' "$real_awk" "$1"
+        cat <<'SHIM'
+case "$*" in *"$marker"*) cat > /dev/null; exit 0 ;; esac
+exec "$real_awk" "$@"
+SHIM
+    } > "$TEST_DIR/shim/awk"
+    chmod 755 "$TEST_DIR/shim/awk"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+tr_silent_join() {   # <N>: the Nth tr of the joins' shape ('\n' '\0') reads its input and exits 0 writing nothing; the real tr runs otherwise
+    local real_tr
+    real_tr="$(command -v tr)"
+    mkdir -p "$TEST_DIR/shim"
+    echo 0 > "$TEST_DIR/tr-calls"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'real_tr=%q; counter=%q; n=%d\n' "$real_tr" "$TEST_DIR/tr-calls" "$1"
+        cat <<'SHIM'
+if [ $# -eq 2 ] && [ "$1" = '\n' ] && [ "$2" = '\0' ]; then
+    seen=$(( $(cat "$counter") + 1 )); echo "$seen" > "$counter"
+    if [ "$seen" -eq "$n" ]; then cat > /dev/null; exit 0; fi
+fi
+exec "$real_tr" "$@"
+SHIM
+    } > "$TEST_DIR/shim/tr"
+    chmod 755 "$TEST_DIR/shim/tr"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+cat_silent() {   # a cat that reads its input and exits 0 writing nothing (the round 6 refuters' shim over the ref list)
+    mkdir -p "$TEST_DIR/shim"
+    printf '#!/usr/bin/env bash\nwhile IFS= read -r line; do :; done\nexit 0\n' > "$TEST_DIR/shim/cat"
+    chmod 755 "$TEST_DIR/shim/cat"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+mktemp_making_hits_a_directory() {   # a mktemp that makes the scratch directory as the real one does, and a DIRECTORY named hits inside it, so the added-lines grep's capture file cannot be opened
+    local real_mktemp
+    real_mktemp="$(command -v mktemp)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'real_mktemp=%q\n' "$real_mktemp"
+        cat <<'SHIM'
+d=$("$real_mktemp" "$@") || exit $?
+mkdir "$d/hits"
+printf '%s\n' "$d"
+SHIM
+    } > "$TEST_DIR/shim/mktemp"
+    chmod 755 "$TEST_DIR/shim/mktemp"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+leak_in_middle_commit_after_base() {   # a base on the remote (BASE), then a commit adding a banned line (leak), removed at the tip: the added-lines pass alone can name it
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file leak.txt "home is /home/zzsynthuser/code" "leak"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file leak.txt "remove it"
+}
+
+@test "the ADDED LINES grep exiting 0 (a match) and printing NO line is refused as unscanned naming the grep and the short answer before the sort runs, through a real push (case 175's shape, silent instead of failing): the sort is not named for a grep that answered nothing, and the remote stays at the base" {
+    leak_in_middle_commit_after_base
+    grep_silent '[ "${1:-}" = -a ]'                      # the added-lines grep's shape (-a -i -F), as in case 175
+    run _hook_in "$REPO" -c 'printf "x\n" | grep -a -i -F -e x; echo "status $?"'
+    [ "$output" = "status 0" ]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the ADDED LINES of commit ${leak:0:10} were grepped with no hit line listed (grep exited 0, a match, and printed no line), so the answer is short"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"sort exited 0"* ]]                 # the round 6 text's line, naming the wrong tool
+    [[ "$output" != *"could not be reported"* ]]
+    [[ "$output" != *"ADDS a personal identifier"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
+@test "the TIP CANDIDATES join under an awk exiting 0 and printing nothing is refused as unscanned naming the read and the three counts, through a real push: the -z listing names 3 regular files with bytes and the grep read 2, so 1 candidate was due and 0 came, and the hidden text file the remote already holds is not passed by the empty join; the remote stays at the base" {
+    hidden_file_on_remote_then_clean_commit
+    awk_silent_on_program 'printf "tip'                  # the tip join's program alone (its rows begin with the word tip)
+    run _hook_in "$REPO" -c 'printf "x\n" | awk "{ printf \"tip\\t%s\\n\", \$0 }"; echo "status $?"'
+    [ "$output" = "status 0" ]
+    run _hook_in "$REPO" -c 'git grep --no-color -I -l -z -e "" "$1" -- | tr "\0" "\n" | wc -l' _ "$sha"
+    [ "$output" = 2 ]                                      # .gitattributes and other.txt read; notes.txt skipped under -diff
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the TREE of the tip of refs/heads/main (${sha:0:10}) was joined short with the grep's read list for the BINARY VERDICT check (the join appended 0 candidate rows where the -z listing names 3 regular files with bytes and the grep's read list 2 of them, so the count expected is 1; awk and tr exited 0)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"is text that"* ]]                  # judged by nothing: refused for the read, not for the blob
+    [[ "$output" != *"could not be joined"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
+@test "the same join under a tr exiting 0 and writing nothing (the first tr of the joins' shape: the tip's) is refused the same way, naming the same three counts; the remote stays at the base" {
+    hidden_file_on_remote_then_clean_commit
+    tr_silent_join 1
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the TREE of the tip of refs/heads/main (${sha:0:10}) was joined short with the grep's read list for the BINARY VERDICT check (the join appended 0 candidate rows where the -z listing names 3 regular files with bytes and the grep's read list 2 of them, so the count expected is 1; awk and tr exited 0)"* ]]
+    [[ "$output" != *"is text that"* ]]
+    [ "$(cat "$TEST_DIR/tr-calls")" -ge 1 ]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
+@test "the JOIN of a commit's verdicts under an awk exiting 0 and printing nothing is refused as unscanned naming the read and the missing count, through a real push: the join's awk records the count of rows it printed and a join that recorded none is not a join that found none, so the hidden text file in the middle commit is not passed by it; the remote stays at the base" {
+    hidden_file_in_middle_commit_after_base
+    awk_silent_on_program 'ENVIRON["ROMP_SHORT_FILE"]'   # the join's program alone: the short file's path is read from the environment there
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the JOIN of commit ${leak:0:10}'s verdicts could not be made for the BINARY VERDICT check (its pipeline exited 0 and its awk recorded \"\" as the count of candidate rows it printed, not a count, so whether every candidate was appended is unknown)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"is text that"* ]]
+    [[ "$output" != *"printed no verdict"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
+@test "the same join under a tr exiting 0 and writing nothing (the second tr of the joins' shape: the tip's join is the first, and the removal commit has no post-image to join) is refused naming the rows appended against the count the awk recorded; the remote stays at the base" {
+    hidden_file_in_middle_commit_after_base
+    tr_silent_join 2
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the JOIN of commit ${leak:0:10}'s verdicts appended 0 candidate rows for the BINARY VERDICT check where its awk recorded 1 printed (its pipeline exited 0), so the join answered short"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"is text that"* ]]
+    [ "$(cat "$TEST_DIR/tr-calls")" -eq 2 ]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
+@test "the ADDED LINES diff under an awk exiting 0 and printing nothing is refused as unscanned naming the read and the missing count, through a real push: the diff's awk records the count of lines it printed, so an empty capture with no count is not a commit that added nothing, and the remote stays at the base" {
+    leak_in_middle_commit_after_base
+    awk_silent_on_program 'plus = plus "+"'              # the added-lines program alone (the column of pluses it builds)
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the ADDED LINES of commit ${leak:0:10} could not be read (the diff's awk exited 0 and recorded \"\" as the count of lines it printed, not a count)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"ADDS a personal identifier"* ]]
+    [[ "$output" != *"could not be grepped"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
+@test "the REF LIST under a cat exiting 0 and printing nothing: every ref is still scanned, since the shell's own read builtin takes git's list and no tool on PATH stands between them; a tip carrying a banned string is refused through a real push and the remote holds nothing, while an EMPTY list stays git's own answer and passes with nothing printed" {
+    add_remote
+    commit_file leak.txt "home is /home/zzsynthuser/code" "leak"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    cat_silent
+    run _hook_in "$REPO" -c 'printf "x\n" | cat; echo "status $?"'
+    [ "$output" = "status 0" ]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the tip of refs/heads/main (${sha:0:10}) would publish a personal identifier in:"* ]]
+    [[ "$output" == *"leak.txt"* ]]
+    [[ "$output" == *"BLOCKED"* ]]
+    run remote_holds_main
+    [ "$status" -ne 0 ]
+    # the control: no ref line at all (nothing to update) is read as no ref, the hook exits 0 and prints nothing
+    run _hook_in "$REPO" "$HOOK" origin git@example.invalid:x/y.git < /dev/null
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "a capture file the helper cannot OPEN (a mktemp whose scratch directory holds hits as a DIRECTORY) is refused as unscanned naming the read and the file, through a real push: the file is opened once before the grep runs, so a failed open is not a grep that found nothing, and the remote stays at the base" {
+    leak_in_middle_commit_after_base
+    mktemp_making_hits_a_directory
+    run _hook_in "$REPO" -c 'd=$(mktemp -d "${TMPDIR:-/tmp}/romp-pre-push.XXXXXX"); [ -d "$d/hits" ] && echo "hits is a directory"; rm -rf "$d"'
+    [ "$output" = "hits is a directory" ]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the ADDED LINES of commit ${leak:0:10} could not be grepped (grep was not run: its output file "*"/hits could not be opened for writing)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"ADDS a personal identifier"* ]]
+    [[ "$output" != *"grep exited"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
+@test "judged_read opens its capture file ONCE before the command runs and refuses a failed open whatever the expected set, in the -o branch and in the -a branch (the helper read out of the hook): a set holding 1 does not admit a command that never ran, a good open writes or appends, and a status outside the set is still the set's refusal" {
+    probe="$TEST_DIR/probe.sh"
+    {
+        printf 'set -uo pipefail\nfailed_scan=0; read_rc=0; read_out=""\n'
+        sed -n '/^unscanned() {/,/^}/p; /^judged_read() {/,/^}/p' "$HOOK"
+        cat <<'PROBE'
+mkdir -p "$1/dir"
+echo "--- -o onto a directory, the set 0,1"
+judged_read own="the PROBE read" 0,1 "the PROBE of x could not be read (probe exited {rc})" -o "$1/dir" -- printf 'x\n'; echo "o-dir rc=$? failed_scan=$failed_scan"
+failed_scan=0
+echo "--- -a onto a directory, the set 0,1"
+judged_read own="the PROBE read" 0,1 "the PROBE of x could not be read (probe exited {rc})" -a "$1/dir" -- printf 'x\n'; echo "a-dir rc=$? failed_scan=$failed_scan"
+failed_scan=0
+echo "--- -o onto a file: written once, the old content gone"
+printf 'old\n' > "$1/out"
+judged_read own="the PROBE read" 0 "the PROBE of x could not be read (probe exited {rc})" -o "$1/out" -- printf 'x\n'; echo "o-file rc=$? failed_scan=$failed_scan out=$(tr '\n' , < "$1/out")"
+echo "--- -a onto the same file: appended"
+judged_read own="the PROBE read" 0 "the PROBE of x could not be read (probe exited {rc})" -a "$1/out" -- printf 'y\n'; echo "a-file rc=$? failed_scan=$failed_scan out=$(tr '\n' , < "$1/out")"
+echo "--- a status outside the set with the file open is the set's own refusal"
+judged_read own="the PROBE read" 0 "the PROBE of x could not be read (probe exited {rc})" -o "$1/out" -- bash -c 'exit 3'; echo "o-status rc=$? failed_scan=$failed_scan"
+echo "--- the descriptor is closed again: a second read after the first opens afresh"
+failed_scan=0
+judged_read own="the PROBE read" 0 "the PROBE of x could not be read (probe exited {rc})" -o "$1/out2" -- bash -c 'ls /proc/self/fd 2>/dev/null | tr "\n" " "'; echo "fds=$(cat "$1/out2")"
+PROBE
+    } > "$probe"
+    run bash "$probe" "$TEST_DIR/p"
+    [ "$status" -eq 0 ]
+    [ "$(grep -c "the PROBE of x could not be read (probe was not run: its output file $TEST_DIR/p/dir could not be opened for writing); the scan is incomplete, so the push is refused" <<< "$output")" -eq 2 ]
+    [[ "$output" == *"o-dir rc=1 failed_scan=1"* ]]
+    [[ "$output" == *"a-dir rc=1 failed_scan=1"* ]]
+    [[ "$output" == *"o-file rc=0 failed_scan=0 out=x,"* ]]
+    [[ "$output" == *"a-file rc=0 failed_scan=0 out=x,y,"* ]]
+    [[ "$output" == *"the PROBE of x could not be read (probe exited 3); the scan is incomplete"* ]]
+    [[ "$output" == *"o-status rc=1 failed_scan=1"* ]]
+    [[ "$output" != *"exited 1)"* ]]                      # the failed open is never reported as the command's status 1
+    [[ "$output" == *"fds="*" 9 "* ]]                     # the command writes to descriptor 9, the one open
+}

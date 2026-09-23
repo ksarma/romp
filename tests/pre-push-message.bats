@@ -310,11 +310,11 @@ git_refusing() {   # <bash test over the shim's "$@"> <exit status> <stderr line
     export PATH="$TEST_DIR/shim:$PATH"
 }
 fail_log_message() {   # [<sha whose message log fails; every commit's when omitted>]
-    # the one `git log` format the hook reads a commit's message with; the addresses log is another format
+    # the one `git log` format the hook reads a commit's message with (the marker line, then %B; round 7); the addresses log is another format
     if [ -n "${1:-}" ]; then
-        git_refusing "[ \"\${1:-}\" = log ] && [ \"\${4:-}\" = --format=%B ] && [ \"\${!#}\" = $1 ]" 128 "fatal: shim: log (the message) refused for $1"
+        git_refusing "[ \"\${1:-}\" = log ] && [ \"\${4:-}\" = --format=message%x09%H%n%B ] && [ \"\${!#}\" = $1 ]" 128 "fatal: shim: log (the message) refused for $1"
     else
-        git_refusing '[ "${1:-}" = log ] && [ "${4:-}" = --format=%B ]' 128 "fatal: shim: log (the message) refused"
+        git_refusing '[ "${1:-}" = log ] && [ "${4:-}" = --format=message%x09%H%n%B ]' 128 "fatal: shim: log (the message) refused"
     fi
 }
 
@@ -323,7 +323,7 @@ fail_log_message() {   # [<sha whose message log fails; every commit's when omit
     sha="$(git -C "$REPO" rev-parse HEAD)"
     fail_log_message
     # the fault as the hook meets it, from the repo's top level: the message log fails, the addresses log and the diff work
-    run _hook_in "$REPO" -c 'git log -1 --no-show-signature --format=%B "$1"' _ "$sha"
+    run _hook_in "$REPO" -c 'git log -1 --no-show-signature --format=message%x09%H%n%B "$1"' _ "$sha"
     [ "$status" -eq 128 ]
     run _hook_in "$REPO" -c 'git log -1 --no-show-signature --format=authored%x09%ae "$1" >/dev/null && git diff-tree -p -r --root --no-commit-id "$1" >/dev/null' _ "$sha"
     [ "$status" -eq 0 ]
@@ -429,6 +429,166 @@ grep_refusing_message_shape() {   # a grep exiting 2 for the message grep's shap
     [ "$status" -ne 0 ]
     [[ "$output" == *"the MESSAGE of tag refs/tags/v1 (${sha:0:10}) could not be grepped (grep exited 2)"* ]]
     [[ "$output" != *"carries a personal identifier"* ]]
+    run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
+}
+
+# ── round 7: the message reads under a tool that exits 0 and prints nothing ──
+# Round 6's refuters drove the message grep with a grep exiting 0 and printing
+# nothing: exit 0 is a match, and no line was read as no hit, so a commit and
+# a tag whose message carried a banned string were published through real
+# pushes with nothing printed. The same shape needs no shim: under a UTF-8
+# locale GNU grep calls a line holding a byte that is no UTF-8 binary, and a
+# match on such a line is a note on stderr, no line and exit 0. The grep now
+# reads the message as text (-a) and a match with no line is refused as
+# unscanned naming the message. The message reads themselves were open too: a
+# git exiting 0 and printing nothing for the commit's log read as an empty
+# message, and an awk exiting 0 and printing nothing for a tag's message read
+# as a tag with none. The commit's log now asks for a marker line ahead of the
+# message and refuses an answer without it; the tag object is read once, judged
+# against its size, and its message parsed by the shell with no awk between.
+grep_silent_message_shape() {   # a grep exiting 0 (a match) and printing nothing for the message grep's shape (-in ... -F), the real grep otherwise
+    local real_grep
+    real_grep="$(command -v grep)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [ "${1:-}" = -in ]; then cat > /dev/null; exit 0; fi\n'
+        printf 'exec %q "$@"\n' "$real_grep"
+    } > "$TEST_DIR/shim/grep"
+    chmod 755 "$TEST_DIR/shim/grep"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+awk_silent_on_program() {   # <text of an awk program>: an awk exiting 0 and printing nothing when its arguments carry that text, the real awk for every other program
+    local real_awk
+    real_awk="$(command -v awk)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'real_awk=%q; marker=%q\n' "$real_awk" "$1"
+        cat <<'SHIM'
+case "$*" in *"$marker"*) cat > /dev/null; exit 0 ;; esac
+exec "$real_awk" "$@"
+SHIM
+    } > "$TEST_DIR/shim/awk"
+    chmod 755 "$TEST_DIR/shim/awk"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+push_ref_through_hook() {   # <refspec>: the hook installed for one real push with no shim (an empty shim directory ahead of PATH: every tool the real one)
+    mkdir -p "$TEST_DIR/shim"
+    push_ref_through_hook_with_shim "$1"
+}
+tag_over_clean_commit_on_remote() {   # <tag message paragraphs...>: a clean commit pushed, so the tag's own reads are the only ones the push makes; sha is the tag's
+    local para args=()
+    for para in "$@"; do args+=(-m "$para"); done
+    add_remote
+    commit_msg ok.txt "clean"
+    git -C "$REPO" push -q origin main
+    git -C "$REPO" tag -a v1 "${args[@]}"
+    sha="$(git -C "$REPO" rev-parse refs/tags/v1)"
+}
+
+@test "the MESSAGE grep exiting 0 (a match) and printing NO line over a commit whose subject names a banned host is refused as unscanned naming the message and the short answer, through a real push: the status says a match, the answer says none, and the remote holds nothing" {
+    add_remote
+    commit_msg web.txt "fix the crash on TESTHOST"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    grep_silent_message_shape
+    run _hook_in "$REPO" -c 'printf "x\n" | grep -in -F -e x; echo "status $?"'
+    [ "$output" = "status 0" ]
+    push_ref_through_hook_with_shim main
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the MESSAGE of commit ${sha:0:10} was grepped with no hit line listed (grep exited 0, a match, and printed no line), so the answer is short"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"carries a personal identifier"* ]]
+    [[ "$output" != *"could not be grepped"* ]]
+    [[ "$output" != *"BLOCKED"* ]]
+    run remote_holds_ref refs/heads/main
+    [ "$status" -ne 0 ]
+}
+
+@test "the same grep exiting 0 with no line over an annotated TAG's message is refused naming the tag, through a real push of the tag over a commit the remote holds, and the remote never gets the tag" {
+    tag_over_clean_commit_on_remote "release one" "cut on TESTHOST"
+    grep_silent_message_shape
+    push_ref_through_hook_with_shim refs/tags/v1
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the MESSAGE of tag refs/tags/v1 (${sha:0:10}) was grepped with no hit line listed (grep exited 0, a match, and printed no line), so the answer is short"* ]]
+    [[ "$output" != *"carries a personal identifier"* ]]
+    run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
+}
+
+@test "a tag MESSAGE holding a byte that is no UTF-8, beside the banned host, under a UTF-8 locale and the REAL grep: the hit is named through a real push and the remote never gets the tag (without -a, GNU grep calls the line binary and a match on it is a note and no line, exit 0, which read as no hit)" {
+    locale -a 2>/dev/null | grep -qix 'C\.UTF-8\|C\.utf8' || skip "no C.UTF-8 locale on this machine"
+    export LC_ALL=C.UTF-8
+    add_remote
+    commit_msg ok.txt "clean"
+    git -C "$REPO" push -q origin main
+    commit="$(git -C "$REPO" rev-parse HEAD)"
+    # the tag object built by hand (git tag would not write the byte): its message's second line carries the banned host and a 0xFF byte
+    printf 'object %s\ntype commit\ntag v2\ntagger Tester <tests@example.invalid> 1700000000 +0000\n\nrelease two\ncut on TESTHOST \377\n' "$commit" > "$TEST_DIR/tagobj"
+    sha="$(git -C "$REPO" hash-object -t tag -w --stdin --literally < "$TEST_DIR/tagobj")"
+    git -C "$REPO" update-ref refs/tags/v2 "$sha"
+    [ "$(git -C "$REPO" cat-file -t "$sha")" = tag ]
+    # the road, with the real grep and no shim: without -a a match on that line is a note on stderr, no line on stdout, exit 0
+    run _hook_in "$REPO" -c 'git cat-file -p "$1" | grep -in -F -e TESTHOST; echo "status $?"' _ "$sha"
+    [[ "$output" == *"status 0"* ]]
+    [[ "$output" != *"7:"* ]]
+    run _hook_in "$REPO" -c 'git cat-file -p "$1" | grep -in -a -F -e TESTHOST; echo "status $?"' _ "$sha"
+    [[ "$output" == *"7:cut on TESTHOST"* ]]
+    push_ref_through_hook refs/tags/v2
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the MESSAGE of tag refs/tags/v2 (${sha:0:10}) carries a personal identifier on line 2"* ]]
+    [[ "$output" != *"TESTHOST"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    [[ "$output" == *"git tag -f -a <name> <commit>"* ]]
+    run remote_holds_ref refs/tags/v2
+    [ "$status" -ne 0 ]
+}
+
+@test "a MESSAGE log that answers NOTHING (git log exiting 0 with no line, for any format holding %B) over a commit whose subject names a banned host is refused as unscanned naming the read and the empty first line, through a real push: the format asks for a marker line ahead of the message, so an answer without it is short, and the remote holds nothing" {
+    add_remote
+    commit_msg web.txt "fix the crash on TESTHOST"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    git_refusing '[ "${1:-}" = log ] && [[ "${4:-}" == --format=*%B* ]]' 0 ""
+    run _hook_in "$REPO" -c 'git log -1 --no-show-signature --format=message%x09%H%n%B "$1"' _ "$sha"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    push_ref_through_hook_with_shim main
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the MESSAGE of commit ${sha:0:10} could not be read (git log exited 0 and answered \"\" on its first line, not the marker line the format asks for ahead of the message)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"carries a personal identifier"* ]]
+    run remote_holds_ref refs/heads/main
+    [ "$status" -ne 0 ]
+}
+
+@test "a tag OBJECT that reads as NOTHING (cat-file -p exiting 0 with no output) over a tag whose message names a banned host is refused as unscanned naming the read and the object's size, through a real push: an empty capture of an object with bytes is a short read, the tag's fields are parsed from that one capture, and the remote never gets the tag" {
+    tag_over_clean_commit_on_remote "release one" "cut on TESTHOST"
+    size="$(git -C "$REPO" cat-file -s "$sha")"
+    [ "$size" -gt 0 ]
+    git_refusing "[ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = -p ] && [ \"\${3:-}\" = $sha ]" 0 ""
+    run _hook_in "$REPO" -c 'git cat-file -p "$1"' _ "$sha"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    push_ref_through_hook_with_shim refs/tags/v1
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the OBJECT of tag refs/tags/v1 (${sha:0:10}) was read as empty (git cat-file -p exited 0) while git cat-file -s gives its size as $size bytes, so the read answered short, which ends the peel here"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"carries a personal identifier"* ]]
+    [[ "$output" != *"while its type read as tag"* ]]
+    run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
+}
+
+@test "an awk exiting 0 and printing nothing for the program that read a tag's MESSAGE at the round 6 text changes nothing now: the tag's message is parsed by the shell from the object capture, the hit is named through a real push, and the remote never gets the tag" {
+    tag_over_clean_commit_on_remote "release one" "cut on TESTHOST"
+    awk_silent_on_program '!hdr { print }'
+    run _hook_in "$REPO" -c 'printf "a\n\nb\n" | awk "BEGIN { hdr = 1 } hdr && !NF { hdr = 0; next } !hdr { print }"; echo "status $?"'
+    [ "$output" = "status 0" ]
+    push_ref_through_hook_with_shim refs/tags/v1
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the MESSAGE of tag refs/tags/v1 (${sha:0:10}) carries a personal identifier on line 3"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
     run remote_holds_ref refs/tags/v1
     [ "$status" -ne 0 ]
 }

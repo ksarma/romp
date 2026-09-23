@@ -405,7 +405,7 @@ fail_log_addresses() {   # [<sha whose addresses log fails; every commit's when 
     fi
 }
 
-@test "a tag whose fields cannot be READ is refused as unscanned, naming the tag and each field: a failed read is not an empty field" {
+@test "a tag whose OBJECT cannot be READ is refused as unscanned, naming the tag and the three fields that one read carries (round 7: the object is read once and its tagger, message and object line parsed by the shell): a failed read is not an empty field" {
     commit_clean ok.txt "clean"
     GIT_COMMITTER_EMAIL="$STAMPED" git -C "$REPO" tag -a v1 -m "release one"
     sha="$(git -C "$REPO" rev-parse refs/tags/v1)"
@@ -416,9 +416,10 @@ fail_log_addresses() {   # [<sha whose addresses log fails; every commit's when 
     [ "$status" -ne 0 ]
     run_hook_tag v1
     [ "$status" -eq 1 ]
-    [[ "$output" == *"the TAGGER of tag refs/tags/v1 (${sha:0:10}) could not be read"* ]]
-    [[ "$output" == *"the MESSAGE of tag refs/tags/v1 (${sha:0:10}) could not be read"* ]]
-    [[ "$output" == *"the OBJECT of tag refs/tags/v1 (${sha:0:10}) could not be read"* ]]
+    # one line for the one read (until round 6 three reads, of the TAGGER, the MESSAGE and the OBJECT field, each with a line)
+    [[ "$output" == *"the OBJECT of tag refs/tags/v1 (${sha:0:10}), its tagger and its message could not be read (git cat-file -p exited 1), which ends the peel here"* ]]
+    [[ "$output" != *"the TAGGER of tag"* ]]
+    [[ "$output" != *"the MESSAGE of tag"* ]]
     [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
     [[ "$output" == *"git push --no-verify"* ]]
     # reported as a failed read, not as a finding: nothing was read to find
@@ -437,7 +438,7 @@ fail_log_addresses() {   # [<sha whose addresses log fails; every commit's when 
     # the clean tag the fault sits on is refused all the same: unread, it cannot be known clean
     run_hook_tag other
     [ "$status" -eq 1 ]
-    [[ "$output" == *"the TAGGER of tag refs/tags/other"* ]]
+    [[ "$output" == *"the OBJECT of tag refs/tags/other"*"could not be read (git cat-file -p exited 1)"* ]]
     [[ "$output" != *"BLOCKED"* ]]
 }
 
@@ -522,7 +523,7 @@ fail_log_addresses() {   # [<sha whose addresses log fails; every commit's when 
     # the fault as the hook meets it, from the repo's top level: the addresses log fails, the message log and the diff work
     run _hook_in "$REPO" -c 'git log -1 --no-show-signature --format=authored%x09%ae "$1"' _ "$sha"
     [ "$status" -eq 128 ]
-    run _hook_in "$REPO" -c 'git log -1 --no-show-signature --format=%B "$1" >/dev/null && git diff-tree -p -r --root --no-commit-id "$1" >/dev/null' _ "$sha"
+    run _hook_in "$REPO" -c 'git log -1 --no-show-signature --format=message%x09%H%n%B "$1" >/dev/null && git diff-tree -p -r --root --no-commit-id "$1" >/dev/null' _ "$sha"
     [ "$status" -eq 0 ]
     run_hook
     [ "$status" -eq 1 ]
@@ -645,20 +646,25 @@ clean_commit_on_remote() {
     [ "$status" -ne 0 ]
 }
 
-@test "a tag whose fields all read as NOTHING (cat-file -p exiting 0 with no output) is refused on its OBJECT field, through a real push: a tag object always names what it points at, so an empty field under a type of tag is a short answer, and the remote never gets the tag" {
+@test "a tag OBJECT that reads as NOTHING (cat-file -p exiting 0 with no output) over a banned tagger is refused on the object's SIZE, through a real push: the tag's fields are parsed from that one capture (round 7), an empty capture of an object with bytes is a short read, and the remote never gets the tag" {
     clean_commit_on_remote
     GIT_COMMITTER_EMAIL="$STAMPED" git -C "$REPO" tag -a v1 -m "release one"
     sha="$(git -C "$REPO" rev-parse refs/tags/v1)"
+    size="$(git -C "$REPO" cat-file -s "$sha")"
+    [ "$size" -gt 0 ]
     silent_cat_file_p "$sha"
     run _hook_in "$REPO" -c 'git cat-file -p "$1"' _ "$sha"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
     [ "$(git -C "$REPO" cat-file -t "$sha")" = tag ]            # the type read is untouched
+    [ "$(git -C "$REPO" cat-file -s "$sha")" = "$size" ]         # and so is the size read, the sibling fact
     push_ref_through_hook_with_shim refs/tags/v1
     [ "$status" -ne 0 ]
-    [[ "$output" == *"the OBJECT of tag refs/tags/v1 (${sha:0:10}) was read as empty (git cat-file -p exited 0) while its type read as tag, which ends the peel here"* ]]
+    # until round 6 the line was the OBJECT field's, read as empty while the type read as tag; that line now stands for an object read whole with no object line
+    [[ "$output" == *"the OBJECT of tag refs/tags/v1 (${sha:0:10}) was read as empty (git cat-file -p exited 0) while git cat-file -s gives its size as $size bytes, so the read answered short, which ends the peel here"* ]]
     [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
-    [[ "$output" != *"could not be read"* ]]           # an absent tagger and an absent message are the tag's own: refused for the object field alone
+    [[ "$output" != *"could not be read"* ]]           # a short read, not a failed one
+    [[ "$output" != *"while its type read as tag"* ]]
     [[ "$output" != *"is tagged as"* ]]
     run remote_holds_ref refs/tags/v1
     [ "$status" -ne 0 ]
@@ -722,5 +728,43 @@ clean_commit_on_remote() {
     [[ "$output" == *"the ADDRESS <dev@zzsynthuser.example> of commit ${sha:0:10} could not be compared with the addresses this clone is configured to use (grep exited 2)"* ]]
     [[ "$output" == *"commit ${sha:0:10} is authored as <dev@zzsynthuser.example>, an address this clone is not configured to use"* ]]
     run remote_holds_ref refs/heads/main
+    [ "$status" -ne 0 ]
+}
+
+# ── round 7: the tag's TAGGER with no awk between the object and the check ──
+# Round 6's refuters drove the awk that read a tag's tagger field with a shim
+# exiting 0 and printing nothing: the field read as absent, no address was
+# judged, and a tag stamped under a banned domain was published through a real
+# push with nothing printed. The tag object is now read once into a capture
+# judged against its size, and its header parsed by the shell, so no awk
+# stands between the object and the address check.
+awk_silent_on_program() {   # <text of an awk program>: an awk exiting 0 and printing nothing when its arguments carry that text, the real awk for every other program
+    local real_awk
+    real_awk="$(command -v awk)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'real_awk=%q; marker=%q\n' "$real_awk" "$1"
+        cat <<'SHIM'
+case "$*" in *"$marker"*) cat > /dev/null; exit 0 ;; esac
+exec "$real_awk" "$@"
+SHIM
+    } > "$TEST_DIR/shim/awk"
+    chmod 755 "$TEST_DIR/shim/awk"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+
+@test "an awk exiting 0 and printing nothing for the program that read a tag's TAGGER field at the round 6 text changes nothing now: the tagger is parsed by the shell from the object capture, the banned address is named through a real push, and the remote never gets the tag" {
+    clean_commit_on_remote
+    GIT_COMMITTER_EMAIL="$STAMPED" git -C "$REPO" tag -a v1 -m "release one"
+    sha="$(git -C "$REPO" rev-parse refs/tags/v1)"
+    awk_silent_on_program 'f=tagger'                     # the -v operand of the round 6 tagger read alone (the object field's read carried f=object and stays)
+    run _hook_in "$REPO" -c 'printf "tagger x\n" | awk -v f=tagger "\$1 == f { print }"; echo "status $?"'
+    [ "$output" = "status 0" ]
+    push_ref_through_hook_with_shim refs/tags/v1
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"tag refs/tags/v1 (${sha:0:10}) is tagged as <$STAMPED>, an address this clone is not configured to use, whose domain carries a personal identifier"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    run remote_holds_ref refs/tags/v1
     [ "$status" -ne 0 ]
 }
