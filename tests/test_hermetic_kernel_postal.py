@@ -2122,16 +2122,19 @@ class HermeticKernelPostal(unittest.TestCase):
         the garbage) with the collector off, twice: the first build warms what a first use imports or fills, a
         gc.collect() takes the baseline, and after the second build, the table alive, gc.collect() finds no
         unreachable object (DEBUG_SAVEALL for that one collection, so a red names the types found). The round's
-        mutant that drops the release reds it with the plant's bindings graphs."""
+        mutant that drops the release reds it with the plant's bindings graphs. The two builds read the plant through
+        parse_cache.source_and_tree, each planted module parsed once between them, which the tree's counter pin
+        cannot show for the build alone (the peers test's walk parses the tree's modules through the cache too)."""
         self.assertTrue(gc.isenabled(), "the case plants the collector's off state from the on state pytest runs in")
         self.addCleanup(gc.enable)                                     # registered BEFORE the disable below
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
+        paths = []
         for i, (_label, _kind, _site, src) in enumerate(PLANT_TABLE):
-            path = os.path.join(d, "test_row_%03d.py" % i)
-            with open(path, "w", encoding="utf-8") as f:
+            paths.append(os.path.join(d, "test_row_%03d.py" % i))
+            with open(paths[-1], "w", encoding="utf-8") as f:
                 f.write(src + "\n")
-            self.addCleanup(parse_cache.clear, path)                  # the plant's parses leave the cache with the case
+            self.addCleanup(parse_cache.clear, paths[-1])             # the plant's parses leave the cache with the case
         gc.disable()                                                   # the state derived() holds a build in; planted, as the build runs directly
         warm = _roads_build(d)
         self.assertEqual(len(warm.roads), len(PLANT_TABLE), "the plant's build reads a module per row")
@@ -2152,6 +2155,8 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual(unreachable, 0, "the roads build dropped %d objects only the collector could reclaim (%s): a cycle the "
                                          "build made and did not break before returning, which derived()'s freeze would keep for "
                                          "the process" % (unreachable, ", ".join("%s %d" % kv for kv in kinds.most_common(8))))
+        self.assertEqual([os.path.basename(p) for p in paths if parse_cache.parses_of(p) != 1], [], "the build reads each module "
+                         "through parse_cache.source_and_tree: the first build parsed every planted module once, the second none")
 
     def test_the_module_that_loads_the_kernel_in_process_and_attaches_places_each_leg_of_the_trio_where_it_is_read(self):
         """Read by position from the module's ast, not by text (_placement_faults): the port is assigned at module level
