@@ -1317,9 +1317,14 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
     "the registered post-passes, derived from the code, are the census REGISTERED_POST_PASSES (one, the math fill, registered by md-config.ts and defined in math.ts); " + CENSUS_REMEDY);
   // the paint pass (paint-refs.ts dropRemoteRefs, sanitizeMd's fourth statement) runs over every other caller's body and not over
   // mdBlock's, which opts out (remoteRefs: "keep", the bind pinned below); it is held to the same doors, so the premise survives
-  // the opt-out going
+  // the opt-out going. The doors read paint-refs.ts's WHOLE code, not dropRemoteRefs's body alone: the pass calls the module's
+  // other functions (remoteUrlRef, styleDeclarations, declaration, skipBlank and the tokenizer) and the sweep does not follow
+  // callees, so a live-document road planted in remoteUrlRef left a read of the body alone green (the paint-reference fix's
+  // closing pass, mutation N9, 2026-09-23). The module imports nothing, so its own code is everything the pass can reach.
+  const PAINT_CODE = codeOnly(web("paint-refs.ts"));
+  assert.doesNotMatch(PAINT_CODE, /\bimport\b|\brequire\s*\(/, "paint-refs.ts imports nothing, so its own code is all the paint pass reaches and the doors below read all of it (an import is red here until this read covers the imported module too)");
   const preChain = [{ label: "mintHeadingIds (file-view.ts, the pass mdBlock hands sanitizeMd)", body: fnBody(codeOnly(VIEW), "mintHeadingIds", "file-view.ts") },
-    { label: "dropRemoteRefs (paint-refs.ts, sanitizeMd's paint pass, off for mdBlock)", body: fnBody(codeOnly(web("paint-refs.ts")), "dropRemoteRefs", "paint-refs.ts") },
+    { label: "paint-refs.ts, its whole code (dropRemoteRefs, sanitizeMd's paint pass, off for mdBlock, and every function it calls)", body: PAINT_CODE },
     ...registrants.map((r) => ({ label: r.name + " (" + r.module + ", registered by " + r.site + ")", body: r.body }))];
   // no door to the live document in any of them: no `document`, `window`, `globalThis` or `self` (the live document and its
   // window), no cross-document verb, no element creation (a node created outside the body's document is a road out of it when
