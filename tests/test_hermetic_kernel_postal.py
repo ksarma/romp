@@ -70,7 +70,9 @@ reviewer's ruling of round 1 removed that assertion: the test asserts nothing ab
 ensure, so it holds under this kernel, upstream's and fork PR #875's. Its text conflicts with fork PR #875's copy of
 the test, and whichever of the two lands second keeps fork PR #875's assertion beside this wait and fake. The pins
 below read the test's parts as statements that run (the trio, the wrap and the fake set before the call; the wait
-before the fake and the environment are put back), run its fake's own def over the argv shapes it must
+before the fake and the environment are put back; none after a return, a raise, a skip or an exit, none in the body of a
+try with an except clause) and hold every other statement of the test to putting back none of what those set, in any
+binding form or by reflection (a plant test reds each part), run its fake's own def over the argv shapes it must
 tell apart, and run the test in a child pytest with a sitecustomize that records every connect and every Python
 process of the run: none dials the fixed port, and no ensure child starts.
 The census pin passes one floor write of a leak name, upstream's client-only "1" (FLOOR_LEAK_WRITES), and the tunnels
@@ -1268,16 +1270,68 @@ _DIAL_SPY = textwrap.dedent("""\
 """)
 
 
-def _executed(body):
-    """The statements of a function body that run whenever it runs through: each top-level statement and, for a try among
-    them, the statements of its body and of its finally, recursively. Never an if or loop body, a with body, an except or
-    else clause, or a nested def's body: a statement under `if False:`, or in a def the test never calls, is in the tree
-    and never runs (the verifier's two mutants of round 2 on fork PR #894 passed a pin that walked the whole function)."""
+_TRIES = tuple(getattr(ast, name) for name in ("Try", "TryStar") if hasattr(ast, name))
+_ENDS_BY_CALL = ("skipTest", "skip", "xfail", "exit", "_exit")
+
+
+def _runs_with(node):
+    """Every node that executes when `node` does, in the same frame: a def contributes its decorators, default values and
+    annotations and a lambda its default values, never their bodies, which run when called; a class its decorators, bases
+    and keywords and its body, which runs at the class statement (the defs in it again by their headers)."""
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        a = node.args
+        parts = _def_header(node) + [x.annotation for x in a.posonlyargs + a.args + a.kwonlyargs + [a.vararg, a.kwarg]
+                                     if x is not None and x.annotation is not None] + ([node.returns] if node.returns else [])
+    elif isinstance(node, ast.Lambda):
+        parts = [d for d in list(node.args.defaults) + list(node.args.kw_defaults) if d is not None]
+    elif isinstance(node, ast.ClassDef):
+        parts = _class_header(node) + list(node.body)
+    else:
+        yield node
+        parts = ast.iter_child_nodes(node)
+    for p in parts:
+        yield from _runs_with(p)
+
+
+def _ends_the_run(stmt):
+    """`stmt` can end the test's run before the statements after it while the run still passes, is skipped or exits with
+    status 0: it is, or holds in its own frame (_runs_with), a return or a raise (a raise of SkipTest skips; a raise an
+    except clause catches jumps past the statements between), or a call named skipTest, skip, xfail, exit or _exit
+    (unittest's and pytest's skips and expected failure, sys.exit, pytest.exit, and os._exit, which ends the process with
+    the status it is given). A break or continue is not among them: _executed never reads inside a loop, so one ends
+    only a loop the list does not read into. NOT READ: a skip, an expected failure or an exit raised from inside a
+    function the test calls (the executed pin's child run requires the test to PASS and reds on it)."""
+    return any(isinstance(n, (ast.Return, ast.Raise))
+               or (isinstance(n, ast.Call) and (_dotted(n.func) or [""])[-1] in _ENDS_BY_CALL) for n in _runs_with(stmt))
+
+
+def _run_prefix(body):
+    """The statements of `body` in order, up to and including the first that can end the run (_ends_the_run): the ones
+    after it are in the tree and never run on a run that returns there (the verifier's mutant on round 2's third commit of
+    fork PR #894, a `return` between the try and the test's two final assertions, under which the guard test and all
+    three pins passed)."""
     out = []
     for stmt in body:
         out.append(stmt)
-        if isinstance(stmt, ast.Try):
-            out += _executed(stmt.body) + _executed(stmt.finalbody)
+        if _ends_the_run(stmt):
+            break
+    return out
+
+
+def _executed(body):
+    """The statements of a function body that run on every run of it that passes: each statement of its run prefix
+    (_run_prefix) and, for a try among them, the statements of its finally and, when it has no except clause, of its
+    body, recursively. Never an if or loop body, a with body, an except or else clause, the body of a try that has an
+    except clause (a statement after one that raises there is skipped and the run goes on), or a nested def's body: a
+    statement under `if False:`, in a def the test never calls, after a caught raise or after a `return` is in the tree
+    and never runs (the verifier's two mutants of round 2 on fork PR #894 passed a pin that walked the whole function, and
+    two more, a `return` after the try and one in its finally before the put-backs, a pin that read every statement of a
+    list). A try* statement always has handlers, so its body is never read."""
+    out = []
+    for stmt in _run_prefix(body):
+        out.append(stmt)
+        if isinstance(stmt, _TRIES):
+            out += (_executed(stmt.body) if not stmt.handlers else []) + _executed(stmt.finalbody)
     return out
 
 
@@ -1317,11 +1371,73 @@ def _names_bound(stmts, value):
 
 def _environ_writes(node):
     """Every write to os.environ inside `node`, nested defs included: a call of pop, popitem, update, setdefault, clear,
-    __setitem__ or __delitem__ on it, or a subscript of it stored or deleted."""
+    __setitem__ or __delitem__ on it, or a subscript of it stored or deleted. What the guard pin requires of the restore;
+    its safe side reads every mention of the environment instead (_environ_mentions)."""
     return [n for n in ast.walk(node)
             if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and _dotted(n.func.value) == ["os", "environ"]
                 and n.func.attr in ("pop", "popitem", "update", "setdefault", "clear", "__setitem__", "__delitem__"))
             or (isinstance(n, ast.Subscript) and _dotted(n.value) == ["os", "environ"] and isinstance(n.ctx, (ast.Store, ast.Del)))]
+
+
+_ENV_NAMES = ("environ", "environb", "putenv", "unsetenv")
+
+
+def _environ_mentions(node):
+    """Every node inside `node`, nested defs included, that names the process environment or a function that changes it:
+    an attribute environ, environb, putenv or unsetenv on any object (os under any name, or reached any way), and a bare
+    name so spelled (after `from os import environ`), whatever its context. A write through a name bound to the mapping
+    (`env = os.environ`) is read at the binding, which names it."""
+    return [n for n in ast.walk(node)
+            if (isinstance(n, ast.Attribute) and n.attr in _ENV_NAMES) or (isinstance(n, ast.Name) and n.id in _ENV_NAMES)]
+
+
+def _attribute_binds(node, attrs):
+    """Every node inside `node`, nested defs included, that binds or deletes an attribute named in `attrs` on ANY object,
+    so a module reached through another name (`subprocess.run = ...` beside `km.subprocess.run`) is read too: an
+    attribute target in every binding form, one target of an assignment or one of several, unpacked from a tuple or a
+    list or starred, an augmented or annotated one, a for, with or comprehension target, or a del. Every one of those
+    carries a Store or Del context on the attribute node, which is what this reads."""
+    return [n for n in ast.walk(node) if isinstance(n, ast.Attribute) and isinstance(n.ctx, (ast.Store, ast.Del)) and n.attr in attrs]
+
+
+def _name_binds(node, names):
+    """Every node inside `node`, nested defs included, that binds or deletes one of `names`: a name stored or deleted (an
+    assignment, augmented or annotated, a for, with or comprehension target, a walrus, a del), an import's name or `as`
+    name, a def or class so named, an except clause's `as` name, a match capture or rest, and a global or nonlocal
+    declaration of it."""
+    names = set(names)
+    return [n for n in ast.walk(node)
+            if (isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)) and n.id in names)
+            or (isinstance(n, ast.alias) and (n.asname or n.name.split(".")[0]) in names)
+            or (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.ExceptHandler)) and n.name in names)
+            or (isinstance(n, (ast.Global, ast.Nonlocal)) and names & set(n.names))
+            or (type(n).__name__ in ("MatchAs", "MatchStar") and getattr(n, "name", None) in names)
+            or (type(n).__name__ == "MatchMapping" and getattr(n, "rest", None) in names)]
+
+
+_REFLECTIVE_CALLS = ("setattr", "delattr", "getattr", "vars", "globals", "locals", "exec", "eval", "compile", "__import__", "patch")
+_REFLECTIVE_ATTRS = ("__setattr__", "__delattr__", "__dict__", "setattr", "delattr", "patch", "modules", "import_module")
+
+
+def _reflective(n):
+    """`n` reaches an attribute, a module or a name by reflection or by a string, so what it binds is decided at run time:
+    a call of setattr, delattr, getattr, vars, globals, locals, exec, eval, compile, __import__ or patch by that bare
+    name; an attribute __setattr__, __delattr__, __dict__, setattr or delattr (a method so named, as pytest's monkeypatch
+    spells them), patch (mock's, mock.patch.object and mock.patch.dict among them), modules (sys.modules) or
+    import_module (importlib's)."""
+    return ((isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in _REFLECTIVE_CALLS)
+            or (isinstance(n, ast.Attribute) and n.attr in _REFLECTIVE_ATTRS))
+
+
+def _plant_at(src, node, text, where, col=None):
+    """`src` with the lines of `text`, each indented as the statement `node` is (or by `col` columns), put before its first
+    line (its decorators included), after its last line, or in its place: `where` is "before", "after" or "replace".
+    `node` is a node of a parse of `src` itself, so its line numbers count in `src`."""
+    lines = src.splitlines(keepends=True)
+    new = ["%s%s\n" % (" " * (node.col_offset if col is None else col), line) for line in text.split("\n")]
+    first = min([node.lineno] + [d.lineno for d in getattr(node, "decorator_list", [])])
+    start, end = {"before": (first - 1, first - 1), "after": (node.end_lineno, node.end_lineno), "replace": (first - 1, node.end_lineno)}[where]
+    return "".join(lines[:start] + new + lines[end:])
 
 
 def _conftest_with_the_client_only_floor():
@@ -2075,28 +2191,57 @@ class HermeticKernelPostal(unittest.TestCase):
             self.assertIn("importing the module writes no leg of the trio", str(caught.exception),
                           "%s: the shared check reds on the import leg, its floor value read before the import" % label)
 
-    def _guard_test(self):
-        """tests/test_kernel.py's PostalPeerTunnels.test_notify_bus_peer_is_guarded as a parsed function node (the pins below
-        read code, never text: a statement commented out is not in the tree)."""
-        tree = ast.parse(open(os.path.join(HERE, "test_kernel.py"), encoding="utf-8", errors="replace").read())
-        cls = [c for c in tree.body if isinstance(c, ast.ClassDef) and c.name == "PostalPeerTunnels"]
+    def _guard_test(self, src=None):
+        """tests/test_kernel.py's PostalPeerTunnels.test_notify_bus_peer_is_guarded as a parsed function node, or the same
+        test in `src`, a module text that defines the class (a planted copy of it; _guard_class_source); the pins below read
+        code, never text: a statement commented out is not in the tree."""
+        if src is None:
+            src = open(os.path.join(HERE, "test_kernel.py"), encoding="utf-8", errors="replace").read()
+        cls = [c for c in ast.parse(src).body if isinstance(c, ast.ClassDef) and c.name == "PostalPeerTunnels"]
         self.assertEqual(len(cls), 1, "tests/test_kernel.py defines PostalPeerTunnels once")
         fns = [f for f in cls[0].body if isinstance(f, ast.FunctionDef) and f.name == "test_notify_bus_peer_is_guarded"]
         self.assertEqual(len(fns), 1, "PostalPeerTunnels defines test_notify_bus_peer_is_guarded once")
         return fns[0]
 
-    def _guard_shape(self):
-        """The guard test's parts, each required as a statement that RUNS (_executed): at the test's top level before the
-        try that makes the notify call, in that try's finally, after the try, or in the body and the finally of the
-        wrapper's own try. A statement under an if, in a loop or in a def the test never calls satisfies nothing here.
-        The safe side is read over the whole function instead: no statement anywhere in it, run or not, may put the fake,
-        the revive or the environment back other than the ones required, so a conditional early restore still reds.
-        Returns what the pin on the fake's behaviour needs."""
-        fn = self._guard_test()
-        top = fn.body
-        tries = [i for i, s in enumerate(top) if isinstance(s, ast.Try)
+    def _guard_class_source(self):
+        """The text of tests/test_kernel.py's PostalPeerTunnels class, its decorators included: parsed alone it defines the
+        class and the guard test at the same shape, so the plants below edit a copy of it and hand it to _guard_shape."""
+        src = open(os.path.join(HERE, "test_kernel.py"), encoding="utf-8", errors="replace").read()
+        cls = [c for c in ast.parse(src).body if isinstance(c, ast.ClassDef) and c.name == "PostalPeerTunnels"]
+        self.assertEqual(len(cls), 1, "tests/test_kernel.py defines PostalPeerTunnels once")
+        first = min([cls[0].lineno] + [d.lineno for d in cls[0].decorator_list])
+        return "".join(src.splitlines(keepends=True)[first - 1:cls[0].end_lineno])
+
+    def _guard_shape(self, src=None):
+        """The guard test's parts (in tests/test_kernel.py, or in `src`, a planted copy of its class), each required as a
+        statement that RUNS on a run of the test that passes (_executed): among the statements of the test that run
+        (_run_prefix) before the try that makes the notify call, in that try's finally, after the try, or in the body and
+        the finally of the wrapper's own try. A statement under an if, in a loop, in a def the test never calls, in the
+        body of a try that has an except clause, or after a statement that can end the run (a return, a raise, a skip or an
+        exit: _ends_the_run) satisfies nothing here; and the test is undecorated and no generator, since a skip decorator,
+        or a yield anywhere in it, passes a run in which none of its statements ran.
+        The safe side is read over the whole function, every statement, run or not, nested defs included, so a conditional
+        or early put-back still reds: no statement binds or deletes run, subprocess or _revive_postal_bus on any object, in
+        any binding form (_attribute_binds), other than the four required; none binds the names km or os (_name_binds);
+        none reaches anything by reflection or by a string (_reflective: setattr and the verifier's tuple target of round
+        2's third commit on fork PR #894 passed a scan that read single-target assignments alone); and the environment is
+        named only in os.environ.get reads, in the trio and in the finally after the wait (_environ_mentions).
+        NOT READ, each with what sees it instead: a put-back made by code the test calls but does not contain (a helper of
+        the module, setUp or tearDown), and the class's own decorators. An early put-back of the fake lets the revive's
+        real ensure child start, which the executed pin's spy records (the verifier's two mutants reddened it there); of
+        the revive, the kick runs the real revive, the Event is never set and the guard test's own wait fails; of the
+        environment, nothing sees it while the fake holds, since every postal-service call is then answered in the
+        process, so the restore's place after the wait is a second belt. A skip or an exit from a callee or from the class
+        reds the executed pin, which requires the child run to pass.
+        Returns what the pin on the fake's behaviour and the plants need."""
+        fn = self._guard_test(src)
+        self.assertEqual(fn.decorator_list, [], "the guard test carries no decorator: a skip or an expected failure passes a run that never reached its statements")
+        self.assertEqual([n.lineno for s in fn.body for n in _runs_with(s) if isinstance(n, (ast.Yield, ast.YieldFrom))], [],
+                         "the guard test is no generator: called, a generator runs none of its statements, and the run still passes")
+        top = _run_prefix(fn.body)
+        tries = [i for i, s in enumerate(top) if isinstance(s, ast.Try) and not s.handlers
                  and any(_dotted(c.func) == ["km", "_notify_bus_peer"] for st in _executed(s.body) for c in _own_calls(st))]
-        self.assertEqual(len(tries), 1, "the notify call runs in one try at the test's top level")
+        self.assertEqual(len(tries), 1, "the notify call runs in one try with no except clause, among the statements of the test that run")
         before, final, after = top[:tries[0]], _executed(top[tries[0]].finalbody), top[tries[0] + 1:]
         defs = {s.name: i for i, s in enumerate(before) if isinstance(s, ast.FunctionDef)}
         # the trio, set before the call
@@ -2119,7 +2264,7 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertTrue(any(any(isinstance(s, ast.Expr) and isinstance(s.value, ast.Call) and isinstance(s.value.func, ast.Name)
                                 and s.value.func.id == kept_revive[0][1] for s in _executed(t.body))
                             and any(_call_stmt(s, [event, "set"]) for s in _executed(t.finalbody))
-                            for t in _executed(before[defs[wrapper.id]].body) if isinstance(t, ast.Try)),
+                            for t in _executed(before[defs[wrapper.id]].body) if isinstance(t, ast.Try) and not t.handlers),
                         "the wrapper runs the real revive in a try whose finally sets the Event (%s), whatever the revive does" % event)
         # the scoped fake: the real run kept, a fake of the test's own taking (*a, **kw), installed before the call
         kept_run = _names_bound(before, ["km", "subprocess", "run"])
@@ -2146,34 +2291,53 @@ class HermeticKernelPostal(unittest.TestCase):
         restores = [i for i, s in enumerate(final) if _environ_writes(s)]
         self.assertTrue(restores, "the finally restores the trio")
         self.assertLess(wait, min(restores), "...after the wait: the revive's calls run under the trio")
-        # the safe side, over every statement of the test, run or not
-        for target, allowed in ((["km", "subprocess", "run"], (before[install[0]], final[unfake[0]])),
-                                (["km", "_revive_postal_bus"], (before[rebind[0]], final[unwrap[0]]))):
-            self.assertEqual([n.lineno for n in ast.walk(fn) if _assign_to(n, target) and not any(n is a for a in allowed)], [],
-                             "no other statement of the test binds %s" % ".".join(target))
-        late = [w for s in final[wait + 1:] for w in _environ_writes(s)]
-        self.assertEqual([w.lineno for w in _environ_writes(fn) if w is not trio[0] and not any(w is x for x in late)], [],
-                         "the test writes the environment only in the trio and in the finally after the wait")
+        # the safe side, over every statement of the test, run or not, nested defs included
+        self.assertEqual([n.lineno for n in ast.walk(fn) if _reflective(n)], [],
+                         "no statement of the test reaches an attribute, a module or a name by reflection or by a string: what it binds is decided at run time")
+        allowed = (before[install[0]].targets[0], final[unfake[0]].targets[0], before[rebind[0]].targets[0], final[unwrap[0]].targets[0])
+        self.assertEqual([(n.lineno, n.attr) for n in _attribute_binds(fn, ("run", "subprocess", "_revive_postal_bus")) if not any(n is a for a in allowed)], [],
+                         "no other statement of the test binds or deletes run, subprocess or _revive_postal_bus, on any object, in any binding form")
+        self.assertEqual([n.lineno for n in _name_binds(fn, ("km", "os"))], [],
+                         "no statement of the test binds the names km or os: every km and os it writes through is the kernel module and the os module")
+        gets = {id(c.func.value) for c in ast.walk(fn) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "get"}
+        where_writes_go = {id(n) for s in [trio[0]] + final[wait + 1:] for n in ast.walk(s)}
+        self.assertEqual([n.lineno for n in _environ_mentions(fn) if id(n) not in gets and id(n) not in where_writes_go], [],
+                         "the test names the environment only in os.environ.get reads, in the trio and in the finally after the wait")
         # after the try: the wait's result, and the one assertion on the fake
         asserted = [s.value for s in after if isinstance(s, ast.Expr) and isinstance(s.value, ast.Call)]
         self.assertTrue(any(_dotted(c.func) == ["self", "assertTrue"] and c.args and _dotted(c.args[0]) == [ended] for c in asserted),
                         "after the try the wait's result (%s) is asserted: a revive never kicked, or never ended, fails the test" % ended)
-        reached = [c.args[0].id for c in asserted if _dotted(c.func) == ["self", "assertEqual"] and len(c.args) >= 2
-                   and isinstance(c.args[0], ast.Name) and isinstance(c.args[1], ast.List) and not c.args[1].elts]
-        self.assertEqual(len(reached), 1, "after the try one list is asserted empty: the postal-service calls that reached the real run")
-        return {"fn": fn, "fake": fake.id, "real_run": kept_run[0][1], "reached": reached[0]}
+        roads = [s for s in before if isinstance(s, ast.FunctionDef)
+                 and any(isinstance(c, ast.Call) and _dotted(c.func) == [kept_run[0][1]] for c in ast.walk(s))]
+        fake_calls = {c.func.id for c in ast.walk(before[defs[fake.id]]) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+        self.assertTrue(roads and all(r.name == fake.id or r.name in fake_calls for r in roads),
+                        "the real run is called only in a def of the test that the fake is or calls by name: the road from the fake to the real run")
+        on_every_road = set.intersection(*[{c.func.value.id for c in ast.walk(r) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                                            and c.func.attr == "append" and isinstance(c.func.value, ast.Name)} for r in roads])
+        reached = sorted({c.args[0].id for c in asserted if _dotted(c.func) == ["self", "assertEqual"] and len(c.args) >= 2
+                          and isinstance(c.args[0], ast.Name) and isinstance(c.args[1], ast.List) and not c.args[1].elts} & on_every_road)
+        self.assertEqual(len(reached), 1, "after the try one list is asserted empty that every road to the real run appends to: the postal-service "
+                                          "calls that reached it (a list asserted empty beside it, fork PR #875's, is not what this reads)")
+        return {"fn": fn, "fake": fake.id, "real_run": kept_run[0][1], "reached": reached[0], "event": event, "ended": ended,
+                "real_revive": kept_revive[0][1], "try": top[tries[0]], "install": before[install[0]], "wait": final[wait],
+                "after": after, "wrapper": before[defs[wrapper.id]], "fake_def": before[defs[fake.id]]}
 
     def test_the_peer_notify_guard_test_runs_the_trio_the_wrap_the_wait_and_the_scoped_fake_as_statements_that_run(self):
         """Read by ast from tests/test_kernel.py's PostalPeerTunnels.test_notify_bus_peer_is_guarded, each part required as
-        a statement that runs (_guard_shape; the reviewer's re-ruling of round 2 on fork PR #894): the trio,
-        os.environ.update(ROMP_POSTAL_CLIENT_ONLY="1", ROMP_POSTAL_PEERS="0", ROMP_POSTAL_PORT="1"), set before the one
-        km._notify_bus_peer call (the refusal that kicks the bus revive on a thread); km._revive_postal_bus rebound before
-        the call to a wrapper of the test's own that runs the real revive in a try whose finally sets an Event;
+        a statement that runs on a run of the test that passes, so none after a return, a raise, a skip or an exit and none
+        in the body of a try with an except clause (_guard_shape; the reviewer's re-ruling of round 2 on fork PR #894): the
+        trio, os.environ.update(ROMP_POSTAL_CLIENT_ONLY="1", ROMP_POSTAL_PEERS="0", ROMP_POSTAL_PORT="1"), set before the
+        one km._notify_bus_peer call (the refusal that kicks the bus revive on a thread); km._revive_postal_bus rebound
+        before the call to a wrapper of the test's own that runs the real revive in a try whose finally sets an Event;
         km.subprocess.run replaced before the call by a fake of the test's own taking (*a, **kw); the call in a try whose
         finally waits on that Event, keeping the result, BEFORE it puts the fake and the environment back, and puts the
-        real revive back; and, after the try, the wait's result asserted and one list asserted empty, the postal-service
-        calls that reached the real run. No other statement of the test, run or not, puts the fake, the revive or the
-        environment back.
+        real revive back; and, after the try, the wait's result asserted and one list asserted empty that the road from the
+        fake to the real run appends to, the postal-service calls that reached the real run (another list asserted empty
+        beside it, as fork PR #875's assertion will be once the two texts meet, is not what this reads). No other statement
+        of the test, run or not, binds or deletes run, subprocess or _revive_postal_bus on any object in any binding form,
+        binds km or os, reaches anything by reflection or by a string, or names the environment outside os.environ.get
+        reads, the trio and the finally after the wait; what that leaves unread (a put-back made by code the test calls) is
+        named in _guard_shape with what sees it, and the plant test below reds each part.
         Why the wait and the fake: with the test at its base text the restore won the race in every run, and the ensure's
         child, forked with the restored environment, which names no port, pinged the machine's fixed bus port (the
         verifier's plant in round 2); the fake answers the revive's ensure, so under this kernel no ensure child starts at
@@ -2183,6 +2347,118 @@ class HermeticKernelPostal(unittest.TestCase):
         the pin below it, and that no process of the test's run dials the fixed port or starts an ensure child by the
         executed pin after that."""
         self._guard_shape()
+
+    def test_the_guard_pin_reds_on_a_part_that_never_runs_and_on_a_put_back_in_any_form(self):
+        """THE PLANTS for the guard pin's readers (the verifier's three findings on round 2's third commit of fork PR #894):
+        each is planted into a copy of the PostalPeerTunnels class (_guard_class_source, _plant_at) and read by
+        _guard_shape, which must red with the message of the part it breaks. Parts that never run: a return between the
+        try and the final assertions, and one in the finally between the wait and the put-backs (the verifier's two
+        mutants, under which the guard test and all three pins passed), a raise of SkipTest, a skipTest call and an
+        os._exit after the try, a conditional return before it, the wait in a try whose except clause catches what the
+        call before it raises (int("planted"), no raise statement, so only the except-clause rule sees it), a return in
+        the wrapper before its try, an except clause on the notify's try and on the wrapper's, a yield that never runs,
+        and a skip decorator. Put-backs, planted right after the fake is installed or right before the wait: setattr and a
+        tuple target (the verifier's two, which reddened only the executed pin), a chained, an augmented, an annotated and
+        a starred assignment, a for and a with target, a del, the module through another name, the kernel's subprocess
+        attribute rebound, the module's __dict__, vars(), object.__setattr__, mock.patch by a string, exec of a string,
+        getattr, sys.modules, the revive by a tuple target, km rebound and bound by an import, os rebound; and for the
+        environment a pop in the finally before the wait, a pop and a del before the call, |=, dict.__setitem__ on it, a
+        name bound to it, os.environb, os.putenv, os.unsetenv, environ imported from os, os.environ rebound and
+        mock.patch.dict. The road: the fake calling the real run itself reds, and so does a second road from the fake that
+        records nothing. And fork PR #875's assertion kept beside this test's, after the try as the guard test's comment
+        anticipates or inside the try where upstream's text has it, reads green with the road's list read (the verifier's
+        third finding: the pin counted two lists asserted empty and reddened); with the fake's own list asserted in the
+        road's place it reds."""
+        cls_src = self._guard_class_source()
+        shape = self._guard_shape(cls_src)
+        stubbed = sorted({c.func.value.id for c in ast.walk(shape["fake_def"]) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                          and c.func.attr == "append" and isinstance(c.func.value, ast.Name)})
+        self.assertEqual(len(stubbed), 1, "the fake records the calls it answers in one list of its own: %r" % stubbed)
+        names = {k: shape[k] for k in ("event", "ended", "real_run", "real_revive")}
+        names["stubbed"] = stubbed[0]
+        self.assertIsInstance(shape["fake_def"].body[-1], ast.Return, "the fake ends by returning what the road to the real run returns")
+        names["fake_return"] = ast.unparse(shape["fake_def"].body[-1].value)
+        road_assert = [s for s in shape["after"] if isinstance(s, ast.Expr) and isinstance(s.value, ast.Call) and s.value.args
+                       and isinstance(s.value.args[0], ast.Name) and s.value.args[0].id == shape["reached"]]
+        self.assertEqual(len(road_assert), 1, "the road's list is asserted once after the try")
+        wrapper_try = [t for t in shape["wrapper"].body if isinstance(t, ast.Try)][0]
+        anchors = {"after the try": (shape["after"][0], "before"), "after the wait": (shape["wait"], "after"),
+                   "the wait": (shape["wait"], "replace"), "before the wait": (shape["wait"], "before"),
+                   "before the try": (shape["try"], "before"), "in the try": (shape["try"].body[0], "after"),
+                   "the wrapper's try": (wrapper_try, "before"),
+                   "the def": (shape["fn"], "before"), "after the install": (shape["install"], "after"),
+                   "the road's assertion": (road_assert[0], "replace"), "the fake's return": (shape["fake_def"].body[-1], "replace"),
+                   "the notify try's clauses": (shape["try"].body[-1], "after", shape["try"].col_offset),
+                   "the wrapper try's clauses": (wrapper_try.body[-1], "after", wrapper_try.col_offset)}
+        after_try, finally_run, one_try, wait_msg = ("after the try the wait's result", "the finally puts the real run back",
+                                                    "the notify call runs in one try", "the finally waits on the Event")
+        reflect, binds, rebinds, env = ("by reflection or by a string", "binds or deletes run, subprocess or _revive_postal_bus",
+                                        "binds the names km or os", "names the environment only in")
+        plants = (
+            ("a return between the try and the final assertions", "after the try", "return", after_try),
+            ("a return in the finally between the wait and the put-backs", "after the wait", "return", finally_run),
+            ("a raise of SkipTest after the try", "after the try", 'raise unittest.SkipTest("planted")', after_try),
+            ("a skipTest call after the try", "after the try", 'self.skipTest("planted")', after_try),
+            ("os._exit after the try", "after the try", "os._exit(0)", after_try),
+            ("a conditional return before the try", "before the try", "if saved:\n    return", one_try),
+            ("the wait in a try whose except clause catches what the call before it raises", "the wait",
+             'try:\n    int("planted")\n    %(ended)s = %(event)s.wait(60)\nexcept ValueError:\n    %(ended)s = True', wait_msg),
+            ("a return in the wrapper before its try", "the wrapper's try", "return", "the wrapper runs the real revive in a try"),
+            ("an except clause on the notify's try", "the notify try's clauses", "except AssertionError:\n    pass", one_try),
+            ("an except clause on the wrapper's try", "the wrapper try's clauses", "except BaseException:\n    pass", "the wrapper runs the real revive in a try"),
+            ("a yield that never runs", "after the try", "if False:\n    yield", "no generator"),
+            ("a skip decorator", "the def", '@unittest.skip("planted")', "carries no decorator"),
+            ("setattr on the module", "after the install", 'setattr(km.subprocess, "run", %(real_run)s)', reflect),
+            ("a tuple target", "after the install", "km.subprocess.run, _x = %(real_run)s, 0", binds),
+            ("a chained assignment", "after the install", "_y = km.subprocess.run = %(real_run)s", binds),
+            ("an augmented assignment", "after the install", "km.subprocess.run |= %(real_run)s", binds),
+            ("an annotated assignment", "after the install", "km.subprocess.run: object = %(real_run)s", binds),
+            ("a starred target", "after the install", "*km.subprocess.run, = [%(real_run)s]", binds),
+            ("a for target", "after the install", "for km.subprocess.run in (%(real_run)s,):\n    pass", binds),
+            ("a with target", "after the install", "with contextlib.nullcontext(%(real_run)s) as km.subprocess.run:\n    pass", binds),
+            ("a del", "after the install", "del km.subprocess.run", binds),
+            ("the module through another name", "after the install", "subprocess.run = %(real_run)s", binds),
+            ("the kernel's subprocess attribute rebound", "after the install", "km.subprocess = subprocess", binds),
+            ("the module's __dict__", "after the install", 'km.subprocess.__dict__["run"] = %(real_run)s', reflect),
+            ("vars() of the kernel", "after the install", 'vars(km)["_revive_postal_bus"] = %(real_revive)s', reflect),
+            ("object.__setattr__", "after the install", 'object.__setattr__(km, "_revive_postal_bus", %(real_revive)s)', reflect),
+            ("mock.patch by a string", "after the install", 'mock.patch("subprocess.run", %(real_run)s).start()', reflect),
+            ("exec of a string", "after the install", 'exec("km.subprocess.run = %(real_run)s")', reflect),
+            ("getattr of the kernel", "after the install", 'getattr(km, "subprocess").run = %(real_run)s', reflect),
+            ("sys.modules", "after the install", 'sys.modules["subprocess"].run = %(real_run)s', reflect),
+            ("the revive by a tuple target", "after the install", "km._revive_postal_bus, _x = %(real_revive)s, 0", binds),
+            ("km rebound", "after the install", "km = importlib.reload(km)", rebinds),
+            ("km bound by an import", "after the install", "import json as km", rebinds),
+            ("os rebound", "after the install", "os = types.SimpleNamespace(environ={})", rebinds),
+            ("a pop in the finally before the wait", "before the wait", 'os.environ.pop("ROMP_POSTAL_PORT", None)', "the revive's calls run under the trio"),
+            ("a pop before the call", "after the install", 'os.environ.pop("ROMP_POSTAL_PORT", None)', env),
+            ("a del before the call", "after the install", 'del os.environ["ROMP_POSTAL_PORT"]', env),
+            ("|= on the environment", "before the wait", 'os.environ |= {"ROMP_POSTAL_PORT": "0"}', env),
+            ("dict.__setitem__ on the environment", "before the wait", 'dict.__setitem__(os.environ, "ROMP_POSTAL_PORT", "0")', env),
+            ("a name bound to the environment", "after the install", 'env = os.environ\nenv.pop("ROMP_POSTAL_PORT", None)', env),
+            ("os.environb", "before the wait", 'os.environb.pop(b"ROMP_POSTAL_PORT", None)', env),
+            ("os.putenv", "before the wait", 'os.putenv("ROMP_POSTAL_PORT", "0")', env),
+            ("os.unsetenv", "before the wait", 'os.unsetenv("ROMP_POSTAL_PORT")', env),
+            ("environ imported from os", "before the wait", 'from os import environ\nenviron.pop("ROMP_POSTAL_PORT", None)', env),
+            ("os.environ rebound", "before the wait", "os.environ = dict(os.environ)", env),
+            ("mock.patch.dict of the environment", "before the wait", 'mock.patch.dict(os.environ, {"ROMP_POSTAL_PORT": "0"}).start()', reflect),
+            ("the fake calling the real run itself", "the fake's return", "return %(real_run)s(*a, **kw)", "the road from the fake to the real run"),
+            ("a second road from the fake that records nothing", "the fake's return",
+             "return %(fake_return)s if a else %(real_run)s(*a, **kw)", "one list is asserted empty that every road to the real run appends to"),
+            ("the fake's list asserted in the road's place", "the road's assertion", 'self.assertEqual(%(stubbed)s, [], "planted")',
+             "one list is asserted empty that every road to the real run appends to"))
+        for label, anchor, text, fragment in plants:
+            node, where = anchors[anchor][:2]
+            planted = _plant_at(cls_src, node, text % names, where, *anchors[anchor][2:])
+            with self.assertRaises(AssertionError, msg="%s: the pin passed it" % label) as caught:
+                self._guard_shape(planted)
+            self.assertIn(fragment, str(caught.exception), "%s: the pin reds for the part it breaks" % label)
+        for label, anchor in (("after the try, as the guard test's comment anticipates", "after the try"),
+                              ("inside the try, where upstream's text has it", "in the try")):
+            node, where = anchors[anchor]
+            both = _plant_at(cls_src, node, 'self.assertEqual(%(stubbed)s, [], "a client-only kernel never runs the bus ensure")' % names, where)
+            self.assertEqual(self._guard_shape(both)["reached"], shape["reached"],
+                             "fork PR #875's assertion kept %s: the pin passes and reads the road's list" % label)
 
     def test_the_guard_tests_fake_answers_only_a_postal_service_call_and_passes_every_other_call_to_the_real_run(self):
         """The guard test's own fake, run: its def (and any def of the test it calls by name) is compiled from the test's
