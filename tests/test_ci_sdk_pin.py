@@ -263,13 +263,23 @@ class InstallStep(unittest.TestCase):
         self.assertLess(pip[0], imp[0], "the import must follow the install")
 
     def test_the_comment_states_the_pin_source_the_bump_and_the_residual(self):
-        # "pytest plugin" and "transitive release" (2026-09-20): the constant pins the SDK alone and its dependency closure
+        # "transitive release" and the anyio plugin (2026-09-20): the constant pins the SDK alone and its dependency closure
         # resolves fresh on every run; one of those packages, anyio, registers a pytest plugin, and a comment that stops
-        # saying so lets the pytest environment change again without a word (the line below holds the block itself)
-        for phrase in ("SDK_TESTED_VERSION", "kernel/session_host.py", "bin/romp-sdk-setup", "not PyPI's latest",
-                       "run the host tests on it, move the number", "nothing polls PyPI", "continue-on-error", "cryptography",
-                       "pytest plugin", "transitive release"):
-            self.assertIn(phrase, self.comment, "the step's comment lost the sentence about %r" % phrase)
+        # saying so lets the pytest environment change again without a word (the line below holds the block itself).
+        # The count rule (review round 4, 2026-09-23): each phrase is a spelling unique to the sentence it guards and
+        # occurs EXACTLY ONCE in the comment. A phrase that occurs twice lets its sentence go with the pin green: "pytest
+        # plugin" gained a second occurrence, and round 1's sentence on anyio's plugin and the flag could be deleted with
+        # this case passing. So that sentence is keyed on two spellings of its own, the pin source on its sed and the
+        # no-continue-on-error reason on its cryptography clause, in place of the bare words bin/romp-sdk-setup and
+        # cryptography, which the comment spells more than once.
+        for phrase in ("SDK_TESTED_VERSION", "kernel/session_host.py", "the sed bin/romp-sdk-setup runs over the same line",
+                       "not PyPI's latest", "run the host tests on it, move the number", "nothing polls PyPI",
+                       "continue-on-error", "the SDK requires cryptography (through mcp's pyjwt[crypto])",
+                       "registers a pytest plugin (a pytest11 entry point)", "passes -p no:anyio so it does not",
+                       "transitive release"):
+            self.assertEqual(self.comment.count(phrase), 1, "the step's comment spells %r %d times, not once (keyed on "
+                             "that spelling; each phrase guards one sentence and must be unique to it): a sentence was "
+                             "lost, or a second copy of the phrase lets it go unseen" % (phrase, self.comment.count(phrase)))
 
 
 class PinDerivation(unittest.TestCase):
