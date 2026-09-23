@@ -26,7 +26,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
-from collections import Counter
+from collections import Counter, namedtuple
 from http.server import ThreadingHTTPServer
 from romp_load import load_source
 from pathlib import Path
@@ -481,13 +481,6 @@ def _source_functions():
     return fns, rest
 
 
-def _loads_by_name(tree):
-    """The file names a module loads its sibling modules by: each ".py" string constant inside a call to load_source or
-    spec_from_file_location (`load_source("romp_judge", HERE / "judge.py")`)."""
-    return {c.value for n in ast.walk(tree) if isinstance(n, ast.Call) and _callee(n) in ("load_source", "spec_from_file_location")
-            for c in ast.walk(n) if isinstance(c, ast.Constant) and isinstance(c.value, str) and c.value.endswith(".py")}
-
-
 def _callee(call):
     f = call.func
     return f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
@@ -509,15 +502,6 @@ def _mentioned(node):
     if isinstance(node, ast.Constant) and isinstance(node.value, str) and _DOTTED.fullmatch(node.value):
         return set(node.value.split("."))
     return set()
-
-
-def _refs(node):
-    """Every name `node` mentions as code (_mentioned): a call, a bare reference (a setter handed on as a callback), or
-    a string naming it."""
-    out = set()
-    for n in ast.walk(node):
-        out |= _mentioned(n)
-    return out
 
 
 def _mentions(node, names):
@@ -553,42 +537,42 @@ def _door_walk(fn, qual):
     as a frozenset of its (kind, name) pairs; a node under no such arm is keyed {("no door", qual)}, which no expected
     population holds, so a setter call there reds loudly. An arm's test and its else branch belong to the enclosing door.
     The def's decorators, parameter defaults and annotations are walked too, under no door, so every node _mentions finds
-    in `fn` is keyed."""
+    in `fn` is keyed. In pre-order (a node, then each child's whole subtree in turn), from an explicit stack: no closure
+    that refers to itself, so the census's build (_derive_flag_census) leaves no cycle behind (_flag_census)."""
     out = []
-
-    def visit(node, door):
+    top = frozenset({("no door", qual)})
+    roots = list(fn.decorator_list) + [fn.args] + ([fn.returns] if fn.returns is not None else []) + list(fn.body)
+    stack = [(st, top) for st in reversed(roots)]
+    while stack:
+        node, door = stack.pop()
         out.append((door, node))
         if isinstance(node, ast.If):
             names = _door_names(node.test)
-            visit(node.test, door)
-            for st in node.body:
-                visit(st, frozenset(names) if names else door)
-            for st in node.orelse:
-                visit(st, door)
-            return
-        for child in ast.iter_child_nodes(node):
-            visit(child, door)
-    for st in list(fn.decorator_list) + [fn.args] + ([fn.returns] if fn.returns is not None else []) + list(fn.body):
-        visit(st, frozenset({("no door", qual)}))
+            arm = frozenset(names) if names else door
+            stack.extend(reversed([(node.test, door)] + [(st, arm) for st in node.body]
+                                  + [(st, door) for st in node.orelse]))
+            continue
+        stack.extend(reversed([(child, door) for child in ast.iter_child_nodes(node)]))
     return out
 
 
-def _doors_reaching(fn, qual, targets):
-    """{door: [line of each call]} for every call in `fn` to a name in `targets`, keyed as _door_walk keys it. The ask of
-    the predicate is read this way: a door asks only by calling it."""
+def _doors_reaching(walk, targets):
+    """{door: [line of each call]} for every call in a function's door walk (_door_walk) to a name in `targets`. The ask
+    of the predicate is read this way: a door asks only by calling it."""
     found = {}
-    for door, node in _door_walk(fn, qual):
+    for door, node in walk:
         if isinstance(node, ast.Call) and _callee(node) in targets:
             found.setdefault(door, []).append(node.lineno)
     return found
 
 
-def _doors_naming(fn, qual, targets):
-    """{door: [line of each mention]} for every node in `fn` that mentions a name in `targets` (_mentioned), keyed as
-    _door_walk keys it. The setters are read this way: an arm that binds a setter to a local, picks it from a table, hands
-    it on or names it by a string writes through it as surely as one that calls it by name, so the mention makes the door."""
+def _doors_naming(walk, targets):
+    """{door: [line of each mention]} for every node in a function's door walk (_door_walk) that mentions a name in
+    `targets` (_mentioned). The setters are read this way: an arm that binds a setter to a local, picks it from a table,
+    hands it on or names it by a string writes through it as surely as one that calls it by name, so the mention makes
+    the door."""
     found = {}
-    for door, node in _door_walk(fn, qual):
+    for door, node in walk:
         if _mentioned(node) & targets:
             found.setdefault(door, []).append(node.lineno)
     return found
@@ -696,6 +680,96 @@ def _unwrap_str(node):
     return node
 
 
+_LOADERS = ("load_source", "spec_from_file_location")   # the calls a module loads a sibling module by, naming its file
+_NO_CHILD = {"ctx", "op", "ops"}   # the fields holding an expression context or an operator, neither with a child node
+_CHILD_FIELDS = {}                 # node class -> its fields but those (_facts); keyed by class, never by a node
+_Facts = namedtuple("_Facts", "names callees seeded lane loads")
+
+
+def _facts(node):
+    """Everything the census reads from one unit (a def or a statement, _unit_facts), from ONE walk of it. names:
+    {name: the number of nodes under the unit that mention it as code (_mentioned)}, so its keys are every name the unit
+    mentions and a count is how many nodes _mentions(node, {name}) finds. callees: _callee of every call under it.
+    seeded: whether it names the flags store in code (_store_seeds(node) is not empty). lane: whether a comparison
+    under it tests membership in _LANE_FLAGS (one of its operators `in` or `not in`, the name one of its comparators).
+    loads: the file names it loads a sibling module by, each ".py" string constant inside a call in _LOADERS
+    (`load_source("romp_judge", HERE / "judge.py")`). It visits every node ast.walk(node) visits except an expression
+    context or an operator (no child, no name, no call; a comparison's operators are read on the comparison), in a
+    stack's order rather than a queue's, which no fact depends on: each is a count, a set or a flag. A type test
+    stands for isinstance, since the parser builds each node as its exact class. Read-only, as the cached trees must
+    be (_parsed). One walk per unit is round 1's cost cut on fork PR #909, the reviewer's ask after the PR's own
+    Python 3.10 cell hit CI's 25-minute wall: the census had walked every function once per fact and once per round of
+    _derive_roads, about 5 s of the module's run on 3.10."""
+    Name, Attribute, Constant, Call, Expr, Compare, AST = (ast.Name, ast.Attribute, ast.Constant, ast.Call, ast.Expr,
+                                                           ast.Compare, ast.AST)   # locals: the loop runs once per node
+    names, callees, loads, text, needles, lane = {}, set(), set(), set(), [], False
+    count, dotted = names.get, _DOTTED.fullmatch
+    stack = [node]
+    pop, push, extend = stack.pop, stack.append, stack.extend
+    while stack:
+        n = pop()
+        t = type(n)
+        if t is Name:                      # id and ctx: no child to walk
+            names[n.id] = count(n.id, 0) + 1
+            continue
+        if t is Attribute:                 # value, attr and ctx: value is the one child
+            names[n.attr] = count(n.attr, 0) + 1
+            push(n.value)
+            continue
+        if t is Constant:                  # value and kind: no child
+            v = n.value
+            if isinstance(v, str):
+                if dotted(v):
+                    for m in set(v.split(".")):
+                        names[m] = count(m, 0) + 1
+                if _STORE_NEEDLE in v:
+                    needles.append(id(n))
+            continue
+        if t is Call:
+            c = _callee(n)
+            callees.add(c)
+            if c in _LOADERS:
+                loads.update(x.value for x in ast.walk(n)
+                             if isinstance(x, Constant) and isinstance(x.value, str) and x.value.endswith(".py"))
+        elif t is Expr:
+            if isinstance(n.value, Constant) and isinstance(n.value.value, str):
+                text.add(id(n.value))      # a string standing as a statement is text about the code (_store_seeds)
+        elif t is Compare:
+            lane = lane or (any(isinstance(op, (ast.In, ast.NotIn)) for op in n.ops)
+                            and any(isinstance(c, Name) and c.id == "_LANE_FLAGS" for c in n.comparators))
+        fields = _CHILD_FIELDS.get(t)
+        if fields is None:
+            fields = _CHILD_FIELDS[t] = tuple(f for f in t._fields if f not in _NO_CHILD)
+        for f in fields:
+            v = getattr(n, f, None)
+            if isinstance(v, AST):
+                push(v)
+            elif isinstance(v, list):
+                extend([x for x in v if isinstance(x, AST)])
+    return _Facts(names, frozenset(callees), bool(set(needles) - text), lane, frozenset(loads))
+
+
+def _unit_facts(tree):
+    """({id(unit): _facts(unit)}, loads) for one module's tree. The units are the pieces _source_functions splits a
+    module into, each top-level statement but a class and each statement of a class's body, so every def in fns and
+    every statement in rest is one; the table is keyed by id(unit), the census's own, never an attribute on a cached
+    node. loads is the union of every unit's and of each class's parts outside its body (decorators, bases,
+    keywords): every node ast.walk(tree) visits but the module and the classes themselves, neither of them a call."""
+    table, loads = {}, set()
+    for node in tree.body:
+        units = [node]
+        if isinstance(node, ast.ClassDef):
+            body = {id(st) for st in node.body}
+            for part in ast.iter_child_nodes(node):
+                if id(part) not in body:
+                    loads |= _facts(part).loads
+            units = node.body
+        for st in units:
+            table[id(st)] = f = _facts(st)
+            loads |= f.loads
+    return table, frozenset(loads)
+
+
 _CENSUS_KEY = ("tests/test_obsidian_state_routes.py FlagWriterPopulation", _KERNEL_DIR)
 
 
@@ -704,9 +778,10 @@ def _flag_census():
     from the kernel directory's trees (read through the cache, parsed once per process with the other censuses) and this
     class's sets, and read by every test of the class after. The build must leave no cycle behind, since the cache
     freezes what is tracked when it returns (tests/parse_cache.py, the rule for a build): its value is plain data
-    (dicts, sets, tuples and the cached trees' own nodes) and it makes no closure or object that refers back to itself.
+    (dicts, sets, tuples, the cached trees' own nodes and a table keyed by id(node)) and it makes no closure or object
+    that refers back to itself.
     Unpinned, as a measurement: with the collector off, a collection right after this build found nothing unreachable
-    when the cache was adopted here."""
+    when the cache was adopted here, and again after round 1's one-walk cut on fork PR #909."""
     return PC.derived(_CENSUS_KEY, lambda: _derive_flag_census(FlagWriterPopulation))
 
 
@@ -719,26 +794,38 @@ def _derive_flag_census(cls):
     every landed write of that store runs (_flags_written), and the functions that hand the store's path to anything
     outside READS (_store_flow), whatever the call is spelled; every setter any of them finds with WRITERS (setters,
     and shorts, the names code mentions them by); the functions other than a setter that mention one (callers); and
-    the roads (_derive_roads)."""
+    the roads (_derive_roads). Every unit of every module (each def and statement) is walked ONCE (_facts), and what
+    the sets above and the tests read of a unit comes from that one walk: facts, keyed by id(unit), and loads, each
+    module's files loaded by name. Each caller's door walk (_door_walk) is walked once here too, as door_walks, for
+    the five tests that key a caller's nodes to its doors."""
     fns, rest = _source_functions()
     modules = frozenset(n for m in (km, km.jd) for n, v in vars(m).items() if isinstance(v, type(os)))
-    namers = {q for q, fn in fns.items() if _store_seeds(fn)}
+    facts, loads = {}, {}
+    for module in _kernel_modules():
+        table, loads[module] = _unit_facts(_parsed(module))
+        facts.update(table)
+    of = {q: facts[id(fn)] for q, fn in fns.items()}
+    namers = {q for q, f in of.items() if f.seeded}
     writes = {"_write_state_json", "_atomic_write", "write_text", "write_bytes"}
-    by_write = {q for q in namers if {_callee(n) for n in ast.walk(fns[q]) if isinstance(n, ast.Call)} & writes}
-    by_hook = {q for q, fn in fns.items() if "_flags_written" in {_callee(n) for n in ast.walk(fn) if isinstance(n, ast.Call)}}
+    by_write = {q for q in namers if of[q].callees & writes}
+    by_hook = {q for q, f in of.items() if "_flags_written" in f.callees}
     by_flow = {q for q in namers if set(_store_flow(fns[q], modules)) - cls.READS}
     setters = cls.WRITERS.union(by_write, by_hook, by_flow)
     shorts = {_short(q) for q in setters}
-    callers = {q for q, fn in fns.items() if q not in setters and _refs(fn) & shorts}
+    callers = {q for q, f in of.items() if q not in setters and f.names.keys() & shorts}
     return {"fns": fns, "rest": rest, "modules": modules, "namers": namers, "writers": (by_write, by_hook, by_flow),
-            "setters": setters, "shorts": shorts, "callers": callers, "roads": _derive_roads(fns, setters)}
+            "setters": setters, "shorts": shorts, "callers": callers,
+            "roads": _derive_roads({q: f.names for q, f in of.items()}, setters), "facts": facts, "loads": loads,
+            "door_walks": {q: _door_walk(fns[q], q) for q in callers}}
 
 
-def _derive_roads(fns, setters):
+def _derive_roads(names, setters):
     """{(function, target): mentions} for every function that mentions a setter, then every function that mentions one
     of those, to a fixpoint, over every module of the kernel's directory (a mention as _mentioned reads it; a function
     matched by its bare name, so two sharing a name both count, on the safe side). A function's mentions of itself are
-    left out."""
+    left out. `names` is {function: {name: the number of its nodes that mention the name}} (_facts), so a round reads
+    each function's counts instead of walking it: a node counts once toward each target it mentions, and a target
+    matches exactly one name (_short), so a road's mentions are the count of that name."""
     on_road = set(setters)
     frontier, roads = set(on_road), {}
     while frontier:
@@ -746,10 +833,10 @@ def _derive_roads(fns, setters):
         for t in frontier:
             short.setdefault(_short(t), set()).add(t)
         grown = set()
-        for q, fn in fns.items():
-            for n in _mentions(fn, set(short)):
-                for t in set().union(*(short[m] for m in _mentioned(n) & set(short))) - {q}:
-                    roads[(q, t)] = roads.get((q, t), 0) + 1
+        for q, counts in names.items():
+            for m in short.keys() & counts.keys():
+                for t in short[m] - {q}:
+                    roads[(q, t)] = roads.get((q, t), 0) + counts[m]
                     if q not in on_road:
                         grown.add(q)
         on_road |= grown
@@ -811,7 +898,7 @@ class FlagWriterPopulation(unittest.TestCase):
              "_flags_exit_text", "_StateUnreadable", "_note_state_fault", "_clear_state_fault", "_retire_flags_quarantine",
              "_stat_key", "_chat_ident", "_files_stat_observe_sig", ".append", ".items", "bool", "dict", "isinstance",
              "str", "sorted", "tuple"}
-    # the modules the kernel loads by file name, from kernel.py to a fixpoint (_loads_by_name): every one lives in the
+    # the modules the kernel loads by file name, from kernel.py to a fixpoint (_facts' loads): every one lives in the
     # kernel's directory, and the census reads that whole directory
     LOADED = {"kernel.py", "loadsource.py", "event_model.py", "judge.py", "colormap.py", "palette.py",
               "session_backend.py", "logins.py", "credentials.py", "sdk_backend.py", "host_transport.py",
@@ -857,6 +944,15 @@ class FlagWriterPopulation(unittest.TestCase):
         """{(function, target): mentions} for every road from a request to a setter (_derive_roads)."""
         return self.census["roads"]
 
+    def _facts_of(self, unit):
+        """What the census's one walk read from a def in fns or a statement in rest (_facts)."""
+        return self.census["facts"][id(unit)]
+
+    def _door_walk_of(self, q):
+        """The door walk of a function that mentions a setter (_door_walk), walked once in the census and read by every
+        test below that keys a caller's nodes to its doors."""
+        return self.census["door_walks"][q]
+
     def test_the_census_is_one_derivation_over_one_parse_per_module(self):
         """tests/parse_cache.py's mechanism, read from its counters: the census is built once per process behind its one
         key (_CENSUS_KEY) however many tests read it, and each module of the kernel's directory is parsed once per
@@ -873,9 +969,10 @@ class FlagWriterPopulation(unittest.TestCase):
         kernel.py. So the census reads every module in the kernel's directory, and this pins that the modules the kernel
         loads, by file name and to a fixpoint, all live there; the executed refusal is SocketFlagWhitelist."""
         scanned = set(_kernel_modules())
+        loads = self.census["loads"]   # each module's files loaded by name, from the census's one walk (_facts)
         loaded, frontier = {"kernel.py"}, {"kernel.py"}
         while frontier:
-            new = set().union(*(_loads_by_name(_parsed(f)) for f in frontier)) - loaded
+            new = set().union(*(loads[f] for f in frontier)) - loaded
             self.assertLessEqual(new, scanned, "a module the kernel loads lives outside kernel/, out of this census's sight")
             loaded |= new
             frontier = new
@@ -888,7 +985,8 @@ class FlagWriterPopulation(unittest.TestCase):
                          "the functions that name session-flags.json in code. A new one reds here whatever it does with "
                          "the file: class it in NAMERS, a reader handing the path only to READS, or a writer, a setter "
                          "whose doors must ask _lane_flag_refusal and refuse threadMail by execution (SocketFlagWhitelist)")
-        self.assertEqual(["%s:%d" % (m, getattr(st, "lineno", 0)) for m, st in self.rest if _store_seeds(st)], [],
+        self.assertEqual(["%s:%d" % (m, getattr(st, "lineno", 0)) for m, st in self.rest if self._facts_of(st).seeded],
+                         [],
                          "no module-level statement, in any module of the kernel's directory, names the store: a constant "
                          "there would let a function reach the file without naming it, out of this census's sight")
         for q, role in sorted(self.NAMERS.items()):
@@ -916,11 +1014,12 @@ class FlagWriterPopulation(unittest.TestCase):
                          "write a flag: route it through _lane_flag_refusal, prove it refuses threadMail by execution "
                          "(SocketFlagWhitelist is the model), and add it here")
         shorts = self._shorts()
-        self.assertEqual(["%s:%d" % (m, getattr(st, "lineno", 0)) for m, st in self.rest if _refs(st) & shorts], [],
+        self.assertEqual(["%s:%d" % (m, getattr(st, "lineno", 0)) for m, st in self.rest
+                          if self._facts_of(st).names.keys() & shorts], [],
                          "no module-level table hands a setter on")
         doors = {}
         for q in callers:
-            named = _doors_naming(self.fns[q], q, shorts)
+            named = _doors_naming(self._door_walk_of(q), shorts)
             self.assertEqual(sum(len(v) for v in named.values()), len(_mentions(self.fns[q], shorts)),
                              "%s: every mention of a setter is keyed to a door (_door_walk walks the whole def)" % q)
             doors.update(named)
@@ -947,11 +1046,12 @@ class FlagWriterPopulation(unittest.TestCase):
                          "route it through a door that asks _lane_flag_refusal, prove it refuses threadMail by execution "
                          "(SocketFlagWhitelist is the model), and add it here")
         on_road = {_short(t) for road in roads for t in road}
-        self.assertEqual(["%s:%d" % (m, getattr(st, "lineno", 0)) for m, st in self.rest if _refs(st) & on_road], [],
+        self.assertEqual(["%s:%d" % (m, getattr(st, "lineno", 0)) for m, st in self.rest
+                          if self._facts_of(st).names.keys() & on_road], [],
                          "no module-level or class-level statement mentions a function on these roads: a table there "
                          "would hand one on out of this walk's sight")
         post = self.fns["Handler.do_POST"]
-        arms = _doors_naming(post, "Handler.do_POST", {"_state_write_route"})
+        arms = _doors_naming(_door_walk(post, "Handler.do_POST"), {"_state_write_route"})
         self.assertEqual(set(arms), self.ROUTE_ARMS,
                          "do_POST hands _state_write_route the request from one arm, for /flag, /views and /order; the "
                          "route's executed refusal is FlagRoute.test_an_unknown_flag_key_or_a_missing_id_is_a_400_naming_it")
@@ -964,8 +1064,8 @@ class FlagWriterPopulation(unittest.TestCase):
     def test_every_door_asks_the_one_predicate_before_its_setter(self):
         shorts = self._shorts()
         for q in self._callers():
-            writes = _doors_naming(self.fns[q], q, shorts)
-            asks = _doors_reaching(self.fns[q], q, {"_lane_flag_refusal"})
+            writes = _doors_naming(self._door_walk_of(q), shorts)
+            asks = _doors_reaching(self._door_walk_of(q), {"_lane_flag_refusal"})
             for door, lines in writes.items():
                 self.assertIn(door, asks, "%s: the %s arm mentions a setter without asking _lane_flag_refusal; the executed "
                               "proof that it refuses an unlisted name is SocketFlagWhitelist (socket op) and "
@@ -994,7 +1094,7 @@ class FlagWriterPopulation(unittest.TestCase):
             blocks = [getattr(n, f) for n in ast.walk(fn) for f in ("body", "orelse", "finalbody")
                       if isinstance(getattr(n, f, None), list)]
             by_door = {}
-            for door, node in _door_walk(fn, q):
+            for door, node in self._door_walk_of(q):
                 by_door.setdefault(door, []).append(node)
             for door, nodes in by_door.items():
                 sets = [n for n in nodes if isinstance(n, ast.Call) and _callee(n) in shorts]
@@ -1050,7 +1150,7 @@ class FlagWriterPopulation(unittest.TestCase):
             fn = self.fns[q]
             parents = {id(c): p for p in ast.walk(fn) for c in ast.iter_child_nodes(p)}   # a side table: the cached tree is read-only
             by_door = {}
-            for door, node in _door_walk(fn, q):
+            for door, node in self._door_walk_of(q):
                 by_door.setdefault(door, []).append(node)
             for door, nodes in by_door.items():
                 calls = [n for n in nodes if isinstance(n, ast.Call)]
@@ -1137,7 +1237,7 @@ class FlagWriterPopulation(unittest.TestCase):
         checked = set()
         for q in sorted(self._callers()):
             by_door = {}
-            for door, node in _door_walk(self.fns[q], q):
+            for door, node in self._door_walk_of(q):
                 if isinstance(node, ast.Call) and _callee(node) in shorts:
                     by_door.setdefault(door, []).append(node)
             for door, calls in by_door.items():
@@ -1153,13 +1253,11 @@ class FlagWriterPopulation(unittest.TestCase):
         self.assertEqual(checked, {frozenset({d}) for d in self.DOORS}, "both doors were read")
 
     def test_the_list_is_a_whitelist_in_one_place(self):
-        # a membership test against _LANE_FLAGS outside the predicate is a second whitelist that can drift from it
-        where = set()
-        for q, fn in list(self.fns.items()) + [("<module %s>" % m, st) for m, st in self.rest]:
-            for n in ast.walk(fn):
-                if (isinstance(n, ast.Compare) and any(isinstance(op, (ast.In, ast.NotIn)) for op in n.ops)
-                        and any(isinstance(c, ast.Name) and c.id == "_LANE_FLAGS" for c in n.comparators)):
-                    where.add(q)
+        # a membership test against _LANE_FLAGS outside the predicate is a second whitelist that can drift from it: a
+        # comparison, anywhere in a def or a statement, one of whose operators is `in` or `not in` and one of whose
+        # comparators is the name _LANE_FLAGS (read by the census's one walk, _facts' lane)
+        where = {q for q, fn in list(self.fns.items()) + [("<module %s>" % m, st) for m, st in self.rest]
+                 if self._facts_of(fn).lane}
         self.assertEqual(where, {"_lane_flag_refusal"}, "the one predicate both doors ask; the executed proof is "
                          "SocketFlagWhitelist.test_an_unlisted_name_is_refused_on_the_socket_in_the_routes_words_and_writes_nothing")
 
