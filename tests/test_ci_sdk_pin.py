@@ -126,7 +126,7 @@ This module holds five things, and it never skips: a pin that skips reports gree
    case can be relied on to see is a road that changes what a RUN collects without touching the file, the residual
    stated here and above tests/conftest.py's tuple. The road is a class, and no list closes it: anything that changes
    what the run collects, among them a collect_ignore or collect_ignore_glob, a collection hook in a conftest or plugin
-   (pytest_ignore_collect, pytest_collection_modifyitems), an ini file's python_files, testpaths or addopts,
+   (pytest_ignore_collect, pytest_collection_modifyitems), an ini file's test-file pattern, testpaths or addopts,
    PYTEST_ADDOPTS, --ignore or --ignore-glob, -k, -m or --deselect, and a module-level __test__ = False. A road that
    drops the whole module takes this census with it (a module-level __test__ = False empties the module's
    collection; the child would list nothing, and never runs); one that drops InstalledVersion and keeps this census

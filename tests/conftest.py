@@ -937,7 +937,7 @@ def _require_served_test_ran(item, rep) -> None:
 # collects without touching the file files no report, takes the census with it or acts on the run where the
 # census's child may not see it, and the run stays green. The road is a class, and no list closes it: anything that changes what the run collects,
 # among them a collect_ignore or collect_ignore_glob, a collection hook in a conftest or plugin (pytest_ignore_collect,
-# pytest_collection_modifyitems), an ini file's python_files, testpaths or addopts, PYTEST_ADDOPTS, --ignore or
+# pytest_collection_modifyitems), an ini file's test-file pattern, testpaths or addopts, PYTEST_ADDOPTS, --ignore or
 # --ignore-glob, -k, -m or --deselect, and a module-level __test__ = False. As read on 2026-09-23: none of these is on
 # ci.yml's Run pytest line (no path, no -k, no --ignore) or in its env (no PYTEST_ADDOPTS); no conftest in the tree
 # sets collect_ignore or collect_ignore_glob or defines a collection hook (this file, the only one, implements two
