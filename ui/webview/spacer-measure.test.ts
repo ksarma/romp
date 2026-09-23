@@ -1038,7 +1038,7 @@ function bundledModules(): Promise<string[]> {
     const parts = partition(own, [["modules", MODULE_SUFFIX], ["styles", STYLE_SUFFIX]], "the page bundles' inputs outside node_modules");
     // the module class is checked too: an entry list that names only a third-party file or only a stylesheet builds inputs and no module,
     // so the metafile guard above passes, and the census would again red at the directory equality blaming the modules, 0 loaded
-    assert.ok(parts.modules.length > 0, "the in-memory build of the shipped webview config reached no module outside node_modules: esbuild's metafile lists " + inputs.length + " inputs, " + (inputs.length - own.length) + " of them under node_modules and " + parts.styles.length + " stylesheets (" + Object.keys(r.metafile!.outputs).length + " outputs), so there is no loaded set to census");
+    assert.ok(parts.modules.length > 0, "the in-memory build of the shipped webview config reached no module outside node_modules (esbuild's metafile: inputs " + inputs.length + ", under node_modules " + (inputs.length - own.length) + ", stylesheets " + parts.styles.length + ", outputs " + Object.keys(r.metafile!.outputs).length + "), so there is no loaded set to census");
     return parts.modules.sort();
   })();
   return bundledP;
