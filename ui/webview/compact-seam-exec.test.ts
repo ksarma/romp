@@ -349,13 +349,19 @@ test("render.ts: one owner per hover class. The tail paint (both paths and the t
     'render.ts:paintGlowRuler:".turn.ext-glow"', 'render.ts:paintRailBand:".turn.ext-glow"',                                                // the two READERS of the glow: the ruler mirrors it, the band reads it
   ].sort(), "every string, template or regular-expression literal in the bundle naming a hover class as a token, by module and owner: the owners, the two readers, nothing else (a literal handed to a helper that mutates by parameter, a new selector on the class, or a pattern that strips it, a regular-expression literal or a RegExp source string, is enumerated here or reds)");
   // the mutators the two axes cannot read (a parameter, a computed value), by module, owner and method, a closed multiset; the message names
-  // what was added and what is gone, so a 42nd is enumerated here (and its class, when a literal reaches it, on the literal axis) or reds
+  // what was added and what is gone, so a 44th is enumerated here (and its class, when a literal reaches it, on the literal axis) or reds
   const EXPECTED_UNRESOLVED = [
     "anchor-map.ts:makeMark:setAttribute(class)", "anchor-map.ts:makePoint:setAttribute(class)", "anchor-map.ts:stampBlock:setAttribute(class)",
     "code-block.ts:el:className=", "ctx-menu.ts:addMenuItem:className=", "ctx-menu.ts:menuCard:className=", "file-browse.ts:el:className=",
     "file-comments-regions.ts:mk:className=", "file-comments.ts:el:className=", "file-comments.ts:frameImage:classList.add", "file-comments.ts:graft:className=",
     "file-comments.ts:stripBlockPaint:classList.remove", "file-comments.ts:unframeImage:classList.remove", "file-view-links.ts:withClass:setAttribute(class)",
-    "file-view.ts:copySay:classList.add", "file-view.ts:el:className=", "path-links.ts:el:className=", "path-links.ts:markPathLink:setAttribute(class)",
+    "file-view.ts:copySay:classList.add",
+    // the figure's Open the picture control, neither class a hover class: decideFigureControl adds fv-figopen-left or fv-figopen-right,
+    // FIGOPEN_CLASS joined to the figure's own align attribute (the sanitizer keeps it), so the control floats with a floated figure, the side
+    // read at run time; dressFigureControl toggles FIGOPEN_WEB_CLASS, fv-figopen-web, on a control whose target is a picture from the web, a
+    // constant declared as FIGOPEN_CLASS + "-web", a concatenation constOf above (a literal initializer alone) does not fold
+    "file-view.ts:decideFigureControl:classList.add", "file-view.ts:dressFigureControl:classList.toggle",
+    "file-view.ts:el:className=", "path-links.ts:el:className=", "path-links.ts:markPathLink:setAttribute(class)",
     "pinned-notes.ts:make:className=", "preview.ts:say:classList.add",
     "render.ts:applyFold:classList.add", "render.ts:applyTabStatus:classList.add", "render.ts:dress:className=", "render.ts:el:className=",
     "render.ts:notice:classList.add", "render.ts:notice:classList.add", "render.ts:onMoveDirCompletions:className=", "render.ts:rememberFold:classList.toggle",

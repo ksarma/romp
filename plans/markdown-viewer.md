@@ -8686,9 +8686,14 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word, given on 2026-09-22
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools,
-upstream or tests alone (51 files, the ledger entry's where line; run 2026-09-23 at the head that carries the painted-contrast ask of
-2026-09-23 and the merge of the fork's main after it, where the merge-base is fa3ef54b5, the fork's main the branch merged after
-that ask, its tip the merge of the fork's batch PR 907, and the listing is the branch's whole delta over it; the run at the head
+upstream or tests alone (53 files, the ledger entry's where line; run 2026-09-23 at the head that carries the entries two of main's
+censuses owe this follow-on's modules, after the merge of the fork's main, where the merge-base is fa3ef54b5, the fork's main the
+branch merged after the painted-contrast ask of 2026-09-23, its tip the merge of the fork's batch PR 907, and the listing is the
+branch's whole delta over it; the run at the head that carries that ask and the merge of the fork's main after it, from the
+merge-base fa3ef54b5, listed 51, before ui/webview/compact-seam-exec.test.ts and ui/webview/spacer-measure.test.ts, two censuses
+that batch PR brought, joined the delta in those entries (the class mutators with no constant class gained the figure control's
+two, the modules no page bundle loads the three readers this follow-on's tests import, and the writes of a view property the
+trail's two); the run at the head
 that carries the fixes ruled in the file review's round 13 and the merge of the fork's main after them, from the merge-base
 6cf6839ba, the fork's main the branch merged after those fixes, its tip the merge of the fork's batch PR 906, listed the same 51; under ui the listing lies in ui/webview but for ui/test-code-only.ts, the comment stripper, which the case fixes brought
 into the delta (its header's reader roster names file-figure-open.test.ts as its sixth reader; the file review's round 13,
@@ -8844,7 +8849,7 @@ that step in the vscode-extension job and the switch (ROMP_BROWSER_LEGS_REQUIRE,
 ui/webview/browser-legs-require.ts): where the tree carries none of the four it holds this sentence, where it carries all
 four it holds every leg to a roster line outside the exclusions and the roster's own tree test to exist, and a tree with
 some of the four it refuses, naming them (the file review's round 8, extra8-2: the legs were the feature's evidence and none of them ran where
-landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Eighteen standing suites were re-aimed, not undone:
+landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Twenty standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
 (the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
@@ -8886,7 +8891,14 @@ an html wrapper, and over a right-floated figure wearing the failed figure's lab
 stayed green while the structural read read neither, since the control stood in the text read's list alone and a top-level
 control's box, ending above the edge, sent the level's search past the figure to the paragraph after it; the structural read
 now leaves a figure's two companions out by the pair predicate the map's pairing uses, blockElementsOf with isFigureCompanion,
-and not the text read's wider isControl, since a gated figure's top-level placeholder IS its block's element). The guide's Links in a file paragraph gained two sentences, the trail's and
+and not the text read's wider isControl, since a gated figure's top-level placeholder IS its block's element), and after the
+merge of the fork's main at fa3ef54b5, whose batch PR 907 brought them, ui/webview/compact-seam-exec.test.ts (its closed
+multiset of the class mutators whose class is no constant of the source names the figure control's two: decideFigureControl's
+classList.add, the control's float side read off the figure's align, and dressFigureControl's classList.toggle, the web class
+declared by a concatenation the census's constant reader does not fold) and ui/webview/spacer-measure.test.ts (its roster of
+the modules under ui/webview that no page bundle loads names css-rules.mjs, host-sheets.mjs and source-units.ts, the readers
+this follow-on's tests import, and its closed multiset of the writes of a view property names the trail's two, trailSetView's
+and moveTrail's, each kept in the page's trail state and never posted). The guide's Links in a file paragraph gained two sentences, the trail's and
 the figure control's, and the browser plan's navigation-stack section (plans/file-browser.md) a pointer sentence.
 tools/markdown-viewer-plan-linknav.test.mjs holds this section to the tree: the section is present once after "## Out of
 scope" and carries the ask, what existed, the six decisions, the tests and the open points in that order; the trail
