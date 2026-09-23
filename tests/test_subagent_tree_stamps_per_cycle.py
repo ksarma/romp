@@ -118,8 +118,8 @@ lookup of each agent whose file is nowhere, G x K x (1 + M) per cycle, cold or s
 pin, red under a kernel that holds absence for the cycle); a sibling tree the walk reads is read once per cycle and
 costs a candidate stat per directory per walk, and on a steady cycle one own stat per directory, shared (both in
 MissPathRoads, with a command row whose owner is read from the agents' transcripts before the tree is read, which
-re-stats the tree's D directories once per cycle); each walk stats the project directory's E entries, G x E over the
-cycle (_miss_walk_cycle); a walk's calls under the tree are {lstat: D, scandir: D} (Guards' stale-hold case); an
+re-stats the tree's D directories once per cycle); each walk lists the project directory once and stats its E entries,
+G listings and G x E stats over the cycle (_miss_walk_cycle); a walk's calls under the tree are {lstat: D, scandir: D} (Guards' stale-hold case); an
 unreadable session directory resolves every agent again on every read, {lstat: CALLS x (2A + 1), stat: CALLS x A x
 (D + 3)} under the tree, with no counter moved but the project directory's one stamp stat (Guards); and the chat
 signature of a tab whose build walked S sibling trees re-stats its D + 1 + S x D + K recorded paths every cycle, and a
@@ -340,9 +340,12 @@ class _PathCalls:
     path one way), summed over threads, and the ones made inside _subagent_file_walk counted apart (`walk`), so a count
     can key on the agent-file walk's own calls and not on another reader's stat of the same path in the cycle (the
     cycle stats the transcript and the project directory for reasons of its own). Beside _Spy, which counts the tree's
-    directories and files: this one counts any path, the project directory's entries and the sibling roots included. On
-    3.10 pathlib stats through the accessor it bound at import (the kernel's counting wrapper, which holds the builtin),
-    so the accessor is patched too and Path.is_dir is counted on every interpreter the suite runs."""
+    directories and files: this one counts any path, the project directory's entries and the sibling roots included. The
+    listings too, os.listdir and os.scandir by the directory they list (Path.iterdir lists through os.listdir through
+    3.12 and os.scandir from 3.13), so the walk's listing of the project directory is counted on every interpreter. On
+    3.10 pathlib stats and lists through the accessor it bound at import (the kernel's counting wrapper, which holds the
+    builtin), so the accessor is patched too and Path.is_dir and Path.iterdir are counted on every interpreter the suite
+    runs."""
 
     def __init__(self):
         self.all, self.walk = {}, {}
@@ -351,8 +354,10 @@ class _PathCalls:
     def __enter__(self):
         pc, real_walk = self, km._subagent_file_walk
 
-        def counted(cls, real):
-            def f(p, *a, **k):
+        def counted(cls, real, default=None):
+            def f(p=default, *a, **k):
+                if p is None:
+                    return real(*a, **k)
                 if not isinstance(p, int):
                     key = (cls, os.fspath(p))
                     pc.all[key] = pc.all.get(key, 0) + 1
@@ -369,11 +374,15 @@ class _PathCalls:
                 pc._tl.depth -= 1
         self._patches = [mock.patch.object(os, "stat", counted("stat", os.stat)),
                          mock.patch.object(os, "lstat", counted("lstat", os.lstat)),
+                         mock.patch.object(os, "listdir", counted("listdir", os.listdir)),
+                         mock.patch.object(os, "scandir", counted("scandir", os.scandir)),
                          mock.patch.object(km, "_subagent_file_walk", walk)]
         acc = getattr(sys.modules.get("pathlib"), "_NormalAccessor", None)   # 3.10 alone
         if acc is not None:
             self._patches += [mock.patch.object(acc, "stat", staticmethod(counted("stat", acc.stat))),
-                              mock.patch.object(acc, "lstat", staticmethod(counted("lstat", acc.lstat)))]
+                              mock.patch.object(acc, "lstat", staticmethod(counted("lstat", acc.lstat))),
+                              mock.patch.object(acc, "listdir", staticmethod(counted("listdir", acc.listdir))),
+                              mock.patch.object(acc, "scandir", staticmethod(counted("scandir", acc.scandir)))]
         for p in self._patches:
             p.start()
         return self
@@ -384,9 +393,14 @@ class _PathCalls:
         return False
 
     def count(self, cls, paths, walk=False):
-        """Calls of class `cls` ("stat" or "lstat") on the given paths, inside the walk alone when `walk`."""
+        """Calls of class `cls` ("stat", "lstat", "listdir" or "scandir") on the given paths, inside the walk alone when
+        `walk`."""
         src = self.walk if walk else self.all
         return sum(src.get((cls, str(p)), 0) for p in paths)
+
+    def listings(self, d, walk=True):
+        """Listings of the directory `d`, by os.listdir or os.scandir, inside the walk alone by default."""
+        return self.count("listdir", [d], walk) + self.count("scandir", [d], walk)
 
     def entries(self, cls, parent, walk=True):
         """Calls of class `cls` on the entries of the directory `parent` (a path whose dirname is `parent`), inside the walk
@@ -693,10 +707,11 @@ class _World(unittest.TestCase):
         and os.path.realpath's lstat per component), counted by running those two calls, and one os.stat per candidate file,
         the flat place and one per served directory (D + 1). The walk's own ask on the root is among the first read's and is
         served, not a second validation: the asks are asserted by shape, and served by the asks the scope answered
-        (_assert_asks). And each walk lists the project directory and stats each of its E entries once (Path.is_dir, files
-        included), G x E over the cycle, counted inside the walk (_PathCalls) and paid per walk, not shared: the cost home's
-        miss-walk term (_subagent_tree_memo_report's docstring; round 2 of #882, fresh-2), red under a kernel that holds the
-        entries' types for the cycle (E at G = 2). What the rows SHARE, the project directory's one stamp stat in dirStats,
+        (_assert_asks). And each walk lists the project directory once and stats each of its E entries once (Path.is_dir,
+        files included), G listings and G x E stats over the cycle, counted inside the walk (_PathCalls) and paid per walk,
+        not shared: the cost home's miss-walk term (_subagent_tree_memo_report's docstring; round 2 of #882, fresh-2, and
+        the listing since the pass applying its rulings), the stats red under a kernel that holds the entries' types for
+        the cycle (E at G = 2) and the listings under one that lists the directory twice per walk (2G). What the rows SHARE, the project directory's one stamp stat in dirStats,
         the caller asserts: one row and two rows pay the same. Returns (the spy's totals, the counters' delta, the job's
         record, the ghosts)."""
         ghosts = ["a%016x" % (0x7cf1 + i) for i in range(G)]
@@ -717,6 +732,10 @@ class _World(unittest.TestCase):
                          "os.stat on the project directory's entries inside the agent-file walk over one pusher cycle: %d; keyed on "
                          "G x E = %d x %d, each walk's Path.is_dir per entry, paid per walk and held nowhere (a kernel that shares the "
                          "entries' types across the cycle's walks pays E)" % (pc.entries("stat", proj), G, E))
+        self.assertEqual(pc.listings(proj), G,
+                         "listings of the project directory inside the agent-file walk over one pusher cycle: %d; keyed on G = %d, "
+                         "each walk's one Path.iterdir, paid per walk, held nowhere and counted by no counter (a walk that lists it "
+                         "twice pays 2G)" % (pc.listings(proj), G))
         what = "pusher cycle with the miss walk" if G == 1 else "pusher cycle with %d miss walks" % G
         self.assertEqual(rec.get("counts"), [A + G] * CALLS, "each of the %d reads saw the A agents and the %d rows nobody owns: %r" % (CALLS, G, rec))
         flat = self._assert_asks(what, rec.get("asked") or [], d, CALLS)

@@ -35768,7 +35768,8 @@ def _subagent_tree_memo_report():
         cycle, shared), one listing and one os.stat per entry (Path.is_dir), E per walk, held nowhere and counted
         nowhere. _miss_walk_cycle under BoundPerCycleAndPerPass
         test_one_pusher_cycle_with_an_agent_whose_file_is_nowhere_walks_once_and_its_notes_cost_no_stat and the two-row
-        case above (D + G x W lstats on the tree, A + G x (D + 1) file stats, G x E entry stats);
+        case above (D + G x W lstats on the tree, A + G x (D + 1) file stats, G x E entry stats, G listings of the
+        project directory);
       - the miss walk over a sibling's tree (per sibling session directory with a subagents tree, per walk): the sibling
         root's stamp (an own stat before the tree is read on the cycle's first walk, dirStats 1, then served from the
         tree's index), the tree read once per cycle for every walk (a walk, miss 1, or a validated hit), W' lstats of
