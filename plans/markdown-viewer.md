@@ -8491,7 +8491,11 @@ placeholder's click, a settings change restoring it, the chat page's heal landin
 figures are the web's. Two more shapes get none, the review's round 1 (a control the sheets' fixed margins laid over a
 figure's neighbours took the clicks meant for them, itself transparent): a figure under 48 CSS px on either side
 (`FIGOPEN_MIN_PX`: the control's 22px box, its 6px inset and as much figure again; a badge, an inline icon, whose
-plain click still opens them where no link holds them), measured from the loaded picture's laid-out box while it is in
+plain click still opens them where no link holds them, and a picture from the web among them wears the control's dashed dress
+itself, an outline the sheets key on the mark the decision sets right after the title (`data-fv-figweb`, `dressFigureMark`), on
+hover on a fine pointer and at rest where hover is none or any pointer is coarse, in the outbound dress's own token, `--outbound-line`,
+the one the control's dashed border wears at rest (the file review's round 13, ui-1 with extra6-1), so a tap's open is shown before it
+happens where the title is no surface; the file review's round 12, fresh-1), measured from the loaded picture's laid-out box while it is in
 the document, else its own size (`figureBox`, `figureTooSmall`; a loaded figure alone has a box to measure, `figureState`), read wherever the
 decision runs: in a browser a picture the browser is still fetching at the paint (mdBlock, `addFigureControls`) gets none
 then, and its load or its error (`armFigureControls`) runs the decision with the picture's size known; a picture the
@@ -8670,12 +8674,13 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word, given on 2026-09-22
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools,
-upstream or tests alone (51 files, the ledger entry's where line; run 2026-09-23 at the head that carries the dress and case
-fixes ruled in the file review's round 13 (ui-1, extra6-1, extra7-2, tests-1, regression-2, extra7-1 and extra6-2), where the
-merge-base is de06b8718, the fork's main the branch merged before that round, and the listing is the branch's whole delta over
+upstream or tests alone (51 files, the ledger entry's where line; run 2026-09-23 at the head that carries the fixes ruled in the
+file review's round 13, where the merge-base is de06b8718, the fork's main the branch merged before that round, and the listing is
+the branch's whole delta over
 it; under ui the listing lies in ui/webview but for ui/test-code-only.ts, the comment stripper, which the case fixes brought
 into the delta (its header's reader roster names file-figure-open.test.ts as its sixth reader; the file review's round 13,
-extra7-1), so the run at the head that carries the dress fixes alone, from the same merge-base, listed 50; the run at the head
+extra7-1), so the run at the head that carries the dress fixes alone among them, from the same merge-base, listed 50; the run at the
+head
 that carries the fixes ruled in the file review's round 12, from the same merge-base de06b8718, listed 48, before
 ui/webview/theme-parity.test.ts and
 ui/webview/real-viewer-leg.ts joined the delta in those dress fixes (the outbound line's contrast pair, and the launch options the
@@ -9043,7 +9048,10 @@ Playwright browser).
     file-view-figure-chosen-browser.test.ts from each of the three gestures, and since the fixes for the file review's
     round 11 (ui-1 with extra8-1) the surface says where the open goes before the click: for a web target the control's
     title, aria-label, class and glyph name the outbound open and its host, and the picture's own title carries the
-    address, an author's title kept before it (L3); (b) the narrow road, not taken: the tab for the
+    address, an author's title kept before it (L3), and since the fixes for the file review's round 12 (fresh-1) a web picture
+    that wears no control, one under the floor, wears the dashed dress itself, an outline keyed on the mark `data-fv-figweb`
+    that `dressFigureMark` sets right after the title, on hover on a fine pointer and at rest where hover is none or any pointer
+    is coarse (L3); (b) the narrow road, not taken: the tab for the
     explicit control and for a Cmd/Ctrl-click where the press reaches the picture alone, a bare plain click on a remote
     picture doing nothing, as before the follow-on. The narrow road keeps the request: the control and the modified click still open the same
     credentialed tab (the file review's round 2, extra5-3), so it changes which gesture makes it and not what leaves;
