@@ -100,8 +100,11 @@
 //              try ends, an over-approximation on the safe side, as is a try around a call never awaited, which fails at run time
 //              and still reads as a swallow), or its promise handed to .catch, to .then with a second argument, or to
 //              Promise.allSettled, directly or as an element of its array literal, through a chain of .then and .finally
-//              (.finally and a bare .then hand the rejection on and are not swallows; Promise.all, race and any reject through; a
-//              call returned by a wrapper and awaited inside a try is the wrapper's, the second residual's kin, and is not read).
+//              (.finally and a bare .then hand the rejection on and are not swallows; Promise.all, race and any reject through).
+//              Three under-reads, stated, each swallowing at run time all the same: a call returned by a wrapper and awaited inside
+//              a try is the wrapper's, the second residual's kin, and is not read; and the chain is followed on the call itself, so
+//              a .catch on a name the call's promise was bound to, or on the result of Promise.all, race or any over an array
+//              holding the call, is not read either (the closing pass after the review's round 6 stated the last two).
 //              REPORTED, not refused (such a leg is admitted to the roster; the count over the tree is printed by the census test;
 //              rosterGap never reads it). Before the review's round 6 the read was a try statement of the same function alone.
 //   embedded:  a string or template literal whose TEXT loads a playwright package (a child-process driver's source): counted
@@ -658,7 +661,11 @@ export function classify(ts, file, src, opts = {}) {
    *  tested as a substring of the same concatenation, over-inclusive, on the safe side (the "/" join is not tested beside it:
    *  every needle holds the slash-free playwright or real-viewer-leg, so a match in the "/" join lies inside a piece and is a match
    *  in the concatenation too); a chain that DID cross a path call is a path and keeps the "/" join, path.join's own reading,
-   *  which names a playwright package or the launcher only when one of its literal pieces does. Anything else: null (refuse). */
+   *  which names a playwright package or the launcher only when one of its literal pieces does. The flag is per chain, not per
+   *  argument: a `+` chain or a template standing as ONE argument of a path call is joined with the call's other arguments piece by
+   *  piece, so path.join("./play", "wr" + "ight") folds to ./play/wr/ight, not ./play/wright, a stated boundary (the closing pass
+   *  after round 6's verification): refused as naming no file, the safe side, and silent only were a module to stand at the
+   *  misjoined path (p311 holds it). Anything else: null (refuse). */
   const foldSpecifier = (e, depth) => {
     if (depth > 4) return null;
     e = unwrap(e);
@@ -705,11 +712,17 @@ export function classify(ts, file, src, opts = {}) {
    *  census and under THE SAFETY NET alike (the package's name stands in a declaration's initializer or a call's argument to a
    *  callee the net knows no loader for). The write check is the closing pass after round 5's: before it, `let spec = "./decoy";
    *  spec = "playwright"; require(spec)` folded to the decoy and loaded the package silently; undefined here makes the loader call
-   *  refuse as folding through no closed form, and a driver template's substitution a placeholder. The plants p237 to p244 record
-   *  the write outcome, p245 the never-written control; p249 to p254 the lexical read (round 6), p252 its renamed-parameter control. */
+   *  refuse as folding through no closed form, and a driver template's substitution a placeholder. A catch clause's variable is a
+   *  VariableDeclaration whose parent is the CatchClause, not a VariableDeclarationList, so the VariableDeclaration test alone read
+   *  it and, the declaration carrying no initializer, took the null road until the closing pass after round 6's verification: the
+   *  fold pushed the placeholder and the loader was refused as loading `<spec>`, which names no file, the wrong reason (the census
+   *  before round 6 refused the same shape through no closed form by another road, its by-name read finding two declarations so
+   *  named); the CatchClause test returns undefined for it now. The plants p237 to p244 record the write outcome, p245 the
+   *  never-written control; p249 to p254 the lexical read (round 6), p252 its renamed-parameter control, p306 and p307 a parameter
+   *  shadowing an unwritten let and a destructured parameter sharing a const's name, p308 the catch variable (the closing pass). */
   const constInitializer = (id) => {
     const d = declOfUse(id);
-    if (!d || !ts.isVariableDeclaration(d) || !ts.isIdentifier(d.name)) return undefined;
+    if (!d || !ts.isVariableDeclaration(d) || !ts.isIdentifier(d.name) || ts.isCatchClause(d.parent)) return undefined;   // no variable declaration, or a catch clause's variable (a VariableDeclaration under the CatchClause, bound to the thrown value and to no text): no closed form (the closing pass after round 6)
     if (!isConstDecl(d) && assignedSomewhere(d.name.text, d)) return undefined;   // written after its declaration: no closed form (the closing pass after round 5)
     return d.initializer === undefined ? null : d.initializer;
   };
@@ -970,7 +983,9 @@ export function classify(ts, file, src, opts = {}) {
    *  handed to .catch, to .then with a second argument, or to Promise.allSettled (as its argument or an element of its array literal).
    *  .finally and a bare .then hand the rejection on; Promise.all, race and any reject through. Over-approximates on the safe side
    *  (a callback may run after its try ends; a try around a call never awaited reads as a swallow and fails at run time). Under-reads
-   *  one form, stated in the header: a call returned by a wrapper and awaited inside a try is the wrapper's, not this call's. */
+   *  three forms, stated in the header: a call returned by a wrapper and awaited inside a try is the wrapper's, not this call's
+   *  (p304); and the chain is followed on the call itself, so a .catch on a name the call's promise was bound to (p309) or on the
+   *  result of Promise.all, race or any over an array holding the call (p310) is not read (the closing pass after round 6). */
   const swallowed = (n) => {
     for (let p = n.parent; p; p = p.parent) if (ts.isTryStatement(p) && p.catchClause && p.tryBlock.pos <= n.pos && n.end <= p.tryBlock.end) return true;
     let q = up(n);

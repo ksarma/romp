@@ -57,7 +57,11 @@
 // round-6 rows (R6_FIRST to R6_LAST, p249 onward, past the round-5 range: a function parameter or an inner declaration sharing a
 // module const's name, which the specifier fold read as that const before round 6, so a playwright package or the launcher passed in
 // through the parameter loaded with class none and no refusal under the census and under the net alike, beside the literal control,
-// whose refusal moves from the net's sentence at the call to the walker's at the function line, and the renamed-parameter control; a
+// whose refusal moves from the net's sentence at the call to the walker's at the function line, and the renamed-parameter control,
+// and, from the closing pass after the round's verification, a parameter shadowing an unwritten let and a destructured parameter
+// sharing a const's name, silent the same way before round 6, beside the catch variable sharing a const's name, a pin of the fold's
+// catch-variable arm, refused through no closed form before round 6 by the by-name read's two declarations and, at the round-6 head
+// before the closing pass, as loading a placeholder that names no file, the wrong reason; a
 // loader or a playwright binding handed on as a parameter's default value, which both isName tests exempted as a name position
 // before round 6, the loader silent and the binding's WebKit launch unread beside a read Firefox engine, beside the name-position and
 // argument-position controls; and a playwright load in a position the walker does not read, a class field, an object property, a
@@ -68,13 +72,15 @@
 // barrel's import since, whatever the test's own calls, beside the barrel-only control p32, which keeps the launcherBinds sentence;
 // and a specifier assembled from literals, joined with a slash before round 6 as if a path, so the package or the launcher so spelled
 // was refused for the wrong reason and a relative chain resolved to a decoy at the slash-joined path silently, folded since by
-// concatenation when the chain crossed no path call, beside the literal control and the path-call control; and a shared inBrowser
+// concatenation when the chain crossed no path call, beside the literal control and the path-call control, and the chain nested
+// inside a path call's argument, joined piece by piece before and after, the boundary the closing pass stated; and a shared inBrowser
 // call whose rejection is swallowed by a spelling other than a try statement of the same function, the call's promise handed to
 // .catch, to .then's second argument or to Promise.allSettled, directly, through a chain of .then and .finally, or as a parenthesized
 // element of the array literal, the call inside a callback lexically inside a try, or a helper's such call folded at the import line,
 // each read as no swallow before round 6, when the read was the same-function try alone, beside the .finally and bare .then controls,
 // the Promise.all control, the wrapper-in-try residual the census header states and the never-awaited try, which reads as a swallow
-// before and after), every one is red under
+// before and after, and the two spellings the closing pass stated as residuals beside the wrapper's, a .catch on a name the promise
+// was bound to and on a Promise.all over the call, swallow [] before and after), every one is red under
 // the census before round 6 (the module at the round-5 head) unless the table names it held with its reason, and the same test holds
 // the table to that statement. A module
 // whose classification throws for any other reason is refused by name and the census goes on, executed over a synthetic root by a
@@ -890,6 +896,25 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p303-r6g-s11-promise-all-control.test.ts", leg: true, cls: "shared", gap: null, swallow: [], holds: "the no-refusal half of a pair whose partner reds: p294 (Promise.allSettled over the same call); Promise.all rejects through, so the field stays [] before and after round 6, the control that keeps the allSettled read from widening to every Promise member" }, // s11: await Promise.all([inBrowser(t, body)])
   { dir: W, file: "p304-r6g-s12-wrapper-returns-call-in-try.test.ts", leg: true, cls: "shared", gap: null, swallow: [], holds: "a stated residual boundary: a shared call returned by a wrapper, const p = (t) => inBrowser(t, body), and awaited inside a try is the wrapper's to the read (the call is lexically the wrapper's, outside the try) and swallows at run time all the same, stated in the census header's swallow clause; swallow [] before and after round 6" }, // s12: try { await p(t); } catch {}
   { dir: W, file: "p305-r6g-s9-try-no-await.test.ts", leg: true, cls: "shared", gap: null, swallow: [3], holds: "a stated residual boundary: a try with a catch around a call never awaited, try { void inBrowser(t, body) } catch {}, reads as a swallow before and after round 6 (the same-function read already saw it) and leaves an unhandled rejection at run time, the over-approximation on the safe side the census header's swallow clause states" }, // s9: the try swallows nothing at run time, the read says [3]
+  // the closing pass after round 6 (the round's verifiers' findings), three groups. A: two more shapes of the name read as a binding,
+  // a parameter shadowing an unwritten let (the let's initializer is a closed form, so the by-name read folded the parameter to the
+  // decoy) and an object-destructured parameter sharing a module const's name (a binding element, no variable declaration), both
+  // class none with no refusal under the census before round 6 and refused since as folding through no closed form, at the require
+  // line (the rows hold the SENTENCE through SPEC_NO_CLOSED_FORM); and the catch variable sharing a const's name, a pin of
+  // constInitializer's catch-variable arm: a catch clause's variable is a VariableDeclaration under the CatchClause, which the
+  // lexical read reached and, finding no initializer, took the null road, so the round-6 module before the closing pass refused the
+  // loader as loading the placeholder <spec>, which names no file, the wrong reason, where the census before round 6 refused it
+  // through no closed form by its by-name read's two declarations, the row held. G: the two swallow spellings the read does not
+  // reach, a .catch on a name the call's promise was bound to and on a Promise.all over the call, stated as residuals in the census
+  // header's swallow clause beside the wrapper's, swallow [] before and after round 6, held. F: a `+` chain nested inside a path
+  // call's argument, joined piece by piece with the call's other arguments before and after round 6 (pathCall is per chain), the
+  // boundary foldSpecifier's docstring states, refused as naming no file at both, held.
+  { dir: W, file: "p306-r6a-q7-param-shadows-unwritten-let.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p306-r6a-q7-param-shadows-unwritten-let.test.ts:4: " + SPEC_NO_CLOSED_FORM }, // let spec = "./decoy-helper" never written; function load(spec: string) { return require(spec); } load(PW): the parameter shadows a let (before: class none, no refusal, folded to the decoy)
+  { dir: W, file: "p307-r6a-q8-destructured-param-shares-const-name.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p307-r6a-q8-destructured-param-shares-const-name.test.ts:4: " + SPEC_NO_CLOSED_FORM }, // function load({ spec }: { spec: string }) { return require(spec); } load({ spec: PW }): the binding element shares the const's name (before: class none, no refusal, folded to the decoy)
+  { dir: W, file: "p308-r6a-q9-catch-variable-shares-const-name.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p308-r6a-q9-catch-variable-shares-const-name.test.ts:4: " + SPEC_NO_CLOSED_FORM, holds: "a pin of an arm no plant carried: constInitializer's catch-variable arm, added by the closing pass after round 6's verification. A catch clause's variable is a VariableDeclaration whose parent is the CatchClause, not a VariableDeclarationList, so the round-6 module's lexical read reached it, found no initializer and took the null road: the fold pushed the placeholder <spec> and the loader was refused as loading <spec>, which names no file in the tree, the wrong reason, where the census before round 6 refused this row through no closed form by another road, its by-name read finding two declarations so named. Green under the census before round 6 on the same sentence, red under the round-6 module before the closing pass, executed and recorded in the PR's notes" }, // try { throw PW; } catch (spec) { return require(spec as string); } beside const spec = "./decoy-helper"
+  { dir: W, file: "p309-r6g-s17-bound-promise-catch-residual.test.ts", leg: true, cls: "shared", gap: null, swallow: [], holds: "a stated residual boundary: the swallow read follows the chain on the call itself, so a .catch on a name the call's promise was bound to, const p = inBrowser(t, body); await p.catch(() => {}), is not read, swallow [] before and after round 6 while the rejection is swallowed at run time, the first of the two residuals the closing pass after round 6's verification stated in the census header's swallow clause beside the wrapper's" }, // s17: the promise bound, then caught on the name
+  { dir: W, file: "p310-r6g-s18-promise-all-catch-residual.test.ts", leg: true, cls: "shared", gap: null, swallow: [], holds: "a stated residual boundary: a .catch on the result of Promise.all over an array holding the call, await Promise.all([inBrowser(t, body)]).catch(() => {}), is not read either (the chain is followed on the call, not on a combinator's result; p303 holds Promise.all alone rejecting through), swallow [] before and after round 6 while the rejection is swallowed at run time, the second residual the closing pass stated in the census header's swallow clause" }, // s18: the combinator's result caught
+  { dir: W, file: "p311-r6f-a37-plus-inside-path-join-boundary.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p311-r6f-a37-plus-inside-path-join-boundary.test.ts:3: loads ./play/wr/ight, which names no file in the tree", holds: "a stated residual boundary: pathCall is per chain, not per argument, so a + chain standing as one argument of a path call is joined with the call's other arguments piece by piece, require(path.join(\"./play\", \"wr\" + \"ight\")) folding to ./play/wr/ight, not ./play/wright, refused as naming no file before and after round 6 (the safe side, and silent only were a module to stand at the misjoined path), the boundary foldSpecifier's docstring states since the closing pass after round 6's verification" }, // a37: the chain inside path.join's second argument
 ];
 const bundleOf = (p: Plant): string => "out-tests/" + p.dir + "/" + p.file.replace(/\.test\.ts$/, ".test.js");
 
@@ -1134,7 +1159,7 @@ test("every planted form under tests/fixtures/browser-legs-plants is classified 
   // the header-pin line FIRST (fresh-3, round 6): the census header's swallow clause states the widened read, a shared call whose
   // rejection is swallowed where it stands by a try with a catch through callbacks, or by .catch, .then's second argument or
   // Promise.allSettled, with .finally and a bare .then stated as not swallows. Two sentence pins over the module's leading comment
-  // block (its // lines joined, since the clause wraps), before the rows: the round-6 swallow rows below (p292 to p305) hold the
+  // block (its // lines joined, since the clause wraps), before the rows: the round-6 swallow rows below (p292 to p305, and p309 and p310, the closing pass's stated residuals) hold the
   // read's OUTCOME as a property, and this holds that the header SAYS what it reads, so a clause reworded back to the same-function
   // try reds here first. Holds the sentence: a reword of either phrase moves this pin too.
   const swallowHeader = moduleHeader();
@@ -1310,8 +1335,8 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // ranges are held to abut: p246 to p248, the three plants of THE SAFETY NET's arms that had none, are the round-5 range's (refused
   // by the census before round 6, red under the census before round 5), so a moved R5_LAST alone cannot slide them into the round-6
   // population, whose statement (red under the census before round 6) would be false for them and which this test cannot re-run
-  const R6_FIRST = 249, R6_LAST = 305;
-  const R6_HELD = ["p252", "p260", "p261", "p266", "p275", "p276", "p277", "p278", "p279", "p290", "p291", "p297", "p298", "p303", "p304", "p305"];
+  const R6_FIRST = 249, R6_LAST = 311;
+  const R6_HELD = ["p252", "p260", "p261", "p266", "p275", "p276", "p277", "p278", "p279", "p290", "p291", "p297", "p298", "p303", "p304", "p305", "p308", "p309", "p310", "p311"];
   const R6_CARRIED: string[] = [];
   const inRound6 = (p: Plant) => num(p) >= R6_FIRST && num(p) <= R6_LAST;
   const r5 = PLANT_TABLE.filter(inRound5);
@@ -1332,7 +1357,9 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // binding (a function parameter or an inner declaration sharing a module const's name, which constInitializer read as that const
   // before round 6, so the package or the launcher passed in through the parameter loaded with class none and no refusal, under the
   // census and under the net alike, where the row expects the specifier refusal; p251, the literal control, red on the sentence and
-  // the line, the net's at the call giving way to the walker's at the function), a loader or a playwright binding handed on as a
+  // the line, the net's at the call giving way to the walker's at the function; and, from the closing pass after the round's
+  // verification, a parameter shadowing an unwritten let and a destructured parameter sharing a const's name, silent the same way,
+  // p306 and p307), a loader or a playwright binding handed on as a
   // parameter's DEFAULT value (a value position both isName tests exempted as a name before round 6: class none with no refusal for
   // the loader rows, and for the binding rows class own with engines [firefox] and no refusal, the WebKit launch through the default
   // unread beside a read engine, where the row expects the arm's refusal; p255, p263 and p267 red on the sentence, the net's giving
@@ -1350,7 +1377,10 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // row expects the call's line, or the helper's import line, the field a PROPERTY), unless R6_HELD names it with
   // holds set (the renamed-parameter control, the two name-position controls, the argument-position control, the five read-position
   // controls, the literal control and the path-call control of the literal chain, and, of the swallow read, the .finally and bare
-  // .then controls, the Promise.all control, the wrapper-in-try residual and the never-awaited try boundary); a round-6 builder who adds a row moves R6_LAST to
+  // .then controls, the Promise.all control, the wrapper-in-try residual and the never-awaited try boundary, and, from the closing
+  // pass after the round's verification, the catch-variable pin of the specifier fold, p308, green under that census by its by-name
+  // read's other road and red under the round-6 module before the pass, the two swallow spellings stated as residuals, p309 and
+  // p310, and the chain nested inside a path call's argument stated as a boundary, p311); a round-6 builder who adds a row moves R6_LAST to
   // it and, when the row stays green under that census, adds it to
   // R6_HELD with holds set (the round-5 population above is closed)
   const NOT_RERUN6 = " (the discrimination was established by running the census before round 6, the module at the round-5 head, over the plants, recorded in the PR's notes, and is not re-run here, since that census is not in the tree at test time: this assertion holds the table's statement, not the fact)";
