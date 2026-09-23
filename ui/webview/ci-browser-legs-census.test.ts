@@ -68,7 +68,13 @@
 // barrel's import since, whatever the test's own calls, beside the barrel-only control p32, which keeps the launcherBinds sentence;
 // and a specifier assembled from literals, joined with a slash before round 6 as if a path, so the package or the launcher so spelled
 // was refused for the wrong reason and a relative chain resolved to a decoy at the slash-joined path silently, folded since by
-// concatenation when the chain crossed no path call, beside the literal control and the path-call control), every one is red under
+// concatenation when the chain crossed no path call, beside the literal control and the path-call control; and a shared inBrowser
+// call whose rejection is swallowed by a spelling other than a try statement of the same function, the call's promise handed to
+// .catch, to .then's second argument or to Promise.allSettled, directly, through a chain of .then and .finally, or as a parenthesized
+// element of the array literal, the call inside a callback lexically inside a try, or a helper's such call folded at the import line,
+// each read as no swallow before round 6, when the read was the same-function try alone, beside the .finally and bare .then controls,
+// the Promise.all control, the wrapper-in-try residual the census header states and the never-awaited try, which reads as a swallow
+// before and after), every one is red under
 // the census before round 6 (the module at the round-5 head) unless the table names it held with its reason, and the same test holds
 // the table to that statement. A module
 // whose classification throws for any other reason is refused by name and the census goes on, executed over a synthetic root by a
@@ -106,9 +112,18 @@ type Census = {
   EMBEDDED_PHRASE: string;
   ENGINE_PHRASE: string;
   LEG_DIRS: string[];
+  loadTypescript(): any;   // the census's own compiler load (vscode-extension/node_modules/typescript), read by the identifier census over the net block
 };
 const load = (): Promise<Census> => import(pathToFileURL(MODULE).href) as Promise<Census>;
 const read = (p: string): string => fs.readFileSync(p, "utf8");
+/** The census module's LEADING comment block, its // lines before the first line of code joined with spaces (a sentence moved into a
+ *  body comment does not satisfy a pin over it; a wrapped clause reads as one line). The header pins of the plants test and the
+ *  identifier census read the header through this. */
+const moduleHeader = (): string => {
+  const lines = read(MODULE).split("\n");
+  const codeAt = lines.findIndex((l) => !l.startsWith("//") && l.trim() !== "");
+  return lines.slice(0, codeAt < 0 ? lines.length : codeAt).filter((l) => l.startsWith("//")).map((l) => l.replace(/^\/\/ ?/, "")).join(" ");
+};
 const sourceOf = (bundle: string): string => path.join(REPO, bundle.replace(/^out-tests\//, "").replace(/\.test\.js$/, ".test.ts"));
 /** Roster lines: [{ n, bundle }], comments and blanks dropped. */
 const parseRoster = (text: string) => text.split("\n").map((line, i) => ({ n: i + 1, line })).filter(({ line }) => !/^\s*(#|$)/.test(line)).map(({ n, line }) => ({ n, bundle: line }));
@@ -283,7 +298,7 @@ test("the roster plus the exclusions whose source is present equals the census's
   for (const r of recs) { const k = (r.engines || []).join("+") || "none"; engineSets[k] = (engineSets[k] || 0) + 1; }
   t.diagnostic("census: " + c.byBundle.size + " test modules read (and " + c.localModules + " modules of the tree they load), " + c.legs.length + " legs, " + roster.length + " rostered, " + (excluded.length - pending.length) + " excluded, " + pending.length + " pending (absent sources, PRs " + JSON.stringify([...new Set(pending.map((e) => "#" + (e.pending as { pr: string }).pr))]) + ")");
   t.diagnostic("classes: " + JSON.stringify(classes) + "; engines: " + JSON.stringify(engineSets));
-  t.diagnostic("rosterable by the gate: " + count((r) => rosterGap(r) === null) + "; legs importing the launcher and never calling it: " + count((r) => !!r.launcherImported && r.sharedCalls === 0) + "; shared calls inside try/catch (admitted, reported): " + count((r) => (r.swallow || []).length > 0) + "; legs with a skip or todo: " + count((r) => (r.skipTodo || []).length > 0) + "; own launches: " + recs.reduce((n, r) => n + (r.launches || []).length, 0) + " sites in " + count((r) => (r.launches || []).length > 0) + " modules");
+  t.diagnostic("rosterable by the gate: " + count((r) => rosterGap(r) === null) + "; legs importing the launcher and never calling it: " + count((r) => !!r.launcherImported && r.sharedCalls === 0) + "; shared calls whose rejection is swallowed (a try with a catch, .catch, .then's second argument or Promise.allSettled; admitted, reported): " + count((r) => (r.swallow || []).length > 0) + "; legs with a skip or todo: " + count((r) => (r.skipTodo || []).length > 0) + "; own launches: " + recs.reduce((n, r) => n + (r.launches || []).length, 0) + " sites in " + count((r) => (r.launches || []).length > 0) + " modules");
 });
 
 /** What each planted form is: the fixture's file under tests/fixtures/browser-legs-plants/<dir>, and the verdict the census
@@ -851,6 +866,30 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p289-r6f-a35-relative-template-decoy.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p289-r6f-a35-relative-template-decoy.test.ts:3: " + LAUNCHER_BINDS("ui/webview/playwright.ts") }, // a35: the template twin, const tail = "wright", require(`./play${tail}`), m.run(t) (before: silent, as p288)
   { dir: W, file: "p290-r6f-a36-literal-relative-control.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p290-r6f-a36-literal-relative-control.test.ts:2: " + LAUNCHER_BINDS("ui/webview/playwright.ts"), holds: "a shape another plant carries: p32 (a literal relative specifier naming a module that binds or calls the launcher's inBrowser, refused at the importer by the launcherBinds arm); the literal control for p288 and p289, whose chains fold to this literal's road since round 6, refused with this row's sentence before and after" }, // a36: const m = require("./playwright"), m.run(t)
   { dir: W, file: "p291-r6f-a32-path-join-control.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, holds: "the no-refusal half of a pair whose partner reds: p288 and p289 (the same pieces with no path call, folded by concatenation to ./playwright since round 6 and refused there); a chain that crossed path.join is a path and keeps the slash join, so it resolves to the clean decoy play/wright.ts, class none with no refusal before and after round 6; the row that refutes the fix line's own shape, under which ./play/wright was read as a package and refused falsely" }, // a32: import path from "node:path", const m = require(path.join("./play", "wright")), void m.nothing
+  // round 6, G (fresh-3): a shared call whose rejection is swallowed. The swallow read was a try statement of the SAME function with a
+  // catch clause, so a shared call whose rejection was handled another way, its promise handed to .catch, to .then's second argument or
+  // to Promise.allSettled, or the call inside a callback lexically inside a try, was class shared, gap null, swallow [] and rosterable
+  // with the swallow unreported, while every spelling swallows the switch's failure at run time the same. Since round 6 swallowed(n)
+  // reads the underlying predicate: an enclosing try with a catch up to the module through callbacks, or the promise, through any
+  // chain of .then and .finally, reaching .catch or a .then with two arguments, or standing as Promise.allSettled's argument or an
+  // element of its array literal; .finally and a bare .then hand the rejection on and are not swallows, Promise.all rejects through.
+  // Every row here holds the swallow field as a PROPERTY (the lines, as p07 and p210 do), none a refusal: p292 to p296 and p299 to
+  // p302 red under the census before round 6 (swallow [] where the row expects the call's line, or the helper's import line), the
+  // rest held. The census header's swallow clause is held by a sentence pin at the top of the plants test (the header-pin line first).
+  { dir: W, file: "p292-r6g-s2-catch.test.ts", leg: true, cls: "shared", gap: null, swallow: [3] },                                  // s2: await inBrowser(t, body).catch(() => {}) (before round 6: swallow [], the .catch unread)
+  { dir: W, file: "p293-r6g-s6-then-second-argument.test.ts", leg: true, cls: "shared", gap: null, swallow: [3] },                    // s6: .then(() => {}, () => {}), the second argument the rejection handler (before: swallow [])
+  { dir: W, file: "p294-r6g-s4-allsettled.test.ts", leg: true, cls: "shared", gap: null, swallow: [3] },                              // s4: await Promise.allSettled([inBrowser(t, body)]), the rejection settled, never thrown (before: swallow [])
+  { dir: W, file: "p295-r6g-s3-callback-in-try.test.ts", leg: true, cls: "shared", gap: null, swallow: [4] },                         // s3: the call inside an async callback the try awaits through a wrapper, run(async () => { await inBrowser(...) }), the same-function read stopped at the callback (before: swallow [])
+  { dir: W, file: "p296-r6g-s10-helper-catch.test.ts", leg: true, cls: "shared", gap: null, swallow: [2] },                           // s10: the test calls inBrowser itself and a helper whose shared call carries .catch (catch-helper.ts): the helper's swallow folds into the record at the import line, as p210's try/catch helper does (before: swallow [], the helper's .catch unread)
+  { dir: W, file: "p297-r6g-s5-finally-control.test.ts", leg: true, cls: "shared", gap: null, swallow: [], holds: "the no-refusal half of a pair whose partner reds: p292 (.catch on the same call); .finally hands the rejection on and is not a swallow, so the field stays [] before and after round 6, the control the widened read must leave alone" }, // s5: await inBrowser(t, body).finally(() => {})
+  { dir: W, file: "p298-r6g-s7-bare-then-control.test.ts", leg: true, cls: "shared", gap: null, swallow: [], holds: "the no-refusal half of a pair whose partner reds: p293 (.then with a second argument on the same call); a bare .then hands the rejection on and is not a swallow, so the field stays [] before and after round 6" }, // s7: await inBrowser(t, body).then(() => {})
+  { dir: W, file: "p299-r6g-s13-then-catch-chain.test.ts", leg: true, cls: "shared", gap: null, swallow: [3] },                       // s13: .then(() => {}).catch(() => {}), the .catch reached through the chain (before: swallow [])
+  { dir: W, file: "p300-r6g-s14-finally-catch-chain.test.ts", leg: true, cls: "shared", gap: null, swallow: [3] },                    // s14: .finally(() => {}).catch(() => {}), the .catch reached through .finally (before: swallow [])
+  { dir: W, file: "p301-r6g-s15-allsettled-parenthesized-second.test.ts", leg: true, cls: "shared", gap: null, swallow: [3] },        // s15: Promise.allSettled([Promise.resolve(), (inBrowser(t, body))]), the call a parenthesized second element (before: swallow [])
+  { dir: W, file: "p302-r6g-s16-then-undefined-second.test.ts", leg: true, cls: "shared", gap: null, swallow: [3] },                  // s16: .then(undefined, () => {}), read by arity: two arguments, the first undefined (before: swallow [])
+  { dir: W, file: "p303-r6g-s11-promise-all-control.test.ts", leg: true, cls: "shared", gap: null, swallow: [], holds: "the no-refusal half of a pair whose partner reds: p294 (Promise.allSettled over the same call); Promise.all rejects through, so the field stays [] before and after round 6, the control that keeps the allSettled read from widening to every Promise member" }, // s11: await Promise.all([inBrowser(t, body)])
+  { dir: W, file: "p304-r6g-s12-wrapper-returns-call-in-try.test.ts", leg: true, cls: "shared", gap: null, swallow: [], holds: "a stated residual boundary: a shared call returned by a wrapper, const p = (t) => inBrowser(t, body), and awaited inside a try is the wrapper's to the read (the call is lexically the wrapper's, outside the try) and swallows at run time all the same, stated in the census header's swallow clause; swallow [] before and after round 6" }, // s12: try { await p(t); } catch {}
+  { dir: W, file: "p305-r6g-s9-try-no-await.test.ts", leg: true, cls: "shared", gap: null, swallow: [3], holds: "a stated residual boundary: a try with a catch around a call never awaited, try { void inBrowser(t, body) } catch {}, reads as a swallow before and after round 6 (the same-function read already saw it) and leaves an unhandled rejection at run time, the over-approximation on the safe side the census header's swallow clause states" }, // s9: the try swallows nothing at run time, the read says [3]
 ];
 const bundleOf = (p: Plant): string => "out-tests/" + p.dir + "/" + p.file.replace(/\.test\.ts$/, ".test.js");
 
@@ -933,7 +972,9 @@ function boundLineAt(text: string): string {
  *  --depth fetch into a full store writes .git/shallow and makes the WHOLE store shallow, for every worktree that shares it (measured
  *  in a scratch store: a full clone lacking the commit, fetched at depth 1, reads --is-shallow-repository true after, the fetched
  *  commit parentless). A store whose shape read prints anything but "true" (an older git, an error) is treated as full: no fetch,
- *  the hold-off, the restricted side. `fetched` says whether the depth-1 fetch ran. */
+ *  the hold-off, the restricted side. `fetched` is true only when the depth-1 fetch ran and brought the commit; a fetch that failed,
+ *  or that left the commit unreadable, reports false beside its hold-off, as does a store that needed no fetch (the scratch-clone
+ *  test pins both values). */
 function boundReadable(git: (args: string[]) => { status: number | null; stdout: string; stderr: string }, sha: string, boundAt: string): { verdict: string | null; fetched: boolean } {
   if (git(["cat-file", "-e", sha]).status === 0) return { verdict: null, fetched: false };
   const shallow = git(["rev-parse", "--is-shallow-repository"]).stdout.trim();
@@ -1090,6 +1131,15 @@ test("reasonVerdict, the one writer of the exclusions rows' reason verdicts, dri
 
 test("every planted form under tests/fixtures/browser-legs-plants is classified or refused as recorded, none is silent; a form the census cannot classify refuses with file and line; the plants in neither file are exactly the plants that are legs", async () => {
   const { census, rosterGap, engineNames, classOf } = await load();
+  // the header-pin line FIRST (fresh-3, round 6): the census header's swallow clause states the widened read, a shared call whose
+  // rejection is swallowed where it stands by a try with a catch through callbacks, or by .catch, .then's second argument or
+  // Promise.allSettled, with .finally and a bare .then stated as not swallows. Two sentence pins over the module's leading comment
+  // block (its // lines joined, since the clause wraps), before the rows: the round-6 swallow rows below (p292 to p305) hold the
+  // read's OUTCOME as a property, and this holds that the header SAYS what it reads, so a clause reworded back to the same-function
+  // try reds here first. Holds the sentence: a reword of either phrase moves this pin too.
+  const swallowHeader = moduleHeader();
+  assert.ok(swallowHeader.includes("whose rejection is swallowed where it stands"), "the census header's swallow clause reads the rejection's fate, not a try statement's position: the leading comment block says a shared inBrowser call whose rejection is swallowed where it stands (before round 6 it said inside a try statement that has a catch clause, the same-function read the round-5 review found under-reads .catch, .then's second argument, Promise.allSettled and a callback inside a try). Holds the sentence: a reword moves this pin too");
+  assert.ok(swallowHeader.includes(".finally and a bare .then hand the rejection on and are not swallows"), "the census header's swallow clause states the read's boundary on the promise chain, .finally and a bare .then hand the rejection on and are not swallows (the p297 and p298 controls hold the outcome). Holds the sentence: a reword moves this pin too");
   // the table and the fixture tree name the same files
   const onDisk = [W, "vscode-extension/src"].flatMap((d) => fs.readdirSync(path.join(PLANTS, d)).filter((f) => f.endsWith(".test.ts")).map((f) => d + "/" + f)).sort();
   assert.deepEqual(onDisk, PLANT_TABLE.map((p) => p.dir + "/" + p.file).sort(), "the plant table names every fixture and no other (a fixture added without a row is a plant with no expected outcome)");
@@ -1118,7 +1168,7 @@ test("every planted form under tests/fixtures/browser-legs-plants is classified 
     if (p.playwright) assert.deepEqual(r.playwright, p.playwright, at + "playwright packages");
     if (p.launches) assert.deepEqual((r.launches || []).map((l) => l.how), p.launches, at + "own launches, by form");
     if (p.skipTodo) assert.deepEqual((r.skipTodo || []).map((s) => s.what), p.skipTodo, at + "skips and todos read from the tree");
-    if (p.swallow) assert.deepEqual(r.swallow, p.swallow, at + "shared calls inside try/catch, by line");
+    if (p.swallow) assert.deepEqual(r.swallow, p.swallow, at + "shared calls whose rejection is swallowed (a try with a catch, .catch, .then's second argument or Promise.allSettled), by line");
     if (p.launcherImported !== undefined) assert.equal(r.launcherImported, p.launcherImported, at + "the launcher import is recorded");
     if (p.strictRefused) {
       const sr = strict.byBundle.get(bundle) as Rec;
@@ -1260,8 +1310,8 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // ranges are held to abut: p246 to p248, the three plants of THE SAFETY NET's arms that had none, are the round-5 range's (refused
   // by the census before round 6, red under the census before round 5), so a moved R5_LAST alone cannot slide them into the round-6
   // population, whose statement (red under the census before round 6) would be false for them and which this test cannot re-run
-  const R6_FIRST = 249, R6_LAST = 291;
-  const R6_HELD = ["p252", "p260", "p261", "p266", "p275", "p276", "p277", "p278", "p279", "p290", "p291"];
+  const R6_FIRST = 249, R6_LAST = 305;
+  const R6_HELD = ["p252", "p260", "p261", "p266", "p275", "p276", "p277", "p278", "p279", "p290", "p291", "p297", "p298", "p303", "p304", "p305"];
   const R6_CARRIED: string[] = [];
   const inRound6 = (p: Plant) => num(p) >= R6_FIRST && num(p) <= R6_LAST;
   const r5 = PLANT_TABLE.filter(inRound5);
@@ -1294,9 +1344,13 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // call's engine unread, where the row expects the barrel arm's refusal at the import line), and a specifier assembled from literals
   // with no path call (the package or the launcher so spelled refused as naming no file, or by the net's clause 1 with a file at the
   // slash-joined path, where the row expects class own or shared; the relative chain resolved to the decoy with no refusal, where the
-  // row expects the launcherBinds sentence at the module ./playwright), unless R6_HELD names it with
+  // row expects the launcherBinds sentence at the module ./playwright), and a shared call whose rejection is swallowed by a spelling
+  // the same-function try read missed, its promise handed to .catch, to .then's second argument or to Promise.allSettled, directly or
+  // through a chain, the call inside a callback lexically inside a try, or a helper's such call (swallow [] before round 6 where the
+  // row expects the call's line, or the helper's import line, the field a PROPERTY), unless R6_HELD names it with
   // holds set (the renamed-parameter control, the two name-position controls, the argument-position control, the five read-position
-  // controls, the literal control and the path-call control of the literal chain); a round-6 builder who adds a row moves R6_LAST to
+  // controls, the literal control and the path-call control of the literal chain, and, of the swallow read, the .finally and bare
+  // .then controls, the Promise.all control, the wrapper-in-try residual and the never-awaited try boundary); a round-6 builder who adds a row moves R6_LAST to
   // it and, when the row stays green under that census, adds it to
   // R6_HELD with holds set (the round-5 population above is closed)
   const NOT_RERUN6 = " (the discrimination was established by running the census before round 6, the module at the round-5 head, over the plants, recorded in the PR's notes, and is not re-run here, since that census is not in the tree at test time: this assertion holds the table's statement, not the fact)";
@@ -1443,6 +1497,65 @@ test("THE INVARIANT is armed: one mutation of the walker per clause, over the pl
     const out = JSON.parse(r.stdout) as { refusals: string[]; modules: Record<string, Rec> };
     for (const want of m.refused) assert.ok(out.refusals.some((x) => x.startsWith("ui/webview/" + want)), "mutation " + i + " (clause " + m.clause + "): the invariant refuses the road the mutation silenced, a refusal starting " + JSON.stringify(want) + "; the mutant's refusals: " + JSON.stringify(out.refusals));
     assert.deepEqual(out.modules[B("p01-alias.test.ts")].refusals, [], "mutation " + i + ": the plain aliased caller stays clean under the mutant (the invariant refuses the silenced road, not every module)");
+  }
+});
+
+test("THE SAFETY NET's recipe cannot go stale unnoticed (extra7-1, round 6): a comment-stripped identifier census over the net block, the compiler's own tree of scripts/browser-legs-census.mjs (an identifier node carries no comment), finds the block's free names to be exactly the records and readers the census header's recipe names beside the utilities it states, and both homes of the recipe, the header's parenthetical and the block's own comment, name every one of them; before round 6 the block read PW_PACKAGES through an inline predicate that neither home accounted for, and named driverText and CALL_APPLY_BIND that neither listed", async () => {
+  // The recipe is the header's sentence for checking THE SAFETY NET's accounting by hand: grep the net block for the records it reads
+  // and the readers it calls, and find no other record or name-set. A reader who followed it before round 6 found three names the
+  // sentence did not list (pwText, a substring predicate reading PW_PACKAGES directly; driverText; CALL_APPLY_BIND), and a later
+  // drift of the inline predicate narrower than the walker's own pre-filter would have passed both homes' prose unchanged. The
+  // pre-filter is one named reader now (namesPwPackage, the one driverLoads and foldSpecifier's placeholder road read), and this
+  // test derives the block's free identifiers from the compiler's tree rather than from a grep, so a comment naming a reader does
+  // not satisfy it and a reader added to the code without a home in the prose reds it. Holds a PROPERTY (the equality of the
+  // derived set and the stated list) and, for each name, the SENTENCE in both homes (a reword that drops or renames one moves the
+  // pin too).
+  const mod = await load();
+  const ts = mod.loadTypescript();
+  const source = read(MODULE);
+  const sf = ts.createSourceFile(MODULE, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  // the net block: the bare block (a block whose parent is a block, classify's body) whose statements declare netWalk; found once
+  const blocks: any[] = [];
+  const find = (n: any): void => { if (ts.isBlock(n) && n.parent && ts.isBlock(n.parent) && n.statements.some((st: any) => ts.isVariableStatement(st) && st.declarationList.declarations.some((d: any) => ts.isIdentifier(d.name) && d.name.text === "netWalk"))) blocks.push(n); ts.forEachChild(n, find); };
+  find(sf);
+  assert.equal(blocks.length, 1, "the net block is found once in scripts/browser-legs-census.mjs: a bare block inside classify's body declaring netWalk (a rewrite of the net re-anchors this test rather than passing it over no block)");
+  const block = blocks[0];
+  // free identifiers: every identifier node that is not a declaration's own name, a member's name or a property assignment's name,
+  // minus the names the block itself declares (a comment is no node of the tree, so a name in a comment is neither read nor declared)
+  const declared = new Set<string>(), used = new Set<string>();
+  const walk = (n: any): void => {
+    if (ts.isIdentifier(n)) {
+      const p = n.parent;
+      const isDecl = (ts.isVariableDeclaration(p) && p.name === n) || (ts.isParameter(p) && p.name === n) || (ts.isFunctionDeclaration(p) && p.name === n) || (ts.isBindingElement(p) && p.name === n);
+      const isMemberName = ts.isPropertyAccessExpression(p) && p.name === n;
+      const isPropName = ts.isPropertyAssignment(p) && p.name === n;
+      if (isDecl) declared.add(n.text); else if (!isMemberName && !isPropName) used.add(n.text);
+    }
+    ts.forEachChild(n, walk);
+  };
+  walk(block);
+  const free = [...used].filter((k) => !declared.has(k)).sort();
+  const RECORDS = ["resolved", "embedded", "loaders", "loaderReexport", "bindingAt"];
+  const READERS = ["loaderCall", "resolveSpec", "isPwPackage", "namesPwPackage", "foldText", "memberNames", "declOfUse", "isCreateRequireId", "isModuleRequire", "driverText", "CALL_APPLY_BIND"];
+  const UTILITIES = ["up", "unwrap", "lineOf", "ts", "sf", "netHits", "String", "undefined"];
+  assert.deepEqual(free, [...RECORDS, ...READERS, ...UTILITIES].sort(), "the net block's free identifiers, derived from the compiler's tree, are exactly the five records and eleven readers the header's recipe names plus the eight utilities it states (holds the PROPERTY: a name the block's code reads that this list lacks is a reader the recipe does not account for, PW_PACKAGES through an inline predicate before round 6; a name listed here that the block no longer reads is a stale recipe; either way both homes of the prose are rewritten with this list)");
+  assert.ok(!free.includes("PW_PACKAGES"), "the block reads no name-set of its own: PW_PACKAGES is read through namesPwPackage, the one pre-filter the walker's readers share, never inline (before round 6 the block declared pwText over PW_PACKAGES directly)");
+  // both homes name every record, reader and utility: the header's recipe, from its checking clause to its closing sentence, and the
+  // block's own comment, the // lines directly above `const netHits`
+  const header = moduleHeader();
+  const from = header.indexOf("a reader checks it by grepping the net block"), to = header.indexOf("so the recipe cannot go stale unnoticed");
+  assert.ok(from >= 0 && to > from, "the census header's recipe runs from the checking clause (a reader checks it by grepping the net block) to its closing sentence (so the recipe cannot go stale unnoticed); holds the sentence: a reword of either end moves this pin too");
+  const recipe = header.slice(from, to);
+  assert.ok(recipe.includes("finding no other record or name-set"), "the recipe's 'no other' is scoped to records and name-sets (finding no other record or name-set), so the position utilities, the compiler and the parse it also names are not a contradiction of it; holds the sentence");
+  const lines = source.split("\n");
+  const netAt = lines.findIndex((l) => l.trim() === "const netHits = [];");
+  assert.ok(netAt > 0, "the net block's comment sits directly above the line `const netHits = [];`, found once");
+  let top = netAt; while (top > 0 && lines[top - 1].trim().startsWith("//")) top--;
+  const blockComment = lines.slice(top, netAt).map((l) => l.trim().replace(/^\/\/ ?/, "")).join(" ");
+  for (const name of [...RECORDS, ...READERS, ...UTILITIES]) {
+    const word = new RegExp("(^|[^A-Za-z0-9_])" + name + "(?![A-Za-z0-9_])");
+    assert.ok(word.test(recipe), "the census header's recipe names " + name + " (holds the SENTENCE in the header, the first home: a reader following it finds every free name of the block accounted for)");
+    assert.ok(word.test(blockComment), "THE SAFETY NET block's own comment names " + name + " (holds the SENTENCE in the block, the second home)");
   }
 });
 

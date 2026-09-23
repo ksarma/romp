@@ -22,7 +22,8 @@
 //              so a bound reference is a value use, refused). The call arm and the value-use refusal read ONE record of the
 //              identifier the call resolved through, so the two agree by construction. A type-only import binds nothing and is
 //              recorded (typeOnly). The import without a call is recorded (launcherImported) and is not a leg. An ENGINE
-//              passed to inBrowser as its third argument (the launcher's engine parameter; .call passes it fourth, .apply in
+//              passed to inBrowser as its third argument (the engine parameter #853 adds to the launcher, read ahead of it: at the
+//              head that reads it inBrowser takes two arguments and no engine is passed; .call passes it fourth, .apply in
 //              its array literal) is read into the engines the leg reaches: a literal, or a name FOLDED through the closed
 //              forms under `playwright` below; an argument outside them, one naming no engine, or a spread element at or before
 //              the engine position (the list the walker cannot read may carry an engine), is REFUSED with the line,
@@ -94,8 +95,15 @@
 //              that is not a loader: a browser returned by launch() or a wrapper's return value is not the package.
 //   skipTodo:  every .skip( and .todo( call and every { skip: } or { todo: } option property, with its line, read from the tree,
 //              so one held in a comment or a string is not one.
-//   swallow:   a shared inBrowser call inside a try statement that has a catch clause, with its line: REPORTED, not refused
-//              (such a leg is admitted to the roster; the count over the tree is printed by the census test).
+//   swallow:   a shared inBrowser call whose rejection is swallowed where it stands, with its line: the call inside a try statement
+//              that has a catch clause, read up to the module through callbacks (a callback lexically inside a try may run after the
+//              try ends, an over-approximation on the safe side, as is a try around a call never awaited, which fails at run time
+//              and still reads as a swallow), or its promise handed to .catch, to .then with a second argument, or to
+//              Promise.allSettled, directly or as an element of its array literal, through a chain of .then and .finally
+//              (.finally and a bare .then hand the rejection on and are not swallows; Promise.all, race and any reject through; a
+//              call returned by a wrapper and awaited inside a try is the wrapper's, the second residual's kin, and is not read).
+//              REPORTED, not refused (such a leg is admitted to the roster; the count over the tree is printed by the census test;
+//              rosterGap never reads it). Before the review's round 6 the read was a try statement of the same function alone.
 //   embedded:  a string or template literal whose TEXT loads a playwright package (a child-process driver's source): counted
 //              as reaching a browser, on the safe side, and never rosterable (the switch never reaches a child process). The
 //              text is read two ways, either one enough: by the driver regex (require(, import( or from before the package
@@ -234,8 +242,12 @@
 // the loader function and makes no load; those three make or bind one); module.require when it is the callee of a call loaderCall
 // reads. The accounting set is derived from those records at the
 // moment of the scan and the net declares no set of its own (a reader checks it by grepping the net block for the records it
-// reads, resolved, embedded, loaders, loaderReexport and bindingAt, and the readers loaderCall, resolveSpec, isPwPackage, foldText,
-// memberNames, declOfUse, isCreateRequireId and isModuleRequire, and finding no other), so a fold that reads a form accounts for its token by construction and the two cannot
+// reads, resolved, embedded, loaders, loaderReexport and bindingAt, and the readers loaderCall, resolveSpec, isPwPackage,
+// namesPwPackage (the substring pre-filter of a text, the one driverLoads and foldSpecifier's placeholder road read), foldText,
+// memberNames, declOfUse, isCreateRequireId, isModuleRequire, driverText and CALL_APPLY_BIND, and finding no other record or
+// name-set: the block's other free names are the position utilities up, unwrap and lineOf, the compiler ts and the parse sf, netHits,
+// its own output, and the language's String and undefined; the census test holds that set by a comment-stripped identifier census
+// over the block, so the recipe cannot go stale unnoticed), so a fold that reads a form accounts for its token by construction and the two cannot
 // disagree. Two clauses, one refusal per module, by name with the first unaccounted mention and its line, the count of the rest,
 // and the remedy: (1) a module with an unaccounted mention whose fold produced NO reach and NO refusal is refused, "mentions a
 // browser load the walker did not fold"; (2) a module with an unaccounted mention whose fold produced a reach is refused too, the
@@ -314,6 +326,11 @@ export function loadTypescript() {
 }
 
 const isPwPackage = (spec) => PW_PACKAGES.some((p) => spec === p || spec.startsWith(p + "/"));
+/** Does a TEXT name a playwright package anywhere in it: the substring pre-filter every reader of a text applies before the closer
+ *  read (foldSpecifier's placeholder road, driverLoads, and THE SAFETY NET's read of a string as code), one function, so the net's gate
+ *  and the walker's are the same read and cannot drift apart (before the review's round 6 the expression was spelled three times,
+ *  once inside the net block under a name neither home of the recipe accounted for). Wider than isPwPackage, which reads a specifier. */
+const namesPwPackage = (text) => PW_PACKAGES.some((p) => text.includes(p));
 
 /** Classify one module. `file` is absolute; `src` its text; `opts.strictComputed` refuses every computed member on a tracked binding;
  *  `opts.testModule` marks a module census() reads directly (a .test.ts under LEG_DIRS): THE SAFETY NET then asks its read-through
@@ -673,7 +690,7 @@ export function classify(ts, file, src, opts = {}) {
     // path and its pieces are path segments, joined with "/" (path.join's own reading)
     const text = pathCall ? pieces.join("/") : pieces.join("");
     if (!pathCall && !pieces.some((p) => /^<[^>]*>$/.test(p))) return resolveSpec(text);   // a concatenation of literals: the literal's own road
-    if (PW_PACKAGES.some((p) => text.includes(p))) return { kind: "playwright", spec: text };
+    if (namesPwPackage(text)) return { kind: "playwright", spec: text };
     if (text.includes("real-viewer-leg")) return { kind: "launcher", spec: text };
     return { kind: "local", spec: text };
   };
@@ -947,7 +964,31 @@ export function classify(ts, file, src, opts = {}) {
   walkShadow(sf);
 
   // pass 3: calls and references
-  const inTryWithCatch = (n) => { for (let p = n.parent; p; p = p.parent) { if (ts.isTryStatement(p) && p.catchClause && p.tryBlock.pos <= n.pos && n.end <= p.tryBlock.end) return true; if (ts.isFunctionLike(p)) return false; } return false; };
+  /** Is a shared call's rejection swallowed where it stands (the header's swallow clause): the call inside the try block of a try
+   *  statement that has a catch clause, read up to the module through callbacks (not stopped at a function boundary: the review's
+   *  round 5 found the same-function read missed a callback inside a try); or its promise, through any chain of .then and .finally,
+   *  handed to .catch, to .then with a second argument, or to Promise.allSettled (as its argument or an element of its array literal).
+   *  .finally and a bare .then hand the rejection on; Promise.all, race and any reject through. Over-approximates on the safe side
+   *  (a callback may run after its try ends; a try around a call never awaited reads as a swallow and fails at run time). Under-reads
+   *  one form, stated in the header: a call returned by a wrapper and awaited inside a try is the wrapper's, not this call's. */
+  const swallowed = (n) => {
+    for (let p = n.parent; p; p = p.parent) if (ts.isTryStatement(p) && p.catchClause && p.tryBlock.pos <= n.pos && n.end <= p.tryBlock.end) return true;
+    let q = up(n);
+    for (;;) {   // the promise chain on the call: .then and .finally pass the rejection on to the next member
+      const pa = q.parent;
+      if (!(pa && ts.isPropertyAccessExpression(pa) && pa.expression === q)) break;
+      const outer = up(pa).parent;
+      if (!(outer && ts.isCallExpression(outer) && outer.expression === up(pa))) break;
+      if (pa.name.text === "catch") return true;
+      if (pa.name.text === "then" && outer.arguments.length >= 2) return true;
+      if (pa.name.text !== "then" && pa.name.text !== "finally") break;
+      q = up(outer);
+    }
+    let arg = q, holder = q.parent;
+    if (holder && ts.isArrayLiteralExpression(holder)) { arg = up(holder); holder = arg.parent; }
+    if (holder && ts.isCallExpression(holder) && holder.arguments.includes(arg)) { const c = unwrap(holder.expression); if (ts.isPropertyAccessExpression(c) && ts.isIdentifier(c.expression) && c.expression.text === "Promise" && c.name.text === "allSettled") return true; }
+    return false;
+  };
   // the identifier nodes the call arm resolved a shared call through (the callee, or the object of the inBrowser member it
   // called): the value-use arm below reads this record, so a wrapped call (parentheses, !, as, .call/.apply) is never also a
   // value use, by construction; `refRead` is every reference to a launch-carrying launcher binding the walker classified as
@@ -1085,7 +1126,7 @@ export function classify(ts, file, src, opts = {}) {
       if ((ts.isPropertyAccessExpression(c)) && ["call", "apply"].includes(c.name.text)) { viaCall = c.name.text; c = unwrap(c.expression); }
       if (ts.isIdentifier(c)) {
         const b = bindingAt(c);
-        if (b && b.module === "launcher" && b.member === "inBrowser") { sharedCalls++; calledThrough.add(c); readEngineArg(n, viaCall); if (inTryWithCatch(n)) swallow.push(lineOf(n)); }
+        if (b && b.module === "launcher" && b.member === "inBrowser") { sharedCalls++; calledThrough.add(c); readEngineArg(n, viaCall); if (swallowed(n)) swallow.push(lineOf(n)); }
         const d = derivedAt(c);
         if (d) { const last = d.chain[d.chain.length - 1] || []; if (last.some((x) => LAUNCHES.has(x))) launches.push({ line: lineOf(n), how: "call of destructured " + last.join("|") + (viaCall ? " via .call/.apply" : "") }); }
         if (b && b.module === "playwright" && b.member && LAUNCHES.has(b.member.split(".").pop())) launches.push({ line: lineOf(n), how: "call of imported " + b.member });
@@ -1099,12 +1140,12 @@ export function classify(ts, file, src, opts = {}) {
         else {
           if (names.some((x) => x === "skip" || x === "todo")) skipTodo.push({ line: lineOf(n), what: "." + names.join("|") + "(" });
           // launcher namespace or default binding: leg.inBrowser(...); or the loader call's own result: require(launcher).inBrowser(...)
-          if (ts.isIdentifier(obj)) { const b = bindingAt(obj); if (b && b.module === "launcher" && (b.member === null || b.member === "default") && names.includes("inBrowser")) { sharedCalls++; calledThrough.add(obj); readEngineArg(n, viaCall); if (inTryWithCatch(n)) swallow.push(lineOf(n)); } }
+          if (ts.isIdentifier(obj)) { const b = bindingAt(obj); if (b && b.module === "launcher" && (b.member === null || b.member === "default") && names.includes("inBrowser")) { sharedCalls++; calledThrough.add(obj); readEngineArg(n, viaCall); if (swallowed(n)) swallow.push(lineOf(n)); } }
           else {
             // the loader call's own result as the object: `require(launcher).inBrowser(...)` is a shared call and any other export
             // read is an import; `.then(cb)` (or .catch, .finally) hands the module to a callback the walker does not follow, and
             // `.default` is no export of the launcher: refused by name, the load read (followed) by that refusal
-            const l = loaderCall(obj); if (l && l.kind === "launcher") { followed.add(unwrap(obj)); if (names.some((x) => HANDOFF.has(x))) refuse(n, "the launcher loaded where it stands and handed on through a member the walker does not follow (a promise callback through .then, .catch or .finally, or a default member), so where inBrowser is called from is unread: await the load and call inBrowser on the result"); else { launcherImported.push(lineOf(n)); if (names.includes("inBrowser")) { sharedCalls++; readEngineArg(n, viaCall); if (inTryWithCatch(n)) swallow.push(lineOf(n)); } } }
+            const l = loaderCall(obj); if (l && l.kind === "launcher") { followed.add(unwrap(obj)); if (names.some((x) => HANDOFF.has(x))) refuse(n, "the launcher loaded where it stands and handed on through a member the walker does not follow (a promise callback through .then, .catch or .finally, or a default member), so where inBrowser is called from is unread: await the load and call inBrowser on the result"); else { launcherImported.push(lineOf(n)); if (names.includes("inBrowser")) { sharedCalls++; readEngineArg(n, viaCall); if (swallowed(n)) swallow.push(lineOf(n)); } } }
           }
           if (names.some((x) => LAUNCHES.has(x))) { const chain = pwChain(obj); if (chain && !chain.refused) { noteChain(chain); launches.push({ line: lineOf(n), how: "." + names.join("|") + "(" + (viaCall ? " via .call/.apply" : "") }); } }
           const chain = pwChain(c); if (chain && !chain.refused) noteChain(chain);
@@ -1254,8 +1295,8 @@ export function classify(ts, file, src, opts = {}) {
   /** A string's text as the compiler reads it: the fold's <placeholder> pieces (a substitution the fold could not take) rewritten
    *  to an identifier, so the rest parses. One rewrite for the driver reader below and THE SAFETY NET's read of the same text. */
   const driverText = (text) => text.replace(/<[^<>]*>/g, "_");
-  /** Does a string's text LOAD a playwright package, read AS CODE by this same walker? The text (its package-name pre-filter the
-   *  one foldSpecifier uses) is classified one level down (opts.driverText: a string inside a driver's text is not read as a driver
+  /** Does a string's text LOAD a playwright package, read AS CODE by this same walker? The text (its package-name pre-filter
+   *  namesPwPackage, the one foldSpecifier's placeholder road and THE SAFETY NET read) is classified one level down (opts.driverText: a string inside a driver's text is not read as a driver
    *  of its own) and the record's playwright set read, so the string reader is exactly as wide as the code walker: a loader call
    *  by any name in loaders, createRequire applied directly or bound by a declaration, an import, a subpath, a relative path into
    *  node_modules. A text that does not parse yields the parser's refusal record, which carries no playwright set: false, and the
@@ -1263,7 +1304,7 @@ export function classify(ts, file, src, opts = {}) {
    *  no driver to the walker (a title, a message, a wrapper around a non-literal require): class none from the walker, and THE
    *  SAFETY NET's refusal when the name stands in a specifier-capable position of the text. */
   const driverLoads = (text) => {
-    if (opts.driverText || !PW_PACKAGES.some((p) => text.includes(p))) return false;
+    if (opts.driverText || !namesPwPackage(text)) return false;
     const rec = classify(ts, file, driverText(text), { ...opts, testModule: false, driverText: true });
     return !!(rec.playwright && rec.playwright.length);
   };
@@ -1296,13 +1337,14 @@ export function classify(ts, file, src, opts = {}) {
   // THE SAFETY NET (the header states it): a pre-scan of the parse for any mention of a browser load, keyed on the walker's own
   // name-sets and readers, with the accounting DERIVED from the walker's records. This block reads the records `resolved`,
   // `embedded`, `loaders`, `loaderReexport` and `bindings` (through bindingAt) and the readers loaderCall, resolveSpec, isPwPackage,
-  // foldText, memberNames, declOfUse, isCreateRequireId and isModuleRequire, and declares no set of its own: a fold that reads a
+  // namesPwPackage, foldText, memberNames, declOfUse, isCreateRequireId, isModuleRequire, driverText and CALL_APPLY_BIND, and
+  // declares no set of its own (its other free names are up, unwrap, lineOf, ts, sf, netHits, String and undefined, none a record
+  // or a name-set; the census test holds the set by a comment-stripped identifier census over this block): a fold that reads a
   // form accounts for its token by construction.
   // `netHits` is every UNACCOUNTED mention in source order, { line, what, token }.
   const netHits = [];
   {
     const hit = (n, what, token) => netHits.push({ line: lineOf(n), what, token: String(token).split("\n")[0].slice(0, 80) });
-    const pwText = (t) => PW_PACKAGES.some((p) => t.includes(p));
     // a relative path into node_modules naming a playwright package: resolveSpec's own reading of a dotted specifier (kind playwright)
     const nmPw = (t) => t.startsWith(".") && resolveSpec(t).kind === "playwright";
     /** The node a specifier-capable position hands `n`'s text to, the one noteResolved keys when the walker reads it: the import,
@@ -1334,7 +1376,7 @@ export function classify(ts, file, src, opts = {}) {
     // bound). Accounted when the string reader noted the string's line (embedded), which the walker's driver read does for every
     // load it folds, so a text this scan flags and that read did not fold is refused by name.
     const scanAsCode = (n, text) => {
-      if (!pwText(text) || embedded.some((e) => e.line === lineOf(n))) return;
+      if (!namesPwPackage(text) || embedded.some((e) => e.line === lineOf(n))) return;
       const isf = ts.createSourceFile("driver.ts", driverText(text), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
       if (isf.parseDiagnostics.length) return;
       let found = null;
