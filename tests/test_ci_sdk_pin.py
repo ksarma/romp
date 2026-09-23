@@ -44,14 +44,20 @@ This module holds five things, and it never skips: a pin that skips reports gree
    a pip install, is read as an invocation or is red, whatever its layout (round 4's ruling, 2026-09-23): the line
    census in PytestPopulation holds each such line to the span of lines the parser read for a row, so a step in a
    layout the parser does not read (steps at indent 4 or 8, `-   name:`, a flow mapping, a quoted or spaced `run` key)
-   is red at its pytest line; a mention the parser reads but not as a command (a wrapper such as `uvx pytest`, a
+   is red at its pytest line (a line joined to the next by a backslash counts when the joined text spells pytest, joined
+   as the shell joins it); a mention the parser reads but not as a command (a wrapper such as `uvx pytest`, a
    `$PYTEST` variable, an option cluster such as `python -Impytest`, an indentation indicator on a block, a
    more-indented line in a folded block, an anchor on the run) is red as `unparsed` until the parser reads it; and a
    line where a job key goes that the parser does not read as one (a quoted key) is red, so no step is read under the
-   job above it. Outside the check: a run line that never spells pytest (a `$RUNNER` set elsewhere, `make test`, a
-   YAML alias such as `run: *cmd`, whose anchor is red where the text it names spells pytest: on a run, as unparsed,
-   and on any other line, by the census), a pytest run by a script or action a step calls, and every other workflow
-   file under .github/workflows/. The flag half
+   job above it. A name: key's own line is excused, and nothing else of the name: a name folded or continued onto a
+   second line that spells pytest there is red on valid YAML, and the message says to reword it. The check does not
+   read YAML anchors, aliases or merge keys, nor a step written as a flow mapping or flow sequence, and fails
+   closed on them rather than model them (the owner's fail-closed design, 2026-09-23; ci.yml uses none): every anchor
+   (`&cmd`), alias (`*cmd`) and merge key (`<<:`) anywhere in ci.yml, and every flow mapping or flow sequence holding
+   a run, env or shell key or a name key beside another key, is red at its line (unread_yaml_forms), so a run, a step,
+   a steps list or an env reached through an alias is red where it is written. Outside the check: a run line that
+   never spells pytest (a `$RUNNER` set elsewhere, `make test`), a pytest run by a script or action a step calls, and
+   every other workflow file under .github/workflows/. The flag half
    keys on the spelling `-p no:anyio` with one space, the switch half on the merged value reading exactly 1 (a quoted
    value read verbatim, so `"1 "` is not 1, and a plain value continued on the next line folded as YAML folds it), and
    their messages say so. The switch half reads what the run text does to the variable only by its spelling (round
@@ -59,10 +65,12 @@ This module holds five things, and it never skips: a pin that skips reports gree
    its pytest command (an unset, export, declare, env -u or assignment, on an earlier line or before the command on
    its own line; a comment too), or whose job's other run texts spell it (a write to $GITHUB_ENV sets it for the steps
    after), is `unparsed`, red until read, since the parser does not run the shell. And every line of ci.yml that spells
-   the switch, outside a comment, is an env: key line the merge read (a bare key at its scope's indent, its value on
-   that line) or lies in a run text the parser read, or the switch census in PytestPopulation names it (review round
-   4's verify, 2026-09-23): an env: written as an alias or a flow mapping, a quoted or spaced key, a value continued on
-   the next line, and a step's shell: or a job's defaults that spells the switch are each red at their line. Outside
+   the switch, outside a comment, is an env: key line the merge read (a bare key at its block's first key indent, its
+   value on that line and not a block scalar) or lies in a run text the parser read, or the switch census in
+   PytestPopulation names it (review round 4's verify, 2026-09-23): an env: written as an alias or a flow mapping, a
+   quoted or spaced key, a value continued on the next line or written as a block scalar, a key-shaped line inside
+   another key's block scalar (that key's text to YAML), and a step's shell: or a job's defaults that spells the
+   switch are each red at their line. Outside
    that read: any write of the switch that does not spell its name, wherever it is written. Among them: one in a
    step's own run text (`env -i`, sudo's reset of the environment, an indirect unset such as `unset "${!ROMP_@}"`, a
    loop over the environment), one in a step's shell: or a job's defaults (`shell: env -i bash -e {0}`), one by a
@@ -162,8 +170,10 @@ This module holds five things, and it never skips: a pin that skips reports gree
    positional arguments of asyncio.create_subprocess_exec and of the os.exec and os.spawn l forms (execl, execle,
    execlp, execlpe, spawnl, spawnle, spawnlp, spawnlpe; a spawn form's mode and an e form's env set aside), read as
    that argv. And a call of pytest.main or pytest.console_main, or of _pytest.config's main or console_main, by a name
-   the census resolves for it (an import, an alias, a star import, a name assigned from one; looked up by scope, as
-   Python looks it up): a pytest session in the calling process,
+   the census resolves for it (an import, an alias, a star import from a module whose calls the census reads, a name
+   assigned from one; looked up by scope, as Python looks it up: the call's own scope, the functions around it with
+   class bodies skipped, the module; a binding under a global declaration counted at the module and one under a
+   nonlocal declaration in the enclosing function that binds the name): a pytest session in the calling process,
    where plugin autoload runs again whatever flag the outer run was given, so its argv, the first positional argument
    or args=, carries the flag itself. The flag check keys on the argv's constant elements (`-p` then `no:anyio`,
    or `-pno:anyio`), so a flag carried by a variable reads as absent, the safe side, and the message says so. The
@@ -175,24 +185,30 @@ This module holds five things, and it never skips: a pin that skips reports gree
    `pytest.main(` call included) is `unparsed` and red until it is spelled as an argv, as is an argv that may run
    pytest and the census cannot tell (a `-m` whose module name is not a constant, an element that is not a constant
    right before `pytest`, after an interpreter head), an in-process call whose argv is not a literal (a name, or no
-   argument, which reads sys.argv), and a module that does not parse under the running interpreter. A string anywhere
+   argument, which reads sys.argv), and a module that does not parse under the running interpreter. Unparsed the same
+   way (the owner's fail-closed design, 2026-09-23), a call whose callee's name the resolution cannot resolve: one
+   inside a comprehension or generator expression in a class body that binds the name (Python looks it up past the class
+   there, a scope the census does not model), and one through a name no scope binds and no builtin names in a module
+   with a star import from a module whose calls the census does not read (the name may come from it). A string anywhere
    else, or one held in a variable or built with %, + or .format, is outside the read, as is an argv assembled one
    element at a time (append calls) and any call, string or in process, reached through a name the census does not
    resolve (a name bound other than by an import or a plain or annotated assignment: tuple unpacking, a walrus, a
-   conditional expression, a parameter default; or getattr, importlib or runpy, among others); each of those named
-   here has a case holding its outcome, no row. What the flag buys, in every pytest process the census and the
-   population check read in which nothing loads the plugin again by its module name (`-p anyio.pytest_plugin` on the
-   line, PYTEST_PLUGINS in the environment, plugins= handed to pytest.main; both checks key on the flag's spelling and
-   read none of these): anyio's plugin is absent from that process's plugin set as it is from the box's default
-   run's. The sets are not equal, and nothing here says they are: the box's default run loads pytest-xdist's two plugins, which no cell
-   installs. Verified by execution before this landed: a synthetic broken anyio/pytest_plugin.py in a CI-shaped venv
-   (the SDK pinned, the parent under the flag) red tests in each of the six modules that spawned unflagged children,
-   none of which imports the SDK, and the same six were green with the flag on every launcher (2026-09-20).
+   conditional expression, a parameter default; an attribute of a class or an instance, `T.m` or `self.m`; getattr,
+   importlib or runpy, among others); each of those named here has a case holding its outcome, no row. What the flag
+   buys, in every pytest process the census and the population check read in which nothing loads the plugin again by its
+   entry-point name or its module name (`-p anyio` or `-p anyio.pytest_plugin` after the flag on the line,
+   PYTEST_PLUGINS in the environment, plugins= handed to pytest.main; both checks key on the flag's spelling and read
+   none of these): anyio's plugin is absent from that process's plugin set as it is from the box's default run's. The
+   sets are not equal, and nothing here says they are: the box's default run loads pytest-xdist's two plugins, which no
+   cell installs. Verified by execution before this landed: a synthetic broken anyio/pytest_plugin.py in a CI-shaped
+   venv (the SDK pinned, the parent under the flag) red tests in each of the six modules that spawned unflagged
+   children, none of which imports the SDK, and the same six were green with the flag on every launcher (2026-09-20).
 
 Hermetic: the run block executes in a scratch directory with its own copy of the constant's line, never at the repo
 root, and its `python` is a shim that records its arguments; no network, no pip.
 """
 import ast
+import builtins
 import glob
 import importlib.metadata
 import importlib.util
@@ -522,7 +538,8 @@ class NeverSkips(unittest.TestCase):
     outside this module, where a deletion of this file can still red it. The children pass -p no:anyio, as
     every pytest the suite spawns in a form the launcher census reads does (ChildPytestLaunchers holds it on each
     launcher it reads), so in a cell these children leave anyio's plugin out, as the box's default run does, and load
-    it again by no module name (pytest accepts the flag where anyio is absent, as on the box venvs)."""
+    it again by neither its entry-point name nor its module name (pytest accepts the flag where anyio is absent, as on
+    the box venvs)."""
     INSTALLED_VERSION_TEST = "test_the_installed_sdk_is_the_pin_where_it_imports_and_the_pin_is_well_formed_where_it_does_not"
     INSTALLED_VERSION_NODE = "%s::%s::%s" % (os.path.relpath(os.path.realpath(__file__), ROOT), InstalledVersion.__name__,
                                              INSTALLED_VERSION_TEST)     # as pytest prints it from the repo root
@@ -708,6 +725,8 @@ class RequireSwitch(unittest.TestCase):
 # comment or a name: key, lies in the span of lines the parser read for a row, or the census names it. A line at the
 # jobs' indent that is not a job the parser reads is red too (unread_job_keys), so no step is read under the job above
 # it. Until 2026-09-23 the parser's limits were claimed red and a step in YAML's compact list style gave no row at all.
+# YAML anchors, aliases and merge keys, and a step in flow style, are not read at all: every one is red at its
+# line (unread_yaml_forms, the owner's fail-closed design, 2026-09-23), since the real file uses none.
 # ---------------------------------------------------------------------------------------------------------------------
 TOP_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):", re.M)                # a column-0 key of the workflow's mapping
 JOB_RE = re.compile(r"^  ([A-Za-z0-9_-]+):[ \t]*(?:#.*)?\n", re.M)           # a job: a bare key at indent 2 under jobs:
@@ -721,6 +740,9 @@ BLOCK_INDICATOR_RE = re.compile(r"^[ \t]*([|>])([+-]?)([0-9]?)[ \t]*(#.*)?$")
 # verify: it was folded into one command). _step_run sets them aside to split the scalar, reads through a tag, and
 # reports a run that carries an anchor as unparsed
 NODE_PROPERTIES_RE = re.compile(r"^[ \t]*(?:(?:&[^ \t]+|![^ \t]*)(?:[ \t]+|$))+")
+# an env: key's value that is a block scalar: node properties, then `|` or `>` with its chomping and indentation
+# indicators; its lines are the key's text, and _env_block reads the key as not clean
+ENV_BLOCK_SCALAR_RE = re.compile(r"^(?:(?:&[^ \t]+|![^ \t]*)[ \t]+)*[|>](?:[1-9]?[+-]?|[+-]?[1-9]?)$")
 UNNAMED = "(unnamed step)"
 # a command that runs pytest: `python -m pytest`, `python3.12 -m pytest`, `python -mpytest` (one token), a bare `pytest`
 # or `py.test`, at the START of a command (the run line is split into its commands first, _shell_commands: at `&&`,
@@ -756,13 +778,15 @@ NAME_KEY_RE = re.compile(r"^[ \t]*(?:-[ \t]+)?name:(?:[ \t]|$)")
 
 def _name_key_alone(line):
     """True when the line's key is `name` (NAME_KEY_RE) and no other key follows on it: after the name, no `:` followed
-    by whitespace or the end of the line, outside a YAML-quoted scalar and a trailing comment. In a block mapping a
-    plain scalar cannot hold `: ` (a `${{ }}` expression is plain text to YAML, so not there either), so one after the
-    name is the next key of a flow mapping (`name: x, run: y` on one line of a `{ }` written over several), or YAML the
-    runner refuses. A quote opens a quoted scalar only where a scalar starts (the value's first character, or the first
-    after `,`, `{` or `[`); elsewhere it is the plain scalar's own character (`Don't`), and a `#` after whitespace
-    outside a quoted scalar starts a comment. Keyed on that text, not on YAML structure: a name whose quoted value is
-    unterminated on its line reads as alone, since YAML carries the value on to the next line."""
+    by whitespace or the end of the line, and no `:` right after a closed quoted scalar, outside a YAML-quoted scalar
+    and a trailing comment. In a block mapping a plain scalar cannot hold `: ` (a `${{ }}` expression is plain text to
+    YAML, so not there either), so one after the name is the next key of a flow mapping (`name: x, run: y` on one line
+    of a `{ }` written over several), or YAML the runner refuses; and a `:` right after a quoted scalar is YAML's
+    JSON-style key (`name: x, "run":y`, whatever follows the colon). A quote opens a quoted scalar only where a scalar
+    starts (the value's first character, or the first after `,`, `{` or `[`); elsewhere it is the plain scalar's own
+    character (`Don't`), and a `#` after whitespace outside a quoted scalar starts a comment. Keyed on that text, not
+    on YAML structure: a name whose quoted value is unterminated on its line reads as alone, since YAML carries the
+    value on to the next line."""
     m = NAME_KEY_RE.match(line)
     if not m:
         return False
@@ -787,6 +811,8 @@ def _name_key_alone(line):
                         continue
                     break
                 j += 1
+            if rest[j + 1:j + 2] == ":":
+                return False
             i, at_start = j + 1, False
             continue
         if ch == ":" and (i + 1 == n or rest[i + 1] in " \t"):
@@ -845,36 +871,46 @@ def _env_block(text, env_indent, keys_out=None):
     whitespace included, as YAML keeps it (`"1 "` reads as `1 `, which is not 1; both runtime readers of the switch
     compare with == "1"); only an unquoted plain value is stripped (review round 4, 2026-09-23: the strip reached inside
     quotes, and `"1 "` read as the switch on). Comment and blank lines inside the block are skipped. A value that is a
-    `${{ }}` expression is kept as its text, which is never `1`: the safe side. A line indented past the key line
-    before it that is not itself a key line continues that key's value: a plain value's lines are folded with one
-    space, as YAML folds them (`1` then `0` reads `1 0`; until review round 4's verify, 2026-09-23, it read `1`), and
-    the key is marked as not read clean. `keys_out`, when a list is given, receives [offset of the key's line in
-    `text`, name, clean] for every key line read, clean False for a key whose value runs on past its line (the switch
-    census, switch_line_census, counts only a clean key line as read). Not read at all: an `env:` line that carries
-    anything after the colon but a comment (an alias `env: *x`, an anchor, a flow mapping), and a line this regex does
-    not read as a key (a quoted or spaced key)."""
+    `${{ }}` expression is kept as its text, which is never `1`: the safe side. A key is read only at the block's first
+    key indent (the owner's fail-closed design, 2026-09-23: until then a key-shaped line at any depth was read as a key,
+    so `ROMP_SDK_REQUIRE: "1"` written as a line of another key's `|` block read as the switch on while YAML held it as
+    that key's text). A deeper line continues the key above it, and that key is marked as not read clean: a plain
+    value's lines are folded with one space, as YAML folds them (`1` then `0` reads `1 0`; until review round 4's
+    verify, 2026-09-23, it read `1`); a block scalar's lines (a `|` or `>` value, node properties before it and a
+    chomping or indentation indicator after it included: ENV_BLOCK_SCALAR_RE) are its text, never keys, and the
+    block-scalar value itself (its indicator, never `1`) makes its key unclean, whatever its lines hold. `keys_out`,
+    when a list is given, receives [offset of the key's line in `text`, name, clean] for every key line read, clean
+    False for a key whose value runs on past its line or is a block scalar (the switch census, switch_line_census,
+    counts only a clean key line as read). Not read at all: an `env:` line that carries anything after the colon but a
+    comment (an alias `env: *x`, an anchor, a flow mapping), a line at the key indent this regex does not read as a key
+    (a quoted or spaced key), and a line less indented than the first key."""
     pad = " " * env_indent
     m = re.search(r"^%senv:[ \t]*(?:#.*)?\n((?:%s .*\n|[ \t]*\n)+)" % (pad, pad), text, re.M)
     out = {}
     keys = [] if keys_out is None else keys_out
     if m:
-        pos, last = m.start(1), None      # last: [name, indent, its entry in keys, whether its value is plain]
+        pos, last, key_indent = m.start(1), None, None   # last: [name, its entry in keys, a plain value to fold]
         for line in m.group(1).splitlines(keepends=True):
             off, pos = pos, pos + len(line)
             body = line.rstrip("\n")
-            if not body.strip() or body.lstrip().startswith("#"):
+            if not body.strip():
                 continue
             indent = len(body) - len(body.lstrip(" "))
+            if body.lstrip().startswith("#"):
+                continue
+            if key_indent is None:
+                key_indent = indent
             km = re.match(r"""^\s*([A-Za-z_][A-Za-z0-9_]*):[ \t]*(?:"([^"]*)"|'([^']*)'|([^#]*?))[ \t]*(?:#.*)?$""", body)
-            if km:
+            if km and indent == key_indent:
                 double, single, plain = km.group(2), km.group(3), km.group(4)
                 out[km.group(1)] = double if double is not None else single if single is not None else plain.strip()
-                keys.append([off, km.group(1), True])
-                last = [km.group(1), indent, keys[-1], plain is not None]
-            elif last is not None and indent > last[1]:
-                if last[3]:
+                block = plain is not None and ENV_BLOCK_SCALAR_RE.match(plain.strip()) is not None
+                keys.append([off, km.group(1), not block])
+                last = [km.group(1), keys[-1], plain is not None and not block]
+            elif last is not None and indent > key_indent:
+                if last[2]:
                     out[last[0]] = (out[last[0]] + " " + _comment_cut(body).strip()).strip()
-                last[2][2] = False
+                last[1][2] = False
     return out
 
 
@@ -989,8 +1025,8 @@ def _step_run(stext):
     lines as the same scalar without them is: a tag (`!!str`) is read through. Not read, and reported so an invocation
     in the block is `unparsed`: an anchor on the run (`&cmd`: an alias of it, `run: *cmd`, runs the same text in
     another step under that step's env and name, and the alias line never spells pytest, so this parser would read the
-    text once, under the wrong step; with the anchor refused, an alias of a run that spells pytest cannot stand
-    without a red at its anchor); an indentation indicator on the block (`|2`); or a line indented deeper than the
+    text once, under the wrong step; unread_yaml_forms reds the anchor and every alias at their lines as well); an
+    indentation indicator on the block (`|2`); or a line indented deeper than the
     block's first line inside a folded block (YAML keeps its line breaks, which this fold would not). Until 2026-09-23
     a property before a block indicator kept the block from being read as a block, and it was folded into one command
     (review round 4's verify). No `run:`: (None, None)."""
@@ -1071,9 +1107,10 @@ def pytest_invocations(src, read=None, switch_read=None):
     mapping, a quoted or spaced `run` key) gives no row here; pytest_line_census reds its pytest line, and
     unread_job_keys a job key this parser does not read. The run forms read are _step_run's; comment lines are skipped;
     a line ending in an unescaped backslash is joined with the next the way the shell joins it (_continues,
-    _join_continuation: nothing inserted). Outside this parser by construction: a pytest run by a script
-    or action the workflow calls, and a run line that never spells pytest (a `$RUNNER` variable set elsewhere, or
-    `make test`)."""
+    _join_continuation: nothing inserted). Not read, and red at their lines by unread_yaml_forms instead: an anchor,
+    an alias, a merge key, and a step in flow style. Outside this parser by construction: a pytest run by a
+    script or action the workflow calls, and a run line that never spells pytest (a `$RUNNER` variable set elsewhere,
+    or `make test`)."""
     sections = _top_sections(src)
     assert "jobs" in sections, "ci.yml has no jobs: mapping at column 0: re-anchor this parser"
 
@@ -1211,17 +1248,22 @@ def _comment_cut(line):
 def pytest_line_census(src):
     """The line census (round 4's ruling A, 2026-09-23): (the lines that spell pytest and count, [(line, text) of the
     counted lines no row covers]), file lines 1-based. A line counts when PYTEST_WORD_RE matches it with a trailing
-    comment cut as _shell_commands cuts one (_comment_cut; a comment line is then empty and never counts), unless one
-    of two exclusions, and no others, applies: its key is `name` and no other key follows on it (_name_key_alone:
-    `name:` or `- name:`; never a line that merely contains "name:", nor one that opens with `name:` and carries
-    `run:` after it, so a flow mapping carrying a run counts on whichever line it spells pytest); or it is a pip
-    install, judged per shell
-    command and never per line: the line is excused only when every command it belongs to that spells pytest is a pip
-    install, so a line that installs pytest and then runs it counts. The commands a line belongs to are the text the
-    parser read for it when the parser read it (pytest_invocations' `read`: a pip install continued over two lines is
-    one command), else the line itself with its backslash continuations joined, split at every operator character
-    (CENSUS_SPLIT_RE), each piece with a YAML key's prefix stripped (YAML_KEY_PREFIX_RE); a pip install is a command
-    whose program is pip (PIP_INSTALL_RE, at the start of the command). A counted line is covered when it lies in the
+    comment cut as _shell_commands cuts one (_comment_cut; a comment line is then empty and never counts), or matches
+    one of the commands it belongs to (below: a pytest word split over a backslash continuation counts on each line of
+    it), unless one of two exclusions, and no others, applies: its key is `name` and no other key follows on it
+    (_name_key_alone: `name:` or `- name:`; never a line that merely contains "name:", nor one that opens with `name:`
+    and carries another key after it, a JSON-style `"run":` included, so a flow mapping carrying a run counts on
+    whichever line it spells pytest; the exclusion is the key's own line, so a name folded or continued onto a line
+    that spells pytest reds there on valid YAML, and the message says to reword it); or it is a pip install, judged
+    per shell command and never per line: the line is excused only when every command it belongs to that spells pytest
+    is a pip install, so a line that installs pytest and then runs it counts. The commands a line belongs to are the
+    text the parser read for it when the parser read it (pytest_invocations' `read`: a pip install continued over two
+    lines is one command), else the line itself with its backslash continuations joined as the shell joins them
+    (_continues, _join_continuation: nothing inserted, a backslash followed by a space or an escaped backslash joining
+    nothing; each continuation line loses up to the first line's indentation, the block indentation YAML strips from a
+    literal block's lines), split at every operator character (CENSUS_SPLIT_RE), each piece with a YAML key's prefix
+    stripped (YAML_KEY_PREFIX_RE); a pip install is a command whose program is pip (PIP_INSTALL_RE, at the start of
+    the command). A counted line is covered when it lies in the
     span of lines the parser read for a row, parsed or unparsed: the row's first line through its last joined
     continuation (line..last_line). Keyed on the span, never the first line alone, which would red a compliant command
     whose pytest word sits on a continuation line. The census keys on the spelling over the whole file, not on YAML
@@ -1240,19 +1282,29 @@ def pytest_line_census(src):
     cut = [_comment_cut(line) for line in lines]
     counted, uncovered = [], []
     for idx, line in enumerate(lines):
-        if not PYTEST_WORD_RE.search(cut[idx]) or _name_key_alone(line):
+        if _name_key_alone(line):
             continue
         if idx + 1 in read_text:
             commands = _shell_commands(read_text[idx + 1])
         else:
+            # the shell's join (_continues, _join_continuation), the parser's own: until the owner's fail-closed design
+            # (2026-09-23) this join stripped trailing whitespace and joined after an escaped backslash too, so a pip
+            # line ending in `\ ` or `\\` swallowed the pytest line after it, and it joined with a space, so a pytest
+            # word split by a continuation was never read. A continuation line loses up to the indentation of the
+            # group's first line, the block indentation YAML strips from a literal block's lines
             lo = hi = idx
-            while lo > 0 and cut[lo - 1].rstrip().endswith("\\"):
+            while lo > 0 and _continues(cut[lo - 1]):
                 lo -= 1
-            while hi + 1 < len(lines) and cut[hi].rstrip().endswith("\\"):
+            while hi + 1 < len(lines) and _continues(cut[hi]):
                 hi += 1
-            joined = " ".join(c.rstrip().rstrip("\\") for c in cut[lo:hi + 1])
+            pad = len(cut[lo]) - len(cut[lo].lstrip(" "))
+            joined = cut[lo]
+            for tail in cut[lo + 1:hi + 1]:
+                joined = _join_continuation(joined, tail[min(pad, len(tail) - len(tail.lstrip(" "))):])
             commands = [YAML_KEY_PREFIX_RE.sub("", c, count=1).strip() for c in CENSUS_SPLIT_RE.split(joined)]
         mentions = [c for c in commands if PYTEST_WORD_RE.search(c)]
+        if not (PYTEST_WORD_RE.search(cut[idx]) or mentions):
+            continue
         if mentions and all(PIP_INSTALL_RE.match(c) for c in mentions):
             continue
         counted.append(idx + 1)
@@ -1266,15 +1318,16 @@ def switch_line_census(src):
     spell ROMP_SDK_REQUIRE and count, [(line, text) of the counted lines the parser read neither as an env: key nor as
     run text]), file lines 1-based. A line counts when it spells the switch's name with a trailing comment cut
     (_comment_cut; a comment line never counts). A counted line is read when it is an env: key line of the switch that
-    _env_block read clean in a scope the merge reads (the workflow's env, a job's, a step's: a bare key at the scope's
-    indent, its value on that line), or when it lies in the run text of a step the parser read, whose every spelling
-    of the switch the switch half reads as `unparsed` (pytest_invocations). Anything else sets or clears the switch
-    where the merge does not look and reds here: an `env:` written as an alias (`env: *x`) or a flow mapping, a quoted
-    or spaced key, a value continued on the next line, a step's `shell:` or a job's `defaults: run: shell:` that
-    spells the name, a line in a layout the parser does not read. Until 2026-09-23 each of these read ok beside a
-    pytest step that ran with the switch at 0, `1 0` or unset. Keyed on the spelling over the whole file, so a name: or
-    an if: that spells the switch reds too: rename it. What this census cannot see is a write that does not spell the
-    name (module docstring, item 1)."""
+    _env_block read clean in a scope the merge reads (the workflow's env, a job's, a step's: a bare key at the block's
+    first key indent, its value on that line and not a block scalar), or when it lies in the run text of a step the
+    parser read, whose every spelling of the switch the switch half reads as `unparsed` (pytest_invocations). Anything
+    else sets or clears the switch where the merge does not look and reds here: an `env:` written as an alias (`env:
+    *x`) or a flow mapping, a quoted or spaced key, a value continued on the next line or written as a block scalar, a
+    key-shaped line inside another key's block scalar (that key's text to YAML), a step's `shell:` or a job's `defaults:
+    run: shell:` that spells the name, a line in a layout the parser does not read. Until 2026-09-23 each of these read
+    ok beside a pytest step that ran with the switch at 0, `1 0` or unset. Keyed on the spelling over the whole file, so
+    a name: or an if: that spells the switch reds too: rename it. What this census cannot see is a write that does not
+    spell the name (module docstring, item 1)."""
     read, switch_read = [], []
     pytest_invocations(src, read, switch_read)
     covered = {e["line"] for e in switch_read if e["clean"]}
@@ -1315,6 +1368,176 @@ def unread_job_keys(src):
         else:
             unread.append((_line_of(src, jobs_at + off), text))
     return read, unread
+
+
+STEP_FLOW_KEYS = ("run", "env", "shell")     # keys that make a flow collection a step's to this check
+YAML_FORMS_UNREAD = "this check does not read YAML anchors, aliases or merge keys, nor a step written in flow style"
+
+
+def _yaml_quote_end(line, i, quote):
+    """The index just past the quote that closes a YAML quoted scalar opened before `i`, or None when the line ends
+    inside it: a double-quoted scalar's backslash escapes the next character, a single-quoted one's `''` is a quote."""
+    n = len(line)
+    while i < n:
+        ch = line[i]
+        if quote == '"' and ch == "\\":
+            i += 2
+            continue
+        if ch == quote:
+            if quote == "'" and line.startswith("''", i):
+                i += 2
+                continue
+            return i + 1
+        i += 1
+    return None
+
+
+def unread_yaml_forms(src):
+    """The YAML constructs this check refuses rather than reads (the owner's fail-closed design, 2026-09-23): [(line,
+    text, what)], file lines 1-based, over every line of ci.yml outside a block scalar's text. Refused: every anchor
+    (`&name`), alias (`*name`) and merge key (`<<:`), wherever it sits (a step, a steps list, an env, a run, a name:
+    value, a line of its own); and every flow mapping or flow sequence, on one line or over several, holding a key a
+    step can carry: `run`, `env` or `shell` (in any case, plain or quoted, a plain key read up to its first colon), or
+    `name` beside any other key of its mapping. Until then the parser read none of them and the two censuses excused
+    some: an anchor on a name: value aliased by `run: *cmd`, an anchored step or steps list aliased into a job without
+    the switch, `env: *x` with its anchor on a line of its own, and a flow mapping over several lines whose name line
+    carried a JSON-style `"run":` each read green beside a pytest run without the switch or the flag (the pre-push
+    lenses' plants). The real ci.yml uses none of these, so each is red at its line and never modelled. Keyed on a line
+    scan, not a YAML parser: a node starts at a line's first character, after a sequence's `- `, after a key's colon,
+    and after `[`, `{` or `,` inside a flow collection; a block scalar's lines (every line indented past the key or dash
+    that opened it with `|` or `>`) are text and are not read. A quoted scalar or a flow collection left open at the end
+    of the file is refused at the line that opened it; a quoted scalar's later lines are its text. The scan errs on the
+    side of red: a line that continues a plain scalar is read as if it began a node, so a continuation line that begins
+    with `&`, `*` or `<<:` is red on valid YAML; reword it."""
+    out = []
+    block_at = None       # inside a block scalar: its lines are those indented past this column
+    quote = None          # a quoted scalar open at the end of the previous line: (quote character, its opening line)
+    flow = []             # the open flow collections, outermost first: [bracket, opening line, own keys [(key, line)]]
+    expect_key = False    # inside a flow mapping, the next scalar is an entry's key (after `{` or `,`)
+
+    def refuse(n, what):
+        if (n, what) not in {(o[0], o[2]) for o in out}:
+            out.append((n, lines[n - 1].strip(), what))
+
+    def key(text, n, quoted):
+        name = (text if quoted else text.split(":")[0]).strip()
+        if name == "<<":
+            refuse(n, "a merge key (<<)")
+        if flow:
+            flow[-1][2].append((name.lower(), n))
+
+    def close():
+        # each collection is judged on its own keys when it closes, so one nested at any depth is judged too; the
+        # name rule is a mapping's (a flow sequence's `name: x` entries are one-pair mappings of their own)
+        bracket, _opened, keys = flow.pop()
+        kind = "mapping" if bracket == "{" else "sequence"
+        steps = [(k, n) for k, n in keys if k in STEP_FLOW_KEYS]
+        for k, n in steps:
+            refuse(n, "a flow %s holding the key %r" % (kind, k))
+        if not steps and bracket == "{" and len(keys) > 1:
+            for k, n in keys:
+                if k == "name":
+                    refuse(n, "a flow mapping holding a name key beside another key")
+
+    lines = src.splitlines()
+    for idx, raw in enumerate(lines):
+        n = idx + 1
+        indent = len(raw) - len(raw.lstrip(" "))
+        if block_at is not None:
+            if not raw.strip() or indent > block_at:
+                continue
+            block_at = None
+        i, size, start, col = 0, len(raw), True, indent
+        if quote:
+            end = _yaml_quote_end(raw, 0, quote[0])
+            if end is None:
+                continue
+            quote, i, start = None, end, False
+        while i < size:
+            ch = raw[i]
+            if ch in " \t":
+                i += 1
+                continue
+            if ch == "#" and (i == 0 or raw[i - 1] in " \t"):
+                break
+            if flow and ch in "]}":
+                close()
+                i, start = i + 1, False
+                continue
+            if flow and ch == ",":
+                i, start, expect_key = i + 1, True, flow[-1][0] == "{"
+                continue
+            if flow and ch == ":":
+                i, start, expect_key = i + 1, True, False
+                continue
+            if not start:
+                if not flow:
+                    break                 # the rest of a block-context line after its value: nothing a node starts in
+                i += 1
+                continue
+            if not flow and ch == "-" and raw[i + 1:i + 2] in ("", " ", "\t"):
+                col, i = i, i + 1         # a sequence entry: a block scalar here is text past the dash's column
+                continue
+            if ch in "&*!":
+                j = i + 1
+                while j < size and raw[j] not in " \t" and not (flow and raw[j] in ",[]{}"):
+                    j += 1
+                if ch == "&":
+                    refuse(n, "an anchor (%s)" % raw[i:j])
+                elif ch == "*":
+                    refuse(n, "an alias (%s)" % raw[i:j])
+                    start = False
+                i = j
+                continue
+            if ch in "[{":
+                flow.append([ch, n, []])
+                i, start, expect_key = i + 1, True, ch == "{"
+                continue
+            if ch in "\"'":
+                end = _yaml_quote_end(raw, i + 1, ch)
+                if end is None:
+                    quote = (ch, n)
+                    break
+                opened, text, i, start = i, raw[i + 1:end - 1], end, False
+                j = i
+                while j < size and raw[j] in " \t":
+                    j += 1
+                if raw[j:j + 1] == ":" and (flow or raw[j + 1:j + 2] in ("", " ", "\t")):
+                    key(text, n, True)
+                    i, start, expect_key, col = j + 1, True, False, opened
+                elif flow and expect_key:
+                    key(text, n, True)
+                    expect_key = False
+                continue
+            if not flow and ch in "|>":
+                block_at = col            # a block scalar: its lines are its text
+                break
+            # a plain scalar: to a key's colon (`: `, or `:` at the end of the line or, in a flow, before an indicator),
+            # a comment, the end of the line, or, in a flow, the next indicator
+            j = i
+            while j < size:
+                c = raw[j]
+                if c == ":" and (raw[j + 1:j + 2] in ("", " ", "\t") or (flow and raw[j + 1:j + 2] in (",", "[", "]", "{", "}"))):
+                    break
+                if c == "#" and raw[j - 1] in " \t":
+                    break
+                if flow and c in ",[]{}":
+                    break
+                j += 1
+            text = raw[i:j]
+            if raw[j:j + 1] == ":":
+                key(text, n, False)
+                i, start, expect_key, col = j + 1, True, False, i
+            else:
+                if flow and expect_key and text.strip():
+                    key(text, n, False)
+                    expect_key = False
+                i, start = j, False
+    if quote:
+        refuse(quote[1], "a quoted scalar left open at the end of the file")
+    for bracket, opened, _keys in flow:
+        refuse(opened, "a flow collection (%s) left open at the end of the file" % bracket)
+    return sorted(out)
 
 
 def invocations_by_key(found):
@@ -1491,9 +1714,11 @@ class PytestPopulation(unittest.TestCase):
     same way. The check reads the file's text, and proves it read all of it (round 4's ruling A, 2026-09-23): every
     line that spells pytest (PYTEST_WORD_RE), outside a comment or a name: key and other than a pip install, lies in
     the span of lines the parser read for a row, parsed or unparsed, whatever its layout, or the line census names it;
-    a mention the parser reads but not as a command is red as unparsed until it is read; and every line where a job key
-    goes is a job the parser reads, so no step is read under the job above it. Outside the check: a run line that
-    never spells pytest, a pytest run by a script or action a step calls, and any other workflow file."""
+    a mention the parser reads but not as a command is red as unparsed until it is read; every line where a job key
+    goes is a job the parser reads, so no step is read under the job above it; and no YAML anchor, alias, merge key, or
+    step in flow style appears in the file, each red at its line, since the check does not read them (the
+    owner's fail-closed design, 2026-09-23). Outside the check: a run line that never spells pytest, a pytest run by a
+    script or action a step calls, and any other workflow file."""
     def setUp(self):
         self.src = open(WF).read()
         self.found = pytest_invocations(self.src)
@@ -1517,11 +1742,12 @@ class PytestPopulation(unittest.TestCase):
         self.assertTrue(known and set(known) <= set(counted), "the census does not count the known invocations' lines %r "
                         "among the lines it counts %r: an empty or partial census is red, not green" % (known, counted))
         self.assertEqual(uncovered, [], "lines of ci.yml that spell pytest (keyed on the spelling, PYTEST_WORD_RE, with a "
-                         "trailing comment cut) outside every span of lines the parser read for a row, parsed or "
-                         "unparsed; only a name: key with no other key after it on its line and a line whose every "
-                         "pytest-spelling command is a pip install are excused. Such a line is in a layout the parser does not read (steps at another indent, a flow "
-                         "mapping, a quoted or spaced run key) or outside any run (an artifact path, an action input): "
-                         "red until the parser reads it or the line is reworded:\n  "
+                         "trailing comment cut, or on the command a backslash continuation joins them into) outside every "
+                         "span of lines the parser read for a row, parsed or unparsed; only a name: key's own line with no "
+                         "other key after it and a line whose every pytest-spelling command is a pip install are excused. "
+                         "Such a line is in a layout the parser does not read (steps at another indent, a flow mapping, a "
+                         "quoted or spaced run key), outside any run (an artifact path, an action input), or the second "
+                         "line of a folded or continued name: red until the parser reads it or the line is reworded:\n  "
                          + "\n  ".join("line %d: %s" % u for u in uncovered))
 
     def test_every_line_that_spells_the_switch_is_an_env_key_or_a_run_text_the_parser_read(self):
@@ -1537,9 +1763,10 @@ class PytestPopulation(unittest.TestCase):
         self.assertTrue(matrix and set(matrix) <= set(counted), "the switch census does not count the matrix step's switch "
                         "line %r among the lines it counts %r: an empty or partial census is red, not green" % (matrix, counted))
         self.assertEqual(uncovered, [], "lines of ci.yml that spell %s (keyed on the spelling, with a trailing comment cut) "
-                         "that the parser read neither as an env: key line (a bare key at its scope's indent, its value on "
-                         "that line) nor as run text: such a line sets or clears the switch where the env merge does not "
-                         "look (an env: alias or flow mapping, a quoted or spaced key, a continued value, a step's shell: "
+                         "that the parser read neither as an env: key line (a bare key at its block's first key indent, its "
+                         "value on that line and not a block scalar) nor as run text: such a line sets or clears the switch "
+                         "where the env merge does not look (an env: alias or flow mapping, a quoted or spaced key, a "
+                         "continued or block-scalar value, a key-shaped line in another key's block scalar, a step's shell: "
                          "or a job's defaults, a name: or if: that spells it). Red until it is an env: key the parser reads, "
                          "moves into a run text, or stops spelling the name:\n  " % SWITCH
                          + "\n  ".join("line %d: %s" % u for u in uncovered))
@@ -1554,6 +1781,23 @@ class PytestPopulation(unittest.TestCase):
                          "job key at indent 2 (keyed on the indentation and JOB_RE): the parser reads the steps under "
                          "such a line as the job above's, with that job's name and env. Rewrite the key bare:\n  "
                          + "\n  ".join("line %d: %s" % u for u in unread))
+
+    def test_ci_yml_holds_no_yaml_form_the_check_refuses(self):
+        # the owner's fail-closed design (2026-09-23): the parser and the two censuses read no YAML anchor, alias or
+        # merge key and no step written in flow style, and the pre-push lenses planted each beside a pytest run
+        # without the switch or the flag and read green. The real file uses none of them, so each is refused at its line
+        # (unread_yaml_forms; its cases in PopulationCheckReds) and none is modelled
+        found = unread_yaml_forms(self.src)
+        self.assertEqual(found, [], "lines of ci.yml in a YAML form " + YAML_FORMS_UNREAD + " (a flow mapping or sequence "
+                         "holding a run, env or shell key, or a name key beside another key). Keyed on a line scan outside "
+                         "block scalars: rewrite the line in the file's block layout without the anchor, alias, merge key "
+                         "or flow collection (a plain scalar continued onto a line that begins with &, * or <<: reads as "
+                         "one: reword it):\n  " + "\n  ".join("line %d: %s (%s)" % f for f in found))
+        # the scan reads to the end of the real file: an alias appended as its last line is named there (a scan left
+        # inside a block scalar, or stopped early, would read nothing after the point it stopped)
+        last = len(self.src.rstrip("\n").splitlines()) + 1
+        self.assertEqual(unread_yaml_forms(self.src.rstrip("\n") + "\nzz-alias: *nowhere\n"),
+                         [(last, "zz-alias: *nowhere", "an alias (*nowhere)")])
 
     def test_every_invocation_passes_the_flag_and_sets_the_switch_or_is_listed_with_its_reason(self):
         bad = [_describe(i) for i in self.found if verdict(i) in ("unlisted", "unparsed", "ambiguous")]
@@ -2251,6 +2495,10 @@ class PopulationCheckReds(unittest.TestCase):
                         if "python -m pytest" in src.splitlines()[n - 1]]
                 self.assertEqual(len(want), 1, label)
                 self.assertEqual(pytest_line_census(src)[1], want, label)
+        # the exclusion is the name key's own line and no other: a name folded onto a second line that spells pytest
+        # reds there, a red on valid YAML whose message says to reword the line (the pre-push lenses' N07 and B46)
+        src, first = self._with_first_step_in_shell_job("      - name: >-\n          Smoke pytest\n          on Linux\n        run: echo hi\n")
+        self.assertEqual(pytest_line_census(src)[1], [(first + 1, "Smoke pytest")])
         # the controls: a name key that spells pytest with no key after it is still excused, whether its value holds a
         # comma, brackets and an expression, a `: ` inside its quoted scalar, or a `: ` in a trailing comment (in block
         # context a plain scalar cannot hold `: `, so an unquoted one outside a comment is the test)
@@ -2374,6 +2622,135 @@ class PopulationCheckReds(unittest.TestCase):
                                                          "          python -m pip install --upgrade pip pytest \\\n            pytest-timeout\n")
         self.assertEqual(pytest_line_census(src)[1], [])
 
+    def test_the_census_joins_an_unread_line_the_way_the_shell_joins_it(self):
+        # the owner's fail-closed design (2026-09-23; the pre-push lenses' C03, C04 and C05): the census's own join for
+        # a line the parser did not read stripped trailing whitespace first and joined with a space, so a pip line
+        # ending in a backslash and a space, or in an escaped backslash, took the pytest line after it as one pip
+        # command and excused it (bash runs the two apart), and a pytest word split by a continuation was never counted.
+        # It joins as the parser does now (_continues, _join_continuation), and PYTEST_WORD_RE reads the joined text
+        # too. Steps at indent 4, a layout the parser does not read
+        head = "  compact:\n    runs-on: ubuntu-latest\n    steps:\n    - name: Compact\n      shell: bash {0}\n      run: |\n"
+        for label, block, named in (
+                ("a pip line ending in a backslash and a space", "        pip install foo \\ \n        python -m pytest tests/test_a.py -q\n", (8,)),
+                ("a pip line ending in an escaped backslash", "        pip install foo \\\\\n        python -m pytest tests/test_a.py -q\n", (8,)),
+                ("the pytest word split by a continuation", "        python -m py\\\n        test tests/test_a.py -q\n", (7, 8))):
+            with self.subTest(form=label):
+                src, first = self._with_job_before_shell(head + block)
+                self.assertEqual(self._new(src), [], "%s: the parser does not read this layout" % label)
+                self.assertEqual(pytest_line_census(src)[1], [(first + k - 1, src.splitlines()[first + k - 2].strip()) for k in named], label)
+        # the controls: a pip install continued onto the next line is one command and excused, and a continuation whose
+        # next line is indented past the first keeps its words apart, so `python -m py \` then `test` spells no pytest
+        for label, block in (("a pip install continued", "        pip install --upgrade pip \\\n        pytest pytest-timeout\n"),
+                             ("a continuation with whitespace at the join", "        python -m py \\\n          test tests/test_a.py\n")):
+            with self.subTest(control=label):
+                src, first = self._with_job_before_shell(head + block)
+                self.assertEqual(pytest_line_census(src)[1], [], label)
+
+    def test_a_key_shaped_line_in_an_env_block_scalar_is_its_text_and_the_key_is_unclean(self):
+        # the owner's fail-closed design (2026-09-23; the pre-push lenses' S10, S11 and S12): _env_block read a key at
+        # any depth, so `ROMP_SDK_REQUIRE: "1"` written as a line of another key's `|` or `>` block read as the switch
+        # on and the switch census counted it a clean key line, while YAML held it as that key's text and pytest ran
+        # without the switch. A key is read at the block's first key indent only, a block scalar's lines are its text,
+        # and a block-scalar value makes its key unclean: the step reads unlisted and the switch census names the line
+        run = "        run: python -m pytest tests/test_a.py -q -p no:anyio\n"
+        for label, indicator in (("a literal block", "|"), ("a folded block", ">"), ("a literal block, strip chomping", "|-")):
+            with self.subTest(form=label, scope="step"):
+                src, first = self._with_step_in_shell_job("      - name: Block text (pytest)\n        env:\n          NOTES: %s\n"
+                                                          '            %s: "1"\n' % (indicator, SWITCH) + run)
+                new = self._new(src)
+                self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in new], [(None, "unlisted")], [_describe(i) for i in new])
+                self.assertEqual(switch_line_census(src)[1], [(first + 3, '%s: "1"' % SWITCH)], label)
+        with self.subTest(scope="job"):
+            src = self.src.replace("\n  shell:\n    name: Shell", '\n  shell:\n    env:\n      NOTES: |\n        %s: "1"\n    name: Shell' % SWITCH, 1)
+            self.assertNotEqual(src, self.src, "the shell job's header moved: re-anchor this case")
+            src, first = self._with_step_in_shell_job("      - name: Job block text (pytest)\n" + run, src)
+            new = self._new(src)
+            self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in new], [(None, "unlisted")], [_describe(i) for i in new])
+            at = [n + 1 for n, l in enumerate(src.splitlines()) if l == '        %s: "1"' % SWITCH]
+            self.assertEqual(switch_line_census(src)[1], [(at[0], '%s: "1"' % SWITCH)])
+        # the switch's own value as a block scalar (`|-` then 1 is "1" to YAML): its key line is not read clean, the
+        # value read is the indicator, never 1, and the census names the key line
+        src, first = self._with_step_in_shell_job("      - name: Block switch (pytest)\n        env:\n          %s: |-\n            1\n" % SWITCH + run)
+        self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in self._new(src)], [("|-", "unlisted")])
+        self.assertEqual(switch_line_census(src)[1], [(first + 2, "%s: |-" % SWITCH)])
+        # the controls: a real switch key at the block's key indent after another key's block scalar reads, and a `#`
+        # line inside the block scalar is its text; the census names nothing
+        src, first = self._with_step_in_shell_job("      - name: After a block (pytest)\n        env:\n          NOTES: |\n"
+                                                  "            # a line of text\n            more text\n          %s: \"1\"\n" % SWITCH + run)
+        self.assertEqual([(i["env"].get(SWITCH), verdict(i)) for i in self._new(src)], [("1", "ok")])
+        self.assertEqual(switch_line_census(src)[1], [])
+
+    def test_a_yaml_anchor_alias_or_merge_key_anywhere_is_refused_at_its_line(self):
+        # the owner's fail-closed design (2026-09-23): the parser reads no anchor, alias or merge key, and the pre-push
+        # lenses planted the first four of these beside a pytest run without the switch or the flag and read green,
+        # since no other check here names them (asserted per plant: nothing else is red). unread_yaml_forms refuses each
+        # at its line; a merge key, which GitHub's runner refuses, is refused the same way
+        sw_job = '    runs-on: ubuntu-latest\n    env:\n      %s: "1"\n' % SWITCH
+        run_ok = "        run: python -m pytest tests/test_a.py -q -p no:anyio\n"
+        for label, where, text, named in (
+                ("an anchor on a name: value, aliased by a run (N06)", "first",
+                 "      - name: &cmd python -m pytest tests/test_a.py -q\n        run: *cmd\n",
+                 ((1, "an anchor (&cmd)"), (2, "an alias (*cmd)"))),
+                ("an anchored step aliased into a job without the switch (A01b)", "job",
+                 "  anch:\n" + sw_job + "    steps:\n      - &pystep\n        name: Anchored step (pytest)\n" + run_ok +
+                 "  alias:\n    runs-on: ubuntu-latest\n    steps:\n      - *pystep\n",
+                 ((6, "an anchor (&pystep)"), (12, "an alias (*pystep)"))),
+                ("an anchored steps list aliased into a job without the switch (A02b)", "job",
+                 "  anch:\n" + sw_job + "    steps: &st\n      - name: In anchored list (pytest)\n" + run_ok +
+                 "  copy:\n    runs-on: ubuntu-latest\n    steps: *st\n",
+                 ((5, "an anchor (&st)"), (10, "an alias (*st)"))),
+                ("env: *x, its anchor on a line of its own (the env alias plant)", "job",
+                 "  setter:\n" + sw_job + "    steps:\n      - name: Env anchor\n        env:\n          &zeroenv\n"
+                 '          %s: "0"\n        run: echo anchor\n      - name: Env alias (pytest)\n        env: *zeroenv\n' % SWITCH + run_ok,
+                 ((8, "an anchor (&zeroenv)"), (12, "an alias (*zeroenv)"))),
+                ("a merge key bringing a run into a step", "first",
+                 "      - &base\n        name: Base\n        run: echo base\n      - <<: *base\n        name: Merged\n",
+                 ((1, "an anchor (&base)"), (4, "a merge key (<<)"), (4, "an alias (*base)")))):
+            with self.subTest(form=label):
+                src, first = (self._with_job_before_shell if where == "job" else self._with_first_step_in_shell_job)(text)
+                want = [(first + k - 1, src.splitlines()[first + k - 2].strip(), what) for k, what in named]
+                self.assertEqual(unread_yaml_forms(src), sorted(want), label)
+                self.assertEqual((self._new_bad(src), pytest_line_census(src)[1], switch_line_census(src)[1], unread_job_keys(src)[1]),
+                                 ([], [], [], []), "%s: the refusal is the one red" % label)
+        # the controls, the real file's own shapes: `&&`, `2>&1` and a `*` glob in a run; a literal block whose lines
+        # open with `*)` and `&>`; a quoted scalar holding `*` and `&`; each reads as text
+        for label, text in (("operators and a glob in a plain run", "      - name: Plain\n        run: make a && ls tests/*.py 2>&1 | tee log\n"),
+                            ("a literal block's lines", "      - name: Block\n        run: |\n          case $x in\n            *) echo other ;;\n"
+                                                        "          esac\n          &>/dev/null true\n"),
+                            ("a quoted scalar", '      - name: "* & *"\n        run: echo \'&x *y\'\n')):
+            with self.subTest(control=label):
+                self.assertEqual(unread_yaml_forms(self._with_first_step_in_shell_job(text)[0]), [], label)
+
+    def test_a_step_or_env_written_as_a_flow_collection_is_refused_at_its_line(self):
+        # the owner's fail-closed design (2026-09-23; the pre-push lenses' N04 and N05): the parser reads no step in
+        # flow style, and a flow mapping over several lines whose name line carried a JSON-style `"run":` key read
+        # green, the census excusing the line as a lone name key. A flow mapping or sequence holding a run, env or shell
+        # key, or a name key beside another key, is refused at the key's line
+        for label, text, named, what in (
+                ('a JSON-style "run": after the name, over several lines (N04)',
+                 '      - {\n          name: FlowAdj, "run":python -m pytest tests/test_a.py -q\n        }\n', 2, "a flow mapping holding the key 'run'"),
+                ("the same with 'run': (N05)",
+                 "      - {\n          name: FlowAdj, 'run':python -m pytest tests/test_a.py -q\n        }\n", 2, "a flow mapping holding the key 'run'"),
+                ("a one-line flow step", "      - {name: Flow step, run: python -m pytest tests/test_a.py -q}\n", 1, "a flow mapping holding the key 'run'"),
+                ("a flow env on a flow step", '      - {name: Flow env, env: {%s: "0"}, uses: ./a}\n' % SWITCH, 1, "a flow mapping holding the key 'env'"),
+                ("a shell key in a flow sequence's mapping", "      - uses: ./a\n        with: [{shell: bash}]\n", 2, "a flow mapping holding the key 'shell'"),
+                ("a name beside another key", "      - {name: Flow action, uses: ./.github/actions/a}\n", 1, "a flow mapping holding a name key beside another key")):
+            with self.subTest(form=label):
+                src, first = self._with_first_step_in_shell_job(text)
+                line = first + named - 1
+                self.assertEqual([(n, w) for n, _t, w in unread_yaml_forms(src)], [(line, what)], label)
+        # the N04 line is named by the census as well: a `:` right after a quoted scalar is a key, so the line is not a
+        # lone name key (_name_key_alone)
+        src, first = self._with_first_step_in_shell_job('      - {\n          name: FlowAdj, "run":python -m pytest tests/test_a.py -q\n        }\n')
+        self.assertEqual([n for n, _t in pytest_line_census(src)[1]], [first + 1])
+        # the controls: a flow sequence of values (the file's `branches: [main]` and its matrix lists), a flow mapping
+        # of an action's inputs, and a flow mapping holding a name alone
+        for label, text in (("a flow sequence of values", "      - uses: ./a\n        with:\n          list: ['3.10', \"3.13\", main]\n"),
+                            ("a flow mapping of inputs", "      - uses: actions/setup-python@v5\n        with: {python-version: '3.12', cache: pip}\n"),
+                            ("a name alone", "      - uses: ./a\n        with: {name: only}\n")):
+            with self.subTest(control=label):
+                self.assertEqual(unread_yaml_forms(self._with_first_step_in_shell_job(text)[0]), [], label)
+
 
 # ---------------------------------------------------------------------------------------------------------------------
 # The launcher census (round 3's ruling, 2026-09-20; item 5 of the module docstring): every pytest the suite itself
@@ -2415,6 +2792,8 @@ IN_PROCESS_CALLS = ("pytest.main", "pytest.console_main", "_pytest.config.main",
 # a path outside this set can reach none of those calls by an attribute
 CENSUS_CALLS = tuple(FIRST_ARG_CALLS) + tuple(POSITIONAL_ARGV_CALLS) + IN_PROCESS_CALLS + ("shlex.split",)
 CENSUS_PATHS = frozenset(".".join(c.split(".")[:k]) for c in CENSUS_CALLS for k in range(1, c.count(".") + 2))
+CENSUS_STAR_MODULES = frozenset(c.rpartition(".")[0] for c in CENSUS_CALLS)   # a star import the census reads comes from one
+BUILTIN_NAMES = frozenset(dir(builtins))
 UNBOUND_MODULES = ("subprocess", "os", "shlex", "asyncio", "pytest", "_pytest")   # a bare name the module never binds reads as itself
 SHELL_NAMES = ("sh", "bash", "dash", "zsh", "ksh")                 # an argv headed by one of these runs its -c string
 FLAG_ARGV = ("-p", "no:anyio")
@@ -2505,8 +2884,9 @@ def _launchers_in(src, filename):
     """The launchers, and the pytest commands the census cannot read as an argv, in one module's source. Each is a dict:
     file (the basename; child_pytest_launchers rewrites it relative to tests/), line, func (the enclosing function, else
     '<module>'), kind (_argv_command's answer, after the call's name for positional arguments; "an argv literal" for a
-    literal it reports unparsed; the call that got a string; or "<call> (in process)"), argv (the constant elements in order, None for an expression), flag (_passes_flag), unparsed (None,
-    or why the command was not read as an argv).
+    literal it reports unparsed; the call that got a string; "<call> (in process)"; or "a call the census cannot
+    resolve"), argv (the constant elements in order, None for an expression), flag (_passes_flag), unparsed (None, or
+    why the command was not read as an argv).
     Read: every list or tuple literal in the module whose command is pytest (_argv_command: `-m pytest` after an
     interpreter head through interpreter options, pytest by name or path), wherever it is built: in the subprocess
     call, in a helper that passes it on, in a variable extended later, so a helper-built argv is counted.
@@ -2515,11 +2895,18 @@ def _launchers_in(src, filename):
     aside), and a call that runs pytest in this process (IN_PROCESS_CALLS: pytest.main, pytest.console_main and
     _pytest.config's two), a launcher whose argv is its first positional argument or args= and must carry the flag
     itself. A call is known by its qualified name through the module's own names for it that the census resolves: an
-    import (an alias, and a star import from a module whose calls it reads, included) and a plain or annotated
-    assignment from such a name, each looked up in the scope Python looks it up in (the call's own function, the
-    functions around it, the module), a name bound more than once there standing for every path it is bound to; a
-    module name that no scope on that chain binds (a star import from elsewhere brought it) reads as itself.
-    Unparsed, and red in ChildPytestLaunchers until spelled as an argv: a list or tuple literal that may run pytest and
+    import (an alias, and a star import from a module whose calls it reads, CENSUS_STAR_MODULES, included) and a plain
+    or annotated assignment from such a name, each binding placed where Python places it (home: in its own scope, at
+    the module under a global declaration, in the enclosing function that binds the name under a nonlocal one) and
+    looked up in the scopes Python looks it up in (chain: the call's own scope, the functions around it with class
+    bodies skipped, the module; straight to the module under a global declaration), a name bound more than once there
+    standing for every path it is bound to; a module name that no scope on that chain binds (a star import may have
+    brought it) reads as itself. Unparsed, and red in ChildPytestLaunchers until spelled as an argv or rewritten: a call
+    whose callee's name this resolution cannot resolve (the owner's fail-closed design, 2026-09-23; unresolved): one
+    inside a comprehension or generator expression, outside its first iterable, in a class body that binds the name,
+    where Python looks the name up past the class and the census does not model that scope; and one through a name no
+    scope binds and no builtin names, in a module with a star import from a module outside CENSUS_STAR_MODULES (or a
+    relative one), whose names the census does not read. Unparsed too: a list or tuple literal that may run pytest and
     the census cannot tell (after an interpreter head, a -m whose module name is not a constant, or an element that is
     not a constant right before `pytest`; _argv_command's docstring); a constant string or f-string, written at the
     call, handed to subprocess.run, Popen, call, check_call, check_output, getoutput or getstatusoutput, to os.system
@@ -2533,12 +2920,12 @@ def _launchers_in(src, filename):
     a set of names, not an argv, and is not read. Not read, stated as the residual and each pinned by a case with no
     row (test_each_form_outside_the_read_gives_no_row): an argv assembled one element at a time (append calls); a
     command string held in a variable or built with %, + or .format, a `-c` string held in a variable among them; any
-    call, string or in process, reached through a name this resolution does not reach, among them one bound other
-    than by an import or a plain or annotated assignment (tuple unpacking, a walrus, a conditional expression, a
-    parameter default) and one reached through getattr, importlib or runpy; and a string that spells pytest anywhere
-    else (a
-    script written to a file, an exec; the suite's synthetic tool-call fixtures spell `uv run pytest -q` by the dozen),
-    which is data, not a command."""
+    call, string or in process, reached through a name this resolution does not reach and does not refuse, among them
+    one bound other than by an import or a plain or annotated assignment (tuple unpacking, a walrus, a conditional
+    expression, a parameter default), an attribute of a class or an instance (`T.m`, `self.m`), and one reached
+    through getattr, importlib or runpy; and a string that spells pytest anywhere else (a script written to a file, an
+    exec; the suite's synthetic tool-call fixtures spell `uv run pytest -q` by the dozen), which is data, not a
+    command."""
     base = os.path.basename(filename)
     try:
         tree = ast.parse(src, filename=filename)
@@ -2547,8 +2934,9 @@ def _launchers_in(src, filename):
                  "unparsed": "the module does not parse under this interpreter (%s), so nothing in it was read" % e.msg}]
     parents = {}
     membership = set()          # the right operands of `x in (...)` / `x not in [...]`: sets of names, never an argv
-    imports, assigns = [], []   # gathered in this walk, not walks of their own: walking every module is most of the
-                                # census's cost
+    # gathered in this walk, not walks of their own (walking every module is most of the census's cost): the imports,
+    # the assignments from a name, and the global and nonlocal statements
+    imports, assigns, decls = [], [], []
     for parent in ast.walk(tree):
         for child in ast.iter_child_nodes(parent):
             parents[child] = parent
@@ -2558,6 +2946,8 @@ def _launchers_in(src, filename):
             imports.append(parent)
         elif isinstance(parent, (ast.Assign, ast.AnnAssign)) and isinstance(parent.value, (ast.Name, ast.Attribute)):
             assigns.append((parent, parent.targets if isinstance(parent, ast.Assign) else [parent.target], parent.value))
+        elif isinstance(parent, (ast.Global, ast.Nonlocal)):
+            decls.append(parent)
 
     def func_of(node):
         while node in parents:
@@ -2587,6 +2977,77 @@ def _launchers_in(src, filename):
             scopes[n] = found
         return found
 
+    declared = {}               # {scope: {name: "global" or "nonlocal"}}, as the scope's own statements declare it
+    for node in decls:
+        where = scope_of(node)
+        for name in node.names:
+            declared.setdefault(where, {})[name] = "global" if isinstance(node, ast.Global) else "nonlocal"
+    bound_cache = []
+
+    def bound_by_any():
+        """{scope: the names a statement in that scope binds}, before a global or nonlocal declaration moves them: an
+        assignment, deletion or loop target, a def or class name, a parameter, an import, an except or match capture. A
+        comprehension's own targets are left out, since they bind in the comprehension. Built on first use, since only
+        a nonlocal declaration and a star import from a module the census does not read need it."""
+        if not bound_cache:
+            table, own = {}, set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.comprehension):
+                    own.update(id(t) for t in ast.walk(node.target))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)) and id(node) not in own:
+                    names = [node.id]
+                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    names = [node.name]
+                elif isinstance(node, ast.arg):
+                    names = [node.arg]
+                elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                    names = [a.asname or a.name.split(".")[0] for a in node.names if a.name != "*"]
+                elif isinstance(node, ast.ExceptHandler) or type(node).__name__ in ("MatchAs", "MatchStar"):
+                    names = [node.name] if node.name else []
+                elif type(node).__name__ == "MatchMapping":
+                    names = [node.rest] if node.rest else []
+                else:
+                    continue
+                for name in names:
+                    table.setdefault(scope_of(node), set()).add(name)
+            bound_cache.append(table)
+        return bound_cache[0]
+
+    def home(scope, name):
+        """The scope a binding of `name` made in `scope` lands in, as Python places it (the owner's fail-closed design,
+        2026-09-23): the module for a name `scope` declares global; for one it declares nonlocal, the nearest function
+        around it that binds the name itself, class bodies skipped; else `scope`. Until then a binding stayed in its own
+        scope, so `global run` then `from subprocess import run` in a setup function, called from a test, gave the
+        test's call no row, where the module-wide read before round 4's verify had read it."""
+        kind = declared.get(scope, {}).get(name)
+        if kind == "global":
+            return None
+        if kind == "nonlocal":
+            up = scope_of(scope)
+            while up is not None:
+                if not isinstance(up, ast.ClassDef):
+                    outer = declared.get(up, {}).get(name)
+                    if outer == "global":
+                        return None
+                    if outer is None and name in bound_by_any().get(up, ()):
+                        return up
+                up = scope_of(up)
+        return scope
+
+    def chain(name, scope, first=True):
+        """The scopes Python looks `name` up in from `scope`, in order: `scope` itself (a class body only when `first`,
+        the use sitting in it), each function around it with class bodies skipped, then the module (None); a scope that
+        declares the name global sends the lookup straight to the module, past the functions around it. (A scope that
+        declares it nonlocal holds no binding of it, since home moves each one out, so the lookup passes it by.)"""
+        while scope is not None:
+            if declared.get(scope, {}).get(name) == "global":
+                break
+            if first or not isinstance(scope, ast.ClassDef):
+                yield scope
+            scope, first = scope_of(scope), False
+        yield None
+
     # What each name stands for, as dotted paths, scope by scope (review round 4's verify, 2026-09-23: until then one
     # dict held the whole module and the last binding won, so a launcher's name rebound in another function, `from json
     # import loads as run` beside `from subprocess import run`, read as the other binding and its launcher gave no
@@ -2594,11 +3055,13 @@ def _launchers_in(src, filename):
     # import from a module whose calls the census reads binds each of those calls' names, and `m = pytest.main` binds m
     # to what the right side names. A name bound more than once in one scope stands for every path it is bound to (no
     # flow is followed: a false row, never a lost one). Only the paths that can reach a call the census reads are kept
-    # (CENSUS_PATHS), so a name bound to anything else is bound and stands for nothing, and `p = p.parent` cannot grow
+    # (CENSUS_PATHS), so a name bound to anything else is bound and stands for nothing, and `p = p.parent` cannot grow.
+    # A binding lands where Python puts it (home): the module for a name declared global, the enclosing function for
+    # one declared nonlocal
     bindings = {}
 
     def bind(scope, name, paths):
-        names = bindings.setdefault(scope, {})
+        names = bindings.setdefault(home(scope, name), {})
         fresh = name not in names
         cur = names.setdefault(name, set())
         grow = {p for p in paths if p in CENSUS_PATHS} - cur
@@ -2623,17 +3086,16 @@ def _launchers_in(src, filename):
                 else:
                     bind(scope, a.asname or a.name, {node.module + "." + a.name})
 
-    def resolve(name_node):
+    def resolve(name_node, skip_class=False):
         """The paths a name stands for where it is used: the innermost scope that binds it, looked up as Python looks
-        it up (the use's own scope, then each function around it, a class body skipped, then the module); a module
-        name that no scope on that chain binds stands for itself (a star import from elsewhere may have brought it)."""
-        name, scope, first = name_node.id, scope_of(name_node), True
-        while scope is not None:
-            if (first or not isinstance(scope, ast.ClassDef)) and name in bindings.get(scope, {}):
+        it up (chain: the use's own scope, then each function around it, a class body skipped, then the module; global
+        and nonlocal declarations followed); a module name that no scope on that chain binds stands for itself (a star
+        import from a module whose calls the census reads may have brought it). `skip_class` skips the use's own class
+        body too, as Python does for a use inside a comprehension there."""
+        name = name_node.id
+        for scope in chain(name, scope_of(name_node), not skip_class):
+            if name in bindings.get(scope, {}):
                 return bindings[scope][name]
-            scope, first = scope_of(scope), False
-        if name in bindings.get(None, {}):
-            return bindings[None][name]
         return {name} if name in UNBOUND_MODULES else set()
 
     def dotted(expr):
@@ -2659,6 +3121,53 @@ def _launchers_in(src, filename):
 
     def is_shlex_split(node):
         return isinstance(node, ast.Call) and "shlex.split" in dotted(node.func)
+
+    # the refusals (the owner's fail-closed design, 2026-09-23): a name in a call's callee position that this resolution
+    # cannot resolve is named, never passed. Until then a comprehension in a class body, whose names Python looks up
+    # past the class, read the class's binding, and a name a star import from an unread module brought read as unbound:
+    # each gave no row where pytest.main ran
+    unread_stars = sorted({"." * node.level + (node.module or "") for node in imports if isinstance(node, ast.ImportFrom)
+                           and any(a.name == "*" for a in node.names) and (node.level or node.module not in CENSUS_STAR_MODULES)})
+
+    def in_class_comprehension(node):
+        """True when `node` sits in a comprehension or generator expression whose scope is a class body, outside its
+        first iterable (which Python evaluates in the class body itself)."""
+        crossed, first_iter = False, None
+        while node in parents:
+            up = parents[node]
+            if isinstance(up, ast.comprehension):
+                first_iter = up if node is up.iter else None
+            elif isinstance(up, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+                crossed = crossed or not (first_iter is not None and up.generators[0] is first_iter)
+                first_iter = None
+            elif isinstance(up, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                return False
+            elif isinstance(up, ast.ClassDef):
+                return crossed
+            node = up
+        return False
+
+    def homes_of(name):
+        """The scopes a statement binds `name` in, each moved where a global or nonlocal declaration puts it."""
+        return {home(where, name) for where, names in bound_by_any().items() if name in names}
+
+    def unresolved(func):
+        """Why the census refuses to read a call through `func` (its root name), or None."""
+        root = func
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        if not isinstance(root, ast.Name):
+            return None
+        if in_class_comprehension(root) and resolve(root) != resolve(root, skip_class=True):
+            return ("a call through %r inside a comprehension or generator expression in a class body that binds the name: "
+                    "Python looks the name up past the class there, and the census does not resolve that scope, so it is "
+                    "not read as a launcher until the call moves out of the comprehension" % root.id)
+        if unread_stars and not resolve(root) and root.id not in BUILTIN_NAMES and not any(
+                scope in homes_of(root.id) for scope in chain(root.id, scope_of(root))):
+            return ("a call through %r, a name no scope here binds, in a module with a star import from %s, which the census "
+                    "does not read (the name may come from it): not read as a launcher until the name is imported by name"
+                    % (root.id, ", ".join(unread_stars)))
+        return None
 
     out = []
 
@@ -2726,6 +3235,10 @@ def _launchers_in(src, filename):
                 row(node, "an argv literal", [], unparsed)
             continue
         if not isinstance(node, ast.Call):
+            continue
+        refused = unresolved(node.func)
+        if refused:
+            row(node, "a call the census cannot resolve", [], refused)
             continue
         for what in sorted(dotted(node.func)):
             call_row(node, what)
@@ -2994,6 +3507,41 @@ class ChildPytestLaunchers(unittest.TestCase):
         ("a class attribute does not hide the module's name from a method",
          'import os\nfrom subprocess import run\n\nclass T:\n    run = os.getcwd\n\n    def go(self):\n        return run("pytest -q", shell=True)\n',
          "unparsed", "a pytest command in a shell string"),
+        # a binding lands where Python puts it (the owner's fail-closed design, 2026-09-23; the pre-push lenses' L03,
+        # L04, L12 and the regression): a name a function declares global binds at the module, one it declares nonlocal
+        # in the enclosing function that binds it. Until then each binding stayed in its own function and each call gave
+        # no row; the regression's call had a row before round 4's verify made the resolution scoped
+        ("the regression: a setup function's global import of subprocess.run, called from a test",
+         'def _setup():\n    global run\n    from subprocess import run\ndef test_x():\n    _setup()\n'
+         '    run("python -m pytest -q tests/test_a.py", shell=True)\n', "unparsed", "a pytest command in a shell string"),
+        ("pytest.main imported under a global declaration (L03)",
+         'main = None\ndef setup():\n    global main\n    from pytest import main\ndef test():\n    return main(["-q", "tests/x.py"])\n',
+         False, "pytest.main (in process)"),
+        ("pytest.main imported under a nonlocal declaration, called by a sibling (L04)",
+         'def outer():\n    main = print\n    def setup():\n        nonlocal main\n        from pytest import main\n'
+         '    def go():\n        return main(["-q"])\n    setup()\n    return go()\n', False, "pytest.main (in process)"),
+        ("a use under a global declaration reads the module's name, past an enclosing function's",
+         'from subprocess import run\ndef outer():\n    from json import loads as run\n    def f():\n        global run\n'
+         '        return run("pytest -q", shell=True)\n', "unparsed", "a pytest command in a shell string"),
+        ("a global assignment of pytest.main, the call in a nested function",
+         'import pytest\ndef setup():\n    global go\n    go = pytest.main\ndef outer():\n    def inner():\n        return go(["-q"])\n',
+         False, "pytest.main (in process)"),
+        # the refusals: a name in a call's callee position the resolution cannot resolve is named, never passed (the
+        # pre-push lenses' L07, L14 and L09, each silent until then)
+        ("a comprehension in a class body that binds the name (L07)",
+         'from pytest import main as m\nclass T:\n    from json import loads as m\n    out = [m(["-q"]) for _ in (1,)]\n',
+         "unparsed", "inside a comprehension or generator expression in a class body that binds the name"),
+        ("a generator expression in a class body that binds the name (L14)",
+         'from pytest import main as m\nclass T:\n    from json import loads as m\n    out = list(m(["-q"]) for _ in (1,))\n',
+         "unparsed", "inside a comprehension or generator expression in a class body that binds the name"),
+        ("a class body binding pytest.main, called in its comprehension",
+         'import pytest\nclass T:\n    m = pytest.main\n    out = {k: m([k]) for k in ("-q",)}\n',
+         "unparsed", "inside a comprehension or generator expression in a class body that binds the name"),
+        ("a name no scope binds beside a star import from a module the census does not read (L09)",
+         'from helpers_x import *\ndef go():\n    return main(["-q"])\n',
+         "unparsed", "a name no scope here binds, in a module with a star import from helpers_x"),
+        ("an attribute of such a name", 'from .helpers import *\nsp.run("pytest -q", shell=True)\n',
+         "unparsed", "a name no scope here binds, in a module with a star import from .helpers"),
     )
     # the argv each positional form reads, its elements joined by spaces (None for an expression): a spawn form's mode
     # and an e form's env are not argv elements. Strings, not lists: a list here would be an argv literal this census reads.
@@ -3066,12 +3614,41 @@ class ChildPytestLaunchers(unittest.TestCase):
         ("a string call through a parameter default", 'import os\ndef go(sh=os.system):\n    sh("pytest -q")\n'),
         ("pytest.main through tuple unpacking", 'import pytest\nm, _ = pytest.main, None\nm(["-q"])\n'),
         ("pytest.main through a walrus", 'import pytest\nif (m := pytest.main):\n    m(["-q"])\n'),
+        # an attribute of a class or an instance (the pre-push lenses' L05 and L06)
+        ("pytest.main as a class attribute reached through the class", 'import pytest\nclass T:\n    m = pytest.main\n'
+         '    def go(self):\n        return T.m(["-q"])\n'),
+        ("pytest.main as a class attribute reached through self", 'import pytest\nclass T:\n    m = staticmethod(pytest.main)\n'
+         '    def go(self):\n        return self.m(["-q"])\n'),
     )
 
     def test_each_form_outside_the_read_gives_no_row(self):
         for label, src in self.OUTSIDE_THE_READ:
             with self.subTest(form=label):
                 self.assertEqual(_launchers_in(src, "test_synthetic_launcher.py"), [], label)
+
+    def test_a_name_the_resolution_reads_is_not_refused(self):
+        # the refusals' edges (the owner's fail-closed design, 2026-09-23): a comprehension in a class body is refused
+        # only where the class binds the callee's name, so the lookup past the class could differ, and outside its first
+        # iterable, which Python evaluates in the class body; a star import from an unread module refuses only a name no
+        # scope binds and no builtin names. Each of these is read as Python reads it
+        for label, src, rows in (
+                ("a class-body comprehension whose class does not bind the name reads the module's",
+                 'from pytest import main as m\nclass T:\n    out = [m(["-q"]) for _ in (1,)]\n', ["pytest.main (in process)"]),
+                ("the first iterable is the class body's own",
+                 'from pytest import main as m\nclass T:\n    from json import loads as m\n    out = [x for x in m("[1]")]\n', []),
+                ("a lambda in a class body skips the class, and is read",
+                 'from pytest import main as m\nclass T:\n    from json import loads as m\n    f = lambda self: m(["-q"])\n', ["pytest.main (in process)"]),
+                ("a star import from an unread module beside builtins, a def, an import and a parameter",
+                 'import os\nfrom helpers_x import *\ndef local(): pass\ndef go(cb):\n    local()\n    print(len([]))\n    cb()\n'
+                 '    os.getcwd()\n', []),
+                ("a star import from a module the census reads refuses nothing",
+                 'from subprocess import *\ndef go():\n    return helper()\n', []),
+                ("a name declared global and bound nowhere else is unbound, with no star import to refuse it",
+                 'def go():\n    global main\n    return main(["-q"])\n', [])):
+            with self.subTest(form=label):
+                got = _launchers_in(src, "test_synthetic_launcher.py")
+                self.assertEqual([r["kind"] for r in got], rows, [_describe_launcher(r) for r in got])
+                self.assertTrue(all(r["unparsed"] is None for r in got), [_describe_launcher(r) for r in got])
 
     def test_the_walk_parses_a_module_whose_only_pytest_spelling_is_the_one_token_form(self):
         # child_pytest_launchers skips a module without a parse when its text spells no pytest; until 2026-09-21 that
