@@ -1551,6 +1551,14 @@ SERVED_COMPUTED = ("fetch(u,{cache", "fetch(path,{method:'POST',headers", "fetch
 PANE_CSS = re.compile(r'\(UI / "webview" / "([a-z]+-pane\.css)"\)\.read_text\(\)')
 # A, the chat-media road: the row's key line and the JS entry (with and without the lookbehind that keeps the definition out)
 CHAT_MEDIA_LABEL = "a rendered message's media (browser)"
+# The sent cell's clause on an inline svg's paint references (kept by the sanitizer, loading at render, their request able to carry the
+# dashboard's address with the serve token in its Referer), one text with SECURITY.md's sentence, which tests/test_security_price_feed.py
+# holds to the same words; the claim it replaces, that no token rides, is held absent
+CHAT_MEDIA_PAINT = ("an inline svg's paint references (a `fill`, `mask` or `filter` whose `url()` names another host) load at render too, with no "
+                    "click, and are the one case where the request can carry the dashboard's address with the serve token in its Referer: the browser does "
+                    "not reliably hold them to the page's referrer policy, so the request to that host can carry the page's origin or the full chat URL "
+                    "with the serve token (the response is blocked as cross-origin; the request, with that header, has reached the host)")
+CHAT_MEDIA_NO_TOKEN_WITHDRAWN = "no serve token, key or login token rides"
 CHAT_MEDIA_ROW = '_t("chat-media", "ui/webview/render.ts:mdImgPostPass")'
 MD_IMG_ENTRY = '("mdImgPostPass", r"(?<!function )\\bmdImgPostPass\\(")'
 MD_IMG_ENTRY_NO_LOOKBEHIND = '("mdImgPostPass", r"\\bmdImgPostPass\\(")'
@@ -1862,7 +1870,9 @@ class TheChatMediaRoadIsRowed(_Scope):
     """A rendered message's media on the web dashboard is a road (the fourth round, tests-1): the pipeline's one line on a
     message's pictures before the browser fetches them, `mdImgPostPass(clean)` in md() and in userMd(), is the row's site (two
     lines, keyed ui/webview/render.ts:mdImgPostPass, through a JS entry whose lookbehind keeps the definition in preview.ts out),
-    and the table's row states the render as the trigger, the cross-site cookies and no Referer as what is sent, and no switch.
+    and the table's row states the render as the trigger, the cross-site cookies and no Referer as what is sent (save an inline svg's
+    paint references, whose request can carry the dashboard's address with the serve token in its Referer, one text with the
+    section's sentence), and no switch.
     The executed witness is ui/webview/chat-media-loads-browser.test.ts (the request events of a page served under the
     dashboard's headers, and the editor CSP scene), which skips without a browser; tests/test_security_price_feed.py holds the
     section's sentence and the row's cells to the same words."""
@@ -1889,8 +1899,10 @@ class TheChatMediaRoadIsRowed(_Scope):
                        "the editor extension's webviews block these loads by their CSP"):
             self.assertIn(phrase, cells[2], "the trigger cell names the population and the editor's block")
         for phrase in ("with the cross-site cookies that browser sends to that host", "no Referer (every page the kernel serves carries `Referrer-Policy: same-origin`)",
-                       "no serve token, key or login token rides in it"):
-            self.assertIn(phrase, cells[3], "the sent cell: the host the URL names, the cookies a cross-site subresource carries, no Referer, no credential of romp's")
+                       CHAT_MEDIA_PAINT):
+            self.assertIn(phrase, cells[3], "the sent cell: the host the URL names, the cookies a cross-site subresource carries, no Referer, and the one case "
+                          "whose request can carry the dashboard's address with the serve token in its Referer, an inline svg's paint references")
+        self.assertNotIn(CHAT_MEDIA_NO_TOKEN_WITHDRAWN, cells[3], "the sent cell no longer claims that no token rides: a paint reference's Referer can carry the serve token")
         self.assertEqual(cells[4], "none: no setting gates a message's media (the gear's Pictures from the web in files list gates a viewed file's figures, not the chat's)")
         self.assertTrue(os.path.isfile(os.path.join(ROOT, "ui", "webview", "chat-media-loads-browser.test.ts")), "the executed witness is in the tree")
 

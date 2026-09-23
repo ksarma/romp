@@ -92,7 +92,9 @@ copy of the section and with the residual deleted from a scratch copy of the scr
 
 The fourth round (2026-09-23, the landing round again) found a road with no row and three cells that misstated the code. The
 section now says the chat-media road (on the web dashboard a rendered message's media loads from the host its URL names on
-render, with the cookies a cross-site subresource carries and no Referer; the editor webviews' CSP blocks it), the file viewer's
+render, with the cookies a cross-site subresource carries and no Referer, save an inline svg's paint references, which the
+sanitizer keeps and whose request can carry the dashboard's address with the serve token in its Referer, a correction from an
+executed fact check of the media road; the editor webviews' CSP blocks it), the file viewer's
 GitHub button (an address romp composes from the checkout's owner and repository name, its branch or the commit sha when HEAD is
 detached, and the file's path, to github.com) in the clicked-link road's trigger list and sent clause, the sign-in link's opener
 per document (the settings page installs none: the browser's own open; the editor's chat panel posts openLink; the editor's feed
@@ -302,6 +304,15 @@ CHAT_MEDIA_LABEL = "a rendered message's media (browser)"
 CHAT_MEDIA = ("on the web dashboard the chat's rendered markdown (a session's reply, your own message, a postal body) loads an image, video, "
               "audio, srcset or picture media from the host its URL names the moment it renders")
 CHAT_MEDIA_COOKIES = "with whatever cookies that browser sends cross-site to that host and no Referer"
+# Corrected from an executed fact check of the media road on a lab kernel: the sanitizer keeps an inline svg's paint references, which
+# load at render like the media above, and their request does not reliably follow the page's referrer policy (the page's origin in one
+# run, the full chat URL with the serve token in another, where every image, video, audio, srcset and picture request carried none).
+# One text in the section's sentence and the table's sent cell; the claim it replaces, that no token rides, is held absent from both.
+CHAT_MEDIA_PAINT = ("an inline svg's paint references (a `fill`, `mask` or `filter` whose `url()` names another host) load at render too, with no "
+                    "click, and are the one case where the request can carry the dashboard's address with the serve token in its Referer: the browser does "
+                    "not reliably hold them to the page's referrer policy, so the request to that host can carry the page's origin or the full chat URL "
+                    "with the serve token (the response is blocked as cross-origin; the request, with that header, has reached the host)")
+CHAT_MEDIA_NO_TOKEN_WITHDRAWN = "no serve token, key or login token rides"
 CHAT_MEDIA_WITNESS = "ui/webview/chat-media-loads-browser.test.ts"
 # The GitHub button (extra7-1): the clicked-link row's sent cell names the address romp composes, held to the URL shapes
 # tests/test_file_github.py executes; the trigger cell names the button's mechanics per document; the section carries both
@@ -397,7 +408,7 @@ ROAD_PHRASES = {
     "the judges' CLI (session-or-judge-cli)": ("the judge CLIs",),
     "the postal bus to peer buses (bus-request)": ("the postal mail between the two machines' buses",),
     "a viewed file's pictures from the web (browser)": (IN_THE_BROWSER, PICTURES_DEFAULT),
-    CHAT_MEDIA_LABEL: (CHAT_MEDIA, CHAT_MEDIA_COOKIES),
+    CHAT_MEDIA_LABEL: (CHAT_MEDIA, CHAT_MEDIA_COOKIES, CHAT_MEDIA_PAINT),
     CLICKED_LABEL: (CLICKED_LINK, CLICKED_HOST, CLICKED_SIGNIN),
     "bootstrap.sh (install-time-by-hand)": ("Installing by hand (`bootstrap.sh`, `install.sh`) fetches from GitHub",),
     "bin/romp-sdk-setup (install-time-by-hand; also run by the kernel's self-update through install.sh)": (GET_PIP,),
@@ -1118,6 +1129,10 @@ class TheSectionIsTheTables(_Pins):
         flat = _flat(NETWORK)
         self.assertQuoted(CHAT_MEDIA, flat, self.DOC, "the road: the chat's rendered markdown loads its media on render, on the web dashboard")
         self.assertQuoted(CHAT_MEDIA_COOKIES, flat, self.DOC, "what rides: the cookies a cross-site subresource carries, and no Referer")
+        self.assertQuoted(CHAT_MEDIA_PAINT, flat, self.DOC, "the one case whose request can carry the dashboard's address with the serve token in its "
+                          "Referer: an inline svg's paint references, kept by the sanitizer, loading at render with no click")
+        self.assertNotIn(CHAT_MEDIA_NO_TOKEN_WITHDRAWN, flat, "the section no longer claims that no token rides a rendered message's media request: "
+                         "a paint reference's Referer can carry the serve token")
         self.assertQuoted("the editor extension's webviews block these loads by their content security policy", flat, self.DOC, "the editor's negative")
         rows, rc, err = _table()
         self.assertTrue(rows, "%s --table printed no table (exit %s): %s" % (INVENTORY, rc, err))
@@ -1125,8 +1140,9 @@ class TheSectionIsTheTables(_Pins):
         self.assertTrue(cells, "the table has the road as a row: %r" % CHAT_MEDIA_LABEL)
         self.assertEqual(cells[0], "ui/webview/render.ts (`mdImgPostPass`)", "the where cell: the pipeline's post-pass on a message's pictures")
         self.assertQuoted("the render of a message on the web dashboard, and nothing else: no click, no gate, no setting", cells[1], "the road's trigger cell")
-        for phrase in ("with the cross-site cookies that browser sends to that host", "no Referer"):
+        for phrase in ("with the cross-site cookies that browser sends to that host", "no Referer", CHAT_MEDIA_PAINT):
             self.assertQuoted(phrase, cells[2], "the road's sent cell", "the same fact the section states")
+        self.assertNotIn(CHAT_MEDIA_NO_TOKEN_WITHDRAWN, cells[2], "the sent cell no longer claims that no token rides: the same fact the section states")
         self.assertQuoted("none: no setting gates a message's media", cells[3], "the road's off-switch cell")
         self.assertTrue(os.path.isfile(os.path.join(ROOT, CHAT_MEDIA_WITNESS)), "the executed witness is in the tree: " + CHAT_MEDIA_WITNESS)
         witness = _read(*CHAT_MEDIA_WITNESS.split("/"))

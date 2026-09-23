@@ -264,9 +264,15 @@ host its URL names the moment it renders (a video's poster and an inline svg's
 image load the same way), with whatever cookies that browser sends cross-site
 to that host and no Referer (a SameSite=None cookie, not the fuller set a
 top-level navigation carries; every page the kernel serves carries
-`Referrer-Policy: same-origin`); the editor extension's webviews block these
-loads by their content security policy, so this is the web dashboard's alone,
-and no serve token, key or login token rides in the request.
+`Referrer-Policy: same-origin`); an inline svg's paint references (a `fill`,
+`mask` or `filter` whose `url()` names another host) load at render too, with
+no click, and are the one case where the request can carry the dashboard's
+address with the serve token in its Referer: the browser does not reliably
+hold them to the page's referrer policy, so the request to that host can carry
+the page's origin or the full chat URL with the serve token (the response is
+blocked as cross-origin; the request, with that header, has reached the host);
+the editor extension's webviews block these loads by their content security
+policy, so this is the web dashboard's alone.
 
 The other connections open when something sets them up, you or a session you
 are running: an attached machine (ssh commands to it and tunnels to it, and
