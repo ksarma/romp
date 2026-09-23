@@ -220,9 +220,135 @@ class ThreadOwnSendRefused(unittest.TestCase):
     broken out (final; the isolation refusal a peer must not route around). The gate is also the witness the
     deadness mirror's disclosure rests on (fork PR #897, round 3): the mirror's roster omits comment threads, and
     the road to a false presumed-closed for a live thread runs only through a thread's mail crossing a host, which
-    this gate refuses before the relay unless the `threadMail` flag is set. No control of the UI sends that key, but
-    the kernel's WebSocket setSessionFlag arm writes any flag name a client sends (only POST /flag holds the name to
-    the kernel's _LANE_FLAGS), so a client message sets it as well as a hand edit of the file."""
+    this gate refuses before the relay unless the `threadMail` flag is set. One road writes that key today: the
+    kernel's WebSocket setSessionFlag arm, which accepts any flag name a client sends, while POST /flag, the one other
+    kernel route that writes a session flag, applies the _LANE_FLAGS whitelist and refuses it; a separate fix-tier PR
+    makes the WebSocket arm apply the same whitelist."""
+
+    KERNEL_SRC = os.path.realpath(os.path.join(BIN, "romp-kernel"))   # the file km was loaded from (kernel/kernel.py)
+    FLAG_WRITERS = {"_set_session_flag", "_set_notify_session"}
+    FLAG_ROUTES = {("_state_write_route", "/flag"), ("Handler._dispatch_ws", "setSessionFlag")}
+
+    @staticmethod
+    def _flag_writing_routes(source):
+        """The kernel's routes that write a session flag, DERIVED from the source (fork PR #897, round 3, the reviewer's
+        ruling on section D: the witness pins the population as a set, so a new route turns it red). Returns (writers,
+        references). A WRITER is a function holding a call of a write door (_write_state_json, _atomic_write, open, or a
+        method named replace, rename, write_text or write_bytes) one of whose arguments, or whose receiver, carries the
+        flags path: the constant "session-flags.json", a name bound to it in that function or at module level, or a call
+        of a function that returns it ("<module>" for a call outside every function). The door list errs wide (a read
+        through open, or a str.replace on the path, counts too), so a miss is what it guards against and a surplus fails
+        the pin loudly. A REFERENCE is every other mention of a writer's name in the file, a call or not, as (the
+        enclosing function's dotted name, the selectors, the writer), the selectors being the string constants compared
+        for equality in the tests of the if-statements whose body holds the mention, outermost first (the route's own
+        selector leads: POST /flag's path in _state_write_route, the WebSocket op's type in Handler._dispatch_ws)."""
+        import ast
+        flags = "session-flags.json"
+        tree = ast.parse(source)
+        parent = {c: n for n in ast.walk(tree) for c in ast.iter_child_nodes(n)}
+        defs = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+        def up(node):                                  # the ancestors, innermost first
+            while node in parent:
+                node = parent[node]
+                yield node
+
+        def function_of(node):
+            return next((n for n in up(node) if isinstance(n, defs)), None)
+
+        def has_const(expr):
+            return any(isinstance(c, ast.Constant) and c.value == flags for c in ast.walk(expr))
+
+        path_funcs = {fn.name for n in ast.walk(tree) if isinstance(n, ast.Return) and n.value is not None and has_const(n.value)
+                      for fn in [function_of(n)] if fn is not None}
+
+        def carries(expr, names):
+            for n in ast.walk(expr):
+                if isinstance(n, ast.Constant) and n.value == flags or isinstance(n, ast.Name) and n.id in names:
+                    return True
+                if isinstance(n, ast.Call) and (getattr(n.func, "id", None) or getattr(n.func, "attr", None)) in path_funcs:
+                    return True
+            return False
+
+        def bound_in(nodes, names):                    # the names an assignment among `nodes` binds to the flags path
+            names = set(names)
+            for n in nodes:
+                if isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None and carries(n.value, names):
+                    names.update(t.id for t in (n.targets if isinstance(n, ast.Assign) else [n.target]) if isinstance(t, ast.Name))
+            return names
+
+        module_names = bound_in(tree.body, ())
+        scoped, writers = {}, set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            f = node.func
+            if not (isinstance(f, ast.Name) and f.id in ("_write_state_json", "_atomic_write", "open")
+                    or isinstance(f, ast.Attribute) and f.attr in ("replace", "rename", "write_text", "write_bytes")):
+                continue
+            fn = function_of(node)
+            if fn not in scoped:
+                scoped[fn] = module_names if fn is None else bound_in(ast.walk(fn), module_names)
+            parts = list(node.args) + [k.value for k in node.keywords] + ([f.value] if isinstance(f, ast.Attribute) else [])
+            if any(carries(p, scoped[fn]) for p in parts):
+                writers.add("<module>" if fn is None else fn.name)
+        refs = []
+        for node in ast.walk(tree):
+            name = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
+            if name not in writers:
+                continue
+            fn, selectors, child = function_of(node), [], node
+            for n in up(node):
+                if n is fn:
+                    break
+                if isinstance(n, ast.If) and any(child is b for b in n.body):
+                    selectors[:0] = [x.value for c in ast.walk(n.test) if isinstance(c, ast.Compare) and all(isinstance(o, ast.Eq) for o in c.ops)
+                                     for x in [c.left] + c.comparators if isinstance(x, ast.Constant) and isinstance(x.value, str)]
+                child = n
+            where = ".".join(reversed([n.name for n in up(node) if isinstance(n, defs + (ast.ClassDef,))])) or "<module>"
+            refs.append((where, tuple(selectors), name))
+        return writers, sorted(refs)
+
+    def test_the_flag_route_census_finds_a_new_route_and_a_writer_of_each_shape(self):
+        """The census the witness below pins (fork PR #897, round 3), run against what it must catch, on planted sources: a
+        third WebSocket arm calling the setter; writers through a module-level path name, through a function that returns
+        the path and through a local name bound to that call, reached by a new POST route directly and through a helper;
+        and a write at module level. Each lands in the population, so the witness's set equality turns red on it."""
+        census = self._flag_writing_routes
+        third_arm = ('def _set_session_flag(sid, flag, value):\n'
+                     '    _write_state_json(jd.STATE / "session-flags.json", "{}")\n'
+                     'class Handler:\n'
+                     '    def _dispatch_ws(self, msg, client):\n'
+                     '        if msg.get("type") == "setSessionFlag":\n'
+                     '            _set_session_flag(msg["id"], msg["flag"], True)\n'
+                     '        elif msg.get("type") == "setSessionFlagAny":\n'
+                     '            _set_session_flag(msg["id"], msg["flag"], True)\n')
+        self.assertEqual(census(third_arm), ({"_set_session_flag"},
+                                             [("Handler._dispatch_ws", ("setSessionFlag",), "_set_session_flag"),
+                                              ("Handler._dispatch_ws", ("setSessionFlagAny",), "_set_session_flag")]),
+                         "a third WebSocket arm is a route of its own")
+        shapes = ('FLAGS_PATH = STATE / "session-flags.json"\n'
+                  'def _flags_path():\n'
+                  '    return STATE / "session-flags.json"\n'
+                  'def _by_name(cur):\n'
+                  '    _atomic_write(FLAGS_PATH, cur)\n'
+                  'def _by_function(cur):\n'
+                  '    _flags_path().write_text(cur)\n'
+                  'def _by_local(tmp):\n'
+                  '    p = _flags_path()\n'
+                  '    os.replace(tmp, p)\n'
+                  'def _helper(b):\n'
+                  '    _by_function(b)\n'
+                  'def _route(path, b):\n'
+                  '    if path == "/mute":\n'
+                  '        _by_name(b)\n'
+                  '        _helper(b)\n'
+                  '        _by_local(b)\n'
+                  'open(STATE / "session-flags.json", "w").write("{}")\n')
+        self.assertEqual(census(shapes), ({"_by_name", "_by_function", "_by_local", "<module>"},
+                                          [("_helper", (), "_by_function"), ("_route", ("/mute",), "_by_local"),
+                                           ("_route", ("/mute",), "_by_name")]),
+                         "each writer shape is found, and a helper between a route and a writer is a reference of its own")
 
     @classmethod
     def setUpClass(cls):
@@ -279,19 +405,24 @@ class ThreadOwnSendRefused(unittest.TestCase):
         rows ride only when asked), so a live thread's sid is in no roster a peer's mirror holds, and a peer whose host
         vouches for absence would presume a thread that mailed it closed (rule 5). The road is closed here: a thread's own
         send is refused with 403 before resolve_recipient and any relay, so no thread's mail crosses a host; the one way
-        through is `threadMail` at the literal True in session-flags.json. No control of the UI sends that key, but it has
-        two writers: a hand edit of the file, and the kernel's WebSocket setSessionFlag arm (Handler._dispatch_ws), which
-        writes ANY flag name an authenticated dashboard client sends, because only POST /flag (_state_write_route) holds the
-        name to _LANE_FLAGS (the seventeenth commit said no route of the kernel or the bus writes the key; the reviewer's
-        verifier refuted that by execution, and the eighteenth commit corrects it and pins both kernel routes here).
-        Executed over the real handlers: the listing with thread rows has the thread and the roster omits it; a send to a
-        session on a peer host, a relay destination for any session whose mail is on, is refused and nothing is parked in
-        the peer's outbox; POST /flag refuses the key and the send is still refused; the key written through the kernel's
-        real WebSocket arm, into the file the bus reads, lets the same send be parked (the disclosed road, whose shape, if
-        thread mail is ever re-enabled, is a separate exchange field carrying the mirror-relevant thread sids, never the
-        roster with thread rows; closing the arm, which would hold the name to _LANE_FLAGS as the route does, is a kernel
-        change recorded in fork PR #897's ledger entry, and turns the WebSocket pin here red so the disclosure moves with it). A
-        gate that let a thread's send through fails the 403 pin here."""
+        through is `threadMail` at the literal True in session-flags.json. ONE road writes that key today: the kernel's
+        WebSocket setSessionFlag arm (Handler._dispatch_ws), which accepts ANY flag name from an authenticated dashboard
+        client, while POST /flag (_state_write_route) applies the _LANE_FLAGS whitelist and refuses it (no control of the
+        UI sends the key; a hand edit of the file writes the same bytes). The consequence, in one sentence: a client that
+        sets threadMail on a comment thread lets that thread's mail relay while every roster still omits its sid, so a far
+        host's mirror can presume the live thread closed, a false rule 5 that a user reaches only by hand-crafting a
+        WebSocket message (or by editing the file). The fix is a separate fix-tier PR that makes the WebSocket arm apply
+        the same whitelist as POST /flag (the seventeenth commit said no route writes the key and the eighteenth named the
+        arm; the reviewer's ruling of round 3 asked for this text and the set below).
+        This pins the current truth as a set. The kernel's routes that write a session flag, derived from kernel/kernel.py
+        by the census above (_flag_writing_routes), are exactly POST /flag and the WebSocket arm, so a new route fails the
+        set pin. Executed over the real handlers: the listing with thread rows has the thread and the roster omits it; a
+        send to a session on a peer host, a relay destination for any session whose mail is on, is refused and nothing is
+        parked in the peer's outbox; POST /flag refuses the key and the send is still refused; the key written through
+        the kernel's real WebSocket arm, into the file the bus reads, lets the same send be parked (the disclosed road,
+        whose shape, if thread mail is ever re-enabled, is a separate exchange field carrying the mirror-relevant thread
+        sids, never the roster with thread rows). The fix PR flips exactly the WebSocket half: its pin here turns red and
+        moves with the fix, never silently. A gate that let a thread's send through fails the 403 pin here."""
         far_host, far = "TESTHOST-far", "88888888-9999-aaaa-bbbb-cccccccccccc"
         self.assertTrue(pm.peers_on(), "peer mode: a name on a peer host is a relay destination")
         pm.PEER_STATE[far_host] = {"presence": [{"id": far, "name": "far"}], "epoch": 1, "holds": [],
@@ -312,6 +443,18 @@ class ThreadOwnSendRefused(unittest.TestCase):
         self.assertFalse(outbox.exists() and any(outbox.iterdir()),
                          "REFUSED BEFORE THE RELAY: nothing is parked for the peer, so the thread's sid never reaches a far host as a "
                          "sender (a gate that opened parks the message here)")
+        with open(self.KERNEL_SRC, encoding="utf-8") as f:
+            writers, refs = self._flag_writing_routes(f.read())
+        self.assertEqual(writers, self.FLAG_WRITERS, "the kernel functions that write session-flags.json")
+        self.assertEqual({(where, selectors[0] if selectors else "") for where, selectors, _ in refs}, self.FLAG_ROUTES,
+                         "THE ROUTES THAT WRITE A SESSION FLAG, as a set: POST /flag and the WebSocket setSessionFlag arm, both "
+                         "driven below through the real handlers (a new route fails here: drive it below and say what it does "
+                         "with threadMail)")
+        self.assertEqual(refs, [("Handler._dispatch_ws", ("setSessionFlag",), "_set_session_flag"),
+                                ("Handler._dispatch_ws", ("setSessionFlag", "notify"), "_set_notify_session"),
+                                ("_state_write_route", ("/flag",), "_set_session_flag"),
+                                ("_state_write_route", ("/flag", "notify"), "_set_notify_session")],
+                         "every mention of a flag writer in the kernel: the two routes' four calls and nothing else")
         saved_state = km.jd.STATE                             # the kernel writes the flags file the bus reads: one root, as in
         km.jd._rebind_state(pm.SESSION_FLAGS.parent)          # production (the kernel's STATE is the bus's STATE.parent)
         self.addCleanup(km.jd._rebind_state, saved_state)
@@ -331,9 +474,9 @@ class ThreadOwnSendRefused(unittest.TestCase):
         km.Handler._dispatch_ws(None, {"type": "setSessionFlag", "id": THREAD, "flag": "threadMail", "value": True}, client)
         flags = json.loads(pm.SESSION_FLAGS.read_text()) if pm.SESSION_FLAGS.exists() else None
         self.assertEqual((sent, flags), ([], {THREAD: {"threadMail": True}}),
-                         "THE KERNEL'S WEBSOCKET ARM writes the key, unrefused, into the file the bus reads: it holds no flag name to "
-                         "_LANE_FLAGS (a hand edit of the file writes the same bytes; an arm that held the name to _LANE_FLAGS "
-                         "writes nothing, and fails here)")
+                         "THE KERNEL'S WEBSOCKET ARM writes the key, unrefused, into the file the bus reads: it applies no whitelist "
+                         "(a hand edit of the file writes the same bytes; the separate fix-tier PR makes the arm apply _LANE_FLAGS, "
+                         "which writes nothing, so this pin turns red and moves with that fix)")
         status, body = self._send(THREAD, "web-comment-1", "far")
         self.assertEqual(status, 200, body)
         self.assertTrue(outbox.exists() and any(outbox.iterdir()),

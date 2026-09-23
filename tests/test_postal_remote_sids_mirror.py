@@ -99,8 +99,10 @@ is kept, by the recorder's write and by a bare one (a writer reading the presenc
 listing's sids through the blink, drops it); a row the listing does not own is kept, and an answered empty listing
 releases nothing; a read without thread rows owns no thread's sid, and the recorder's read, which asks for them, does;
 the release reaching heartbeat rows alone, a carried legacy list, peer row and via row naming an owned sid beside another
-carried whole (the reviewer's verifier at the seventeenth commit: a carry with its kind test deleted passed every pin);
-and the release's order across a write that fails, the entry kept and the row re-emitted heard until a write succeeds.
+carried whole (the reviewer's verifier at the seventeenth commit: a carry with its kind test deleted passed every pin),
+and a heard peer row and via row doing so written whole (its verifier at the eighteenth: an in-memory drop of the via
+row passed every pin); and the release's order across a write that fails, at the temporary file or at the replace, the
+entry kept and the row re-emitted heard until a write succeeds.
 tests/test_dead_session_staleness.py ReaderFollowsTheWriter
 runs this writer and the judge's reader together over one root; tests/test_postal_bus_lifetime.py
 MonitorTick pins the poll's write. SYNTHETIC fixtures only: private synthetic sids, hostname TESTHOST."""
@@ -451,9 +453,13 @@ class Mirror(unittest.TestCase):
         session beside a session on a host this process has not heard yet; that session is then in no row, and a host
         vouching for absence lets rule 5 presume it closed. The release reaches heartbeat rows alone: the legacy list, a peer
         row and a via row naming an owned sid beside another are that source's word about the other sid and are carried
-        whole, while the owned sid's own heartbeat row is released at the same write. The composition with the reader's
-        verdict (the unheard host's session named-by-unreachable-host, never rule 5) is tests/test_dead_session_staleness.py
-        ReaderFollowsTheWriter (the release's reach phase)."""
+        whole, while the owned sid's own heartbeat row is released at the same write. The same holds IN MEMORY (the reviewer's
+        verifier at the eighteenth commit: a writer dropping a heard via row that names an owned sid beside another passed
+        every pin, a false rule 5 for the other sid by execution through the real writer and reader): a heard peer row and a
+        heard via row naming the owned sid beside another are written whole under an answered listing owning it. The
+        composition with the reader's verdicts (the unheard host's session named-by-unreachable-host by the carried list,
+        and the far session a heard hub names beside the local one named-by-reachable-host, never rule 5) is
+        tests/test_dead_session_staleness.py ReaderFollowsTheWriter (the release's reach phases)."""
         self.assertTrue(pm.peers_on(), "peer mode, the default this module runs under")
         self.path.write_text(A + "\n" + B + "\n")     # a bus before 2026-09-22 wrote A (a local session now) and B (live on a
         self._local_listing_answered([{"id": A, "name": "web"}])   # host this process has not heard yet)
@@ -482,49 +488,89 @@ class Mirror(unittest.TestCase):
                          "THE RELEASE'S REACH, a peer row and a via row: each carried whole, A with D and A with E, while A's own "
                          "carried heartbeat row is released at the same write (a carry releasing every row kind that names an "
                          "owned sid drops both rows here, and D and E with them)")
+        self.path.unlink()                              # IN MEMORY: a fresh file, the listing answering owning A, and the hub HEARD,
+        self._restart()                                 # naming A beside D and, as its word about the far host, A beside E
+        self._local_listing_answered([{"id": A, "name": "web"}])
+        self.assertEqual([r["id"] for r in pm.local_agents_checked()[0]], [A], "the listing answered, owning A")
+        self._peer(HUB, [{"id": A, "name": "web"}, {"id": D, "name": "api"},
+                         {"id": A, "name": "web", "via": FAR, "viaBus": "far-bus"}, {"id": E, "name": "api", "via": FAR, "viaBus": "far-bus"}],
+                   bus_id="hub-bus")
+        pm._write_remote_sids()
+        self.assertEqual(self._rows(), {HUB: (True, False, [A, D]), VIA_FAR: (True, False, [A, E])},
+                         "THE RELEASE'S REACH IN MEMORY, a heard peer row and a heard via row: each written whole, A with D and A "
+                         "with E, under an answered listing owning A (a writer releasing a heard via row that names an owned sid "
+                         "drops the via row here, E in no row, and a host vouching for absence lets rule 5 presume E closed: the "
+                         "verifier's false rule 5 at the eighteenth commit; one releasing a heard peer row drops the hub's own "
+                         "row here, D with it)")
+        self.assertEqual(self._reach()[VIA_FAR], (True, False, False, True, [A, E]),
+                         "the via row heard and reachable, its hub's link not held down: E is rule 4's by it")
 
     def test_a_released_entry_survives_a_write_that_fails_and_its_row_is_written_heard_until_a_write_succeeds(self):
         """Round 3 of fork PR #897, the reviewer's verifier at the seventeenth commit: _write_remote_sids forgets a released
         HEARTBEATS entry only AFTER the file without the row is in place, and the docstring says the order matters, but a
         writer popping the entry before the replace passed every pin. What the order buys, driven through the real writer: a
-        write that fails (the temporary path a directory, so the write never reaches the replace) keeps the entry, and the
-        next write under a listing that does not answer re-emits the row heard, reachable, this process's own word (rule 4
-        for the sid); a writer that popped before the replace has lost the entry, and that write carries the row from the
-        previous file heard=false, unreachable (cannot-determine for the sid: conservative, never closed, but no longer this
-        process's word) until a write under an answered listing releases it. The next write that succeeds under an answered
-        listing owning the sid releases the row and forgets the entry, as ever."""
+        write that fails keeps the entry, and the next write under a listing that does not answer re-emits the row heard,
+        reachable, this process's own word (rule 4 for the sid); a writer that popped before the replace has lost the entry,
+        and that write carries the row from the previous file heard=false, unreachable (cannot-determine for the sid:
+        conservative, never closed, but no longer this process's word) until a write under an answered listing releases it.
+        The next write that succeeds under an answered listing owning the sid releases the row and forgets the entry, as
+        ever. The write fails at each of its two steps: at the temporary file (its path a directory, so the write never
+        reaches the replace), and at the replace (os.replace raising for the mirror's path, the temporary file written).
+        A pop anywhere before the replace loses the entry at one of them: the reviewer's verifier at the eighteenth commit
+        placed the pop between the temporary write and the replace, and the temporary-file case alone passed it."""
         self.assertTrue(pm.peers_on(), "peer mode, the default this module runs under")
-        self._local_listing_unanswered()
-        self.assertFalse(pm._record_heartbeat(A, "web"), "A's beat during a blink: filed, and the recorder's write puts its row down")
-        self.assertEqual(self._rows(), {HB + A: (True, False, [A])})
-        self._local_listing_answered([{"id": A, "name": "web"}])
-        pm.local_agents_checked()                       # the listing answers, owning A: the next write releases A
         tmp = pm.STATE / "remote-sids.tmp"
-        tmp.mkdir()                                     # the write's temporary path a directory: the write fails before the replace
-        self.addCleanup(lambda: tmp.rmdir() if tmp.is_dir() else None)
+        self.addCleanup(lambda: tmp.rmdir() if tmp.is_dir() else tmp.unlink(missing_ok=True))
         said = set(pm._REMOTE_SIDS_SAID)
         self.addCleanup(lambda: (pm._REMOTE_SIDS_SAID.clear(), pm._REMOTE_SIDS_SAID.update(said)))
-        pm._REMOTE_SIDS_SAID.clear()
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            pm._write_remote_sids()
-        self.assertIn("remote-sids mirror was not written (IsADirectoryError", err.getvalue(),
-                      "the write failed at the temporary path, before the replace, and said so")
-        self.assertIn(A, pm.HEARTBEATS, "THE ORDER: the entry is forgotten only once the file without the row is in place, so a "
-                      "write that fails keeps it (a writer popping before the replace has lost it here)")
-        self.assertEqual(self._rows(), {HB + A: (True, False, [A])}, "the file is still the recorder's write")
-        tmp.rmdir()
-        self._local_listing_unanswered()
-        pm.local_agents_checked()                       # the listing blinks: the record says unanswered, so nothing is released
-        pm._write_remote_sids()
-        self.assertEqual(self._reach()[HB + A], (True, False, False, True, [A]),
-                         "the kept entry re-emits the row heard and reachable, rule 4 for A (a writer that popped before the "
-                         "replace carries the row from the previous file here, (False, False, False, False, [A]), unreachable)")
-        self._local_listing_answered([{"id": A, "name": "web"}])
-        pm.local_agents_checked()
-        pm._write_remote_sids()
-        self.assertEqual(self._rows(), {}, "the next write that succeeds under an answered listing owning A releases the row")
-        self.assertNotIn(A, pm.HEARTBEATS, "...and forgets the entry")
+        real_replace = pm.os.replace
+        self.addCleanup(setattr, pm.os, "replace", real_replace)
+
+        def at_the_temporary_file():
+            tmp.mkdir()                                 # the write's temporary path a directory: the write fails before the replace
+            return tmp.rmdir
+
+        def at_the_replace():
+            def replace(src, dst, *args, **kwargs):     # the mirror's replace alone fails; any other replace in the process runs
+                if Path(dst) == self.path:
+                    raise OSError(5, "the replace failed (synthetic)")
+                return real_replace(src, dst, *args, **kwargs)
+            pm.os.replace = replace
+            return lambda: setattr(pm.os, "replace", real_replace)
+
+        for point, fail, said_as in (("the temporary file", at_the_temporary_file, "(IsADirectoryError"),
+                                     ("the replace", at_the_replace, "(OSError: [Errno 5] the replace failed (synthetic)")):
+            with self.subTest(failing_at=point):
+                pm.HEARTBEATS.clear(); self.path.unlink(missing_ok=True); _forget_listing()
+                self._local_listing_unanswered()
+                self.assertFalse(pm._record_heartbeat(A, "web"), "A's beat during a blink: filed, and the recorder's write puts its row down")
+                self.assertEqual(self._rows(), {HB + A: (True, False, [A])})
+                self._local_listing_answered([{"id": A, "name": "web"}])
+                pm.local_agents_checked()               # the listing answers, owning A: the next write releases A
+                pm._REMOTE_SIDS_SAID.clear()
+                err = io.StringIO()
+                undo = fail()
+                try:
+                    with contextlib.redirect_stderr(err):
+                        pm._write_remote_sids()
+                finally:
+                    undo()
+                self.assertIn("remote-sids mirror was not written " + said_as, err.getvalue(),
+                              "the write failed at %s and said so" % point)
+                self.assertIn(A, pm.HEARTBEATS, "THE ORDER: the entry is forgotten only once the file without the row is in place, "
+                              "so a write that fails at %s keeps it (a writer popping before the replace has lost it here)" % point)
+                self.assertEqual(self._rows(), {HB + A: (True, False, [A])}, "the file is still the recorder's write")
+                self._local_listing_unanswered()
+                pm.local_agents_checked()               # the listing blinks: the record says unanswered, so nothing is released
+                pm._write_remote_sids()
+                self.assertEqual(self._reach()[HB + A], (True, False, False, True, [A]),
+                                 "the kept entry re-emits the row heard and reachable, rule 4 for A (a writer that popped before the "
+                                 "replace carries the row from the previous file here, (False, False, False, False, [A]), unreachable)")
+                self._local_listing_answered([{"id": A, "name": "web"}])
+                pm.local_agents_checked()
+                pm._write_remote_sids()
+                self.assertEqual(self._rows(), {}, "the next write that succeeds under an answered listing owning A releases the row")
+                self.assertNotIn(A, pm.HEARTBEATS, "...and forgets the entry")
 
     def test_a_peers_own_rows_under_its_name_and_its_gossip_as_a_via_row_under_the_hub_and_the_far_host(self):
         self._peer(HUB, [{"id": A, "name": "web"}, {"id": B, "name": "api", "via": FAR, "viaBus": "far-bus"}], bus_id="hub-bus")

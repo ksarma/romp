@@ -120,6 +120,8 @@ BLINK_BEAT = "a11f0001-1111-4222-8333-000000000018"  # a LOCAL session whose bea
 #                                                      the recorder files it as remote presence (the blink), a heartbeat row in peer mode
 LEGACY_NAMED = "a11f0001-1111-4222-8333-000000000019"   # a session live on a host this process has not heard yet, named by the
 #                                                         whitespace list a bus before 2026-09-22 wrote, beside BLINK_BEAT
+VIA_NAMED = "a11f0001-1111-4222-8333-000000000020"   # a session live on the spoke that HOST2, heard, names as its word about the spoke
+#                                                      beside BLINK_BEAT (the release's reach in memory)
 LEGACY = "legacy:list"                               # the key a whitespace-list mirror is carried under (postal_service.py REMOTE_SIDS_LEGACY)
 
 RULE_5 = (True, 5, "no-reachable-host-names-it")               # the ladder's verdicts, (closed, rule, why), as
@@ -730,7 +732,12 @@ class ReaderFollowsTheWriter(unittest.TestCase):
                     has not heard yet; the listing answers owning the local session (a consumer's read); B heard with its
                     link up, naming neither. The list is carried whole, so the unheard host's session is cannot-determine
                     by it, while B vouches and a sid nothing names is rule 5's (a carry releasing every row kind that names
-                    an owned sid drops the list, and the reader presumes that live session closed on B's word);
+                    an owned sid drops the list, and the reader presumes that live session closed on B's word). Then, IN
+                    MEMORY (the reviewer's verifier at the eighteenth commit: a writer dropping a heard via row that names an
+                    owned sid passed every pin), B's next exchange through the real handler names, as its word about the
+                    spoke, the local session beside a session live there, the listing still owning the local session: the
+                    via row is written whole, so the spoke's session is rule 4's by it while B vouches (a writer dropping
+                    the via row leaves it in no row, and the reader presumes it closed on B's word);
       legacy shape  the whitespace list a bus before 2026-09-22 wrote, at the bus's path: the reader
                     answers cannot-determine for the sid it does not name AND for the one it does, and
                     says once in the judge's log that the file is not the shape the bus writes; it is
@@ -787,7 +794,7 @@ class ReaderFollowsTheWriter(unittest.TestCase):
 import contextlib, io, json, os, sys, time
 (tests_dir, bin_dir, remote, remote2, dead, host_a, host_b, carried, other, alias, declared, far_sid, hub, gossiped, later,
  collided, ended, decl_named, spoke_kept, spoke_gone, hub_declared, spoke, spoke_declared, hub2, spoke_new, blinked,
- hub_named, blink_beat, legacy_named) = sys.argv[1:30]
+ hub_named, blink_beat, legacy_named, via_named) = sys.argv[1:31]
 sys.path.insert(0, tests_dir)
 from romp_load import load_source
 pm = load_source("romp_postal_oneroot", os.path.join(bin_dir, "romp-postal-service"))
@@ -1155,6 +1162,16 @@ out["reachOwned"] = [r.get("id") for r in pm14.local_agents_checked()[0]]   # a 
 notify(pm14, host_b, True)
 exchange(pm14, host_b, [other], bus_id="bus-b2")   # B heard with its link up, answered, naming neither sid of the list
 out["releaseReach"] = link_phase({"legacyNamed": verdict(legacy_named), "owned": verdict(blink_beat)})
+# THE RELEASE'S REACH IN MEMORY (the reviewer's verifier at the eighteenth commit): B's next exchange, through the real handler,
+# names the local session beside a session live on the spoke, as its word about the spoke; the handler's response reads this
+# bus's listing, still answering owning the local session, and its recorder writes the mirror
+req = {"host": host_b, "epoch": 1, "proto": pm14.PEER_PROTO, "busId": "bus-b2", "holds": [], "relays": [], "acks": [],
+       "bounces": [], "wait": False, "presenceAnswered": True,
+       "presence": [{"id": other, "name": "api"}] + [{"id": s, "name": "api", "via": spoke, "viaBus": "bus-spoke", "viaAnswered": True}
+                                                     for s in (blink_beat, via_named)]}
+resp, out["reachMemoryDialStatus"] = pm14.peer_exchange_handle(req)
+out["reachMemoryOwned"] = sorted(pm14._local_listing_owned())
+out["releaseReachMemory"] = link_phase({"viaNamed": verdict(via_named), "owned": verdict(blink_beat)})
 bus_file.write_text(remote + "\n")                 # the shape a bus before 2026-09-22 wrote
 err = io.StringIO()
 with contextlib.redirect_stderr(err):
@@ -1171,7 +1188,7 @@ out["controlOldPathOnly"] = ask(dead)
 print(json.dumps(out))
 """, HERE, BIN, REMOTE, REMOTE2, DEAD, HOST, HOST2, CARRIED, OTHER, ALIAS, DECLARED, FARSID, HUB, GOSSIPED, LATER, COLLIDED,
                               ENDED, DECL_NAMED, SPOKE_KEPT, SPOKE_GONE, HUB_DECLARED, SPOKE, SPOKE_DECLARED, HUB2, SPOKE_NEW, BLINKED,
-                              HUB_NAMED, BLINK_BEAT, LEGACY_NAMED],
+                              HUB_NAMED, BLINK_BEAT, LEGACY_NAMED, VIA_NAMED],
                              capture_output=True, text=True, env=full,
                              cwd=str(home), timeout=120)
         assert out.returncode == 0, "%s child failed: %s" % (shape, out.stderr[-2000:])
@@ -2032,6 +2049,34 @@ print(json.dumps(out))
                 self.assertEqual(reach["hosts"], {HOST2: L(True, False, False, True, True, True, [OTHER]),
                                                   LEGACY: L(False, False, False, False, False, False, [BLINK_BEAT, LEGACY_NAMED])},
                                  "B heard, its link up, vouching; the list carried heard=false with both of its sids")
+
+    def test_the_release_reaches_heartbeat_rows_alone_in_memory_and_a_heard_via_row_naming_an_owned_sid_protects_its_other_sid(self):
+        """Round 3 of fork PR #897, the reviewer's verifier at the eighteenth commit (the release's reach phase of the class
+        docstring, in memory): the writer's one release drops a heartbeat row whose sid the answered local listing owns, and
+        no heard row of another kind. A heard hub's word about a far host naming that sid beside a session live there is
+        written whole, so while B vouches for absence the far session is rule 4's by the via row, never rule 5. A writer
+        dropping the heard via row passed every earlier pin and answers rule 5 here (the verifier's false rule 5, by execution
+        through this writer and this reader). The verdicts first, then the rows, on both root shapes."""
+        L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                self.assertEqual(got["reachMemoryDialStatus"], 200, "B's exchange landed through the real handler")
+                self.assertEqual(got["reachMemoryOwned"], [BLINK_BEAT], "the listing answered, owning the local session")
+                reach = got["releaseReachMemory"]
+                self.assertEqual(self._v(reach, "viaNamed"), RULE_4,
+                                 "THE RELEASE'S REACH IN MEMORY: B's heard word about the spoke is written whole, so the spoke's "
+                                 "session is named by a reachable source (a writer releasing a heard via row that names an owned sid "
+                                 "drops the row and answers (True, 5, no-reachable-host-names-it) here: a live session presumed closed "
+                                 "on B's word)")
+                self.assertEqual(self._v(reach, "nobody"), RULE_5,
+                                 "B vouches for absence, so the verdict above is the via row's protection and not a mirror nobody vouches in")
+                self.assertEqual(self._v(reach, "owned"), RULE_4,
+                                 "the owned local session is named by B's word too (on a real root rules 1 and 2 answer for it first)")
+                self.assertEqual(reach["hosts"], {HOST2: L(True, False, False, True, True, True, [OTHER]),
+                                                  "via:" + HOST2 + "/" + SPOKE: L(True, False, False, True, True, True, [BLINK_BEAT, VIA_NAMED]),
+                                                  LEGACY: L(False, False, False, False, False, False, [LEGACY_NAMED])},
+                                 "B heard, its link up, vouching; its word about the spoke a heard via row with both sids; the carried "
+                                 "list keeps the sid no heard row names")
 
     def test_a_mirror_of_the_legacy_shape_is_cannot_determine_and_said_once(self):
         for shape, got in self.got.items():

@@ -4247,13 +4247,15 @@ def _remote_sids_document(now, previous, owned=frozenset()):
     did not answer releases nothing, and the last answered rows the presence producer serves through a blink are
     a cache, never read here. A read without thread rows does not own a comment thread's sid (the seam and the
     route filter alike), so a thread's blink beat waits for the recorder's read, which asks for them. The release
-    reaches HEARTBEAT rows alone, in memory and in the carry: the legacy list, a peer row or a via row naming an
-    owned sid beside another is carried whole, since its other sids are that source's last word: a carry dropping
-    such a row for the owned sid would leave them in no row, and a host vouching for absence would let rule 5
-    presume a live session closed (a session on a host this process has not heard yet, named by a carried
-    whitespace list beside a local session: the road the reviewer's verifier drove at the seventeenth commit
-    through this writer and the reader, with the carry's kind test deleted, which no pin then caught; pinned at
-    the writer and in the composition since the eighteenth commit).
+    reaches HEARTBEAT rows alone, in memory and in the carry: a heard peer row or via row naming an owned sid
+    beside another is written whole, and the legacy list, a peer row or a via row doing so is carried whole, since
+    its other sids are that source's word: a drop of such a row for the owned sid would leave them in no row, and a
+    host vouching for absence would let rule 5 presume a live session closed (a session on a host this process has
+    not heard yet, named by a carried whitespace list beside a local session: the road the reviewer's verifier
+    drove at the seventeenth commit through this writer and the reader, with the carry's kind test deleted, pinned
+    at the writer and in the composition since the eighteenth commit; and a session on a far host that a heard hub
+    names beside a local session, the road the verifier drove at the eighteenth commit with the in-memory via row
+    dropped, pinned at the writer and in the composition since the nineteenth).
     Every other row nothing retires. A heartbeat row of a session that stopped beating (under the legacy scheme
     a remote session that ended, or whose tunnel never came back) stays, expired, for the life of the state root;
     so do the peer row and the via rows of a host the kernel no longer dials (a departed host), carried heard
@@ -4275,20 +4277,22 @@ def _remote_sids_document(now, previous, owned=frozenset()):
     closed there. Safe while no thread's mail crosses a host: a thread's mail is off by default since T356
     (_mail_off_why answers "thread" for a session whose durable record carries threadOf, unless session-flags.json
     carries `threadMail` at the literal True), and the /send handler (Handler.do_POST) refuses a thread's own send
-    with 403 before resolve_recipient and any relay, so its sid never reaches a far host as a sender. No control of
-    the UI sends that key (the lane gear's toggles and the tab menu's typed union are the three names the kernel's
-    _LANE_FLAGS lists), but two writers reach it: a hand edit of the file, and the kernel's WebSocket setSessionFlag
-    arm (Handler._dispatch_ws), which writes ANY flag name an authenticated dashboard client sends, because only
-    POST /flag (_state_write_route) holds the name to _LANE_FLAGS. So a client message opens the road as well as a
-    hand edit (the eighteenth commit corrects the seventeenth's "a key no route of the kernel or the bus writes",
-    which the reviewer's verifier refuted by execution). Closing that route is a kernel change, the WS arm holding
-    the name to _LANE_FLAGS as the route does, recorded for the kernel's owner in fork PR #897's ledger entry and
-    outside this change. tests/test_postal_isolation.py ThreadOwnSendRefused runs the road through the real
-    handlers: the roster omits the thread; the send is refused before the relay; POST /flag refuses the key and the
-    send is still refused; the key written through the kernel's real WS arm lets the same send be parked. If thread
-    mail is ever re-enabled, the shape is a separate exchange field carrying the mirror-relevant thread sids, read
-    by this writer alone; never _local_presence with thread rows, which would list threads to every remote consumer
-    with no filter."""
+    with 403 before resolve_recipient and any relay, so its sid never reaches a far host as a sender. ONE road
+    writes that key today: the kernel's WebSocket setSessionFlag arm (Handler._dispatch_ws), which accepts ANY flag
+    name from an authenticated dashboard client, while POST /flag (_state_write_route), the kernel's one other
+    route that writes a session flag, applies the _LANE_FLAGS whitelist and refuses it (no control of the UI sends
+    the key; a hand edit of the file writes the same bytes). The consequence, in one sentence: a client that sets
+    threadMail on a comment thread lets that thread's mail relay while every roster still omits its sid, so a far
+    host's mirror can presume the live thread closed, a false rule 5 that a user reaches only by hand-crafting a
+    WebSocket message (or by editing the file). The fix is a separate fix-tier PR that makes the WebSocket arm
+    apply the same whitelist as POST /flag. tests/test_postal_isolation.py ThreadOwnSendRefused pins the current
+    truth as a set: the kernel's routes that write a session flag, derived from kernel/kernel.py, are exactly POST
+    /flag and the WebSocket arm; and through the real handlers the roster omits the thread, its send is refused
+    before the relay, POST /flag refuses the key and the send is still refused, and the key written through the
+    WebSocket arm lets the same send be parked (the fix flips that last half, and the witness moves with it). If
+    thread mail is ever re-enabled, the shape is a separate exchange field carrying the mirror-relevant thread
+    sids, read by this writer alone; never _local_presence with thread rows, which would list threads to every
+    remote consumer with no filter."""
     hosts = {}
     for sid, (name, ts) in list(HEARTBEATS.items()):
         if str(sid) in owned:
@@ -4421,9 +4425,11 @@ def _write_remote_sids():
     row heard, this process's own word. A pop before the replace loses the entry on a failed write, and the next
     write the listing does not answer for carries the row from the previous file heard=false: its sid
     cannot-determine rather than rule 4's, never presumed closed, until a write under an answered listing owning it
-    releases it (the order is pinned by a failing write in tests/test_postal_remote_sids_mirror.py, round 3 of fork
-    PR #897, the eighteenth commit). A listing that did not answer releases nothing. Every other row stands
-    for the life of the state root (the cost and the follow-up: _remote_sids_document). Under _REMOTE_SIDS_LOCK:
+    releases it (the order is pinned in tests/test_postal_remote_sids_mirror.py by a write that fails at the
+    temporary file and by one that fails at the replace, so a pop anywhere before the replace fails a pin; round
+    3 of fork PR #897, the eighteenth and nineteenth commits). A listing that did not answer releases nothing.
+    Every other row stands for the life of the state root (the cost and the follow-up: _remote_sids_document).
+    Under _REMOTE_SIDS_LOCK:
     the write reads the file it replaces, and the heartbeat, exchange, monitor and notify threads all
     write."""
     with _REMOTE_SIDS_LOCK:
