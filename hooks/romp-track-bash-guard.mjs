@@ -883,7 +883,7 @@
 // text through, or a command substitution over such a producer handed to a shell, an eval or a here-string (a call of a function
 // the command defines, a tee or a pipe through another command, a cat of a file, an eval or a shell -c inside the substitution);
 // zsh's glob grouping, a `(..)` inside a word handed to zsh, read as a subshell by the lexer's zsh grammar while zsh globs it (a
-// lexer gap, stated since the first commit of this round); zsh's hook functions, a function the command defines under a name zsh calls on its own (chpwd, precmd, preexec, periodic, zshexit, and the names in chpwd_functions and its kin), whose body runs when the shell moves, prompts or exits, from the directory the shell is in then, while the guard judges the definition where it stands; a positional the resolver reads at the word by a model the shell does not keep, an element's emptiness, a binding a later shift or unset removed, zsh's subscript grammar beyond one index (the colon form of a positional's alternate value is read as set by the list's length, not the element, so `set -- ''; eval cp ${1:+x} a b` copies in every shell; a head or script text reads a positional's candidate that no shift, second set, unset, read or body's local removes, so `set -- a; shift; ${1}cp a b` is read as `acp` while every shell runs cp, and the known set reads a name or a list bound in a subshell, a pipeline, a background job, a command substitution, an untaken body, a prefix position or behind a wrapper as this shell's, as in `c=a; unset c; eval cp ${c:+x} a b` and `(set -- a); eval cp ${1:+x} a b`; the unbraced list's subscript is read as one numeric index while zsh's `[@]`, `[*]`, an arithmetic, flagged or quoted subscript and a word of several such expansions select from the list too, so `$argv[*] cp a b` copies in zsh, and in every shell through `zsh -c`; each pre-existing at the round-5 head and filed in round 6's thirteenth commit for the round's ruling, a fix at the mechanism or an accepted allow); an opaque expansion from a cwd outside every project, a leading
+// lexer gap, stated since the first commit of this round); zsh's hook functions, a function the command defines under a name zsh calls on its own (chpwd, precmd, preexec, periodic, zshexit, and the names in chpwd_functions and its kin), whose body runs when the shell moves, prompts or exits, from the directory the shell is in then, while the guard judges the definition where it stands; a positional the resolver reads at the word by a model the shell does not keep, an element's emptiness, a binding a later shift or unset removed, zsh's subscript grammar beyond one index (the colon form of a positional's alternate value is read as set by the list's length, not the element, so `set -- ''; eval cp ${1:+x} a b` copies in every shell; a head or script text reads a positional's candidate that no shift, second set, unset, read or body's local removes, so `set -- a; shift; ${1}cp a b` is read as `acp` while every shell runs cp, and the known set reads a name bound in a subshell, a pipeline, a background job, a command substitution, an untaken body, a prefix position or behind a wrapper as this shell's, as in `c=a; unset c; eval cp ${c:+x} a b`; the unbraced list's subscript is read as one numeric index while zsh's `[@]`, `[*]`, an arithmetic, flagged or quoted subscript and a word of several such expansions select from the list too, so `$argv[*] cp a b` copies in zsh, and in every shell through `zsh -c`; each pre-existing at the round-5 head and filed in round 6's thirteenth commit for the round's ruling, a fix at the mechanism or an accepted allow); an opaque expansion from a cwd outside every project, a leading
 // opaque expansion, or one after a literal head outside every project, from a cwd in no project (B2 as ruled, with its
 // boundary). A shape outside these classes that reaches a tracked file is a rule to state, not a residual. The same
 // paragraph,
@@ -1079,6 +1079,23 @@
 // rows). Whether the word holds something before the substitution is now read from the word itself (text, or a spelling before the substitution's
 // own: an explicit null's quotes, an expansion the resolver did not read), and a substitution that leaves nothing held clears the word whole, raw
 // included, so the next word starts clean. Every row is pinned with its writers in tools/romp-track-bash-guard.test.mjs (round 7, eighteenth commit).
+// ROUND 7 OF FORK PR #780 REVIEW, NINETEENTH COMMIT (2026-09-23; the reviewer's extra5-1, both refuters by execution): THE BIND'S FRAME
+// (positionalFrame, rebindHere; closeGroups' positional note). THE POSITIONAL VALUE had bound every `set` and `shift` the walk met as this
+// shell's list, so `set -- report.md; (set -- other.md); cp ../base/report.md $1` from docs/ was allowed while bash, zsh and dash copied onto the
+// tracked file (the round-5 head had refused `$1` as not literal), and the same through an untaken if, case, for, while or until body, a `&&` or
+// `||` list, a pipeline member, a backgrounded command, a `{ }` group that is piped or backgrounded, `command`, `builtin`, `time`, `env`, `nice`
+// and `timeout`, a `shift` so placed, an `eval`, a head splice, `emulate -c` or a sourced text holding the `set`, every positional spelling,
+// every write form and the root, scratch/ and notes/ cwds: 68 rows refused at the round-5 head, allowed at the eighteenth commit, written by the
+// shells named (bash and dash for a pipeline's last member; zsh alone for `command`; dash alone for `builtin` and `time`), 3 twins without a
+// writer, and 23 allows the round-5 head shared (the head and script roads, `eval "cp .. $1"`, `bash -c "cp .. $1"`, and the fifteen residual rows
+// whose `set` stood so, `(set -- a); eval cp ${1:+x} a b` and `(set -- a); $1 cp a b`). A `set` or `shift`, or a text this shell runs in place
+// that holds one, rebinds THIS shell's list only when it runs in this shell's frame: plainSequence's question, asked with a running function body
+// counted as this shell's own (the replay's list is the body's), and unwrapped; anywhere else the list is rebound to values not read, the
+// construct named, and a bind inside an open `{ }` group is noted so the closer rebinds again when the group turns out piped or backgrounded.
+// The plain shapes stay allowed (`set -- other.md; cp .. $1`, a plain `{ set -- other.md; }`, `eval 'set -- other.md'`), the taken body and the
+// `true &&` list pay the refusal the round-5 head charged, the name twins refuse as before, and the fifteen residual rows leave the table as
+// pinned refusals with the shells that write (the residual class 'a positional the resolver reads at the word by a model the shell does not
+// keep' keeps its name rows and loses the list clause on every surface: 408 rows over 9 classes).
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -5199,9 +5216,9 @@ function extractIn(command, ctx) {
   // the names the words before it set, C5d); recordSegment reads every other segment as writes the rule does not follow,
   // keyed on the SHAPE of each word and never on a list of commands, so a construct nobody listed is caught by the shape it
   // must take to name the variable.
-  const plainSequence = (seg, idx) => {
+  const plainSequence = (seg, idx, own = (f) => f.kind === 'group') => {   // `own`: the frames that are this shell's own (a plain `{ }` group; for the positional list a running function body too, positionalFrame)
     const prevOp = idx > 0 ? segments[idx - 1].op : '';
-    if (!frames.every((f) => f.kind === 'group')) return { ok: false, why: 'an if, loop, case or function body, or a subshell' };   // a plain `{ }` group runs in this shell (one opened after `&&`, `||` or `|`, or behind `time`, is not plain: below); its closing brace settles a piped or backgrounded one
+    if (!frames.every(own)) return { ok: false, why: 'an if, loop, case or function body, or a subshell' };   // a plain `{ }` group runs in this shell (one opened after `&&`, `||` or `|`, or behind `time`, is not plain: below); its closing brace settles a piped or backgrounded one
     // round 5's addendum (F1, F9): a group opened after `&&`, `||` or `|` is skipped, or run in a subshell, whole, whatever line
     // its body sits on; a group behind `time` loses an assignment made alone in it in zsh (`x=a; time { x=b; }` leaves a)
     const cond = frames.find((f) => f.conditional);
@@ -5237,6 +5254,34 @@ function extractIn(command, ctx) {
   // brace, or an enclosing group's, can taint the name when the group turns out to have run in a subshell (F2: `{ declare
   // x=scratch/keep.md; } | cat` kept x readable because the declaration branch noted nothing)
   const noteGroupName = (name) => { const g = frames.length && frames[frames.length - 1].kind === 'group' ? frames[frames.length - 1] : null; if (g) g.names.add(name); };
+  // THE BIND'S FRAME (round 7's nineteenth commit, 2026-09-23; the reviewer's extra5-1, both refuters: `set -- report.md; (set -- other.md); cp
+  // ../base/report.md $1` from docs/ was allowed while bash, zsh and dash copied onto the tracked file, where the round-5 head had refused `$1` as
+  // not literal, and the same through an untaken body, a `&&`/`||` list, a pipeline, a background job and the wrappers, 39 rows; THE POSITIONAL
+  // VALUE had bound every `set` and `shift` the walk met as this shell's). A `set` or `shift`, or a text this shell runs in place that holds one
+  // (eval's text, a head splice, `emulate -c`, a `mapfile -C` callback, a sourced standard input or process substitution), rebinds THIS shell's
+  // positional parameters only when it runs in this shell's frame: plainSequence's question (not in a subshell, an if, loop or case body, a
+  // command after `&&` or `||`, a pipeline member, a backgrounded command or a `{ }` group opened after one of those), asked with a running
+  // function body counted as this shell's own (the replay reads the body with the call's operands as its list, and a `set` or `shift` inside
+  // binds that list: `c() { shift; "$@"; }; c x cp a b` runs cp), and unwrapped (`command set` runs the shell's set in bash and finds no
+  // external set in zsh; `builtin set` and `time set` are dash's "not found": which shells rebind is not the walk's to know). Anywhere else the
+  // list is rebound to values not read, the construct named, so a later positional word is UNRESOLVABLE (refused where it is a command name, a
+  // script, a target or a here-string), as the round-5 head refused it. A bind inside an open `{ }` group is noted on the group, so its closing
+  // brace rebinds the list to values not read when the group turns out piped or backgrounded (`{ set -- other.md; } | cat; cp ../base/report.md
+  // $1`: every shell runs the group in a subshell and copies; zsh alone would keep a LAST member's), as closeGroups taints the names noted there.
+  const positionalFrame = (seg, idx, cmd) => {
+    if (cmd && cmd.wrapped) return { ok: false, where: `behind the wrapper \`${cmd.wrappers[cmd.wrappers.length - 1]}\`, which runs the shell's own \`${cmd.name}\` in some shells and an external command that binds nothing in others` };
+    const seq = plainSequence(seg, idx, (f) => f.kind === 'group' || (f.kind === 'function' && f.running && !f.coproc));
+    return seq.ok ? { ok: true, where: null } : { ok: false, where: `in ${seq.why}` };
+  };
+  // the one door every rebind of this shell's list goes through: `label` names the command for the reason (\`set\`, \`shift\`, \`eval\`, a command
+  // name); `cmd` null where the caller has no command of its own (the head splice, whose re-lexed text carries the wrapper for its own walk to read)
+  const rebindHere = (seg, idx, cmd, label, ws, why) => {
+    const fr = positionalFrame(seg, idx, cmd);
+    if (fr.ok) bindPositionals(ws, why);
+    else bindPositionals(UNKNOWN_POSITIONALS, `an earlier ${label} stands ${fr.where}, and whether it rebinds this shell's positional parameters is not known`);
+    const g = frames.length && frames[frames.length - 1].kind === 'group' ? frames[frames.length - 1] : null;
+    if (g) g.positionals = label;   // the group's closer reads it (closeGroups)
+  };
   // the readable form: a word of a segment holding assignment words alone (commandOf gave null), resolved by the caller
   const recordPlainWord = (w, seg, idx, seq) => {
     const m = w.raw.match(/^([A-Za-z_][A-Za-z0-9_]*)(\+?=)/);
@@ -5935,7 +5980,7 @@ function extractIn(command, ctx) {
     // does, the sub-walk's directory state adopted (known or unknown, with the construct that made it so), the move recorded on the frames
     // around it and on a function body it stands in; a trap action that moves leaves the directory unknown, since when it fires is not known
     if (sub.moved && opts.adopt) { dir = sub.dir; unknownDir = sub.unknownDir; unknownWhy = sub.unknownWhy; oldDir = sub.oldDir; movedHere(); markFunctionBody(); }
-    if (opts.adopt && opts.callArgs === undefined && sub.positionals !== undefined && sub.positionals !== positionals) bindPositionals(sub.positionals, sub.positionalsWhy);   // THE POSITIONAL VALUE: a `set` or `shift` inside a text this shell ran in place rebinds this shell's positional parameters (`eval 'set -- cp'; "$@" a b`)
+    if (opts.adopt && opts.callArgs === undefined && sub.positionals !== undefined && sub.positionals !== positionals) (opts.rebind || bindPositionals)(sub.positionals, sub.positionalsWhy);   // THE POSITIONAL VALUE: a `set` or `shift` inside a text this shell ran in place rebinds this shell's positional parameters (`eval 'set -- cp'; "$@" a b`); through the caller's door where it has one (THE BIND'S FRAME: `(eval 'set -- other.md')` binds the subshell's)
     else if (sub.moved && opts.trapMove) { setUnknown('an earlier `trap` action moves the shell (its cd runs when the trap fires, before a later command under DEBUG or at exit), so where the shell is when the command runs is not known'); movedHere(); markFunctionBody(); }
   };
   // What a command at segment `idx` reads on stdin, as text the hook holds: its own heredocs and
@@ -6142,16 +6187,18 @@ function extractIn(command, ctx) {
   // and dash, F1, `test -d d || {⏎mkdir d⏎cd d⏎}` the lead). A group behind `time` is `timed`: zsh does not keep an assignment
   // made alone inside it (`x=a; time { x=b; }` leaves a in zsh and b in bash, measured), so its assignments are unreadable
   // (F9) while its cd, which moves every shell, is followed.
-  const openGroup = (conditional = null, timed = false) => frames.push({ kind: 'group', names: new Set(), dir, unknownDir, unknownWhy, oldDir, conditional, timed, stdinFrom: pipedFrom(), stdinText: closerStdin(walkIdx, 'group') });   // stdinFrom: the producer piped into the group; stdinText: what a redirection on its closing brace feeds it (THE CONSUMER'S STDIN, THE CLOSER'S STDIN)
+  const openGroup = (conditional = null, timed = false) => frames.push({ kind: 'group', names: new Set(), positionals: null, dir, unknownDir, unknownWhy, oldDir, conditional, timed, stdinFrom: pipedFrom(), stdinText: closerStdin(walkIdx, 'group') });   // `positionals`: the label of a `set`, `shift` or in-place text that rebound the list inside the group (THE BIND'S FRAME: the closer settles it)   // stdinFrom: the producer piped into the group; stdinText: what a redirection on its closing brace feeds it (THE CONSUMER'S STDIN, THE CLOSER'S STDIN)
   const closeGroups = (n, op) => {
     for (let i = 0; i < n && frames.length && frames[frames.length - 1].kind === 'group'; i++) {
       const g = frames.pop();
       if (i === n - 1 && (op === '|' || op === '&')) {
         const how = op === '|' ? 'a `{ }` group that is piped, which the shells run in a subshell' : 'a `{ }` group that is backgrounded, which the shells run in a subshell';
         for (const nm of g.names) { readonlyNames.delete(nm); taint(nm, wroteThrough(nm, how, '{ ... }')); }   // a name frozen inside the group was frozen in the subshell alone (round 5's addendum, the freeze lens: `{ readonly x; } | cat; x=..` performed the later write in every shell)
+        if (g.positionals) bindPositionals(UNKNOWN_POSITIONALS, `an earlier ${g.positionals} stands in ${how}${op === '|' ? ' (zsh keeps a last member in this shell)' : ''}, and whether it rebinds this shell's positional parameters is not known`);   // THE BIND'S FRAME: the list a `set` in the group bound was the subshell's
         ({ dir, unknownDir, unknownWhy, oldDir } = g);
       } else if (frames.length && frames[frames.length - 1].kind === 'group') {
         for (const nm of g.names) frames[frames.length - 1].names.add(nm);
+        if (g.positionals) frames[frames.length - 1].positionals = g.positionals;   // an enclosing group that turns out piped or backgrounded settles it
       }
     }
   };
@@ -6533,7 +6580,7 @@ function extractIn(command, ctx) {
         const { text, chain, at = headIdx } = headTexts[splicedUpTo];
         const before = renderWords(seg.words.slice(0, at));
         const after = renderWords(seg.words.slice(at + 1));
-        recurse([before, text, after, redirs].filter(Boolean).join(' '), shell, false, ` through the command name \`${seg.words[at].raw}\``, stdinBodies(idx), chain, true, { adopt: true });   // the spliced text runs in this shell: a cd in it moves the shell (THE MOVED SHELL: `alias c=cd`, then `c ../notes`; `c=cd; $c ../notes`)
+        recurse([before, text, after, redirs].filter(Boolean).join(' '), shell, false, ` through the command name \`${seg.words[at].raw}\``, stdinBodies(idx), chain, true, { adopt: true, rebind: (ws, why) => rebindHere(seg, idx, null, `\`${seg.words[at].raw}\``, ws, why) });   // the spliced text runs in this shell: a cd in it moves the shell (THE MOVED SHELL: `alias c=cd`, then `c ../notes`; `c=cd; $c ../notes`)
       }
     };
     // THE KEYWORD DASH RUNS (round 6's eleventh commit, 2026-09-22; the round's verifiers: `alias function=cp`, then `function ../base/report.md
@@ -6798,8 +6845,10 @@ function extractIn(command, ctx) {
     // eval cp ${1:+x} ../base/report.md report.md` ran the two-operand copy in every shell while the body's `set` had bound `1` here and the word
     // read as `x` alone): a `set` or `shift` inside a function body being defined rebinds the body's positional parameters, the call's, not this
     // shell's (positionalsApply, the rule stated at bindPositionals); the replay of a fed call reads the body with its frame running, where the bind applies
-    if (name === 'set' && positionalsApply()) { const ops = setOperands(asSpelled); if (ops) bindPositionals(ops.every((w) => w && w.literal && !w.text.includes('\0')) ? ops : UNKNOWN_POSITIONALS, 'an earlier `set` rebinds the positional parameters through option words or operands I do not read'); }
-    else if (name === 'shift' && positionals !== null && positionalsApply()) { const n = asSpelled.length ? (asSpelled[0].literal && /^[0-9]+$/.test(asSpelled[0].text) ? Number(asSpelled[0].text) : null) : 1; bindPositionals(n == null || positionals === UNKNOWN_POSITIONALS ? UNKNOWN_POSITIONALS : positionals.slice(n), n == null ? 'an earlier `shift` moves the positional parameters by a count I do not read' : positionalsWhy); }
+    // THE BIND'S FRAME (round 7's nineteenth commit): both binds go through rebindHere, which binds values not read, the construct named, when the
+    // command is not in this shell's frame or is wrapped, and notes an open `{ }` group for its closer
+    if (name === 'set' && positionalsApply()) { const ops = setOperands(asSpelled); if (ops) rebindHere(seg, idx, cmd, '`set`', ops.every((w) => w && w.literal && !w.text.includes('\0')) ? ops : UNKNOWN_POSITIONALS, 'an earlier `set` rebinds the positional parameters through option words or operands I do not read'); }
+    else if (name === 'shift' && positionals !== null && positionalsApply()) { const n = asSpelled.length ? (asSpelled[0].literal && /^[0-9]+$/.test(asSpelled[0].text) ? Number(asSpelled[0].text) : null) : 1; rebindHere(seg, idx, cmd, '`shift`', n == null || positionals === UNKNOWN_POSITIONALS ? UNKNOWN_POSITIONALS : positionals.slice(n), n == null ? 'an earlier `shift` moves the positional parameters by a count I do not read' : positionalsWhy); }
     // bash's keyword mode (setsKeywordMode): a later writer's operands are read as spelled and with every assignment-shaped
     // word dropped, and a write under either reading is judged; zsh reads the words as spelled
     let variants = keywordMode && asSpelled.some(isAssignmentWord) ? [asSpelled, asSpelled.filter((w) => !isAssignmentWord(w))] : [asSpelled];
@@ -7117,16 +7166,16 @@ function extractIn(command, ctx) {
           texts = texts.flatMap((a) => ts.map((b) => (a ? a + ' ' : '') + b));
           if (texts.length > 64) { unread = true; break; }
         }
-        if (vanishedRead && !unread && name === 'eval') { sawOpaqueCommand = true; if (positionals !== null) bindPositionals(UNKNOWN_POSITIONALS, 'an earlier `eval` of a text I do not read may rebind the positional parameters'); }   // THE VANISHED TEXT read one text of an operand; its other values are not read, and a text this shell runs and the guard does not read may set or shift the positional parameters
-        if (unread) { if (name === 'eval') { sawOpaqueCommand = true; if (positionals !== null) bindPositionals(UNKNOWN_POSITIONALS, 'an earlier `eval` of a text I do not read may rebind the positional parameters'); } break; }   // THE POSITIONAL VALUE: a text this shell runs and the guard does not read may set or shift them
-        for (const t of texts) recurse(t, shell, false, ` through \`${name}\``, null, aliasChain, false, { adopt: name === 'eval', trapMove: name === 'trap' });   // eval's text runs in this shell and moves it (THE MOVED SHELL); a trap action that moves leaves the directory unknown
+        if (vanishedRead && !unread && name === 'eval') { sawOpaqueCommand = true; if (positionals !== null) rebindHere(seg, idx, cmd, '`eval`', UNKNOWN_POSITIONALS, 'an earlier `eval` of a text I do not read may rebind the positional parameters'); }   // THE VANISHED TEXT read one text of an operand; its other values are not read, and a text this shell runs and the guard does not read may set or shift the positional parameters
+        if (unread) { if (name === 'eval') { sawOpaqueCommand = true; if (positionals !== null) rebindHere(seg, idx, cmd, '`eval`', UNKNOWN_POSITIONALS, 'an earlier `eval` of a text I do not read may rebind the positional parameters'); } break; }   // THE POSITIONAL VALUE: a text this shell runs and the guard does not read may set or shift them
+        for (const t of texts) recurse(t, shell, false, ` through \`${name}\``, null, aliasChain, false, { adopt: name === 'eval', trapMove: name === 'trap', rebind: (ws, why) => rebindHere(seg, idx, cmd, '`eval`', ws, why) });   // eval's text runs in this shell and moves it (THE MOVED SHELL); a trap action that moves leaves the directory unknown
         break;
       }
       case 'xargs': sawOpaqueCommand = true; break;
       case 'emulate': {
         // zsh's `emulate [-LR] [shell [flags]] -c TEXT` runs TEXT under the emulation, in this shell (round 6's third commit: `emulate sh -c 'cp a
         // b'` copied in zsh while the walk read an unknown command); the text after `-c` is a script of zsh, read as `eval`'s text is
-        for (let k = 0; k < args.length; k++) if (args[k].literal && args[k].text === '-c' && args[k + 1]) for (const tx of scriptTexts(args[k + 1], '`emulate -c` script')) recurse(tx, 'zsh', false, ' through `emulate -c`', null, aliasChain, false, { adopt: true });
+        for (let k = 0; k < args.length; k++) if (args[k].literal && args[k].text === '-c' && args[k + 1]) for (const tx of scriptTexts(args[k + 1], '`emulate -c` script')) recurse(tx, 'zsh', false, ' through `emulate -c`', null, aliasChain, false, { adopt: true, rebind: (ws, why) => rebindHere(seg, idx, cmd, '`emulate -c`', ws, why) });
         break;
       }
       case 'mapfile': case 'readarray': {
@@ -7134,7 +7183,7 @@ function extractIn(command, ctx) {
         // auditor: `mapfile -C 'cp a b #' -c 1 < f` copied in bash while the callback's text stood in the command unread): the text is a script
         // of this shell, read as eval's text is (the appended index and line are operands the text's last command takes; a text the resolver
         // cannot read refuses through scriptTexts, an expansion it never reads is the residual)
-        for (let k = 0; k < args.length; k++) if (args[k].literal && /^-[A-Za-z]*C$/.test(args[k].text) && args[k + 1]) for (const tx of scriptTexts(args[k + 1], `\`${name} -C\` callback`)) recurse(tx, shell, false, ` through \`${name} -C\``, null, aliasChain, false, { adopt: true });
+        for (let k = 0; k < args.length; k++) if (args[k].literal && /^-[A-Za-z]*C$/.test(args[k].text) && args[k + 1]) for (const tx of scriptTexts(args[k + 1], `\`${name} -C\` callback`)) recurse(tx, shell, false, ` through \`${name} -C\``, null, aliasChain, false, { adopt: true, rebind: (ws, why) => rebindHere(seg, idx, cmd, `\`${name} -C\``, ws, why) });
         break;
       }
       case 'alias': {
@@ -7173,11 +7222,11 @@ function extractIn(command, ctx) {
         // body, measured) reads what this command reads, in this shell (round 6's second commit); a sourced file's contents are not in the
         // command (the residual the surfaces name; the name poison VAR_POISONERS applies as before)
         const ops = args.length && args[0].literal && args[0].text === '--' ? args.slice(1) : args;   // `. -- FILE`: the option terminator (round 6's fourth commit: `. -- <(echo 'cp a b')` copied in bash and zsh while the `--` was read as the operand)
-        if (ops.length && ops[0].literal && isStdinName(ops[0].text)) for (const body of stdinBodies(idx, fdOfName(ops[0].text))) recurse(body, shell, false, ` through \`${name} ${ops[0].text}\``, [], aliasChain, false, { adopt: true });   // the descriptor named is read (THE DESCRIPTOR FEED: `. /dev/fd/3 3< <(..)`); a sourced text runs in this shell and moves it (THE MOVED SHELL)
+        if (ops.length && ops[0].literal && isStdinName(ops[0].text)) for (const body of stdinBodies(idx, fdOfName(ops[0].text))) recurse(body, shell, false, ` through \`${name} ${ops[0].text}\``, [], aliasChain, false, { adopt: true, rebind: (ws, why) => rebindHere(seg, idx, cmd, `\`${name}\``, ws, why) });   // the descriptor named is read (THE DESCRIPTOR FEED: `. /dev/fd/3 3< <(..)`); a sourced text runs in this shell and moves it (THE MOVED SHELL)
         // a sourced process substitution is the text a literal echo or printf prints, as a script operand that is one is (round 6's third
         // commit: `. <(echo 'cp a b')` copied in bash and zsh, zsh's `. =(echo '..')` too, while the operand was read as a file outside the command)
-        else if (ops.length && procsubOf(ops[0]) != null) for (const t of scriptTexts(ops[0], `\`${name}\` operand`, 'file')) recurse(t, shell, false, ` through \`${name} <(..)\``, null, aliasChain, false, { adopt: true });
-        else if (positionals !== null) bindPositionals(UNKNOWN_POSITIONALS, `an earlier \`${name}\` of a file whose contents are not in the command may rebind the positional parameters`);   // THE POSITIONAL VALUE: a sourced file runs in this shell and may set or shift them
+        else if (ops.length && procsubOf(ops[0]) != null) for (const t of scriptTexts(ops[0], `\`${name}\` operand`, 'file')) recurse(t, shell, false, ` through \`${name} <(..)\``, null, aliasChain, false, { adopt: true, rebind: (ws, why) => rebindHere(seg, idx, cmd, `\`${name}\``, ws, why) });
+        else if (positionals !== null) rebindHere(seg, idx, cmd, `\`${name}\``, UNKNOWN_POSITIONALS, `an earlier \`${name}\` of a file whose contents are not in the command may rebind the positional parameters`);   // THE POSITIONAL VALUE: a sourced file runs in this shell and may set or shift them
         break;
       }
       default:

@@ -7424,7 +7424,7 @@ const RESIDUAL_CLASSES = {
   'a producer outside the output model': 'a pipe into a shell, or a write redirection into a process substitution running one, from anything but a literal echo or printf, alone or in a subshell or group of such commands, or a plain cat passing such a text through, or a command substitution over such a producer handed to a shell, an eval or a here-string (a call of a function the command defines, a tee or a pipe through another command, a cat of a file, an eval or a shell -c inside the substitution)',
   'zsh\'s glob grouping': 'a `(..)` inside a word handed to zsh, read as a subshell by the lexer\'s zsh grammar while zsh globs it (a lexer gap, stated since the first commit of this round)',
   'zsh\'s hook functions': 'a function the command defines under a name zsh calls on its own (chpwd, precmd, preexec, periodic, zshexit, and the names in chpwd_functions and its kin), whose body runs when the shell moves, prompts or exits, from the directory the shell is in then, while the guard judges the definition where it stands',   // round 6's eighth commit
-  'a positional the resolver reads at the word by a model the shell does not keep': 'an element\'s emptiness, a binding a later shift or unset removed, zsh\'s subscript grammar beyond one index (the colon form of a positional\'s alternate value is read as set by the list\'s length, not the element, so `set -- \'\'; eval cp ${1:+x} a b` copies in every shell; a head or script text reads a positional\'s candidate that no shift, second set, unset, read or body\'s local removes, so `set -- a; shift; ${1}cp a b` is read as `acp` while every shell runs cp, and the known set reads a name or a list bound in a subshell, a pipeline, a background job, a command substitution, an untaken body, a prefix position or behind a wrapper as this shell\'s, as in `c=a; unset c; eval cp ${c:+x} a b` and `(set -- a); eval cp ${1:+x} a b`; the unbraced list\'s subscript is read as one numeric index while zsh\'s `[@]`, `[*]`, an arithmetic, flagged or quoted subscript and a word of several such expansions select from the list too, so `$argv[*] cp a b` copies in zsh, and in every shell through `zsh -c`; each pre-existing at the round-5 head and filed in round 6\'s thirteenth commit for the round\'s ruling, a fix at the mechanism or an accepted allow)',   // round 6's thirteenth commit: the three populations the round's verifiers measured on the twelfth commit's head, filed for the round's ruling
+  'a positional the resolver reads at the word by a model the shell does not keep': 'an element\'s emptiness, a binding a later shift or unset removed, zsh\'s subscript grammar beyond one index (the colon form of a positional\'s alternate value is read as set by the list\'s length, not the element, so `set -- \'\'; eval cp ${1:+x} a b` copies in every shell; a head or script text reads a positional\'s candidate that no shift, second set, unset, read or body\'s local removes, so `set -- a; shift; ${1}cp a b` is read as `acp` while every shell runs cp, and the known set reads a name bound in a subshell, a pipeline, a background job, a command substitution, an untaken body, a prefix position or behind a wrapper as this shell\'s, as in `c=a; unset c; eval cp ${c:+x} a b`; the unbraced list\'s subscript is read as one numeric index while zsh\'s `[@]`, `[*]`, an arithmetic, flagged or quoted subscript and a word of several such expansions select from the list too, so `$argv[*] cp a b` copies in zsh, and in every shell through `zsh -c`; each pre-existing at the round-5 head and filed in round 6\'s thirteenth commit for the round\'s ruling, a fix at the mechanism or an accepted allow)',   // round 6's thirteenth commit: the three populations the round's verifiers measured on the twelfth commit's head, filed for the round's ruling
   'an opaque expansion from a cwd outside every project': 'a leading opaque expansion, or one after a literal head outside every project, from a cwd in no project (B2 as ruled, with its boundary)',
 };
 const RESIDUAL_TABLE = [
@@ -7840,21 +7840,6 @@ const RESIDUAL_TABLE = [
   ['RT-sb-prefix-true', 'a positional the resolver reads at the word by a model the shell does not keep', null, "c=a true; eval cp ${c:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
   ['RT-sb-prefix-bin-true', 'a positional the resolver reads at the word by a model the shell does not keep', null, "c=a /bin/true; eval cp ${c:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
   ['RT-sb-unset-bash-c', 'a positional the resolver reads at the word by a model the shell does not keep', null, "c=a; unset c; bash -c \"cp ${c:+x} ../base/report.md report.md\"", ['bash', 'zsh', 'dash']],
-  ['RT-sb-list-subshell', 'a positional the resolver reads at the word by a model the shell does not keep', null, "(set -- a); eval cp ${1:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-list-subshell-semi', 'a positional the resolver reads at the word by a model the shell does not keep', null, "( set -- a; ); eval cp ${1:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-list-pipe', 'a positional the resolver reads at the word by a model the shell does not keep', null, "true | set -- a; eval cp ${1:+x} ../base/report.md report.md", ['bash', 'dash']],
-  ['RT-sb-list-background', 'a positional the resolver reads at the word by a model the shell does not keep', null, "set -- a & wait; eval cp ${1:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-list-env', 'a positional the resolver reads at the word by a model the shell does not keep', null, "env set -- a; eval cp ${1:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-list-nice', 'a positional the resolver reads at the word by a model the shell does not keep', null, "nice set -- a; eval cp ${1:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-list-command', 'a positional the resolver reads at the word by a model the shell does not keep', null, "command set -- a; eval cp ${1:+x} ../base/report.md report.md", ['zsh']],
-  ['RT-sb-list-if-false', 'a positional the resolver reads at the word by a model the shell does not keep', null, "if false; then set -- a; fi; eval cp ${1:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-list-and-false', 'a positional the resolver reads at the word by a model the shell does not keep', null, "false && set -- a; eval cp ${1:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-list-or-true', 'a positional the resolver reads at the word by a model the shell does not keep', null, "true || set -- a; eval cp ${1:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-list-case', 'a positional the resolver reads at the word by a model the shell does not keep', null, "case x in y) set -- a;; esac; eval cp ${1:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-list-for-empty', 'a positional the resolver reads at the word by a model the shell does not keep', null, "for i in; do set -- a; done; eval cp ${1:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-list-while-false', 'a positional the resolver reads at the word by a model the shell does not keep', null, "while false; do set -- a; done; eval cp ${1:+x} ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-head-subshell', 'a positional the resolver reads at the word by a model the shell does not keep', null, "(set -- a); $1 cp ../base/report.md report.md", ['bash', 'zsh', 'dash']],
-  ['RT-sb-head-if-false', 'a positional the resolver reads at the word by a model the shell does not keep', null, "if false; then set -- ls; fi; $1 cp ../base/report.md report.md", ['bash', 'zsh', 'dash']],
   // THE SUBSCRIPTED POSITIONAL beyond one numeric index: ZSH_POSITIONAL_SUBSCRIPT takes one numeric subscript on the whole word, while under zsh's
   // grammar every `[..]` after the unbraced `$argv`, `$@` or `$*` selects from the positional list (`[@]`, `[*]`, an arithmetic, flagged or quoted
   // subscript), no field where the list is empty, and a word of several such expansions is not one subscript; the lexer glob-marks them and
@@ -10495,5 +10480,237 @@ test("round 7, eighteenth commit, the rows: a resolved substitution that leaves 
     const hook = fs.readFileSync(HOOK, 'utf8');
     assert.ok(hook.includes("const heldBefore = buf !== '' || before !== '';") && hook.includes("if (k > 0) { if (buf !== '' || heldBefore) endWord(); raw = spelling; }"), 'the text road ends the word under way when the word holds something before the substitution, read from the word itself (behaviour: S18-lb-* above)');
     assert.ok(hook.includes("if (buf === '' && (parts.length > 1 || !heldBefore)) { inWord = false; raw = ''; }"), 'a substitution that leaves nothing held clears the word whole, raw included (behaviour: S18-lb-empty-glue-*, and the raw pin above)');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+// Round 7's nineteenth commit (2026-09-23; the reviewer's extra5-1, ruled in section A of the round-6 rulings, both refuters by execution):
+// THE BIND'S FRAME. THE POSITIONAL VALUE bound every `set` and `shift` the walk met as this shell's list, so `set -- report.md; (set -- other.md);
+// cp ../base/report.md $1` from docs/ was allowed while bash, zsh and dash copied onto the tracked file (the round-5 head refused `$1` as not
+// literal), and the same through an untaken body, a `&&`/`||` list, a pipeline, a background job, a piped or backgrounded `{ }` group, a wrapper,
+// a `shift`, and an eval, head splice, `emulate -c` or sourced text holding the `set`. The fix asks plainSequence (a running function body counted
+// as this shell's own) and `cmd.wrapped` before either bind and binds values not read, the construct named, with a note on an open `{ }` group
+// for its closer; the rows below are the population derived over every construct, positional spelling, write form, cwd and road, measured at the
+// round-5 head, at the eighteenth commit and at the fixed tree through the hook as a process, then unguarded in the three shells.
+test("round 7, nineteenth commit, the rows: a `set` or `shift` in a subshell, a body, a `&&`/`||` list, a pipeline, a background job, a piped or backgrounded `{ }` group or behind a wrapper, or inside an eval, head splice, `emulate -c` or sourced text so placed, rebinds this shell's positional parameters to values not read, so a later positional word is refused as the round-5 head refused it, on the target, head and script roads; the plain shapes stay allowed, a running function body binds its own list, the name twins refuse as before, and the fifteen residual rows the fix refuses leave the table as pinned refusals with the shells that write", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const BD = ['bash', 'dash'];
+    const BZ = ['bash', 'zsh'];
+    const Z = ['zsh'];
+    const D = ['dash'];
+    const N = [];
+    // the reason names the construct: `an earlier <label> stands in <where>, and whether it rebinds this shell's positional parameters is not known`
+    const NOT_OWN = "whether it rebinds this shell's positional parameters is not known";
+    const W_BODY = 'an if, loop, case or function body, or a subshell';
+    const W_AND = 'a command after `&&`, which may not run';
+    const W_OR = 'a command after `||`, which may not run';
+    const W_PIPE = 'a pipeline, whose members bash and dash run in a subshell (zsh keeps the last in this shell)';
+    const W_BG = 'a backgrounded command, which runs in a subshell';
+    const W_GPIPE = 'a `{ }` group that is piped, which the shells run in a subshell (zsh keeps a last member in this shell)';
+    const W_GBG = 'a `{ }` group that is backgrounded, which the shells run in a subshell';
+    const W_GAFTER = 'a `{ }` group opened after `|`, a pipeline member bash and dash run in a subshell (zsh keeps the last in this shell)';
+    const IN = (label, where) => ['text', `an earlier ${label} stands in ${where}, and ${NOT_OWN}`];
+    const WRAP = (label, wrapper) => ['text', `an earlier ${label} stands behind the wrapper \`${wrapper}\`, which runs the shell's own ${label} in some shells and an external command that binds nothing in others, and ${NOT_OWN}`];
+    const SET = '`set`';
+    const SHIFT = '`shift`';
+    const BODY = IN(SET, W_BODY);
+    const NOT_LIT = ['text', 'not a literal path'];
+    const S1 = 'set -- report.md; ';
+    const CP = '; cp ../base/report.md $1';
+    // [id, cwd, command, the shells that write (measured), the verdict ('allow', 'name', or ['text', a substring of the reason]), the verdict from a
+    // cwd in no project ('allow' unless given; null: the row's own cwd is that cwd)]
+    const rows = [
+      // 1. the constructs, `set` binding another target inside each, the copy after it from docs/ (refused at the round-5 head, allowed at the
+      // eighteenth commit while the shells named copied onto the tracked file)
+      ['S19-set-subshell', 'nad', S1 + '(set -- other.md)' + CP, A, BODY],
+      ['S19-set-subshell-semi', 'nad', S1 + '( set -- other.md; )' + CP, A, BODY],
+      ['S19-set-subshell-empty', 'nad', S1 + '(set --)' + CP, A, BODY],
+      ['S19-set-subshell-pipe', 'nad', S1 + '(set -- other.md) | cat' + CP, A, BODY],
+      ['S19-set-subshell-bg', 'nad', S1 + '(set -- other.md) & wait' + CP, A, BODY],
+      ['S19-set-if-false', 'nad', S1 + 'if false; then set -- other.md; fi' + CP, A, BODY],
+      ['S19-set-if-else', 'nad', S1 + 'if true; then :; else set -- other.md; fi' + CP, A, BODY],
+      ['S19-set-case', 'nad', S1 + 'case x in y) set -- other.md;; esac' + CP, A, BODY],
+      ['S19-set-for-empty', 'nad', S1 + 'for i in; do set -- other.md; done' + CP, A, BODY],
+      ['S19-set-while-false', 'nad', S1 + 'while false; do set -- other.md; done' + CP, A, BODY],
+      ['S19-set-until-true', 'nad', S1 + 'until true; do set -- other.md; done' + CP, A, BODY],
+      ['S19-set-and-false', 'nad', S1 + 'false && set -- other.md' + CP, A, IN(SET, W_AND)],
+      ['S19-set-or-true', 'nad', S1 + 'true || set -- other.md' + CP, A, IN(SET, W_OR)],
+      ['S19-set-pipe-tail', 'nad', S1 + 'true | set -- other.md' + CP, BD, IN(SET, W_PIPE)],
+      ['S19-set-pipe-head', 'nad', S1 + 'set -- other.md | cat' + CP, A, IN(SET, W_PIPE)],
+      ['S19-set-group-pipe', 'nad', S1 + '{ set -- other.md; } | cat' + CP, A, IN(SET, W_GPIPE)],
+      ['S19-set-group-pipe-redir', 'nad', S1 + '{ set -- other.md; } 2>&1 | cat' + CP, A, IN(SET, W_GPIPE)],
+      ['S19-set-group-bg', 'nad', S1 + '{ set -- other.md; } & wait' + CP, A, IN(SET, W_GBG)],
+      ['S19-set-group-nested-pipe', 'nad', S1 + '{ { set -- other.md; }; } | cat' + CP, A, IN(SET, W_GPIPE)],
+      ['S19-set-group-after-pipe', 'nad', S1 + 'cat </dev/null | { set -- other.md; }' + CP, BD, IN(SET, W_GAFTER)],
+      ['S19-set-bg', 'nad', S1 + 'set -- other.md & wait' + CP, A, IN(SET, W_BG)],
+      ['S19-set-wrap-command', 'nad', S1 + 'command set -- other.md' + CP, Z, WRAP(SET, 'command')],
+      ['S19-set-wrap-builtin', 'nad', S1 + 'builtin set -- other.md' + CP, D, WRAP(SET, 'builtin')],
+      ['S19-set-wrap-time', 'nad', S1 + 'time set -- other.md' + CP, D, WRAP(SET, 'time')],
+      ['S19-set-wrap-env', 'nad', S1 + 'env set -- other.md' + CP, A, WRAP(SET, 'env')],
+      ['S19-set-wrap-nice', 'nad', S1 + 'nice set -- other.md' + CP, A, WRAP(SET, 'nice')],
+      ['S19-set-wrap-timeout', 'nad', S1 + 'timeout 5 set -- other.md' + CP, A, WRAP(SET, 'timeout')],
+      // the in-place texts holding the `set`: eval, a head splice, `emulate -c`, a sourced standard input or process substitution (the adoption of
+      // the sub-walk's list goes through the same door)
+      ['S19-eval-subshell', 'nad', S1 + "(eval 'set -- other.md')" + CP, A, IN('`eval`', W_BODY)],
+      ['S19-eval-and-false', 'nad', S1 + "false && eval 'set -- other.md'" + CP, A, IN('`eval`', W_AND)],
+      ['S19-eval-group-pipe', 'nad', S1 + "{ eval 'set -- other.md'; } | cat" + CP, A, IN('`eval`', W_GPIPE)],
+      ['S19-eval-wrap-command', 'nad', S1 + "command eval 'set -- other.md'" + CP, Z, ['text', NOT_OWN]],
+      ['S19-eval-inner-subshell', 'nad', S1 + "eval '(set -- other.md)'" + CP, A, BODY],
+      ['S19-source-stdin-subshell', 'nad', S1 + "(. /dev/stdin <<< 'set -- other.md')" + CP, BZ, IN('`.`', W_BODY)],
+      ['S19-source-procsub-subshell', 'nad', S1 + "(source <(echo 'set -- other.md'))" + CP, BZ, IN('`source`', W_BODY)],
+      ['S19-splice-subshell', 'nad', S1 + 's=set; ($s -- other.md)' + CP, A, ['text', `stands in ${W_BODY}, and ${NOT_OWN}`]],
+      ['S19-splice-and-false', 'nad', S1 + 's=set; false && $s -- other.md' + CP, A, ['text', `stands in ${W_AND}, and ${NOT_OWN}`]],
+      ['S19-emulate-subshell', 'nad', S1 + "(emulate sh -c 'set -- other.md')" + CP, A, IN('`emulate -c`', W_BODY)],
+      // `shift` so placed
+      ['S19-shift-subshell', 'nad', 'set -- report.md other.md; (shift)' + CP, A, IN(SHIFT, W_BODY)],
+      ['S19-shift-and-false', 'nad', 'set -- report.md other.md; false && shift' + CP, A, IN(SHIFT, W_AND)],
+      ['S19-shift-bg', 'nad', 'set -- report.md other.md; shift & wait' + CP, A, IN(SHIFT, W_BG)],
+      ['S19-shift-pipe-tail', 'nad', 'set -- report.md other.md; true | shift' + CP, BD, IN(SHIFT, W_PIPE)],
+      ['S19-shift-if-false', 'nad', 'set -- report.md other.md; if false; then shift; fi' + CP, A, IN(SHIFT, W_BODY)],
+      ['S19-shift-group-pipe', 'nad', 'set -- report.md other.md; { shift; } | cat' + CP, A, IN(SHIFT, W_GPIPE)],
+      ['S19-shift-wrap-command', 'nad', 'set -- report.md other.md; command shift' + CP, Z, WRAP(SHIFT, 'command')],
+      ['S19-shift-wrap-env', 'nad', 'set -- report.md other.md; env shift' + CP, A, WRAP(SHIFT, 'env')],
+      // 2. every positional spelling as the target (the subshell construct)
+      ['S19-target-dq', 'nad', 'set -- report.md; (set -- other.md); cp ../base/report.md "$1"', A, BODY],
+      ['S19-target-braced', 'nad', 'set -- report.md; (set -- other.md); cp ../base/report.md ${1}', A, BODY],
+      // the list spellings refuse as not literal with no construct named: the reason's named-expansion route reads a digit's or a name's unread
+      // reason and none for `@`, `*`, a slice or zsh's `argv` (the same through an unread eval at the eighteenth commit: a labelling gap that
+      // predates this commit, the verdict right)
+      ['S19-target-star-dq', 'nad', 'set -- report.md; (set -- other.md); cp ../base/report.md "$*"', A, NOT_LIT],
+      ['S19-target-at-dq', 'nad', 'set -- report.md; (set -- other.md); cp ../base/report.md "$@"', A, NOT_LIT],
+      ['S19-target-at', 'nad', 'set -- report.md; (set -- other.md); cp ../base/report.md $@', A, NOT_LIT],
+      ['S19-target-star', 'nad', 'set -- report.md; (set -- other.md); cp ../base/report.md $*', A, NOT_LIT],
+      ['S19-target-slice', 'nad', 'set -- report.md; (set -- other.md); cp ../base/report.md ${@:1}', BZ, NOT_LIT],
+      ['S19-target-argv1', 'nad', 'set -- report.md; (set -- other.md); cp ../base/report.md $argv[1]', Z, NOT_LIT],
+      ['S19-target-two', 'nad', 'set -- ../base/report.md report.md; (set -- a b); cp $1 $2', A, BODY],
+      // 3. every write form
+      ['S19-writer-mv', 'nad', 'set -- report.md; (set -- other.md); mv ../base/report.md $1', A, BODY],
+      ['S19-writer-install', 'nad', 'set -- report.md; (set -- other.md); install ../base/report.md $1', A, BODY],
+      ['S19-writer-ln-f', 'nad', 'set -- report.md; (set -- other.md); ln -f ../base/report.md $1', A, BODY],
+      ['S19-writer-ln-sf', 'nad', 'set -- report.md; (set -- other.md); ln -sf ../base/report.md $1', A, BODY],
+      ['S19-writer-tee', 'nad', 'set -- report.md; (set -- other.md); echo x | tee $1', A, BODY],
+      ['S19-writer-sed-i', 'nad', "set -- report.md; (set -- other.md); sed -i 's/ORIG/X/' $1", A, BODY],
+      ['S19-writer-redirect', 'nad', 'set -- report.md; (set -- other.md); echo x > $1', A, BODY],
+      ['S19-writer-append', 'nad', 'set -- report.md; (set -- other.md); echo x >> $1', A, BODY],
+      ['S19-writer-clobber', 'nad', 'set -- report.md; (set -- other.md); echo x >| $1', A, BODY],
+      ['S19-writer-amp', 'nad', 'set -- report.md; (set -- other.md); echo x &> $1', A, BODY],
+      // 4. the cwds: the root, scratch/, the tracked notes/ (a new file and the existing note), and a cwd in no project with absolute paths, which
+      // stays the B2 residual the property names (an opaque expansion after a literal head, from a cwd in no project: allowed at the round-5 head too)
+      ['S19-cwd-root', 'na', 'set -- docs/report.md; (set -- other.md); cp base/report.md $1', A, BODY],
+      ['S19-cwd-root-group-pipe', 'na', 'set -- docs/report.md; { set -- other.md; } | cat; cp base/report.md $1', A, IN(SET, W_GPIPE)],
+      ['S19-cwd-scratch', 'nas', 'set -- ../docs/report.md; (set -- other.md); cp ../base/report.md $1', A, BODY],
+      ['S19-cwd-scratch-wrap-env', 'nas', 'set -- ../docs/report.md; env set -- other.md; cp ../base/report.md $1', A, WRAP(SET, 'env')],
+      ['S19-cwd-notes-new', 'nan', 'set -- n2.md; (set -- other.md); cp ../base/report.md $1', A, BODY],
+      ['S19-cwd-notes-and-false', 'nan', 'set -- n1.md; false && set -- other.md; cp ../base/report.md $1', A, IN(SET, W_AND)],
+      ['S19-cwd-out-b2', 'out', 'set -- {NA}/docs/report.md; (set -- other.md); cp {NA}/base/report.md $1', A, 'allow', null],
+      ['S19-cwd-out-b2-group-pipe', 'out', 'set -- {NA}/docs/report.md; { set -- other.md; } | cat; cp {NA}/base/report.md $1', A, 'allow', null],
+      ['S19-cwd-out-b2-if-false', 'out', 'set -- {NA}/docs/report.md; if false; then set -- other.md; fi; mv {NA}/base/report.md $1', A, 'allow', null],
+      // 5. the head and script roads: a positional the subshell's `set` bound as the command name vanishes (THE VANISHING HEAD reads the copy after it by
+      // name) or, after a plain `set`, is a name the resolver cannot establish; a `$1` inside a `-c` script or an eval's text is a text it cannot
+      // establish (allowed at the round-5 head and the eighteenth commit while every shell copied, save the one no shell writes)
+      ['S19-head-subshell', 'nad', '(set -- a); $1 cp ../base/report.md report.md', A, 'name'],
+      ['S19-head-if-false', 'nad', 'if false; then set -- ls; fi; $1 cp ../base/report.md report.md', A, 'name'],
+      ['S19-head-set-then-subshell', 'nad', 'set -- ls; (set -- cp); $1 ../base/report.md report.md', N, ['text', `an earlier ${SET} stands in ${W_BODY}`]],
+      ['S19-head-set-then-subshell-cp', 'nad', 'set -- cp; (set -- ls); $1 ../base/report.md report.md', A, ['text', `an earlier ${SET} stands in ${W_BODY}`]],
+      ['S19-script-bash-dq', 'nad', 'set -- report.md; (set -- other.md); bash -c "cp ../base/report.md $1"', A, ['text', `an earlier ${SET} stands in ${W_BODY}`]],
+      ['S19-script-sh-dq', 'nad', 'set -- report.md; (set -- other.md); sh -c "cp ../base/report.md $1"', A, ['text', `an earlier ${SET} stands in ${W_BODY}`]],
+      ['S19-script-eval-dq', 'nad', 'set -- report.md; (set -- other.md); eval "cp ../base/report.md $1"', A, ['text', `an earlier ${SET} stands in ${W_BODY}`]],
+      ['S19-script-eval-bare', 'nad', 'set -- report.md; (set -- other.md); eval cp ../base/report.md $1', A, ['text', `an earlier ${SET} stands in ${W_BODY}`]],
+      ['S19-script-eval-sq', 'nad', "set -- report.md; (set -- other.md); eval 'cp ../base/report.md $1'", A, BODY],
+      ['S19-script-herestring', 'nad', 'set -- report.md; (set -- other.md); bash <<< "cp ../base/report.md $1"', BZ, NOT_LIT],   // refused at every head (control)
+      // 6. the fifteen rows that leave RESIDUAL_TABLE (their former ids in the name): allowed at the round-5 head and the eighteenth commit while the
+      // shells named copied; refused by name now (the alternate value over an unread list joins the dropped reading; the vanished head drops)
+      ['S19-RT-sb-list-subshell', 'nad', '(set -- a); eval cp ${1:+x} ../base/report.md report.md', A, 'name'],
+      ['S19-RT-sb-list-subshell-semi', 'nad', '( set -- a; ); eval cp ${1:+x} ../base/report.md report.md', A, 'name'],
+      ['S19-RT-sb-list-pipe', 'nad', 'true | set -- a; eval cp ${1:+x} ../base/report.md report.md', BD, 'name'],
+      ['S19-RT-sb-list-background', 'nad', 'set -- a & wait; eval cp ${1:+x} ../base/report.md report.md', A, 'name'],
+      ['S19-RT-sb-list-env', 'nad', 'env set -- a; eval cp ${1:+x} ../base/report.md report.md', A, 'name'],
+      ['S19-RT-sb-list-nice', 'nad', 'nice set -- a; eval cp ${1:+x} ../base/report.md report.md', A, 'name'],
+      ['S19-RT-sb-list-command', 'nad', 'command set -- a; eval cp ${1:+x} ../base/report.md report.md', Z, 'name'],
+      ['S19-RT-sb-list-if-false', 'nad', 'if false; then set -- a; fi; eval cp ${1:+x} ../base/report.md report.md', A, 'name'],
+      ['S19-RT-sb-list-and-false', 'nad', 'false && set -- a; eval cp ${1:+x} ../base/report.md report.md', A, 'name'],
+      ['S19-RT-sb-list-or-true', 'nad', 'true || set -- a; eval cp ${1:+x} ../base/report.md report.md', A, 'name'],
+      ['S19-RT-sb-list-case', 'nad', 'case x in y) set -- a;; esac; eval cp ${1:+x} ../base/report.md report.md', A, 'name'],
+      ['S19-RT-sb-list-for-empty', 'nad', 'for i in; do set -- a; done; eval cp ${1:+x} ../base/report.md report.md', A, 'name'],
+      ['S19-RT-sb-list-while-false', 'nad', 'while false; do set -- a; done; eval cp ${1:+x} ../base/report.md report.md', A, 'name'],
+      ['S19-RT-sb-head-subshell', 'nad', '(set -- a); $1 cp ../base/report.md report.md', A, 'name'],
+      ['S19-RT-sb-head-if-false', 'nad', 'if false; then set -- ls; fi; $1 cp ../base/report.md report.md', A, 'name'],
+      // 7. the name twins (controls): the readability rule refused each at every head, the shells named writing
+      ['S19-name-subshell', 'nad', 'c=report.md; (c=other.md); cp ../base/report.md $c', A, NOT_LIT],
+      ['S19-name-and-false', 'nad', 'c=report.md; false && c=other.md; cp ../base/report.md $c', A, NOT_LIT],
+      ['S19-name-pipe-tail', 'nad', 'c=report.md; true | c=other.md; cp ../base/report.md $c', BD, NOT_LIT],
+      ['S19-name-group-pipe', 'nad', 'c=report.md; { c=other.md; } | cat; cp ../base/report.md $c', A, NOT_LIT],
+      ['S19-name-bg', 'nad', 'c=report.md; c=other.md & wait; cp ../base/report.md $c', BD, NOT_LIT],
+      ['S19-name-if-false', 'nad', 'c=report.md; if false; then c=other.md; fi; cp ../base/report.md $c', A, NOT_LIT],
+      ['S19-name-wrap-env', 'nad', 'c=report.md; env c=other.md; cp ../base/report.md $c', A, NOT_LIT],
+      ['S19-name-prefix', 'nad', 'c=report.md; c=other.md true; cp ../base/report.md $c', A, NOT_LIT],
+      ['S19-name-eval-subshell', 'nad', "c=report.md; (eval 'c=other.md'); cp ../base/report.md $c", A, NOT_LIT],
+      // 8. the plain shapes (this shell's own bind: allowed, no shell writes), the plain binds that refuse by name, the cost the round-5 head charged
+      // (a taken body, a `true &&` list: refused, no shell writes), a substitution's list that never comes back, the running function body's own
+      // list (`c() { shift; "$@"; }` refuses by name; `f() { set -- cat; $1 ..; }` stays allowed), and the mirror shape whose refusal now carries a
+      // true reason (the eighteenth commit refused `set -- other.md; (set -- report.md); echo x > $1` by name, reading the subshell's list)
+      ['S19-plain-set', 'nad', 'set -- report.md; set -- other.md; cp ../base/report.md $1', N, 'allow'],
+      ['S19-plain-group', 'nad', 'set -- report.md; { set -- other.md; }; cp ../base/report.md $1', N, 'allow'],
+      ['S19-plain-group-redirect', 'nad', 'set -- report.md; { set -- other.md; } >/dev/null; cp ../base/report.md $1', N, 'allow'],
+      ['S19-plain-group-and', 'nad', 'set -- report.md; { set -- other.md; } && cp ../base/report.md $1', N, 'allow'],
+      ['S19-plain-eval', 'nad', "set -- report.md; eval 'set -- other.md'; cp ../base/report.md $1", N, 'allow'],
+      ['S19-plain-shift', 'nad', 'set -- other.md report.md; shift; cp ../base/report.md $1', A, 'name'],
+      ['S19-plain-set-target', 'nad', 'set -- report.md; cp ../base/report.md $1', A, 'name'],
+      ['S19-cost-taken-if', 'nad', 'set -- report.md; if true; then set -- other.md; fi; cp ../base/report.md $1', N, BODY],
+      ['S19-cost-taken-and', 'nad', 'set -- report.md; true && set -- other.md; cp ../base/report.md $1', N, IN(SET, W_AND)],
+      ['S19-ctl-substitution', 'nad', 'set -- report.md; x=$(set -- other.md); cp ../base/report.md $1', A, 'name'],
+      ['S19-ctl-function-shift-head', 'nad', 'c() { shift; "$@"; }; c x cp ../base/report.md report.md', A, 'name'],
+      ['S19-ctl-function-set-cat', 'nad', 'f() { set -- cat; $1 ../base/report.md; }; f', N, 'allow'],
+      ['S19-ctl-function-body-subshell', 'nad', 'f() { (set -- other.md); cp ../base/report.md $1; }; f report.md', A, NOT_LIT],
+      ['S19-ctl-function-def-set-outer', 'nad', 'set -- report.md; f() { set -- other.md; }; f; cp ../base/report.md $1', A, 'name'],
+      ['S19-mirror-subshell', 'nad', 'set -- other.md; (set -- report.md); echo x > $1', N, BODY],
+      ['S19-mirror-group-pipe', 'nad', 'set -- other.md; { set -- report.md; } | cat; cp ../base/report.md $1', N, IN(SET, W_GPIPE)],
+      ['S19-twin-no-set-subshell', 'nad', '(set -- other.md); cp ../base/report.md $1', N, BODY],
+    ];
+    const judge = (id, cwd, raw, writers, expect, outside = 'allow') => {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      w.build();
+      const h = w.hook(cmd, at);
+      assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error: ${h.reason.split('\n')[0]}`);
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      if (outside != null) {
+        w.build();
+        const o = w.hook(cmd, w.cwds.out);
+        assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
+      }
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    };
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect, outside] of rows) { judge(id, cwd, raw, writers, expect, outside); n++; }
+    assert.equal(n, 124);
+    // the fifteen rows left the table: no residual row binds a list outside this shell's frame, and the rows above hold them as refusals
+    for (const id of ['RT-sb-list-subshell', 'RT-sb-list-subshell-semi', 'RT-sb-list-pipe', 'RT-sb-list-background', 'RT-sb-list-env', 'RT-sb-list-nice', 'RT-sb-list-command', 'RT-sb-list-if-false', 'RT-sb-list-and-false', 'RT-sb-list-or-true', 'RT-sb-list-case', 'RT-sb-list-for-empty', 'RT-sb-list-while-false', 'RT-sb-head-subshell', 'RT-sb-head-if-false']) {
+      assert.ok(!RESIDUAL_TABLE.some((r) => r[0] === id), `${id} left the residual table (refused now)`);
+      assert.ok(rows.some((r) => r[0] === `S19-${id}` && r[4] === 'name'), `${id} stands above as a refusal by name`);
+    }
+    assert.ok(RESIDUAL_TABLE.filter((r) => r[0].startsWith('RT-sb-')).every((r) => !/\bset --|\bshift\b/.test(r[3])), 'every remaining sb row is a name the known set reads, not a positional list bound outside this shell\'s frame');
+    assert.ok(!RESIDUAL_CLASSES['a positional the resolver reads at the word by a model the shell does not keep'].includes('or a list bound'), 'the class gloss names the name clause alone (the list clause is refused now)');
+    // where the code lives (the rows above prove what it does)
+    const hook = fs.readFileSync(HOOK, 'utf8');
+    assert.ok(hook.includes("const positionalFrame = (seg, idx, cmd) => {") && hook.includes("const seq = plainSequence(seg, idx, (f) => f.kind === 'group' || (f.kind === 'function' && f.running && !f.coproc));"), "THE BIND'S FRAME asks plainSequence with a running function body counted as this shell's own (behaviour: S19-set-*, S19-ctl-function-shift-head, S19-ctl-function-set-cat)");
+    assert.ok(hook.includes("if (cmd && cmd.wrapped) return { ok: false, where: `behind the wrapper"), 'a wrapped `set` or `shift` binds values not read (behaviour: S19-set-wrap-*, S19-shift-wrap-*)');
+    assert.ok(hook.includes("if (name === 'set' && positionalsApply()) { const ops = setOperands(asSpelled); if (ops) rebindHere(seg, idx, cmd, '`set`',") && hook.includes("rebindHere(seg, idx, cmd, '`shift`',"), 'both binds go through the door (behaviour: S19-set-*, S19-shift-*)');
+    assert.ok(hook.includes("(opts.rebind || bindPositionals)(sub.positionals, sub.positionalsWhy)"), "an in-place text's list is adopted through the caller's door (behaviour: S19-eval-subshell, S19-splice-subshell, S19-emulate-subshell, S19-source-*)");
+    for (const site of ["{ adopt: name === 'eval', trapMove: name === 'trap', rebind: (ws, why) => rebindHere(seg, idx, cmd, '`eval`', ws, why) }", "{ adopt: true, rebind: (ws, why) => rebindHere(seg, idx, null, `\\`${seg.words[at].raw}\\``, ws, why) }", "{ adopt: true, rebind: (ws, why) => rebindHere(seg, idx, cmd, '`emulate -c`', ws, why) }", "{ adopt: true, rebind: (ws, why) => rebindHere(seg, idx, cmd, `\\`${name} -C\\``, ws, why) }", "{ adopt: true, rebind: (ws, why) => rebindHere(seg, idx, cmd, `\\`${name}\\``, ws, why) }"]) assert.ok(hook.includes(site), `the adoption site carries the door: ${site}`);
+    assert.equal((hook.match(/\{ adopt: /g) || []).length, (hook.match(/\{ adopt: [^{}]*rebind: \(ws, why\) => rebindHere\(/g) || []).length, 'every adoption site in the hook carries the door (a new `adopt: true` without one reds here)');
+    assert.ok(hook.includes("if (g.positionals) bindPositionals(UNKNOWN_POSITIONALS, `an earlier ${g.positionals} stands in ${how}") && hook.includes("if (g.positionals) frames[frames.length - 1].positionals = g.positionals;"), 'a `{ }` group notes the bind and its closer settles or hands it on (behaviour: S19-set-group-pipe, S19-set-group-bg, S19-set-group-nested-pipe, S19-shift-group-pipe, S19-eval-group-pipe)');
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
