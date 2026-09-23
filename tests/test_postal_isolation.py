@@ -213,7 +213,10 @@ class ThreadMailOff(unittest.TestCase):
 
 class ThreadOwnSendRefused(unittest.TestCase):
     """The thread's OWN send, over the real handler: 403 whose text says the thread's mail is off until it is
-    broken out (final; the isolation refusal a peer must not route around)."""
+    broken out (final; the isolation refusal a peer must not route around). The gate is also the witness the
+    deadness mirror's disclosure rests on (fork PR #897, round 3): the mirror's roster omits comment threads, and
+    the road to a false presumed-closed for a live thread runs only through a thread's mail crossing a host, which
+    this gate refuses before the relay unless the `threadMail` flag is hand-set."""
 
     @classmethod
     def setUpClass(cls):
@@ -263,6 +266,45 @@ class ThreadOwnSendRefused(unittest.TestCase):
         _reg(THREAD)                                       # broken out: the reg has no threadOf
         status, body = self._send(THREAD, "web-2", "web")
         self.assertNotEqual(status, 403, "a promoted session sends like any other: %r" % (body,))
+
+    def test_a_threads_send_to_a_peer_host_is_refused_before_the_relay_and_its_sid_is_in_no_roster(self):
+        """Fork PR #897, round 3 (the reviewer's ruling on its refuters' narrowing of the comment-thread finding): the deadness
+        mirror's roster is built from the presence producer, which reads the default listing (the 2026-08-22 rule: thread
+        rows ride only when asked), so a live thread's sid is in no roster a peer's mirror holds, and a peer whose host
+        vouches for absence would presume a thread that mailed it closed (rule 5). The road is closed here: a thread's own
+        send is refused with 403 before resolve_recipient and any relay, so no thread's mail crosses a host; the one way
+        through is `threadMail` at the literal True in session-flags.json, a key no route of the kernel or the bus writes.
+        Executed over the real handler: the listing with thread rows has the thread and the roster omits it; a send to a
+        session on a peer host, a relay destination for any session whose mail is on, is refused and nothing is parked in
+        the peer's outbox; with the flag hand-set the same send is parked (the disclosed road, whose shape, if thread mail
+        is ever re-enabled, is a separate exchange field carrying the mirror-relevant thread sids, never the roster with
+        thread rows: fork PR #897's ledger entry). A gate that let a thread's send through fails the 403 pin here."""
+        far_host, far = "TESTHOST-far", "88888888-9999-aaaa-bbbb-cccccccccccc"
+        self.assertTrue(pm.peers_on(), "peer mode: a name on a peer host is a relay destination")
+        pm.PEER_STATE[far_host] = {"presence": [{"id": far, "name": "far"}], "epoch": 1, "holds": [],
+                                   "seenAt": int(pm.time.time()), "presenceAnswered": True}
+        pm.PEERS[far_host] = {"port": 50002, "up": True, "at": 0, "token": "", "trust": "trusted"}   # up: the park needs no redial
+        self.addCleanup(pm.PEER_STATE.pop, far_host, None); self.addCleanup(pm.PEERS.pop, far_host, None)
+        outbox = pm.OUTBOX / far_host
+        shutil.rmtree(outbox, ignore_errors=True); self.addCleanup(shutil.rmtree, outbox, ignore_errors=True)
+        self.assertIn(THREAD, [a["id"] for a in pm.local_agents_checked(threads=True)[0]], "the listing with thread rows has the thread")
+        roster, answered = pm.presence_payload("")
+        self.assertEqual(([a.get("id") for a in roster], answered), ([PARENT, far], True),
+                         "THE ROSTER OMITS COMMENT THREADS: the presence producer reads the default listing, so the thread's sid is in "
+                         "no roster a peer's mirror holds (its parent and the gossiped far session are)")
+        self.assertEqual(pm.resolve_recipient("far", PARENT)["kind"], "relay", "the far session is a relay destination")
+        status, body = self._send(THREAD, "web-comment-1", "far")
+        self.assertEqual(status, 403, body)
+        self.assertIn("COMMENT THREAD", body["error"]); self.assertIn("Nothing was sent", body["error"])
+        self.assertFalse(outbox.exists() and any(outbox.iterdir()),
+                         "REFUSED BEFORE THE RELAY: nothing is parked for the peer, so the thread's sid never reaches a far host as a "
+                         "sender (a gate that opened parks the message here)")
+        _flags({THREAD: {"threadMail": True}})                # the hand-set flag: the one way through
+        status, body = self._send(THREAD, "web-comment-1", "far")
+        self.assertEqual(status, 200, body)
+        self.assertTrue(outbox.exists() and any(outbox.iterdir()),
+                        "with the flag hand-set the same send is parked for the peer while the roster still omits the thread: the "
+                        "disclosed road, reachable through this flag alone")
 
 
 class ThreadMailOffFollowUp(unittest.TestCase):

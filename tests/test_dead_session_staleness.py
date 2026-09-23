@@ -713,10 +713,14 @@ class ReaderFollowsTheWriter(unittest.TestCase):
                     adjacent road; the TTL vouch answered rule 5 here). The same rows under the legacy scheme
                     (ROMP_POSTAL_PEERS=0 set, read back, the writer run again): rule 5, the beat a remote session's only
                     presence there vouching by its TTL whatever B's link; the switch popped and the writer run again:
-                    cannot-determine again. Then the listing answers naming the beating session: the recorder calls it
-                    local and keeps the key, so the row stays heard and its sid rule 4's (the refused retirement, a pop,
-                    leaves the carry to re-file the key from the previous file as a row heard by nobody, the sid
-                    cannot-determine by its own earlier beat for the file's life);
+                    cannot-determine again. Then the listing answers owning nothing (a consumer's read, a bare write):
+                    the row and the entry stay, the listing not owning the sid. Then the listing answers naming the
+                    beating session: the recorder calls it local, and the writer's ONE RELEASE (the seventeenth commit,
+                    the reviewer's ruling) drops the row and forgets the entry, so the sid is in no row and no reason
+                    (on a real root rules 1 and 2 own it, its transcript being local; this child's HOME is empty, so the
+                    ladder shows the mirror's answer, naming B alone); a blink's bare write after it does not bring the
+                    row back (the sixteenth commit had kept the key and the row, refusing a pop in the recorder that left
+                    the carry a key to re-file from the file; the writer's own drop leaves it none);
       legacy shape  the whitespace list a bus before 2026-09-22 wrote, at the bus's path: the reader
                     answers cannot-determine for the sid it does not name AND for the one it does, and
                     says once in the judge's log that the file is not the shape the bus writes; it is
@@ -1120,9 +1124,16 @@ out["legacyBeatBesideDown"] = beat_phase(pm13)
 os.environ.pop("ROMP_POSTAL_PEERS", None)          # peer mode again: the scheme is read at each write, nothing stored on the row
 pm13._write_remote_sids()
 out["peerBeatAgain"] = beat_phase(pm13)
+listing_answers([])                                # the kernel answers owning nothing: a consumer's read, then a bare write
+pm13.local_agents_checked()
+pm13._write_remote_sids()
+out["peerBeatUnowned"] = beat_phase(pm13)          # the row and the entry stay: the listing does not own the sid
 listing_answers([blink_beat])                      # the kernel answers: the beating session is local
-out["beatConfirmedLocal"] = pm13._record_heartbeat(blink_beat, "web")   # True; the key is kept (the refused pop leaves a carried phantom)
+out["beatConfirmedLocal"] = pm13._record_heartbeat(blink_beat, "web")   # True; the recorder's write releases the row and forgets the entry
 out["peerBeatLocal"] = beat_phase(pm13)
+listing_blinks()                                   # a blink's bare write after the release: the row does not return
+pm13._write_remote_sids()
+out["peerBeatLocalBlinkAgain"] = beat_phase(pm13)
 bus_file.write_text(remote + "\n")                 # the shape a bus before 2026-09-22 wrote
 err = io.StringIO()
 with contextlib.redirect_stderr(err):
@@ -1954,18 +1965,26 @@ print(json.dumps(out))
                                  (True, NO_VOUCH(HOST2 + " (link down)", beat + " (no link state)")),
                                  "the scheme is read at each write and nothing is stored on the row: peer mode again, "
                                  "cannot-determine again")
+                unowned = got["peerBeatUnowned"]
+                self.assertEqual((unowned["keyKept"], unowned["hosts"][beat], self._v(unowned, "beat")),
+                                 (True, L(True, False, False, False, True, False, [BLINK_BEAT]), RULE_4),
+                                 "an answered listing that does not own the beating sid releases nothing: the row and the entry stay "
+                                 "(a writer dropping a row the listing does not own drops it here)")
                 self.assertIs(got["beatConfirmedLocal"], True, "the listing answered naming the session: local")
                 local = got["peerBeatLocal"]
-                self.assertIs(local["keyKept"], True,
-                              "THE REFUSED RETIREMENT: the recorder keeps the key once the listing calls the sid local (a pop "
-                              "leaves the carry to re-file it from the previous file as a row heard by nobody)")
-                self.assertNotEqual(local["hosts"].get(beat), L(False, False, False, False, False, False, [BLINK_BEAT]),
-                                    "the row is never a carried phantom of the session's own earlier beat")
-                self.assertNotEqual(self._v(local, "beat"), LOST(beat + " (not heard)"),
-                                    "...and its sid is never cannot-determine by that phantom for the file's life")
-                self.assertEqual((local["hosts"][beat], self._v(local, "beat")),
-                                 (L(True, False, False, False, True, False, [BLINK_BEAT]), RULE_4),
-                                 "the row stays as recorded, heard, naming its sid")
+                self.assertIs(local["keyKept"], False,
+                              "THE RULED RELEASE (the seventeenth commit): the write after a listing this bus read answered and owns "
+                              "the sid drops the row and forgets the entry (rules 1 and 2 own that sid); the sixteenth commit kept "
+                              "both, refusing a pop in the recorder that left the carry a key to re-file")
+                self.assertEqual(local["hosts"], {HOST2: L(True, False, True, False, False, False, [OTHER])},
+                                 "the beat's row is gone; B's row, held down, is the whole mirror")
+                self.assertEqual(self._v(local, "beat"), NO_VOUCH(HOST2 + " (link down)"),
+                                 "the sid is in no row and no reason (on a real root rules 1 and 2 answer for it, its transcript "
+                                 "being local; this child's HOME is empty, so the ladder shows the mirror's answer, naming B alone)")
+                back = got["peerBeatLocalBlinkAgain"]
+                self.assertEqual((back["keyKept"], back["hosts"]), (False, {HOST2: L(True, False, True, False, False, False, [OTHER])}),
+                                 "a blink's bare write after the release does not bring the row back: no memory and no file carries "
+                                 "it (a writer that dropped the row and kept the key re-emits it here)")
 
     def test_a_mirror_of_the_legacy_shape_is_cannot_determine_and_said_once(self):
         for shape, got in self.got.items():

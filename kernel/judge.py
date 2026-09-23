@@ -19533,9 +19533,14 @@ def _presumed_closed_verdict(sid, now):
     and the event that closes the road is that host's heartbeat or exchange arriving in the new process;
     (2) under the legacy singleton scheme the bus pruned an expired heartbeat's sid from the file, so a
     tunnel drop or a stalled peer longer than the TTL settled a live session on no new information; the
-    row now stays, marked expired, and the event that closes the road is the next beat. Both are
-    event-keyed: no grace period anywhere. A dead rule was conservative; an armed rule that settles falsely
-    is worse than dead, so both arms answer as the dead rule did, cannot-determine.
+    row now stays, marked expired, and a beat from the session (the event) makes it reachable again. A
+    session that has ended beats no more, so its row stands, its sid cannot-determine by it, for the life
+    of the state root: the bus's disclosed cost (round 3 of fork PR #897, the seventeenth commit, which
+    corrected the earlier framing of the expiry as closed by "the next beat"), and the design rule refuses
+    a timer. The bus has one release, a heartbeat row whose sid the local kernel's answered listing owns,
+    which rules 1 and 2 here own anyway. Both are event-keyed: no grace period anywhere. A dead rule was
+    conservative; an armed rule that settles falsely is worse than dead, so both arms answer as the dead
+    rule did, cannot-determine.
     The mirror is read where the bus writes it: postal_service.py's _write_remote_sids puts it at the
     BUS's state root, which is this module's STATE plus `postal` (its STATE binding carries that
     suffix), so the file is STATE/postal/remote-sids here. The writer owns the file's home and its shape

@@ -18,7 +18,10 @@ writer:
       the previous file named that this process has not heard is CARRIED FORWARD, its roster kept, heard
       false, until its heartbeat or exchange arrives (the event);
   (2) an expired legacy heartbeat was PRUNED, so a stalled peer past the TTL removed a live session's
-      sid: the row stays, marked expired, until the next beat (the event).
+      sid: the row stays, marked expired; a beat from the session (the event) makes it reachable again, and a
+      session that ended beats no more, so the row stands for the file's life (the disclosed cost; the mirror's
+      one release is a heartbeat row whose sid the local kernel's ANSWERED listing owns, dropped by the writer:
+      round 3 of fork PR #897, the seventeenth commit).
 And the kernel's link state decides what a source vouches for (round 2 of fork PR #897, the reviewer's
 ruling): a session started on a host after its last heard roster is in no roster, so a host counted as
 vouching for absence while its link is down, or while the kernel has never reported it up, would let rule 5
@@ -34,8 +37,10 @@ legacy singleton scheme alone: in peer mode (the default, which this module runs
 table is a local session's, filed as remote presence by _record_heartbeat while the kernel's listing did not answer,
 and its row vouches for presence alone (round 3 of fork PR #897, the reviewer's ruling: counted as vouching, such a
 beat let a restarted bus that had heard no host presume every sid nothing named closed within the beat's TTL, and let
-a blink's phantom vouch while a peer's link was down); the entry is never popped once the listing calls the sid local,
-since the carry would re-file the missing key as a row heard by nobody.
+a blink's phantom vouch while a peer's link was down); such a row has the mirror's one release: the write after a
+listing this bus read answered and owns its sid drops it, heard or carried, and forgets the entry once the file without
+the row is in place (round 3 of fork PR #897, the seventeenth commit; the sixteenth had refused a pop in the recorder,
+which left the carry a key to re-file, and kept the row).
 The gate reaches a peer's row under the name it is filed under, and the kernel notifies the ALIAS it dials:
 the dialer's fold files there, the dialed side's handler files a far bus under the name it DECLARES until a
 row under a dialable name carries its busId (_canon_peer_name), so before this bus's own dial has folded the
@@ -85,9 +90,14 @@ the eleventh commit the gate read heard and not held down alone, the hub's word 
 hub, vouching for absence, let rule 5 presume a live session closed for one exchange interval of the far host); and
 the heartbeat row's scheme gate (round 3 of fork PR #897, the reviewer's ruling): a beat through the real recorder
 during a listing blink in peer mode vouching for presence alone, nothing vouching beside a peer the kernel holds down,
-the same rows under ROMP_POSTAL_PEERS=0 vouching by the TTL, and the recorder keeping its key once the listing calls
-the sid local (a pop leaves a carried phantom); the four earlier heartbeat pins of this module that asserted the TTL
-vouch are re-pinned to peer mode's presence alone, each saying so.
+the same rows under ROMP_POSTAL_PEERS=0 vouching by the TTL; the four earlier heartbeat pins of this module that
+asserted the TTL vouch are re-pinned to peer mode's presence alone, each saying so; and the mirror's ONE RELEASE
+(round 3 of fork PR #897, the reviewer's ruling, the seventeenth commit): a heartbeat row whose sid the local kernel's
+ANSWERED listing owns, as this bus last read it through local_agents_checked, is dropped by the writer, heard or
+carried, and the entry forgotten with it so no later write re-emits it; a beat filed while the listing did not answer
+is kept, by the recorder's write and by a bare one (a writer reading the presence producer's cache, or the last answered
+listing's sids through the blink, drops it); a row the listing does not own is kept, and an answered empty listing
+releases nothing; a read without thread rows owns no thread's sid, and the recorder's read, which asks for them, does.
 tests/test_dead_session_staleness.py ReaderFollowsTheWriter
 runs this writer and the judge's reader together over one root; tests/test_postal_bus_lifetime.py
 MonitorTick pins the poll's write. SYNTHETIC fixtures only: private synthetic sids, hostname TESTHOST."""
@@ -129,17 +139,34 @@ HB = "heartbeat:"                              # the key of a legacy heartbeat's
 LEGACY = "legacy:list"                         # the key a whitespace-list mirror is carried under (pm.REMOTE_SIDS_LEGACY)
 
 
+def _listing_record():
+    """The writer's record of the local listing as the bus last read it (_LOCAL_LISTING, round 3 of fork PR #897), or None
+    for a bus module without it: read with getattr so this module, overlaid on the product before the seventeenth commit
+    for its red-before, reaches its assertions instead of failing in setUp."""
+    rec = getattr(pm, "_LOCAL_LISTING", None)
+    return rec[0] if rec is not None else None
+
+
+def _forget_listing(value=None):
+    """Set the record to `value` (None: no listing read yet in this "process") when the module has one."""
+    rec = getattr(pm, "_LOCAL_LISTING", None)
+    if rec is not None:
+        rec[0] = value
+
+
 class Mirror(unittest.TestCase):
     def setUp(self):
         pm.STATE.mkdir(parents=True, exist_ok=True)
         self.path = pm.STATE / "remote-sids"
         self.path.unlink(missing_ok=True)
-        saved = (dict(pm.HEARTBEATS), dict(pm.PEER_STATE), dict(pm.PEERS))
+        saved = (dict(pm.HEARTBEATS), dict(pm.PEER_STATE), dict(pm.PEERS), _listing_record())
         pm.HEARTBEATS.clear(); pm.PEER_STATE.clear(); pm.PEERS.clear()
+        _forget_listing()                             # no listing read yet in this "process": the writer releases nothing
 
         def restore():
             for d, v in zip((pm.HEARTBEATS, pm.PEER_STATE, pm.PEERS), saved):
                 d.clear(); d.update(v)
+            _forget_listing(saved[3])
             self.path.unlink(missing_ok=True)
         self.addCleanup(restore)
         reconcile = pm._peer_threads_reconcile
@@ -209,8 +236,8 @@ class Mirror(unittest.TestCase):
         pm.PEER_STATE[host] = st
 
     def _restart(self):
-        """A restarted bus process's memory: nothing heard yet, the file still on disk."""
-        pm.HEARTBEATS.clear(); pm.PEER_STATE.clear()
+        """A restarted bus process's memory: nothing heard yet, no listing read yet, the file still on disk."""
+        pm.HEARTBEATS.clear(); pm.PEER_STATE.clear(); _forget_listing()
 
     def _local_listing_answered_empty(self):
         """The local sessions listing the dialed side's handler gossips in its response presence, answered and
@@ -315,11 +342,11 @@ class Mirror(unittest.TestCase):
         beat's TTL, and let a blink's phantom vouch while a peer's link was down. Under the legacy singleton scheme
         (ROMP_POSTAL_PEERS=0) the beats are a remote session's only presence and the row vouches by its TTL as ruled in
         round 1. The scheme is read at each write (peers_on), so the same rows flip with the switch and nothing is stored on
-        the row. The beat arrives through the REAL recorder under a listing that does not answer, as in the blink. The
-        refused retirement: popping the HEARTBEATS entry once the listing calls the sid local leaves the carry to re-file
-        the missing key from the previous file as a row heard by nobody, a phantom for the file's life (the refuters, by
-        execution); the recorder keeps the key. The composition with the reader's verdicts is
-        tests/test_dead_session_staleness.py ReaderFollowsTheWriter (the peer-mode beat phase)."""
+        the row. The beat arrives through the REAL recorder under a listing that does not answer, as in the blink. What
+        happens once the listing answers and owns the sid is the writer's release, pinned by
+        test_a_heartbeat_row_whose_sid_the_answered_local_listing_owns_is_released_by_the_writer (the seventeenth
+        commit). The composition with the reader's verdicts is tests/test_dead_session_staleness.py
+        ReaderFollowsTheWriter (the peer-mode beat phase)."""
         self.assertTrue(pm.peers_on(), "peer mode, the default this module runs under")
         self._local_listing_unanswered()                      # the kernel mid-restart: the listing does not answer
         self.assertFalse(pm._record_heartbeat(A, "web"), "the listing did not answer, so the beat is recorded as remote "
@@ -336,14 +363,6 @@ class Mirror(unittest.TestCase):
         self.assertEqual(self._vouch(), {HB + A: (True, False, False), HOST: (False, False, False)},
                          "THE BLINK PHANTOM beside a down peer: no row vouches for absence, so a sid nothing names is "
                          "cannot-determine (the TTL vouch made the beat vouch here while the peer was down, and rule 5 fired)")
-        self._local_listing_answered([{"id": A, "name": "web"}])   # the kernel answers: the beating session is local
-        self.assertTrue(pm._record_heartbeat(A, "web"), "the listing answered and holds the sid: local")
-        self.assertIn(A, pm.HEARTBEATS, "THE REFUSED RETIREMENT: the recorder keeps the key (a pop leaves the carry to "
-                      "re-file it from the previous file as a row heard by nobody)")
-        self.assertNotEqual(self._rows().get(HB + A), (False, False, [A]),
-                            "the row is never a carried phantom of the session's own earlier beat (heard False, its sid "
-                            "cannot-determine by it for the file's life): the outcome of the refused pop")
-        self.assertEqual(self._rows()[HB + A], (True, False, [A]), "the row stays as recorded, heard, naming its sid")
         self._legacy_scheme()                                 # the same rows under the legacy singleton scheme
         pm._write_remote_sids()
         self.assertEqual(self._vouch(), {HB + A: (True, False, True), HOST: (False, False, False)},
@@ -353,6 +372,76 @@ class Mirror(unittest.TestCase):
         pm.HEARTBEATS[B] = ("api", self.now - pm.HEARTBEAT_TTL - 1)   # a beat past its TTL under the legacy scheme
         pm._write_remote_sids()
         self.assertEqual(self._vouch()[HB + B], (False, False, False), "expired: unreachable, vouching for nothing, as before")
+
+    def test_a_heartbeat_row_whose_sid_the_answered_local_listing_owns_is_released_by_the_writer(self):
+        """Round 3 of fork PR #897, the reviewer's ruling (the seventeenth commit): the mirror's ONE release. A heartbeat
+        row whose sid the local kernel's ANSWERED listing owns is dropped by the writer, heard or carried, and the
+        HEARTBEATS entry is forgotten with it once the file without the row is in place, so the carry has nothing to
+        re-file: rules 1 and 2 of the judge's ladder own a sid the local kernel lists (its transcript is local), and in
+        peer mode every beat that reaches the table is such a session's, filed during a listing blink. The listing is the
+        one this bus LAST read through local_agents_checked (the recorder at every beat, the presence producer at every
+        exchange, the autostop gate at every poll), when that read answered; a listing that did not answer releases
+        nothing, and the last answered rows the presence producer serves through a blink are a cache, not the listing's
+        word at this write. Until this commit no event removed a heartbeat row: a local session's blink beat stood, heard,
+        for the file's life, and the sixteenth commit had refused a pop in the recorder because the carry re-filed the
+        key from the file (the reviewer's refuters, by execution); the writer's own drop leaves it nothing to re-file.
+        Every other row still has no release (the disclosed cost in _remote_sids_document). The composition with the
+        reader's verdicts is tests/test_dead_session_staleness.py ReaderFollowsTheWriter (the peer-mode beat phase); the
+        poll's write is tests/test_postal_bus_lifetime.py MonitorTick."""
+        self.assertTrue(pm.peers_on(), "peer mode, the default this module runs under")
+        self._forget_presence_cache()
+        self._local_listing_answered([{"id": A, "name": "web"}])   # the kernel answers: A is a local session
+        rows, answered = pm._local_presence_checked()
+        self.assertEqual(([r["id"] for r in rows], answered), ([A], True),
+                         "the presence producer read the answered listing and cached A (the cache a wrong writer would read)")
+        pm._write_remote_sids()
+        self.assertEqual(self._rows(), {}, "no beat yet: no row")
+        self._local_listing_unanswered()                      # the kernel restarts: the listing does not answer
+        self.assertFalse(pm._record_heartbeat(A, "web"), "A's beat during the blink: recorded as remote presence")
+        self.assertFalse(pm._record_heartbeat(B, "api"), "a second beat, of a sid no listing of this bus owns")
+        self.assertEqual(self._rows(), {HB + A: (True, False, [A]), HB + B: (True, False, [B])},
+                         "A SID OF AN UNANSWERED LISTING IS KEPT: the listing did not answer, so the recorder's write releases "
+                         "nothing (a writer reading the presence producer's cache, which serves A through the blink, or the last "
+                         "answered listing's sids, drops A's row here)")
+        pm._write_remote_sids()                               # a bare write (a notify's, a poll's) while the listing still does not answer
+        self.assertEqual(self._rows(), {HB + A: (True, False, [A]), HB + B: (True, False, [B])}, "...and so does a bare write")
+        self._local_listing_answered([{"id": A, "name": "web"}])   # the kernel answers again, owning A
+        self.assertEqual([r["id"] for r in pm.local_agents_checked()[0]], [A],
+                         "a consumer's read of the answered listing (the presence producer's, the autostop gate's): the event")
+        pm._write_remote_sids()                               # the next write, a bare one
+        self.assertEqual(self._rows(), {HB + B: (True, False, [B])},
+                         "THE RULED RELEASE: A's row is dropped at the next write once the listing this bus read answered and owns "
+                         "A (rules 1 and 2 own that sid); B's row, which the listing does not own, is kept")
+        self.assertNotIn(A, pm.HEARTBEATS, "the entry is forgotten with the row, so no later write re-emits it (a writer that "
+                         "drops the row and keeps the key writes A's row again at the next write the listing does not answer for)")
+        self.assertIn(B, pm.HEARTBEATS, "B's entry stays")
+        self._local_listing_unanswered()                      # the listing blinks again, and a bare write follows
+        pm._write_remote_sids()
+        self.assertEqual(self._rows(), {HB + B: (True, False, [B])}, "A's row does not return: no memory and no file carries it")
+        pm.HEARTBEATS[C] = ("tests", self.now)                # a beat of C in this process, then a restart: both rows carried
+        pm._write_remote_sids()
+        self._restart()
+        pm._write_remote_sids()
+        self.assertEqual(self._rows(), {HB + B: (False, False, [B]), HB + C: (False, False, [C])}, "both carried, heard by nobody")
+        self._local_listing_answered([{"id": C, "name": "tests"}])
+        pm.local_agents_checked()
+        pm._write_remote_sids()
+        self.assertEqual(self._rows(), {HB + B: (False, False, [B])},
+                         "a CARRIED heartbeat row is released the same way (a writer dropping heard rows alone carries C for the "
+                         "file's life); B, which no listing owns, is carried on")
+        self._local_listing_answered([])                      # an answered EMPTY listing owns nothing
+        pm.local_agents_checked()
+        pm._write_remote_sids()
+        self.assertEqual(self._rows(), {HB + B: (False, False, [B])}, "an answered listing that owns nothing releases nothing")
+        self._local_listing_unanswered()                      # a comment thread's beat during a blink, filed like any other
+        self.assertFalse(pm._record_heartbeat(D, "web-comment-1"))
+        self._local_listing_answered([{"id": D, "name": "web-comment-1", "thread": True, "parent": A}])
+        self.assertEqual(pm.local_agents_checked()[0], [], "the default listing hides the thread row (the seam mirrors the route)")
+        pm._write_remote_sids()
+        self.assertEqual(self._rows()[HB + D], (True, False, [D]), "a read without thread rows does not own the thread: kept")
+        self.assertTrue(pm._record_heartbeat(D, "web-comment-1"), "the recorder asks for thread rows: local")
+        self.assertNotIn(HB + D, self._rows(), "...and the recorder's own write releases the row")
+        self.assertNotIn(D, pm.HEARTBEATS, "...and forgets the entry")
 
     def test_a_peers_own_rows_under_its_name_and_its_gossip_as_a_via_row_under_the_hub_and_the_far_host(self):
         self._peer(HUB, [{"id": A, "name": "web"}, {"id": B, "name": "api", "via": FAR, "viaBus": "far-bus"}], bus_id="hub-bus")

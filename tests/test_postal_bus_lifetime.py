@@ -123,9 +123,23 @@ GAMMA = "99999999-8888-7777-6666-555555555555"
 
 
 def _forget_presence():
-    """A bus that has never seen an answered listing: no in-memory rows, no disk twin."""
+    """A bus that has never seen an answered listing: no in-memory rows, no disk twin, and no listing read yet for the
+    deadness mirror's release (_LOCAL_LISTING; round 3 of fork PR #897)."""
     pm._LOCAL_PRESENCE_GOOD[0], pm._LOCAL_PRESENCE_GOOD[1] = [], False
     pm._PRESENCE_GOOD_FILE.unlink(missing_ok=True)
+    rec = getattr(pm, "_LOCAL_LISTING", None)        # getattr: the red-before overlays this module on the product before the record
+    if rec is not None:
+        rec[0] = None
+
+
+def _mirror_rows():
+    """key -> (heard, expired, sids) from the mirror the poll wrote, or the raw text when it is not a document (so a writer
+    of another shape fails a pin by its message rather than by an exception)."""
+    text = (pm.STATE / "remote-sids").read_text()
+    try:
+        return {k: (r["heard"], r["expired"], r["sids"]) for k, r in json.loads(text)["hosts"].items()}
+    except (ValueError, KeyError, TypeError):
+        return text
 
 
 class IdleGate(unittest.TestCase):
@@ -307,6 +321,28 @@ class MonitorTick(unittest.TestCase):
                          "reads it as unreachable and answers cannot-determine for its sid (the shape before "
                          "2026-09-22 pruned the sid, and a live session that missed a beat was presumed closed); "
                          "the legacy list is not carried, both its sids being named by heard sources")
+
+    def test_the_polls_write_releases_a_beat_the_answered_listing_owns_within_one_tick(self):
+        """Round 3 of fork PR #897, the reviewer's ruling (the seventeenth commit): the poll reads the listing BEFORE it writes
+        the mirror, so its write releases a heartbeat row whose sid this poll's ANSWERED listing owns (rules 1 and 2 of the
+        judge's ladder own that sid) and forgets the entry with it, within the tick. An unanswered listing releases nothing
+        (a local session's beat filed during a blink stays), and an answered listing that does not own the sid releases
+        nothing. The writer's own pins are tests/test_postal_remote_sids_mirror.py; the composition with the reader is
+        tests/test_dead_session_staleness.py ReaderFollowsTheWriter."""
+        pm._kernel_sessions_checked = lambda threads=False: ([], False)
+        pm.HEARTBEATS[GAMMA] = ("gamma", pm.time.time())              # a beat filed while the listing did not answer
+        pm._monitor_tick(0)
+        self.assertEqual((_mirror_rows(), GAMMA in pm.HEARTBEATS), ({"heartbeat:" + GAMMA: (True, False, [GAMMA])}, True),
+                         "an unanswered listing releases nothing: the beat's row is written, heard, and the entry stays")
+        pm._kernel_sessions_checked = lambda threads=False: ([{"id": ALPHA, "name": "web"}], True)
+        pm._monitor_tick(0)
+        self.assertEqual((_mirror_rows(), GAMMA in pm.HEARTBEATS), ({"heartbeat:" + GAMMA: (True, False, [GAMMA])}, True),
+                         "an answered listing that does not own the sid releases nothing")
+        pm._kernel_sessions_checked = lambda threads=False: ([{"id": GAMMA, "name": "gamma"}], True)
+        pm._monitor_tick(0)
+        self.assertEqual((_mirror_rows(), GAMMA in pm.HEARTBEATS), ({}, False),
+                         "THE RULED RELEASE within one tick: the poll's read owns the sid and its write drops the row and forgets "
+                         "the entry (a tick that wrote before it read releases at the NEXT tick, one poll late)")
 
 
 class MonitorLoop(unittest.TestCase):

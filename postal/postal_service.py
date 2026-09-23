@@ -1235,6 +1235,9 @@ def format_receipts(recs):
 # ───────────────────────── the bus (server) ─────────────────────────
 
 HEARTBEATS = {}        # id -> (name, last_seen_epoch)   (remote presence)
+_LOCAL_LISTING = [None]   # the local kernel's listing as this bus LAST read it through local_agents_checked, as
+#                           (answered, frozenset of the sids it owns); None until a read in this process. The deadness
+#                           mirror's writer reads it for the one release it has (_local_listing_owned; round 3 of fork PR #897)
 STREAKS = {}           # id -> (count, last_epoch)        (loop guard)
 _lock = threading.Lock()
 
@@ -1259,7 +1262,8 @@ def _kernel_sessions_checked(threads=False):
     Callers that are about to make a CLAIM about liveness (resolve_recipient's refusal) must
     check `answered` — an unanswered fetch collapsed to [] read exactly like universal deadness,
     and the refusal it produced blamed a demonstrably live peer (sighting 2026-08-29: a send was
-    refused as not-live mid-restart; the retry 101 seconds later delivered)."""
+    refused as not-live mid-restart; the retry 101 seconds later delivered). Every honesty-arm read
+    goes through local_agents_checked, which records what it read for the deadness mirror's writer."""
     seam = os.environ.get("ROMP_SESSIONS_FILE")
     if seam:
         try:
@@ -1328,8 +1332,19 @@ def local_agents_checked(threads=False):
     """(local_agents rows, answered) — the honesty-arm variant for consumers whose REFUSALS ride the
     listing (the inbound relay's bounces, the presence producer): 'answered' distinguishes a kernel
     that said "no sessions" from one that couldn't answer at all (mid-restart), the same bit the
-    sending resolver has carried since the answered-but-absent round (2026-08-31)."""
+    sending resolver has carried since the answered-but-absent round (2026-08-31).
+
+    The read is also RECORDED, as (answered, the sids the rows own), for the deadness mirror's one release
+    (_LOCAL_LISTING, read by _local_listing_owned; round 3 of fork PR #897, the reviewer's ruling): a heartbeat
+    row whose sid the local kernel's ANSWERED listing owns is dropped at the mirror's next write, since rules 1
+    and 2 of the judge's ladder own a sid the local kernel lists. The record is this bus's latest word from the
+    kernel, whichever consumer asked (the recorder at every beat, the presence producer at every exchange, the
+    autostop gate at every poll, the inbound relay's bounces); a read that did not answer is recorded as such,
+    and releases nothing. A read without thread rows owns no comment thread's sid (the seam filters as the route
+    does), so a thread's beat waits for the recorder's read, which asks for them."""
     rows, answered = _kernel_sessions_checked(threads=threads)
+    _LOCAL_LISTING[0] = (bool(answered), frozenset(str(r.get("id")) for r in rows
+                                                    if isinstance(r, dict) and r.get("id")))
     return _agent_rows(rows), answered
 
 
@@ -1492,10 +1507,15 @@ def _record_heartbeat(sid, name):
     The beat recorded here reaches the deadness mirror as its own row (_remote_sids_document, kind
     heartbeat): under the legacy singleton scheme a remote session's only presence, vouching for absence
     by its TTL; in peer mode a local session's beat filed during a listing blink, which vouches for
-    presence alone (round 3 of fork PR #897, the reviewer's ruling). The entry is never popped when a
-    later listing calls the sid local: the mirror's carry would re-file the missing key from the previous
-    file as a row heard by nobody, for the file's life (the reviewer's refuters, by execution), so the
-    row stays as recorded, heard, naming its sid."""
+    presence alone (round 3 of fork PR #897, the reviewer's ruling). The recorder never pops the entry
+    itself: a key missing from memory while the file still carries its row is re-filed by the mirror's
+    carry as a row heard by nobody, for the file's life (the reviewer's refuters, by execution). The
+    release is the WRITER's (round 3 of fork PR #897, the reviewer's ruling, the seventeenth commit): at
+    the first write after a listing this bus read ANSWERED and owns the sid (the read made here included,
+    so a beat that meets such a listing is neither recorded nor kept), _write_remote_sids drops the row,
+    heard or carried, and forgets the entry once the file without the row is in place, so nothing re-files
+    it; rules 1 and 2 of the judge's ladder own a sid the local kernel lists. A listing that did not answer
+    releases nothing, so a beat filed during a blink stays, heard, until one answers."""
     local = False
     if sid and _safe_id(sid):
         rows, answered = local_agents_checked(threads=True)
@@ -3178,8 +3198,9 @@ def _sessions_were_listed():
 
 
 def _monitor_tick(idle):
-    """One poll of _monitor after its sleep: the mail sweeps, the deadness-mirror refresh, and the
-    autostop decision. Returns (idle, stop). Factored out so a tick is unit-testable."""
+    """One poll of _monitor after its sleep: the mail sweeps, the listing read the autostop decision needs,
+    the deadness-mirror refresh (after the read, so the write releases a beat this poll's answered listing
+    owns within the tick), and the decision. Returns (idle, stop). Factored out so a tick is unit-testable."""
     try:
         _sweep_orphans()    # bounce mail stuck unread in dead recipients' mailboxes
     except Exception:
@@ -3188,11 +3209,11 @@ def _monitor_tick(idle):
         _warn_stuck_mail()  # warn the sender when a LIVE-but-idle recipient still hasn't read (backstop)
     except Exception:
         pass
-    _write_remote_sids()    # the TTL marks a beat expired only at write time; the poll is the write that needs no beat to arrive
     try:
-        n, answered = present_count_checked()
-    except Exception:
+        n, answered = present_count_checked()   # the listing read FIRST: the write below releases a heartbeat row this
+    except Exception:                           # poll's answered listing owns (round 3 of fork PR #897, the seventeenth commit)
         n, answered = 1, True   # on error, err on the side of staying up
+    _write_remote_sids()    # the TTL marks a beat expired only at write time; the poll is the write that needs no beat to arrive
     return _idle_tick(n, idle, answered)
 
 
@@ -4038,7 +4059,21 @@ def _direct_row_speaks(peers, far, far_bus):
     return None
 
 
-def _remote_sids_document(now, previous):
+def _local_listing_owned():
+    """The sids the local kernel's listing owns, for the deadness mirror's one release (round 3 of fork PR #897,
+    the reviewer's ruling, the seventeenth commit): the listing as this bus LAST read it through
+    local_agents_checked (_LOCAL_LISTING: the recorder at every beat, the presence producer at every exchange,
+    the autostop gate at every poll, the inbound relay's bounces) when that read ANSWERED; an empty set when it
+    did not answer, or none has been read in this process. A listing that did not answer releases nothing: its
+    rows are [] (the fetch collapsed), and the last answered rows the presence producer serves through a blink
+    are a cache, not the listing's word at this write, so they are never read here; a beat filed during the
+    blink stays until a listing answers. Nothing here asks the kernel: the release rides the reads the bus
+    already makes, so a write costs the kernel nothing more."""
+    last = _LOCAL_LISTING[0]
+    return last[1] if last and last[0] else frozenset()
+
+
+def _remote_sids_document(now, previous, owned=frozenset()):
     """The mirror's content, {"v": 2, "busStarted", "writtenAt", "hosts": {key: row}}: one row per PRESENCE
     SOURCE, the roster it last reported and whether THIS bus process can vouch for it.
       key      a peer host by name (its own sessions); a hub's word about a far host as via:<hub>/<far> (kind
@@ -4085,9 +4120,10 @@ def _remote_sids_document(now, previous):
                beat's TTL, and let a blink's phantom vouch while a peer's link was down (the reviewer's refuters, by
                execution). The scheme is read at each write (peers_on, a test seam), never stored on the row; the
                reader sees only the flag, and a peer-mode heartbeat row reads "no link state" among its causes, the
-               literal fact. The entry is never popped once a later listing calls the sid local: the carry below
-               re-files a key missing from memory from the previous file as a row heard by nobody, a phantom for the
-               file's life, so the refused retirement would have made things worse (the reviewer's refuters). A heard
+               literal fact. Such a row has the mirror's ONE release (below): the write after a listing this bus
+               read answered and owns its sid drops it, heard or carried, and forgets the entry with it, since rules
+               1 and 2 of the judge's ladder own that sid (the seventeenth commit; the sixteenth had refused a pop in
+               the recorder, which left the carry a key to re-file from the file, and kept the row). A heard
                source with no link state is reachable and does not vouch for
                absence: it answers cannot-determine for a sid it does not name, as a down host does (round 2 of
                fork PR #897, the reviewer's ruling: a source vouches for absence only when its link is known
@@ -4121,8 +4157,10 @@ def _remote_sids_document(now, previous):
           so a restarted bus writes a first mirror whose hosts are all unreachable, and each becomes
           reachable on the event that closes the road, its heartbeat or exchange arriving in this process;
       (2) an expired legacy heartbeat was pruned from the file, so a tunnel drop or a stalled peer longer
-          than HEARTBEAT_TTL removed a live session's sid: the row stays, marked expired, unreachable, and
-          the next beat (the event) makes it reachable again.
+          than HEARTBEAT_TTL removed a live session's sid: the row stays, marked expired, unreachable, and a
+          beat from the session (the event) makes it reachable again; a session that has ended beats no more,
+          so its row stands for the life of the state root, the cost stated below (the seventeenth commit
+          corrects the earlier framing of the expiry as closed by "the next beat").
     Both are event-keyed; there is no grace period. Two folds keep one row per source: a carried row whose
     busId a heard row also carries is the same bus under a stale name (the event _drop_peer_name_dupes keys
     on) and is dropped; the legacy list loses each sid a heard source names (its owner has spoken) and is
@@ -4196,9 +4234,50 @@ def _remote_sids_document(now, previous):
     host's own fold and vouch, not the presumption from another host's word. The display and routing
     consumers keep their own fold (_via_duplicate: a direct
     link wins over a relay hop on screen and on the wire); the mirror does not use it, because what the
-    reader weighs is each source's word and whether this process can vouch for it."""
+    reader weighs is each source's word and whether this process can vouch for it.
+    THE ONE RELEASE, and what nothing retires (round 3 of fork PR #897, the reviewer's ruling, the seventeenth
+    commit). A heartbeat row whose sid the local kernel's ANSWERED listing owns is dropped, heard or carried
+    (`owned`: the sids of the listing as this bus last read it through local_agents_checked, when that read
+    answered, _local_listing_owned; _write_remote_sids forgets the HEARTBEATS entry once the file without the row
+    is in place, so the carry has nothing to re-file): rules 1 and 2 of the judge's ladder own a sid the local
+    kernel lists, its transcript being local, so the row said nothing the ladder needed and would otherwise have
+    stood for the file's life (in peer mode every beat that reaches HEARTBEATS is such a session's, filed during
+    a blink). The event is the listing's word, read by the recorder at every beat, by the presence producer at
+    every exchange and by the autostop gate at every poll (_monitor_tick reads before it writes); a listing that
+    did not answer releases nothing, and the last answered rows the presence producer serves through a blink are
+    a cache, never read here. A read without thread rows does not own a comment thread's sid (the seam and the
+    route filter alike), so a thread's blink beat waits for the recorder's read, which asks for them.
+    Every other row nothing retires. A heartbeat row of a session that stopped beating (under the legacy scheme
+    a remote session that ended, or whose tunnel never came back) stays, expired, for the life of the state root;
+    so do the peer row and the via rows of a host the kernel no longer dials (a departed host), carried heard
+    false. The release event for those would be the kernel's word that the host is gone, which no notify carries
+    yet: the follow-up, for the kernel's owner, is a forget notify on /peer naming the host, on which this writer
+    drops the host's own row and its via rows (recorded in fork PR #897's ledger entry; outside this fix-tier
+    change). The cost, stated plainly: the mirror grows by one row per legacy beat that expired or host that
+    departed, for the life of the state root; every write (each beat, exchange, notify and poll) reads, parses
+    and rewrites the whole file; and rule 5 stays dead for those sids, each cannot-determine by an unreachable
+    row's last word (the reviewer's refuters measured 204 rows and 56 KB after 200 expired beats; re-measured at
+    the seventeenth commit through the real recorder under the legacy scheme, 200 rows and 58361 bytes (57 KB)
+    after 200 expired beats, the same after a restart's carry). An expired row is NOT closed by "the next beat":
+    a session that ended never beats again; its row's release is the one above alone, and the design rule refuses
+    a timer (an age-based prune settled a live session on no new information, road (2)).
+    COMMENT THREADS are outside every roster (round 3 of fork PR #897, the reviewer's ruling on its refuters'
+    narrowing of the finding): the presence producer reads the default listing (_local_presence_checked, through
+    local_agents_checked without thread rows, the 2026-08-22 rule that hides threads from every remote consumer),
+    so a live thread's sid is in no row on any peer, and a host vouching for absence would let rule 5 presume it
+    closed there. Safe today because no thread's mail crosses a host: a thread's mail is off by default since T356
+    (_mail_off_why answers "thread" for a session whose durable record carries threadOf, unless session-flags.json
+    carries `threadMail` at the literal True, a key no route of the kernel or the bus writes), and the /send
+    handler (Handler.do_POST) refuses a thread's own send with 403 before resolve_recipient and any relay, so its
+    sid never reaches a far host as a sender (tests/test_postal_isolation.py ThreadOwnSendRefused runs the road
+    through the real handler: the roster omits the thread, the send is refused before the relay, and the hand-set
+    flag is the one way through). If thread mail is ever re-enabled, the shape is a separate exchange field
+    carrying the mirror-relevant thread sids, read by this writer alone; never _local_presence with thread rows,
+    which would list threads to every remote consumer with no filter."""
     hosts = {}
     for sid, (name, ts) in list(HEARTBEATS.items()):
+        if str(sid) in owned:
+            continue                                  # the one release: the local kernel's answered listing owns it (rules 1 and 2)
         hosts[REMOTE_SIDS_HEARTBEAT + str(sid)] = {"kind": "heartbeat", "sids": [str(sid)], "heard": True,
                                                    "expired": now - ts >= HEARTBEAT_TTL, "answered": True,
                                                    "seenAt": int(ts), "name": name or "?"}
@@ -4239,6 +4318,8 @@ def _remote_sids_document(now, previous):
     for key, prev in previous.items():
         if key in hosts:
             continue
+        if prev.get("kind") == "heartbeat" and any(str(s) in owned for s in prev.get("sids") or []):
+            continue                                  # a carried beat of a session the local kernel's answered listing owns: released
         if prev.get("busId") and prev["busId"] in heard_bus:
             continue                                  # the same bus, heard under its dialable name
         if prev.get("kind") == "via" and (key in folded
@@ -4317,17 +4398,26 @@ def _write_remote_sids():
     reads peers_on at each write). In
     legacy singleton mode the beats continue and each row vouches for absence by its TTL; the poll-time
     write is the backstop for a hub whose local
-    sessions have all gone quiet while a dead remote's beat ages past its TTL. Under _REMOTE_SIDS_LOCK:
+    sessions have all gone quiet while a dead remote's beat ages past its TTL. The write has ONE release
+    (round 3 of fork PR #897, the reviewer's ruling, the seventeenth commit): a heartbeat row whose sid the
+    local kernel's ANSWERED listing owns, as this bus last read it (_local_listing_owned), is dropped, heard or
+    carried, and its HEARTBEATS entry is forgotten AFTER the file without the row is in place (a pop before the
+    replace, or in the recorder, leaves the carry a key to re-file from the previous file), since rules 1 and 2
+    of the judge's ladder own that sid; a listing that did not answer releases nothing. Every other row stands
+    for the life of the state root (the cost and the follow-up: _remote_sids_document). Under _REMOTE_SIDS_LOCK:
     the write reads the file it replaces, and the heartbeat, exchange, monitor and notify threads all
     write."""
     with _REMOTE_SIDS_LOCK:
         try:
+            owned = _local_listing_owned()            # the sids the local kernel's answered listing owns: released below
             path = STATE / "remote-sids"
-            doc = _remote_sids_document(time.time(), _remote_sids_previous(path))
+            doc = _remote_sids_document(time.time(), _remote_sids_previous(path), owned)
             tmp = STATE / "remote-sids.tmp"
             tmp.write_text(json.dumps(doc, sort_keys=True) + "\n")
             os.replace(tmp, path)
-        except Exception as e:
+            for sid in [s for s in list(HEARTBEATS) if str(s) in owned]:
+                HEARTBEATS.pop(sid, None)             # the file without the row is in place, so the carry has nothing to
+        except Exception as e:                        # re-file: the released beat leaves memory with it (round 3 of fork PR #897)
             line = "the remote-sids mirror was not written (%s: %s); the judge reads the previous one" % (type(e).__name__, e)
             if line not in _REMOTE_SIDS_SAID:
                 _REMOTE_SIDS_SAID.add(line)
