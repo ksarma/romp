@@ -118,7 +118,9 @@ def _row(sids, heard=True, expired=False, kind="peer", link_down=False, link_up=
     sid it does not name). postal_service.py _remote_sids_document computes both; a fixture row restates
     the rules so the reader is held to reading the flags, not recomputing them: a heard, unexpired,
     link-down row is unreachable, and a heard, unexpired peer row with no link state (link_up False, the
-    default here: a host the kernel never reported up) is reachable and does not vouch for absence."""
+    default here: a host the kernel never reported up) is reachable and does not vouch for absence. A row
+    NOT heard can carry link_up True (the kernel's seed of a tunnel up at a restart, before any exchange):
+    it vouches for nothing, heard being the first condition of both flags."""
     return {"kind": kind, "sids": sorted(sids), "heard": heard, "expired": expired, "linkDown": link_down,
             "linkUp": link_up, "reachable": heard and not expired and not link_down,
             "vouchesAbsence": heard and not expired and (link_up or kind == "heartbeat"), "seenAt": NOW - 5}
@@ -316,6 +318,13 @@ class PresumedClosed(World):
         self.assertEqual(self._verdict(DEAD), LOST(HOST + " (not heard, link down)"), "every cause, not heard first")
         _bus_wrote({HOST: _row([DEAD], heard=True, expired=False, link_down=False, link_up=True)})
         self.assertEqual(self._verdict(REMOTE), RULE_5, "the same host with its link known up: rule 5")
+        # the kernel's seed of a link up at a restart, the host not heard yet (a verifier's finding at round 2's fifth
+        # commit): the link alone vouches for nothing; the reader reads the writer's vouchesAbsence, False, not linkUp
+        _bus_wrote({HOST: _row([DEAD], heard=False, link_up=True)})
+        self.assertEqual(self._verdict(REMOTE), NO_VOUCH(HOST + " (not heard)"),
+                         "a carried host whose link the kernel seeded up: not heard, so it vouches for nothing and a sid it "
+                         "does not name is cannot-determine (a reader gating rule 5 on linkUp answers rule 5 here)")
+        self.assertEqual(self._verdict(DEAD), LOST(HOST + " (not heard)"), "...and the sid it names is held by its last word")
         # no host vouches for absence at all (a bus that has heard nobody since it started): cannot determine
         _bus_wrote({HOST: _row([], heard=False), HOST2: _row([REMOTE], heard=False)})
         self.assertEqual(self._verdict(DEAD), NO_VOUCH(HOST + " (not heard)", HOST2 + " (not heard)"))
@@ -445,8 +454,13 @@ class ReaderFollowsTheWriter(unittest.TestCase):
                     the reviewer's ruling: a session started on a host after its last heard roster is in no
                     roster, so a host counted as vouching for absence while its link is down would let rule
                     5 presume it closed; a host that is down cannot vouch for absence). After a third restart
-                    the kernel's up notify for host B and B's exchange make it the one source vouching for
-                    absence; the kernel's down notify for B, through the real handler (peer_update), writes
+                    the kernel's up notify for host B, before any exchange (the seed from /tunnels, or the
+                    re-notify, as every restarted bus's kernel does), reaches B's carried row: linkUp and not
+                    heard, it vouches for nothing, so B's sid is held by its last word and a sid nothing names
+                    is cannot-determine (a writer vouching for absence by the link alone lets rule 5 settle it
+                    on the restarted bus's first write: the primary restart road, a verifier's finding at the
+                    fifth commit, pinned since the sixth); B's exchange then makes it the one source vouching
+                    for absence; the kernel's down notify for B, through the real handler (peer_update), writes
                     the mirror itself: B's sid is cannot-determine by B's last word (not rule 4: a host the
                     bus cannot vouch for makes no positive determination) and a sid nothing names is
                     cannot-determine, no host vouches for absence, where a gate on heard alone answers rule
@@ -606,8 +620,9 @@ def link_phase(extra=None):                        # the rows with their six fla
         got.update(extra)
     return got
 pm4, out["restartMemory3"] = restarted("romp_postal_oneroot_restarted_thrice", pm3)
-notify(pm4, host_b, True)                          # B's tunnel up, then B heard: the one source vouching for absence
-exchange(pm4, host_b, [other])                     # (every other row carried, unreachable)
+notify(pm4, host_b, True)                          # B's tunnel up before any exchange (the kernel's seed, or its re-notify):
+out["seededUpUnheard"] = link_phase()              # B's carried row has linkUp and is not heard, so it vouches for nothing
+exchange(pm4, host_b, [other])                     # then B heard: the one source vouching for absence (every other row carried)
 out["linkHeard"] = link_phase()
 out["linkDownNotify"] = notify(pm4, host_b, False)
 out["linkDown"] = link_phase()                     # nothing wrote between the notify and this read
@@ -783,6 +798,35 @@ print(json.dumps(out))
                                  "does: rule 5 presumes it closed, on that exchange and nothing else")
                 self.assertEqual(self._v(gone, "other"), RULE_4, "the other host's sid stays rule 4's")
                 self.assertEqual(gone["hosts"][HOST], [True, False, []], "heard, naming nobody")
+
+    def test_the_kernels_seed_of_a_carried_hosts_link_up_at_a_restart_settles_nothing_until_the_host_is_heard(self):
+        """The primary restart road, with the verdicts (round 2 of fork PR #897, a verifier's finding at the fifth commit:
+        a writer computing vouchesAbsence from the link alone, heard dropped, survived every pin of the five modules while
+        reopening the first road of round 1 by execution). A restarted bus's kernel seeds or re-notifies a tunnel UP
+        (_seed_peers_from_kernel, peer_update) before any exchange arrives, so a host carried from the previous file has
+        PEERS up and no mark: linkUp True, heard False. Its roster is the previous process's last word, and the row must
+        vouch for nothing: the sid it names is held by that word (cannot-determine, not heard), and a sid nothing names is
+        cannot-determine too, no host vouching for absence; under the link-alone writer the carried row vouches and rule 5
+        presumes a session started on that host since the previous file closed, on the restarted bus's first write. The
+        verdict pins first, the document after; the phase after this one (linkHeard) is the event."""
+        L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                seeded = got["seededUpUnheard"]
+                self.assertEqual(self._v(seeded, "nobody"),
+                                 NO_VOUCH(HOST + " (not heard)", HOST2 + " (not heard)",
+                                          self.HB + REMOTE + " (not heard, expired)", self.HB + REMOTE2 + " (not heard)"),
+                                 "THE SEED: the kernel holds B's link up and the new process has heard nothing over it; every "
+                                 "row is carried and none vouches for absence, so a sid nothing names is cannot-determine, the "
+                                 "reason naming every source as not heard (a writer vouching for absence by the link alone "
+                                 "answers rule 5 here: a session started on B since the previous file, presumed closed on the "
+                                 "restarted bus's first write)")
+                self.assertEqual(self._v(seeded, "other"), LOST(HOST2 + " (not heard)"),
+                                 "B's carried word holds its sid: not heard, so not rule 4's either")
+                self.assertEqual(seeded["hosts"][HOST2], L(False, False, False, True, False, False, [OTHER]),
+                                 "carried, not heard, PEERS up and no mark: linkUp, and neither reachable nor vouching")
+                self.assertEqual(seeded["hosts"][HOST], L(False, False, False, False, False, False, []),
+                                 "the host the seed did not name: not heard, no link state")
 
     def test_a_host_the_kernel_holds_down_cannot_vouch_until_heard_with_the_link_up(self):
         """Round 2 of fork PR #897, the reviewer's ruling: the kernel's link state decides what a source vouches for. The

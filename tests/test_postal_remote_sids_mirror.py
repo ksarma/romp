@@ -38,7 +38,8 @@ busId fold (the fourth commit), so the fold's own write has one row per bus.
 Pinned here, by writing through the real writer and reading the file back: the document's shape; one
 source per heartbeat with its own TTL; a peer's own rows under its name and its gossip under the far host
 it speaks for, with gossip about a directly held host folded (the direct row speaks); a PEER_STATE row no
-exchange produced is not a source; the carry-forward across a restart and its release per host; the fold
+exchange produced is not a source; the carry-forward across a restart and its release per host; the kernel's
+seed of a carried host's link up at a restart, which vouches for nothing until the host is heard; the fold
 of a carried row for a bus heard under its other name; the whitespace list of the shape until 2026-09-22
 carried as one legacy source and pruned as heard sources name its sids; a file of neither shape carrying
 nothing; a write failure said once in the bus log; the two flags at the notify and at the two exchange
@@ -234,6 +235,38 @@ class Mirror(unittest.TestCase):
         self._peer(HUB, [{"id": C, "name": "tests"}])
         pm._write_remote_sids()
         self.assertEqual(self._rows(), {HB + A: (True, False, [A]), HOST: (True, False, [D]), HUB: (True, False, [C])})
+
+    def test_the_kernels_seed_of_a_carried_hosts_link_up_at_a_restart_vouches_for_nothing_until_the_host_is_heard(self):
+        """The primary restart road (round 2 of fork PR #897, a verifier's finding at the fifth commit: a writer computing
+        vouchesAbsence from the link alone, heard dropped, survived every pin of the five modules and reopened the first
+        road of round 1 by execution). A restarted bus starts with an empty peer table, and the kernel seeds it from
+        /tunnels (_seed_peers_from_kernel) or re-notifies every tunnel up on its next supervisor pass, through peer_update,
+        BEFORE any exchange arrives: a host carried from the previous file, not heard by this process, has PEERS up and no
+        mark, so linkUp is True. Its roster is the previous process's last word, not this one's, and the row vouches for
+        nothing: unreachable (not heard), and not vouching for absence, so a sid it does not name stays unsettled (a writer
+        vouching for absence by the link alone says True here, and a session started on that host since the previous file
+        is presumed closed on the restarted bus's first write). The host's exchange is the event: heard with the link up,
+        both flags. The composition with the reader's verdicts is tests/test_dead_session_staleness.py
+        ReaderFollowsTheWriter (the seeded phase)."""
+        self._peer(HOST, [{"id": B, "name": "api"}])
+        self._peer(HUB, [{"id": C, "name": "tests"}])
+        pm._write_remote_sids()
+        self._restart()
+        pm.PEERS.clear()                                    # a fresh process: the link table empty until the seed
+        self._notify(HOST, up=True)                         # the seed (or the re-notify): PEERS up, nothing heard, no mark
+        self.assertEqual(self._reach()[HOST], (False, False, False, False, [B]),
+                         "carried from the previous file and not heard: unreachable, its roster kept, the link neither down "
+                         "nor marked")
+        self.assertEqual(self._vouch()[HOST], (False, True, False),
+                         "THE SEED: the kernel holds the link up (linkUp) and this process has heard nothing over it, so the row "
+                         "vouches for neither presence nor absence (a writer vouching for absence by the link alone says "
+                         "(False, True, True) here, and a sid started on that host since the previous file would be rule 5's)")
+        self.assertEqual(self._vouch()[HUB], (False, False, False), "the host the seed did not name: not heard, no link state")
+        self._peer(HOST, [{"id": D, "name": "api"}])        # the event: the host's exchange arrives with the link up
+        pm._write_remote_sids()
+        self.assertEqual((self._reach()[HOST], self._vouch()[HOST]), ((True, False, False, True, [D]), (True, True, True)),
+                         "heard with the link up: reachable and vouching for absence, on this exchange and nothing else")
+        self.assertEqual(self._vouch()[HUB], (False, False, False), "the other carried host still waits for its own event")
 
     def test_a_carried_row_for_a_bus_heard_under_its_other_name_is_dropped(self):
         self._peer("TESTHOST-selfname", [{"id": A, "name": "web"}], bus_id="bus-1")
