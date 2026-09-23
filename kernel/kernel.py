@@ -35499,7 +35499,8 @@ class _SubagentTreeUnreadable(Exception):
     reader that catches it answers its standing entry or an unreadable marker, except for the two absent-shaped answers
     _subagent_tree's docstring names: _subagent_meta_map's {} for a map never built, and _subagent_file's bare None to a
     caller that passes no faults list, which the viewer shows as a missing transcript and the Agent head as no steps
-    while the fault lasts (tests/test_subagent_tree_memo.py ViewerUnderAnUnreadableTree). The agent-file walk excludes
+    while the fault lasts (tests/test_subagent_tree_memo.py ViewerUnderAnUnreadableTree; having the viewer state the
+    fault instead is a follow-up fix after #882). The agent-file walk excludes
     the tree that raised it and nothing else: it looks through every other tree and answers a file found under one
     (_subagent_walk_unreadable)."""
 
