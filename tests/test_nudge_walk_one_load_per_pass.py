@@ -63,12 +63,12 @@ outside it. The window: each pass, the
 builder, a handler, the perf snapshot the test reads after its last pass) is outside the window and is not this test's
 claim. By the store's own counters, a witness keyed on the store rather than on a list of doors, one per door. The shared
 door: every call that reaches the shared cache's branch and returns moves exactly one of hit, miss, compare_miss, absent
-and fallback in `jd.shared_store_stats()` (a call whose open or read raises moves none, and reds as a recorded call that
-took no read; held by execution since the round-5 fixes by the door witness's two raise-road drives, a symlink loop and a directory at
+and fallback in `jd.shared_store_stats()` (a call whose open or read raises moves none, and the recorder notes it so the
+reconciliation subtracts it; held by execution since the round-5 fixes by the door witness's two raise-road drives, a symlink loop and a directory at
 the store path, each propagating its OSError with no key moved; a call whose fill raises after its miss bump, a malformed journal row
 raising out of the replay, moves that one call key and no second key, held by the witness's third raise-road drive since the round-5
 consolidation), so per pass the delta of those five must equal the walk's, the gate's and the sweep's recorded calls
-together; and the door's second bumps, unreadable_journal, corrupt, dup and refuse (SHARED_SECOND_KEYS), each sit on the fill
+together, less the calls that raised with no key moved; and the door's second bumps, unreadable_journal, corrupt, dup and refuse (SHARED_SECOND_KEYS), each sit on the fill
 road below the miss or compare_miss bump and return, so per pass their sum never exceeds the fills, miss plus compare_miss
 (the second-bump bound, ruling 1 of the reviewer's rulings on the pre-emption: corrupt and unreadable_journal are hand-off keys
 that are not call keys, so a bump of
@@ -114,7 +114,8 @@ and the equality the cases assert holds here because the harness's parsed_sessio
 So the first pass and a moved-transcript pass derive and the gate loads once per derived session
 beside the walk's one; a ledger-driven run pass (the ledger is the tenth keyed file) re-evaluates every look with the gate
 served, so the walk loads once and the gate not at all. A look the state gates end before the store read (a working
-session's, say) runs, records, and loads through neither.
+session's, say) runs, records, and loads through neither; one whose store read faults (a directory or a symlink loop at the
+store path) loads once through the walk, is counted, and notes its storeFault leg, with no gate check.
 
 The wake sweep, `_awaiting_wake_outcomes`, is the store's third reader on the pass. It runs after the per-session loop,
 in the same pass and outside the toggle guard, and takes one shared load per wake record it owns: a record that is
@@ -2246,11 +2247,23 @@ class _WalkHarness(unittest.TestCase):
         boundary = tuple(boundary)
         shared_body = real_shared.__code__
         self.calls, self.writer = [], []
+        self.raised = []                                  # (record, moved): each recorded shared call whose real door raised, and whether
+        #                                                   a call key moved across it (_pass subtracts the ones that moved none)
         self.owned_records = {}                           # sid -> the wake records the sweep owns this test (the seeding helper sets it)
 
+        def _call_keys():
+            s = jd.shared_store_stats()
+            return tuple(s[k] for k in SHARED_CALL_KEYS)
+
         def _shared(sid):
-            self.calls.append((sid,) + _caller(inspect.currentframe(), boundary))
-            return real_shared(sid)
+            rec = (sid,) + _caller(inspect.currentframe(), boundary)
+            self.calls.append(rec)
+            k0 = _call_keys()
+            try:
+                return real_shared(sid)
+            except BaseException:
+                self.raised.append((rec, _call_keys() != k0))
+                raise
 
         def _load(sid):
             if inspect.currentframe().f_back.f_code is not shared_body:          # the shared door's own fallback into load_goals (the
@@ -2428,7 +2441,11 @@ class _WalkHarness(unittest.TestCase):
         TheCountersOneSite, not this witness's), and the sweep is held to its bound per sid; the writer door's list is
         asserted empty after every pass, separately, each entry named the same way; a reader below the doors is outside the
         claim. The store's counters are reconciled against the recorded calls per door (`shared`, the delta over
-        SHARED_CALL_KEYS, against every recorded shared call, listed in the message; `writerLoads`, the delta of goal_io
+        SHARED_CALL_KEYS, against every recorded shared call less those whose real door raised with no call key moved across the
+        call, an open or a read that raises: the recorder notes each call whose door raised and whether a call key moved, and only
+        those that moved none are subtracted, since the fallback road bumps fallback and the fill road bumps miss or compare_miss
+        before they raise, so those calls balance as they are (review round 8, tests-1 and correctness-2); the calls are listed in
+        the message; `writerLoads`, the delta of goal_io
         loads, against the writer records plus the shared door's hand-offs over SHARED_HANDOFF_KEYS), so a load through a
         door of the judge module the recorders do not wrap is noticed, unnamed; a reader that bypasses the module is outside
         both. Between the two sits the second-bump bound (ruling 1 of the reviewer's rulings on the pre-emption), derived from
@@ -2484,7 +2501,7 @@ class _WalkHarness(unittest.TestCase):
         before = {k: km._NUDGE_WALK_STATS[k] for k in self.KEYS}
         gate0 = dict(km._NUDGE_GATE_STATS)
         s0, g0 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
-        self.calls.clear(); self.writer.clear(); self.parsed.clear()
+        self.calls.clear(); self.writer.clear(); self.parsed.clear(); self.raised.clear()
         km._auto_nudge_tick(now, {sid: {"state": ""} for sid in SIDS})
         s1, g1 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
         d = {k: km._NUDGE_WALK_STATS[k] - before[k] for k in self.KEYS}
@@ -2533,14 +2550,18 @@ class _WalkHarness(unittest.TestCase):
                          "derive holds its parse and checks once; the gate's rule is the bound above" % now)
         d["shared"] = {k: s1[k] - s0[k] for k in SHARED_CALL_KEYS if s1[k] != s0[k]}
         records = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.calls]
-        self.assertEqual(sum(d["shared"].values()), sum(d["walk"].values()) + sum(d["gate"].values()) + sum(d["sweep"].values()),
+        unmoved = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for (s, c, f, ln), moved in self.raised if not moved]
+        self.assertEqual(sum(d["shared"].values()),
+                         sum(d["walk"].values()) + sum(d["gate"].values()) + sum(d["sweep"].values()) - len(unmoved),
                          "the shared cache's five call counters (hit, miss, compare_miss, absent, fallback) moved %d times this pass and the "
-                         "recorder on jd.load_goals_shared saw %d calls; the two must agree, since every call that reaches the cache's "
-                         "branch and returns moves exactly one of them. This line knows the two figures and not the cause: counters %r; "
-                         "recorded calls: %s. Among the possibilities: a load through a door of the judge module the recorders do not "
-                         "wrap, a load through a reference to the real door taken before a recorder stood, a recorded call whose open or "
-                         "read raised, a record appended without a call through"
-                         % (sum(d["shared"].values()), len(self.calls), d["shared"], "; ".join(records) or "none"))
+                         "recorder on jd.load_goals_shared saw %d calls, %d of them raising out of the real door with no call key moved "
+                         "across the call (%s); the counters must equal the calls less those, since every other call moves exactly one "
+                         "of them, a call that raises after its bump (the fallback road, the fill road) included. This line knows the "
+                         "figures and not the cause: counters %r; recorded calls: %s. Among the possibilities: a load through a door of "
+                         "the judge module the recorders do not wrap, a load through a reference to the real door taken before a "
+                         "recorder stood, a record appended without a call through"
+                         % (sum(d["shared"].values()), len(self.calls), len(unmoved), "; ".join(unmoved) or "none", d["shared"],
+                            "; ".join(records) or "none"))
         # the second-bump bound (ruling 1 of the reviewer's rulings on the pre-emption): the derivation from the door's body is in
         # the docstring above
         second = {k: s1[k] - s0[k] for k in SHARED_SECOND_KEYS if s1[k] != s0[k]}
@@ -2748,6 +2769,50 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                                      "%s, pass %d: memos.nudgeWalk.loads moves by the walk's recorded calls, one per look that reached "
                                      "the read whatever the read did, the raising look's included: loads %d, walk %r"
                                      % (road, n, p["loads"], p["walk"]))
+
+    def test_a_look_whose_store_read_faults_loads_once_and_is_counted(self):
+        """The look's fault return: an OSError out of the store read, which _or_fault turns into a fault, so the look notes its
+        storeFault leg and returns before the placement gate (review round 8, tests-1 and correctness-2: no case drove this road,
+        and a retry of the read on a fault, or a bump conditioned on the read returning a store, left the module green). Two roads,
+        one subTest each, each on a first pass (the caches and memos cleared as setUp clears them): a directory at SID_A's store
+        path, whose read raises, and a symlink loop there, whose open raises. Neither moves a call key, so _pass's reconciliation
+        subtracts the call the recorder noted raising. On the fault pass the walk loads once per session and the counter moves by
+        two; SID_B's look reaches its gate, and SID_A's is the fault: its storeFault leg, a memo row with no flip (so it is
+        evaluated again on the next pass) and an unreadable-store episode for SID_A alone."""
+        store = jd.GOALDIR / (SID_A + ".json")
+        self.addCleanup(jd._end_store_fault, SID_A)       # the episode table is a module-level dict the cleanup's check does not read
+        roads = (("a directory at the store path", "IsADirectoryError", store.mkdir),
+                 ("a symlink loop at the store path", "OSError: [Errno %d]" % errno.ELOOP, lambda: os.symlink(str(store), str(store))))
+        now = NOW
+        for road, fault, plant in roads:
+            with self.subTest(road=road):
+                if store.is_symlink() or store.is_file():
+                    store.unlink()
+                elif store.is_dir():
+                    store.rmdir()
+                plant()
+                km._SESSION_STAMP_CACHE.clear(); km._autonudge_cache.clear(); jd._shared_clear()
+                km._nudge_gate_memo.clear(); km._nudge_deleg_memo.clear(); km._TICK_SEEN.clear()
+                by0 = dict(km._NUDGE_WALK_STATS.get("unboundedBy") or {})
+                p = self._pass(now)
+                now += 5
+                by = {k: v - by0.get(k, 0) for k, v in (km._NUDGE_WALK_STATS.get("unboundedBy") or {}).items() if v != by0.get(k, 0)}
+                self.assertEqual(p["walk"], {SID_A: 1, SID_B: 1},
+                                 "%s: the walk takes exactly one shared load per alive session, the faulted look's included, and "
+                                 "does not read again on the fault (condition 7, the walk's bound)" % road)
+                self.assertEqual(p["loads"], 2, "%s: memos.nudgeWalk.loads counts the faulted look's read beside SID_B's: loads %d, "
+                                                "walk %r" % (road, p["loads"], p["walk"]))
+                self.assertEqual((p["gate"], p["memo"]), ({SID_A: 0, SID_B: 1}, (0, 1)),
+                                 "%s: the faulted look returns before the placement gate; SID_B's derives and checks once" % road)
+                self.assertEqual((p["shared"], p["writerLoads"]), ({"miss": 1, "hit": 1}, 0),
+                                 "%s: SID_A's read moves no call key; SID_B's read fills and its gate hits; no hand-off" % road)
+                self.assertEqual(by.get("storeFault"), 1, "%s: one look noted the storeFault leg: %r" % (road, by))
+                self.assertEqual(self._row(SID_A)[-2:], (None, None),
+                                 "%s: SID_A's look recorded a row with no flip and no verdict, so the next pass evaluates it" % road)
+                faults = {s: t for s, t in jd._STORE_FAULTS.items() if s in (SID_A, SID_B)}
+                self.assertEqual(sorted(faults), [SID_A], "%s: the fault episode is SID_A's alone: %r" % (road, faults))
+                self.assertTrue(faults[SID_A].startswith(fault), "%s: SID_A's episode is this road's fault, %r: %r"
+                                % (road, fault, faults[SID_A]))
 
 
 class TheSweepIsItsOwnBoundedReader(_WalkHarness):
