@@ -53,12 +53,14 @@ This module holds five things, and it never skips: a pin that skips reports gree
    job above it. A name: key's own line is excused, and nothing else of the name: a name folded or continued onto a
    second line that spells pytest there is red on valid YAML, and the message says to reword it. The check does not
    read YAML anchors, aliases or merge keys, a step written as a flow mapping or flow sequence, a quoted scalar or a
-   flow collection continued past the line it opens on, or a double-quoted scalar holding a backslash escape, and
-   fails closed on them rather than model them (the owner's fail-closed design, 2026-09-23, and its first verify
-   pass; ci.yml uses none): every anchor (`&cmd`), alias (`*cmd`) and merge key (`<<:`) anywhere in ci.yml, every flow
-   mapping or flow sequence holding a run, env or shell key or a name key beside another key, every quoted scalar and
-   flow collection that does not close on the line it opens, and every double-quoted scalar holding a backslash (an
-   escape the parser does not decode: `\n` in a run starts a second command) is red at its line (unread_yaml_forms),
+   flow collection continued past the line it opens on, a double-quoted scalar holding a backslash escape, or a block
+   scalar header on the line after its key, and fails closed on them rather than model them (the owner's fail-closed
+   design, 2026-09-23, and its first verify pass; ci.yml uses none): every anchor (`&cmd`), alias (`*cmd`) and merge
+   key (`<<:`) anywhere in ci.yml, every flow mapping or flow sequence holding a run, env or shell key or a name key
+   beside another key, every quoted scalar and flow collection that does not close on the line it opens, every
+   double-quoted scalar holding a backslash (an escape the parser does not decode: `\n` in a run starts a second
+   command), and every `|` or `>` header on the line after its key (the parser folds that block as one command) is red
+   at its line (unread_yaml_forms),
    so a run, a step, a steps list or an env reached through an alias is red where it is written, and a key-shaped line
    inside another key's quoted scalar over several lines is red at that scalar's opening line. Outside the check: a
    run line that
@@ -740,7 +742,8 @@ class RequireSwitch(unittest.TestCase):
 # jobs' indent that is not a job the parser reads is red too (unread_job_keys), so no step is read under the job above
 # it. Until 2026-09-23 the parser's limits were claimed red and a step in YAML's compact list style gave no row at all.
 # YAML anchors, aliases and merge keys, a step in flow style, a quoted scalar or flow collection continued past its
-# line, and a double-quoted scalar holding a backslash escape are not read at all: every one is red at its line
+# line, a double-quoted scalar holding a backslash escape and a block scalar header on the line after its key are not
+# read at all: every one is red at its line
 # (unread_yaml_forms, the owner's fail-closed design, 2026-09-23, and its first verify pass), since the real file uses
 # none.
 # ---------------------------------------------------------------------------------------------------------------------
@@ -1037,8 +1040,9 @@ def _step_run(stext):
     """The step's `run:` scalar as shell lines [(offset in stext, text, offset of its last line)] and an `unreadable`
     reason (None when the form is one this parser reads); the last line differs from the first for a folded paragraph
     or a plain scalar continued on later lines. Read: a single-line plain or quoted scalar, with continuation lines
-    indented past the key folded onto it (a quoted scalar that runs on past its line, and a double-quoted one holding
-    a backslash escape, which this split does not decode, are refused by unread_yaml_forms); a `run: |` literal (with a `-` or `+` chomping indicator: the indicator
+    indented past the key folded onto it (a quoted scalar that runs on past its line, a double-quoted one holding a
+    backslash escape, which this split does not decode, and a block header on the line after `run:`, which this split
+    would fold as such a continuation, are refused by unread_yaml_forms); a `run: |` literal (with a `-` or `+` chomping indicator: the indicator
     changes trailing newlines only); a `run: >` folded block, each paragraph one command. Node properties before any of
     these (NODE_PROPERTIES_RE) are set aside, since they change no text of the scalar, so the scalar is split into its
     lines as the same scalar without them is: a tag (`!!str`) is read through. Not read, and reported so an invocation
@@ -1127,9 +1131,10 @@ def pytest_invocations(src, read=None, switch_read=None):
     unread_job_keys a job key this parser does not read. The run forms read are _step_run's; comment lines are skipped;
     a line ending in an unescaped backslash is joined with the next the way the shell joins it (_continues,
     _join_continuation: nothing inserted). Not read, and red at their lines by unread_yaml_forms instead: an anchor,
-    an alias, a merge key, a step in flow style, a quoted scalar or flow collection continued past its line, and a
+    an alias, a merge key, a step in flow style, a quoted scalar or flow collection continued past its line, a
     double-quoted scalar holding a backslash escape (this parser reads a quoted run's text as written, and decodes no
-    escape). Outside this parser by construction: a pytest run by a
+    escape), and a block scalar header on the line after its key (this parser would fold the block as a plain scalar).
+    Outside this parser by construction: a pytest run by a
     script or action the workflow calls, and a run line that never spells pytest (a `$RUNNER` variable set elsewhere,
     or `make test`)."""
     sections = _top_sections(src)
@@ -1395,7 +1400,8 @@ def unread_job_keys(src):
 
 STEP_FLOW_KEYS = ("run", "env", "shell")     # keys that make a flow collection a step's to this check
 YAML_FORMS_UNREAD = ("this check does not read YAML anchors, aliases or merge keys, a step written in flow style, a quoted "
-                     "scalar or flow collection continued past its line, nor a double-quoted scalar holding a backslash escape")
+                     "scalar or flow collection continued past its line, a double-quoted scalar holding a backslash escape, "
+                     "nor a block scalar header on the line after its key")
 
 
 def _yaml_quote_end(line, i, quote):
@@ -1433,20 +1439,23 @@ def unread_yaml_forms(src):
     unread and an anchor or alias there read green (the lenses' env alias, name anchor and anchored step plants each
     behind such a line); a key-shaped line inside another env key's quoted scalar over several lines read as the
     switch on; and a double-quoted run's `\\n` escape started a second pytest command, without the flag, that the
-    parser read as part of the first. The real ci.yml uses none of these, so each is red at its line and never
-    modelled. Keyed on a line scan, not a YAML parser: a node starts at a line's first character, after a sequence's
-    `- `, after an explicit key's `? ` and a document start marker's `---` (the first verify pass: an anchor or alias
-    after either was not read), after a key's colon, and after `[`, `{` or `,` inside a flow collection; a block
-    scalar's lines (every line
-    indented past the key or dash that opened it with `|` or `>`) are text and are not read, and a refused quoted
-    scalar or flow collection is followed to its close, so its later lines are not read as nodes. The scan's error
-    runs one way: a line that continues a plain scalar is read as if it began a node, so one that opens with `&`, `*`
-    or `<<:`, or with a quote or a bracket that does not close on the line, is red on valid YAML; reword it."""
+    parser read as part of the first. Refused too, found closing that pass: a block scalar header (`|` or `>`) on the
+    line after its key, which the parser folded as a plain scalar, one command, so a first pytest without the flag
+    took the second's. The real ci.yml uses none of these, so each is red at its line and never modelled. Keyed on a
+    line scan, not a YAML parser: a node starts at a line's first character, after a sequence's `- `, after an explicit
+    key's `? ` and a document start marker's `---` (the first verify pass: an anchor or alias after either was not
+    read), after a key's colon, and after `[`, `{` or `,` inside a flow collection; a block scalar's lines (every line
+    indented past the key, dash or `?` that opened it, on the header's line or, for a header on the next line, the
+    line before) are text and are not read, and a refused quoted scalar or flow collection is followed to its close,
+    so its later lines are not read as nodes. The scan's error runs one way: a line that continues a plain scalar is
+    read as if it began a node, so one that opens with `&`, `*`, `<<:`, `|` or `>`, or with a quote or a bracket that
+    does not close on the line, is red on valid YAML; reword it."""
     out = []
     block_at = None       # inside a block scalar: its lines are those indented past this column
     quote = None          # a quoted scalar open at the end of the previous line: (quote character, its opening line)
     flow = []             # the open flow collections, outermost first: [bracket, opening line, own keys [(key, line)]]
     expect_key = False    # inside a flow mapping, the next scalar is an entry's key (after `{` or `,`)
+    pending = None        # the column of the key, dash or `?` whose node the last content line left to a later line
 
     def refuse(n, what):
         if (n, what) not in {(o[0], o[2]) for o in out}:
@@ -1480,7 +1489,7 @@ def unread_yaml_forms(src):
             if not raw.strip() or indent > block_at:
                 continue
             block_at = None
-        i, size, start, col = 0, len(raw), True, indent
+        i, size, start, col, own = 0, len(raw), True, indent, True    # own: no key, dash, `?` or `---` on this line yet
         if quote:
             end = _yaml_quote_end(raw, 0, quote[0])
             if end is None:
@@ -1509,13 +1518,13 @@ def unread_yaml_forms(src):
                 i += 1
                 continue
             if not flow and ch == "-" and raw[i + 1:i + 2] in ("", " ", "\t"):
-                col, i = i, i + 1         # a sequence entry: a block scalar here is text past the dash's column
+                col, i, own = i, i + 1, False    # a sequence entry: a block scalar here is text past the dash's column
                 continue
             if ch == "?" and raw[i + 1:i + 2] in ("", " ", "\t"):
-                col, i = i, i + 1         # an explicit key: its node starts after the `?`, as a sequence entry's does
+                col, i, own = i, i + 1, False    # an explicit key: its node starts after the `?`, as a sequence entry's does
                 continue
             if not flow and i == 0 and raw.startswith("---") and raw[3:4] in ("", " ", "\t"):
-                i = 3                     # a document start marker: a node may start after it on its line
+                i, own = 3, False         # a document start marker: a node may start after it on its line
                 continue
             if ch in "&*!":
                 j = i + 1
@@ -1546,12 +1555,19 @@ def unread_yaml_forms(src):
                     j += 1
                 if raw[j:j + 1] == ":" and (flow or raw[j + 1:j + 2] in ("", " ", "\t")):
                     key(text, n, True)
-                    i, start, expect_key, col = j + 1, True, False, opened
+                    i, start, expect_key, col, own = j + 1, True, False, opened, False
                 elif flow and expect_key:
                     key(text, n, True)
                     expect_key = False
                 continue
             if not flow and ch in "|>":
+                if own:
+                    # a header on the line after its key: the parser folds such a block as a plain scalar, one command
+                    # (the fail-closed design's first verify pass, 2026-09-23), so it is refused; its lines are the
+                    # text of the key the last content line left open, past that key's column
+                    refuse(n, "a block scalar header on the line after its key")
+                    if pending is not None and indent > pending:
+                        col = pending
                 block_at = col            # a block scalar: its lines are its text
                 break
             # a plain scalar: to a key's colon (`: `, or `:` at the end of the line or, in a flow, before an indicator),
@@ -1569,7 +1585,7 @@ def unread_yaml_forms(src):
             text = raw[i:j]
             if raw[j:j + 1] == ":":
                 key(text, n, False)
-                i, start, expect_key, col = j + 1, True, False, i
+                i, start, expect_key, col, own = j + 1, True, False, i, False
             else:
                 if flow and expect_key and text.strip():
                     key(text, n, False)
@@ -1577,6 +1593,8 @@ def unread_yaml_forms(src):
                 i, start = j, False
         for bracket, opened, _keys in flow:
             refuse(opened, "a flow collection (%s) continued past its line" % bracket)
+        if raw.strip() and not raw.lstrip().startswith("#"):
+            pending = col if start and not flow and block_at is None and quote is None else None
     return sorted(out)
 
 
@@ -1756,8 +1774,9 @@ class PytestPopulation(unittest.TestCase):
     the span of lines the parser read for a row, parsed or unparsed, whatever its layout, or the line census names it;
     a mention the parser reads but not as a command is red as unparsed until it is read; every line where a job key
     goes is a job the parser reads, so no step is read under the job above it; and no YAML anchor, alias, merge key,
-    step in flow style, quoted scalar or flow collection continued past its line, or double-quoted scalar holding a
-    backslash escape appears in the file, each red at its line, since the check does not read them (the owner's
+    step in flow style, quoted scalar or flow collection continued past its line, double-quoted scalar holding a
+    backslash escape, or block scalar header on the line after its key appears in the file, each red at its line,
+    since the check does not read them (the owner's
     fail-closed design, 2026-09-23, and its first verify pass). Outside the check: a run line that never spells pytest,
     a pytest run by a script or action a step calls, and any other workflow file."""
     def setUp(self):
@@ -1833,9 +1852,10 @@ class PytestPopulation(unittest.TestCase):
         self.assertEqual(found, [], "lines of ci.yml in a YAML form " + YAML_FORMS_UNREAD + " (a flow mapping or sequence "
                          "holding a run, env or shell key, or a name key beside another key). Keyed on a line scan outside "
                          "block scalars: rewrite the line in the file's block layout without the anchor, alias, merge key "
-                         "or flow collection, each quoted scalar closed on its line and a double-quoted one without a "
-                         "backslash (a plain scalar continued onto a line that begins with &, * or <<:, or with a quote or "
-                         "bracket that does not close there, reads as one: reword it):\n  "
+                         "or flow collection, each quoted scalar closed on its line, a double-quoted one without a "
+                         "backslash, and each block scalar header on its key's line (a plain scalar continued onto a line "
+                         "that begins with &, *, <<:, | or >, or with a quote or bracket that does not close there, reads "
+                         "as one: reword it):\n  "
                          + "\n  ".join("line %d: %s (%s)" % f for f in found))
         # the scan reads to the end of the real file: an alias appended as its last line is named there (a scan left
         # inside a block scalar, or stopped early, would read nothing after the point it stopped)
@@ -2913,6 +2933,31 @@ class PopulationCheckReds(unittest.TestCase):
                             ("a double-quoted value in a flow mapping", '      - uses: ./a\n        with: {a: "x, *y", b: \'z\'}\n')):
             with self.subTest(control=label):
                 self.assertEqual(unread_yaml_forms(self._with_first_step_in_shell_job(text)[0]), [], label)
+
+    def test_a_block_scalar_header_on_the_line_after_its_key_is_refused_and_its_lines_are_text(self):
+        # found closing the fail-closed design's first verify pass (2026-09-23): YAML reads `run:` with its `|` header on
+        # the next line as a literal block, and the parser folded it as a plain scalar, one command, so a first pytest
+        # without the flag took the flag of the second and read ok (H01, and H02 with a tag on the key's line; silent at
+        # the round-4 takes head and at the owner's fail-closed head). The scan refuses such a header, and takes the
+        # block's column from the key the last content line left open, so the block's lines are its text: a `*)` line
+        # there was refused as an alias (the first verify pass's Y13, a red on valid YAML for the wrong reason)
+        two = "          python -m pytest -q tests/test_a.py\n          python -m pytest -q -p no:anyio tests/test_b.py\n"
+        header = "a block scalar header on the line after its key"
+        for label, text in (("a literal block (H01)", "      - name: Header next (pytest)\n        run:\n          |\n" + two),
+                            ("a tag on the key's line (H02)", "      - name: Header next tagged (pytest)\n        run: !!str\n          |\n" + two)):
+            with self.subTest(form=label):
+                src, first = self._with_first_step_in_shell_job(text, self._with_shell_job_env(self.src))
+                self.assertEqual(unread_yaml_forms(src), [(first + 2, "|", header)], label)
+                self.assertEqual((self._new_bad(src), pytest_line_census(src)[1], switch_line_census(src)[1], unread_job_keys(src)[1]),
+                                 ([], [], [], []), "%s: the refusal is the one red" % label)
+        for label, text in (("a case statement's `*)` line (Y13)", "      - name: Header next line\n        run:\n          |\n"
+                                                                    "          case \"$x\" in\n          *) echo other ;;\n          esac\n"),
+                            ("a comment line between the key and the header", "      - name: Header after a comment\n        run:\n"
+                                                                               "          # the block below\n          |\n          *) echo other ;;\n")):
+            with self.subTest(form=label):
+                src, first = self._with_first_step_in_shell_job(text)
+                at = first + text.splitlines().index("          |")
+                self.assertEqual(unread_yaml_forms(src), [(at, "|", header)], label)
 
 
 # ---------------------------------------------------------------------------------------------------------------------

@@ -246,10 +246,10 @@ jobs:
           # a pip install, is read as a command or is red until it is read, whatever its layout (its line
           # census; a name continued onto a line that spells pytest is red there too: reword it), and so
           # is a job key it does not read; it does not read YAML anchors, aliases or merge keys, a step
-          # in flow style, a quoted scalar or flow collection continued past its line, or a double-quoted
-          # scalar holding a backslash escape, and each is red at its line; a run line that never spells
-          # pytest, a pytest run by a script or action a step calls, and the other workflow files are
-          # outside it.
+          # in flow style, a quoted scalar or flow collection continued past its line, a double-quoted
+          # scalar holding a backslash escape, or a block scalar header on the line after its key, and
+          # each is red at its line; a run line that never spells pytest, a pytest run by a script or
+          # action a step calls, and the other workflow files are outside it.
           ROMP_SDK_REQUIRE: "1"
           # The free-threaded cell runs with the GIL off, stated rather than defaulted (a 't'
           # build disables it by default, and an extension that lacks free-threading support
