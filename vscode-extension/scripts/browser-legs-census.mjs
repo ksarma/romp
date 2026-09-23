@@ -10,8 +10,16 @@
 // the list's one home, which ui/webview/ci-browser-legs-census.test.ts holds equal to the directories esbuild.js testBuild
 // compiles by building that config's entry points with a metafile and comparing, in both directions, with what census() read)
 // it derives:
-//   launcher:  the module imports ui/webview/real-viewer-leg.ts by RESOLVED path (relative to the module, .js read as .ts, the
-//              suffix added when absent) under any binding form (named, aliased, namespace, default, import-equals, require(),
+//   launcher:  the module imports ui/webview/real-viewer-leg.ts by RESOLVED path (relative to the module; a .js, .cjs or .mjs
+//              spelling names the file that stands at that path when one does, the bundler's order, and is read as the .ts beside
+//              it only when none does, so a real-viewer-leg.cjs beside the launcher, which the bundler loads for that spelling, is
+//              read by its own content and not as the launcher (p348, p349); the suffix added when absent; a specifier FOLDED
+//              from pieces resolves by the same rule, a concatenation of literals through resolveSpec and a chain that crossed a
+//              path call or carries a placeholder piece through resolveLocal, beside the module and under the repo root and
+//              vscode-extension/, and binds the launcher only when it lands on the launcher's file, never because its text spells
+//              the launcher's name, while a folded specifier whose placeholder piece names the launcher or is dropped on the way
+//              to the launcher's file is refused, since the file it loads when run is unread: p323 to p330 and p347) under any
+//              binding form (named, aliased, namespace, default, import-equals, require(),
 //              module.require(), await import(), a createRequire-bound loader (createRequire by its own name or through its import
 //              alias) or the launcher's own exported requireCjs, by its named import, as a
 //              member of a whole-module or default launcher binding or of the launcher loaded where it stands, or destructured
@@ -233,15 +241,21 @@
 // roster with every checker green, and a set closed one arm at a time stays open). The census reads every module a second time
 // for any MENTION of a browser load, keyed on the walker's own name-sets and readers and on nothing else: a string literal, a
 // no-substitution template, or a template or `+` chain folded by foldText, standing in a specifier-capable position (an import or
-// export specifier, import = require, any call's or new's argument, an array literal that is a call's argument, a tagged
-// template's text), whose text isPwPackage or resolves through resolveSpec to the launcher or to a playwright package (a relative
-// path into node_modules, resolveSpec's own reading); a string whose text names a playwright package and parses as code without a
+// export specifier, import = require, any call's or new's argument, an array or an object literal (a property's value), at any
+// depth, that is a call's or new's argument, p331, p361 and p362 since round 7, a tagged template's text), or bound to a name or
+// returned from a function (THE BOUND-NAME clause below), whose text isPwPackage or resolves through resolveSpec to the launcher or
+// to a playwright package (a relative path into node_modules, resolveSpec's own reading); the climb from a text to the position
+// its value stands in, the specifier-capable positions' and the bound-name clause's alike, passes the wrappers that leave a value
+// where it stands (parentheses, as, a non-null assertion, satisfies, a type assertion), a conditional's two branches and either
+// operand of ??, || and && (since round 7: p344 the conditional, p350, p351 and p352 one per operator), and, for the bound-name
+// clause, a template's substitution and a `+` operand, and no other expression, so a text read through a member of its own,
+// load("playwright".trim()), stands in no position either reads (p365, class none with no refusal); a string whose text names a playwright package and parses as code without a
 // diagnostic (the same rewritten text the walker's driver read classifies), read by the compiler for a specifier so positioned
 // inside it, a read wider than the walker's (any call's argument, where the walker reads a loader's); and the
 // identifiers requireCjs and createRequire (the latter through its import binding, so an alias counts) and the member
 // module.require, in every position. A mention is ACCOUNTED when the walker's own records show it read, and only then: a
 // specifier when the import, export or loader call holding it is in `resolved`; a driver string when the string reader noted its
-// line (embedded); requireCjs when bindingAt resolves it to a launcher binding, when it names a member of a launcher binding or of
+// line (embedded); a text bound to a name when every value reference to the name is so read (the bound-name clause); requireCjs when bindingAt resolves it to a launcher binding, when it names a member of a launcher binding or of
 // a launcher load in `resolved`, when the declaration it reaches is a loader the walker bound (loaders), or when it is the
 // specifier of a re-export the walker flagged (loaderReexport, the export declaration in `resolved` as the launcher); createRequire
 // (isCreateRequireId, the walker's own reader of the name and its alias) when it
@@ -252,7 +266,8 @@
 // moment of the scan and the net declares no set of its own (a reader checks it by grepping the net block for the records it
 // reads, resolved, embedded, loaders, loaderReexport and bindingAt, and the readers loaderCall, resolveSpec, isPwPackage,
 // namesPwPackage (the substring pre-filter of a text, the one driverLoads and foldSpecifier's placeholder road read), foldText,
-// memberNames, declOfUse, isCreateRequireId, isModuleRequire, driverText and CALL_APPLY_BIND, and finding no other record or
+// memberNames, declOfUse, isAssignmentOp (the walker's assignment test: =, a compound operator, ??=, ||=, &&=), isCreateRequireId,
+// isModuleRequire, driverText and CALL_APPLY_BIND, and finding no other record or
 // name-set: the block's other free names are the position utilities up, unwrap and lineOf, the compiler ts and the parse sf, netHits,
 // its own output, and the language's String and undefined; the census test holds that set by a comment-stripped identifier census
 // over the block, so the recipe cannot go stale unnoticed), so a fold that reads a form accounts for its token by construction and the two cannot
@@ -272,11 +287,28 @@
 // a module with one load read through and a second handed on passes it on the second (the hand-on refusals above name that
 // form, for a binding and, since round 6, for a load where it stands: a class field, an object property, a promise callback, an
 // argument, a return); a driver text that parses with a diagnostic is read by the regex alone; the net reads the text of a literal, a template
-// or a `+` chain where it stands and folds no identifier (a name bound to the package's text by a const, or by a let or var no
-// statement writes to, is a mention at its declaration, a position the net does not read, and a load through that name is the
-// walker's fold when the callee is a loader and the hand-on refusals' when it is not; a let or var written after its declaration
-// is no closed form, so a loader called through it is refused by the walker, the net reading no assignment's right side either:
-// the closing pass after round 5, p237 to p244); the strict road (the ruling's literal wording, a
+// or a `+` chain where it stands and folds no identifier at a use: it reads the NAME a text is bound to instead, THE BOUND-NAME
+// clause (the review's round 6, extra6-1, built in round 7). A text naming a playwright package or the launcher that stands,
+// directly or through the climb above, as a declaration's initializer (a const, a let or var, a parameter's or a binding element's
+// default) or as the right side of any assignment is a mention at that site, ACCOUNTED only when every value reference to the name
+// it binds (by lexical scope; a property name, a declaration's own name, a type position, a label and a plain assignment's target
+// are no reference) lies inside the specifier argument of a loader call in `resolved`, inside a driver string the string reader
+// noted (embedded), or in the initializer or the assignment of another name so accounted in turn, and REFUSED otherwise, naming the
+// bound name and the line of the first reference no fold read: the name handed to a callee the walker knows no loader for
+// (require.main.require(name) among them, which reaches Firefox with node builtins alone in the CJS test bundle), an exported
+// declaration, or a property, an element, a class field or a destructuring pattern as the target. Before round 7 each was class
+// none with no refusal under the census and the net alike, and the walker's hand-on refusals, which read a binding of a module,
+// never a name bound to a text, closed none of them (p332, p333, p335, p336, p337, p338, p339, p340, p354, p355, p356, p357, p358,
+// p359, p360, p369; p363, p366, p367 and p368 are the controls of the clause's own reading, each passing with no refusal). The clause
+// over-refuses on the safe side: a bound name also read outside any load (a test's title, a message) is refused though that
+// reference loads nothing, and the remedy is to spell the load where it is made. A text RETURNED from a function, as a return
+// statement's expression or an arrow's expression body, is refused where it stands, in any function of the module, the return
+// arm: it follows no call, so the text is refused whoever calls the function (p343, p364); a text that leaves a function by any
+// other road, a generator's yield, is past its reach, class none with no refusal (p353). A text held in an array or an object
+// literal bound to a name is not read by the clause (p341, p342, class none with no refusal): reading a literal's elements refuses
+// the census module's own PW_PACKAGES, through the census test's import, a false refusal on the tree. A let or var written after
+// its declaration is no closed form, so a loader called through it is refused by the walker (the closing pass after round 5, p237
+// to p244); the strict road (the ruling's literal wording, a
 // mention of the launcher's name counted whether or not the parse resolved the import) was measured at 36 live refusals over the
 // tree before round 5, every one a module that imports the launcher and never calls it, and not taken, the accounting through the
 // walker's resolutions being what lets the tree pass. Live modules at this head: the net refuses none, falsely or truly, the
@@ -365,7 +397,9 @@ export function classify(ts, file, src, opts = {}) {
     // one home of the road; THE SAFETY NET keys its relative-path mention on this reader, so the two agree by construction)
     const segs = abs.split(path.sep), nm = segs.lastIndexOf("node_modules");
     if (nm >= 0 && isPwPackage(segs.slice(nm + 1).join("/").replace(/\.[cm]?[jt]s$/, "").replace(/\/index$/, ""))) return { kind: "playwright", spec, abs };
-    if (/\.[cm]?js$/.test(abs)) abs = abs.replace(/\.[cm]?js$/, ".ts"); else if (!/\.[cm]?ts$/.test(abs)) abs += ".ts";
+    // a .js, .cjs or .mjs spelling names the file that stands at that path when one does (the bundler's order: the exact path
+    // first), and is read as the .ts beside it only when none does
+    if (/\.[cm]?js$/.test(abs)) { if (!fileAt(abs)) abs = abs.replace(/\.[cm]?js$/, ".ts"); } else if (!/\.[cm]?ts$/.test(abs)) abs += ".ts";
     return { kind: abs === launcherAbs ? "launcher" : "local", spec, abs };
   };
 
@@ -679,10 +713,23 @@ export function classify(ts, file, src, opts = {}) {
    *  play/wright, a file that names nothing, the wrong reason, and when a file stood at that path the chain resolved to it
    *  SILENTLY, the module ./playwright it loads unread); a chain with a piece the fold cannot take (a placeholder, a
    *  property-access root such as `<process.env.X>`: since the review's round 7 an identifier is never one, below) is
-   *  tested as a substring of the same concatenation, over-inclusive, on the safe side (the "/" join is not tested beside it:
-   *  every needle holds the slash-free playwright or real-viewer-leg, so a match in the "/" join lies inside a piece and is a match
-   *  in the concatenation too); a chain that DID cross a path call is a path and keeps the "/" join, path.join's own reading,
-   *  which names a playwright package or the launcher only when one of its literal pieces does. The flag is per chain, not per
+   *  tested for a playwright package as a substring of the same concatenation, over-inclusive, on the safe side (the "/" join is
+   *  not tested beside it: every needle holds the slash-free playwright or real-viewer-leg, so a match in the "/" join lies inside
+   *  a piece and is a match in the concatenation too); a chain that DID cross a path call is a path and keeps the "/" join,
+   *  path.join's own reading, which names a playwright package only when one of its literal pieces does. The launcher is never
+   *  bound by its spelling, since for it over-inclusion is the UNSAFE side (a false launcher binding is class shared and passes
+   *  the roster gate): a folded text naming real-viewer-leg whose chain carries a placeholder piece is refused before it is
+   *  resolved (resolveLocal drops the piece, so a placeholder prefix spelling the launcher's own path would land on the launcher
+   *  whatever it loads when run), and every other folded text is RESOLVED through resolveLocal, the local road's resolver: it
+   *  binds the launcher only when it lands on the launcher's file with no placeholder dropped on the way (a placeholder splitting
+   *  the launcher's name is refused the same way), and otherwise takes the local road below, whose walk reads the module it names
+   *  or refuses the import as naming no file or two files, the true reason. Before the review's round 7 the substring alone bound
+   *  the launcher, so a module named with the launcher's name and loaded through a path call or a placeholder chain was class
+   *  shared, gap null, no refusal, under the census and THE SAFETY NET alike (p323 to p325 and p327 to p330, with p326 the real
+   *  launcher through the same path-call spelling, bound before and after), and a placeholder splitting the name, since round 6
+   *  joined a chain as written, reached the launcher's file as a local module, walked for what it binds and not bound as the
+   *  launcher: class none with no refusal over the plants' stub launcher (p347), refused for the wrong reason over the live one.
+   *  The flag is per chain, not per
    *  argument: a `+` chain or a template standing as ONE argument of a path call is joined with the call's other arguments piece by
    *  piece, so path.join("./play", "wr" + "ight") folds to ./play/wr/ight, not ./play/wright, a stated boundary (the closing pass
    *  after round 6's verification): refused as naming no file, the safe side, and silent only were a module to stand at the
@@ -719,7 +766,16 @@ export function classify(ts, file, src, opts = {}) {
     const text = pathCall ? pieces.join("/") : pieces.join("");
     if (!pathCall && !pieces.some((p) => /^<[^>]*>$/.test(p))) return resolveSpec(text);   // a concatenation of literals: the literal's own road
     if (namesPwPackage(text)) return { kind: "playwright", spec: text };
-    if (text.includes("real-viewer-leg")) return { kind: "launcher", spec: text };
+    // the launcher is matched by RESOLVED path, the literal road's rule, never by its spelling (correctness-1, the review's round 6):
+    // a text naming the launcher through a placeholder piece is refused before it is resolved, since resolveLocal drops the piece
+    // and a placeholder prefix spelling the launcher's own path would land on the launcher whatever it loads when run; every other
+    // folded text is resolved, and one landing on the launcher binds it only when no placeholder was dropped on the way (a
+    // placeholder that splits the launcher's name is refused the same way); a text landing anywhere else takes the local road,
+    // whose walk reads the module it names or refuses the import as naming no file or two files, the true reason
+    const placeholder = pieces.some((p) => /^<[^>]*>$/.test(p));
+    if (placeholder && text.includes("real-viewer-leg")) return null;
+    const lr = resolveLocal(file, text, opts.root || REPO);
+    if (lr && lr.abs === launcherAbs) return placeholder ? null : { kind: "launcher", spec: text, abs: launcherAbs };
     return { kind: "local", spec: text };
   };
   /** The initializer of the variable declaration the identifier `id` reaches by LEXICAL SCOPE (declOfUse: the innermost enclosing
@@ -1383,34 +1439,115 @@ export function classify(ts, file, src, opts = {}) {
   // THE SAFETY NET (the header states it): a pre-scan of the parse for any mention of a browser load, keyed on the walker's own
   // name-sets and readers, with the accounting DERIVED from the walker's records. This block reads the records `resolved`,
   // `embedded`, `loaders`, `loaderReexport` and `bindings` (through bindingAt) and the readers loaderCall, resolveSpec, isPwPackage,
-  // namesPwPackage, foldText, memberNames, declOfUse, isCreateRequireId, isModuleRequire, driverText and CALL_APPLY_BIND, and
-  // declares no set of its own (its other free names are up, unwrap, lineOf, ts, sf, netHits, String and undefined, none a record
-  // or a name-set; the census test holds the set by a comment-stripped identifier census over this block): a fold that reads a
-  // form accounts for its token by construction.
+  // namesPwPackage, foldText, memberNames, declOfUse, isAssignmentOp, isCreateRequireId, isModuleRequire, driverText and
+  // CALL_APPLY_BIND, and declares no set of its own (its other free names are up, unwrap, lineOf, ts, sf, netHits, String and
+  // undefined, none a record or a name-set; the census test holds the set by a comment-stripped identifier census over this
+  // block): a fold that reads a form accounts for its token by construction.
   // `netHits` is every UNACCOUNTED mention in source order, { line, what, token }.
   const netHits = [];
   {
     const hit = (n, what, token) => netHits.push({ line: lineOf(n), what, token: String(token).split("\n")[0].slice(0, 80) });
     // a relative path into node_modules naming a playwright package: resolveSpec's own reading of a dotted specifier (kind playwright)
     const nmPw = (t) => t.startsWith(".") && resolveSpec(t).kind === "playwright";
+    // a conditional's branch or a logical operand (??, || or &&), whose value may be the expression's own: the climb from a text to
+    // the position its value stands in passes through these, as through the wrappers up() passes
+    const isBranch = (q) => { const p = q.parent; return !!p && ((ts.isConditionalExpression(p) && (p.whenTrue === q || p.whenFalse === q)) || (ts.isBinaryExpression(p) && [ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.AmpersandAmpersandToken].includes(p.operatorToken.kind))); };
     /** The node a specifier-capable position hands `n`'s text to, the one noteResolved keys when the walker reads it: the import,
-     *  export or import = declaration whose specifier it is, the call or new whose argument it is (an array literal that is a call's
-     *  argument too, .apply's list), the tagged template whose text it is; null in any other position (a declaration's initializer,
-     *  a property, an array in a declaration, a type, a title). */
+     *  export or import = declaration whose specifier it is, the call or new whose argument it is (an array or an object literal, a
+     *  property's value, at any depth, that is a call's or new's argument too, .apply's list), the tagged template whose text it is,
+     *  reached up through a conditional's branches and a logical's operands (the review's round 7: a text in either branch of a
+     *  conditional, or either operand of ??, || or &&, standing as a foreign callee's argument was read in no position before);
+     *  null in any other position (a declaration's initializer or an assignment's right side, which the bound-name road reads, a
+     *  return, which it refuses, a property of an object or an element of an array bound to a name, a type, a title). */
     const specHolder = (n) => {
-      const q = up(n), p = q.parent;
+      let q = up(n);
+      while (isBranch(q)) q = up(q.parent);
+      const p = q.parent;
       if (!p) return null;
       if ((ts.isCallExpression(p) || ts.isNewExpression(p)) && (p.arguments || []).includes(q)) return p;
       if ((ts.isImportDeclaration(p) || ts.isExportDeclaration(p)) && p.moduleSpecifier === q) return p;
       if (ts.isExternalModuleReference(p)) return p.parent;
       if (ts.isTaggedTemplateExpression(p) && p.template === q) return p;
-      if (ts.isArrayLiteralExpression(p)) { const a = up(p), pp = a.parent; return pp && ts.isCallExpression(pp) && pp.arguments.includes(a) ? pp : null; }
+      // an array or an object literal (a property's value), at any depth, that is a call's or new's argument
+      if (ts.isArrayLiteralExpression(p) || (ts.isPropertyAssignment(p) && p.initializer === q)) {
+        let a = ts.isPropertyAssignment(p) ? up(p.parent) : up(p);
+        while (a.parent && (ts.isArrayLiteralExpression(a.parent) || (ts.isPropertyAssignment(a.parent) && a.parent.initializer === a))) a = ts.isPropertyAssignment(a.parent) ? up(a.parent.parent) : up(a.parent);
+        const pp = a.parent;
+        return pp && (ts.isCallExpression(pp) || ts.isNewExpression(pp)) && (pp.arguments || []).includes(a) ? pp : null;
+      }
       return null;
     };
-    // a specifier is accounted when the walker resolved the holder (`resolved`: an import, an export from, import =, a loader call)
+    // THE BOUND-NAME road (the review's round 6, extra6-1, built in round 7; the header states it): a text naming a playwright
+    // package or the launcher that stands as a declaration's initializer or an assignment's right side is a mention at that site,
+    // accounted only when every value reference to the name it binds is read by a fold the walker made: inside the specifier
+    // argument of a loader call in `resolved`, inside a driver string the string reader noted (embedded), or bound in turn to a
+    // name every reference of which is so read; a text returned from a function is refused where it stands
+    const namesLoad = (text) => isPwPackage(text) ? "a playwright package's name" : nmPw(text) ? "a relative path into node_modules naming a playwright package" : text.startsWith(".") && resolveSpec(text).kind === "launcher" ? "the launcher module's name" : null;
+    // the node a text's value stands at: up through wrappers, a template's substitution, a `+` operand, a conditional's branch and
+    // a logical operand to the root the value is bound, passed or returned from
+    const chainRoot = (x) => { let q = up(x); for (;;) { const p = q.parent; if (p && ts.isTemplateSpan(p) && p.expression === q) { q = up(p.parent); continue; } if (p && isPlus(p)) { q = up(p); continue; } if (isBranch(q)) { q = up(p); continue; } return q; } };
+    // what a value standing at `root` binds: { decl, name, node } for a declaration's initializer under a plain name (a variable, a
+    // parameter, a binding element) or an assignment's right side whose target is a plain name (decl by lexical scope, null for a
+    // name no scope declares); { bad } for any other target, and for a return statement's expression or an arrow's expression
+    // body (the return arm: the text leaves the function it is spelled in, and no fold follows it to the caller); undefined in any
+    // other position
+    const boundBy = (root) => {
+      const p = root.parent;
+      if (!p) return undefined;
+      if (ts.isVariableDeclaration(p) && p.initializer === root) return ts.isIdentifier(p.name) ? { decl: declOfUse(p.name) || p, name: p.name.text, node: p.name } : { bad: p.name.getText(sf) };
+      if ((ts.isParameter(p) || ts.isBindingElement(p)) && p.initializer === root) return ts.isIdentifier(p.name) ? { decl: declOfUse(p.name) || p, name: p.name.text, node: p.name } : { bad: p.name.getText(sf) };
+      if (ts.isBinaryExpression(p) && isAssignmentOp(p) && p.right === root) { const t = unwrap(p.left); return ts.isIdentifier(t) ? { decl: declOfUse(t), name: t.text, node: t } : { bad: p.left.getText(sf) }; }
+      if (ts.isPropertyDeclaration(p) && p.initializer === root) return { bad: "the class field " + p.name.getText(sf) };
+      if ((ts.isReturnStatement(p) && p.expression === root) || (ts.isArrowFunction(p) && p.body === root)) return { bad: "a function's return value", returned: true };
+      return undefined;
+    };
+    // a VALUE reference: not a property name, a declaration's own name, a plain assignment's target (a write), a type position
+    const isValueRef = (x) => {
+      const p = x.parent;
+      if (!p) return false;
+      if ((ts.isPropertyAccessExpression(p) || ts.isPropertyAssignment(p) || ts.isMethodDeclaration(p) || ts.isPropertyDeclaration(p) || ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p) || ts.isPropertySignature(p) || ts.isMethodSignature(p) || ts.isEnumMember(p)) && p.name === x) return false;
+      if ((ts.isVariableDeclaration(p) || ts.isParameter(p) || ts.isFunctionDeclaration(p) || ts.isClassDeclaration(p)) && p.name === x) return false;
+      if (ts.isBindingElement(p) && (p.name === x || p.propertyName === x)) return false;
+      if (ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.EqualsToken && p.left === x) return false;
+      if (ts.isTypeQueryNode(p) || ts.isTypeReferenceNode(p) || ts.isQualifiedName(p)) return false;
+      if ((ts.isLabeledStatement(p) || ts.isBreakStatement(p) || ts.isContinueStatement(p)) && p.label === x) return false;
+      return true;
+    };
+    const exportedDecl = (d) => { const st = d && ts.isVariableDeclaration(d) && d.parent && d.parent.parent; return !!(st && ts.isVariableStatement(st) && (ts.getModifiers(st) || []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword)); };
+    const refsOf = (b) => { const out = []; const look = (x) => { if (ts.isIdentifier(x) && x.text === b.name && x !== b.node && isValueRef(x) && declOfUse(x) === b.decl) out.push(x); ts.forEachChild(x, look); }; look(sf); return out; };
+    // the first reference of a bound name no fold read, or null; `seen` guards a cycle of names bound to each other
+    const unreadRef = (b, seen) => {
+      if (seen.includes(b.node)) return null;
+      seen.push(b.node);
+      if (exportedDecl(b.decl)) return b.node;
+      for (const r of refsOf(b)) {
+        let read = false;
+        for (let a = r.parent; a && !read; a = a.parent) if (ts.isCallExpression(a) && resolved.has(a) && a.arguments.length && a.arguments[0].pos <= r.pos && r.end <= a.arguments[0].end) read = true;
+        if (read) continue;
+        const root = chainRoot(r);
+        if ((ts.isTemplateExpression(root) || isPlus(root)) && embedded.some((e) => e.line === lineOf(root))) continue;
+        const nb = boundBy(root);
+        if (nb && !nb.bad) { const deeper = unreadRef(nb, seen); if (deeper === null) continue; return deeper; }
+        return r;
+      }
+      return null;
+    };
+    const scanBound = (n, text) => {
+      const what = namesLoad(text);
+      if (what === null) return;
+      const b = boundBy(chainRoot(n));
+      if (b === undefined) return;   // any other position is not read here: a text held in an array or object literal bound to a name, or yielded, is the stated boundary
+      if (b.returned) { hit(n, what + " returned from a function, whose callers the walker does not follow", text); return; }
+      if (b.bad) { hit(n, what + " bound to " + b.bad + ", whose references the walker does not read", text); return; }
+      const u = unreadRef(b, []);
+      if (u !== null) hit(n, what + " bound to " + b.name + (u === b.node ? " and exported" : " and read at line " + lineOf(u) + " where no fold of the walker accounts for it"), text);
+    };
+    // a specifier is accounted when the walker resolved the holder (`resolved`: an import, an export from, import =, a loader call);
+    // a text in no specifier-capable position is read by the bound-name road
     const scanText = (n, text) => {
       const holder = specHolder(n);
-      if (holder === null || resolved.has(holder)) return;
+      if (holder === null) { scanBound(n, text); return; }
+      if (resolved.has(holder)) return;
       if (isPwPackage(text)) hit(n, "a playwright package specifier", text);
       else if (nmPw(text)) hit(n, "a relative path into node_modules naming a playwright package", text);
       else if (text.startsWith(".") && resolveSpec(text).kind === "launcher") hit(n, "the launcher module's name", text);
@@ -1494,8 +1631,12 @@ export function classify(ts, file, src, opts = {}) {
 
 const MODULE_EXT = /\.(d\.ts|[cm]?ts|[cm]?js)$/;
 const fileAt = (p) => { try { return fs.statSync(p).isFile() ? p : null; } catch { return null; } };
-/** The files a path names, tried in order: the .ts beside a .js spelling, the path itself, a .d.ts, a .js, a directory's index. */
-const candidatesOf = (raw) => /\.[cm]?js$/.test(raw) ? [raw.replace(/\.[cm]?js$/, ".ts"), raw.replace(/\.[cm]?js$/, ".d.ts"), raw]
+/** The files a path names, tried in order: for a .js, .cjs or .mjs spelling the path itself first (the bundler's order: a file that
+ *  stands at the spelled path is the one it loads), then the .ts and the .d.ts beside it; for a .ts spelling the path; for a path with
+ *  no script extension the .ts, a .d.ts, a .js, a .mjs, a .cjs, a directory's index, the path itself. Before the review's round 7 the
+ *  .ts came first for every script spelling, so a real-viewer-leg.cjs beside the launcher, loaded by that spelling, was read as the
+ *  launcher while the bundler loads the .cjs. */
+const candidatesOf = (raw) => /\.[cm]?js$/.test(raw) ? [raw, raw.replace(/\.[cm]?js$/, ".ts"), raw.replace(/\.[cm]?js$/, ".d.ts")]
   : /\.[cm]?ts$/.test(raw) ? [raw]
   : [raw + ".ts", raw + ".d.ts", raw + ".js", raw + ".mjs", raw + ".cjs", path.join(raw, "index.ts"), path.join(raw, "index.js"), raw];
 /** The file a local specifier names. A relative specifier resolves against the loading module's directory; a specifier that
