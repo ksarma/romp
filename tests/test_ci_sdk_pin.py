@@ -160,8 +160,9 @@ This module holds five things, and it never skips: a pin that skips reports gree
    as the first two elements; pytest or py.test by name or path as argv[0]; _argv_command's docstring is the rule). The
    positional arguments of asyncio.create_subprocess_exec and of the os.exec and os.spawn l forms (execl, execle,
    execlp, execlpe, spawnl, spawnle, spawnlp, spawnlpe; a spawn form's mode and an e form's env set aside), read as
-   that argv. And a call of pytest.main or pytest.console_main, or of _pytest.config's main or console_main, by the
-   module's own name for it (an import, an alias, a name assigned from it): a pytest session in the calling process,
+   that argv. And a call of pytest.main or pytest.console_main, or of _pytest.config's main or console_main, by a name
+   the census resolves for it (an import, an alias, a star import, a name assigned from one; looked up by scope, as
+   Python looks it up): a pytest session in the calling process,
    where plugin autoload runs again whatever flag the outer run was given, so its argv, the first positional argument
    or args=, carries the flag itself. The flag check keys on the argv's constant elements (`-p` then `no:anyio`,
    or `-pno:anyio`), so a flag carried by a variable reads as absent, the safe side, and the message says so. The
@@ -175,9 +176,10 @@ This module holds five things, and it never skips: a pin that skips reports gree
    right before `pytest`, after an interpreter head), an in-process call whose argv is not a literal (a name, or no
    argument, which reads sys.argv), and a module that does not parse under the running interpreter. A string anywhere
    else, or one held in a variable or built with %, + or .format, is outside the read, as is an argv assembled one
-   element at a time (append calls) and an in-process pytest the census does not resolve by name (through getattr,
-   importlib or runpy, or a name bound other than by an import or an assignment, among others); each of those
-   named here has a case holding its outcome, no row. What the flag buys, in every pytest process the census and the
+   element at a time (append calls) and any call, string or in process, reached through a name the census does not
+   resolve (a name bound other than by an import or a plain or annotated assignment: tuple unpacking, a walrus, a
+   conditional expression, a parameter default; or getattr, importlib or runpy, among others); each of those named
+   here has a case holding its outcome, no row. What the flag buys, in every pytest process the census and the
    population check read: anyio's plugin is absent from that process's plugin set as it is from the box's default
    run's. The sets are not equal, and nothing here says they are: the box's default run loads pytest-xdist's two plugins, which no cell
    installs. Verified by execution before this landed: a synthetic broken anyio/pytest_plugin.py in a CI-shaped venv
@@ -2405,6 +2407,10 @@ POSITIONAL_ARGV_CALLS = {"asyncio.create_subprocess_exec": (0, None), "asyncio.s
                          "os.execl": (0, None), "os.execlp": (0, None), "os.execle": (0, -1), "os.execlpe": (0, -1),
                          "os.spawnl": (1, None), "os.spawnlp": (1, None), "os.spawnle": (1, -1), "os.spawnlpe": (1, -1)}
 IN_PROCESS_CALLS = ("pytest.main", "pytest.console_main", "_pytest.config.main", "_pytest.config.console_main")
+# every call the census reads, and every dotted prefix of one: the only paths a name's binding keeps (_launchers_in), since
+# a path outside this set can reach none of those calls by an attribute
+CENSUS_CALLS = tuple(FIRST_ARG_CALLS) + tuple(POSITIONAL_ARGV_CALLS) + IN_PROCESS_CALLS + ("shlex.split",)
+CENSUS_PATHS = frozenset(".".join(c.split(".")[:k]) for c in CENSUS_CALLS for k in range(1, c.count(".") + 2))
 UNBOUND_MODULES = ("subprocess", "os", "shlex", "asyncio", "pytest", "_pytest")   # a bare name the module never binds reads as itself
 SHELL_NAMES = ("sh", "bash", "dash", "zsh", "ksh")                 # an argv headed by one of these runs its -c string
 FLAG_ARGV = ("-p", "no:anyio")
@@ -2504,8 +2510,11 @@ def _launchers_in(src, filename):
     os.exec and os.spawn l forms, as an argv (POSITIONAL_ARGV_CALLS: a spawn form's mode and an e form's env set
     aside), and a call that runs pytest in this process (IN_PROCESS_CALLS: pytest.main, pytest.console_main and
     _pytest.config's two), a launcher whose argv is its first positional argument or args= and must carry the flag
-    itself. Every call is known by its qualified name, whatever the module's own name for it: an import, an alias, or
-    a name assigned from it; a module name the module never binds (a star import brought it) reads as itself.
+    itself. A call is known by its qualified name through the module's own names for it that the census resolves: an
+    import (an alias, and a star import from a module whose calls it reads, included) and a plain or annotated
+    assignment from such a name, each looked up in the scope Python looks it up in (the call's own function, the
+    functions around it, the module), a name bound more than once there standing for every path it is bound to; a
+    module name that no scope on that chain binds (a star import from elsewhere brought it) reads as itself.
     Unparsed, and red in ChildPytestLaunchers until spelled as an argv: a list or tuple literal that may run pytest and
     the census cannot tell (after an interpreter head, a -m whose module name is not a constant, or an element that is
     not a constant right before `pytest`; _argv_command's docstring); a constant string or f-string, written at the
@@ -2519,10 +2528,11 @@ def _launchers_in(src, filename):
     reads sys.argv). A module that does not parse is one unparsed row. A list or tuple on the right of an `in` test is
     a set of names, not an argv, and is not read. Not read, stated as the residual and each pinned by a case with no
     row (test_each_form_outside_the_read_gives_no_row): an argv assembled one element at a time (append calls); a
-    command string held in a variable or built with %, + or .format, a `-c` string held in a variable among them; an
-    in-process pytest this resolution does not reach by name, among them one reached through getattr, importlib or
-    runpy or bound to a name other than by an import or an assignment (a parameter default); and a string that
-    spells pytest anywhere else (a
+    command string held in a variable or built with %, + or .format, a `-c` string held in a variable among them; any
+    call, string or in process, reached through a name this resolution does not reach, among them one bound other
+    than by an import or a plain or annotated assignment (tuple unpacking, a walrus, a conditional expression, a
+    parameter default) and one reached through getattr, importlib or runpy; and a string that spells pytest anywhere
+    else (a
     script written to a file, an exec; the suite's synthetic tool-call fixtures spell `uv run pytest -q` by the dozen),
     which is data, not a command."""
     base = os.path.basename(filename)
@@ -2543,7 +2553,7 @@ def _launchers_in(src, filename):
         elif isinstance(parent, (ast.Import, ast.ImportFrom)):
             imports.append(parent)
         elif isinstance(parent, (ast.Assign, ast.AnnAssign)) and isinstance(parent.value, (ast.Name, ast.Attribute)):
-            assigns.append((parent.targets if isinstance(parent, ast.Assign) else [parent.target], parent.value))
+            assigns.append((parent, parent.targets if isinstance(parent, ast.Assign) else [parent.target], parent.value))
 
     def func_of(node):
         while node in parents:
@@ -2552,23 +2562,75 @@ def _launchers_in(src, filename):
                 return node.name
         return "<module>"
 
-    # what each name the module binds by import or by assignment stands for, as a dotted path: `import a.b` binds a,
-    # `import a.b as x` and `from a import b as x` bind x to a.b, and `m = pytest.main` binds m to what the right side
-    # names (one pass per assignment at most, so a chain of names resolves and `p = p.parent` cannot loop); a bare name
-    # the module never binds reads as itself
-    bound = {}
+    scopes = {}
+
+    def scope_of(node):
+        """The nearest function, lambda or class around a node; None for the module. Memoized along the walk up, since
+        every name in every call is resolved through it."""
+        path, found = [], None
+        while node not in scopes:
+            up = parents.get(node)
+            if up is None:
+                break
+            path.append(node)
+            if isinstance(up, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+                found = up
+                break
+            node = up
+        else:
+            found = scopes[node]
+        for n in path:
+            scopes[n] = found
+        return found
+
+    # What each name stands for, as dotted paths, scope by scope (review round 4's verify, 2026-09-23: until then one
+    # dict held the whole module and the last binding won, so a launcher's name rebound in another function, `from json
+    # import loads as run` beside `from subprocess import run`, read as the other binding and its launcher gave no
+    # row). A scope's bindings: `import a.b` binds a, `import a.b as x` and `from a import b as x` bind x to a.b, a star
+    # import from a module whose calls the census reads binds each of those calls' names, and `m = pytest.main` binds m
+    # to what the right side names. A name bound more than once in one scope stands for every path it is bound to (no
+    # flow is followed: a false row, never a lost one). Only the paths that can reach a call the census reads are kept
+    # (CENSUS_PATHS), so a name bound to anything else is bound and stands for nothing, and `p = p.parent` cannot grow
+    bindings = {}
+
+    def bind(scope, name, paths):
+        names = bindings.setdefault(scope, {})
+        fresh = name not in names
+        cur = names.setdefault(name, set())
+        grow = {p for p in paths if p in CENSUS_PATHS} - cur
+        cur |= grow
+        return fresh or bool(grow)
+
     for node in imports:
+        scope = scope_of(node)
         if isinstance(node, ast.Import):
             for a in node.names:
                 if a.asname:
-                    bound[a.asname] = a.name
+                    bind(scope, a.asname, {a.name})
                 else:
                     top = a.name.split(".")[0]
-                    bound[top] = top
+                    bind(scope, top, {top})
         elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
             for a in node.names:
-                if a.name != "*":
-                    bound[a.asname or a.name] = node.module + "." + a.name
+                if a.name == "*":
+                    for call in CENSUS_CALLS:
+                        if call.rpartition(".")[0] == node.module:
+                            bind(scope, call.rpartition(".")[2], {call})
+                else:
+                    bind(scope, a.asname or a.name, {node.module + "." + a.name})
+
+    def resolve(name_node):
+        """The paths a name stands for where it is used: the innermost scope that binds it, looked up as Python looks
+        it up (the use's own scope, then each function around it, a class body skipped, then the module); a module
+        name that no scope on that chain binds stands for itself (a star import from elsewhere may have brought it)."""
+        name, scope, first = name_node.id, scope_of(name_node), True
+        while scope is not None:
+            if (first or not isinstance(scope, ast.ClassDef)) and name in bindings.get(scope, {}):
+                return bindings[scope][name]
+            scope, first = scope_of(scope), False
+        if name in bindings.get(None, {}):
+            return bindings[None][name]
+        return {name} if name in UNBOUND_MODULES else set()
 
     def dotted(expr):
         attrs = []
@@ -2576,23 +2638,23 @@ def _launchers_in(src, filename):
             attrs.append(expr.attr)
             expr = expr.value
         if not isinstance(expr, ast.Name):
-            return None
-        root = bound.get(expr.id, expr.id if expr.id in UNBOUND_MODULES else None)
-        return None if root is None else ".".join([root] + attrs[::-1])
+            return set()
+        return {".".join([root] + attrs[::-1]) for root in resolve(expr)}
 
+    # a chain of names resolves in as many passes as it has links; the sets only grow, so the passes end
     for _ in range(len(assigns)):
         changed = False
-        for targets, value in assigns:
-            path = dotted(value)
-            for t in targets:
-                if path is not None and isinstance(t, ast.Name) and bound.get(t.id) != path:
-                    bound[t.id] = path
-                    changed = True
+        for node, targets, value in assigns:
+            paths = dotted(value)
+            if paths:
+                for t in targets:
+                    if isinstance(t, ast.Name) and bind(scope_of(node), t.id, paths):
+                        changed = True
         if not changed:
             break
 
     def is_shlex_split(node):
-        return isinstance(node, ast.Call) and dotted(node.func) == "shlex.split"
+        return isinstance(node, ast.Call) and "shlex.split" in dotted(node.func)
 
     out = []
 
@@ -2610,17 +2672,8 @@ def _launchers_in(src, filename):
         if hit:
             row(node, what, [], "a pytest command inside one element of the argv (%r), not read as the command" % hit[0])
 
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.List, ast.Tuple)):
-            kind, unparsed = _argv_command(node.elts) if id(node) not in membership else (None, None)
-            if kind:
-                row(node, kind, node.elts)
-            elif unparsed:
-                row(node, "an argv literal", [], unparsed)
-            continue
-        if not isinstance(node, ast.Call):
-            continue
-        what = dotted(node.func)
+    def call_row(node, what):
+        """The row a call gives when its callee stands for `what` (every path it stands for is judged)."""
         if what in IN_PROCESS_CALLS:
             # a pytest session in this process: plugin autoload runs again inside it, whatever flag the outer run had,
             # so its own argv must carry the flag (tests-4's refuter's probe: -p no:anyio inside the call blocked it)
@@ -2647,7 +2700,7 @@ def _launchers_in(src, filename):
         elif what in FIRST_ARG_CALLS:
             arg = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg == FIRST_ARG_CALLS[what]), None)
             if arg is None:
-                continue
+                return
             if isinstance(arg, (ast.List, ast.Tuple)):
                 if _argv_command(arg.elts) == (None, None):      # a launcher or an unparsed argv has its row from the literal
                     element_command(node, what, arg.elts)
@@ -2659,6 +2712,19 @@ def _launchers_in(src, filename):
                 text = _text(arg)
                 if text is not None and PYTEST_IN_STRING_RE.search(text):
                     row(node, what, [], "a pytest command in a shell string, not read as an argv")
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.List, ast.Tuple)):
+            kind, unparsed = _argv_command(node.elts) if id(node) not in membership else (None, None)
+            if kind:
+                row(node, kind, node.elts)
+            elif unparsed:
+                row(node, "an argv literal", [], unparsed)
+            continue
+        if not isinstance(node, ast.Call):
+            continue
+        for what in sorted(dotted(node.func)):
+            call_row(node, what)
     return out
 
 
@@ -2893,6 +2959,25 @@ class ChildPytestLaunchers(unittest.TestCase):
         ("_pytest.config.console_main", 'from _pytest.config import console_main\nconsole_main()\n', "unparsed", "no argument, so its argv is sys.argv"),
         # a module name the module never binds reads as itself (a star import, a name injected), as before the ruling
         ("subprocess never imported by name", 'from helpers import *\nsubprocess.run("pytest -q", shell=True)\n', "unparsed", "a pytest command in a shell string"),
+        # names resolved by scope (review round 4's verify, attacks M4, 2026-09-23): until then one dict held the module and
+        # the last binding won, so each launcher below, whose name another function rebinds, gave no row; so did a star
+        # import from pytest, and a name bound twice in one scope read as its last binding alone
+        ("a string call through a name rebound in another function",
+         'from subprocess import run\n\ndef suite():\n    return run("python -m pytest -q", shell=True)\n\n'
+         'def helper():\n    from json import loads as run\n    return run("{}")\n', "unparsed", "a pytest command in a shell string"),
+        ("os.execl through a name rebound in another function",
+         'import sys\nfrom os import execl as start\n\ndef suite():\n    start(sys.executable, sys.executable, "-m", "pytest", "-q")\n\n'
+         'def helper():\n    from json import loads as start\n    return start("{}")\n', False, "<interpreter> -m pytest"),
+        ("pytest.main imported, rebound in another function",
+         'from pytest import main as run_tests\n\ndef suite():\n    return run_tests(["-q"])\n\n'
+         'def helper():\n    from json import loads as run_tests\n    return run_tests("{}")\n', False, "pytest.main (in process)"),
+        ("pytest.main assigned, rebound in another function",
+         'import os\nimport pytest\n\ndef suite():\n    go = pytest.main\n    return go(["-q"])\n\ndef helper():\n    go = os.getcwd\n    return go()\n',
+         False, "pytest.main (in process)"),
+        ("pytest.main by a star import", 'from pytest import *\n\ndef suite():\n    return main(["-q"])\n', False, "pytest.main (in process)"),
+        ("subprocess.run by a star import", 'from subprocess import *\nrun("pytest -q", shell=True)\n', "unparsed", "a pytest command in a shell string"),
+        ("a name bound twice in one scope, the launcher first",
+         'import os, subprocess\nrun = subprocess.run\nrun = os.getcwd\nrun("pytest -q", shell=True)\n', "unparsed", "a pytest command in a shell string"),
     )
     # the argv each positional form reads, its elements joined by spaces (None for an expression): a spawn form's mode
     # and an e form's env are not argv elements. Strings, not lists: a list here would be an argv literal this census reads.
@@ -2958,6 +3043,13 @@ class ChildPytestLaunchers(unittest.TestCase):
         ("pytest.main reached through importlib", 'import importlib\nimportlib.import_module("pytest").main(["-q"])\n'),
         ("pytest run in process by runpy", 'import runpy\nrunpy.run_module("pytest", run_name="__main__")\n'),
         ("pytest.main bound to a parameter default", 'import pytest\ndef nested(run=pytest.main):\n    return run(["-q"])\n'),
+        # a call, string or in process, reached through a name the census does not resolve (review round 4's verify,
+        # prose-records, 2026-09-23): the census resolves a name bound by an import or by a plain or annotated assignment
+        ("a string call through a tuple-unpacked name", 'import subprocess\nrun, _ = subprocess.run, None\nrun("python -m pytest -q", shell=True)\n'),
+        ("a string call through a conditional alias", 'import os\nsh = os.system if os.name else os.popen\nsh("pytest -q")\n'),
+        ("a string call through a parameter default", 'import os\ndef go(sh=os.system):\n    sh("pytest -q")\n'),
+        ("pytest.main through tuple unpacking", 'import pytest\nm, _ = pytest.main, None\nm(["-q"])\n'),
+        ("pytest.main through a walrus", 'import pytest\nif (m := pytest.main):\n    m(["-q"])\n'),
     )
 
     def test_each_form_outside_the_read_gives_no_row(self):
