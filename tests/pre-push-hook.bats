@@ -8012,3 +8012,26 @@ r8b3_scanner_log_short() {   # <cut bytes>: a gitleaks on ROMP_GITLEAKS that run
     [[ "$output" != *"romp pre-push"* ]]
     [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/wt)" = "$(git -C "$TEST_DIR/repo-wt" rev-parse HEAD)" ]
 }
+
+# ── round 8b4 (A.8, a closing round): the COMMIT listing's whole-name arm, pinned ──
+# The r8b3 audit found that the arm refusing a listed line that is no whole commit name turned no case red
+# when disabled: a listing cut inside its LAST name keeps its line count, so git rev-list --count agrees with
+# it, and with the arm gone the same push is refused all the same, first by the PARENT COUNT gate (the scan's
+# parent read answers the whole name the cut dropped) and then by each later read of that commit. The arm
+# stays, a hardening that names the cut line first, and the case below pins its line, red with the arm
+# disabled. The COMMIT listing row's short column keeps the round 8b3 case, the cut that published at
+# 6e34a9d89; the row's fact names this one.
+@test "round 8b4 hardening case: the COMMIT listing of a pushed ref, its whole-name arm: a git whose range listing answers the tip's line whole and the last name, the leak commit's, cut to half its digits (exit 0), through a real push of a ref update whose middle commit adds a banned line, lists as many lines as git rev-list --count counts and is refused by the arm naming the cut line (the PARENT COUNT gate stands behind it), and the remote stays at its base" {
+    leak_in_middle_commit_after_base
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    n=${#sha}; half=$((n / 2))
+    mkdir -p "$TEST_DIR/shim"
+    calls_short_on git range-listing '[ "${1:-}" = rev-list ] && [ "${3:-}" = --not ]' "less:$((n - half + 1))"
+    push_main_through_hook_with_shim
+    fired_short range-listing "rev-list $sha --not --remotes $BASE"
+    grep -q -F -- "rev-list $sha --not --remotes $BASE [whole $((2 * (n + 1))) cut $((n + 1 + half))]" "$TEST_DIR/calls.range-listing"   # the tip's line and half the last name
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the COMMITS of refs/heads/main (${sha:0:10}) were listed short (git rev-list exited 0 and answered \"${leak:0:$half}\" on a line that is no whole commit name)"* ]]
+    [[ "$output" != *"could not be listed whole"* ]]                   # the line count agrees: the count arm has nothing to refuse
+    at_base
+}

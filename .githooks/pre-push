@@ -235,9 +235,13 @@
 #       ref containing the commit, or on a ref update the ancestry: an empty
 #       listing none of them excuses is short, refused naming the read. Its
 #       end: the COMMIT COUNT of the same range, read apart, against its line
-#       count, and each line a whole commit name, refused naming both answers
-#       (round 8b3: a listing cut to its tip published a middle commit's
-#       banned line, on a ref update and on a new branch)
+#       count, refused naming both answers (round 8b3: a listing cut to its
+#       tip published a middle commit's banned line, on a ref update and on a
+#       new branch); and each line a whole commit name, a line that is none
+#       refused naming it, a hardening: a listing cut inside its last name
+#       keeps its line count, and without this arm the PARENT COUNT gate
+#       refuses it (round 8b4: the hardening case of the COMMIT listing drives
+#       the arm)
 #   the COMMIT COUNT of a pushed ref
 #       a digit run compared with the commit listing's line count: a non-count
 #       refuses naming the read, and another number refuses naming both. Its
@@ -357,7 +361,11 @@
 #   the BYTE COUNT of a scratch listing
 #       a digit run, the input's and the rewrite's: a non-count refuses naming
 #       the read. Its end: the two counts compared, a cut one a prefix of its
-#       digits, another number than the other's
+#       digits, another number than the other's; the same cut at both call
+#       sites leaves the two equal and disarms the comparison, while the
+#       REWRITE it gates stands, a different read, whole when one read is cut
+#       at a time (the rewrite and its counts cut at once are outside this
+#       guarantee, as a listing and its gate are for the joins)
 #   the CHANGED PATHS listing of a commit
 #       the paths its numstat rows or combined-patch sections name: a path
 #       they name that the listing lacks refuses naming the read and the path.
