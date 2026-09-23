@@ -8060,10 +8060,12 @@ the run form left it green with the held-whole paragraph pin red, as the same-co
 round-2 review (its pins-2 and pins-3), a `#` comment in the job's header naming the browser cache green (10 of 10,
 where the pin before it read the raw block and was red, 9 of 10), and a restore step for that cache before the Test
 step red on the property (9 of 10); after that ruling, the job key renamed alone green (10 of 10) and a Chromium
-install moved before the Test step red on the property (9 of 10). Five modules read comment-stripped code (`grep -l
+install moved before the Test step red on the property (9 of 10). Six modules read comment-stripped code (`grep -l
 'from "../test-code-only"' ui/webview/*.test.ts`: file-view-seam.test.ts, md-url-view.test.ts,
-md-sanitize-viewer-links.test.ts, code-block.test.ts and file-view-links.test.ts, the last two since the fence-pass
-pins were re-aimed at the pass's place; the round-2 review's regression-2 found this record and the stripper's header
+md-sanitize-viewer-links.test.ts, code-block.test.ts, file-view-links.test.ts and file-figure-open.test.ts, the
+fourth and fifth since the fence-pass pins were re-aimed at the pass's place and the sixth since
+the file review's round 13 (extra7-1: its count of figureLinkOf's calls read the raw text, which a comment naming
+the call satisfied); the fork PR review's round 2 (its regression-2) found this record and the stripper's header
 naming three, and the plan pin now derives the list from the tree and holds both to it), and outside the first three
 no test of this branch compares where the chain or the fence pass sits relative to the adoption: code-block.test.ts
 reads the fence pass's own shape on the stripped code, file-view-links.test.ts holds an index compare of the fence
@@ -8667,11 +8669,15 @@ a host the page had already fetched the image from, was false for a failed remot
 bypassed: no request reaches a host the gate still holds. The build's record here claimed that nothing leaves the machine that did not before, and the PR body and
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word, given on 2026-09-22
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
-`git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools,
-upstream or tests alone (50 files, the ledger entry's where line; run 2026-09-23 at the head that carries the dress fixes ruled
-in the file review's round 13 (ui-1, extra6-1 and extra7-2), where the merge-base is de06b8718, the fork's main the branch merged
-before that round, and the listing is the branch's whole delta over it; the run at the head that carries the fixes ruled in the
-file review's round 12, from the same merge-base de06b8718, listed 48, before ui/webview/theme-parity.test.ts and
+`git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools,
+upstream or tests alone (51 files, the ledger entry's where line; run 2026-09-23 at the head that carries the dress and case
+fixes ruled in the file review's round 13 (ui-1, extra6-1, extra7-2, tests-1, regression-2, extra7-1 and extra6-2), where the
+merge-base is de06b8718, the fork's main the branch merged before that round, and the listing is the branch's whole delta over
+it; under ui the listing lies in ui/webview but for ui/test-code-only.ts, the comment stripper, which the case fixes brought
+into the delta (its header's reader roster names file-figure-open.test.ts as its sixth reader; the file review's round 13,
+extra7-1), so the run at the head that carries the dress fixes alone, from the same merge-base, listed 50; the run at the head
+that carries the fixes ruled in the file review's round 12, from the same merge-base de06b8718, listed 48, before
+ui/webview/theme-parity.test.ts and
 ui/webview/real-viewer-leg.ts joined the delta in those dress fixes (the outbound line's contrast pair, and the launch options the
 open leg's hybrid twin hands the shared launcher); the run at the head that carries the fixes ruled in
 the file review's round 11, from the merge-base 4ae3b6659, the fork's main the branch merged for the file review's round 12,

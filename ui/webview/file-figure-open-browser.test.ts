@@ -569,11 +569,13 @@ const linkDress = (page: any): Promise<LinkDress[]> => page.evaluate(() => {
       anchorHref: anchor ? anchor.getAttribute("href") : null, anchorDead: !!anchor && anchor.classList.contains("fv-dead"), w: r.width, h: r.height };
   });
 });
-/** A click on the named picture at (0.3w, 0.6h), with the modifier when `ctrl`, after scrolling it into view; what window.open recorded. */
+/** A click on the named picture at (0.3w, 0.6h), with Control held around it when `ctrl`, after scrolling it into view; what window.open recorded. */
 async function clickPicture(page: any, alt: string, ctrl = false): Promise<string[]> {
   const b = await page.evaluate((alt: string) => { const i = Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt)!; i.scrollIntoView({ block: "center" }); const q = i.getBoundingClientRect(); return { x: q.left + q.width * 0.3, y: q.top + q.height * 0.6 }; }, alt);
   await frames(page, 2);
-  await page.mouse.click(b.x, b.y, ctrl ? { modifiers: ["Control"] } : {});
+  if (ctrl) await page.keyboard.down("Control");   // mouse.click takes no modifiers option: the key is held around it (the file review's round 13, extra6-2: passed as an option it was dropped, and the click was plain)
+  await page.mouse.click(b.x, b.y);
+  if (ctrl) await page.keyboard.up("Control");
   await frames(page, 2);
   return opened(page);
 }
@@ -618,7 +620,13 @@ test("in a browser: a LOADED remote picture inside an author's named anchor or a
         assert.deepEqual(await clickPicture(page, d[i].alt), [WEB + "/" + d[i].alt + ".svg"], d[i].alt + ": the plain click opens the tab at the picture's address");
         assert.equal(await base(page), "report.md", d[i].alt + ": the viewer shows the report still");
       }
-      assert.deepEqual(await clickPicture(page, "deadcap", true), [WEB + "/deadcap.svg"], "a Ctrl-click on the captioned dead link's picture: the tab too, once");
+      // a Ctrl-click on a link-shape picture opens once, at the picture's address, and moves the viewer nowhere (a regression routing it
+      // to the links listener, or opening twice, reds here); the click's ctrlKey is read back off a capture listener, so the form cannot
+      // degrade to a plain click unseen again (the file review's round 13, extra6-2: mouse.click's modifiers option is dropped by Playwright)
+      await page.evaluate(() => { const w = window as any; w.__ctrl = []; document.addEventListener("click", (ev) => { w.__ctrl.push((ev as MouseEvent).ctrlKey); }, { capture: true }); });
+      assert.deepEqual(await clickPicture(page, "deadcap", true), [WEB + "/deadcap.svg"], "a Ctrl-click on the captioned dead link's picture: the tab at the picture's address, once");
+      assert.deepEqual(await page.evaluate(() => (window as any).__ctrl.splice(0)), [true], "the click reached the document with ctrlKey set: a Ctrl-click, not a plain one (mouse.click takes no modifiers option; the key is held around the click)");
+      assert.equal(await base(page), "report.md", "and the viewer shows the report still");
       assert.ok(served.some((s) => s.endsWith("/floor.svg")), "the second server served the pictures: " + JSON.stringify(served));
       assert.deepEqual(errors, [], "no page errors");
       await page.close();

@@ -31,11 +31,17 @@
 // floor, and wore a control inside the neighbouring prose that opened the picture the author hid); (9) the load road while the
 // viewer is hidden (armFigureControls is not skipped): a picture re-fetched while the card is display:none is decided at its
 // load over its 0 by 0 box, under the floor, so a standing control leaves at that load and the show's report of the real box
-// brings it back (before: decided over the natural size, the control stood through the hidden load).
+// brings it back (before: decided over the natural size, the control stood through the hidden load). In (1) a remote twin of the
+// figure, the same 761 by 76 picture relayed from a second http server the case starts, wears the outbound mark (data-fv-figweb, the
+// dashed outline at rest under CDP touch emulation) with the address in its title under the floor, and loses the mark when its
+// control returns at the wide width: the mark's removal executed, where before a sentence pin alone held dressFigureMark's else
+// branch (the file review's round 13, tests-1 with regression-2; a mutation red: that branch made a no-op keeps the mark and the
+// outline reads dashed beside the standing control, the double dress).
 // Skipped LOUDLY where playwright has no browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic
 // values only: the notes-api world, a placeholder session id, example.invalid addresses, /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import * as http from "node:http";   // the narrow-and-widen case's second server: a real origin of its own for the remote twin
 import { inBrowser, openViewer, openPanel, closePanel, frames, ROOT, REPORT, SID, PARA } from "./real-viewer-leg";
 
 const WIDE = ROOT + "/docs/figs/wide.svg";
@@ -48,6 +54,42 @@ const svg = (w: number, h: number, fill: string): string => '<svg xmlns="http://
 const REPORT_TEXT = "# Report\n\n![wide](figs/wide.svg)\n\nA sentence under the figure.\n\n![proto](" + PROTO + ")\n\n"
   + Array.from({ length: 30 }, (_, i) => PARA(i + 1)).join("\n\n") + "\n";
 const DOCS: Record<string, string> = { [REPORT]: REPORT_TEXT, [WIDE]: svg(761, 76, "#468") };
+// the remote twin of the wide figure (the file review's round 13, tests-1 with regression-2): the same 761 by 76 picture from the
+// web, served by a second http server the case starts and relayed into the page as http://example.test (a loopback subresource
+// from the page's routed origin is refused by Chromium's private network access, as file-figure-open-browser.test.ts records), so
+// it is gated until its placeholder's click and, loaded, wears the outbound mark under the floor and its control above it
+const WEB = "http://example.test";
+const WEB_LINE = (href: string): string => "Opens in a new tab: " + href;   // the picture's own title line (file-view.ts figureWebTitleLine)
+const TWIN_TEXT = "# Report\n\n![wide](figs/wide.svg)\n\n![webwide](" + WEB + "/wide.svg)\n\nA sentence under the figures.\n\n![proto](" + PROTO + ")\n\n"
+  + Array.from({ length: 30 }, (_, i) => PARA(i + 1)).join("\n\n") + "\n";
+const TWIN_DOCS: Record<string, string> = { [REPORT]: TWIN_TEXT, [WIDE]: svg(761, 76, "#468") };
+/** The second server: a real http server on another loopback port, serving every request as the 761 by 76 picture and logging it. */
+function secondServer(log: string[]): Promise<{ port: number; close: () => Promise<void> }> {
+  return new Promise((resolve) => {
+    const s = http.createServer((req, res) => { log.push((req.method || "") + " " + (req.url || "")); res.writeHead(200, { "Content-Type": "image/svg+xml" }); res.end(svg(761, 76, "#333")); });
+    s.listen(0, "127.0.0.1", () => { const a = s.address() as { port: number }; resolve({ port: a.port, close: () => new Promise((r) => s.close(() => r())) }); });
+  });
+}
+const fromSecond = (port: number, p: string): Promise<{ status: number; type: string; body: string }> => new Promise((resolve, reject) => {
+  http.get({ host: "127.0.0.1", port, path: p }, (res) => { let b = ""; res.on("data", (c) => { b += c; }); res.on("end", () => resolve({ status: res.statusCode || 0, type: String(res.headers["content-type"] || ""), body: b })); }).on("error", reject);
+});
+type Twin = { gated: boolean; w: number; h: number; control: boolean; mark: boolean; title: string | null; outline: string; hoverNone: boolean };
+/** The remote twin as the reader sees it: gated or loaded, its box, whether a control stands after it, the mark attribute, its title,
+ *  its computed outline style, and whether the page is under (hover: none). */
+const twin = (page: any): Promise<Twin> => page.evaluate(() => {
+  const img = Array.from(document.querySelectorAll(".fileview-md img")).find((i) => i.getAttribute("alt") === "webwide") as HTMLImageElement;
+  const r = img.getBoundingClientRect();
+  const n = img.nextElementSibling;
+  return { gated: !!img.closest('[data-act="fv-load"]'), w: r.width, h: r.height, control: !!(n && n.hasAttribute("data-fv-figopen")), mark: img.hasAttribute("data-fv-figweb"), title: img.getAttribute("title"), outline: getComputedStyle(img).outlineStyle, hoverNone: matchMedia("(hover: none)").matches };
+});
+/** Wait up to a second for the twin's control to be present (`want` true) or absent; the verdict is read after, by `twin`. */
+async function settleTwin(page: any, want: boolean): Promise<void> {
+  try {
+    await page.waitForFunction((w: boolean) => { const img = Array.from(document.querySelectorAll(".fileview-md img")).find((i) => i.getAttribute("alt") === "webwide"); if (!img) return false; const n = img.nextElementSibling; return !!(n && n.hasAttribute("data-fv-figopen")) === w; }, want, { timeout: 1000 });
+  } catch { /* read below */ }
+  await frames(page, 1);
+}
+const fmtTwin = (f: Twin): string => "twin " + Math.round(f.w) + "x" + Math.round(f.h) + ", control " + (f.control ? "present" : "absent") + ", mark " + (f.mark ? "on" : "off") + ", outline " + f.outline + (f.hoverNone ? ", hover none" : "");
 
 type Fig = { w: number; h: number; control: boolean; bodyW: number };
 /** The wide figure (the box's first img): its laid-out box, whether a control stands after its anchor (the img, or the
@@ -81,27 +123,45 @@ const base = (page: any): Promise<string | null> => page.locator(".fileview-base
 const backDisabled = (page: any): Promise<string | null> => page.evaluate(() => { const b = document.querySelector(".fileview-nav-back"); return b ? b.getAttribute("aria-disabled") : "no button"; });
 
 /** The report open in the chat modal at the viewport size, the wide figure served from the /file route and the web one from a
- *  route on its host, window.open stubbed to a record, the wide figure loaded. */
-async function openReport(browser: any, width: number, height: number): Promise<{ page: any; errors: string[] }> {
+ *  route on its host, window.open stubbed to a record, the wide figure loaded; with `second`, the report with the remote twin, whose
+ *  host is relayed to that server (the twin stays gated until its placeholder is clicked). */
+async function openReport(browser: any, width: number, height: number, second?: { port: number }): Promise<{ page: any; errors: string[] }> {
+  const docs = second ? TWIN_DOCS : DOCS;
   const o = await openViewer(browser, "chat", width, height, {
-    docs: DOCS,
-    serve: (u) => { const p = u.pathname === "/file" ? u.searchParams.get("path") || "" : ""; return DOCS[p] !== undefined && /\.svg$/.test(p) ? { status: 200, type: "image/svg+xml", body: DOCS[p] } : null; },
+    docs,
+    serve: (u) => { const p = u.pathname === "/file" ? u.searchParams.get("path") || "" : ""; return docs[p] !== undefined && /\.svg$/.test(p) ? { status: 200, type: "image/svg+xml", body: docs[p] } : null; },
   });
   await o.page.context().route(/^https?:\/\/example\.invalid\//, (route: any) => route.fulfill({ status: 200, contentType: "image/svg+xml", body: svg(300, 200, "#333") }));
+  if (second) await o.page.context().route((u: URL) => u.href.startsWith(WEB + "/"), async (route: any) => { const a = await fromSecond(second.port, new URL(route.request().url()).pathname); return route.fulfill({ status: a.status, contentType: a.type, body: a.body }); });
   await o.page.evaluate(() => { const w = window as any; w.__opened = []; window.open = ((u: unknown) => { w.__opened.push(String(u)); return { opener: null }; }) as unknown as typeof window.open; });
   await o.page.waitForFunction(() => { const i = document.querySelector(".fileview-md img") as HTMLImageElement | null; return !!i && i.complete && i.naturalWidth > 0; }, null, { timeout: 10000 });
   await frames(o.page, 2);
   return o;
 }
 
-test("in a browser: a 761 by 76 figure wears its control at a 900 px viewport, loses it when the viewport narrows the column so the figure falls under the floor, gets it back when the viewport widens, and a page opened at the narrow width never gets one", async (t) => {
+test("in a browser: a 761 by 76 figure wears its control at a 900 px viewport, loses it when the viewport narrows the column so the figure falls under the floor, gets it back when the viewport widens, and a page opened at the narrow width never gets one; a remote twin of the figure relayed from a second server wears the outbound mark under the floor (the dashed outline at rest under touch emulation) and loses it when its control returns above the floor, so the picture never wears the mark beside a control (the file review's round 13, tests-1 with regression-2: the mark's removal executed)", async (t) => {
+  const served: string[] = [];
+  const second = await secondServer(served);
+  try {
   await inBrowser(t, async (browser) => {
-    const { page, errors } = await openReport(browser, 900, 600);
+    const { page, errors } = await openReport(browser, 900, 600, second);
     await settle(page, true);
     const wide = await figure(page);
     t.diagnostic("wide: " + fmt(wide));
     assert.ok(wide.w >= FLOOR && wide.h >= FLOOR, "the figure is above the floor on both sides at the wide column: " + fmt(wide));
     assert.equal(wide.control, true, "the control stands at the wide column: " + fmt(wide));
+    // the remote twin: gated until its placeholder's click; loaded, it stands above the floor with its control, the address in its
+    // title and no mark. The click leaves the pointer over the restored picture, so it is moved away before any read a hover could colour.
+    assert.equal((await twin(page)).gated, true, "the twin is a gated placeholder before the click");
+    await page.click('[data-act="fv-load"][data-fv-host="example.test"]');
+    await page.waitForFunction(() => { const i = Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === "webwide") as HTMLImageElement | undefined; return !!i && !i.closest('[data-act="fv-load"]') && i.complete && i.naturalWidth > 0 && !!(i.nextElementSibling && i.nextElementSibling.hasAttribute("data-fv-figopen")); }, null, { timeout: 10000 });
+    await page.mouse.move(5, 5);
+    await frames(page, 2);
+    assert.ok(served.some((s) => s.endsWith("/wide.svg")), "the second server served the twin: " + JSON.stringify(served));
+    const tw = await twin(page);
+    t.diagnostic("wide twin: " + fmtTwin(tw));
+    assert.ok(tw.w >= FLOOR && tw.h >= FLOOR, "the twin is above the floor on both sides at the wide column: " + fmtTwin(tw));
+    assert.deepEqual([tw.control, tw.mark, tw.title, tw.outline], [true, false, WEB_LINE(WEB + "/wide.svg"), "none"], "the twin at the wide column: its control, the address in its title, no mark and no outline: " + fmtTwin(tw));
     // the viewport narrowed: the column shrinks the figure in its own ratio, under the floor on its short side
     await page.setViewportSize({ width: 381, height: 600 });
     await settle(page, false);
@@ -110,6 +170,21 @@ test("in a browser: a 761 by 76 figure wears its control at a 900 px viewport, l
     assert.ok(narrow.h < FLOOR, "the figure fell under the floor on its short side: " + fmt(narrow));
     // FAILS BEFORE: the floor was read once, at the load; the control stayed (present at 323 by 32) and hung over the figure
     assert.equal(narrow.control, false, "the control left at the width's report: " + fmt(narrow));
+    // the twin under the floor: no control, the mark on the picture itself, the address still in its title; at rest on a fine pointer
+    // the mark's outline waits for a hover
+    await settleTwin(page, false);
+    const tn = await twin(page);
+    t.diagnostic("narrowed twin: " + fmtTwin(tn));
+    assert.ok(tn.h < FLOOR, "the twin fell under the floor on its short side: " + fmtTwin(tn));
+    assert.deepEqual([tn.control, tn.mark, tn.title], [false, true, WEB_LINE(WEB + "/wide.svg")], "the twin under the floor: no control, the mark on, the address in its title: " + fmtTwin(tn));
+    assert.equal(tn.outline, "none", "at rest on a fine pointer the mark's outline waits for the hover: " + fmtTwin(tn));
+    // under CDP touch emulation (hover none, which Chromium keeps through the widen below) the mark stands at rest: the dashed outline
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+    await frames(page, 2);
+    const tt = await twin(page);
+    t.diagnostic("narrowed twin, touch: " + fmtTwin(tt));
+    assert.deepEqual([tt.hoverNone, tt.mark, tt.outline], [true, true, "dashed"], "under touch emulation the marked twin wears the dashed outline at rest: " + fmtTwin(tt));
     // widened again: the figure is back above the floor and the control returns
     await page.setViewportSize({ width: 900, height: 600 });
     await settle(page, true);
@@ -117,6 +192,19 @@ test("in a browser: a 761 by 76 figure wears its control at a 900 px viewport, l
     t.diagnostic("widened: " + fmt(again));
     assert.ok(again.w >= FLOOR && again.h >= FLOOR, "above the floor again: " + fmt(again));
     assert.equal(again.control, true, "the control is back: " + fmt(again));
+    // the twin above the floor again: its control returns and the mark leaves at that decision, so under touch emulation the picture
+    // wears no outline beside its control (MUTATION RED: dressFigureMark's else branch made a no-op keeps the mark, and the outline
+    // reads dashed beside the standing control, the double dress). This is the control-returns road of the mark's removal; the
+    // target-turns-local road, a <picture> re-selecting from a remote to a local candidate, is driven by no case (the residual:
+    // file-figure-open-browser.test.ts's <picture> has a 300 by 200 remote candidate that never wears the mark) and stays under
+    // file-figure-open.test.ts's sentence pin on the else branch.
+    await settleTwin(page, true);
+    const ta = await twin(page);
+    t.diagnostic("widened twin: " + fmtTwin(ta));
+    assert.ok(ta.w >= FLOOR && ta.h >= FLOOR, "the twin is above the floor again: " + fmtTwin(ta));
+    assert.equal(ta.control, true, "the twin's control is back: " + fmtTwin(ta));
+    assert.equal(ta.mark, false, "the mark is GONE when the control returns: " + fmtTwin(ta));
+    assert.equal(ta.outline, "none", "no double dress: under touch emulation the picture beside its standing control wears no outline: " + fmtTwin(ta));
     assert.deepEqual(errors, [], "no page errors");
     await page.close();
     // a page opened AT the narrow width: the load's read finds the figure under the floor and no control stands
@@ -129,6 +217,7 @@ test("in a browser: a 761 by 76 figure wears its control at a 900 px viewport, l
     assert.deepEqual(fresh.errors, [], "no page errors");
     await fresh.page.close();
   });
+  } finally { await second.close(); }
 });
 
 test("in a browser: the Comments aside opening narrows the body so the figure falls under the floor and the control leaves; closing the aside brings the control back", async (t) => {

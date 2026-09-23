@@ -159,7 +159,7 @@ test('the two shapes modules the round added exist, name the follow-on, and are 
 });
 
 test('L6 names tests among the directories the branch changes, from the merge-base, and the two files under it, which the Tests paragraph names too and which exist, and no longer calls the records commit the follow-on\'s last', () => {
-  assert.ok(L6.includes('`git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools, upstream or tests alone'), 'the directory list carries tests beside the command, derived from the merge-base');
+  assert.ok(L6.includes('`git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools, upstream or tests alone'), 'the directory list carries tests beside the command, derived from the merge-base');
   assert.ok(L6.includes('a verification is derived from the merge-base with main, never from a fixed sha a merge can move behind'), 'and L6 states the rule fresh-1 taught');
   assert.ok(!L6.includes('the last commit of the follow-on'), 'the records commit is not the branch\'s last');
   for (const f of ['test_guide_files_failures.py', 'test_guide_trail_chords_and_figure_button.py']) {

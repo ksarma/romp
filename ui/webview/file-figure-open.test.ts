@@ -13,6 +13,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { cssRules, renderRule, underScreen } from "./css-rules.mjs";
 import { hostSheets } from "./host-sheets.mjs";
+import { codeOnly } from "../test-code-only";   // the comment stripper the count pin and the Mouse-call census read through (the compiler's ranges; file-view-seam.test.ts self-checks it)
 
 const ROOT = path.resolve(process.cwd(), "..");
 const web = (f: string) => fs.readFileSync(path.join(ROOT, "ui", "webview", f), "utf8");
@@ -66,7 +67,7 @@ test("the control: one decision (decideFigureControl) puts a button of the bar's
   assert.match(VIEW, /\nexport function figureLinkOf\(from: Element\): Element \| null \{\n  return from\.closest\(FIGURE_LINK_SET\);\n\}\n/, "closest over the set from the element given: the img for the click and the title, the parent of figureAnchor's climb for the control (a sentence pin)");
   assert.equal((VIEW.match(/closest\('a, \[data-act="openpath"\]'\)/g) || []).length, 0, "no reader keeps a set of its own: the any-anchor selector is gone from the file (a property pin: its count is zero)");
   assert.equal((VIEW.match(/closest\("a\[href\]"\)/g) || []).length, 0, "and so is the click listener's private a[href] read (a property pin: its count is zero)");
-  assert.equal((VIEW.match(/figureLinkOf\(/g) || []).length, 4, "the predicate's definition and its three readers, the click listener, dressFigureTitle and linkAbove, read the one predicate (a property pin: the count of its calls in the file, red when a reader spells a set of its own, re-derived when a reader joins)");
+  assert.equal((codeOnly(VIEW).match(/figureLinkOf\(/g) || []).length, 4, "the predicate's definition and its three readers, the click listener, dressFigureTitle and linkAbove, read the one predicate (a property pin: the count of its calls over the CODE alone, comments stripped by ui/test-code-only.ts, so a comment naming the call neither satisfies nor reds it; red when a reader spells a set of its own, re-derived when a reader joins; the file review's round 13, extra7-1: over the raw text the count stood at four with a reader replaced by a private closest() beside a comment naming the call)");
   assert.match(titleFn, /const title = \(author \? author \+ "\\n" : ""\) \+ figureWebTitleLine\(shownAddress\(\(target as \{ href: string \}\)\.href\)\);/, "the author's title first, the address line after it on its own line");
   assert.match(titleFn, /if \(held === null\) img\.setAttribute\(FIGTITLE_MARK, author\);/, "the author's title kept under the mark while the line stands");
   assert.match(titleFn, /\} else if \(held !== null\) \{\n\s*if \(held\) img\.setAttribute\("title", held\); else img\.removeAttribute\("title"\);\n\s*img\.removeAttribute\(FIGTITLE_MARK\);/, "restored, and the mark taken off, when the candidate is local again");
@@ -76,7 +77,7 @@ test("the control: one decision (decideFigureControl) puts a button of the bar's
   // the pictures a control stands on; the executed read is the browser leg's under-the-floor case (on hover, and at rest under touch emulation)
   assert.match(VIEW, /\nconst FIGWEB_MARK = "data-fv-figweb";\n/, "the mark's attribute (a sentence pin)");
   const markFn = between(VIEW, "function dressFigureMark(img: Element, want: boolean): void {", "\n}\n");
-  assert.match(markFn, /if \(!want && img\.hasAttribute\(FIGTITLE_MARK\)\) img\.setAttribute\(FIGWEB_MARK, ""\);\n\s*else img\.removeAttribute\(FIGWEB_MARK\);/, "the mark on the picture whose title carries the line and on which no control stands; taken off otherwise (a sentence pin)");
+  assert.match(markFn, /if \(!want && img\.hasAttribute\(FIGTITLE_MARK\)\) img\.setAttribute\(FIGWEB_MARK, ""\);\n\s*else img\.removeAttribute\(FIGWEB_MARK\);/, "the mark on the picture whose title carries the line and on which no control stands; taken off otherwise (a sentence pin; the removal is executed in file-view-figure-floor-browser.test.ts's narrow-and-widen case, a relayed remote twin of the 761 by 76 figure marked under the floor and bare again beside its returned control at the wide width, read under touch emulation; the target-turns-local road, a <picture> re-selecting from a remote to a local candidate, stays under this pin alone: file-figure-open-browser.test.ts's <picture> has a 300 by 200 remote candidate that never wears the mark)");
   assert.match(fn, /parent\.insertBefore\(b, anchor\.nextSibling\);/, "the anchor's next sibling: a sibling, never a wrapper");
   assert.doesNotMatch(fn, /tabIndex|tabindex/, "a button is in the tab order as it is: nothing takes it out");
   assert.match(VIEW, /\nconst FIGOPEN_MARK = "data-fv-figopen";\n/); assert.match(VIEW, /\nconst FIGOPEN_CLASS = "fv-figopen";\n/);
@@ -273,4 +274,31 @@ test("the reader the closed set stands on reads rules, not lines: the three shap
     "@media screen { .fileview-md .fv-figopen:focus-visible { opacity: 1; } }",
     "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen { opacity: 0.8; } }",
   ], "the indented rule inside the multi-line screen block and the one-line screen rule, a query list with screen on both members, are under screen");
+});
+
+test("no call of Playwright's Mouse under ui/webview carries a modifiers key: mouse.click, dblclick, down, up, move and wheel take no modifiers option (playwright-core's Mouse interface) and drop one silently, so a modified click there is the key held around the click (keyboard.down, mouse.click, keyboard.up), as file-figure-open-browser.test.ts's Ctrl-clicks are; a property pin over the tree, the files derived by reading the directory and each call's arguments read over the code alone (the file review's round 13, extra6-2: clickPicture's Ctrl form passed the option to mouse.click and dispatched a plain click, green because the plain click opened the same tab)", (t) => {
+  const dir = path.join(ROOT, "ui", "webview");
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith(".ts")).sort();
+  const calls: { file: string; method: string }[] = [];
+  const hits: string[] = [];
+  for (const f of files) {
+    const raw = fs.readFileSync(path.join(dir, f), "utf8");
+    if (!raw.includes(".mouse.")) continue;
+    const src = codeOnly(raw);
+    // a call, not a mention: an identifier character before `.mouse.` (a quoted `.mouse.` in a message or in this pin's own literals is none)
+    for (const m of src.matchAll(/\w\.mouse\.(\w+)\(/g)) {
+      const open = m.index! + m[0].length - 1;   // the call's opening paren; its argument list runs to the balanced close
+      let depth = 0, end = open;
+      for (; end < src.length; end++) { const c = src[end]; if (c === "(") depth++; else if (c === ")" && --depth === 0) break; }
+      const args = src.slice(open + 1, end);
+      calls.push({ file: f, method: m[1] });
+      if (/\bmodifiers\b/.test(args)) hits.push(f + ": mouse." + m[1] + "(" + args.replace(/\s+/g, " ") + ")");
+    }
+  }
+  const clicks = calls.filter((c) => c.method === "click");
+  t.diagnostic("Mouse census: " + calls.length + " calls over " + new Set(calls.map((c) => c.file)).size + " files, " + clicks.length + " of them mouse.click");
+  // derivation guards, never counts: a shrunken census is a broken read, not a clean tree
+  assert.ok(clicks.length >= 20, "the derivation found the legs' mouse.click calls (a derivation guard: fewer than twenty is a broken read, not a clean tree): " + clicks.length);
+  assert.ok(clicks.some((c) => c.file === "file-figure-open-browser.test.ts"), "the derivation reaches the leg whose Ctrl-click helper the finding named");
+  assert.deepEqual(hits, [], "no Mouse call carries a modifiers key: the option is dropped, and a Ctrl-click that dispatches as a plain one passes wherever the plain click does the same");
 });
