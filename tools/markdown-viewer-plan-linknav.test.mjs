@@ -301,7 +301,7 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   // writes into a page, bounds stated here, in the messages, in L3 and in the reader's header rather than read (the author's
   // closing pass after the file review's round 10, mechanism-2, and the file review's round 10, regression-5)
   const REST = '.fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }';
-  const REVEAL = '@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible { opacity: 1; } }';
+  const REVEAL = '@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible, .fileview-md .fv-figopen-web:focus { opacity: 1; } }';   // the web control's under any focus among the reveal's members (the file review's round 14, ui-1 with extra9-1)
   const NOHOVER = '@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen { opacity: 0.8; } }';   // screen on BOTH queries: underScreen reads a list member by member (the file review's round 13, extra7-2)
   const HOVER_BG = '.fileview-md .fv-figopen:hover { background: var(--bg) linear-gradient(var(--accent-wash), var(--accent-wash)); }';
   const LEFT = '.fileview-md .fv-figopen-left { float: left; }', RIGHT = '.fileview-md .fv-figopen-right { float: right; margin: 0 -28px 0 6px; }';
@@ -329,7 +329,7 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
     }
     assert.ok(css.includes('\n' + REST + '\n'), name + ': the rest');
     assert.ok(css.includes('\n' + LEFT + '\n' + RIGHT + '\n' + WEB + '\n' + WEB_COLOR + '\n'), name + ': the float twins, the web dress and its rest colour (the spelling; the closed set below holds the property)');
-    assert.ok(css.includes('\n' + REVEAL + '\n'), name + ': the reveal under screen');
+    assert.ok(css.includes('\n' + REVEAL + '\n'), name + ': the reveal under screen, any focus on the web control among its members (a sentence pin on the rule\'s spelling; the closed set below holds the property)');
     assert.ok(css.includes('\n' + NOHOVER), name + ': no hover, or a coarse pointer beside a hovering one, keeps it visible, under screen (the spelling; the closed set below holds the property)');
     assert.ok(css.includes('\n' + WEB_REST) && css.includes('\n' + FOCUS_OFF) && css.includes('\n' + PRESS_OFF) && css.includes('\n' + DEAD_DRESS), name + ': the web control at rest at full opacity, its focus ring off its border, its press cue off, and the dead link holding the dress dimming by colour, under screen (the spelling; the closed set below holds the property)');
     // the closed set over the parsed rules: outside a screen-only at-rule exactly the rest, the hover background and the float

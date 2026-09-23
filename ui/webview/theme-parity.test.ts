@@ -264,7 +264,8 @@ test("the ring hues stay apart in BOTH themes, every pair: rings against rings f
 // its tint by pixels, a ground this composition over --bg never saw). So the mark is composed over --bg only where the ring stands:
 // markRing reads it off the rules that dress the picture with its outline, each owed a box-shadow of var(--bg) at least 3px wide,
 // and a rule without one is a failure here beside the ratios. The states: the web control at rest, alone and inside a dead link;
-// the control revealed by the pointer over its picture or by a keyboard focus inside a dead link (a focus as its opacities compose
+// the control revealed by the pointer over its picture or by a focus inside a dead link (any focus on the web control, a keyboard's
+// or one a script gives it with no ring, since the file review's round 14, ui-1 with extra9-1; a focus as its opacities compose
 // it: where the focus ring stands is the sheets' focus rule, 2px off the border, which this model does not read, its spelling held by
 // file-figure-open.test.ts's closed set and its paint read in the leg); the accent border with the pointer on the control inside a dead link, against the hover wash; the mark, alone and inside
 // a dead link. The control HELD PRESSED is not composed here and cannot be: what a press changes is a transform, the button family's
@@ -324,7 +325,7 @@ type Theme = { bg: RGBf; tok: RGBf; accent: RGBf; wash: RGBf };   // wash: --acc
  *  with whether its line is the dress's token (the VS Code bound's states) or the family's accent under the pointer. */
 function dressStates(css: string, t: Theme): Array<[string, number, "token" | "accent"]> {
   const rest = declaredOpacity(css, [".fileview-md .fv-figopen", ".fileview-md .fv-figopen-web"], AT_REST);
-  const reveal = declaredOpacity(css, [".fileview-md .fv-figopen:hover", ".fileview-md :hover + .fv-figopen", ".fileview-md .fv-figopen:focus-visible"], SCREEN);
+  const reveal = declaredOpacity(css, [".fileview-md .fv-figopen:hover", ".fileview-md :hover + .fv-figopen", ".fileview-md .fv-figopen:focus-visible", ".fileview-md .fv-figopen-web:focus"], SCREEN);   // the last, any focus on the web control (the file review's round 14, ui-1 with extra9-1)
   // the dead link around a dress: the rule keyed on the dress it holds outranks the plain dead rule (a :has() adds its argument's weight)
   const deadHolding = declaredOpacity(css, [".fileview-md a.fv-dead:has(.fv-figopen-web)", ".fileview-md a.fv-dead:has(img[data-fv-figweb])"], SCREEN);
   const dead = deadHolding !== null ? deadHolding : declaredOpacity(css, [".fileview-md a.fv-dead"], TOP);
@@ -332,7 +333,7 @@ function dressStates(css: string, t: Theme): Array<[string, number, "token" | "a
   return [
     ["the web control at rest (touch, or a coarse pointer beside a hovering one) at " + rest, controlPainted(t.tok, t.bg, t.bg, rest!, 1), "token"],
     ["the web control at rest inside a dead link, " + rest + " x " + dead, controlPainted(t.tok, t.bg, t.bg, rest!, dead!), "token"],
-    ["the web control revealed by the pointer over its picture or by a keyboard focus inside a dead link, " + reveal + " x " + dead, controlPainted(t.tok, t.bg, t.bg, reveal!, dead!), "token"],
+    ["the web control revealed by the pointer over its picture or by a focus inside a dead link, " + reveal + " x " + dead, controlPainted(t.tok, t.bg, t.bg, reveal!, dead!), "token"],
     ["the mark on a picture under the floor (at rest, or on hover)", markPainted(t.tok, t.bg, 1), "token"],
     ["the mark inside a dead link, at " + dead, markPainted(t.tok, t.bg, dead!), "token"],
     ["the accent border with the pointer on the control inside a dead link, against the hover wash, " + reveal + " x " + dead, controlPainted(t.accent, t.wash, t.bg, reveal!, dead!), "accent"],

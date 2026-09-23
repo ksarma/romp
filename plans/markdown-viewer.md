@@ -8386,8 +8386,8 @@ changed a figure's own layout (the regions layer's 2026-09-06 review). The sheet
 corner from that place with no measuring (`.fileview-md .fv-figopen`: the family's inline-flex box aligned to the
 line's top, a zero-width margin box of a 28px negative left margin and a 6px right margin around the 22px glyph, and a
 6px relative offset down), positioned so it paints and is hit above the layer's overlay while the panel is open;
-transparent at rest, revealed by the pointer over the figure or over itself and by a keyboard focus, kept visible on a
-device with no hover and on one where any pointer is a finger (`any-pointer: coarse`: a touchscreen laptop's primary pointer
+transparent at rest, revealed by the pointer over the figure or over itself and by a keyboard focus (the web control by any
+focus), kept visible on a device with no hover and on one where any pointer is a finger (`any-pointer: coarse`: a touchscreen laptop's primary pointer
 hovers, so `(hover: none)` alone dressed nothing there; the file review's round 13, extra7-2), every rule naming its class that
 reveals it under `screen`, so a print shows none of it and the
 print block carries no line for it (the set the two homes close is over the rules whose selector names the class, read
@@ -8513,8 +8513,13 @@ table header, an even row or a callout fell under 3:1 on a VS Code editor ground
 width at rest under screen on every pointer so the ring covers no neighbouring ink, a line holding such a picture up to 6px taller (the
 file review's round 14, correctness-2 with extra5-1 and extra5-2), so a tap's open is shown before it
 happens where the title is no surface; the file review's round 12, fresh-1; the web control rests at full opacity where the at-rest rule
-stands, a local one at 0.8, its focus ring stands 2px off its border so the dashed line shows under a keyboard focus, the button
-family's press cue is off on it since the release that opens the tab comes while it is held (under the cue the line spread over two
+stands, a local one at 0.8, any focus reveals it, a keyboard's or one a script gives it with no ring, no mouse press of any button
+focuses it (the press cancelled in the body's mousedown listener) and Enter or Space opens it only while it is in view at the key,
+its box intersecting the viewport and the scrollport of every ancestor whose overflow on that axis is not visible (`controlInView`,
+read per key; out of view a Space presses nothing and scrolls nothing), since a focus a click or a press dragged off it left stood
+unpainted on a fine pointer once the pointer left and a later Enter or Space opened the tab again with nothing shown
+(the file review's round 14, ui-1 with extra9-1), its focus ring stands 2px off its border so the dashed line shows under a keyboard
+focus, the button family's press cue is off on it since the release that opens the tab comes while it is held (under the cue the line spread over two
 pixel rows, a modal 1.59:1 dark and 1.39:1 light), and a dead link holding either dress dims by colour and not by opacity, its words
 that take the link's colour dimmed and a child the sheet colours itself keeping its own ink, since an href-less dead link owns no click
 and a tap, a click or Enter opens the tab from inside it, so every state a gesture opens the tab from, the press held included, paints

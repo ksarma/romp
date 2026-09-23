@@ -98,7 +98,8 @@ const RULES = [
   // from the line's start to the first close brace)
   ".fileview-md .fv-figopen {", ".fileview-md .fv-figopen:hover {", ".fileview-md .fv-figopen-left {", ".fileview-md .fv-figopen-right {", ".fileview-md .fv-figopen-web {",
   ".fileview-md .fv-figopen-web:not(:hover) {",   // the web dress's rest colour, the outbound dress's own token, a head held byte for byte like the rest of this list (the file review's round 13, ui-1 with extra6-1)
-  "@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible {",
+  // the reveal's list carries `.fv-figopen-web:focus`, any focus on the web control (the file review's round 14, ui-1 with extra9-1)
+  "@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible, .fileview-md .fv-figopen-web:focus {",
   "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen {",
   // the picture's own outbound mark for a web picture with no control (the file review's round 12, fresh-1): the two one-line screen
   // blocks keyed on the img's attribute, byte-equal in both sheets (file-figure-open.test.ts derives the set by the attribute)

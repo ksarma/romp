@@ -2733,6 +2733,17 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // copy of the hosting page at `/files#id`, and a section of the shown file has no tab of its own (the 2026-09-07
   // review, round 3).
   body.addEventListener("mousedown", (ev) => {
+    // A press of any mouse button on a web picture's control is cancelled, so no press focuses it (the file review's round 14,
+    // ui-1 with extra9-1): a press's default is what moves the keyboard focus onto a button, so the focus stays where it was, the
+    // viewer's body or nothing, and the click still opens the tab. A focus a press left on the control outlived the click,
+    // unpainted on a fine pointer once the pointer left, and a later Enter or Space opened the credentialed tab again with
+    // nothing shown first; a press dragged off the control and released, which opens nothing, left the same focus, and so did a
+    // right or a middle press. The context menu and the auxclick still come. Chromium keeps :active through a held press it
+    // cancelled, so the held control paints its pressed dress (file-figure-open-browser.test.ts, pressedLegible); Firefox sets
+    // no :active once the press is cancelled, so there the held control paints as on hover (not measured here: the legs launch
+    // Chromium alone). The web control alone: a local one opens this viewer, and a press focuses it as before.
+    const c = figureControlOf(ev.target as Element | null, body);
+    if (c && c.classList.contains(FIGOPEN_WEB_CLASS)) { ev.preventDefault(); return; }
     const x = ev.button === 1 ? linkOf(ev.target as Element | null) : null;
     if (x && x.dataset.act === "openpath") ev.preventDefault();
   });
@@ -2788,6 +2799,20 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (selectionOpenIn(box)) return;
     openFigure(img, ev);
   });
+  // Enter or Space on a web picture's control opens the tab only while the control is in view at that key (the file review's
+  // round 14, ui-1 with extra9-1): out of view the key's default, the click, is cancelled, so a keyboard focus left on the
+  // control with the control scrolled out of view, by the body or by a table that scrolls on its own, opens nothing while
+  // nothing is shown. In view is read at each key event and never kept (controlInView). Enter clicks a button through its
+  // keydown and Space on its keyup, so both are read, and Space's keydown too: out of view a Space neither presses the control
+  // nor scrolls the body, while every other key, PageDown and Tab among them, works as ever. The web control alone, as in the
+  // mousedown listener above.
+  const keyOnHiddenWebControl = (ev: KeyboardEvent): void => {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    const c = figureControlOf(ev.target as Element | null, body);
+    if (c && c.classList.contains(FIGOPEN_WEB_CLASS) && !controlInView(c)) ev.preventDefault();
+  };
+  body.addEventListener("keydown", keyOnHiddenWebControl);
+  body.addEventListener("keyup", (ev) => { if (ev.key === " ") keyOnHiddenWebControl(ev); });
 
   // ── edit mode (the raw-mode slice) ── a plain textarea holding the raw bytes: an embedded editor
   // is a different project, and a textarea that keeps your changes beats a half-editor. The kernel's
@@ -5018,8 +5043,9 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
 // a 381 px re-open the 761 by 76 picture's paint-time control left at its load, the picture laid out 324 by 32; at 900 it
 // stood).
 // The sheets lay it over the figure's top-right corner from that place with no measuring (`.fileview-md .fv-figopen`: a zero-width margin box aligned to the line's top), transparent until the pointer is over the figure or over
-// it, or a keyboard focus reaches it; always in the tab order. A figure the author floated by its align attribute stacks
-// sideways, so the control floats with it (the -left and -right classes). It has no text of its own and the text walks skip
+// it, or a keyboard focus reaches it, and the web control under any focus; always in the tab order. No mouse press focuses the
+// web control (the body's mousedown listener), and Enter or Space opens it only while it is in view (controlInView). A figure
+// the author floated by its align attribute stacks sideways, so the control floats with it (the -left and -right classes). It has no text of its own and the text walks skip
 // it as a control (anchor-map.ts and reader-place.ts CONTROL_CLASSES). A URL document (openUrlView) gets none: its figures
 // are the web's, and it is no file of a session.
 // What the control opens (figureTarget): the candidate the browser chose for the figure, as the author wrote it
@@ -5061,6 +5087,24 @@ function figureTarget(img: Element, filePath: string): FigureTarget | null {
 function figureControlOf(target: Element | null, within: Element): HTMLElement | null {
   const c = target && typeof target.closest === "function" ? target.closest("[" + FIGOPEN_MARK + "]") as HTMLElement | null : null;
   return c && within.contains(c) ? c : null;
+}
+/** Whether a control is in view now: its box intersects the viewport (in VS Code the webview's) and the padding box, the
+ *  scrollport with any scrollbar left out, of every ancestor whose computed overflow on that axis is not visible, so the
+ *  viewer's body counts and so does a table that scrolls on its own, while the Rendered box, which clips nothing, does not. The
+ *  document's body and root are passed over, since their overflow is the viewport's. Read at the call and never kept; a
+ *  control partly in view is in view. */
+function controlInView(control: Element): boolean {
+  const r = control.getBoundingClientRect();
+  let x0 = Math.max(r.left, 0), y0 = Math.max(r.top, 0), x1 = Math.min(r.right, window.innerWidth), y1 = Math.min(r.bottom, window.innerHeight);
+  for (let a = control.parentElement; a && a !== document.body && a !== document.documentElement; a = a.parentElement) {
+    const cs = getComputedStyle(a);
+    const clipX = cs.overflowX !== "visible", clipY = cs.overflowY !== "visible";
+    if (!clipX && !clipY) continue;
+    const ar = a.getBoundingClientRect(), padLeft = ar.left + a.clientLeft, padTop = ar.top + a.clientTop;
+    if (clipX) { x0 = Math.max(x0, padLeft); x1 = Math.min(x1, padLeft + a.clientWidth); }
+    if (clipY) { y0 = Math.max(y0, padTop); y1 = Math.min(y1, padTop + a.clientHeight); }
+  }
+  return x1 > x0 && y1 > y0;
 }
 /** The figure a control stands after: the img its anchor is or holds (the element before the control: the img itself, its
  *  picture, the regions layer's wrap or the link holding it). Null when nothing stands before it or it holds no img. */

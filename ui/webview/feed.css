@@ -1959,9 +1959,9 @@ a.fileview-gh-note { border-style: dashed; }
    right). Positioned, so it paints and is hit above the regions layer's overlay (position: absolute with no z-index, earlier in
    the tree) while the Comments panel is open; the page's background under the glyph, since it stands on a picture, and the
    family's hover wash over that background. Transparent at rest and revealed by the pointer over the figure (the sibling before
-   it: `:hover +`), by the pointer over itself and by a keyboard focus (.code-copy's reveal); a touch device with no hover, or any
-   device with a coarse pointer beside a hovering one, keeps it visible (.code-copy's and the section snapshot action's precedents); every reveal is
-   under `screen`, so a print, where hover is none, shows none of it and the
+   it: `:hover +`), by the pointer over itself and by a keyboard focus (.code-copy's reveal), the web control by any focus (below); a
+   touch device with no hover, or any device with a coarse pointer beside a hovering one, keeps it visible (.code-copy's and the
+   section snapshot action's precedents); every reveal is under `screen`, so a print, where hover is none, shows none of it and the
    print block needs no line for it. A figure floated by its align attribute stacks sideways: the control floats with it, a left
    float's at the figure's top-right corner as before, a right float's at its top-LEFT corner (a later right float sits left of
    the earlier one, and the far edge cannot be reached without the figure's width). A picture from the web (file-view.ts
@@ -1992,10 +1992,15 @@ a.fileview-gh-note { border-style: dashed; }
    showed through its background and its line alike, so the line's painted ratio followed the picture (read by pixels over the leg's
    #333 picture, 2.46:1 on a VS Code editor ground of #404040). At 1 its own background, var(--bg), is the ground its dashes read
    against, on the line's inner side and in every gap between them, over any picture; over a picture the line's outer side is the
-   author's pixels, which no colour of the dress can clear for every picture, so the dress is held to the ground the sheet controls. A
-   keyboard focus reveals the web control too, and its focus ring stands 2px off its border (the focus rule below): drawn where the
-   browser draws it, the ring covered the border row and the row inside it, so no pixel of the dashed line showed, and at 1px off it
-   still covered the border row. The button family's press cue, a scale to 0.96, is off on the web control alone (the press rule below):
+   author's pixels, which no colour of the dress can clear for every picture, so the dress is held to the ground the sheet controls.
+   Any focus reveals the web control (`:focus` beside the family's `:focus-visible` in the reveal rule, for the web control alone,
+   since a local one opens this viewer): a keyboard focus, and one a script gives it with no ring, so a focus on it is never
+   unpainted; no mouse press focuses it (file-view.ts, the body's mousedown listener), and Enter or Space opens it only while it is
+   in view (controlInView), where a focus left by a click stood unpainted once the pointer left and a later key opened the tab with
+   nothing shown (the file review's round 14, ui-1 with extra9-1). Under a keyboard focus its focus ring stands 2px off its border
+   (the focus rule below): drawn where the browser draws it, the ring covered the border row and the row inside it, so no pixel of
+   the dashed line showed, and at 1px off it still covered the border row. The button family's press cue, a scale to 0.96, is off on
+   the web control alone (the press rule below):
    the release that opens the tab comes while the button is held, so the pressed state is one a gesture opens the tab from, and under
    the cue the 1px line spread over two pixel rows, its modal colour at 1.59:1 dark and 1.39:1 light against the control's own ground;
    held, the control paints as it does unheld: the family's accent border under the pointer, and the token's line under a Space press
@@ -2022,7 +2027,7 @@ a.fileview-gh-note { border-style: dashed; }
 .fileview-md .fv-figopen-right { float: right; margin: 0 -28px 0 6px; }
 .fileview-md .fv-figopen-web { border-style: dashed; }
 .fileview-md .fv-figopen-web:not(:hover) { border-color: var(--outbound-line); }
-@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible { opacity: 1; } }
+@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible, .fileview-md .fv-figopen-web:focus { opacity: 1; } }
 @media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen { opacity: 0.8; } }   /* touch, and a coarse pointer beside a hovering one (a touchscreen laptop): no hover state to reveal it, so keep it visible; never print */
 @media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen-web { opacity: 1; } }   /* the web control at rest at full, where a local one keeps 0.8: at 0.8 the picture under it showed through its dashed line (the comment above); never print */
 @media screen { .fileview-md .fv-figopen-web:focus-visible { outline-offset: 2px; } }   /* the focus ring 2px off the web control's border, so its dashed line shows under a keyboard focus (the comment above) */

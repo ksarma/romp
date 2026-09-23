@@ -57,7 +57,12 @@
 // highlight, whose outer side keeps the tint. The ring's neighbour pin (ringCoversNoNeighbour) reads a glyph glued to a picture under the floor before
 // and after it in a paragraph, a highlight and a table cell, and two glued badges, against the same page with the ring taken off,
 // at rest under touch and on hover on the fine pointer, in both themes: green over the sheets before the ring by design, with no ring
-// to cover anything, and red over a bare 3px ring with no margin beside it (the file review's round 14, correctness-2). Red over
+// to cover anything, and red over a bare 3px ring with no margin beside it (the file review's round 14, correctness-2). The web
+// control's focus is read in cases of their own at the file's end (the file review's round 14, ui-1 with extra9-1): no mouse press,
+// a click, a press dragged off or a right or a middle press, leaves the keyboard on it, any focus it holds paints its line at 3:1 in
+// both themes, and Enter or Space opens it only while it is in view, the body and a table that scrolls on its own each read, on a
+// fine pointer, on the laptop and under touch, and in the feed and the Files pane, each pin red over the viewer before those fixes
+// and the keep checks beside them green there by design. Red over
 // the unchanged viewer at the first control assertion (no control exists), the outbound
 // case red at the head before it, where the two controls presented one surface, and the link-shapes case red at the round-12
 // head, where the title and the control read any anchor while the click did not, and the two under-the-floor cases red at that head too, the hover read and the at-rest read, where no rule dressed the picture. Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid and example.test addresses,
@@ -1022,7 +1027,9 @@ async function editorGround(page: any, grey: string | null): Promise<void> {
  *  picture's and closed, so the read is of the pressed paint and the press is shown to open the tab with the viewer unmoved. A read
  *  under 3:1, or a line paintedRatio refuses (a line resampled over two pixel rows can show no ground among its pixels; its guards'
  *  messages open on the modal colour's figure), is pushed onto `fails` with the pressed control's computed transform and border colour;
- *  `note` carries every figure. The body's scroll is restored after, as paintedLegible restores it, and the control's focus taken off. */
+ *  `note` carries every figure. The body's scroll is restored after, as paintedLegible restores it, and any focus taken off. The mouse
+ *  road is also the statement that in Chromium :active holds through the hold of a press the viewer cancels so that no press focuses
+ *  the web control (the file review's round 14, ui-1 with extra9-1): `settled` waits for :active and the assertion below requires it. */
 async function pressedLegible(page: any, alt: string, where: string, fails: string[], note: (m: string) => void, by: "mouse" | "Space" = "mouse"): Promise<void> {
   const state = (scroll: boolean) => page.evaluate(([alt, scroll]: [string, boolean]) => {
     const img = Array.from(document.querySelectorAll(".fileview-md img")).find((i) => i.getAttribute("alt") === alt) as HTMLImageElement;
@@ -1073,7 +1080,7 @@ async function pressedLegible(page: any, alt: string, where: string, fails: stri
   assert.equal(tab.url(), at.src, where + ": the tab the release opens is the picture's address (the popup's URL)");
   await tab.close();
   assert.equal(await base(page), "report.md", where + ": the viewer stays on the report after the press");
-  await page.evaluate(() => { const f = document.activeElement as HTMLElement | null; if (f && f !== document.body) f.blur(); });   // a mouse press focuses the control: the reads after it start unfocused
+  await page.evaluate(() => { const f = document.activeElement as HTMLElement | null; if (f && f !== document.body) f.blur(); });   // the reads after it start with nothing holding the keyboard: the Space road leaves it on the control, the mouse road where it was, since no mouse press focuses the web control (the file review's round 14, ui-1 with extra9-1)
   await page.mouse.move(5, 5);
   await page.evaluate((y: number) => { (document.querySelector(".fileview-body") as HTMLElement).scrollTop = y; }, top);
   await frames(page, 2);
@@ -1403,3 +1410,387 @@ test("in Chromium launched as a trackpad-plus-touchscreen laptop (hover: hover, 
     }, { args: [LAPTOP] });
   } finally { await second.close(); }
 });
+
+// ── the web control's focus: no mouse press focuses it, any focus it holds is painted, and a key opens it only in view ─────────
+// (the file review's round 14, ui-1 with extra9-1: a mouse press on the web control focused it, a click, a press dragged off the
+// control and released, which opens nothing, and a right or a middle press alike; on a fine pointer the focused control went
+// transparent once the pointer left, since the sheets revealed it for :focus-visible alone, and a later Enter, or a Space with the
+// control wheeled out of view, opened the credentialed tab again with nothing shown first; and a keyboard focus scrolled out of
+// view by PageDown, or by a table that scrolls on its own, opened it on Space.) The three requirements and their pins: no mouse
+// press focuses the web control, pins (a), (b) and (c) and the other-button pin; any focus it holds is painted, pin (e), with (c)'s
+// second branch; Enter or Space opens it only while it is in view at the key, the viewport and every ancestor that clips on that
+// axis, pins (d) and (f), with (a)'s scroll. Four keep checks hold what must still work: Space held on a keyboard focus presses the
+// control and its release opens once, a control in view inside the scrolling table and one half in view each open on their key,
+// and a mouse press held on the control matches :active until its release opens once. The report: a remote picture of 300 by 200
+// from the second server ("big") under the first paragraph, thirty paragraphs, a table wider than the Rendered box, which scrolls
+// on its own (the sheets' overflow-x: auto), holding a second remote picture ("wide") at full size in its first cell, and thirty
+// paragraphs more, both pictures loaded through the gate. Each case runs in a browser of its own (the fine pointer Chromium's
+// default, the laptop the LAPTOP flags, touch CDP's emulation enabled after the load), window.open stubbed to count the opens,
+// and logs its record as a diagnostic. Every pin is a property pin read off the page, each red over the viewer before these
+// fixes by the red its title names; file-figure-open.test.ts and file-view-links.test.ts hold the spellings.
+const FOCUS_CELL = "cellword".repeat(40);   // one unbreakable word, so the table is wider than the Rendered box and scrolls on its own
+const FOCUS_TEXT = "# Report\n\n" + PARA(1) + "\n\n![big](" + WEB + "/pic.svg)\n\n" + Array.from({ length: 30 }, (_, i) => PARA(i + 2)).join("\n\n")
+  // the picture's own cell carries a shorter word (about 400px), so the cell holds the 300px picture at full size, over the control's floor
+  + "\n\n| picture | words | more |\n| --- | --- | --- |\n| ![wide](" + WEB + "/wide.svg) " + "picword".repeat(9) + " | " + FOCUS_CELL + " | " + FOCUS_CELL + " |\n\n"
+  + Array.from({ length: 30 }, (_, i) => PARA(i + 40)).join("\n\n") + "\n";
+type Pointer = "fine" | "laptop" | "touch";
+type Surface = "chat" | "feed" | "pane";
+type FocusState = { opened: number; active: string; focusVisible: boolean; focus: boolean; pressed: boolean; hover: boolean; opacity: string; ctl: { top: number; bottom: number; left: number; right: number }; body: { top: number; bottom: number }; scrollTop: number };
+/** The web control after the picture `alt` names, and where the keyboard is: the opens so far, the holder (the control, the viewer's
+ *  body, or another element by tag and classes), the control's :focus-visible, :focus, :active and :hover, its computed opacity and
+ *  box, and the viewer body's box and scrollTop. */
+const focusState = (page: any, alt: string): Promise<FocusState> => page.evaluate((alt: string) => (window as any).__focusState(alt), alt);
+/** The focus report open on `surface` at 900 by 600, both remote pictures relayed to the second server (`port`) and loaded through the
+ *  gate, window.open stubbed to count the opens and the page's helpers installed; under touch, CDP's emulation enabled after the load. */
+async function openFocus(browser: any, port: number, pointer: Pointer, surface: Surface): Promise<{ page: any; errors: string[]; cdp: any }> {
+  const before = async (pg: any): Promise<void> => {
+    await pg.context().route((u: URL) => u.href.startsWith(WEB + "/"), async (route: any) => {
+      const a = await fromSecond(port, new URL(route.request().url()).pathname);
+      return route.fulfill({ status: a.status, contentType: a.type, body: a.body });
+    });
+  };
+  const o = await openViewer(browser, surface, 900, 600, { docs: { [REPORT]: FOCUS_TEXT }, before });
+  await o.page.evaluate(() => {
+    const w = window as any;
+    w.__opened = [];
+    window.open = ((u: unknown) => { w.__opened.push(String(u)); return { opener: null }; }) as unknown as typeof window.open;
+    w.__img = (alt: string) => Array.from(document.querySelectorAll(".fileview-md img")).find((i) => i.getAttribute("alt") === alt) as HTMLElement;
+    w.__ctl = (alt: string) => { const n = w.__img(alt).nextElementSibling; return n && n.hasAttribute("data-fv-figopen") ? n as HTMLElement : null; };
+    w.__focusState = (alt: string) => {
+      const c = w.__ctl(alt) as HTMLElement, b = document.querySelector(".fileview-body") as HTMLElement, a = document.activeElement as HTMLElement | null;
+      const r = c.getBoundingClientRect(), br = b.getBoundingClientRect();
+      const named = (e: HTMLElement) => e.localName + (typeof e.className === "string" && e.className.trim() ? "." + e.className.trim().split(/\s+/).join(".") : "");
+      return { opened: w.__opened.length, active: a === c ? "control" : a === b ? "fileview-body" : a ? named(a) : "null",
+        focusVisible: c.matches(":focus-visible"), focus: c.matches(":focus"), pressed: c.matches(":active"), hover: c.matches(":hover"), opacity: getComputedStyle(c).opacity,
+        ctl: { top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right) }, body: { top: Math.round(br.top), bottom: Math.round(br.bottom) }, scrollTop: Math.round(b.scrollTop) };
+    };
+  });
+  await o.page.click('[data-act="fv-load"]');
+  await o.page.waitForFunction(() => { const imgs = Array.from(document.querySelectorAll(".fileview-md img")) as HTMLImageElement[]; return imgs.length === 2 && imgs.every((i) => i.complete && i.naturalWidth > 0) && document.querySelectorAll(".fileview-md .fv-figopen-web").length === 2; }, null, { timeout: 10000 });
+  await frames(o.page, 3);
+  let cdp: any = null;
+  if (pointer === "touch") { cdp = await o.page.context().newCDPSession(o.page); await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 }); await frames(o.page, 2); }
+  return { ...o, cdp };
+}
+/** Until the viewer body's scrollTop holds for four polls two frames apart (a wheel and a Space key scroll smoothly), bounded. */
+async function settleScroll(page: any): Promise<number> {
+  let last = -1, same = 0;
+  for (let i = 0; i < 150; i++) {
+    const s = await page.evaluate(() => (document.querySelector(".fileview-body") as HTMLElement).scrollTop);
+    if (s === last) { if (++same >= 4) return s; } else same = 0;
+    last = s;
+    await frames(page, 2);
+  }
+  return last;
+}
+const tapAt = async (cdp: any, x: number, y: number): Promise<void> => { await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] }); await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] }); };
+/** The picture `alt` names centred in the body, then a press on the plain text of the first paragraph below it, which gives the viewer's
+ *  body the keyboard (its tabindex 0), the pointer left there (a tap under touch); returns that point. */
+async function pressPlainText(page: any, cdp: any, pointer: Pointer, alt: string): Promise<{ x: number; y: number }> {
+  await page.evaluate((alt: string) => { (window as any).__img(alt).scrollIntoView({ block: "center" }); }, alt);
+  await settleScroll(page);
+  const p = await page.evaluate((alt: string) => {
+    const ib = (window as any).__img(alt).getBoundingClientRect(), br = (document.querySelector(".fileview-body") as HTMLElement).getBoundingClientRect();
+    const para = Array.from(document.querySelectorAll(".fileview-md > p")).map((e) => e.getBoundingClientRect()).find((r) => r.top > ib.bottom + 4 && r.top + 6 < br.bottom)!;
+    return { x: para.left + 20, y: para.top + 5 };
+  }, alt);
+  if (pointer === "touch") await tapAt(cdp, p.x, p.y); else await page.mouse.click(p.x, p.y);
+  await frames(page, 2);
+  return p;
+}
+const controlCentre = (page: any, alt: string): Promise<{ x: number; y: number }> => page.evaluate((alt: string) => { const r = (window as any).__ctl(alt).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }, alt);
+/** The pointer over the picture until its control is revealed (opacity 1), then onto the control (not under touch). */
+async function revealControl(page: any, alt: string): Promise<void> {
+  const ic = await page.evaluate((alt: string) => { const r = (window as any).__img(alt).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }, alt);
+  await page.mouse.move(ic.x, ic.y);
+  await page.waitForFunction((alt: string) => getComputedStyle((window as any).__ctl(alt)).opacity === "1", alt, { timeout: 5000 });
+}
+/** A click on the web control, the control revealed by the pointer over its picture first; a tap under touch. */
+async function clickWebControl(page: any, cdp: any, pointer: Pointer, alt: string): Promise<void> {
+  if (pointer !== "touch") await revealControl(page, alt);
+  const c = await controlCentre(page, alt);
+  if (pointer === "touch") await tapAt(cdp, c.x, c.y); else await page.mouse.click(c.x, c.y);
+  await frames(page, 2);
+}
+/** A press on the web control dragged off onto the plain text at `off` and released there, which is no click. */
+async function abortedPress(page: any, alt: string, off: { x: number; y: number }): Promise<void> {
+  await revealControl(page, alt);
+  const c = await controlCentre(page, alt);
+  await page.mouse.move(c.x, c.y);
+  await page.mouse.down();
+  await frames(page, 2);
+  await page.mouse.move(off.x, off.y, { steps: 5 });
+  await page.mouse.up();
+  await frames(page, 2);
+}
+const pointerAway = async (page: any, pointer: Pointer): Promise<void> => { if (pointer !== "touch") await page.mouse.move(5, 5); await frames(page, 3); };
+/** The theme set on the page's body, the big control's transition awaited (bounded). */
+async function focusTheme(page: any, which: "dark" | "light"): Promise<void> {
+  await page.evaluate((light: boolean) => new Promise<void>((done) => { const c = (window as any).__ctl("big") as HTMLElement; c.addEventListener("transitionend", () => done(), { once: true }); setTimeout(done, 1500); document.body.classList.toggle("theme-light", light); }), which === "light");
+  await frames(page, 2);
+}
+/** Tab pressed until the web control after `alt` holds the keyboard; returns the presses (bounded at 40). */
+async function tabToControl(page: any, alt: string): Promise<number> {
+  for (let i = 0; i < 40; i++) {
+    await page.keyboard.press("Tab");
+    await frames(page, 1);
+    if (await page.evaluate((alt: string) => document.activeElement === (window as any).__ctl(alt), alt)) return i + 1;
+  }
+  throw new Error("Tab never reached the " + alt + " picture's control");
+}
+/** The web control after `alt`, focused or not, read as painted in both themes when it holds the keyboard: a read under 3:1, or a line
+ *  paintedRatio refuses (a control at opacity 0 shows the picture alone, no dash and no ground), is pushed onto `fails`; each read is
+ *  noted. Returns whether the control held the keyboard in each theme. */
+async function focusedPaints(page: any, alt: string, fails: string[], note: (m: string) => void, onlyIfFocused: boolean): Promise<boolean[]> {
+  const held: boolean[] = [];
+  for (const th of ["dark", "light"] as const) {
+    await focusTheme(page, th);
+    const s = await focusState(page, alt);
+    held.push(s.active === "control");
+    if (onlyIfFocused && s.active !== "control") { note(th + " theme: the keyboard is on " + s.active + ", not on the control"); continue; }
+    const p: Painted | Error = await paintedRatio(page, alt, "control").catch((e: Error) => e);
+    if (p instanceof Error) fails.push(th + " theme: the control holding the keyboard at opacity " + s.opacity + " (:focus " + s.focus + ", :focus-visible " + s.focusVisible + "): its line as painted is refused, " + p.message.split("\n")[0]);
+    else {
+      note(th + " theme: the focused control's line " + p.dash + " over " + p.ground + ", " + p.ratio.toFixed(3) + ":1 at opacity " + s.opacity);
+      if (p.ratio < 3) fails.push(th + " theme: the control holding the keyboard paints " + p.dash + " over " + p.ground + ", " + p.ratio.toFixed(3) + ":1, under the 3:1 floor");
+    }
+  }
+  await focusTheme(page, "dark");
+  return held;
+}
+/** One case: the second server, a browser for the pointer (the laptop's flags at its launch), the focus report opened on the surface,
+ *  `body` run, and the case's record handed to the test's diagnostic whatever happens. */
+async function focusCase(t: any, pointer: Pointer, surface: Surface, rec: Record<string, unknown>, body: (page: any, cdp: any) => Promise<void>): Promise<void> {
+  const second = await secondServer([]);
+  try {
+    await inBrowser(t, async (browser) => {
+      const { page, errors, cdp } = await openFocus(browser, second.port, pointer, surface);
+      try {
+        await body(page, cdp);
+        assert.deepEqual(errors, [], "no page errors");
+      } finally {
+        rec.opens = await page.evaluate(() => (window as any).__opened).catch(() => null);
+        t.diagnostic("record " + JSON.stringify({ pointer, surface, ...rec }));
+        await page.close();
+      }
+    }, pointer === "laptop" ? { args: [LAPTOP] } : {});
+  } finally { await second.close(); }
+}
+const onWhat = (pointer: Pointer, surface: Surface): string => "(" + (pointer === "fine" ? "a fine pointer" : pointer === "laptop" ? "the touchscreen laptop" : "touch emulation") + (surface === "chat" ? "" : ", the " + (surface === "feed" ? "feed" : "Files pane")) + ")";
+
+for (const [pointer, surface] of [["fine", "chat"], ["laptop", "chat"], ["touch", "chat"], ["fine", "feed"], ["fine", "pane"]] as Array<[Pointer, Surface]>) {
+  test("in a browser " + onWhat(pointer, surface) + ", the web control's focus, pin (a): a click on the web control, the pointer away, the body wheeled until the control is out of view, then Space: exactly one open in total, the click's, and Space scrolls the body (the file review's round 14, ui-1 with extra9-1: before the fixes the click left the keyboard on the control, and Space opened a second tab from out of view and scrolled nothing)", { timeout: 120000 }, async (t) => {
+    const rec: Record<string, unknown> = { pin: "a" };
+    await focusCase(t, pointer, surface, rec, async (page, cdp) => {
+      await pressPlainText(page, cdp, pointer, "big");
+      await clickWebControl(page, cdp, pointer, "big");
+      rec.afterClick = await focusState(page, "big");
+      await pointerAway(page, pointer);
+      if (pointer === "touch") await page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).scrollBy(0, 3000); });
+      else { await page.mouse.move(450, 400); await page.mouse.wheel(0, 3000); }
+      await settleScroll(page);
+      const w = await focusState(page, "big");
+      rec.afterWheel = w;
+      assert.ok(w.ctl.bottom <= w.body.top, "the control is out of view above the body (a precondition): " + w.ctl.bottom + " vs " + w.body.top);
+      await page.keyboard.press("Space");
+      await settleScroll(page);
+      const s = await focusState(page, "big");
+      rec.afterSpace = s;
+      assert.equal(s.opened, 1, "exactly one open in total, the click's: a second is Space opening the tab again from the control out of view (the keyboard on " + s.active + ") (a property pin read off the page)");
+      assert.ok(s.scrollTop > w.scrollTop, "Space scrolls the body: " + w.scrollTop + " to " + s.scrollTop + " (the keyboard on " + s.active + ") (a property pin read off the page)");
+    });
+  });
+}
+for (const [pointer, surface] of [["fine", "chat"], ["laptop", "chat"], ["fine", "feed"], ["fine", "pane"]] as Array<[Pointer, Surface]>) {
+  test("in a browser " + onWhat(pointer, surface) + ", the web control's focus, pin (b): an aborted press on the web control (pressed, dragged off onto the text and released there, no click), the pointer away, then Enter: no open (the file review's round 14, ui-1 with extra9-1: before the fixes the press left the keyboard on the control and Enter opened one)", { timeout: 120000 }, async (t) => {
+    const rec: Record<string, unknown> = { pin: "b" };
+    await focusCase(t, pointer, surface, rec, async (page, cdp) => {
+      const off = await pressPlainText(page, cdp, pointer, "big");
+      await abortedPress(page, "big", off);
+      const p = await focusState(page, "big");
+      rec.afterPress = p;
+      assert.equal(p.opened, 0, "the aborted press opens nothing (a precondition)");
+      await pointerAway(page, pointer);
+      await page.keyboard.press("Enter");
+      await frames(page, 3);
+      const s = await focusState(page, "big");
+      rec.afterEnter = s;
+      assert.equal(s.opened, 0, "Enter after an aborted press opens nothing (the keyboard on " + s.active + ") (a property pin read off the page)");
+    });
+  });
+}
+for (const pointer of ["fine", "laptop"] as Pointer[]) for (const gesture of ["click", "aborted press"] as const) {
+  test("in a browser " + onWhat(pointer, "chat") + ", the web control's focus, pin (c): after " + (gesture === "click" ? "a click" : "an aborted press") + " on the web control, the pointer away, the control does not hold the keyboard, or, held by another road, paints its line at 3:1 or better in both themes (paintedRatio) (the file review's round 14, ui-1 with extra9-1: before the fixes, on the fine pointer, the control held the keyboard at opacity 0 and paintedRatio found no dash; on the laptop the at-rest rule shows the control, so that cell paints on the second branch before the fixes too, green by design)", { timeout: 120000 }, async (t) => {
+    const rec: Record<string, unknown> = { pin: "c", gesture };
+    const fails: string[] = [];
+    await focusCase(t, pointer, "chat", rec, async (page, cdp) => {
+      const off = await pressPlainText(page, cdp, pointer, "big");
+      if (gesture === "click") await clickWebControl(page, cdp, pointer, "big"); else await abortedPress(page, "big", off);
+      await pointerAway(page, pointer);
+      rec.held = await focusedPaints(page, "big", fails, (m) => t.diagnostic(m), true);
+      assert.deepEqual(fails, [], "after the gesture the web control holds no keyboard focus, or paints its line at 3:1 in both themes (a property pin read off the page):\n" + fails.join("\n"));
+    });
+  });
+}
+for (const surface of ["chat", "feed", "pane"] as Surface[]) {
+  test("in a browser " + onWhat("fine", surface) + ", the web control's focus, pin (d): Tab to the web control, PageDown until it is out of view, then Space: no open (the file review's round 14, extra9-1: before the fixes Space opened one from the control out of view)", { timeout: 120000 }, async (t) => {
+    const rec: Record<string, unknown> = { pin: "d" };
+    await focusCase(t, "fine", surface, rec, async (page, cdp) => {
+      await pressPlainText(page, cdp, "fine", "big");
+      await pointerAway(page, "fine");
+      rec.tabs = await tabToControl(page, "big");
+      const f = await focusState(page, "big");
+      assert.equal(f.focusVisible, true, "a keyboard focus on the control, :focus-visible (a precondition)");
+      let s = f, n = 0;
+      while (s.ctl.bottom > s.body.top && n < 12) { await page.keyboard.press("PageDown"); await settleScroll(page); s = await focusState(page, "big"); n++; }
+      rec.pageDowns = n;
+      rec.afterPageDown = s;
+      assert.ok(s.ctl.bottom <= s.body.top && s.active === "control", "the focused control is out of view above the body (a precondition): " + s.ctl.bottom + " vs " + s.body.top + ", the keyboard on " + s.active);
+      await page.keyboard.press("Space");
+      await settleScroll(page);
+      const a = await focusState(page, "big");
+      rec.afterSpace = a;
+      assert.equal(a.opened, 0, "Space on the keyboard-focused control out of view opens nothing (a property pin read off the page)");
+    });
+  });
+}
+for (const surface of ["chat", "feed", "pane"] as Surface[]) {
+  test("in a browser " + onWhat("fine", surface) + ", the web control's focus, pin (e): after a mouse click on the body's text, the web control focused from script with focusVisible false matches :focus and not :focus-visible, and paints its line at 3:1 or better in both themes (paintedRatio) (the file review's round 14, ui-1: red before the fixes and red at a head without the reveal's :focus member, the control at opacity 0 and no dash found)", { timeout: 120000 }, async (t) => {
+    const rec: Record<string, unknown> = { pin: "e" };
+    const fails: string[] = [];
+    await focusCase(t, "fine", surface, rec, async (page, cdp) => {
+      await pressPlainText(page, cdp, "fine", "big");
+      await pointerAway(page, "fine");
+      const f = await page.evaluate(() => { const c = (window as any).__ctl("big") as HTMLElement; c.focus({ preventScroll: true, focusVisible: false } as FocusOptions & { focusVisible: boolean }); return { active: document.activeElement === c, focus: c.matches(":focus"), focusVisible: c.matches(":focus-visible") }; });
+      rec.focused = f;
+      assert.deepEqual([f.active, f.focus, f.focusVisible], [true, true, false], "the script's focus holds the control and :focus-visible does not match it in Chromium (the case's premise, asserted first)");
+      rec.held = await focusedPaints(page, "big", fails, (m) => t.diagnostic(m), false);
+      assert.deepEqual(fails, [], "a web control focused with no ring paints its line at 3:1 in both themes (a property pin read off the page):\n" + fails.join("\n"));
+    });
+  });
+}
+test("in a browser (a fine pointer), the web control's focus, pin (f): a Tab-focused web control in a table wider than the Rendered box, the table scrolled sideways until the control is outside the table's own scrollport while the body still shows its row, then Space: no open (the file review's round 14, extra9-1: before the fixes Space opened one)", { timeout: 120000 }, async (t) => {
+  const rec: Record<string, unknown> = { pin: "f" };
+  await focusCase(t, "fine", "chat", rec, async (page, cdp) => {
+    await pressPlainText(page, cdp, "fine", "wide");
+    await pointerAway(page, "fine");
+    rec.tabs = await tabToControl(page, "wide");
+    await settleScroll(page);
+    await page.evaluate(() => { const tb = (window as any).__img("wide").closest("table") as HTMLElement; tb.scrollLeft = tb.scrollWidth; });
+    await frames(page, 3);
+    const g = await page.evaluate(() => {
+      const c = (window as any).__ctl("wide") as HTMLElement, tb = c.closest("table") as HTMLElement, tr = c.closest("tr") as HTMLElement, b = document.querySelector(".fileview-body") as HTMLElement;
+      const cr = c.getBoundingClientRect(), tr0 = tb.getBoundingClientRect(), rr = tr.getBoundingClientRect(), br = b.getBoundingClientRect(), cs = getComputedStyle(tb);
+      const pl = tr0.left + tb.clientLeft, pr = pl + tb.clientWidth;
+      return { overflowX: cs.overflowX, scrollLeft: Math.round(tb.scrollLeft), scrollWidth: tb.scrollWidth, clientWidth: tb.clientWidth, port: [Math.round(pl), Math.round(pr)], ctl: [Math.round(cr.left), Math.round(cr.right)],
+        outside: cr.right <= pl || cr.left >= pr, rowShown: rr.top < br.bottom && rr.bottom > br.top, active: document.activeElement === c };
+    });
+    rec.geometry = g;
+    assert.deepEqual([g.outside, g.rowShown, g.active], [true, true, true], "the focused control is outside the table's scrollport while the body shows its row (a precondition): " + JSON.stringify(g));
+    await page.keyboard.press("Space");
+    await frames(page, 4);
+    const s = await focusState(page, "wide");
+    rec.afterSpace = s;
+    assert.equal(s.opened, 0, "Space on the control outside the table's scrollport opens nothing (a property pin read off the page)");
+  });
+});
+for (const button of ["right", "middle"] as const) {
+  test("in a browser (a fine pointer), the web control's focus, the other-button pin: a " + button + " press released on the web control, the pointer away, then Enter: no open and the control never holds the keyboard, while the " + (button === "right" ? "context menu" : "auxclick") + " still comes (the file review's round 14, ui-1 with extra9-1, the maintainer's answer taking a press of any mouse button: before the fixes, and with the press cancelled for the primary button alone, the " + button + " press focused the control and Enter opened one)", { timeout: 120000 }, async (t) => {
+    const rec: Record<string, unknown> = { pin: "other-" + button };
+    await focusCase(t, "fine", "chat", rec, async (page, cdp) => {
+      await pressPlainText(page, cdp, "fine", "big");
+      await page.evaluate(() => { const w = window as any; w.__ctx = 0; w.__aux = 0; window.addEventListener("contextmenu", () => { w.__ctx++; }, true); window.addEventListener("auxclick", () => { w.__aux++; }, true); });
+      await revealControl(page, "big");
+      const c = await controlCentre(page, "big");
+      await page.mouse.move(c.x, c.y);
+      await page.mouse.down({ button });
+      await frames(page, 2);
+      await page.mouse.up({ button });
+      await frames(page, 2);
+      const p = await focusState(page, "big");
+      const events = await page.evaluate(() => ({ contextmenu: (window as any).__ctx, auxclick: (window as any).__aux }));
+      rec.afterPress = p;
+      rec.events = events;
+      await pointerAway(page, "fine");
+      await page.keyboard.press("Enter");
+      await frames(page, 3);
+      const s = await focusState(page, "big");
+      rec.afterEnter = s;
+      assert.deepEqual([p.active === "control", s.opened], [false, 0], "the " + button + " press leaves the keyboard off the control (on " + p.active + ") and Enter opens nothing (opened " + s.opened + ") (a property pin read off the page)");
+      assert.ok(button === "right" ? events.contextmenu >= 1 : events.auxclick >= 1, "the " + button + " press still fires its " + (button === "right" ? "contextmenu" : "auxclick") + ": " + JSON.stringify(events));
+    });
+  });
+}
+// the keep checks: what must still work under the three requirements, each green over the viewer before the fixes by design
+test("in a browser (a fine pointer), the web control's focus, a keep check: Tab to the web control, Space held presses it (:active) with nothing opened, and the release opens once (the file review's round 14, extra9-1: the key's gate stands aside for a control in view)", { timeout: 120000 }, async (t) => {
+  const rec: Record<string, unknown> = { pin: "keep-space" };
+  await focusCase(t, "fine", "chat", rec, async (page, cdp) => {
+    await pressPlainText(page, cdp, "fine", "big");
+    await pointerAway(page, "fine");
+    rec.tabs = await tabToControl(page, "big");
+    await page.keyboard.down("Space");
+    await frames(page, 3);
+    const h = await focusState(page, "big");
+    rec.held = h;
+    await page.keyboard.up("Space");
+    await frames(page, 3);
+    const s = await focusState(page, "big");
+    rec.afterRelease = s;
+    assert.deepEqual([h.pressed, h.opened, s.opened], [true, 0, 1], "Space holds the control pressed and its release opens once (a keep check, a property read off the page)");
+  });
+});
+test("in a browser (a fine pointer), the web control's focus, a keep check: Tab to the web control in the wide table with the table unscrolled, the control in view inside its scrollport: Space opens once (the file review's round 14, extra9-1: the table's scrollport is read, and a control inside it is in view)", { timeout: 120000 }, async (t) => {
+  const rec: Record<string, unknown> = { pin: "keep-table" };
+  await focusCase(t, "fine", "chat", rec, async (page, cdp) => {
+    await pressPlainText(page, cdp, "fine", "wide");
+    await pointerAway(page, "fine");
+    rec.tabs = await tabToControl(page, "wide");
+    await settleScroll(page);
+    const f = await focusState(page, "wide");
+    rec.afterTab = f;
+    await page.keyboard.press("Space");
+    await frames(page, 4);
+    const s = await focusState(page, "wide");
+    rec.afterSpace = s;
+    assert.deepEqual([f.active, s.opened], ["control", 1], "a control in view inside the scrolling table opens on Space (a keep check, a property read off the page)");
+  });
+});
+test("in a browser (a fine pointer), the web control's focus, a keep check: Tab to the web control, the body scrolled until the control straddles its top edge, then Enter: one open, since a control partly in view is in view (the file review's round 14, extra9-1: the rule is intersection)", { timeout: 120000 }, async (t) => {
+  const rec: Record<string, unknown> = { pin: "keep-half" };
+  await focusCase(t, "fine", "chat", rec, async (page, cdp) => {
+    await pressPlainText(page, cdp, "fine", "big");
+    await pointerAway(page, "fine");
+    rec.tabs = await tabToControl(page, "big");
+    await page.evaluate(() => { const c = (window as any).__ctl("big") as HTMLElement, b = document.querySelector(".fileview-body") as HTMLElement; const r = c.getBoundingClientRect(), br = b.getBoundingClientRect(); b.scrollTop += (r.top - br.top) + r.height / 2; });
+    await frames(page, 3);
+    const f = await focusState(page, "big");
+    rec.half = f;
+    assert.ok(f.ctl.top < f.body.top && f.ctl.bottom > f.body.top && f.active === "control", "the focused control straddles the body's top edge (a precondition): " + JSON.stringify(f.ctl) + " vs " + f.body.top);
+    await page.keyboard.press("Enter");
+    await frames(page, 3);
+    const s = await focusState(page, "big");
+    rec.afterEnter = s;
+    assert.equal(s.opened, 1, "a control partly in view opens on Enter (a keep check, a property read off the page)");
+  });
+});
+for (const pointer of ["fine", "laptop"] as Pointer[]) {
+  test("in a browser " + onWhat(pointer, "chat") + ", the web control's focus, a keep check: a mouse press held on the web control matches :active while held, with nothing opened, and its release opens once (the file review's round 14, extra9-1: in Chromium the press cancelled so that it focuses nothing still presses the control, so pressedLegible's pressed paint stands)", { timeout: 120000 }, async (t) => {
+    const rec: Record<string, unknown> = { pin: "keep-press" };
+    await focusCase(t, pointer, "chat", rec, async (page, cdp) => {
+      await pressPlainText(page, cdp, pointer, "big");
+      await revealControl(page, "big");
+      const c = await controlCentre(page, "big");
+      await page.mouse.move(c.x, c.y);
+      await frames(page, 2);
+      await page.mouse.down();
+      await frames(page, 3);
+      const h = await focusState(page, "big");
+      rec.held = h;
+      await page.mouse.up();
+      await frames(page, 3);
+      const s = await focusState(page, "big");
+      rec.afterRelease = s;
+      assert.deepEqual([h.pressed, h.opened, s.opened], [true, 0, 1], "the press holds :active and its release opens once (a keep check, a property read off the page)");
+    });
+  });
+}
