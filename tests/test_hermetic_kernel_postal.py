@@ -71,10 +71,11 @@ ensure, so it holds under this kernel, upstream's and fork PR #875's. Its text c
 the test, and whichever of the two lands second keeps fork PR #875's assertion beside this wait and fake. The pins
 below read the test's parts as statements that run (the trio, the wrap and the fake set before the call; the wait
 before the fake and the environment are put back; none after a return, a raise, a skip or an exit, none in the body of a
-try with an except clause) and hold every other statement of the test to putting back none of what those set, in any
-binding form or by reflection (a plant test reds each part), run its fake's own def over the argv shapes it must
-tell apart, and run the test in a child pytest with a sitecustomize that records every connect and every Python
-process of the run: none dials the fixed port, and no ensure child starts.
+try with an except clause), hold every other statement of the test to putting back none of what those set, in any
+binding form or by reflection named in any reference form, and hold each name those parts are read by to one value,
+bound once and read only where they read it (a plant test reds each part), run its fake's own def over the argv
+shapes it must tell apart, and run the test in a child pytest with a sitecustomize that records every connect and
+every Python process of the run: none dials the fixed port, and no ensure child starts.
 The census pin passes one floor write of a leak name, upstream's client-only "1" (FLOOR_LEAK_WRITES), and the tunnels
 probe compares client-only with the value the floor modules left. `python -m tests.test_hermetic_kernel_postal
 --census` prints the counts by name and shape (fork PR #871's by-product figures, derived by ast). Beside it,
@@ -1391,23 +1392,26 @@ def _environ_mentions(node):
             if (isinstance(n, ast.Attribute) and n.attr in _ENV_NAMES) or (isinstance(n, ast.Name) and n.id in _ENV_NAMES)]
 
 
-def _attribute_binds(node, attrs):
-    """Every node inside `node`, nested defs included, that binds or deletes an attribute named in `attrs` on ANY object,
-    so a module reached through another name (`subprocess.run = ...` beside `km.subprocess.run`) is read too: an
-    attribute target in every binding form, one target of an assignment or one of several, unpacked from a tuple or a
-    list or starred, an augmented or annotated one, a for, with or comprehension target, or a del. Every one of those
-    carries a Store or Del context on the attribute node, which is what this reads."""
-    return [n for n in ast.walk(node) if isinstance(n, ast.Attribute) and isinstance(n.ctx, (ast.Store, ast.Del)) and n.attr in attrs]
+def _attribute_binds(node):
+    """Every node inside `node`, nested defs included, that binds or deletes an attribute, whatever its name and on ANY
+    object, so a module reached through another name (`subprocess.run = ...` beside `km.subprocess.run`), an assertion
+    method (`self.assertEqual = ...`) and an Event's own method are read too: an attribute target in every binding form,
+    one target of an assignment or one of several, unpacked from a tuple or a list or starred, an augmented or annotated
+    one, a for, with or comprehension target, or a del. Every one of those carries a Store or Del context on the
+    attribute node, which is what this reads."""
+    return [n for n in ast.walk(node) if isinstance(n, ast.Attribute) and isinstance(n.ctx, (ast.Store, ast.Del))]
 
 
 def _name_binds(node, names):
     """Every node inside `node`, nested defs included, that binds or deletes one of `names`: a name stored or deleted (an
-    assignment, augmented or annotated, a for, with or comprehension target, a walrus, a del), an import's name or `as`
-    name, a def or class so named, an except clause's `as` name, a match capture or rest, and a global or nonlocal
-    declaration of it."""
+    assignment, augmented or annotated, a for, with or comprehension target, a walrus, a del), a parameter of `node` or
+    of a def or lambda inside it (which binds the name in that scope, so a nested def's `real_run=None` parameter hides
+    the test's own real_run there: round 2's fifth commit on fork PR #894), an import's name or `as` name, a def or class
+    so named, an except clause's `as` name, a match capture or rest, and a global or nonlocal declaration of it."""
     names = set(names)
     return [n for n in ast.walk(node)
             if (isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)) and n.id in names)
+            or (isinstance(n, ast.arg) and n.arg in names)
             or (isinstance(n, ast.alias) and (n.asname or n.name.split(".")[0]) in names)
             or (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.ExceptHandler)) and n.name in names)
             or (isinstance(n, (ast.Global, ast.Nonlocal)) and names & set(n.names))
@@ -1415,18 +1419,57 @@ def _name_binds(node, names):
             or (type(n).__name__ == "MatchMapping" and getattr(n, "rest", None) in names)]
 
 
-_REFLECTIVE_CALLS = ("setattr", "delattr", "getattr", "vars", "globals", "locals", "exec", "eval", "compile", "__import__", "patch")
-_REFLECTIVE_ATTRS = ("__setattr__", "__delattr__", "__dict__", "setattr", "delattr", "patch", "modules", "import_module")
+def _name_loads(node, name):
+    """Every read of the bare name `name` inside `node`, nested defs included: a load, which is how a call, an attribute
+    or a subscript on it (`name.set()`, `del name[:]`), an argument and an alias (`other = name`) all begin."""
+    return [n for n in ast.walk(node) if isinstance(n, ast.Name) and n.id == name and isinstance(n.ctx, ast.Load)]
+
+
+def _calls_of(node, name):
+    """Every call of the bare name `name` inside `node`, nested defs included."""
+    return [c for c in ast.walk(node) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == name]
+
+
+def _bound_value(stmt, target):
+    """The value an assignment `stmt` gives the name node `target`: the value itself for a lone target, the matching element
+    when a tuple or list of names is assigned a tuple or list of the same length; None for any other shape."""
+    if not (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1):
+        return None
+    t, v = stmt.targets[0], stmt.value
+    if t is target:
+        return v
+    if (isinstance(t, (ast.Tuple, ast.List)) and isinstance(v, (ast.Tuple, ast.List)) and len(t.elts) == len(v.elts)
+            and not any(isinstance(e, ast.Starred) for e in t.elts + v.elts)):
+        return next((ve for te, ve in zip(t.elts, v.elts) if te is target), None)
+    return None
+
+
+# Reflection, read by identifier: a builtin or a function that reaches an attribute, a module, a name, a frame or a
+# namespace by a string or at run time, and the attributes that expose a namespace, a function's bindings or a frame.
+_REFLECTIVE_NAMES = ("setattr", "delattr", "getattr", "vars", "globals", "locals", "exec", "eval", "compile", "__import__",
+                     "patch", "builtins", "__builtins__", "import_module", "attrgetter", "methodcaller", "_getframe",
+                     "currentframe", "get_referrers", "get_referents", "get_objects")
+_REFLECTIVE_ATTRS = ("__setattr__", "__delattr__", "__getattribute__", "__dict__", "__globals__", "__closure__", "__code__",
+                     "__defaults__", "__kwdefaults__", "cell_contents", "f_locals", "f_globals", "f_builtins", "modules")
 
 
 def _reflective(n):
-    """`n` reaches an attribute, a module or a name by reflection or by a string, so what it binds is decided at run time:
-    a call of setattr, delattr, getattr, vars, globals, locals, exec, eval, compile, __import__ or patch by that bare
-    name; an attribute __setattr__, __delattr__, __dict__, setattr or delattr (a method so named, as pytest's monkeypatch
-    spells them), patch (mock's, mock.patch.object and mock.patch.dict among them), modules (sys.modules) or
-    import_module (importlib's)."""
-    return ((isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in _REFLECTIVE_CALLS)
-            or (isinstance(n, ast.Attribute) and n.attr in _REFLECTIVE_ATTRS))
+    """`n` names reflection, so what the statement holding it binds is decided at run time. Read by identifier in every
+    reference form, not only a call by the bare name (the verifier's `_s = setattr; _s(...)`, `functools.partial(setattr,
+    ...)` and `_g = getattr` on round 2's fourth commit of fork PR #894 passed the call-only reading): a bare name in any
+    context (called, aliased, passed as an argument) that is one of _REFLECTIVE_NAMES (setattr, delattr, getattr, vars,
+    globals, locals, exec, eval, compile, __import__, mock's patch, the builtins module and __builtins__, importlib's
+    import_module, operator's attrgetter and methodcaller, sys._getframe, inspect.currentframe, gc's get_referrers,
+    get_referents and get_objects); an attribute so named (builtins.setattr, operator.methodcaller, mock.patch and
+    patch.object and patch.dict, pytest's monkeypatch.setattr) or one of _REFLECTIVE_ATTRS (__setattr__, __delattr__,
+    __getattribute__, __dict__, a function's __globals__, __closure__, __code__, __defaults__ and __kwdefaults__, a
+    cell's cell_contents, a frame's f_locals, f_globals and f_builtins, sys.modules); and an import that binds any of
+    those (`from builtins import setattr as _s`). NOT READ: a namespace or a callable reached through a module neither
+    list names (a pickle or marshal payload, ctypes): _guard_shape names what sees what that could put back."""
+    reflective = _REFLECTIVE_NAMES + _REFLECTIVE_ATTRS
+    return ((isinstance(n, ast.Name) and n.id in _REFLECTIVE_NAMES)
+            or (isinstance(n, ast.Attribute) and n.attr in reflective)
+            or (isinstance(n, ast.alias) and bool({n.name.split(".")[-1], n.asname} & set(reflective))))
 
 
 def _plant_at(src, node, text, where, col=None):
@@ -2220,19 +2263,39 @@ class HermeticKernelPostal(unittest.TestCase):
         body of a try that has an except clause, or after a statement that can end the run (a return, a raise, a skip or an
         exit: _ends_the_run) satisfies nothing here; and the test is undecorated and no generator, since a skip decorator,
         or a yield anywhere in it, passes a run in which none of its statements ran.
+        The environment's put-back is read by the mapping it restores from: one for statement in the finally, after the
+        wait, over that mapping's items(), putting each name back and popping one that was unset, and nothing else; the
+        mapping made before the trio as {name: os.environ.get(name) for name in <the trio's three names>}.
         The safe side is read over the whole function, every statement, run or not, nested defs included, so a conditional
-        or early put-back still reds: no statement binds or deletes run, subprocess or _revive_postal_bus on any object, in
-        any binding form (_attribute_binds), other than the four required; none binds the names km or os (_name_binds);
-        none reaches anything by reflection or by a string (_reflective: setattr and the verifier's tuple target of round
-        2's third commit on fork PR #894 passed a scan that read single-target assignments alone); and the environment is
-        named only in os.environ.get reads, in the trio and in the finally after the wait (_environ_mentions).
+        or early put-back still reds: no statement names reflection in any reference form, called, aliased, passed or
+        imported (_reflective: setattr and the verifier's tuple target of round 2's third commit on fork PR #894 passed a
+        scan that read single-target assignments alone, and the verifier's `_s = setattr`, functools.partial(setattr, ...)
+        and `_g = getattr` on the fourth commit a scan that read a reflective call by its bare name alone); none binds the
+        names km or os (_name_binds, a parameter of a nested def or lambda included); the environment is named only in
+        os.environ.get reads, in the trio and in the restore (_environ_mentions); and no statement binds or deletes an
+        attribute, whatever its name, on any object, in any binding form (_attribute_binds), other than the four put-ins
+        and put-backs and the assignments of km.BUS_PORT, so no assertion method or Event method is replaced either.
+        Every name the parts are read by holds one value (the verifier's five one-line plants on the fourth commit rebound
+        real_run or real_revive, cleared the saved mapping, set the Event before the call or rebound it, and every pin
+        passed): the kept real run and real revive, the Event, the wait's result, the fake, the wrapper and each road def,
+        the saved mapping, the road's list, the threading module and the test case (self) are each bound ONCE in the whole
+        test, parameters of nested defs and lambdas included, by the statement the parts are read from (_name_binds), and
+        each but self is read only where the parts read it (_name_loads: the real run in the unfake and in a road's call,
+        the real revive in the unwrap and the wrapper's call, the Event in the wrapper's set and the wait, and so on); the
+        road's list is made by an empty list literal. NOT READ by the name rule: the fake's own list (the plants read it;
+        nothing the pin guarantees rests on it, and fork PR #875's assertion reads it); the names local to a nested def (the
+        fake's argv and text), whose behaviour the pin on the fake runs; and the restore loop's two names and the saved
+        mapping's comprehension name, bound and read inside texts the pin requires exactly.
         NOT READ, each with what sees it instead: a put-back made by code the test calls but does not contain (a helper of
-        the module, setUp or tearDown), and the class's own decorators. An early put-back of the fake lets the revive's
-        real ensure child start, which the executed pin's spy records (the verifier's two mutants reddened it there); of
-        the revive, the kick runs the real revive, the Event is never set and the guard test's own wait fails; of the
-        environment, nothing sees it while the fake holds, since every postal-service call is then answered in the
-        process, so the restore's place after the wait is a second belt. A skip or an exit from a callee or from the class
-        reds the executed pin, which requires the child run to pass.
+        the module, setUp or tearDown), code outside the test that rebinds what it names (module-level code of
+        tests/test_kernel.py, a fixture), a put-back through a module _reflective does not name (a pickle or marshal
+        payload, ctypes), and the class's own decorators. An early put-back of the fake by any of them lets the revive's
+        real ensure child start, which the executed pin's spy records (the verifier's setattr mutants reddened it there);
+        of the revive, the kick runs the real revive, the Event is never set and the guard test's own wait fails; of the
+        Event, a wait that returns before the revive ends is seen by the executed pin only on a run where the revive is
+        still running at the put-back; of the environment, nothing sees it while the fake holds, since every
+        postal-service call is then answered in the process, so the restore's place after the wait is a second belt. A
+        skip or an exit from a callee or from the class reds the executed pin, which requires the child run to pass.
         Returns what the pin on the fake's behaviour and the plants need."""
         fn = self._guard_test(src)
         self.assertEqual(fn.decorator_list, [], "the guard test carries no decorator: a skip or an expected failure passes a run that never reached its statements")
@@ -2245,8 +2308,9 @@ class HermeticKernelPostal(unittest.TestCase):
         before, final, after = top[:tries[0]], _executed(top[tries[0]].finalbody), top[tries[0] + 1:]
         defs = {s.name: i for i, s in enumerate(before) if isinstance(s, ast.FunctionDef)}
         # the trio, set before the call
-        trio = [s.value for s in before if _call_stmt(s, ["os", "environ", "update"])]
-        self.assertEqual(len(trio), 1, "the trio is set by one os.environ.update statement that runs before the call")
+        trio_at = [i for i, s in enumerate(before) if _call_stmt(s, ["os", "environ", "update"])]
+        self.assertEqual(len(trio_at), 1, "the trio is set by one os.environ.update statement that runs before the call")
+        trio = [before[trio_at[0]].value]
         self.assertEqual((trio[0].args, sorted((k.arg, ast.unparse(k.value)) for k in trio[0].keywords)),
                          ([], [("ROMP_POSTAL_CLIENT_ONLY", "'1'"), ("ROMP_POSTAL_PEERS", "'0'"), ("ROMP_POSTAL_PORT", "'1'")]),
                          "client-only with peers off and a port nothing can bind")
@@ -2291,18 +2355,47 @@ class HermeticKernelPostal(unittest.TestCase):
         restores = [i for i, s in enumerate(final) if _environ_writes(s)]
         self.assertTrue(restores, "the finally restores the trio")
         self.assertLess(wait, min(restores), "...after the wait: the revive's calls run under the trio")
+        # the environment's put-back, read by the mapping it restores from: one for statement of the finally puts each of
+        # the trio's names back from a mapping made before the trio, popping a name that was unset, and does nothing else
+        loops = [i for i, s in enumerate(final) if isinstance(s, ast.For) and isinstance(s.iter, ast.Call) and not (s.iter.args or s.iter.keywords)
+                 and isinstance(s.iter.func, ast.Attribute) and s.iter.func.attr == "items" and isinstance(s.iter.func.value, ast.Name)]
+        self.assertEqual(len(loops), 1, "the finally restores the environment in one for statement over a saved mapping's items()")
+        loop = final[loops[0]]
+        env_saved = loop.iter.func.value.id
+        elts = loop.target.elts if isinstance(loop.target, ast.Tuple) else []
+        pair = [e.id for e in elts if isinstance(e, ast.Name)]
+        self.assertTrue(len(pair) == len(elts) == 2 and pair[0] != pair[1], "the restore loop binds two names, a name and its saved value")
+        restore_text = ("for {k}, {v} in {m}.items():\n    if {v} is None:\n        os.environ.pop({k}, None)\n    else:\n        os.environ[{k}] = {v}\n"
+                        .format(k=pair[0], v=pair[1], m=env_saved))
+        self.assertEqual(ast.unparse(loop), ast.unparse(ast.parse(restore_text).body[0]),
+                         "the restore puts each name back from %s, popping one that was unset, and does nothing else" % env_saved)
+        made = [i for i, s in enumerate(before) if isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Name)
+                and s.targets[0].id == env_saved]
+        self.assertEqual(len(made), 1, "the mapping the restore reads (%s) is made by one statement that runs before the call" % env_saved)
+        comp = before[made[0]].value
+        gen = comp.generators[0] if isinstance(comp, ast.DictComp) and len(comp.generators) == 1 else None
+        q = gen.target.id if gen is not None and isinstance(gen.target, ast.Name) and not gen.ifs and not gen.is_async else None
+        keys = [e.value for e in gen.iter.elts if isinstance(e, ast.Constant)] if q and isinstance(gen.iter, (ast.Tuple, ast.List)) else []
+        self.assertTrue(q is not None and isinstance(comp.key, ast.Name) and comp.key.id == q and ast.unparse(comp.value) == "os.environ.get(%s)" % q
+                        and len(keys) == len(gen.iter.elts) and sorted(keys) == sorted(k.arg for k in trio[0].keywords),
+                        "%s is made as {name: os.environ.get(name) for name in <the trio's three names>}" % env_saved)
+        self.assertLess(made[0], trio_at[0], "...before the trio is set")
         # the safe side, over every statement of the test, run or not, nested defs included
         self.assertEqual([n.lineno for n in ast.walk(fn) if _reflective(n)], [],
-                         "no statement of the test reaches an attribute, a module or a name by reflection or by a string: what it binds is decided at run time")
-        allowed = (before[install[0]].targets[0], final[unfake[0]].targets[0], before[rebind[0]].targets[0], final[unwrap[0]].targets[0])
-        self.assertEqual([(n.lineno, n.attr) for n in _attribute_binds(fn, ("run", "subprocess", "_revive_postal_bus")) if not any(n is a for a in allowed)], [],
-                         "no other statement of the test binds or deletes run, subprocess or _revive_postal_bus, on any object, in any binding form")
+                         "no statement of the test names reflection, in any reference form (called, aliased, passed or imported): what it binds "
+                         "would be decided at run time")
         self.assertEqual([n.lineno for n in _name_binds(fn, ("km", "os"))], [],
                          "no statement of the test binds the names km or os: every km and os it writes through is the kernel module and the os module")
         gets = {id(c.func.value) for c in ast.walk(fn) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "get"}
-        where_writes_go = {id(n) for s in [trio[0]] + final[wait + 1:] for n in ast.walk(s)}
+        where_writes_go = {id(n) for s in (trio[0], loop) for n in ast.walk(s)}
         self.assertEqual([n.lineno for n in _environ_mentions(fn) if id(n) not in gets and id(n) not in where_writes_go], [],
-                         "the test names the environment only in os.environ.get reads, in the trio and in the finally after the wait")
+                         "the test names the environment only in os.environ.get reads, in the trio and in the restore after the wait")
+        allowed = [before[install[0]].targets[0], final[unfake[0]].targets[0], before[rebind[0]].targets[0], final[unwrap[0]].targets[0]]
+        allowed += [s.targets[0] for s in ast.walk(fn) if isinstance(s, ast.Assign) and len(s.targets) == 1 and _dotted(s.targets[0]) == ["km", "BUS_PORT"]]
+        self.assertEqual([(n.lineno, n.attr) for n in _attribute_binds(fn) if not any(n is a for a in allowed)], [],
+                         "no other statement of the test binds or deletes an attribute, on any object, in any binding form (the four put-ins and "
+                         "put-backs and the assignments of km.BUS_PORT aside): not run, subprocess or _revive_postal_bus, an assertion method or "
+                         "an Event's method")
         # after the try: the wait's result, and the one assertion on the fake
         asserted = [s.value for s in after if isinstance(s, ast.Expr) and isinstance(s.value, ast.Call)]
         self.assertTrue(any(_dotted(c.func) == ["self", "assertTrue"] and c.args and _dotted(c.args[0]) == [ended] for c in asserted),
@@ -2318,9 +2411,52 @@ class HermeticKernelPostal(unittest.TestCase):
                           and isinstance(c.args[0], ast.Name) and isinstance(c.args[1], ast.List) and not c.args[1].elts} & on_every_road)
         self.assertEqual(len(reached), 1, "after the try one list is asserted empty that every road to the real run appends to: the postal-service "
                                           "calls that reached it (a list asserted empty beside it, fork PR #875's, is not what this reads)")
+        # every name the parts above are read by holds one value: bound once in the whole test, by the statement read above,
+        # and read only where the parts read it (the verifier's five one-line plants on round 2's fourth commit of fork PR
+        # #894 rebound a kept name, cleared the saved mapping, and set the Event early or rebound it, and every pin passed)
+        fake_def, wrapper_def = before[defs[fake.id]], before[defs[wrapper.id]]
+        wrapper_tries = [t for t in _executed(wrapper_def.body) if isinstance(t, ast.Try) and not t.handlers]
+        list_made = [(s, n) for s in before if isinstance(s, ast.Assign) for n in ast.walk(s.targets[0])
+                     if isinstance(n, ast.Name) and n.id == reached[0] and isinstance(n.ctx, ast.Store)]
+        threading_import = [a for s in before if isinstance(s, ast.Import) for a in s.names if a.name == "threading" and a.asname in (None, "threading")]
+        held = [  # (what the parts read it as, the name, the one node that may bind it, the reads the parts make of it; None: any read)
+            ("the kept real run", kept_run[0][1], before[kept_run[0][0]].targets[0],
+             [final[unfake[0]].value] + [c.func for r in roads for c in _calls_of(r, kept_run[0][1])]),
+            ("the kept real revive", kept_revive[0][1], before[kept_revive[0][0]].targets[0],
+             [final[unwrap[0]].value] + [c.func for c in _calls_of(wrapper_def, kept_revive[0][1])]),
+            ("the Event", event, before[events[0][0]].targets[0],
+             [final[wait].value.func.value] + [s.value.func.value for t in wrapper_tries for s in _executed(t.finalbody) if _call_stmt(s, [event, "set"])]),
+            ("the wait's result", ended, final[wait].targets[0],
+             [c.args[0] for c in asserted if _dotted(c.func) == ["self", "assertTrue"] and c.args and _dotted(c.args[0]) == [ended]]),
+            ("the fake", fake.id, fake_def, [fake]),
+            ("the wrapper", wrapper.id, wrapper_def, [wrapper]),
+            ("the saved environment", env_saved, before[made[0]].targets[0], [loop.iter.func.value]),
+            ("the road's list", reached[0], list_made[0][1] if len(list_made) == 1 else None,
+             [c.func.value for r in roads for c in ast.walk(r) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+              and c.func.attr == "append" and _dotted(c.func.value) == [reached[0]]]
+             + [c.args[0] for c in asserted if _dotted(c.func) == ["self", "assertEqual"] and c.args and _dotted(c.args[0]) == [reached[0]]]),
+            ("the threading module", "threading", threading_import[0] if threading_import else None, [before[events[0][0]].value.func.value]),
+            ("the test case", "self", fn.args.args[0] if fn.args.args else None, None),
+        ] + [("a road from the fake to the real run", r.name, r, [c.func for c in _calls_of(fake_def, r.name)]) for r in roads if r is not fake_def]
+        faults = []
+        for role, name, binding, reads in held:
+            binds = _name_binds(fn, (name,))
+            if binding is None or len(binds) != 1 or binds[0] is not binding:
+                faults.append("%s (%s) is bound at lines %s, not once by the statement the parts are read from" % (role, name, [b.lineno for b in binds]))
+            stray = sorted(n.lineno for n in _name_loads(fn, name) if reads is not None and not any(n is r for r in reads))
+            if stray:
+                faults.append("%s (%s) is read at lines %s, where the parts do not read it" % (role, name, stray))
+        self.assertEqual(faults, [], "each name the pin reads the test's parts by holds one value: bound once, by the statement the parts are read "
+                                     "from, and read only where they read it")
+        made_empty = _bound_value(*list_made[0])
+        self.assertTrue(isinstance(made_empty, ast.List) and not made_empty.elts,
+                        "the road's list (%s) is made by an empty list literal: an object of another kind can compare equal to [] whatever the road "
+                        "appends" % reached[0])
         return {"fn": fn, "fake": fake.id, "real_run": kept_run[0][1], "reached": reached[0], "event": event, "ended": ended,
                 "real_revive": kept_revive[0][1], "try": top[tries[0]], "install": before[install[0]], "wait": final[wait],
-                "after": after, "wrapper": before[defs[wrapper.id]], "fake_def": before[defs[fake.id]]}
+                "after": after, "wrapper": wrapper_def, "fake_def": fake_def, "saved_env": env_saved, "restore": loop,
+                "saved_made": before[made[0]], "list_made": list_made[0][0], "trio_stmt": before[trio_at[0]],
+                "roads": [r for r in roads if r is not fake_def], "rebind": before[rebind[0]]}
 
     def test_the_peer_notify_guard_test_runs_the_trio_the_wrap_the_wait_and_the_scoped_fake_as_statements_that_run(self):
         """Read by ast from tests/test_kernel.py's PostalPeerTunnels.test_notify_bus_peer_is_guarded, each part required as
@@ -2333,10 +2469,14 @@ class HermeticKernelPostal(unittest.TestCase):
         finally waits on that Event, keeping the result, BEFORE it puts the fake and the environment back, and puts the
         real revive back; and, after the try, the wait's result asserted and one list asserted empty that the road from the
         fake to the real run appends to, the postal-service calls that reached the real run (another list asserted empty
-        beside it, as fork PR #875's assertion will be once the two texts meet, is not what this reads). No other statement
-        of the test, run or not, binds or deletes run, subprocess or _revive_postal_bus on any object in any binding form,
-        binds km or os, reaches anything by reflection or by a string, or names the environment outside os.environ.get
-        reads, the trio and the finally after the wait; what that leaves unread (a put-back made by code the test calls) is
+        beside it, as fork PR #875's assertion will be once the two texts meet, is not what this reads). The environment
+        goes back in one for statement over the mapping saved before the trio from os.environ.get of the trio's three
+        names. No other statement of the test, run or not, binds or deletes an attribute on any object in any binding form
+        (km.BUS_PORT aside), binds km or os, names reflection in any reference form, or names the environment outside
+        os.environ.get reads, the trio and the restore; and every name the parts are read by (the kept real run and real
+        revive, the Event, the wait's result, the fake, the wrapper, the road, the saved mapping, the road's list,
+        threading and self) is bound once, by the statement the parts are read from, and read only where they read it
+        (self excepted, read anywhere). What that leaves unread (a put-back made by code the test calls, among others) is
         named in _guard_shape with what sees it, and the plant test below reds each part.
         Why the wait and the fake: with the test at its base text the restore won the race in every run, and the ensure's
         child, forked with the restored environment, which names no port, pinged the machine's fixed bus port (the
@@ -2368,14 +2508,30 @@ class HermeticKernelPostal(unittest.TestCase):
         records nothing. And fork PR #875's assertion kept beside this test's, after the try as the guard test's comment
         anticipates or inside the try where upstream's text has it, reads green with the road's list read (the verifier's
         third finding: the pin counted two lists asserted empty and reddened); with the fake's own list asserted in the
-        road's place it reds."""
+        road's place it reds.
+        Since round 2's fifth commit (the verifier's two findings on the fourth), a name the parts are read by holding
+        another value: the verifier's five, each of which passed every pin (real_run rebound to the fake, real_revive to
+        the wrapper, the Event set before the call, the Event rebound to an object whose wait returns at once, the saved
+        mapping cleared after the trio); one per name, so that name alone is what the plant breaks, the kept real run
+        rebound to what subprocess.run holds, the kept real revive to a function that does nothing, the fake before it is
+        installed, the wrapper before the revive is rebound to it, and the road; the wait's result rebound, the road's list
+        emptied before its assertion, the real run handed to a thread outside the road, a nested def's parameter, the
+        road's own parameter and the wrapper's own parameter hiding a kept name, threading and self rebound, a lambda's
+        parameter named km, the road's list made by an object equal to any list, an assertion method and the Event's wait
+        rebound; the restore rewritten, binding one name twice, or followed by an environment write, and the saved mapping
+        made over two names, holding None, filtered by an if, or made after the trio. Reflection in every reference form:
+        the verifier's three (setattr and getattr through another name, setattr handed to functools.partial), setattr and
+        getattr imported under another name, builtins.setattr, operator's attrgetter and methodcaller by a string, a
+        closure cell rewritten, a function's globals and a frame's locals."""
         cls_src = self._guard_class_source()
         shape = self._guard_shape(cls_src)
         stubbed = sorted({c.func.value.id for c in ast.walk(shape["fake_def"]) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
                           and c.func.attr == "append" and isinstance(c.func.value, ast.Name)})
         self.assertEqual(len(stubbed), 1, "the fake records the calls it answers in one list of its own: %r" % stubbed)
-        names = {k: shape[k] for k in ("event", "ended", "real_run", "real_revive")}
-        names["stubbed"] = stubbed[0]
+        names = {k: shape[k] for k in ("event", "ended", "real_run", "real_revive", "fake", "reached", "saved_env")}
+        names["stubbed"], names["wrapper"] = stubbed[0], shape["wrapper"].name
+        self.assertEqual(len(shape["roads"]), 1, "one road from the fake to the real run, a def of its own")
+        names["road"] = shape["roads"][0].name
         self.assertIsInstance(shape["fake_def"].body[-1], ast.Return, "the fake ends by returning what the road to the real run returns")
         names["fake_return"] = ast.unparse(shape["fake_def"].body[-1].value)
         road_assert = [s for s in shape["after"] if isinstance(s, ast.Expr) and isinstance(s.value, ast.Call) and s.value.args
@@ -2389,11 +2545,15 @@ class HermeticKernelPostal(unittest.TestCase):
                    "the def": (shape["fn"], "before"), "after the install": (shape["install"], "after"),
                    "the road's assertion": (road_assert[0], "replace"), "the fake's return": (shape["fake_def"].body[-1], "replace"),
                    "the notify try's clauses": (shape["try"].body[-1], "after", shape["try"].col_offset),
-                   "the wrapper try's clauses": (wrapper_try.body[-1], "after", wrapper_try.col_offset)}
+                   "the wrapper try's clauses": (wrapper_try.body[-1], "after", wrapper_try.col_offset),
+                   "the restore": (shape["restore"], "replace"), "after the restore": (shape["restore"], "after"),
+                   "the saved mapping": (shape["saved_made"], "replace"), "the road's list": (shape["list_made"], "replace"),
+                   "before the install": (shape["install"], "before"), "before the rebind": (shape["rebind"], "before")}
         after_try, finally_run, one_try, wait_msg = ("after the try the wait's result", "the finally puts the real run back",
                                                     "the notify call runs in one try", "the finally waits on the Event")
-        reflect, binds, rebinds, env = ("by reflection or by a string", "binds or deletes run, subprocess or _revive_postal_bus",
+        reflect, binds, rebinds, env = ("names reflection, in any reference form", "binds or deletes an attribute",
                                         "binds the names km or os", "names the environment only in")
+        held = "holds one value"
         plants = (
             ("a return between the try and the final assertions", "after the try", "return", after_try),
             ("a return in the finally between the wait and the put-backs", "after the wait", "return", finally_run),
@@ -2446,10 +2606,75 @@ class HermeticKernelPostal(unittest.TestCase):
             ("a second road from the fake that records nothing", "the fake's return",
              "return %(fake_return)s if a else %(real_run)s(*a, **kw)", "one list is asserted empty that every road to the real run appends to"),
             ("the fake's list asserted in the road's place", "the road's assertion", 'self.assertEqual(%(stubbed)s, [], "planted")',
-             "one list is asserted empty that every road to the real run appends to"))
-        for label, anchor, text, fragment in plants:
-            node, where = anchors[anchor][:2]
-            planted = _plant_at(cls_src, node, text % names, where, *anchors[anchor][2:])
+             "one list is asserted empty that every road to the real run appends to"),
+            # round 2's fifth commit on fork PR #894: a name the parts are read by, holding another value (the verifier's
+            # five first, each of which passed every pin), and its other routes
+            ("the kept real run rebound after the install", "after the install", "%(real_run)s = %(fake)s", held),
+            ("the kept real revive rebound", "after the install", "%(real_revive)s = %(wrapper)s", held),
+            ("the Event set before the call", "after the install", "%(event)s.set()", held),
+            ("the Event rebound to an object whose wait returns at once", "after the install",
+             '%(event)s = type("_Done", (), {"wait": lambda s, t: True, "set": lambda s: None})()', held),
+            ("the saved mapping cleared after the trio is set", "before the try", "%(saved_env)s.clear()", held),
+            ("the kept real run rebound to what subprocess.run holds", "after the install", "%(real_run)s = subprocess.run", held),
+            ("the kept real revive rebound to a function that does nothing", "after the install", "%(real_revive)s = lambda: None", held),
+            ("the fake rebound before it is installed", "before the install", "%(fake)s = subprocess.run", held),
+            ("the wrapper rebound before the revive is rebound to it", "before the rebind", "%(wrapper)s = lambda: None", held),
+            ("the road rebound", "after the install", "%(road)s = subprocess.run", held),
+            ("the wait's result rebound", "after the try", "%(ended)s = True", held),
+            ("the road's list emptied before its assertion", "after the try", "del %(reached)s[:]", held),
+            ("the real run handed to a thread outside the road", "after the install", 'threading.Thread(target=%(real_run)s, args=(["true"],)).start()', held),
+            ("a nested def's parameter hiding the kept real run", "after the install", "def _planted(%(real_run)s=None):\n    return %(real_run)s", held),
+            ("threading rebound", "after the install", "threading = types.SimpleNamespace(Event=lambda: None)", held),
+            ("the test case rebound", "after the try", "self = types.SimpleNamespace(assertTrue=lambda *a: None, assertEqual=lambda *a: None)", held),
+            ("a lambda's parameter hiding km", "after the install", "_planted = lambda km=None: km", rebinds),
+            ("the road's list made by an object equal to any list", "the road's list",
+             '%(stubbed)s, %(reached)s = [], type("_L", (list,), {"__eq__": lambda s, o: True})()', "made by an empty list literal"),
+            ("an assertion method rebound", "after the try", "self.assertEqual = lambda *a, **kw: None", binds),
+            ("the Event's wait rebound", "after the install", "%(event)s.wait = lambda t: True", binds),
+            ("the restore rewritten to put back another name", "the restore", 'for k, v in %(saved_env)s.items():\n    os.environ.pop("ROMP_X", None)',
+             "the restore puts each name back from"),
+            ("an environment write after the restore", "after the restore", 'os.environ["ROMP_POSTAL_PORT"] = "1"', env),
+            ("the restore loop binding one name twice", "the restore",
+             "for k, k in %(saved_env)s.items():\n    if k is None:\n        os.environ.pop(k, None)\n    else:\n        os.environ[k] = k",
+             "binds two names, a name and its saved value"),
+            ("the saved mapping made over two of the trio's names", "the saved mapping",
+             '%(saved_env)s = {k: os.environ.get(k) for k in ("ROMP_POSTAL_PEERS", "ROMP_POSTAL_PORT")}', "is made as {name: os.environ.get(name)"),
+            ("the saved mapping holding None for every name", "the saved mapping",
+             '%(saved_env)s = {k: None for k in ("ROMP_POSTAL_CLIENT_ONLY", "ROMP_POSTAL_PEERS", "ROMP_POSTAL_PORT")}', "is made as {name: os.environ.get(name)"),
+            ("the saved mapping filtered by an if", "the saved mapping",
+             '%(saved_env)s = {k: os.environ.get(k) for k in ("ROMP_POSTAL_CLIENT_ONLY", "ROMP_POSTAL_PEERS", "ROMP_POSTAL_PORT") if k != "ROMP_POSTAL_PORT"}',
+             "is made as {name: os.environ.get(name)"),
+            # reflection in every reference form (the verifier's three first: the getattr one reddened nothing, the two setattr
+            # ones only the executed pin); in each pair the plant that names no other name the pin reads comes first, so it is
+            # the reflection rule alone that reds it
+            ("getattr through another name onto the environment", "after the install", '_g = getattr\n_g(os, "environ").pop("ROMP_POSTAL_PORT", None)', reflect),
+            ("setattr through another name", "after the install", '_s = setattr\n_s(km.subprocess, "run", %(real_run)s)', reflect),
+            ("setattr handed to functools.partial", "after the install", 'functools.partial(setattr, km.subprocess, "run")(%(real_run)s)', reflect),
+            ("getattr imported under another name onto the environment", "after the install",
+             'from builtins import getattr as _g\n_g(os, "environ").pop("ROMP_POSTAL_PORT", None)', reflect),
+            ("setattr imported under another name", "after the install", 'from builtins import setattr as _s\n_s(km.subprocess, "run", %(real_run)s)', reflect),
+            ("builtins.setattr", "after the install", 'import builtins\nbuiltins.setattr(km.subprocess, "run", %(real_run)s)', reflect),
+            ("the environment popped through operator's attrgetter and methodcaller", "after the install",
+             'operator.methodcaller("pop", "ROMP_POSTAL_PORT")(operator.attrgetter("environ")(os))', reflect),
+            ("operator.methodcaller by a string", "after the install", 'operator.methodcaller("__setattr__", "run", %(real_run)s)(km.subprocess)', reflect),
+            ("a function's globals", "after the install", '(lambda: 0).__globals__["km"] = types.SimpleNamespace()', reflect),
+            ("a closure cell rewritten", "after the install", "%(fake)s.__closure__[0].cell_contents = %(fake)s", reflect),
+            ("a frame's locals", "after the install", 'sys._getframe().f_locals["%(real_run)s"] = %(fake)s', reflect))
+        lines = cls_src.splitlines(keepends=True)
+
+        def with_parameter(fn, extra):     # the one-line header of a def of the test, a parameter added at its end
+            self.assertEqual(fn.body[0].lineno, fn.lineno + 1, "%s's header is one line" % fn.name)
+            header = "%sdef %s(%s):\n" % (" " * fn.col_offset, fn.name, ", ".join(p for p in (ast.unparse(fn.args), extra) if p))
+            return "".join(lines[:fn.lineno - 1] + [header] + lines[fn.lineno:])
+        saved_made, trio_stmt = shape["saved_made"], shape["trio_stmt"]
+        self.assertEqual(trio_stmt.lineno, saved_made.end_lineno + 1, "the saved mapping is made on the line before the trio")
+        whole = [("the road's own parameter hiding the kept real run", with_parameter(shape["roads"][0], "%(real_run)s=None" % names), held),
+                 ("the wrapper's own parameter hiding the Event", with_parameter(shape["wrapper"], "%(event)s=None" % names), held),
+                 ("the saved mapping made after the trio is set",
+                  "".join(lines[:saved_made.lineno - 1] + lines[trio_stmt.lineno - 1:trio_stmt.end_lineno]
+                          + lines[saved_made.lineno - 1:saved_made.end_lineno] + lines[trio_stmt.end_lineno:]), "before the trio is set")]
+        for label, planted, fragment in [(label, _plant_at(cls_src, anchors[anchor][0], text % names, anchors[anchor][1], *anchors[anchor][2:]), fragment)
+                                         for label, anchor, text, fragment in plants] + whole:
             with self.assertRaises(AssertionError, msg="%s: the pin passed it" % label) as caught:
                 self._guard_shape(planted)
             self.assertIn(fragment, str(caught.exception), "%s: the pin reds for the part it breaks" % label)
