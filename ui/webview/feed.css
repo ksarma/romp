@@ -138,6 +138,7 @@
      These neutral tokens are for the chrome that frames them (header, detail box,
      day rules, toggle buttons). */
   --card-border: rgba(255, 255, 255, 0.10);
+  --outbound-line: #8a8a8a;   /* the viewer's outbound dress line, mirrored byte-equal from styles.css (4.83:1 on --bg; theme-parity.test.ts holds the pair) */
   --detail-bg: rgba(255, 255, 255, 0.05);
 
   /* Relevance category colors — single source, the CLASSIC identity-palette hexes
@@ -177,6 +178,7 @@ body.theme-light {
   --btn-pad-sm: 1px 8px; --btn-pad-md: 3px 10px; --btn-pad-lg: 5px 13px;   /* geometry, theme-invariant */
   --btn-fs-sm: 0.72em; --btn-fs-md: 0.82em;
   --card-border: rgba(0, 0, 0, 0.10);
+  --outbound-line: #6b645a;   /* mirrored from styles.css (4.90:1 on the page) */
   --detail-bg: rgba(0, 0, 0, 0.04);
   --rel-done: #3E7D0E;       /* the light ok-green (matches --green) */
   --rel-decision: #1478B8;   /* the classic blue, darkened to read on cream */
@@ -1957,8 +1959,9 @@ a.fileview-gh-note { border-style: dashed; }
    right). Positioned, so it paints and is hit above the regions layer's overlay (position: absolute with no z-index, earlier in
    the tree) while the Comments panel is open; the page's background under the glyph, since it stands on a picture, and the
    family's hover wash over that background. Transparent at rest and revealed by the pointer over the figure (the sibling before
-   it: `:hover +`), by the pointer over itself and by a keyboard focus (.code-copy's reveal); a touch device with no hover keeps
-   it visible (.code-copy's precedent); every reveal is under `screen`, so a print, where hover is none, shows none of it and the
+   it: `:hover +`), by the pointer over itself and by a keyboard focus (.code-copy's reveal); a touch device with no hover, or any
+   device with a coarse pointer beside a hovering one, keeps it visible (.code-copy's and .snap-act's precedents); every reveal is
+   under `screen`, so a print, where hover is none, shows none of it and the
    print block needs no line for it. A figure floated by its align attribute stacks sideways: the control floats with it, a left
    float's at the figure's top-right corner as before, a right float's at its top-LEFT corner (a later right float sits left of
    the earlier one, and the far edge cannot be reached without the figure's width). A picture from the web (file-view.ts
@@ -1968,18 +1971,25 @@ a.fileview-gh-note { border-style: dashed; }
    ui/CLAUDE.md names an exception. A picture from the web that wears no control (a loaded picture under the floor, FIGOPEN_MIN_PX)
    carries the dashed dress itself, an outline keyed on the mark the decision sets (`img[data-fv-figweb]`, file-view.ts dressFigureMark),
    on hover, and at rest on a device with no hover, where its tooltip cannot show (the file review's round 12, fresh-1); an outline and
-   not a border, since a border on the img widens its box, and in the button's border token (var(--card-border)), the one the control's
-   dashed border wears, so the two dresses are one colour. Byte-equal in both sheets (fileview-parity.test.ts); laid out in
+   not a border, since a border on the img widens its box, and in the outbound dress's own token (var(--outbound-line), declared in both
+   theme blocks: a grey clearing 3:1 over the page in each theme, theme-parity.test.ts holds the pair, where the button family's rest
+   hairline, var(--card-border) at 10 percent, read at 1.35:1 dark and 1.25:1 light, no sign at all on a 20 px badge; the file review's
+   round 13, ui-1 with extra6-1), the one the control's dashed border wears at rest (`:not(:hover)`, so the family's accent hover border
+   still wins on the control), so the two dresses are one colour. Both at-rest rules key on `(hover: none)` OR `(any-pointer: coarse)`,
+   `screen` written on both queries (css-rules' underScreen reads a list member by member): `hover` describes the PRIMARY pointer, and a
+   touchscreen laptop's is a hovering trackpad, so neither dress stood there at rest while a finger's tap opened the tab (.snap-act's
+   precedent; the file review's round 13, extra7-2). Byte-equal in both sheets (fileview-parity.test.ts); laid out in
    file-figure-open-browser.test.ts. */
 .fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }
 .fileview-md .fv-figopen:hover { background: var(--bg) linear-gradient(var(--accent-wash), var(--accent-wash)); }
 .fileview-md .fv-figopen-left { float: left; }
 .fileview-md .fv-figopen-right { float: right; margin: 0 -28px 0 6px; }
 .fileview-md .fv-figopen-web { border-style: dashed; }
+.fileview-md .fv-figopen-web:not(:hover) { border-color: var(--outbound-line); }
 @media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible { opacity: 1; } }
-@media screen and (hover: none) { .fileview-md .fv-figopen { opacity: 0.8; } }   /* touch: no hover state, so keep it visible; never print */
-@media screen { .fileview-md img[data-fv-figweb]:hover { outline: 1px dashed var(--card-border); outline-offset: 1px; } }
-@media screen and (hover: none) { .fileview-md img[data-fv-figweb] { outline: 1px dashed var(--card-border); outline-offset: 1px; } }   /* touch: a picture under the floor has no control and its tooltip never shows, so the mark stands at rest; never print */
+@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen { opacity: 0.8; } }   /* touch, and a coarse pointer beside a hovering one (a touchscreen laptop): no hover state to reveal it, so keep it visible; never print */
+@media screen { .fileview-md img[data-fv-figweb]:hover { outline: 1px dashed var(--outbound-line); outline-offset: 1px; } }
+@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md img[data-fv-figweb] { outline: 1px dashed var(--outbound-line); outline-offset: 1px; } }   /* touch, and a coarse pointer beside a hovering one: a picture under the floor has no control and its tooltip never shows to a finger, so the mark stands at rest; never print */
 .fileview-md :not(pre) > code {
   font-family: var(--mono, ui-monospace, monospace); font-size: 0.92em;
   color: var(--code-fg, #e1c08d); background: var(--code-bg, rgba(217, 119, 87, 0.10));

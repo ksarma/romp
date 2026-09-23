@@ -630,7 +630,10 @@ test("in a browser: a LOADED remote picture inside an author's named anchor or a
 // (the file review's round 12, fresh-1 with tests-2: the floor withholds the control under 48 px and the picture's title is a
 // hover tooltip, so on a coarse pointer a plain tap opened the credentialed tab with nothing visible before it, and no executed
 // case read the title of a remote picture under the floor; the picture now wears the control's dashed dress itself, an outline
-// keyed on the mark the decision sets, at rest where hover is none and on hover otherwise, in the control's own border token)
+// keyed on the mark the decision sets, at rest where hover is none or any pointer is coarse and on hover otherwise, in the outbound
+// dress's own token, var(--outbound-line), the one the control's dashed border wears at rest; the file review's round 13, ui-1 with
+// extra6-1 and extra7-2: the button family's hairline it first wore read 1.35:1 dark and 1.25:1 light, and (hover: none) alone
+// dressed nothing on a touchscreen laptop, whose primary pointer hovers)
 const TINY_TEXT = "# Report\n\n![local](figs/plot.svg)\n\n" + PARA(1) + "\n\n![build](" + WEB + "/tiny.svg)\n\n" + PARA(2) + "\n\n![big](" + WEB + "/pic.svg)\n\n" + PARA(3) + "\n";
 const TINY_DOCS: Record<string, string> = { [REPORT]: TINY_TEXT, [PLOT]: svg("#456") };
 type Under = { alt: string; w: number; h: number; control: boolean; controlOpacity: string | null; controlBorder: string | null; title: string | null; mark: boolean; outline: string; outlineWidth: string; outlineColor: string; border: string };
@@ -646,6 +649,34 @@ const under = (page: any): Promise<{ hoverNone: boolean; coarse: boolean; imgs: 
   };
 });
 
+/** The first opaque background behind the badge (the ancestors climbed to the first whose background-color has no alpha: the
+ *  viewer's card, .fileview, painting var(--bg)); the ground the outline's rgba is composited over, read off the page and never typed. */
+const groundOf = (page: any): Promise<string> => page.evaluate(() => {
+  for (let e = (document.querySelectorAll(".fileview-md img")[1] as HTMLElement).parentElement; e; e = e.parentElement) { const bg = getComputedStyle(e).backgroundColor; if (/^rgb\(/.test(bg)) return bg; }
+  return "";
+});
+/** WCAG 2 contrast of a computed colour (an rgb or rgba string) composited over an opaque computed ground. */
+function contrastOver(fg: string, ground: string): number {
+  const parse = (c: string): number[] => { const m = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+))?\s*\)$/.exec(c); assert.ok(m, "a computed colour: " + c); return [+m![1], +m![2], +m![3], m![4] === undefined ? 1 : +m![4]]; };
+  const f = parse(fg), g = parse(ground);
+  assert.equal(g[3], 1, "the ground is opaque: " + ground);
+  const over = [0, 1, 2].map((i) => f[i] * f[3] + g[i] * (1 - f[3]));
+  const lum = (rgb: number[]) => { const ch = (c: number) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }; return 0.2126 * ch(rgb[0]) + 0.7152 * ch(rgb[1]) + 0.0722 * ch(rgb[2]); };
+  const [hi, lo] = [lum(over), lum(g)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+/** The colour a token computes to on the page: a probe element inside the document wearing it as its color, read and removed. */
+const tokenColour = (page: any, token: string): Promise<string> => page.evaluate((tok: string) => { const el = document.createElement("span"); el.style.color = "var(" + tok + ")"; document.querySelector(".fileview-md")!.appendChild(el); const c = getComputedStyle(el).color; el.remove(); return c; }, token);
+/** The mark's outline and the control's border, one colour, and that colour at least 3:1 over the first opaque ground (the legibility
+ *  floor for a line that is the only sign of a state, WCAG 1.4.11): the file review's round 13, ui-1 with extra6-1, where the family's
+ *  10 percent hairline read 1.35:1 dark and 1.25:1 light, present in the DOM and no sign at all on a 20 px badge. */
+async function oneLegibleColour(page: any, r: { imgs: Under[] }, theme: string): Promise<void> {
+  assert.equal(r.imgs[1].outlineColor, r.imgs[2].controlBorder, theme + " theme: the mark's outline colour is the control's border colour, one token (" + r.imgs[1].outlineColor + ")");
+  const ground = await groundOf(page);
+  const ratio = contrastOver(r.imgs[1].outlineColor, ground);
+  // FAILS BEFORE (the file review's round 13): 1.35 dark and 1.25 light over the same ground
+  assert.ok(ratio >= 3, theme + " theme: the mark's outline, " + r.imgs[1].outlineColor + " over the first opaque ground " + ground + ", reads " + ratio.toFixed(2) + ":1, under the 3:1 floor for the only sign of the outbound state");
+}
 /** The tiny report open in the chat modal at 900 by 600: the report's remote pictures relayed to the second server (`second`), the
  *  first local figure loaded, the fv-load click lifting the host, then every figure loaded and out of its placeholder; no control is
  *  waited for, since the badge gets none. Shared by the two under-the-floor cases, each on a page of its own: Chromium's
@@ -692,6 +723,23 @@ test("in a browser: a remote picture under the floor (20 by 20, from the second 
       await page.mouse.move(5, 5);
       await frames(page, 2);
       assert.equal((await under(page)).imgs[1].outline, "none", "and gone with the pointer");
+      // the web control's rest colour is scoped off :hover (the file review's round 13, ui-1 with extra6-1: a border-color on
+      // `.fileview-md .fv-figopen-web` shares .fileview-btn:hover's specificity and stands later in the sheet, so unscoped it would
+      // have taken the family's accent hover border off the web control): the pointer over the big picture reveals its control, and
+      // over the control the border is the accent, not the rest token
+      await page.evaluate(() => { (document.querySelectorAll(".fileview-md img")[2] as HTMLElement).scrollIntoView({ block: "center" }); });
+      await frames(page, 2);
+      const bigBox = await boxOf(page, ".fileview-md img", 2);
+      await page.mouse.move(bigBox.left + bigBox.width / 2, bigBox.top + bigBox.height / 2);
+      await waitOpacity(page, 1, "1");
+      const ctlBox = await boxOf(page, ".fileview-md [data-fv-figopen]", 1);
+      const hoverP = page.evaluate(() => new Promise<void>((done) => { const c = document.querySelectorAll(".fileview-md [data-fv-figopen]")[1] as HTMLElement; c.addEventListener("transitionend", () => done(), { once: true }); setTimeout(done, 1500); }));
+      await page.mouse.move(ctlBox.left + ctlBox.width / 2, ctlBox.top + ctlBox.height / 2);
+      await hoverP;
+      await frames(page, 2);
+      const hoveredCtl = await under(page);
+      assert.equal(hoveredCtl.imgs[2].controlBorder, await tokenColour(page, "--accent"), "the pointer over the web control: its border is the family's accent, the rest colour scoped off :hover");
+      assert.notEqual(hoveredCtl.imgs[2].controlBorder, big.controlBorder, "and not the rest colour it wore before the pointer (" + big.controlBorder + ")");
       assert.deepEqual(errors, [], "no page errors");
       await page.close();
     });
@@ -714,14 +762,15 @@ test("in a browser, under CDP touch emulation (hover none, a coarse pointer) ena
       assert.deepEqual([touch.imgs[1].mark, touch.imgs[1].outline, touch.imgs[1].outlineWidth], [true, "dashed", "1px"], "at rest on a coarse pointer, no pointer ever over it, the badge wears the mark: the open is visible before the tap");
       assert.deepEqual([touch.imgs[2].controlOpacity, touch.imgs[2].outline], ["0.8", "none"], "the picture with a control: the control visible at rest, no mark on the picture");
       // one colour token for the two dresses (the owner's call with the ruling): the mark's outline colour is the control's border
-      // colour, in the dark theme and, with body.theme-light, in the light one; the two themes resolve it apart, so the read is not one value twice
-      assert.equal(touch.imgs[1].outlineColor, touch.imgs[2].controlBorder, "dark theme: the mark's outline colour is the control's border colour, one token (" + touch.imgs[1].outlineColor + ")");
+      // colour, in the dark theme and, with body.theme-light, in the light one; the two themes resolve it apart, so the read is not one
+      // value twice; and that colour, composited over the first opaque ground, clears 3:1 in each theme (oneLegibleColour)
+      await oneLegibleColour(page, touch, "dark");
       // the theme flipped on the body; the control's border colour TRANSITIONS to the light value (.fileview-btn's 0.12 s
       // border-color ease) while the outline has no transition, so the light read waits for the control's transitionend (bounded)
       await page.evaluate(() => new Promise<void>((done) => { const c = document.querySelectorAll(".fileview-md img")[2].nextElementSibling as HTMLElement; c.addEventListener("transitionend", () => done(), { once: true }); setTimeout(done, 1500); document.body.classList.add("theme-light"); }));
       await frames(page, 2);
       const light = await under(page);
-      assert.equal(light.imgs[1].outlineColor, light.imgs[2].controlBorder, "light theme: the same, in that theme's value (" + light.imgs[1].outlineColor + ")");
+      await oneLegibleColour(page, light, "light");
       assert.notEqual(light.imgs[1].outlineColor, touch.imgs[1].outlineColor, "the two themes resolve the token apart: " + light.imgs[1].outlineColor + " against " + touch.imgs[1].outlineColor);
       assert.deepEqual([light.imgs[1].mark, light.imgs[1].outline], [true, "dashed"], "the mark stands in the light theme too");
       await page.evaluate(() => document.body.classList.remove("theme-light"));
@@ -739,5 +788,52 @@ test("in a browser, under CDP touch emulation (hover none, a coarse pointer) ena
       assert.deepEqual(errors, [], "no page errors");
       await page.close();
     });
+  } finally { await second.close(); }
+});
+
+// THE TOUCHSCREEN LAPTOP (the file review's round 13, extra7-2): `hover` and `pointer` describe the PRIMARY pointing device, and a
+// laptop with a trackpad and a touchscreen reports hover: hover and pointer: fine, so an at-rest rule keyed on (hover: none) alone
+// showed neither dress there while a finger's tap opened the tab. CDP's touch emulation cannot build that laptop (it flips the primary
+// pointer and the primary hover together), so Chromium is launched with Blink's own device settings, tab-hide-browser.test.ts's
+// precedent: available pointer types coarse|fine (2|4) with the primary fine (4), available hover types none|hover (1|2) with the
+// primary hover (2). The context is asserted before the dress, so a Chromium that stopped honouring the flag fails on the context.
+const LAPTOP = "--blink-settings=availablePointerTypes=6,primaryPointerType=4,availableHoverTypes=3,primaryHoverType=2";
+const pointing = (page: any): Promise<{ hoverNone: boolean; hoverHover: boolean; pointerFine: boolean; anyCoarse: boolean }> => page.evaluate(() => { const m = (q: string) => matchMedia(q).matches; return { hoverNone: m("(hover: none)"), hoverHover: m("(hover: hover)"), pointerFine: m("(pointer: fine)"), anyCoarse: m("(any-pointer: coarse)") }; });
+test("in Chromium launched as a trackpad-plus-touchscreen laptop (hover: hover, pointer: fine, any-pointer: coarse), the pointer never over the picture: the remote picture under the floor wears the outbound mark AT REST and the loaded picture's control stands visible at rest, one legible colour in both themes, where a rule keyed on (hover: none) alone dressed neither; a finger's tap opens the tab at the address and the viewer stays (the file review's round 13, extra7-2: the hybrid twin of the touch case above)", { timeout: 240000 }, async (t) => {
+  const served: string[] = [];
+  const second = await secondServer(served, { "/tiny.svg": [20, 20] });
+  try {
+    await inBrowser(t, async (browser) => {
+      const { page, errors } = await openTiny(browser, second);
+      const laptop = await pointing(page);
+      assert.deepEqual([laptop.hoverNone, laptop.hoverHover, laptop.pointerFine, laptop.anyCoarse], [false, true, true, true], "the laptop: the primary pointer fine and hovering, a coarse pointer present (the context, asserted before the dress)");
+      const rest = await under(page);
+      assert.deepEqual(rest.imgs.map((x) => x.alt), ["local", "build", "big"], "the three figures");
+      assert.deepEqual([rest.imgs[1].control, rest.imgs[1].title], [false, WEB_LINE(WEB + "/tiny.svg")], "the badge: no control under the floor, the address in its title");
+      // FAILS BEFORE: outline none and the control at opacity 0, (hover: none) false on this laptop
+      assert.deepEqual([rest.imgs[1].mark, rest.imgs[1].outline, rest.imgs[1].outlineWidth], [true, "dashed", "1px"], "at rest on the laptop, no pointer ever over it, the badge wears the mark: the finger's open is visible before the tap");
+      assert.deepEqual([rest.imgs[2].controlOpacity, rest.imgs[2].outline], ["0.8", "none"], "the picture with a control: the control visible at rest, no mark on the picture");
+      await oneLegibleColour(page, rest, "dark");
+      await page.evaluate(() => new Promise<void>((done) => { const c = document.querySelectorAll(".fileview-md img")[2].nextElementSibling as HTMLElement; c.addEventListener("transitionend", () => done(), { once: true }); setTimeout(done, 1500); document.body.classList.add("theme-light"); }));
+      await frames(page, 2);
+      const light = await under(page);
+      await oneLegibleColour(page, light, "light");
+      assert.deepEqual([light.imgs[1].mark, light.imgs[1].outline, light.imgs[2].controlOpacity], [true, "dashed", "0.8"], "both dresses stand in the light theme too");
+      await page.evaluate(() => document.body.classList.remove("theme-light"));
+      await frames(page, 2);
+      const before2 = served.filter((s) => s.endsWith("/tiny.svg")).length;
+      const cdp = await page.context().newCDPSession(page);
+      const popupP = page.context().waitForEvent("page", { timeout: 10000 });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: rest.centre.x, y: rest.centre.y }] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      const popup = await popupP;
+      await popup.waitForLoadState().catch(() => null);
+      assert.equal(popup.url(), WEB + "/tiny.svg", "the finger's tap opens a tab at the picture's address (the popup's URL)");
+      assert.ok(served.filter((s) => s.endsWith("/tiny.svg")).length > before2, "the second server answered the tab's own request: " + JSON.stringify(served));
+      assert.equal(await base(page), "report.md", "the viewer stays on the report");
+      await popup.close();
+      assert.deepEqual(errors, [], "no page errors");
+      await page.close();
+    }, { args: [LAPTOP] });
   } finally { await second.close(); }
 });

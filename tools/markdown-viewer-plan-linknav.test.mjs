@@ -302,10 +302,11 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   // closing pass after the file review's round 10, mechanism-2, and the file review's round 10, regression-5)
   const REST = '.fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }';
   const REVEAL = '@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible { opacity: 1; } }';
-  const NOHOVER = '@media screen and (hover: none) { .fileview-md .fv-figopen { opacity: 0.8; } }';
+  const NOHOVER = '@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen { opacity: 0.8; } }';   // screen on BOTH queries: underScreen reads a list member by member (the file review's round 13, extra7-2)
   const HOVER_BG = '.fileview-md .fv-figopen:hover { background: var(--bg) linear-gradient(var(--accent-wash), var(--accent-wash)); }';
   const LEFT = '.fileview-md .fv-figopen-left { float: left; }', RIGHT = '.fileview-md .fv-figopen-right { float: right; margin: 0 -28px 0 6px; }';
   const WEB = '.fileview-md .fv-figopen-web { border-style: dashed; }';   // the web control's dress (the file review's round 11, ui-1 with extra8-1)
+  const WEB_COLOR = '.fileview-md .fv-figopen-web:not(:hover) { border-color: var(--outbound-line); }';   // its rest colour, the outbound dress's own token, off :hover so the family's accent hover border wins (the file review's round 13, ui-1 with extra6-1)
   /** The sheet's rules naming the control, each rendered on one line with whether a screen-only at-rule encloses it. */
   const controlRules = (css) => cssRules(css).filter((r) => /fv-figopen/.test(r.selector)).map((r) => ({ text: renderRule(r), screen: underScreen(r.chain) }));
   /** The bounds of the set, stated in the messages (the author's closing pass after the file review's round 10, mechanism-2; the
@@ -323,17 +324,17 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
       continue;
     }
     assert.ok(css.includes('\n' + REST + '\n'), name + ': the rest');
-    assert.ok(css.includes('\n' + LEFT + '\n' + RIGHT + '\n' + WEB + '\n'), name + ': the float twins and the web dress (the spelling; the closed set below holds the property)');
+    assert.ok(css.includes('\n' + LEFT + '\n' + RIGHT + '\n' + WEB + '\n' + WEB_COLOR + '\n'), name + ': the float twins, the web dress and its rest colour (the spelling; the closed set below holds the property)');
     assert.ok(css.includes('\n' + REVEAL + '\n'), name + ': the reveal under screen');
-    assert.ok(css.includes('\n' + NOHOVER), name + ': no hover keeps it visible, under screen');
+    assert.ok(css.includes('\n' + NOHOVER), name + ': no hover, or a coarse pointer beside a hovering one, keeps it visible, under screen (the spelling; the closed set below holds the property)');
     // the closed set over the parsed rules: outside a screen-only at-rule exactly the rest, the hover background and the float
     // twins, none a reveal, and every other rule naming the control under one, however the sheet writes it (the file review's
     // round 9, correctness-1 with tests-1 and ui-1: the set had been keyed on lines at column zero carrying the class and a
     // brace, so a reveal indented under an at-rule or on a grouped selector's continuation line stood outside it with every pin
     // green; the file review's round 8, fresh-4: the guard before the set matched two opacity spellings, so a reveal spelled any
     // other way outside screen passed it)
-    assert.deepEqual(rules[name].filter((r) => !r.screen).map((r) => r.text), [REST, HOVER_BG, LEFT, RIGHT, WEB], name + ': the rules naming the control outside a screen-only at-rule, however the sheet writes them, are exactly the rest, the hover background, the float twins and the web dress; any other rule naming the class there is one a print would apply' + BOUND);
-    assert.deepEqual(rules[name].filter((r) => r.screen).map((r) => r.text), [REVEAL, NOHOVER], name + ': the rules under a screen-only at-rule are the reveal and the no-hover rule');
+    assert.deepEqual(rules[name].filter((r) => !r.screen).map((r) => r.text), [REST, HOVER_BG, LEFT, RIGHT, WEB, WEB_COLOR], name + ': the rules naming the control outside a screen-only at-rule, however the sheet writes them, are exactly the rest, the hover background, the float twins and the web dress; any other rule naming the class there is one a print would apply' + BOUND);
+    assert.deepEqual(rules[name].filter((r) => r.screen).map((r) => r.text), [REVEAL, NOHOVER], name + ': the rules under a screen-only at-rule are the reveal and the at-rest rule (no hover, or any coarse pointer)');
     const printAt = css.indexOf('\n@media print {');
     assert.ok(printAt >= 0, name + ': the print block');
     assert.ok(!css.slice(printAt, css.indexOf('\n}', printAt)).includes('fv-figopen'), name + ': the print block names the control nowhere');
@@ -495,7 +496,7 @@ test('the rule reader the two homes of the closed set share (ui/webview/css-rule
     '@media screen {',
     '  .fileview-md .fv-figopen:focus-visible { opacity: 1; }',
     '}',
-    '@media screen and (hover: none) { .fileview-md .fv-figopen { opacity: 0.8; } }',
+    '@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen { opacity: 0.8; } }',
   ].join('\n');
   const control = cssRules(sheet).filter((r) => /fv-figopen/.test(r.selector));
   assert.deepEqual(control.map((r) => [renderRule(r), underScreen(r.chain)]), [
@@ -503,7 +504,7 @@ test('the rule reader the two homes of the closed set share (ui/webview/css-rule
     ['@media (min-width: 1px) { .fileview-md .fv-figopen { opacity: 1; } }', false],
     ['.fileview-md .fv-figerr, .fileview-md .fv-figopen { opacity: 1; }', false],
     ['@media screen { .fileview-md .fv-figopen:focus-visible { opacity: 1; } }', true],
-    ['@media screen and (hover: none) { .fileview-md .fv-figopen { opacity: 0.8; } }', true],
+    ['@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen { opacity: 0.8; } }', true],
   ], 'the column-zero rule, the indented reveal under (min-width: 1px) and the grouped selector\'s continuation-line reveal are rules outside screen, the indented rule inside the multi-line screen block and the one-line screen rule are under it, and the comment\'s brace is no rule');
   assert.deepEqual(cssRules('@supports (display: grid) { @media screen { .a { top: 0 } } }'), [{ selector: '.a', body: 'top: 0', chain: ['@supports (display: grid)', '@media screen'] }], 'the chain holds every enclosing at-rule, outermost first');
   assert.deepEqual(cssRules('.a::after { content: "{"; }\n.b[data-x="}"] { top: 0; }').map(renderRule), ['.a::after { content: "{"; }', '.b[data-x="}"] { top: 0; }'], 'a brace inside a string is text');
@@ -565,7 +566,7 @@ test('the rule reader the two homes of the closed set share (ui/webview/css-rule
   assert.equal(NUMBER_WORDS[stated[1]], sites.length, 'the header\'s count of refusals is the source\'s count of refusal sites (a fail call under any quote, or a throw whose message literal runs past the css-rules prefix, the comment reader\'s; the fail helper\'s own throw, whose literal ends at the prefix, is no site); it says ' + stated[1] + ', the source has ' + sites.length);
   const armed = sites.map((site) => thrown.filter((msg) => msg.startsWith('css-rules: ' + site)).length);
   assert.deepEqual(armed, sites.map(() => 1), 'each refusal site is armed by exactly one pin of REFUSALS above, matched by the phrase its message opens with (a site with none is a refusal no pin holds; one with two is a path pinned twice while another may have none): ' + sites.map((site, i) => JSON.stringify(site) + ' x' + armed[i]).join(', '));
-  for (const chain of [['@media screen'], ['@media screen and (hover: none)'], ['@media only screen and (min-width: 1px) and (hover: none)'], ['@supports (display: grid)', '@media screen'], ['@media screen', '@media (min-width: 1px)']]) assert.equal(underScreen(chain), true, 'confined to screens: ' + JSON.stringify(chain));
+  for (const chain of [['@media screen'], ['@media screen and (hover: none)'], ['@media screen and (hover: none), screen and (any-pointer: coarse)'], ['@media only screen and (min-width: 1px) and (hover: none)'], ['@supports (display: grid)', '@media screen'], ['@media screen', '@media (min-width: 1px)']]) assert.equal(underScreen(chain), true, 'confined to screens: ' + JSON.stringify(chain));
   for (const chain of [[], ['@media (min-width: 1px)'], ['@media print'], ['@media print, screen'], ['@media screen, print'], ['@media screen and (hover: none), (min-width: 1px)'], ['@media not screen'], ['@media all'], ['@supports (display: grid)'], ['@container (max-width: 540px)']]) assert.equal(underScreen(chain), false, 'not confined to screens: ' + JSON.stringify(chain));
 });
 

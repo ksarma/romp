@@ -8161,7 +8161,7 @@ review before the PR ran two rounds, named below as the review's round 1 and rou
 of the PR (2026-09-20) is named the file review. Its contract is kept outside the repo; this section records what was built,
 with the build's deliberate departures from that contract recorded as the decisions, and what is left for the owner to
 rule on. The file review's rounds are numbered by the maintainer, and a record names one by its number: the file review's rounds 1,
-2, 3, 4, 5, 6, 7, 8, 9, 10, 11 and 12 are the rounds the convention enumerates, this list the one home of the enumeration
+2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 and 13 are the rounds the convention enumerates, this list the one home of the enumeration
 (ui/webview/linknav-records-attribution.test.ts reads its allowed set from this list and faults a numbered round the list
 lacks, so a round the maintainer rules next is added here first, and with it the ids its fixlist filed, in the roster
 paragraph after this one; the fixlists and rulings themselves are kept outside the repo in the maintainer's notes). In that numbering rounds 1 to 6 are the delta rounds, each reading what changed since the round before
@@ -8219,7 +8219,8 @@ tests-3, regression-6, regression-7, extra5-3, extra8-1, extra8-2, extra7-3, reg
 correctness-1, regression-1, kernel-1, extra6-1, extra7-1, extra7-2, tests-1, tests-2, ui-1, extra8-1, ui-2, extra8-2,
 fresh-1, fresh-3, fresh-2 and fresh-4; round 12 filed correctness-1, ui-1, extra6-2, fresh-1, correctness-2, tests-3,
 regression-1, extra6-1, extra9-1, extra9-2, tests-1, fresh-2, tests-2, kernel-1, extra8-1, extra7-1, extra7-2, extra8-2 and
-extra10-1.
+extra10-1; round 13 filed ui-1, extra6-1, extra9-1, extra9-2, extra9-3, correctness-1, kernel-1, kernel-2, kernel-3, extra8-1,
+extra8-2, tests-1, extra7-1, rules-1, regression-1, regression-2, extra7-2, extra6-2, extra6-3, extra9-5, extra9-4 and fresh-1.
 
 **What existed.** A link in a rendered file to another file (`[x](other.md)`, `other.md:7`, `other.md#section`, a
 picture or PDF path, a wikilink, an embed chip) opened that file in the SAME viewer card: re-opening replaced whatever
@@ -8372,7 +8373,9 @@ corner from that place with no measuring (`.fileview-md .fv-figopen`: the family
 line's top, a zero-width margin box of a 28px negative left margin and a 6px right margin around the 22px glyph, and a
 6px relative offset down), positioned so it paints and is hit above the layer's overlay while the panel is open;
 transparent at rest, revealed by the pointer over the figure or over itself and by a keyboard focus, kept visible on a
-device with no hover, every rule naming its class that reveals it under `screen`, so a print shows none of it and the
+device with no hover and on one where any pointer is a finger (`any-pointer: coarse`: a touchscreen laptop's primary pointer
+hovers, so `(hover: none)` alone dressed nothing there; the file review's round 13, extra7-2), every rule naming its class that
+reveals it under `screen`, so a print shows none of it and the
 print block carries no line for it (the set the two homes close is over the rules whose selector names the class, read
 as parsed rules with their enclosing at-rules, in every sheet a page of either host loads, a population derived from the
 page assembly and never typed or listed, the kernel's page functions' linked bundles, live-read sheets and inlined

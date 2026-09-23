@@ -4737,13 +4737,15 @@ export function figureWebTitleLine(address: string): string { return "Opens in a
 const FIGTITLE_MARK = "data-fv-figtitle";
 /** The mark on a picture from the web that wears NO control (a loaded picture under the floor, FIGOPEN_MIN_PX): the picture itself
  *  carries the control's outbound dress, a dashed outline the sheets key on this attribute (`.fileview-md img[data-fv-figweb]`), on
- *  hover where the device has one and at rest where it has none (a coarse pointer), as the control's own reveal is, so the plain
+ *  hover where the device has one and at rest where it has none or where any pointer is a finger (a phone; a touchscreen laptop, whose
+ *  primary pointer hovers), as the control's own reveal is, so the plain
  *  tap's open is shown before it happens where the title is no surface (a tooltip never shows on touch; the file review's round 12,
  *  fresh-1). Set and taken off at every decision beside the title (dressFigureMark): the population is the title's (FIGTITLE_MARK, a
  *  web target whose click is the figure's own) less the pictures a control stands on, whose control carries the dress. A data-*
  *  attribute, never a class: the sanitizer keeps an author's `class` and lets no data-* attribute through, so no authored picture
- *  wears the mark. The outline wears the button's border token (var(--card-border)), the one the control's dashed border wears, so
- *  the two dresses are one colour (the owner's call with that ruling). */
+ *  wears the mark. The outline wears the outbound dress's own token (var(--outbound-line), a grey clearing 3:1 over the page in both
+ *  themes; the file review's round 13, ui-1 with extra6-1), the one the control's dashed border wears at rest, so the two dresses are
+ *  one colour (the owner's call with that ruling). */
 const FIGWEB_MARK = "data-fv-figweb";
 /** The host the control's words name for a web target: the address's host (with its port when one is written), never its
  *  credentials or its path; the address as written when it does not parse. */

@@ -97,11 +97,12 @@ const RULES = [
   // hold the rule byte for byte, and a rule in one sheet only reds), and the two one-line screen blocks that reveal it (read whole
   // from the line's start to the first close brace)
   ".fileview-md .fv-figopen {", ".fileview-md .fv-figopen:hover {", ".fileview-md .fv-figopen-left {", ".fileview-md .fv-figopen-right {", ".fileview-md .fv-figopen-web {",
+  ".fileview-md .fv-figopen-web:not(:hover) {",   // the web dress's rest colour, the outbound dress's own token, a head held byte for byte like the rest of this list (the file review's round 13, ui-1 with extra6-1)
   "@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible {",
-  "@media screen and (hover: none) { .fileview-md .fv-figopen {",
+  "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen {",
   // the picture's own outbound mark for a web picture with no control (the file review's round 12, fresh-1): the two one-line screen
   // blocks keyed on the img's attribute, byte-equal in both sheets (file-figure-open.test.ts derives the set by the attribute)
-  "@media screen { .fileview-md img[data-fv-figweb]:hover {", "@media screen and (hover: none) { .fileview-md img[data-fv-figweb] {",
+  "@media screen { .fileview-md img[data-fv-figweb]:hover {", "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md img[data-fv-figweb] {",
   ".fileview-cm {", ".fileview-cm .cm-editor {", ".fileview-editor {",
   ".fileview-dir-link {", ".fileview-dir-link:hover {",
   // links inside a shown file (file-view-links.ts): the light dress on a URL anchor and a path link, and the Markdown link that names a file

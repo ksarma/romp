@@ -156,11 +156,14 @@ window.putAtTop = function (text) {
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
 
-/** Launch headless Chromium and run `body` with it, or skip LOUDLY (CI installs no browsers), as the other legs do. */
-export async function inBrowser(t: any, body: (browser: any) => Promise<void>): Promise<void> {
+/** Launch headless Chromium and run `body` with it, or skip LOUDLY (CI installs no browsers), as the other legs do. `launch` is
+ *  handed to playwright's launch: a case that needs Chromium's own device settings (the touchscreen laptop, a `--blink-settings`
+ *  flag, since CDP's touch emulation flips the primary pointer and cannot build it; tab-hide-browser.test.ts's precedent) passes
+ *  `{ args }`. */
+export async function inBrowser(t: any, body: (browser: any) => Promise<void>, launch: { args?: string[] } = {}): Promise<void> {
   if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser leg needs it (CI installs no browsers)"); return; }
   let browser: any;
-  try { browser = await pw.chromium.launch(); }
+  try { browser = await pw.chromium.launch(launch); }
   catch (e) { t.skip("no playwright browser on this box; the browser leg needs one (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
   try { await body(browser); } finally { await browser.close(); }
 }

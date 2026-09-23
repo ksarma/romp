@@ -179,7 +179,7 @@ test("SOURCE-TEXT pins of the two text-read control lists (anchor-map.ts's CONTR
  *  serving). */
 const BOUND = " (the population is the rules whose selector names the control's class in every sheet a page of either host loads, derived from the page assembly by ui/webview/host-sheets.mjs, the pages' linked bundles, live-read sheets, inlined constants and the style blocks the helpers they call write into their HTML at serve time, and the extension's webview links; outside what this set closes, bounds stated here and in the plan's L3, not read: a rule whose selector would match the control's element without naming the class, katex's vendored sheet that styles.css and feed.css import, the rules a template writes into its own page (the settings page's transparent background, the too-large notice's body rule, the extension's zoom rule), and the style element a script creates after the page is served (palette.ts's and shortcuts-modal.ts's elements, the timeline view's own, the shim's notices' cssText)";
 
-test("the sheets: the control rests transparent over the figure's corner with a zero-width margin box, positioned above the layer's overlay; every rule naming the control's class that reveals it (the pointer over the figure or the control, a keyboard focus, a device with no hover) is under screen, so print shows none of it and the print block carries no line for it; the population the set closes is the rules whose selector names the class in every sheet a page of either host loads, the chat's and the feed's carrying the dress and every other sheet none, the sheets derived and the bounds stated, not read; the picture's own mark for a web picture with no control is a second set, derived by its attribute over the same sheets, under screen alone and in the button's border token, the control's own", () => {
+test("the sheets: the control rests transparent over the figure's corner with a zero-width margin box, positioned above the layer's overlay; every rule naming the control's class that reveals it (the pointer over the figure or the control, a keyboard focus, a device with no hover) is under screen, so print shows none of it and the print block carries no line for it; the population the set closes is the rules whose selector names the class in every sheet a page of either host loads, the chat's and the feed's carrying the dress and every other sheet none, the sheets derived and the bounds stated, not read; the picture's own mark for a web picture with no control is a second set, derived by its attribute over the same sheets, under screen alone and in the outbound dress's own token, the one the control's dashed border wears at rest; both at-rest rules under (hover: none) or (any-pointer: coarse), screen on both queries", () => {
   for (const d of DRESSING) assert.ok(SHEETS.some((s) => s.name === d), d + " is a sheet a page loads: the viewer's dress is written there (a renamed or unlinked sheet fails here, never silently)");
   assert.ok(SHEETS.some((s) => s.name.startsWith("kernel/kernel.py ")), "the population is wider than a listing of ui/webview: the sheets the kernel inlines from its own source (THEME_CSS, into every page that takes no arguments, and the pane spinner's block, _pane_spin's with _LOADER_CSS, into the four pages that call it) are in it, so a rule written there is read; a derivation reading the directory alone passes this set with a reveal there (the file review's round 10, regression-5)");
   assert.ok(SHEETS.some((s) => s.name === "kernel/kernel.py _pane_spin"), "the pane spinner's block is a sheet of the population: the style block the helper _pane_spin writes into the served HTML of the pages that call it (the chat, the feed, the sessions pane and the waiting pane), _LOADER_CSS folded in served order (the file review's round 11, extra6-1 with extra7-1, kernel-1 and tests-1: the block had stood outside the read with every pin green, excused by a bound sentence that called it one added after serving; a property pin over the derivation)");
@@ -197,7 +197,7 @@ test("the sheets: the control rests transparent over the figure's corner with a 
     assert.match(css, /\n\.fileview-md \.fv-figopen-left \{ float: left; \}\n\.fileview-md \.fv-figopen-right \{ float: right; margin: 0 -28px 0 6px; \}\n/, name + ": the float twins");
     assert.match(css, /\n\.fileview-md \.fv-figopen-web \{ border-style: dashed; \}\n/, name + ": the web control's dress, the gate's dashed border for a figure from another host (the file review's round 11, ui-1 with extra8-1; a sentence pin on the rule's spelling, and the closed set below holds the property over the parsed rules)");
     assert.match(css, /\n@media screen \{ \.fileview-md :hover \+ \.fv-figopen, \.fileview-md \.fv-figopen:hover, \.fileview-md \.fv-figopen:focus-visible \{ opacity: 1; \} \}\n/, name + ": the reveal, screen only");
-    assert.match(css, /\n@media screen and \(hover: none\) \{ \.fileview-md \.fv-figopen \{ opacity: 0\.8; \} \}/, name + ": no hover keeps it visible, screen only");
+    assert.match(css, /\n@media screen and \(hover: none\), screen and \(any-pointer: coarse\) \{ \.fileview-md \.fv-figopen \{ opacity: 0\.8; \} \}/, name + ": no hover, or a coarse pointer beside a hovering one, keeps it visible, screen written on both queries (the file review's round 13, extra7-2: `hover` is the primary pointer's, and a touchscreen laptop's hovers; a sentence pin on the at-rule's spelling, the closed set below holds the property)");
     const print = css.slice(css.indexOf("\n@media print {"), css.indexOf("\n}", css.indexOf("\n@media print {")));
     assert.doesNotMatch(print, /fv-figopen/, name + ": the print block names it nowhere");
     // the picture's own outbound mark for a web picture with no control (the file review's round 12, fresh-1): a second closed set,
@@ -209,16 +209,19 @@ test("the sheets: the control rests transparent over the figure's corner with a 
     const mark = cssRules(css).filter((r) => /data-fv-figweb/.test(r.selector));
     assert.deepEqual(mark.filter((r) => !underScreen(r.chain)).map(renderRule), [], name + ": no rule naming the mark outside a screen-only at-rule: a print, where hover is none, would show the at-rest dress (a property pin over the derived population)");
     assert.deepEqual(mark.filter((r) => underScreen(r.chain)).map(renderRule), [
-      "@media screen { .fileview-md img[data-fv-figweb]:hover { outline: 1px dashed var(--card-border); outline-offset: 1px; } }",
-      "@media screen and (hover: none) { .fileview-md img[data-fv-figweb] { outline: 1px dashed var(--card-border); outline-offset: 1px; } }",
-    ], name + ": the rules naming the mark are exactly the hover rule and the at-rest rule where hover is none, the control's dashed dress as an outline (an outline and not a border: a border on the img widens its box; a property pin over the derived population, its count never typed)");
+      "@media screen { .fileview-md img[data-fv-figweb]:hover { outline: 1px dashed var(--outbound-line); outline-offset: 1px; } }",
+      "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md img[data-fv-figweb] { outline: 1px dashed var(--outbound-line); outline-offset: 1px; } }",
+    ], name + ": the rules naming the mark are exactly the hover rule and the at-rest rule where hover is none or any pointer is coarse, the control's dashed dress as an outline (an outline and not a border: a border on the img widens its box; a property pin over the derived population, its count never typed)");
     assert.doesNotMatch(print, /data-fv-figweb/, name + ": the print block names the mark nowhere");
     // one colour token for the two dresses (the owner's call with that ruling): the mark's outline wears the token the control's dashed
-    // border wears, the button's border, read off the button's rule and never typed here
-    const btn = cssRules(css).find((r) => r.selector === ".fileview-btn");
-    const token = btn && /border: 1px solid var\((--[\w-]+)\);/.exec(btn.body);
-    assert.ok(token, name + ": the button's rule and its border token");
-    for (const r of mark) assert.match(r.body, new RegExp("outline: 1px dashed var\\(" + token![1] + "\\);"), name + ": the mark's outline wears the button's border token, " + token![1] + ", the one the control's dashed border wears, so the two dresses are one colour (a property pin: the token derived from the button's rule)");
+    // border wears at rest, the outbound dress's own (the file review's round 13, ui-1 with extra6-1: the button family's hairline it
+    // wore before read at 1.35:1 dark and 1.25:1 light on a 20 px badge), read off the web control's rest rule and never typed here;
+    // the token's ratio over the page is theme-parity.test.ts's pair, and the leg's touch cases read it off the paint
+    const rest = cssRules(css).find((r) => r.selector === ".fileview-md .fv-figopen-web:not(:hover)");
+    const token = rest && /^border-color: var\((--[\w-]+)\);$/.exec(rest.body.trim());
+    assert.ok(token, name + ": the web control's rest rule and its border token, scoped off :hover so .fileview-btn:hover's accent border still wins on the control (the two rules share a specificity and this one is later in the sheet; a property pin: the token is read off the rule and never typed here)");
+    assert.notEqual(token![1], "--card-border", name + ": the token is the dress's own, not the button family's 10 percent hairline (a property pin over the derived token: the one name it may not be)");
+    for (const r of mark) assert.match(r.body, new RegExp("outline: 1px dashed var\\(" + token![1] + "\\);"), name + ": the mark's outline wears " + token![1] + ", the token the control's dashed border wears at rest, so the two dresses are one colour (a property pin: the token derived from the control's rest rule)");
     // the closed set over the control's rules, read as RULES (ui/webview/css-rules.mjs, the reader this home shares with
     // tools/markdown-viewer-plan-linknav.test.mjs: brace-matched over the comment-stripped sheet, each rule with the at-rules
     // enclosing it), so a rule written the sheets' own way, indented inside an at-rule block or on a grouped selector wrapped
@@ -237,11 +240,12 @@ test("the sheets: the control rests transparent over the figure's corner with a 
       ".fileview-md .fv-figopen:hover { background: var(--bg) linear-gradient(var(--accent-wash), var(--accent-wash)); }",
       ".fileview-md .fv-figopen-left { float: left; }", ".fileview-md .fv-figopen-right { float: right; margin: 0 -28px 0 6px; }",
       ".fileview-md .fv-figopen-web { border-style: dashed; }",
-    ], name + ": the rules naming the control outside a screen-only at-rule, however the sheet writes them, are exactly the rest, the hover background, the float twins and the web dress; any other rule naming the class there is one a print would apply" + BOUND + ")");
+      ".fileview-md .fv-figopen-web:not(:hover) { border-color: var(--outbound-line); }",
+    ], name + ": the rules naming the control outside a screen-only at-rule, however the sheet writes them, are exactly the rest, the hover background, the float twins, the web dress and its rest colour; any other rule naming the class there is one a print would apply; a property pin over the parsed rules, the set's membership however the sheet writes it" + BOUND + ")");
     assert.deepEqual(control.filter((r) => underScreen(r.chain)).map(renderRule), [
       "@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible { opacity: 1; } }",
-      "@media screen and (hover: none) { .fileview-md .fv-figopen { opacity: 0.8; } }",
-    ], name + ": the rules under a screen-only at-rule are the reveal and the no-hover rule");
+      "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen { opacity: 0.8; } }",
+    ], name + ": the rules under a screen-only at-rule are the reveal and the at-rest rule (no hover, or any coarse pointer; a property pin over the parsed rules)");
   }
 });
 
@@ -257,7 +261,7 @@ test("the reader the closed set stands on reads rules, not lines: the three shap
     "@media screen {",
     "  .fileview-md .fv-figopen:focus-visible { opacity: 1; }",
     "}",
-    "@media screen and (hover: none) { .fileview-md .fv-figopen { opacity: 0.8; } }",
+    "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen { opacity: 0.8; } }",
   ].join("\n");
   const control = cssRules(sheet).filter((r) => /fv-figopen/.test(r.selector));
   assert.deepEqual(control.filter((r) => !underScreen(r.chain)).map(renderRule), [
@@ -267,6 +271,6 @@ test("the reader the closed set stands on reads rules, not lines: the three shap
   ], "the column-zero rule, the indented reveal under (min-width: 1px) and the grouped selector's continuation-line reveal are rules outside screen; the comment's brace is none");
   assert.deepEqual(control.filter((r) => underScreen(r.chain)).map(renderRule), [
     "@media screen { .fileview-md .fv-figopen:focus-visible { opacity: 1; } }",
-    "@media screen and (hover: none) { .fileview-md .fv-figopen { opacity: 0.8; } }",
-  ], "the indented rule inside the multi-line screen block and the one-line screen rule are under screen");
+    "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen { opacity: 0.8; } }",
+  ], "the indented rule inside the multi-line screen block and the one-line screen rule, a query list with screen on both members, are under screen");
 });
