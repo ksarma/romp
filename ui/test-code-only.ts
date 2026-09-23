@@ -4,7 +4,8 @@
 // before that named three): file-view-seam.test.ts's inertness premise guard and re-parse population, md-url-view.test.ts's and
 // md-sanitize-viewer-links.test.ts's order pins over mdBlock, code-block.test.ts's slice of the fence pass, file-view-links.test.ts's
 // index compare of the fence pass against the two link passes over the adopted box, and file-figure-open.test.ts's count of
-// figureLinkOf's calls and its census of the arguments of every Playwright Mouse call; tools/markdown-viewer-plan-gate-adopt.test.mjs derives that list
+// figureLinkOf's calls and its census of the arguments of the Playwright Mouse calls its compiler walk reads (mouseCalls, whose
+// census pin's title names the receiver shapes it leaves out); tools/markdown-viewer-plan-gate-adopt.test.mjs derives that list
 // from the tree and holds this header and the plan to it, so a seventh reader is red there until named. An edit here reaches every one of them. The comments are the TypeScript compiler's own comment
 // ranges: the source is parsed (ts.createSourceFile), every token of the tree is visited, and the comment ranges the
 // scanner reports before each token (ts.getLeadingCommentRanges at the token's full start) and after it on the same line

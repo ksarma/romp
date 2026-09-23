@@ -484,6 +484,34 @@ test('hostSheets: a helper <style> run passed as the argument of str.format, str
     try { assert.throws(() => hostSheets(d), /_spin.*formatted/, body[0]); } finally { fs.rmSync(d, { recursive: true, force: true }); }
   }
 });
+test('hostSheets: a helper <style> run passed as the first argument of str.replace, or of any other str.<method>(, standing BEFORE its opening literal fails by name, the class and not three spellings (the file review\'s round 14, extra6-1: the arm named str.format, str.format_map and str.__mod__, so str.replace(run, ...) decoded to its placeholder text with no throw; a property pin over a synthetic tree, red at the module before the class)', () => {
+  const heads = [['    return str.replace("<style>a{b:X}</style>"', '                       "<div>X</div>", "X", cid)'], ['    return str.upper("<style>a{b:c}</style>"', '                     "<div>" + cid + "</div>")']];
+  for (const body of heads) {
+    const d = tempTree(pySrc('def _spin(cid):', ...body, '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+    try { assert.throws(() => hostSheets(d), /_spin.*formatted/, body[0]); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+  }
+});
+test('hostSheets, the over-refusal the before-the-run class discloses: a str.<method>( on some other value standing before the run (t = str.maketrans("ab", "cd")) is refused as formatting the run, loudly, though it formats nothing of it (the file review\'s round 14, extra6-1, the new over-refusal ruled disclosed; a property pin recording that refusal over a synthetic tree, red at the module before the class, which decoded the run: the refusal is new, and a red here means the arm narrowed and the disclosure in host-sheets.mjs is to go)', () => {
+  const d = tempTree(pySrc('def _spin(cid):', '    t = str.maketrans("ab", "cd")', '    return ("<style>a{b:c}</style>"', '            "<div>" + cid + "</div>")', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.throws(() => hostSheets(d), /_spin.*formatted/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+test('hostSheets, the helper-side class outside the read, recorded: a module function, operator.mod, the builtin format, an alias of a str method or getattr taking the run as an argument, and a subscript or a repetition after the run, each decode with no throw, the class host-sheets.mjs states once in its header and in helperStyle\'s docstring (the file review\'s round 14, extra6-1; bound-recording pins over synthetic trees, green at the module before the class by design, whose arms named none of these either; a red here means the read now refuses the shape and the stated class names a bound it no longer has)', () => {
+  const shapes = [
+    ['a module function', ['    return _wrap("<style>a{b:c}</style>"', '                 "<div>" + cid + "</div>")']],
+    ['operator.mod', ['    return operator.mod("<style>a{b:%s}</style>"', '                        "<div>%s</div>", (cid, cid))']],
+    ['the builtin format', ['    return format("<style>a{b:c}</style>"', '                  "<div></div>", "")']],
+    ['an alias of a str method', ['    f = str.format', '    return f("<style>a{{b:{0}}}</style>"', '             "<div>{0}</div>", cid)']],
+    ['getattr', ['    return getattr("<style>a{{b:{0}}}</style>"', '                   "<div>{0}</div>", "format")(cid)']],
+    ['a subscript after the run', ['    return ("<style>a{b:c}</style>"', '            "<div></div>")[0:]']],
+    ['a repetition after the run', ['    return ("<style>a{b:c}</style>"', '            "<div></div>") * 1']],
+  ];
+  const got = [];
+  for (const [shape, body] of shapes) {
+    const d = tempTree(pySrc('def _spin(cid):', ...body, '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+    try { got.push([shape, hostSheets(d).map((x) => x.name)]); } catch (e) { got.push([shape, 'refused: ' + String(e.message).slice(0, 80)]); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+  }
+  assert.deepEqual(got, shapes.map(([shape]) => [shape, ['kernel/kernel.py _spin']]), 'each shape decodes with no throw, one entry under the helper\'s name, [shape, entries] (a property pin recording the bound)');
+});
 test('hostSheets control: a % inside a trailing comment or inside a later literal after the closing literal is not the operator, so the run decodes as before (the file review\'s round 12, kernel-1 with extra8-1: the scan blanks literals and comments before it looks; a property pin over a synthetic tree, green before and after, red under a scan that does not blank)', () => {
   const d = tempTree(pySrc('def _spin(cid):', '    return ("<style>a{b:c}</style>"   # 100% of the pane', '            "<div style=\'width:50%\'>" + cid + "</div>")', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
   try { assert.deepEqual(hostSheets(d).map((x) => [x.name, x.css]), [['kernel/kernel.py _spin', 'a{b:c}']]); } finally { fs.rmSync(d, { recursive: true, force: true }); }
@@ -538,6 +566,20 @@ test('hostSheets: a helper writing a second <STYLE> block in upper case in its o
 test('hostSheets: a helper whose only <STYLE> block is in upper case fails by name rather than standing outside the population with no entry (a property pin over a synthetic tree, red before the check read the case, at the module the file review\'s round 13 read and at the one that refused the lower-case second block)', () => {
   const d = tempTree(pySrc('def _spin(cid):', '    return "<STYLE>a{b:c}</STYLE>" + cid', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
   try { assert.throws(() => hostSheets(d), /_spin/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+test('hostSheets: a helper writing a closing </style> literal whose opening tag comes from a module constant, or is split across two literals, fails by name rather than returning no entry (the file review\'s round 14, extra6-2: the detection read the opening tag alone, so the helper returned no entry with no throw and its block stood outside the population; a property pin over a synthetic tree, red at the module before the detection read either tag)', () => {
+  const shapes = [
+    ['a constant-held opening tag', ['_OPEN = "<style>"', '', 'def _spin(cid):', '    return _OPEN + "a{b:c}" + "</style><div></div>"']],
+    ['an opening tag split across two literals', ['def _spin(cid):', '    return ("<sty"', '            "le>a{b:c}</style><div></div>")']],
+  ];
+  for (const [shape, head] of shapes) {
+    const d = tempTree(pySrc(...head, '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+    try { assert.throws(() => hostSheets(d), /_spin writes a <style> in a form this reader has no rule for/, shape); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+  }
+});
+test('hostSheets, the bound recorded: a helper whose opening and closing tags both come from module constants (_OPEN + css + _CLOSE) carries neither tag in its text, so the reader returns no entry for it, the both-constant shape host-sheets.mjs names as its bound in the header\'s outside-the-read paragraph and in helperStyle\'s docstring (the file review\'s round 14, extra6-2, as ruled: named, with a pin recording that it returns nothing; a bound-recording pin over a synthetic tree, green at the module before the detection read either tag and after it, by design, since neither reads a constant\'s text for a tag; a red here means the read now reaches the shape and the stated bound is to go)', () => {
+  const d = tempTree(pySrc('_OPEN = "<style>"', '_CLOSE = "</style>"', '', 'def _spin(cid):', '    return _OPEN + "a{b:c}" + _CLOSE + "<div></div>"', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.deepEqual(hostSheets(d).map((x) => x.name), [], 'no entry: the block stands outside the population (a property pin recording the bound)'); } finally { fs.rmSync(d, { recursive: true, force: true }); }
 });
 test('hostSheets control: a .__mod__ call on some other value standing before the run (n = "%d".__mod__(3)) formats nothing of the run, so the run decodes as before, while str.__mod__ with the run as its first argument stays refused (the before-the-run arm anchored on str in the author\'s closing pass that followed the fixes for the file review\'s round 13; a property pin over a synthetic tree, green at the module the file review\'s round 13 read, which scanned nothing before the run, and red at the module that first scanned it, whose arm was unanchored)', () => {
   const d = tempTree(pySrc('def _spin(cid):', '    n = "%d".__mod__(3)', '    return ("<style>a{b:c}</style>"', '            "<div>" + cid + "</div>" + str(n))', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));

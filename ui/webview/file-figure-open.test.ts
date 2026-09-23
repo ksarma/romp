@@ -14,6 +14,7 @@ import * as path from "node:path";
 import { cssRules, renderRule, underScreen } from "./css-rules.mjs";
 import { hostSheets } from "./host-sheets.mjs";
 import { codeOnly } from "../test-code-only";   // the comment stripper the count pin and the Mouse-call census read through (the compiler's ranges; file-view-seam.test.ts self-checks it)
+import * as ts from "typescript";   // the Mouse-call census's compiler walk (mouseCalls; the test build keeps typescript a runtime require, esbuild.js testBuild)
 
 const ROOT = path.resolve(process.cwd(), "..");
 const web = (f: string) => fs.readFileSync(path.join(ROOT, "ui", "webview", f), "utf8");
@@ -303,23 +304,55 @@ test("the reader the closed set stands on reads rules, not lines: the three shap
   ], "the indented rule inside the multi-line screen block and the one-line screen rule, a query list with screen on both members, are under screen");
 });
 
-test("no call of Playwright's Mouse under ui/webview carries a modifiers key: mouse.click, dblclick, down, up, move and wheel take no modifiers option (playwright-core's Mouse interface) and drop one silently, so a modified click there is the key held around the click (keyboard.down, mouse.click, keyboard.up), as file-figure-open-browser.test.ts's Ctrl-clicks are; a property pin over the tree, the files derived by reading the directory and each call's arguments read over the code alone, as written: an options object bound to a name elsewhere, or spread in, and passed to the call is outside the read, a bound this pin states and does not resolve (the file review's round 13, extra6-2: clickPicture's Ctrl form passed the option to mouse.click and dispatched a plain click, green because the plain click opened the same tab)", (t) => {
+/** One Playwright Mouse call as mouseCalls reads it: the method's name, and the call's argument list as written. */
+type MouseCall = { method: string; args: string };
+/** Every call of a Mouse method in one module's text, read by the compiler (the file review's round 14, tests-1 with extra6-3: the
+ *  read before it matched an identifier character, `.mouse.`, a name and a paren on one line, so a receiver ending in `]`, `!` or
+ *  `)`, optional chaining, a line break before `.mouse` or before the method, a string-literal key and a space before the paren
+ *  each carried a modifiers key unseen, and its `.mouse.` prefilter skipped such a file before any read ran). The module's code
+ *  alone (codeOnly strips its comments) is parsed, and every call whose callee, looked through parentheses, a non-null assertion,
+ *  `as`, `satisfies` and a type assertion, is a member of a member named `mouse`, each member a property access (`.name` or
+ *  `?.name`) or an element access keyed by a string literal (`["name"]`, in either position: `page["mouse"].click(...)` and
+ *  `page.mouse["click"](...)`), is one call, its arguments the source text between the call's parens. A string, a template and a
+ *  regex literal are one token each to the parser, so a quoted `.mouse.click(` is no call. Outside the read, the bound the census
+ *  pin's title states and does not resolve: a Mouse reached through an element access whose key is computed (not a literal), through
+ *  an alias (`const m = page.mouse; m.click(...)`) or through a destructured binding (`const { mouse } = page; mouse.click(...)`),
+ *  each an unseen-passing plant below. Null when the text holds no word `mouse` at all: the prefilter is as wide as the read, so
+ *  no spelling the read counts can be skipped by it. */
+function mouseCalls(raw: string): MouseCall[] | null {
+  if (!/\bmouse\b/.test(raw)) return null;
+  const code = codeOnly(raw);
+  const sf = ts.createSourceFile("mouse-calls.ts", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const bare = (e: ts.Expression): ts.Expression => { for (;;) { if (ts.isParenthesizedExpression(e) || ts.isNonNullExpression(e) || ts.isAsExpression(e) || ts.isSatisfiesExpression(e) || ts.isTypeAssertionExpression(e)) e = e.expression; else return e; } };
+  const member = (e: ts.Expression): { name: string; of: ts.Expression } | null => {
+    if (ts.isPropertyAccessExpression(e)) return { name: e.name.text, of: e.expression };
+    if (ts.isElementAccessExpression(e) && ts.isStringLiteralLike(e.argumentExpression)) return { name: e.argumentExpression.text, of: e.expression };
+    return null;
+  };
+  const out: MouseCall[] = [];
+  const visit = (n: ts.Node): void => {
+    if (ts.isCallExpression(n)) {
+      const callee = member(bare(n.expression));
+      const receiver = callee ? member(bare(callee.of)) : null;
+      if (callee && receiver && receiver.name === "mouse") out.push({ method: callee.name, args: code.slice(n.arguments.pos, n.arguments.end) });
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+test("no call of Playwright's Mouse under ui/webview carries a modifiers key: mouse.click, dblclick, down, up, move and wheel take no modifiers option (playwright-core's Mouse interface) and drop one silently, so a modified click there is the key held around the click (keyboard.down, mouse.click, keyboard.up), as file-figure-open-browser.test.ts's Ctrl-clicks are; a property pin over the tree, the files derived by reading the directory and each module read by the compiler (mouseCalls): every call whose callee is a member of a member named mouse, through parentheses, a non-null assertion, as, satisfies and a type assertion, each member a property access, optional or not, or an element access keyed by a string literal, its arguments read as written; outside the read, bounds this pin states and does not resolve: a Mouse reached through a computed key, an alias or a destructured binding (each an unseen-passing plant in the plant cases below), and an options object bound to a name elsewhere, or spread in, and passed to the call (the file review's round 13, extra6-2: clickPicture's Ctrl form passed the option to mouse.click and dispatched a plain click, green because the plain click opened the same tab; its round 14, tests-1 with extra6-3: the read before the compiler walk saw only an identifier character, .mouse., a name and a paren on one line, and a prefilter skipped a file spelled otherwise)", (t) => {
   const dir = path.join(ROOT, "ui", "webview");
   const files = fs.readdirSync(dir).filter((f) => f.endsWith(".ts")).sort();
   const calls: { file: string; method: string }[] = [];
   const hits: string[] = [];
   for (const f of files) {
-    const raw = fs.readFileSync(path.join(dir, f), "utf8");
-    if (!raw.includes(".mouse.")) continue;
-    const src = codeOnly(raw);
-    // a call, not a mention: an identifier character before `.mouse.` (a quoted `.mouse.` in a message or in this pin's own literals is none)
-    for (const m of src.matchAll(/\w\.mouse\.(\w+)\(/g)) {
-      const open = m.index! + m[0].length - 1;   // the call's opening paren; its argument list runs to the balanced close
-      let depth = 0, end = open;
-      for (; end < src.length; end++) { const c = src[end]; if (c === "(") depth++; else if (c === ")" && --depth === 0) break; }
-      const args = src.slice(open + 1, end);
-      calls.push({ file: f, method: m[1] });
-      if (/\bmodifiers\b/.test(args)) hits.push(f + ": mouse." + m[1] + "(" + args.replace(/\s+/g, " ") + ")");
+    // the compiler's calls, not a text match: a quoted `.mouse.` in a message or in this file's own plant literals is one literal token and no call
+    const read = mouseCalls(fs.readFileSync(path.join(dir, f), "utf8"));
+    if (read === null) continue;
+    for (const c of read) {
+      calls.push({ file: f, method: c.method });
+      if (/\bmodifiers\b/.test(c.args)) hits.push(f + ": mouse." + c.method + "(" + c.args.replace(/\s+/g, " ") + ")");
     }
   }
   const clicks = calls.filter((c) => c.method === "click");
@@ -328,4 +361,47 @@ test("no call of Playwright's Mouse under ui/webview carries a modifiers key: mo
   assert.ok(clicks.length >= 20, "the derivation found the legs' mouse.click calls (a derivation guard: fewer than twenty is a broken read, not a clean tree): " + clicks.length);
   assert.ok(clicks.some((c) => c.file === "file-figure-open-browser.test.ts"), "the derivation reaches the leg whose Ctrl-click helper the finding named");
   assert.deepEqual(hits, [], "no Mouse call carries a modifiers key: the option is dropped, and a Ctrl-click that dispatches as a plain one passes wherever the plain click does the same");
+});
+/** Synthetic module text for the census's plants (never a file under ui/webview): a declare line and one statement in a function. */
+const mousePlant = (statement: string): string => "declare const page: any, pages: any[], ctx: any, key: string;\nexport async function plant(): Promise<void> {\n  " + statement + "\n}\n";
+const MODS = '{ modifiers: ["Control"] }';
+/** A plant's read: the calls mouseCalls counts in it and, of those, the ones whose arguments carry a modifiers key. */
+const plantRead = (statement: string): [number, number] => { const got = mouseCalls(mousePlant(statement)) || []; return [got.length, got.filter((c) => /\bmodifiers\b/.test(c.args)).length]; };
+test("the Mouse census's armed plants: each receiver shape the file review's round 14 named, one Mouse call carrying a literal modifiers key, is read as one call with the key: a receiver ending in ], ! or ) (a parenthesised as, a call's result), optional chaining before or after mouse, a line break before .mouse or before the method, a string-literal key for the method or for mouse, and whitespace before the call's paren (the file review's round 14, tests-1 with extra6-3: the read before the compiler walk counted none of them, its prefilter skipping four; a property pin over synthetic text, the read mouseCalls, red at the read before it)", () => {
+  const ARMED: Array<[string, string]> = [
+    ["a receiver ending in ]", "await pages[0].mouse.click(1, 2, " + MODS + ");"],
+    ["a receiver ending in !", "await page!.mouse.click(1, 2, " + MODS + ");"],
+    ["a receiver ending in ), a parenthesised as", "await (page as any).mouse.click(1, 2, " + MODS + ");"],
+    ["a receiver ending in ), a call's result", "await (await ctx.newPage()).mouse.click(1, 2, " + MODS + ");"],
+    ["optional chaining before mouse", "await page?.mouse.click(1, 2, " + MODS + ");"],
+    ["optional chaining after mouse", "await page.mouse?.click(1, 2, " + MODS + ");"],
+    ["a line break before .mouse", "await page\n    .mouse.click(1, 2, " + MODS + ");"],
+    ["a line break before the method", "await page.mouse\n    .click(1, 2, " + MODS + ");"],
+    ["a string-literal key for the method", 'await page.mouse["click"](1, 2, ' + MODS + ");"],
+    ["a string-literal key for mouse", 'await page["mouse"].click(1, 2, ' + MODS + ");"],
+    ["whitespace before the call's paren", "await page.mouse.click (1, 2, " + MODS + ");"],
+  ];
+  assert.deepEqual(ARMED.map(([shape, statement]) => [shape, ...plantRead(statement)]), ARMED.map(([shape]) => [shape, 1, 1]), "each plant read as one Mouse call carrying the key, [shape, calls, calls with the key] (a property pin over the read)");
+});
+test("the Mouse census's controls: the direct call and a quoted modifiers key are read as one call with the key, by this read and by the one before it; a quoted mention of .mouse.click( with a modifiers key in a string, a template or a regex literal, with no identifier character before the dot, is no call (the file review's round 14, tests-1 with extra6-3: controls, green at the read before the compiler walk by design, whose identifier-before rule counts no quoted mention, and each quoted mention red under a widened regex that leaves the literals in; a property pin over synthetic text)", () => {
+  const COUNTED: Array<[string, string]> = [
+    ["the direct call", "await page.mouse.click(1, 2, " + MODS + ");"],
+    ["a quoted modifiers key", 'await page.mouse.click(1, 2, { "modifiers": ["Control"] });'],
+  ];
+  const QUOTED: Array<[string, string]> = [
+    ["a string literal", "const note = \".mouse.click(1, 2, { modifiers: ['Control'] })\"; void note;"],
+    ["a template literal", "const note = `.mouse.click(1, 2, { modifiers: [\"Control\"] })`; void note;"],
+    ["a regex literal", "const re = /.mouse.click(1, 2, { modifiers: 1 })/; void re;"],
+  ];
+  assert.deepEqual(COUNTED.map(([shape, statement]) => [shape, ...plantRead(statement)]), COUNTED.map(([shape]) => [shape, 1, 1]), "the direct call and a quoted key, each one call with the key (a property pin over the read)");
+  assert.deepEqual(QUOTED.map(([shape, statement]) => [shape, ...plantRead(statement)]), QUOTED.map(([shape]) => [shape, 0, 0]), "a quoted mention, no call (a property pin over the read)");
+});
+test("the Mouse census's bound, recorded: a Mouse reached through an alias, a destructured binding, or an element access whose key is computed, for mouse or for the method, carries a modifiers key unseen, each plant passing with no call read that carries it, the bound the census pin's title states (the file review's round 14, tests-1 with extra6-3, as ruled: these stay outside the read, named in the title with an unseen-passing plant; bound-recording plants, green at the read before the compiler walk by design, which saw none of them either; a red here means the read now sees the shape and the title names a bound it no longer has; a property pin over synthetic text)", () => {
+  const BOUND: Array<[string, string]> = [
+    ["an alias", "const m = page.mouse; await m.click(1, 2, " + MODS + ");"],
+    ["a destructured binding", "const { mouse } = page; await mouse.click(1, 2, " + MODS + ");"],
+    ["a computed key for mouse", "await page[key].click(1, 2, " + MODS + ");"],
+    ["a computed key for the method", "await page.mouse[key](1, 2, " + MODS + ");"],
+  ];
+  assert.deepEqual(BOUND.map(([shape, statement]) => [shape, plantRead(statement)[1]]), BOUND.map(([shape]) => [shape, 0]), "each shape outside the read, [shape, calls read with the key] (a property pin recording the bound)");
 });

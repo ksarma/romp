@@ -31,17 +31,22 @@
 //     entry fails); every `(UI / "webview" / "<name>.css").read_text()` it writes into a `<style>`; and every module-level
 //     `<NAME>_CSS` constant it names, whose text is read from kernel.py by its assignment (a triple-quoted literal, or a
 //     parenthesised run of double-quoted literals with comment lines between them, decoded as Python decodes them);
-//   * the helpers a page body calls are followed one level: for each `_<name>(` in the body whose `def _<name>(...)` writes a
-//     `<style>`, the run of literals from `"<style>` to `</style>"` and every `<NAME>_CSS` constant it concatenates are read into
+//   * the helpers a page body calls are followed one level: each `_<name>(` in the body whose `def _<name>(...)` text carries
+//     either tag, `<style` or `</style` in any letter case, is read or refused: the run of literals from `"<style>` to `</style>"`
+//     and every `<NAME>_CSS` constant it concatenates are read into
 //     the page's sheets under `kernel/kernel.py _<name>`, in served order, one run per helper, and a run this reader cannot
-//     decode fails by name: a `<style` anywhere else in the helper's raw body, in any letter case (a second block in its own
+//     decode fails by name (a closing tag with no opening literal this reader finds among them: an opening tag held in a module
+//     constant or split across two literals; the file review's round 14, extra6-2: the detection read the opening tag alone, so
+//     such a helper returned no entry and its block stood outside the population): a `<style` anywhere else in the helper's raw body, in any letter case (a second block in its own
 //     literal, single- or double-quoted, `<STYLE>` as much as `<style>`, before or after the run, or a mention in a docstring or a
 //     trailing comment, refused too, the module's over-refusal policy; the run itself is the lower-case `"<style>` literal kernel.py
 //     writes, so a helper whose only block is in another case fails by name too, in place of standing outside the population), a run formatted by a `%` or by ANY method call (`.format(`, `.format_map(`, `.__mod__(`, `.replace(`,
 //     `.substitute(`, whatever the whitespace or line break around the dot and the paren) standing anywhere after its closing
-//     literal in the helper's body outside a literal or a comment, and a `str.format(`, `str.format_map(` or `str.__mod__(` standing
-//     before its opening literal (the run passed as the call's first argument; a `.__mod__(` on some other value before the run
-//     formats nothing of the run and decodes), the operator applied to the run's parenthesised
+//     literal in the helper's body outside a literal or a comment, and ANY `str.<method>(` standing before its opening literal
+//     (`str.format(`, `str.format_map(`, `str.__mod__(`, `str.replace(` or any other, the run passed as the call's first argument;
+//     a method called on some other value before the run, `"%d".__mod__(3)`, formats nothing of the run and decodes, and a
+//     `str.<method>(` on some other value there, `str.maketrans(...)`, is over-refused loudly; the file review's round 14,
+//     extra6-1: the arm had named three methods, so `str.replace(run, ...)` decoded to its placeholder text silently), the operator applied to the run's parenthesised
 //     expression being the kernel's house shape (the pane spinner's block, `_pane_spin` with _LOADER_CSS folded in, on the chat,
 //     feed, sessions and waiting pages; the file review's round 11, extra6-1 with extra7-1, kernel-1 and tests-1: the block was
 //     served with the page and outside the read, so a reveal planted in _LOADER_CSS or in the helper's own literal left every
@@ -67,9 +72,14 @@
 // the page body applies to that text at the call site (a `%` or `.format(` on a helper's return or on a constant, a `.replace(`
 // or any other call on it, a `.read_text()` result transformed in the page), an open class of Python expressions no regex
 // closes, so such a page would serve text the population does not hold with every pin green (the file review's round 13,
-// kernel-2; no page at this head does any of it); on the helper side an aliased `f = str.format` then `f(run, ...)`, a
-// `getattr(run, "format")(...)` and the builtin `format(run, ...)` are outside the read the same way (round 13, correctness-1
-// with kernel-3 and extra8-1, disclosed, none in kernel.py).
+// kernel-2; no page at this head does any of it). On the helper side, outside the read the same way and an open class too: any
+// callable other than a `str.<method>(` taking the run as an argument before or around it (a module function, `operator.mod`,
+// the builtin `format(run, ...)`, an alias of a str method, `f = str.format` then `f(run, ...)`, and `getattr(run, "format")(...)`),
+// and after the run a subscript or a repetition on it (`(run)[7:]`, `(run) * 2`), which the after-the-run class, a `%` or a
+// method call, does not cover (round 13, correctness-1 with kernel-3 and extra8-1, and the file review's round 14, extra6-1,
+// disclosed); and a helper whose opening and closing tags both come from module constants, or are both assembled by a call
+// (`_OPEN + css + _CLOSE`), whose text carries neither tag, so it returns no entry and its block stands outside the population
+// (the file review's round 14, extra6-2, the bound, pinned by a tree that returns nothing). None of these is in kernel.py.
 // A plain module with no dependency beyond node's fs and path, imported by the .ts tests through the webview test bundle
 // (ui/webview/host-sheets.d.mts types it) and by tools/*.test.mjs directly; it lives under ui/ for the reason
 // ui/webview/css-rules.mjs states in its header.
@@ -168,7 +178,10 @@ const JOIN = /Uri\.joinPath\(extUri, "dist", "([\w-]+)\.css"\)/g;         // the
 const ANY_CSS = /([\w-]+)\.css\b/g;                                        // every sheet a text names, by base name
 const all = (re, text) => { const out = []; let m; re.lastIndex = 0; while ((m = re.exec(text))) out.push(m[1]); return out; };
 
-/** The `<style>` block a helper writes into the HTML it returns, or null when its text writes none: the run from the literal
+/** The `<style>` block a helper writes into the HTML it returns, or null when its text carries neither tag, `<style` nor
+ *  `</style` in any letter case (a closing tag alone, its opening tag held in a module constant or split across two literals,
+ *  falls to the no-rule refusal below by name; the file review's round 14, extra6-2: the opening tag alone was read, so such a
+ *  helper returned null and its block stood outside the population): the run from the literal
  *  opening `"<style>` to the literal closing `</style>"`, one run per helper, each double-quoted literal decoded and each
  *  `<NAME>_CSS` constant it concatenates read by pyStringConstant, in the order the served HTML has them; a helper with no def in
  *  the strict shape, a `<style` anywhere in the helper's RAW body outside that run, in any letter case (a second block in its own
@@ -178,8 +191,9 @@ const all = (re, text) => { const out = []; let m; re.lastIndex = 0; while ((m =
  *  in the run, a run that does not decode to one block (a second `</style>` inside it), a prefix letter on the opening literal (an
  *  f-, r- or b-string), a `%` or ANY method call (`.format(`, `.format_map(`, `.__mod__(`, `.replace(`, `.substitute(`, and a call
  *  on some other value in the remainder, over-refused loudly, whatever the whitespace or line break around the dot and the paren)
- *  standing anywhere after the closing literal in the helper's body outside a string literal or a comment, and a `str.format(`,
- *  `str.format_map(` or `str.__mod__(` standing before the opening literal, the run passed as the call's first argument (the text before
+ *  standing anywhere after the closing literal in the helper's body outside a string literal or a comment, and ANY `str.<method>(`
+ *  standing before the opening literal (`str.format(`, `str.format_map(`, `str.__mod__(`, `str.replace(` or any other, and a
+ *  `str.<method>(` on some other value there, over-refused loudly), the run passed as the call's first argument (the text before
  *  the run and the remainder after it each scanned with its string literals, the double- and single-quoted, the triple-quoted and
  *  a literal continued over an escaped line end, and its `#` comments blanked, so the operator applied to the run's parenthesised
  *  expression, the kernel's house shape, is refused wherever it stands, and a `%` in arithmetic after the run is refused too,
@@ -197,10 +211,15 @@ const all = (re, text) => { const out = []; let m; re.lastIndex = 0; while ((m =
  *  literal was dropped from the population silently while this text said it failed by name; the letter case of that check and the
  *  anchor of the before-the-run arm on `str` joined in the author's closing pass that followed the fixes for the file review's
  *  round 13, where an upper-case second block had passed both reads and a `.__mod__(` on another value before the run had been
- *  refused as the run's). Outside the blanking, disclosed and
+ *  refused as the run's; and the file review's round 14, extra6-1: the before-the-run arm had named three methods, so
+ *  `str.replace(run, ...)` decoded to its placeholder text silently). Outside the read, disclosed and
  *  not read: an f-string nesting its own quote kind inside its braces (Python 3.12's grammar), whose inner quotes pair the same
- *  wrong way; an aliased `f = str.format` then `f(run, ...)`, a `getattr(run, "format")(...)` and the builtin `format(run, ...)`,
- *  calls the two scans do not name; and what the CALLER does to the returned string (the page body applying `%`, `.format(`,
+ *  wrong way; any callable other than a `str.<method>(` taking the run as an argument before or around it (a module function,
+ *  `operator.mod`, the builtin `format(run, ...)`, an alias of a str method, `f = str.format` then `f(run, ...)`, and
+ *  `getattr(run, "format")(...)`), an open class the two scans do not name, and after the run a subscript or a repetition on it
+ *  (`(run)[7:]`, `(run) * 2`), which the after-the-run class does not cover; a helper whose opening and closing tags both come
+ *  from module constants, or are both assembled by a call (`_OPEN + css + _CLOSE`), whose text carries neither tag, so this
+ *  returns null for it (the file review's round 14, extra6-2, the bound, pinned by a tree that returns nothing); and what the CALLER does to the returned string (the page body applying `%`, `.format(`,
  *  `.replace(` or any other call to the helper's return, a live-read sheet's `.read_text()` result or a constant at the call
  *  site), an open class no regex over the page loop closes: this reader holds every sheet source as its source spells it and
  *  reads nothing the page body does to that text before serving it (the file review's round 13, kernel-2). No helper or page at this head has any
@@ -209,7 +228,7 @@ function helperStyle(kernel, lines, name) {
   const head = new RegExp('^def ' + name + '\\([^)]*\\):\\n', 'm').exec(kernel);
   if (!head) fail(name + ' is called by a page body and is no module-level def this reader has a rule for');
   const text = defBody(lines, kernel.slice(0, head.index + head[0].length).split('\n').length - 1);
-  if (!/<style/i.test(text)) return null;   // any letter case: a helper writing only `<STYLE>` fails by name below, in place of standing outside the population
+  if (!/<\/?style/i.test(text)) return null;   // either tag, any letter case: a helper writing only `<STYLE>`, or a closing literal whose opening tag is held in a constant or split across two literals, fails by name below, in place of standing outside the population
   const open = text.indexOf('"<style>'), close = text.indexOf('</style>"');
   if (open < 0 || close < 0 || close < open) fail(name + ' writes a <style> in a form this reader has no rule for (not a run of literals from "<style> to </style>")');
   if (open > 0 && /\w/.test(text[open - 1])) fail(name + "'s <style> literal carries a prefix letter (an f-, r- or b-string), whose text is not what Python serves");
@@ -225,8 +244,9 @@ function helperStyle(kernel, lines, name) {
   // policy), each with its string literals (the triple-quoted first, then the double- and single-quoted, an escaped character
   // inside any of them a line end included, so a literal continued over a backslash is one piece) and its `#` comments blanked in
   // one left-to-right pass, so a `'` inside a double-quoted JS literal is literal text and a `%` inside a literal or a comment is
-  // not read. Before the run, a `str.format(`, `str.format_map(` or `str.__mod__(` is the run passed as the call's first argument
-  // (each arm anchored on `str`: a `.__mod__(` on some other value before the run, `"%d".__mod__(3)`, formats nothing of the run); after
+  // not read. Before the run, ANY `str.<method>(` is the run passed as the call's first argument, the class and not three
+  // spellings (anchored on `str`: a `.__mod__(` on some other value before the run, `"%d".__mod__(3)`, formats nothing of the run,
+  // and a `str.<method>(` on some other value there is over-refused loudly; the file review's round 14, extra6-1); after
   // it, a `%` or ANY method call (`.` then a name then `(`, whitespace or a line break allowed around each) is the run formatted,
   // the class and not two spellings: the operator applied to the run's parenthesised expression the kernel's house shape
   // (`("..." "...") % (...)`, the `%` on its own line inside the parens, a trailing comment before the `)`), and the run decodes
@@ -236,7 +256,7 @@ function helperStyle(kernel, lines, name) {
   // on some other value in the remainder is over-refused loudly; the real tree's one helper concatenates a bare `_loader_inner()`.
   const BLANK = /"""(?:\\[\s\S]|(?!""")[\s\S])*"""|'''(?:\\[\s\S]|(?!''')[\s\S])*'''|"(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|#[^\n]*/g;
   const before = text.slice(0, open).replace(BLANK, ' ');
-  if (/\bstr\s*\.\s*(?:format(?:_map)?|__mod__)\s*\(/.test(before)) fail(name + "'s <style> run is formatted by a call standing before its opening literal (str.format, str.format_map or str.__mod__ with the run as its first argument), so its text is not what the page serves");
+  if (/\bstr\s*\.\s*\w+\s*\(/.test(before)) fail(name + "'s <style> run is formatted by a call standing before its opening literal (any str.<method>( with the run as its first argument: str.format, str.format_map, str.__mod__, str.replace or any other), so its text is not what the page serves");
   const rest = text.slice(after).replace(BLANK, ' ');
   if (/%|\.\s*\w+\s*\(/.test(rest)) fail(name + "'s <style> run is formatted by a % or a method call on the run (.format, .format_map, .__mod__, .replace or any other call, whatever the whitespace around its dot and paren) standing after its closing literal (anywhere in the helper's body outside a literal or a comment), so its text is not what the page serves");
   const run = text.slice(open, close + '</style>"'.length);
