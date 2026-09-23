@@ -270,8 +270,11 @@ test('the file review: L3 and L6 record the remote picture\'s tab as the one new
   assert.ok(L3.includes('a plain click on a LOADED remote picture, its control, and a Cmd/Ctrl-click on it, three gestures through one arm, all call `openUrlTab`'), 'L3 names the three gestures');
   assert.ok(L3.includes('The modified click opens the picture\'s own address and never the kernel\'s /file URL, since openFigure\'s web arm runs before its /file-tab branch'), 'L3 corrects the modified click');
   /** The clause of `text` in which the three gestures open the tab, from the plain click on a loaded remote picture to "open a
-   *  top-level tab": it names the control and the Cmd/Ctrl-click, and carries the condition beside them, the control at any time
-   *  and the two clicks on the picture where the press reaches it, the Comments panel closed or the pointer coarse. Keyed on the
+   *  top-level tab": it names the control and the Cmd/Ctrl-click, and carries the condition beside them, the control by a click at
+   *  any time and by Enter or Space while it is in view, the plain click on the picture with the Comments panel closed, and the
+   *  Cmd/Ctrl-click where the press reaches it, the panel closed or the pointer coarse, neither click on a picture inside a fold's
+   *  own summary, whose click toggles the fold (the file review's round 14, extra8-1: the condition had given the plain click the
+   *  modified click's, while with the panel open a plain click stands down on every pointer). Keyed on the
    *  property and not the bytes (the file review's round 9, regression-1: the pins on L6 and open point 11 held the unconditioned
    *  phrases by text, so the condition round 8's fresh-1 put in every other home could never be red in these two). */
   const gesturesConditioned = (text, home) => {
@@ -282,7 +285,7 @@ test('the file review: L3 and L6 record the remote picture\'s tab as the one new
     const clause = text.slice(at, end);
     assert.match(clause, /, its (?:Open the picture )?control,/, home + ' names the control among the gestures: ' + clause);
     assert.match(clause, /and a Cmd\/Ctrl-click on it\b/, home + ' names the Cmd\/Ctrl-click among the gestures: ' + clause);
-    assert.match(clause, /\(the control at any time, and the two clicks on the picture where the press reaches it, the Comments panel closed or the pointer coarse\b/, home + ' carries the condition beside the gestures (the control at any time; the two clicks where the press reaches the picture, the Comments panel closed or the pointer coarse): ' + clause);
+    assert.match(clause, /\(the control by a click at any time and by Enter or Space while it is in view, the plain click on the picture with the Comments panel closed, and the Cmd\/Ctrl-click where the press reaches it, the panel closed or the pointer coarse, neither click on a picture inside a fold's own summary, whose click toggles the fold\b/, home + ' carries the condition beside the gestures (the control by a click at any time and by Enter or Space while in view, the plain click with the Comments panel closed, the Cmd\/Ctrl-click where the press reaches the picture, neither click in a fold\'s own summary), a sentence pin on the condition\'s words: ' + clause);
     return clause;
   };
   gesturesConditioned(L6, 'L6');

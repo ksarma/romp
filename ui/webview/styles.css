@@ -5033,9 +5033,11 @@ body.filebrowse-open { overflow: hidden; }
    the tab from inside it (file-view.ts FIGURE_LINK_SET); a dead section link keeps its href, owns its click and holds no dress inside
    it. Its picture stands at full ink with the dress, the words that take the link's colour are dimmed by it, and a child the sheet
    colours itself, bold words or inline code, keeps its own ink; its dotted underline, help cursor and title still say it is dead, and a
-   dead link with no dress keeps the opacity, pixel for pixel. So every state from which a gesture opens the tab, inside a dead link too
-   and the press held, paints the dress at the token's own ratio in both themes (4.83:1 dark, 4.90:1 light), and the family's accent
-   border under the pointer at 7.87:1 dark and 3.79:1 light against its hover wash, read by pixels in file-figure-open-browser.test.ts
+   dead link with no dress keeps the opacity, pixel for pixel. So every state from which a gesture opens the tab, inside a dead link
+   too and the press held, paints the dress at 3:1 or better in both themes: the token's line at the token's own ratio (4.83:1 dark,
+   4.90:1 light), the mark's outline in each of its states and the web control's border at rest, revealed by the pointer over its
+   picture, under any focus and under a Space press from it, and the family's accent border at 7.87:1 dark and 3.79:1 light against its
+   hover wash, the web control's under the pointer and in a pointer press, read by pixels in file-figure-open-browser.test.ts
    (paintedRatio) and, but for the press, composed from the declared opacities in theme-parity.test.ts (a scale is not an opacity); in
    VS Code, whose editor ground the dark theme's --bg follows, the token's states clear 3:1 on a neutral editor ground up to #404040
    (3.00:1) and fall under at #414141 (2.96:1), and on a light one from #efefef (3.00:1), while the accent, the button family's colour

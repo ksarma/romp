@@ -8363,7 +8363,8 @@ under the size floor, a figure inside a link holding more than it), wears an "Op
 button of the bar's family (icons.ts `ICON_EXPAND`, two arrows out of opposite
 corners, for a picture from the file tree, and `ICON_OUTBOUND`, an arrow leaving a box, for a picture from the web, whose
 control names the host in its title and aria-label and wears `fv-figopen-web` beside the class below, the sheets' dashed
-rule for an open that leaves for another host, the picture's own title carrying the address after an author's title, the
+rule for an open that leaves for another host, the picture's own title carrying the address after an author's title (origin
+plus path through `shownAddress`, since the fixes for the file review's round 14, correctness-1), the
 dress re-decided with the control (`dressFigureControl`; the file review's round 11, ui-1 with extra8-1: a remote and a
 local picture had presented one surface before the click); `button.fileview-btn.fileview-icon.fv-figopen`, the words in its
 title and aria-label, found by its mark
@@ -8457,9 +8458,13 @@ picture opened from a figure should take a row instead is the owner's (open poin
 follow-on adds (the file review's HIGH 1; L6): a plain click on a LOADED remote picture, its control, and a
 Cmd/Ctrl-click on it, three gestures through one arm, all call `openUrlTab` (`window.open(href, "_blank",
 "noopener,noreferrer")` in the web dashboard; the function's other arm, the host's openExternal, is the VS Code
-webview's, and the clause below holds in either arm; the control at any time, and the two clicks on the picture where
-the press reaches it, the Comments panel closed or the pointer coarse, since with the panel open on a fine pointer the
-layer's overlay takes a click on the picture, modified or not, and offers a comment), a top-level navigation to the
+webview's, and the clause below holds in either arm; the control by a click at any time and by Enter or Space while it
+is in view, the plain click on the picture with the Comments panel closed, and the Cmd/Ctrl-click where the press
+reaches it, the panel closed or the pointer coarse, since with the panel open a plain click on the picture is the
+panel's comment offer (on a coarse pointer the press reaches the figure listener, which stands down, asideOpen) and on
+a fine pointer the layer's overlay takes a click on the picture, modified or not, and offers a comment, and neither
+click on a picture inside a fold's own summary, whose click toggles the fold (figureFoldOf); the file review's round
+14, extra8-1: this clause had conditioned the plain click as the modified one), a top-level navigation to the
 picture's address: a second,
 differently kinded, credentialed request to a host the page had requested the image from, since a figure opens a tab
 only once LOADED, and the page's image request to that host preceded its load (answered by the host, or by the
@@ -8523,7 +8528,11 @@ focus, the button family's press cue is off on it since the release that opens t
 pixel rows, a modal 1.59:1 dark and 1.39:1 light), and a dead link holding either dress dims by colour and not by opacity, its words
 that take the link's colour dimmed and a child the sheet colours itself keeping its own ink, since an href-less dead link owns no click
 and a tap, a click or Enter opens the tab from inside it, so every state a gesture opens the tab from, the press held included, paints
-the dress at the token's own ratio in both themes, read by pixels and, but for the press, composed from the declared opacities, and the
+the dress at 3:1 or better in both themes, the token's line at the token's own ratio (4.83:1 dark, 4.90:1 light), the mark's outline in
+each of its states and the web control's border at rest, revealed by the pointer over its picture, under any focus and under a Space
+press from it, and the family's accent border at 7.87:1 dark and 3.79:1 light against its hover wash, the web control's under the
+pointer and in a pointer press on a fine pointer, under touch emulation and on the trackpad, read by pixels and, but for the press,
+composed from the declared opacities, and the
 token's states clear 3:1 in VS Code on a neutral editor ground up to #404040 and on a light one from #efefef, the family's accent hover
 border held on each theme's own ground; the painted-contrast ask of 2026-09-23, the press cue on the maintainer's ruling within it,
 where at 0.8 the control read 2.46:1 by pixels on a
@@ -8700,8 +8709,10 @@ L6. **No kernel change, no new route; one new kind of request leaves the machine
 route: a Back or Forward open fetches the file through the same `/file` route the link's open used, a figure's open in
 the viewer fetches the picture through it as the report's paint did, and the trail lives in the page. One request is
 new (the file review's HIGH 1): a plain click on a loaded remote picture, its Open the picture control, and a
-Cmd/Ctrl-click on it (the control at any time, and the two clicks on the picture where the press reaches it, the Comments
-panel closed or the pointer coarse; L3, and the file review's round 9, regression-1, which found this home and open
+Cmd/Ctrl-click on it (the control by a click at any time and by Enter or Space while it is in view, the plain click on the
+picture with the Comments panel closed, and the Cmd/Ctrl-click where the press reaches it, the panel closed or the pointer
+coarse, neither click on a picture inside a fold's own summary, whose click toggles the fold; L3, the file review's round
+14, extra8-1, and its round 9, regression-1, which found this home and open
 point 11 without the condition round 8's fresh-1 put in every other) open a top-level tab at the picture's address (L3,
 `openUrlTab`), a second, differently kinded,
 credentialed request: a request of type document to a host the page had requested the image from, carrying cookie
@@ -8714,10 +8725,11 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word, given on 2026-09-22
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools,
-upstream or tests alone (53 files, the ledger entry's where line; run 2026-09-23 at the head that carries the entries two of main's
-censuses owe this follow-on's modules, after the merge of the fork's main, where the merge-base is fa3ef54b5, the fork's main the
+upstream or tests alone (53 files, the ledger entry's where line; run 2026-09-23 at the head that carries the fixes ruled in the
+file review's round 14, where the merge-base is fa3ef54b5, the fork's main the
 branch merged after the painted-contrast ask of 2026-09-23, its tip the merge of the fork's batch PR 907, and the listing is the
-branch's whole delta over it; the run at the head that carries that ask and the merge of the fork's main after it, from the
+branch's whole delta over it; the run at the head that carries the entries two of main's censuses owe this follow-on's modules,
+after the merge of the fork's main, from the merge-base fa3ef54b5, listed the same 53; the run at the head that carries that ask and the merge of the fork's main after it, from the
 merge-base fa3ef54b5, listed 51, before ui/webview/compact-seam-exec.test.ts and ui/webview/spacer-measure.test.ts, two censuses
 that batch PR brought, joined the delta in those entries (the class mutators with no constant class gained the figure control's
 two, the modules no page bundle loads the three readers this follow-on's tests import, and the writes of a view property the
@@ -9098,15 +9110,17 @@ Playwright browser).
     gestures and asked that the outbound case be made visible before it happens; both roads stay priced here, and (b) is
     the road not taken (the file review's round 11, ui-2 with extra8-2: the point had stood as a two-road offer after the
     decision). (a) as built, the road taken: a plain click on a loaded remote picture, its control, and a Cmd/Ctrl-click on
-    it (the control at any time,
-    and the two clicks on the picture where the press reaches it, the Comments panel closed or the pointer coarse; L3)
+    it (the control by a click at any time and by Enter or Space while it is in view,
+    the plain click on the picture with the Comments panel closed, and the Cmd/Ctrl-click where the press reaches it, the
+    panel closed or the pointer coarse, neither click on a picture inside a fold's own summary, whose click toggles the
+    fold; L3)
     open a top-level tab at the picture's address, a document request to a host the page had requested the image from that carries cookie
     classes the image request did not (L3's table), where before the follow-on only an author's link did; one gesture
     opens every picture, remote or local, and the tab is observed as a request by
     file-view-figure-chosen-browser.test.ts from each of the three gestures, and since the fixes for the file review's
     round 11 (ui-1 with extra8-1) the surface says where the open goes before the click: for a web target the control's
     title, aria-label, class and glyph name the outbound open and its host, and the picture's own title carries the
-    address, an author's title kept before it (L3), and since the fixes for the file review's round 12 (fresh-1) a web picture
+    address as origin plus path, an author's title kept before it (L3), and since the fixes for the file review's round 12 (fresh-1) a web picture
     that wears no control, one under the floor, wears the dashed dress itself, an outline keyed on the mark `data-fv-figweb`
     that `dressFigureMark` sets right after the title, on hover on a fine pointer and at rest where hover is none or any pointer
     is coarse (L3); (b) the narrow road, not taken: the tab for the

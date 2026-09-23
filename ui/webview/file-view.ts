@@ -5006,11 +5006,15 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
 // holding the figure alone), never a wrapper around it: the panel pairs pictures by img order and data-fv-src, the regions
 // layer wraps THE img, the reader's place and the anchor map read the flow as the browser laid it, and a wrapper standing in
 // the author's flow changed a figure's own layout (the regions layer's 2026-09-06 review). Outside a link holding the figure,
-// so the author's link keeps the figure's click and the control's click is its own. A figure inside a link that holds MORE
-// than the figure (text beside it, `[![alt](src) caption](target)`, an `<a>` with a caption) gets no control (linkAbove): the
-// climb leaves such a link standing over the img, so the control went inside the author's link, nested interactive content
-// whose one click the links listener took as the link's and this one as the control's, two opens and a phantom entry on the
-// trail (the review's round 1); there the figure is the author's link, as its plain click is.
+// so the author's link keeps the figure's click and the control's click is its own. A figure inside a link a click can follow
+// (FIGURE_LINK_SET, figureLinkOf: a web address, a section, a file) that holds MORE than the figure (text beside it,
+// `[![alt](src) caption](https://...)`, an `<a href>` with a caption) gets no control (linkAbove): the climb leaves such a
+// link standing over the img, so the control went inside the author's link, nested interactive content whose one click the
+// links listener took as the link's and this one as the control's, two opens and a phantom entry on the trail (the review's
+// round 1); there the figure is the author's link, as its plain click is. A dead link or an author's named anchor is not
+// such a link, since no click of theirs owns the figure, so a captioned picture inside one keeps its control, after the
+// picture inside the anchor (the file review's round 12, correctness-1 with ui-1). Nor is a fold's own summary, whose click
+// the picture's yields to (figureFoldOf): linkAbove does not read it, so a picture there keeps its control, which opens it.
 // Whether the control stands is DECIDED FROM THE FIGURE AS IT IS NOW, by one function (decideFigureControl, the one place a
 // control is added or removed), and decided again at every event that changes what it reads: the paint (mdBlock,
 // addFigureControls), the picture's load and its error (armFigureControls, one capture-phase pair on the body), and each
@@ -5033,7 +5037,8 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
 // that prose). A
 // LOADED figure under the floor on either side (FIGOPEN_MIN_PX, figureTooSmall: a badge, an inline icon, a figure the column
 // narrowed under it) gets none, one with nothing to open (figureTarget: no source, a `data:` candidate) gets none, one
-// inside a link holding more than it (linkAbove) gets none, and every other loaded figure gets one. A verdict that changed
+// inside a link a click can follow that holds more than it (linkAbove over FIGURE_LINK_SET, a dead link or a named anchor
+// not one) gets none, and every other loaded figure gets one. A verdict that changed
 // removes the control that stands (handing the keyboard to the viewer's body first when the control holds it,
 // removeFigureControl) or adds the one that is missing; one that did not leaves the figure as it is, so every
 // caller runs the decision as often as its event fires. This is the class the file review named: a value measured once
@@ -5050,7 +5055,9 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
 // a 381 px re-open the 761 by 76 picture's paint-time control left at its load, the picture laid out 324 by 32; at 900 it
 // stood).
 // The sheets lay it over the figure's top-right corner from that place with no measuring (`.fileview-md .fv-figopen`: a zero-width margin box aligned to the line's top), transparent until the pointer is over the figure or over
-// it, or a keyboard focus reaches it, and the web control under any focus; always in the tab order. No mouse press focuses the
+// the control, or a keyboard focus reaches it, and the web control under any focus, and kept visible at rest where hover is
+// none or any pointer is coarse (the sheets' at-rest rule, under screen: a local control at 0.8, a web one at 1, never in
+// print); always in the tab order. No mouse press focuses the
 // web control (the body's mousedown listener), and Enter or Space opens it only while it is in view (controlInView). A figure
 // the author floated by its align attribute stacks sideways, so the control floats with it (the -left and -right classes). It has no text of its own and the text walks skip
 // it as a control (anchor-map.ts and reader-place.ts CONTROL_CLASSES). A URL document (openUrlView) gets none: its figures
