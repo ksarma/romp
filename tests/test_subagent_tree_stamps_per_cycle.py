@@ -1692,10 +1692,15 @@ class Guards(_World):
         flat place and islink (2 stats, 1 lstat), _subagent_tree's root lstat (1 lstat, the raise), and the fold of the
         standing resolution's file (1 stat). So the census under the tree over one pusher cycle of CALLS reads is
         {lstat: CALLS x (2A + 1), stat: CALLS x A x (D + 3)}, every call failing. None of them moves a counter: hit, miss,
-        served and evict stay at 0, and dirStats moves by 1 alone, the project directory's stamp, which the walk now takes
-        since a fault excludes its own tree and nothing else (outside the tree, readable, an own stat held for the cycle:
-        the miss-walk term). The walk's listing and per-entry stats of the project directory are outside the tree too, the
-        miss-walk term's."""
+        served and evict stay at 0. dirStats moves by 1, and that 1 is one os.stat: _dir_stamp's stat of the project
+        directory (the transcript's parent) in _subagent_file_walk, which the walk now reaches since a fault excludes its own
+        tree and nothing else. The project directory lies outside the mode-000 tree, so that stat succeeds where every stamp
+        stat under the tree fails, and _dir_stamp counts only a stat that succeeds; the tree validation's lstats, dirStats's
+        other half, never run, the root's lstat raising first. The cycle's first walk takes the stat and the scope holds it
+        as an own stat, which the later walks are served. The cost home derives this 1 in its unreadable-tree
+        entry, as each walk's project-directory part, a pointer to the project-directory stamp of its entry for the miss
+        walk over the own tree (an own stat, once per cycle, shared). The walk's listing and per-entry stats of the project
+        directory are outside the tree too, that same entry's, and move no counter."""
         if os.geteuid() == 0:
             self.skipTest("permission bits do not bind root: no EACCES to drive")
         sess = self.sub.parent
@@ -1720,7 +1725,8 @@ class Guards(_World):
         got = tuple(d[k] for k in STAT_KEYS)
         self.assertEqual(got, (0, 0, 0, 0, 1),
                          "(hit, miss, served, evict, dirStats) over the cycle: %r; keyed on (0, 0, 0, 0, 1): the failed calls under the "
-                         "tree move no counter, and dirStats moves by the project directory's one stamp stat alone" % (got,))
+                         "tree move no counter, and dirStats moves by _dir_stamp's one os.stat of the project directory alone (the "
+                         "cost home's unreadable-tree entry, its project-directory part)" % (got,))
 
     def test_a_root_gone_mid_cycle_with_an_entry_moves_the_gen_and_records_its_eviction_while_a_held_sibling_stays_served(self):
         """_subagent_tree's missing-root pop path (a session's tree removed while the walk memo held it): a pop that removed
@@ -2658,11 +2664,13 @@ class EvictionTableLock(_World):
         vouched. Under the lock the second eviction waits for the first to finish, so its store lands last: r's record
         g0 + 1, and False. Keys on that answer and on the record.
 
-        The mutants, each applied alone to the locked kernel: the store taken outside the lock reds this case (the paused
-        store's value was computed before the pause, so the earlier value overwrites the later one, with max or without);
-        the store without max is green, and equivalent while the store is under the lock: the increment and the store run
-        in one critical section, _subagent_root_evicted is the table's one writer and holds the gen's one increment, so
-        each store's g exceeds every value stored before it and max(existing, g) is g on every call."""
+        The mutants, each applied alone to the locked kernel: the store taken outside the lock reds this case and the
+        end-to-end case below (the paused store's value was computed before the pause, so the earlier value overwrites the
+        later one, with max or without). The store without max, which round 2 of #882's group E listed among the mutants,
+        is equivalent under the one lock and cannot fail a case: the increment and the store run in one critical section,
+        _subagent_root_evicted is the table's one writer and holds the gen's one increment, so each store's g exceeds every
+        value stored before it and max(existing, g) is g on every call. So the out-of-order window is pinned by the store
+        taken outside the lock, not by the store without max; max stays in the kernel as ruled."""
         table = _PausingTable()
         watch = self._eviction_world(table)
         r, _s1, _s2 = self._roots()
@@ -2767,7 +2775,8 @@ class DependencyKey(_World):
     (round 2 of #882, group B): the agent-file memo's hit and _awaiting_nest's held launch fold replay the pairs the walk
     noted (_subagent_file_notes_replay), where before they recorded nothing for the sibling's tree; a replayed key that
     disagrees with a fresher key the same build reported for the path is recorded as the disagreement (_chat_build_deps),
-    which no re-stat equals; the project directory stays out of every record, the residual a case here witnesses. Driven
+    which no re-stat equals; the project directory stays out of every record, the residual two cases here witness, one
+    for a build that found the file nowhere and one for a build that found it. Driven
     through the real _pusher_cycle, with the
     build's record shape (build_session's literal) open around the real _session_awaiting."""
 
@@ -3175,6 +3184,98 @@ class DependencyKey(_World):
                              "missing is not rebuilt for it (stated in _subagent_file's docstring)" % (road, moved))
         self.assertEqual(km._subagent_file(self.path, aid), wf / ("agent-%s.jsonl" % aid),
                          "the lookup itself recovers: the memo's stamp of the project directory moved, so it walks and finds the file")
+
+    def test_a_sibling_directory_appearing_after_a_build_that_found_the_file_is_recorded_by_no_later_build_on_any_road(self):
+        """The same residual where round 2 of #882's ruling on group B names it: a new sibling session directory that
+        appears after a build that already FOUND the agent's file (the case above is its twin for a file found nowhere).
+        The file lies under an existing sibling's tree (a /clear fork's), so the walk that found it listed the project
+        directory and stamped it for the agent-file memo alone, and the memo holds the found file. Then a second sibling
+        session's directory appears with a subagents tree of its own, sorted after the first, so a walk that finds the file
+        under the first never reaches it. Keys on every key the found build recorded re-evaluating equal after the
+        appearance (its tab is not rebuilt for it), and on three later chat builds in three cycles, one per road (the
+        lookup walks again, the memo's stamp of the project directory having moved; the agent-file memo answers; a reader
+        with no record open looks first and the held launch fold answers): each is answered the same file, and each
+        records no path under the new sibling's directory and not the project directory. Green by design, and not a
+        claim that the state is wanted: a kernel that records the project
+        directory, or the new sibling's tree for a lookup that found the file elsewhere, closes the residual and turns
+        this case red."""
+        proj = Path(self.path).parent
+        aid = "a%016x" % 0x7cf8
+        self.live_aids.append(aid)
+        other = self._sibling(workflows=True)                      # the first sibling's tree: the root and workflows/
+        wf = other / "workflows" / ("wf_%016x" % 0x7cf8)
+        wf.mkdir()
+        self._add_agent(wf, 245, aid)                              # the agent's file, under the first sibling's tree
+        found = wf / ("agent-%s.jsonl" % aid)
+        _age(other)
+        t = time.time_ns() - AGED_NS
+        os.utime(str(proj), ns=(t, t))                             # the project directory back-dated too, so the new sibling's
+        rec = {}                                                   #  appearance moves its stamp whatever the clock's grain
+
+        def build(road):
+            def job(now, live_map, **kw):
+                walks, asked = [], []
+                if road == "fold":
+                    first = []
+                    with self._counting("_subagent_file", aid, first):
+                        km._session_awaiting(SID, self.path, True)   # a reader with no record open: its lookup holds the fold
+                    rec["fold-first"] = first
+                    rec["fold-held"] = (self.path, aid) in _scope()["launches"]
+                with self._counting("_subagent_file_walk", aid, walks), self._counting("_subagent_file", aid, asked):
+                    rec[road] = self._chat_build()
+                rec[road + "-calls"] = (walks, asked)
+            return job
+        km._turn_notify_tick = build("found")
+        km._pusher_cycle()
+        walks, asked = rec.get("found-calls", ([], []))
+        entry = km._SUBAGENT_FILE_CACHE.get((self.path, aid), ((), "unset"))
+        self.assertEqual((len(walks), set(walks + asked), entry[1]), (1, {found}, found),
+                         "premise: the found build's lookup walked once and found the file under the first sibling's tree, and the "
+                         "memo holds it: walks %r, answers %r, memo %r" % (walks, asked, entry[1]))
+        self.assertIn(str(proj), [d for d, _m in entry[0]], "premise: the memo is stamped on the project directory the walk listed")
+        beside = str(self.sub / ("agent-%s.jsonl" % aid))
+        walked = [beside, str(other), str(other / "workflows"), str(wf)]   # the absent beside-path and the sibling tree's directories
+        recorded0 = dict(rec["found"][1]["task_outs"])
+        self.assertEqual([p for p in walked if p not in recorded0], [],
+                         "premise: the found build recorded the walk's keys, the absent beside-path and every directory of the sibling's tree")
+        new_sid = "11111111-2222-3333-4444-7c7c7c7c7c7e"          # sorted after the first sibling's
+        (proj / (new_sid + ".jsonl")).write_text("")
+        new = km._subagents_dir(proj / (new_sid + ".jsonl"))
+        (new / "workflows").mkdir(parents=True)                    # the new sibling session's directory and its tree appear
+        self.addCleanup(km._SUBAGENT_TREES.pop, str(new), None)
+        self.addCleanup(km._SUBAGENT_META_CACHE.pop, str(new), None)
+        new_dir = str(new.parent)
+        self.assertLess(str(other.parent), new_dir, "premise: the new sibling's directory sorts after the one holding the file")
+        now0 = dict(km._chat_sig_deps(SID, rec["found"][1])[0])
+        moved0 = sorted(os.path.relpath(p, str(proj)) for p in recorded0 if now0.get(p) != recorded0[p])
+        self.assertEqual(moved0, [],
+                         "keys the found build recorded that the new sibling's appearance moved: %r; keyed on none, the residual: the "
+                         "project directory is no build's dependency, so a sibling session directory appearing after a build that "
+                         "found the file does not rebuild its tab" % (moved0,))
+        for road in ("walk", "memo", "fold"):
+            km._turn_notify_tick = build(road)
+            km._pusher_cycle()
+        got = tuple((road, len(rec.get(road + "-calls", ([], []))[0]), bool(rec.get(road + "-calls", ([], []))[1]))
+                    for road in ("walk", "memo", "fold"))
+        self.assertEqual(got, (("walk", 1, True), ("memo", 0, True), ("fold", 0, False)),
+                         "premise, (road, walks, _subagent_file called) per later chat build: the first walked again (the memo's stamp "
+                         "of the project directory moved), the second was answered by the agent-file memo, the third never called "
+                         "_subagent_file (the held fold answered): %r" % (got,))
+        answers = {road: set(sum(rec[road + "-calls"], [])) for road in ("walk", "memo")}
+        answers["fold"] = set(rec.get("fold-first", []))
+        self.assertEqual((answers, rec.get("fold-held")), ({"walk": {found}, "memo": {found}, "fold": {found}}, True),
+                         "premise: the walk and the memo answered the file where it was found, and the fold the chat build was served "
+                         "is held from a lookup that answered it: %r" % (answers,))
+        for road in ("walk", "memo", "fold"):
+            recorded = dict(rec[road][1]["task_outs"])
+            self.assertEqual([p for p in walked if p not in recorded], [],
+                             "premise: the %s build recorded the walk's keys (the absent beside-path, the sibling tree's directories)" % road)
+            self.assertNotIn(str(proj), recorded, "the project directory is no build's dependency (the %s build)" % road)
+            under = sorted(os.path.relpath(p, str(proj)) for p in recorded if p == new_dir or p.startswith(new_dir + os.sep))
+            self.assertEqual(under, [],
+                             "paths under the new sibling's directory the %s build recorded: %r; keyed on none, the residual: a sibling "
+                             "session directory that appears after a build that found the file, sorted after the tree holding it, is "
+                             "recorded by no later build while the file stays where it was found" % (road, under))
 
     def test_the_chat_signature_re_stats_every_directory_the_walk_recorded_so_a_change_in_any_sibling_directory_rebuilds_the_tab(self):
         """The dependency-note signature term of the cost home (_subagent_tree_memo_report's docstring; round 2 of #882,
