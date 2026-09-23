@@ -62,7 +62,12 @@
 // a click, a press dragged off or a right or a middle press, leaves the keyboard on it, any focus it holds paints its line at 3:1 in
 // both themes, and Enter or Space opens it only while it is in view, the body and a table that scrolls on its own each read, on a
 // fine pointer, on the laptop and under touch, and in the feed and the Files pane, each pin red over the viewer before those fixes
-// and the keep checks beside them green there by design. Red over
+// and the keep checks beside them green there by design. A picture inside a fold's summary is read in cases of their own after
+// those (the file review's round 14, fresh-1): inside a details element's own first summary, a plain click and a Ctrl-click on a
+// remote picture under the floor and on a local picture, a plain click on a remote picture over the floor and on one inside a
+// named anchor, each toggle the fold and open nothing, the remote pictures wearing no address line and no mark, each red over the
+// viewer before the summary predicate by the open beside the toggle and by the line and the mark, while the web control inside the
+// summary opens once with the fold shut and the pictures of a stray summary open as anywhere else, controls green there by design. Red over
 // the unchanged viewer at the first control assertion (no control exists), the outbound
 // case red at the head before it, where the two controls presented one surface, and the link-shapes case red at the round-12
 // head, where the title and the control read any anchor while the click did not, and the two under-the-floor cases red at that head too, the hover read and the at-rest read, where no rule dressed the picture. Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid and example.test addresses,
@@ -1794,3 +1799,173 @@ for (const pointer of ["fine", "laptop"] as Pointer[]) {
     });
   });
 }
+
+// ── a picture inside a fold's summary: the fold takes the click, plain or modified, and the control stays ───────────────────────
+// (the file review's round 14, fresh-1: the figures' click listener read no summary, so one click on a picture inside a details
+// element's own first summary toggled the fold AND opened the picture, a remote picture's tab or a local picture's open in the
+// viewer in place of the report, and a Ctrl-click toggled the fold too and opened the picture's tab; the picture under the floor
+// wore the address line and the outbound mark, which promised the open.) The report: six pictures, each in a summary, the remote
+// ones from the second server through the gate: a remote picture under the floor (20 by 20, "stiny"), a local picture ("slocal")
+// and a remote picture over the floor ("sbig"), each in a details element's own first summary; a remote picture inside an author's
+// named anchor inside such a summary ("snamed"); and a remote and a local picture each in a stray summary outside any details
+// ("stray", "straylocal"), which toggles nothing. On a fine pointer in the dark theme, window.open stubbed to a record, each fold's
+// toggles recorded by a MutationObserver on its open attribute as the click's task runs (so a navigation that replaces the report
+// after the click cannot hide the toggle), a Ctrl-click the key held around the click with its ctrlKey read back at the document,
+// and an open that must not happen read after a bounded settle (the viewer's navigation is a fetch and a paint, so the bar's name is
+// awaited up to 2 s for a change). Each case collects its cells, logs its record as diagnostics and asserts the cells once. The
+// first three are property pins read off the page, red over the viewer before the summary predicate (file-view.ts figureFoldOf) by
+// the open beside the toggle and by the title line and the mark; the fourth holds the ruling's two controls, green there by design.
+const FOLD_TEXT = "# Report\n\n" + PARA(1) + "\n\n"
+  + '<details><summary><img src="' + WEB + '/stiny.svg" alt="stiny"> Build badge</summary>\n\nfolded text one\n\n</details>\n\n' + PARA(2) + "\n\n"
+  + '<details><summary><img src="figs/plot.svg" alt="slocal"> Local screenshots</summary>\n\nfolded text two\n\n</details>\n\n' + PARA(3) + "\n\n"
+  + '<details><summary><img src="' + WEB + '/sbig.svg" alt="sbig"> Remote screenshots</summary>\n\nfolded text three\n\n</details>\n\n' + PARA(4) + "\n\n"
+  + '<details><summary><a name="fig-n"><img src="' + WEB + '/snamed.svg" alt="snamed"></a> A named anchor inside</summary>\n\nfolded text four\n\n</details>\n\n' + PARA(5) + "\n\n"
+  + '<summary><img src="' + WEB + '/stray.svg" alt="stray"> A stray summary</summary>\n\n' + PARA(6) + "\n\n"
+  + '<summary><img src="figs/plot2.svg" alt="straylocal"> A stray local summary</summary>\n\n' + PARA(7) + "\n";
+const FOLD_DOCS: Record<string, string> = { [REPORT]: FOLD_TEXT, [PLOT]: svg("#456"), [PLOT2]: svg("#654") };
+const FOLD_ALTS = ["stiny", "slocal", "sbig", "snamed", "stray", "straylocal"];
+type FoldFig = { alt: string; inSummary: boolean; ownSummary: boolean; w: number; h: number; title: string | null; mark: boolean; control: boolean };
+/** Every picture of the fold report: whether a summary holds it and whether that summary is its details element's own first
+ *  summary child, its laid-out box, its title, the outbound mark's attribute and the control standing after its anchor. */
+const foldFigs = (page: any): Promise<FoldFig[]> => page.evaluate(() => Array.from(document.querySelectorAll(".fileview-md img")).map((img) => {
+  let a: Element = img;
+  for (let p = a.parentElement; p && (p.localName === "a" || p.classList.contains("fc-imgwrap") || p.localName === "picture") && (p.localName !== "a" || (p.textContent || "").trim() === ""); p = a.parentElement) a = p;
+  const n = a.nextElementSibling;
+  const s = img.closest("summary");
+  const d = s ? s.parentElement : null;
+  const r = img.getBoundingClientRect();
+  return { alt: img.getAttribute("alt") || "", inSummary: !!s, ownSummary: !!s && !!d && d.localName === "details" && d.querySelector(":scope > summary") === s, w: r.width, h: r.height,
+    title: img.getAttribute("title"), mark: img.hasAttribute("data-fv-figweb"), control: !!n && n.hasAttribute("data-fv-figopen") };
+}));
+/** Until all six pictures of the fold report are loaded and out of the gate's placeholder, then three frames. */
+const foldLoaded = async (page: any): Promise<void> => {
+  await page.waitForFunction(() => { const imgs = Array.from(document.querySelectorAll(".fileview-md img")); return imgs.length === 6 && imgs.every((i) => !i.closest('[data-act="fv-load"]') && (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalWidth > 0); }, null, { timeout: 10000 });
+  await frames(page, 3);
+};
+/** The fold report open in the chat modal at 900 by 700: the remote pictures relayed to the second server (`port`), the local ones
+ *  loaded, the gate lifted, then all six loaded; window.open stubbed to a record and a capture listener on the document recording
+ *  each click's ctrlKey. */
+async function openFold(browser: any, port: number): Promise<{ page: any; errors: string[] }> {
+  const before = async (pg: any): Promise<void> => {
+    await pg.context().route((u: URL) => u.href.startsWith(WEB + "/"), async (route: any) => {
+      const a = await fromSecond(port, new URL(route.request().url()).pathname);
+      return route.fulfill({ status: a.status, contentType: a.type, body: a.body });
+    });
+  };
+  const o = await openViewer(browser, "chat", 900, 700, {
+    docs: FOLD_DOCS, before,
+    serve: (u) => { const p = u.pathname === "/file" ? u.searchParams.get("path") || "" : ""; return FOLD_DOCS[p] !== undefined && /\.svg$/.test(p) ? { status: 200, type: "image/svg+xml", body: FOLD_DOCS[p] } : null; },
+  });
+  await o.page.evaluate(() => { const w = window as any; w.__opened = []; w.__ctrl = []; window.open = ((u: unknown) => { w.__opened.push(String(u)); return { opener: null }; }) as unknown as typeof window.open; document.addEventListener("click", (ev) => { w.__ctrl.push((ev as MouseEvent).ctrlKey); }, { capture: true }); });
+  await o.page.waitForFunction(() => Array.from(document.querySelectorAll(".fileview-md img")).filter((i) => !i.closest('[data-act="fv-load"]')).every((i) => (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalWidth > 0), null, { timeout: 10000 });
+  await o.page.click('[data-act="fv-load"]');
+  await foldLoaded(o.page);
+  return o;
+}
+type FoldClick = { name: string; hit: string | null; toggled: string[]; opened: string[]; base: string | null; ctrlSeen: boolean[] };
+/** A click on the picture `alt` names (at 0.3 of its width and 0.6 of its height, scrolled to the body's centre), Control held
+ *  around it when `ctrl`, every fold shut first and its toggles recorded from then on: what the fold, window.open and the viewer
+ *  did. A navigation is read after the bounded settle and undone by Back, so the next cell starts on the report. */
+async function foldClick(page: any, alt: string, ctrl: boolean): Promise<FoldClick> {
+  await page.evaluate(() => { for (const d of Array.from(document.querySelectorAll(".fileview-md details"))) (d as HTMLDetailsElement).open = false; });
+  await frames(page, 2);
+  await page.evaluate(() => { const w = window as any; if (w.__mo) w.__mo.disconnect(); w.__toggled = []; const ds = Array.from(document.querySelectorAll(".fileview-md details")); w.__mo = new MutationObserver((recs) => { for (const r of recs) w.__toggled.push(ds.indexOf(r.target as Element) + ":" + (r.target as HTMLDetailsElement).open); }); for (const d of ds) w.__mo.observe(d, { attributes: true, attributeFilter: ["open"] }); w.__opened.splice(0); w.__ctrl.splice(0); });
+  const b = await page.evaluate((alt: string) => { const i = Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === alt)!; i.scrollIntoView({ block: "center" }); const q = i.getBoundingClientRect(); return { x: q.left + q.width * 0.3, y: q.top + q.height * 0.6 }; }, alt);
+  await frames(page, 2);
+  const hit = await page.evaluate(([x, y]: [number, number]) => { const e = document.elementFromPoint(x, y); return e ? e.localName + ":" + (e.getAttribute("alt") || "") : null; }, [b.x, b.y]);
+  if (ctrl) await page.keyboard.down("Control");   // mouse.click takes no modifiers option: the key is held around it
+  await page.mouse.click(b.x, b.y);
+  if (ctrl) await page.keyboard.up("Control");
+  const toggled = await page.evaluate(() => (window as any).__toggled.slice());
+  try { await page.waitForFunction(() => (document.querySelector(".fileview-base") || { textContent: "" }).textContent !== "report.md", null, { timeout: 2000 }); } catch { /* no navigation within the bound */ }
+  await frames(page, 3);
+  const at = await base(page);
+  const got = { name: alt + (ctrl ? " Ctrl-click" : " plain click"), hit, toggled, opened: await opened(page), base: at, ctrlSeen: await page.evaluate(() => (window as any).__ctrl.splice(0)) };
+  if (at !== "report.md") {
+    await page.click(".fileview-nav-back");
+    await page.locator(".fileview-base", { hasText: "report.md" }).waitFor({ timeout: 10000 });
+    await foldLoaded(page);
+  }
+  return got;
+}
+/** One fold case on its own browser and second server: the report open and loaded, the six pictures read and checked for the scene
+ *  (six, four in a details element's own summary and two in a stray one, stiny under the floor), then `body` run with a `cell`
+ *  recorder whose cells are asserted together at the end, every record a diagnostic first. */
+async function foldCase(t: any, body: (page: any, figs: FoldFig[], cell: (what: string, want: unknown, got: unknown) => void, log: (r: unknown) => void) => Promise<void>): Promise<void> {
+  const served: string[] = [];
+  const second = await secondServer(served, { "/stiny.svg": [20, 20] });
+  const fails: string[] = [];
+  const cell = (what: string, want: unknown, got: unknown): void => { const w = JSON.stringify(want), g = JSON.stringify(got); t.diagnostic((w === g ? "ok " : "FAIL ") + what + ": want " + w + ", got " + g); if (w !== g) fails.push(what + ": want " + w + ", got " + g); };
+  try {
+    await inBrowser(t, async (browser) => {
+      const { page, errors } = await openFold(browser, second.port);
+      const figs = await foldFigs(page);
+      t.diagnostic("figures " + JSON.stringify(figs));
+      assert.deepEqual(figs.map((f) => f.alt), FOLD_ALTS, "the six pictures, loaded (the scene)");
+      assert.deepEqual(figs.map((f) => [f.inSummary, f.ownSummary]), [[true, true], [true, true], [true, true], [true, true], [true, false], [true, false]], "four in a details element's own summary, two in a stray summary (the scene)");
+      assert.ok(figs[0].w < 48 && figs[0].h < 48 && figs[2].w >= 48 && figs[2].h >= 48, "stiny under the floor and sbig over it (the scene): " + JSON.stringify([figs[0].w, figs[0].h, figs[2].w, figs[2].h]));
+      await body(page, figs, cell, (r) => t.diagnostic("record " + JSON.stringify(r)));
+      assert.deepEqual(errors, [], "no page errors");
+      await page.close();
+    });
+  } finally { await second.close(); }
+  assert.deepEqual(fails, [], "every cell as the fold's click requires:\n" + fails.join("\n"));
+}
+/** The cells of one click that the fold must take alone: the hit on the picture and, for a Ctrl-click, its ctrlKey read back (both
+ *  preconditions, asserted at once), then the fold's one toggle open, no window.open call and the viewer still on the report. */
+function foldTakes(c: FoldClick, index: number, cell: (what: string, want: unknown, got: unknown) => void, alt: string, ctrl: boolean): void {
+  assert.equal(c.hit, "img:" + alt, c.name + ": the click lands on the picture (a precondition)");
+  if (ctrl) assert.deepEqual(c.ctrlSeen, [true], c.name + ": a real Ctrl-click, its ctrlKey read back at the document (a precondition)");
+  cell(c.name + ": the fold toggles open, once", [index + ":true"], c.toggled);
+  cell(c.name + ": no window.open call", [], c.opened);
+  cell(c.name + ": the viewer stays on the report", "report.md", c.base);
+}
+test("in a browser (a fine pointer), a remote picture under the floor inside a details element's own first summary wears no address line and no outbound mark, and a plain click and a Ctrl-click on it each toggle the fold and open nothing (the file review's round 14, fresh-1: before the summary predicate the picture wore the line and the mark, and each click opened its tab beside the toggle; a property pin read off the page)", { timeout: 240000 }, async (t) => {
+  await foldCase(t, async (page, figs, cell, log) => {
+    const f = figs[0];
+    cell("stiny: no address line in its title", null, f.title);
+    cell("stiny: no outbound mark", false, f.mark);
+    assert.equal(f.control, false, "stiny wears no control, under the floor (a precondition)");
+    for (const ctrl of [false, true]) { const c = await foldClick(page, "stiny", ctrl); log(c); foldTakes(c, 0, cell, "stiny", ctrl); }
+  });
+});
+test("in a browser (a fine pointer), a local picture inside a details element's own first summary keeps its control, and a plain click and a Ctrl-click on the picture each toggle the fold and open nothing: no open in the viewer and no /file tab (the file review's round 14, fresh-1: before the summary predicate the plain click opened the picture in the viewer in place of the report and the Ctrl-click opened its /file URL in a tab, each beside the toggle; a property pin read off the page)", { timeout: 240000 }, async (t) => {
+  await foldCase(t, async (page, figs, cell, log) => {
+    cell("slocal: its control stays", true, figs[1].control);
+    for (const ctrl of [false, true]) { const c = await foldClick(page, "slocal", ctrl); log(c); foldTakes(c, 1, cell, "slocal", ctrl); }
+  });
+});
+test("in a browser (a fine pointer), a remote picture over the floor inside a details element's own first summary, and one inside an author's named anchor inside such a summary, each wear no address line and keep their control, and a plain click on either picture toggles its fold and opens nothing (the file review's round 14, fresh-1, consequences of the one predicate: a named anchor is no link of FIGURE_LINK_SET, so the fold takes the click through it; before the summary predicate each wore the line and opened its tab beside the toggle; a property pin read off the page)", { timeout: 240000 }, async (t) => {
+  await foldCase(t, async (page, figs, cell, log) => {
+    for (const [i, alt] of [[2, "sbig"], [3, "snamed"]] as Array<[number, string]>) {
+      cell(alt + ": no address line in its title", null, figs[i].title);
+      cell(alt + ": its control stays", true, figs[i].control);
+      const c = await foldClick(page, alt, false); log(c); foldTakes(c, i, cell, alt, false);
+    }
+  });
+});
+test("in a browser (a fine pointer), the fold's two controls: the web control of a remote picture over the floor inside a details element's own summary opens its tab once and leaves the fold shut, and a picture inside a stray summary outside any details opens as anywhere else, the remote one's tab on a plain click with its address line in the title, the local one in the viewer on a plain click and its /file URL in a tab on a Ctrl-click (the file review's round 14, fresh-1: controls, green before the summary predicate and after it by design, since a button inside a summary toggles nothing and the predicate reads no stray summary)", { timeout: 240000 }, async (t) => {
+  await foldCase(t, async (page, figs, cell, log) => {
+    await page.evaluate(() => { for (const d of Array.from(document.querySelectorAll(".fileview-md details"))) (d as HTMLDetailsElement).open = false; });
+    await page.evaluate(() => { const w = window as any; if (w.__mo) w.__mo.disconnect(); w.__toggled = []; const ds = Array.from(document.querySelectorAll(".fileview-md details")); w.__mo = new MutationObserver((recs) => { for (const r of recs) w.__toggled.push(ds.indexOf(r.target as Element) + ":" + (r.target as HTMLDetailsElement).open); }); for (const d of ds) w.__mo.observe(d, { attributes: true, attributeFilter: ["open"] }); w.__opened.splice(0); });
+    const cb = await page.evaluate(() => { const i = Array.from(document.querySelectorAll(".fileview-md img")).find((x) => x.getAttribute("alt") === "sbig")!; i.scrollIntoView({ block: "center" }); const n = i.nextElementSibling as HTMLElement; const r = n.getBoundingClientRect(); const ir = i.getBoundingClientRect(); return { ok: n.hasAttribute("data-fv-figopen"), x: r.left + r.width / 2, y: r.top + r.height / 2, ix: ir.left + ir.width / 2, iy: ir.top + ir.height / 2 }; });
+    assert.ok(cb.ok, "sbig's control stands right after it (a precondition)");
+    await page.mouse.move(cb.ix, cb.iy);   // the pointer over the picture reveals its control
+    await frames(page, 3);
+    await page.mouse.click(cb.x, cb.y);
+    await frames(page, 3);
+    const control = { toggled: await page.evaluate(() => (window as any).__toggled.slice()), opened: await opened(page), base: await base(page) };
+    log({ name: "sbig's control", ...control });
+    cell("sbig's web control inside the summary: its tab, once", [WEB + "/sbig.svg"], control.opened);
+    cell("sbig's web control inside the summary: the fold stays shut", [], control.toggled);
+    cell("stray: the address line in its title, as anywhere else", WEB_LINE(WEB + "/stray.svg"), figs[4].title);
+    const s = await foldClick(page, "stray", false); log(s);
+    cell("stray plain click: its tab", [WEB + "/stray.svg"], s.opened);
+    cell("stray plain click: the viewer stays on the report", "report.md", s.base);
+    const l = await foldClick(page, "straylocal", false); log(l);
+    cell("straylocal plain click: the picture in the viewer", "plot2.svg", l.base);
+    const lc = await foldClick(page, "straylocal", true); log(lc);
+    cell("straylocal Ctrl-click: its /file URL in a tab", [FILE_URL(PLOT2)], lc.opened);
+    cell("straylocal Ctrl-click: the viewer stays on the report", "report.md", lc.base);
+  });
+});

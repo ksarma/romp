@@ -2772,6 +2772,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // listener leaves to the browser, a web address of the markdown; a dead link with its href removed and an author's named
   // anchor are not in the set, no listener and no browser acts on them, and the click stays the figure's, so the title
   // dressFigureTitle reads from the same predicate stands on the picture, the file review's round 12, correctness-1 with ui-1),
+  // a picture inside a summary that toggles a fold (figureFoldOf: a details element's own first summary child, a sibling of
+  // FIGURE_LINK_SET that dressFigureTitle and dressFigureMark read too and linkAbove does not, so a control stays on the picture
+  // and opens it, a button inside a summary toggling nothing; the browser toggles the fold on the click, plain or modified, and
+  // the click is the fold's alone, the file review's round 14, fresh-1: one click toggled the fold and opened the picture, a
+  // remote picture's tab or a local picture's open in place of the report; a summary outside a details toggles nothing, and a
+  // picture inside one opens as anywhere else),
   // a picture the panel framed (panelMark: the card's, through the row's delegate), the Comments panel open (asideOpen: a plain
   // click is the panel's comment offer, onImageClick, and a drag its region; the regions layer's overlay takes the press on a
   // fine pointer, and on a coarse one the click reaches here and stands down), a drag that selected and ended on the picture
@@ -2794,6 +2800,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (control) { const img = figureOfControl(control); if (img) openFigure(img, ev); return; }
     const img = bareFigureOf(t, body);
     if (!img || figureLinkOf(img)) return;                       // a figure inside a link whose click is the link's (FIGURE_LINK_SET, the one predicate the title and the control read too): the links listener's own three, and a web anchor of the markdown (`[![alt](src)](https://...)`: linkMarkdownAnchors gives it target and rel and no class), the browser's own open of the author's link, never the picture beside it
+    if (figureFoldOf(img)) return;                                // a figure inside a summary whose click toggles a fold, plain or modified: the fold's click alone (figureFoldOf, which the title and the mark read too and the control does not)
     if (panelMark(t) && !wantsOwnTab(ev)) return;
     if (asideOpen && !wantsOwnTab(ev)) return;
     if (selectionOpenIn(box)) return;
@@ -5174,9 +5181,10 @@ function figureTooSmall(img: Element): boolean {
   const b = figureBox(img);
   return b !== null && (b.w < FIGOPEN_MIN_PX || b.h < FIGOPEN_MIN_PX);
 }
-/** The links whose click owns a figure inside them, ONE selector for the three readers of "whose click is this" (the figures'
+/** The links whose click owns a figure inside them, ONE selector for the three readers of "is this click a link's" (the figures'
  *  click listener's yield, dressFigureTitle's withholding of the picture's address line, linkAbove's withholding of the
- *  control): an anchor with an href (a web address of the markdown, `[![alt](src)](https://...)`, whose href the local-anchor
+ *  control). The one owner of a figure's click outside the links, a summary that toggles a fold, is figureFoldOf's, a sibling
+ *  and not a member, since linkAbove does not read it and the control stays on a picture in a summary. In the set: an anchor with an href (a web address of the markdown, `[![alt](src)](https://...)`, whose href the local-anchor
  *  pass leaves in place and the links listener leaves to the browser), a URL link and a section link (URL_LINK_CLASS,
  *  FRAG_LINK_CLASS, the links listener's own), and a path link (`[data-act="openpath"]`, its href taken off at mark time).
  *  NOT in the set, so a figure's click inside one stays the figure's: a dead link (file-view-links.ts DEAD_LINK_CLASS with its
@@ -5189,6 +5197,25 @@ export const FIGURE_LINK_SET = 'a[href], a.' + URL_LINK_CLASS + ', a.' + FRAG_LI
  *  link. The click listener and dressFigureTitle start it from the img; linkAbove from the parent of figureAnchor's climb. */
 export function figureLinkOf(from: Element): Element | null {
   return from.closest(FIGURE_LINK_SET);
+}
+/** The summary at or above `from` whose click toggles a fold, inside the Rendered box: a details element's own first summary child,
+ *  found by closest('summary') and bounded to the box, else null. A summary outside a details, or a later summary of one, toggles
+ *  nothing and is none. The other owner of a figure's click beside the links of FIGURE_LINK_SET, and a sibling of that set, not a
+ *  member: read by the figures' click listener (the fold takes the click, plain or modified), by dressFigureTitle (the picture's
+ *  address line withheld, since no click on the picture opens it) and by dressFigureMark (no outbound mark), and NOT by linkAbove,
+ *  so a picture inside such a summary keeps its control, whose click opens it and toggles nothing (measured in Chromium: a button
+ *  inside a summary does not toggle it; the file review's round 14, fresh-1: the summary had not been read, so one click on a
+ *  picture there toggled the fold and opened the picture as well, a credentialed tab for a remote picture and, for a local one,
+ *  the picture in the viewer in place of the report). A link of the set inside the summary still takes the click first (the
+ *  listener's figureLinkOf return), and a dead link or a named anchor, in no set, leaves the click to the fold. */
+export function figureFoldOf(from: Element): Element | null {
+  const box = from.closest(".fileview-md");
+  const s = from.closest("summary");
+  if (!box || !s || !box.contains(s)) return null;
+  const d = s.parentElement;
+  if (!d || d.localName !== "details") return null;
+  for (let c = d.firstElementChild; c; c = c.nextElementSibling) if (c.localName === "summary") return c === s ? s : null;
+  return null;
 }
 /** The link above `anchor` that figureAnchor's climb did not leave, one of FIGURE_LINK_SET (figureLinkOf). A control inside one
  *  is nested interactive content and the link's click too: a web address, a section, a file. A dead link, an anchor the
@@ -5261,15 +5288,16 @@ function dressFigureControl(b: HTMLElement, target: FigureTarget | null): void {
  *  picture, where the press reaches it): for a web target whose click is the figure's own (no link of FIGURE_LINK_SET holds the
  *  figure, figureLinkOf from the img as the click listener reads it: inside an anchor with an href, a URL, section or path link
  *  the click is the link's and the line is withheld; inside a dead link or an author's named anchor the click is the figure's
- *  and the line stands; the control after a link holding the figure alone carries its own words)
+ *  and the line stands; and no summary that toggles a fold holds it, figureFoldOf, since the fold takes the click on the picture,
+ *  plain or modified, and the control there carries its own words; the control after a link holding the figure alone carries its own words)
  *  the outbound address, origin plus path with no userinfo, query or fragment, on a line of its own after the author's title
  *  when one stands (figureWebTitleLine, shownAddress); for a file, or nothing to open, the author's title alone or none. The author's title is kept under FIGTITLE_MARK while the viewer's
  *  line stands, so the next decision restores it when the candidate is local again (a `<picture>` at a media change) and a
- *  decision never appends the line twice. Whatever the control's verdict: a remote picture under the floor wears no control and
- *  its plain click still opens the tab (the guide's sentence), so its title says so too, and the mark for the picture no control
+ *  decision never appends the line twice. Whatever the control's verdict: a remote picture under the floor wears no control and,
+ *  outside a fold's summary, its plain click still opens the tab (the guide's sentence), so its title says so too, and the mark for the picture no control
  *  stands on is dressFigureMark's, decided after it. Cursor unchanged. */
 function dressFigureTitle(img: Element, target: FigureTarget | null): void {
-  const web = target !== null && target.kind === "web" && figureLinkOf(img) === null;
+  const web = target !== null && target.kind === "web" && figureLinkOf(img) === null && figureFoldOf(img) === null;
   const held = img.getAttribute(FIGTITLE_MARK);
   if (web) {
     const author = held !== null ? held : img.getAttribute("title") || "";
@@ -5282,10 +5310,12 @@ function dressFigureTitle(img: Element, target: FigureTarget | null): void {
   }
 }
 /** The picture's own outbound mark (FIGWEB_MARK): on a picture whose title carries the viewer's line (FIGTITLE_MARK, set by
- *  dressFigureTitle at this decision) and on which no control stands (`want` false: a loaded picture under the floor); taken off
- *  otherwise, so a picture that grows past the floor, or whose candidate turns local, loses it at that decision, as the title does. */
+ *  dressFigureTitle at this decision), on which no control stands (`want` false: a loaded picture under the floor) and which no
+ *  summary that toggles a fold holds (figureFoldOf, whose click the fold takes: no click on the picture opens it there; the
+ *  title's own read of the same predicate already withholds FIGTITLE_MARK inside such a summary, so this read restates the
+ *  mark's population rather than narrowing it); taken off otherwise, so a picture that grows past the floor, or whose candidate turns local, loses it at that decision, as the title does. */
 function dressFigureMark(img: Element, want: boolean): void {
-  if (!want && img.hasAttribute(FIGTITLE_MARK)) img.setAttribute(FIGWEB_MARK, "");
+  if (!want && img.hasAttribute(FIGTITLE_MARK) && figureFoldOf(img) === null) img.setAttribute(FIGWEB_MARK, "");
   else img.removeAttribute(FIGWEB_MARK);
 }
 /** The control's glyph (ICON_EXPAND, the bar's family, and ICON_OUTBOUND for a picture from the web), the two drawings parsed ONCE

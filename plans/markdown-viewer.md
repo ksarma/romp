@@ -8616,6 +8616,13 @@ never the picture beside it, the review's round 1; a captioned picture inside a 
 with no href, keeps its control, after the picture inside the anchor, and its plain click opens the picture, that anchor
 being none of the links the listener yields to, file-view-figure-shapes-browser.test.ts's dead shape, and the guide's
 shape sentence says so), to a picture
+inside a summary that toggles a fold (`figureFoldOf`: a details element's own first summary child, `closest('summary')`
+bounded to the Rendered box, a sibling of `FIGURE_LINK_SET` and not a member, read by the listener, by `dressFigureTitle`
+and by `dressFigureMark` and not by `linkAbove`, so the picture keeps its control, whose click opens it and toggles nothing,
+a button inside a summary toggling nothing in Chromium; the fold takes the click, plain or modified, and a remote picture
+there wears no address line and no mark; a summary outside a details toggles nothing and a picture inside one opens as
+anywhere else; the file review's round 14, fresh-1: the listener read no summary, so one click toggled the fold and opened
+the picture, a remote picture's tab or a local picture's open in the viewer in place of the report), to a picture
 the panel framed (`panelMark`: the card's), to the
 open Comments panel (a plain click is the panel's comment offer, `onImageClick`, and a drag its region; the layer's
 overlay takes the press on a fine pointer, and on a coarse one the click reaches the listener and stands down; one
@@ -8635,7 +8642,8 @@ file-figure-open-browser.test.ts (Chromium: the controls on a synthetic report, 
 both float cases, Tab and Enter, the place kept across the open and Back, the plain click with the panel closed, the
 modified click's tab, the linked figure, the gated remote figure, the inline data picture, print media, no hover, and
 with the panel open the comment offer, the region drag and the control's own click on a fine pointer, and on a coarse
-one the tap standing down to the offer, the modified click's tab and the control's open), and, for the round-1 rules,
+one the tap standing down to the offer, the modified click's tab and the control's open, and a picture inside a fold's
+own summary, whose plain click and Ctrl-click toggle the fold and open nothing), and, for the round-1 rules,
 file-view-figure-shapes.test.ts (the source pins: the web test before the join; the one decision: the state, the
 floor, the target and any link above in figureWantsControl's order, decideFigureControl's add or remove against the
 control standing, the measure's reads, linkAbove over the click's own link set (figureLinkOf), the load, the error and the figures' own ResizeObserver
