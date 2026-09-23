@@ -2829,7 +2829,11 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
         out of _journal_read). The walk's bound in _pass holds the raising session to one call per pass on each road, so a retry
         of the look on a raise, inside its body or around it, reds on the road it catches (a verifier of the round-9 fixes: the
         gate calling the look again on AttributeError or TypeError took two loads per pass with the module green, no case driving
-        either). Nothing here is asserted about goals.loads_shared, which the decode road never moves."""
+        either). A retry of the whole look (by the gate, by the pass loop, or by the look calling itself), which leaves the load a
+        statement of the look's own body, that fires only on a raise no road here drives (a TypeError, a KeyError) is caught by
+        nothing in this module (a verifier of the JSON-list road: the gate calling the look again on TypeError alone, or on
+        KeyError alone, left the module green). Nothing here is asserted about goals.loads_shared, which the decode road never
+        moves."""
         jdir = jd._overrides_dir()
         jdir.mkdir(parents=True, exist_ok=True)
         journal = jdir / (SID_A + ".jsonl")               # _restore unlinks it with the other journals under this test's root
@@ -2869,8 +2873,12 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
         recorder noted raising. On the fault pass the walk loads once per session and the counter moves by two, so a retry on a
         fault, inside the look's body or by the look calling itself again, reds on the road it catches (a verifier of the round-9
         fixes: the look calling its unwrapped self once more on a PermissionError took two loads per pass with the module green,
-        no case driving EACCES). SID_B's look reaches its gate, and SID_A's is the fault: its storeFault leg, a memo row with no
-        flip (so it is evaluated again on the next pass) and an unreadable-store episode for SID_A alone."""
+        no case driving EACCES). A retry of the whole look (by the gate, by the pass loop, or by the look calling itself), which
+        leaves the load a statement of the look's own body, that fires only on a fault no road here drives (an EMFILE or an EIO
+        fault) is caught by nothing in this module (a verifier of the mode-000 road: the look calling its unwrapped self once
+        more on EMFILE or EIO left the module green). SID_B's look reaches its gate, and SID_A's is the fault: its storeFault
+        leg, a memo row with no flip (so it is evaluated again on the next pass) and an unreadable-store episode for SID_A
+        alone."""
         store = jd.GOALDIR / (SID_A + ".json")
         self.addCleanup(jd._end_store_fault, SID_A)       # the episode table is a module-level dict the cleanup's check does not read
 
