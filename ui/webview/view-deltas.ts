@@ -31,7 +31,14 @@
 type Slot = "feed" | "bars";
 type Frame = Record<string, any>;
 type Collection = { order: string[]; items: Map<string, any> };
-type Base = { rev: number; msg: Frame; maps: Map<string, Collection> };
+// A base holds a `gen` beside its rev once a kernel's frames carry one (the resume protocol's generation stamp,
+// 2026-09-19): the full's gen at the full, a composed frame's newGen after it applies, and unchanged by a per-cycle delta,
+// whose gen the gate in receive() holds equal to the base's (a frame carrying another gen recovers, 2026-09-20). A kernel
+// before the stamp seeds none, a stamped frame onto such a base seeds none either (receive() says why), and held() then
+// reports no pair, so nothing is declared for that base. The gen is a string in the kernel's form (genOf below), never a
+// number. What the pair does today is stated once, at federation.ts's Conn.feedHeld: no kernel in this repo stamps a gen
+// yet, so nothing declares one today, and this field stays absent on every base.
+type Base = { rev: number; gen?: string; msg: Frame; maps: Map<string, Collection> };
 export const VIEW_DELTA_KINDS: Record<Slot, Record<string, string>> = {
   feed: { asks: "byid:itemId" },
   bars: { turns: "dictlist:id", judging: "dictlist:k", messages: "byid" },
@@ -40,6 +47,31 @@ const KINDS = VIEW_DELTA_KINDS; // pinned to the kernel-produced fixture and the
 const SEP = "\u001f";
 const object = (v: any): v is Frame => !!v && typeof v === "object" && !Array.isArray(v);
 const slotOf = (s: any): Slot | null => s === "feed" || s === "bars" ? s : null;
+/** The longest gen this side reads as a stamp (2026-09-20). The kernel's form is sixteen lowercase hex characters, a
+ *  hyphen and one or more decimal digits (the design: token_hex(8) and a decimal counter), 18 characters at a one-digit
+ *  counter; the form bounds the character set and not the length, since the digits are unbounded, so a cap is needed
+ *  whatever the form check, and 64 leaves 47 digits of counter. Why a cap at all: a dial URL carries one gen per held
+ *  member (remoteDialUrl), the base holding it survives every redial (connect()'s gated reset keeps a gen-holding base),
+ *  and the kernel's HTTP server refuses a request line over 65,536 bytes with 414 (Python's http.server, which the relay
+ *  runs on), so a stamp long enough to take the request line over that would make every redial of the conn fail for
+ *  the conn's life. Over the cap a value is one genOf cannot read (undefined, as for any other form it refuses): a full
+ *  carrying one seeds no gen, so its base is reset on the redial and re-served whole, as a gen-less base is; a delta
+ *  carrying one onto a base holding a gen is REFUSED by both roads (the receiver's gen gate below, applyRemoteFeedDelta's),
+ *  never read as a gen-less delta (the author's pass 4, 2026-09-20: unparseable is not absent). */
+export const GEN_MAX = 64;
+/** A generation stamp as a frame carries it, or undefined for a frame that carries none. The kernel mints a gen as its
+ *  boot's random token (16 hex characters) and a decimal counter joined by '-', a string that holds neither '.' (the held
+ *  member's own separator: the kernel parses held:<slot>:<gen>.<rev> at its last '.') nor ',' (the caps term's), so a
+ *  non-empty string free of both, at most GEN_MAX characters, is a gen. Anything else (a number, an empty string, a
+ *  string carrying either separator, one over GEN_MAX) is a value this reader cannot read: undefined, the same answer
+ *  as for a frame that carries no gen key, so a CALLER that must tell the two apart reads the key's presence
+ *  (frame.gen !== undefined) where the difference matters, and it matters wherever a pair is held (the author's pass 4, 2026-09-20:
+ *  unparseable is not absent). A full carrying such a value seeds no gen and its base declares nothing, never a member
+ *  the kernel could not parse or a request line it would refuse; a delta carrying one, or a composed frame whose newGen
+ *  is one, onto a base holding a gen is REFUSED by both roads (the receiver's gate below, applyRemoteFeedDelta's), never
+ *  applied as a gen-less frame and never left under the old gen; onto a base holding no gen a delta carrying one applies
+ *  as a gen-less delta does, since no pair is held there for a refusal to protect. Compared with === and never coerced. */
+export const genOf = (v: any): string | undefined => typeof v === "string" && v !== "" && v.length <= GEN_MAX && v.indexOf(".") === -1 && v.indexOf(",") === -1 ? v : undefined;
 class Unkeyable extends Error {}   // a present collection whose container the kind cannot key: the frame seeds nothing
 
 function split(value: any, kind: string): Collection {
@@ -116,6 +148,17 @@ export class ViewDeltas {
    *  the refusal itself: only a patch tells that the remote patches at all. */
   constructor(private needSlot: (slot: string) => void, private unkeyed?: (slot: string, why: string) => void) {}
 
+  /** The pair a slot's base holds for a resume declaration (the dial's held:<slot>:<gen>.<rev> member): its gen and rev,
+   *  or null when the slot has no base or its base holds no gen (a kernel before the generation stamp seeds none, and
+   *  nothing is declared for it). The one read beside receive(): federation.ts's connect() keeps a receiver whose bars
+   *  base holds a pair across a redial and re-mints one whose base holds none, and its remoteDialUrl writes the member
+   *  from the same read, so the declared pair is the applied one and has no home but the base. */
+  held(slot: string): { gen: string; rev: number } | null {
+    const known = slotOf(slot);
+    const base = known ? this.bases.get(known) : undefined;
+    return base && base.gen !== undefined ? { gen: base.gen, rev: base.rev } : null;
+  }
+
   private recover(slot: string): null {
     const known = slotOf(slot);
     if (known) this.bases.delete(known);
@@ -146,7 +189,7 @@ export class ViewDeltas {
           return msg;
         }
       }
-      this.bases.set(full, { rev: 0, msg, maps });
+      this.bases.set(full, { rev: 0, gen: genOf(msg.gen), msg, maps });   // the full's gen, when the kernel stamps one
       this.refused.delete(full);   // a whole frame this table keys ends the refusal: the slot has a base again
       return msg;
     }
@@ -166,8 +209,41 @@ export class ViewDeltas {
       return this.recover(slot);
     }
     if (base.rev !== msg.base) return this.recover(slot);
+    // The gen gate on this road (2026-09-20), the mirror of applyRemoteFeedDelta's: a frame carrying a gen (genOf) onto a
+    // base holding one applies only when the two agree; a foreign gen is another stream's, and the frame recovers as a
+    // base-rev mismatch does (needSlot, the base dropped), never applied onto this base and never adopted as its gen. A
+    // composed frame's gen is gated the same way, so its newGen is adopted only after its gen matched the base's. Where
+    // the roads differ, and why: a stamped frame onto a base holding NO gen (a full carrying none seeded it) applies here
+    // on the rev test alone and seeds no gen, where the feed road refuses it (why "unpaired": no pair is held for a stamped
+    // stream). This receiver is shared with the local VS Code pipe, whose base is the last whole frame the kernel served;
+    // refusing here would cost that pane a whole slot for a frame its rev test accepts, while applying costs nothing, and
+    // the gen is not seeded because the stream never stated a rev 0 under it: a pair declared from such a base would be
+    // one the base never held. A gen-less frame onto a base holding a gen applies and keeps the base's gen, as before.
+    // Unparseable is not absent (the author's pass 4, 2026-09-20): onto a base holding a gen, a frame carrying a gen KEY whose value genOf
+    // cannot read (a number, an empty string, a separator, one over GEN_MAX) is a gen that is not the base's and recovers
+    // the same way, never read as a gen-less frame (GEN_MAX had made a 65-character gen skip this test and apply); and a
+    // composed frame whose gen matched but whose newGen genOf cannot read recovers too, here, before anything below runs,
+    // never applied with the base's old gen kept under the frame's rev (a pair that generation's stream never held). Onto a
+    // base holding no gen neither test runs, as the paragraph above says of a stamped frame there.
+    const g = genOf(msg.gen);
+    if (base.gen !== undefined && msg.gen !== undefined && g !== base.gen) return this.recover(slot);
+    if (base.gen !== undefined && g !== undefined && msg.newGen !== undefined && genOf(msg.newGen) === undefined) return this.recover(slot);
     try {
-      if (!Number.isSafeInteger(msg.base) || msg.base < 0 || !Number.isSafeInteger(msg.rev) || msg.rev !== msg.base + 1 || !object(msg.coll)) {
+      // A per-cycle patch advances the base by one (rev equal to base plus one, the test every kernel in this repo
+      // passes). A frame carrying `through` (2026-09-19) is accepted at any rev at or above its base. Two frames carry
+      // it, and its presence does not tell them apart: a COMPOSED frame, the answer to a declared pair, stamped base r,
+      // rev R, through R and newGen, R equal to r included (the caught-up resume of a peer that had applied the slot's
+      // last frame before the close: base r, rev r, through r, a coll that may be empty), which a base-plus-one test
+      // would refuse into a needSlot and a whole slot at rev 0 under a new gen; and a STAMPED PER-CYCLE patch, which the
+      // kernel that stamps its frames sends with through equal to its rev (every stamped delta carries gen, base, rev and
+      // through), rev equal to base plus one as ever. This test asks only what both satisfy, and one thing more: rev equal
+      // to through (2026-09-20), the design's stamped shape on both frames, so a frame whose two disagree states no one rev
+      // for the base and recovers (needSlot, the base dropped) rather than adopting either; the feed road's gate asks the
+      // same of a feedDelta (applyRemoteFeedDelta), so neither road declares a reach the stream never reached. A frame
+      // carrying no through keeps the base-plus-one test; every other rev recovers as today.
+      const hasThrough = msg.through !== undefined;
+      const revOk = hasThrough ? Number.isSafeInteger(msg.through) && msg.rev >= msg.base && msg.rev === msg.through : msg.rev === msg.base + 1;
+      if (!Number.isSafeInteger(msg.base) || msg.base < 0 || !Number.isSafeInteger(msg.rev) || !revOk || !object(msg.coll)) {
         throw new Error("invalid delta revision or collections");
       }
       const kinds = KINDS[slot], next = { ...base.msg }, maps = new Map(base.maps);
@@ -203,7 +279,16 @@ export class ViewDeltas {
         maps.set(name, collection);
         next[name] = assemble(collection, kinds[name], base.msg[name]);
       }
-      this.bases.set(slot, { rev: msg.rev, msg: next, maps });
+      // the pair the base holds after the frame: (newGen, rev) when the frame carries a gen the gate matched, through and
+      // a newGen (a composed frame, its rev R equal to its through), else (gen, rev) with the base's gen (the frame's, when
+      // it carries one: the gate above held them equal; a gen-less frame moves no gen, its newGen included, since the gate
+      // never ran for it and the feed road adopts a newGen only under a matched gen), and none on a base seeded without
+      // one, whatever the frame carries (the gate's comment says why the frame's gen is not seeded there). A newGen the
+      // gate would adopt here is readable by the gate's own check above, so an undefined newGen means the frame carries
+      // none (a per-cycle delta) and the base keeps its gen: never a fallback for a value genOf could not read (the author's pass 4).
+      const newGen = hasThrough && g !== undefined ? genOf(msg.newGen) : undefined;
+      const gen = base.gen === undefined ? undefined : newGen !== undefined ? newGen : base.gen;
+      this.bases.set(slot, { rev: msg.rev, gen, msg: next, maps });
       return next;
     } catch {
       // A malformed patch never partially advances the held maps or reaches a consumer.

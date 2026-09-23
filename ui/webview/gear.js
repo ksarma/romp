@@ -389,7 +389,7 @@ var GEAR_HTML =
   // both off by default; read raw from the store by every pane's collector, the pane shim and the shell script (perf-telemetry.ts)
   '<label class=rs-row><input type=checkbox id=rs-perfshare>' +
   "<span><b>Share this browser's timing rows</b>" +
-  "<span class=rs-sub>Adds page-load, download, visibility, socket-byte and frame-gap figures to the timing rows this browser already sends to its kernel, and a description of the browser's environment: whether it runs as an installed app, its iOS major version, touch, viewport size, pixel ratio and the timing features it supports (sent once, and again when the pane's viewport flips between wider and taller). Numbers and fixed names only, never text. Off by default.</span>" +
+  "<span class=rs-sub>Adds page-load, download, visibility, socket-byte and frame-gap figures to the timing rows this browser already sends to its kernel, and a description of the browser's environment: whether it runs as an installed app, its iOS major version, touch, viewport size, pixel ratio and the timing features it supports (sent once, and again when the pane's viewport flips between wider and taller). The socket-byte figure is given once for this browser's own connection and once per attached machine, by position rather than by name. Numbers and fixed names only, never text. Off by default.</span>" +
   '</span></label>' +
   '<label class=rs-row><input type=checkbox id=rs-perfmute>' +
   '<span><b>Stop all timing rows from this browser</b>' +
@@ -1552,6 +1552,13 @@ function initGear(post, opts) {
     plasma: [[13, 8, 135], [75, 3, 161], [125, 3, 168], [168, 34, 150], [203, 70, 121], [229, 107, 93], [248, 148, 65], [253, 195, 40], [240, 249, 33]],
     cividis: [[0, 34, 78], [33, 59, 110], [76, 85, 108], [108, 110, 114], [142, 137, 120], [177, 165, 112], [217, 197, 92], [254, 232, 56]] };
   var cmBtn = document.getElementById('rs-cmap-btn'), cmList = document.getElementById('rs-cmap-list');
+  // ONE writer for a picker list's open state (the maintainer's round 5, correctness-1): the list's hidden and the class rs-picking
+  // on its row move together, here and nowhere else, at every site that opens or closes a list (the button's toggle, a pick, the
+  // outside-click closer, for both pickers). The sheet keys two rules on the class and never on a list's id: the row's own
+  // description stands down while its list is open, and a hovered row wearing it contributes nothing to the panel-wide
+  // stand-down, since a row whose description is stood down has nothing to show (gear.css). A class written beside every hidden
+  // write by hand drifts from the real state at the first site that forgets it; a third picker joins by calling this.
+  function setListOpen(list, open) { if (!list) return; list.hidden = !open; var row = list.closest('.rs-row'); if (row) row.classList.toggle('rs-picking', !!open); }
   function cmStops(name) { return CMAPS[(name || '').toLowerCase()] || CMAPS.aurora; }   // the map by name, aurora the default as the chat's selectedStops has it (the settings default)
   function cmGrad(name) { var st = CMAPS[(name || '').toLowerCase()] || CMAPS.hawaii;
     return 'linear-gradient(to right,' + st.map(function (c) { return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')'; }).join(',') + ')'; }
@@ -1560,11 +1567,11 @@ function initGear(post, opts) {
   function cmBuild() { if (!cmList || cmList.children.length) return; Object.keys(CMAPS).forEach(function (name) {
     var o = document.createElement('div'); o.className = 'rs-cmap-opt'; o.setAttribute('data-cmap', name); o.title = name;
     o.style.background = cmGrad(name); o.addEventListener('click', function (e) { e.stopPropagation(); cmPick(name); }); cmList.appendChild(o); }); }
-  function cmPick(name) { var s = load(); s.colormap = name; save(s); cmPaint(name); if (cmList) cmList.hidden = true;
+  function cmPick(name) { var s = load(); s.colormap = name; save(s); cmPaint(name); setListOpen(cmList, false);
     post({ type: 'setColormap', name: name }); }
-  if (cmBtn) cmBtn.addEventListener('click', function (e) { e.stopPropagation(); cmBuild(); if (cmList) cmList.hidden = !cmList.hidden; });
+  if (cmBtn) cmBtn.addEventListener('click', function (e) { e.stopPropagation(); cmBuild(); if (cmList) setListOpen(cmList, cmList.hidden); });
   document.addEventListener('click', function (e) { var w = document.getElementById('rs-cmap');
-    if (cmList && !cmList.hidden && w && !w.contains(e.target)) cmList.hidden = true; });
+    if (cmList && !cmList.hidden && w && !w.contains(e.target)) setListOpen(cmList, false); });
   // Session-colors palette picker: options + the active name come from /palette (the kernel is authoritative).
   var plBtn = document.getElementById('rs-pal-btn'), plList = document.getElementById('rs-pal-list'), plData = null, plActive = '';
   function plDots(cols) { return cols.map(function (c) { return '<span class=rs-pal-dot style="background:' + c + '"></span>'; }).join(''); }
@@ -1574,13 +1581,13 @@ function initGear(post, opts) {
   function plBuild() { if (!plList || !plData || plList.children.length) return; plData.forEach(function (pd) {
     var o = document.createElement('div'); o.className = 'rs-pal-opt'; o.setAttribute('data-pal', pd.name); o.title = pd.label;
     o.innerHTML = plRow(pd); o.addEventListener('click', function (e) { e.stopPropagation(); plPick(pd.name); }); plList.appendChild(o); }); }
-  function plPick(name) { plActive = name; plPaint(); if (plList) plList.hidden = true;
+  function plPick(name) { plActive = name; plPaint(); setListOpen(plList, false);
     post({ type: 'setPalette', name: name }); }
   function plFill() { fetch(ku('/palette'), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
     if (d && d.palettes) { plData = d.palettes; plActive = d.active || ''; plBuild(); plPaint(); } }).catch(function () {}); }
-  if (plBtn) plBtn.addEventListener('click', function (e) { e.stopPropagation(); plBuild(); if (plList) plList.hidden = !plList.hidden; });
+  if (plBtn) plBtn.addEventListener('click', function (e) { e.stopPropagation(); plBuild(); if (plList) setListOpen(plList, plList.hidden); });
   document.addEventListener('click', function (e) { var w = document.getElementById('rs-pal');
-    if (plList && !plList.hidden && w && !w.contains(e.target)) plList.hidden = true; });
+    if (plList && !plList.hidden && w && !w.contains(e.target)) setListOpen(plList, false); });
   if (bk) bk.addEventListener('change', function () { var s = load(); s.backend = bk.value; save(s); });   // webview-local pref read at createSession time
   if (dd) dd.addEventListener('change', function () { var v = dd.value.trim(); var s = load(); s.defaultDir = v; save(s);
     post({ type: 'setDefaultDir', value: v }); });   // persist kernel-side: _default_create_dir reads this file FIRST
@@ -2052,9 +2059,54 @@ function initGear(post, opts) {
     // it (round three, the manager's ruling): a bottom clip is reachable by the card's scroll, a top clip is not
     if (above >= sr.height + 2) host.classList.add('rs-up');
   }
+  // EVERY host of the row an event touched, the row and its Fast mode boxes, re-placed on every road's enter and exit (the
+  // maintainer's round 4 of the share field, correctness-2 and regression-1): the class is written and cleared by two roads, the
+  // pointer's and the keyboard's, and each exit stripped it unconditionally, so a pointer leaving a row whose checkbox holds a
+  // keyboard focus (or a focus leaving a hovered row) dropped the placement while the description was still shown, and it
+  // flipped below the row and past the card's bottom, the T408 clip placeSub exists to prevent. placeSub drops the class first
+  // and re-adds it only while the host's OWN popover is shown and does not fit below, so re-placing is the guard: either road's
+  // exit leaves the other road's placement standing and the class off when nothing is shown. The whole row and not the touched
+  // host alone, on the enters too, because a road that moves from a row's picker button (or label) into its box never leaves
+  // the row (relatedTarget inside the host, so no exit fires for the row), and the row's class, decided for the ROW's popover,
+  // stayed behind: with nothing shown once the focus left the box (measured: a row wearing rs-up), and while the box's popover
+  // showed, placing it above by the row's up rule on a measurement of a different popover.
+  // And the row holding the KEYBOARD FOCUS, when the event's row is another (the author's fixer pass after the
+  // maintainer's round 4, panel-1): the panel-wide stand-down (gear.css) hides the focused row's description while the pointer rests on
+  // another row with one, so a focus that ARRIVES there (a Tab while the mouse still rests where the gear was clicked) measures
+  // a hidden popover, zero height, and is left unplaced; when the pointer then left that row, its exit re-placed the pointer's
+  // row alone, and the focused row's description appeared below it unplaced, past the card's bottom with room above (measured:
+  // the share row's 35 px past the card, the T408 clip, and a Fast mode box's the same). The pointer's enter is the other
+  // half: a pointer arriving on a row with a description hides the focused row's, whose class then says nothing true. At
+  // focusin the focused host IS the event's host and at focusout the focus is already gone (activeElement is the body), so
+  // this arm is the pointer road's; whichever road's event released or imposed the stand-down, every shown popover in the
+  // panel is placed after it, and no host wears the class for a hidden one.
+  function hostRow(host) { return host.classList.contains('rs-fastin') ? (host.closest('#rsettings .rs-row') || host) : host; }
+  function placeRow(row) {
+    placeSub(row);
+    var boxes = row.querySelectorAll('.rs-fastin');
+    for (var i = 0; i < boxes.length; i++) placeSub(boxes[i]);
+  }
+  function placeRowHosts(host) {
+    var row = hostRow(host);
+    placeRow(row);
+    var focused = hostOf(document.activeElement);
+    if (focused && hostRow(focused) !== row) placeRow(hostRow(focused));
+  }
   if (pcard) {
-    pcard.addEventListener('mouseover', function (e) { var host = hostOf(e.target); if (host) placeSub(host); });
-    pcard.addEventListener('mouseout', function (e) { var host = hostOf(e.target); if (host && !(e.relatedTarget && host.contains(e.relatedTarget))) host.classList.remove('rs-up'); });
+    pcard.addEventListener('mouseover', function (e) { var host = hostOf(e.target); if (host) placeRowHosts(host); });
+    pcard.addEventListener('mouseout', function (e) { var host = hostOf(e.target); if (host && !(e.relatedTarget && host.contains(e.relatedTarget))) placeRowHosts(host); });
+    // the focus road (2026-09-20): the sheet shows a description while its row holds a keyboard focus (:has(:focus-visible),
+    // gear.css), and the selector alone does not place it, so the same measurement runs on focusin (a Tab, a screen reader's
+    // move; a mouse click focuses too but shows nothing, and placeSub finds no height to place) and the class goes with the
+    // focus as it goes with the pointer. The host is hostOf's on both roads: for a focus inside a Fast mode box that is the box,
+    // whose own description the sheet shows on that focus (the focus twins of the box's hover pair, gear.css) as it does on a
+    // hover on the box, so the box's popover is the one with a height to place. (The author's pass 4 of the share field had the
+    // sheet show the ROW's description on that focus, and a climb from the box to its row here, so that the shown popover was
+    // the one placed; the twins made the row's stand down and the climb a measurement of a hidden popover, so it went.) Every
+    // handler re-places the row's hosts (placeRowHosts above): at focusout the focus is already gone from the host, at mouseout
+    // the hover is (both measured), so what placeSub measures there is the other road's state alone.
+    pcard.addEventListener('focusin', function (e) { var host = hostOf(e.target); if (host) placeRowHosts(host); });
+    pcard.addEventListener('focusout', function (e) { var host = hostOf(e.target); if (host && !(e.relatedTarget && host.contains(e.relatedTarget))) placeRowHosts(host); });
   }
   function closeSettings() { endDrags(); if (raBack && !raBack.hidden) raHide(); clearSectionScroll(); p.hidden = true; setModalCls(false); feedFull(false); }   // the reset FIRST, while the card still has a layout: a hidden card ignores a scroll write and keeps its old offset for the next open (measured); a pending section ask dies with the panel (round two, LOW 2 and 7)
   function openSettings(tab, section) {

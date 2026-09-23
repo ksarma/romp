@@ -4834,7 +4834,10 @@ frames it received is measured in the panes themselves, by
   per surface and key on stderr, at most eight of one row's by name plus one
   line counting the rest, and the whole latch holds 512 pairs, then says so
   once), cuts every string value at 64 characters at any depth, reads nesting
-  past 8 levels as `null`, stores a `data` that is not an object as `null`,
+  past 8 levels as `null` (a row a value of which was cut or nulled so carries
+  `cut`, the admitted keys it happened under, written by the kernel and admitted
+  from no poster, and the kernel says so once per surface and key on stderr, so a
+  stored value can be told from a whole one), stores a `data` that is not an object as `null`,
   keeps no key for a surface the table does not name, refuses a page's row
   under the kernel's own surface `kernel`, and appends the row to
   `client-diag.jsonl` under the state directory with the dashboard id (`wid`)
@@ -4869,16 +4872,27 @@ frames it received is measured in the panes themselves, by
   open dashboard writes a few MB a day; with the share switch on, the first
   shared row adds about 2 KB of `res`, `env`, `nav` and `marks`. Every row is
   bounded at 24 KiB of JSON, a bound derived from the collector's own caps so
-  that no row it can build is touched (its worst case, every cap reached at
-  once, is about 17.9 KB with share off and 21.3 KB with share on): a `perf`
-  minute row over the bound sheds `frames`, `loaf`, `free` and `slow` in that
-  order until it fits, keeps its other keys, and carries
-  `capped: {bytes, dropped}` (the line's bytes before the shed and the keys
-  shed); any other row over the bound, and a minute row that does not fit
+  that no row it can build is touched while its `wsBytesByHost` map, the one
+  key without a cap, is under the crossing (its worst case, every cap reached at
+  once and eight attached hosts, is about 17.9 KB with share off and 21.5 KB
+  with share on): a `perf`
+  minute row over the bound sheds `wsBytesByHost` whole, then `frames`,
+  `loaf`, `free` and `slow`, in that order until it fits, keeps its other
+  keys, and carries `capped: {bytes, dropped}` (the line's bytes before the
+  shed and the keys shed). The map goes first because it alone can take a row
+  the collector builds over the bound (each position adds 17 to 19 bytes, so
+  on that worst-case row the crossing is 177 positions, and on a smaller row
+  later), and shedding it whole returns such a row to its derived size,
+  under the bound, so the frames and the once-per-page fields stay; it is
+  never cut to the positions that fit, so a stored map is never a partial
+  host count. Any other row over the bound, and a minute row that does not fit
   even bare, is stored as `data: {capped: true, bytes: N, app}` (`app` where
   the row had one) with `t`, `wid`, `surface`, `what` and `reconnect` kept.
-  `romp perf client` skips the whole-row markers and counts both shapes in
-  its header line and its `--json`.
+  `romp perf client` skips the whole-row markers and counts all three loss
+  shapes in its header line and its `--json`: the minute rows that shed keys
+  (by the key shed, every key named), the rows capped whole, and, when any row
+  carried it, the rows carrying `cut` (by the key the cut fell under), so a
+  stored value can be told from a whole one at the reader as at the writer.
 
 Rows carry numbers and code identifiers only, never card text, session names,
 file paths or transcript content: an element id inside an invoker name is
@@ -4893,8 +4907,8 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   span_ms, frames: {<type>: {n, ms_sum, ms_max, n16, n100, hist}}, free: {n,
   p50, p90, max} | null, loaf: {n, blocking_ms, worst_ms, top: [{k, ms, n,
   inv}], src}, slow: {sent, suppressed, suppressed_worst_ms}, heap_mb?, dom,
-  visible, hidden_pane, ua, nav?, res?, marks?, env?, vis?, wsBytes?, rafGap?,
-  capped?}}`. `app` is the pane (`chat`, `feed`, `fleet`,
+  visible, hidden_pane, ua, nav?, res?, marks?, env?, vis?, wsBytes?,
+  wsBytesByHost?, rafGap?, capped?, cut?}}`. `app` is the pane (`chat`, `feed`, `fleet`,
   `waiting`, `timeline`, `files`), or `shell` for the top-level window; `since`
   is the minute's start on the browser's clock (epoch ms) and `span_ms` its
   length (shorter than a minute when the page was hidden or closed); `hist` is
@@ -4908,7 +4922,7 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   the pane shim's test for a pane the shell has set to `display:none`: its
   zero-viewport probe, or the word the pane published as
   `window.__rompPaneHidden` from its own visibility events; `ua` is
-  `chrome-desktop`, `safari-ios` or `other`. The seven optional fields after
+  `chrome-desktop`, `safari-ios` or `other`. The eight optional fields after
   it are the shared fields, present only while the browser's share switch
   (below) is on, numbers, booleans and fixed-vocabulary identifiers only, a
   Performance API the browser lacks reading as `null`, never a guess. Once per
@@ -4938,11 +4952,107 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   `{hiddenN, visibleN, hiddenMs}`, the visibility transitions and the ms
   hidden since this pane's previous row (an idle or muted minute hands its
   counts on to the row that follows); `wsBytes` is the text-frame characters
-  the shim received on this pane's sockets since the previous row (`null`
-  without a shim: the shell, VS Code); `rafGap` is `{n, worst}`, the
-  animation-frame gaps over 50 ms while the document was visible, from a loop
-  that runs only while share is on and the document visible. `capped` is
-  present only on a row the kernel shed or replaced (the bound above).
+  the shim received on this pane's local socket since the previous row
+  (`null` without a shim: the shell, VS Code); `wsBytesByHost` is the same
+  unit for the pane's remote sockets, one number per attached remote host
+  keyed by the host's position in the pane document (`h1` the first remote
+  host this document attached, `h2` the next, in the order hosts first
+  appeared to the document, the kernel's `/tunnels` row order when one answer
+  lists several; one key per host, however many the document attaches; a row
+  the map takes over the kernel's 24 KiB bound is stored without it, above),
+  since the previous row (an idle or muted minute carries on the same way).
+  The two are disjoint: a remote socket's characters are counted under its
+  position and never in `wsBytes`. Positions are assigned per pane document
+  (each pane runs its own federation manager; the row's `app` names the pane),
+  so a page with several panes mints several positions for one machine, one
+  per document (two panes of the same `app` are two documents), and the file
+  holds more rows per host than a per-page grain would give; nothing on the
+  row names the document, so rows from different panes of one `wid` are never
+  folded or compared as one position space. A position is never reused: it is
+  on a row when its host is attached at the
+  flush or received characters in the minute, so the row closing the minute
+  of a host's detach carries the characters it received in it and the rows
+  after carry no key for it, an attached host that received nothing reads
+  0, a host that re-attaches counts on under its old position, and a reload
+  starts over, so `h1` can name a different host after a reload, and names
+  the same one again when the hub's dialable rows (a row with a token and a
+  local port) and their order have not changed: the assignment is re-derived
+  from the kernel's `/tunnels` row order at first sight, so it repeats across
+  page lives for a reader of that order until the roster or its order
+  changes, a row was not dialable at the pane's first poll, or the pane's
+  own attach and detach history differs from a fresh pane's first answer.
+  `GET /tunnels`, an authenticated route, is that order and so a
+  position-to-name map in its own right, as is the state directory the file
+  sits in, whose host registries sit beside the file: `remotes.json` holds
+  the attached set, written in the `/tunnels` row order, so a holder of it
+  maps any position to a name with no client-diag row and no page-life
+  correlation, the order being the kernel's own attached-host order persisted
+  in the same state directory as this file;
+  `remotes-known.json` holds every host ever attached or trusted, attached
+  ones included, each with a `lastAttachedAt` stamp refreshed by every
+  writer (attach, detach, trust and share), written with the newest stamp
+  first, so it names the hosts and not their order. After the file's rotation (8 MB, two
+  files) a pane's host-naming rows can be gone while its later perf rows
+  remain. Reading a registry is itself a join, and what any of these roads yields is
+  exact for a pane life that attached one host; for several it is an order
+  inference, holding while `remotes.json` still carries the row order the
+  pane's `/tunnels` answer had. The
+  map's keys carry positions and no host name, a property the collector
+  holds: the federation manager mints each key as `h` plus the attach
+  ordinal and the collector keeps a key only in the `h<n>` form (`bytesByHost`,
+  a regular-expression test in the page bundle, the one enforcement of the
+  property; the kernel has none); the kernel admits the top-level key and
+  does not inspect the map's keys, as it
+  inspects no nested key of any admitted object (`marks`, `env`, `nav`,
+  `res`, `frames`, `loaf` and federation's `counts` alike): a nested string
+  value is cut at 64 characters, a nested key is stored as posted, and a row a
+  value of which was cut carries `cut` naming the key. Host names reach the
+  file wherever an admitted value can hold one, in four forms: a bare name
+  under a `host` key (the shell's push-test row; every federation row that
+  carries its conn's host, the `hostconn`, `feedDelta-nobase`,
+  `feedDelta-stale`, `feedDelta-apply`, `sendqueue` and `senddrop` rows, with
+  the poll rows carrying an empty host and the local nobase and apply rows the
+  word local; and the kernel's own `wsopen` row for a spliced
+  relay, `kind` `hub`, above); a host-prefixed session id, `<host>:<uuid>`,
+  when the row concerns a remote session (the chat surface's `sid`, `id`,
+  `ids` and `active`: every remote session id a federated page holds carries
+  its host, and the 64-character cut keeps the head, prefix included; and the
+  shell's `tap-pending-land` and `tap-vanish-land` rows' `sid8`, the first 8
+  characters of the push ledger row's sid, which the test push files as the
+  active tab's whole data-id and the relay prefixes with its origin, so a host
+  name's first 8 characters or a short host whole, on every row of both kinds
+  that concerns a remote session); a host-keyed map (federation's `feedmerge`
+  `counts`); and a host name at the tail of a postal message id,
+  `<epoch>.<pid>_<hex>.<host>` (the postal service bakes the delivering
+  kernel's postal host in): the feed surface's `id`, `appeared` and `gone`
+  carry item ids, and a parked hand-off's card id is `parked:` plus that
+  message id (the card's own kernel's postal host, on a single-kernel page the
+  page's own machine's, of which 5 to 11 characters survive the cut) and a
+  quarantined relay's is `quarantine:` plus the held mail's id (its origin
+  kernel's postal host, 0 to 4 characters surviving), on every row of the kind
+  that names such a card, filed on routine use and not gated by the share
+  switch; and the chat surface's `anchor` on one road, a landing miss for a
+  deep link the timeline's message connector filled with a postal message id,
+  the last 12 characters of it, a host of up to 11 characters whole. The chat
+  road is older than this field, is not gated by the share switch, and is
+  filed on routine use (a send, a scroll, a tab set: up to 40 scroll rows a
+  minute per kind), so on a federated page it is the most frequent
+  host-carrying row type; the position-to-name map itself follows from the
+  rows that record a host at attach (federation's `hostconn` open rows of the
+  same pane), not from chat or feed rows alone, which name a host without its
+  position. `tests/test_client_diag_allowlist.py` classifies every admitted
+  key of every surface by the content its value can carry, following each
+  value to its producers (a field is a carrier if any producer chain can put a
+  host name in it, classified by that chain's range, never by the field's
+  typical content), so a new key fails there until classified. The key is absent, not `null`, when no remote host is attached
+  at the flush and none received characters in the minute: a page that never
+  attached one, the shell, and the rows after every host has detached. `rafGap` is
+  `{n, worst}`, the animation-frame gaps over 50 ms while the document was
+  visible, from a loop that runs only while share is on and the document
+  visible. `capped` is present only on a row the kernel shed or replaced
+  (the bound above); `cut`, on any surface's row, only when a value under one
+  of its admitted keys was cut at 64 characters or nulled past depth 8, and it
+  lists those keys.
 - `{"t", "wid", "surface": "perf", "what": "slowframe", "data": {app, type, ms,
   dom, loaf?: {ms, blocking_ms, top: [{k, ms, inv}]}}}`. `type` is the frame
   as received on the wire and `ms` its whole synchronous handling, the
@@ -4964,7 +5074,13 @@ arrival at the kernel, frame counts and long frames); heap and DOM at the last
 sample; and the five slowest slow frames in the window with their attribution,
 plus how many more there were. The shell's row shows as one more pane of its
 dashboard: no frame types, the long frames it observed and the pane scripts
-they name. An absent file or one without perf rows is
+they name. The header's closing clause, present only when the file lost
+something, counts the rows the kernel stored short in each of its three shapes:
+minute rows that shed keys (by key, every key shed named), rows capped whole,
+and, when any row carried it, rows carrying `cut` (by the key the cut fell
+under); `--json` carries the same as
+`shed_minute_rows`, `shed_keys`, `capped_rows`, `cut_rows` and `cut_keys`. An
+absent file or one without perf rows is
 reported as no browser telemetry yet (the bundles predate it or no dashboard
 has loaded them: rebuild the bundles and reload the dashboard); perf rows all
 older than the window are reported with their age. `--json` prints the folded

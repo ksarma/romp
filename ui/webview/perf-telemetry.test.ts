@@ -22,7 +22,11 @@ import {
   HIST_EDGES, HIST_BUCKETS, MAX_FRAME_TYPES, MAX_TOP_KEYS, SLOW_FRAME_MS, SLOW_ROWS_PER_MINUTE, FREE_RING, MAX_RES, RAF_GAP_MS,
   SETTINGS_KEY, SHARE_SETTING, MUTE_SETTING, ENV_ENTRY_TYPES, type PerfDeps, type BeaconSwitches,
 } from "./perf-telemetry";
+import * as pt from "./perf-telemetry";
 import { FederationManager } from "./federation";
+// wsBytesByHost's collector rule (2026-09-19), read off the module namespace so this file still bundles (and runs red)
+// against a perf-telemetry.ts that predates it, as federation-remote-feed-delta.test.ts reads REMOTE_DIAL_CAPS
+const bytesByHost: (now: Record<string, unknown> | null, base: Record<string, number>, attached: readonly string[] | null) => Record<string, number> | null = (pt as any).bytesByHost;
 
 const PAGE = "http://h:1/feed";
 /** A window stand-in for the install tests: an EventTarget carrying `members` (performance, navigator, location and the
@@ -62,6 +66,8 @@ function harness(over: Partial<PerfDeps> = {}) {
     switches: () => ({ share: false, mute: false }),
     entries: () => null,
     marks: () => null,
+    fedBytes: () => null,   // no federation: the row carries no wsBytesByHost
+    fedAttached: () => null,
     env: () => ({ standalone: false, iosMajor: 0, touch: false, vw: 800, vh: 600, dpr: 1, entryTypes: [], ric: true }),
     ...over,
   };
@@ -1034,7 +1040,7 @@ test("a window stand-in enumerates its primitives alone; parent stays non-enumer
 // ── the beacon extension (2026-09-18): the two gear switches, the shared fields, the hide flush, the gap loop ──
 
 const TODAY_KEYS = ["app", "dom", "frames", "free", "heap_mb", "hidden_pane", "loaf", "since", "slow", "span_ms", "ua", "visible"];
-const SHARED_KEYS = ["env", "marks", "nav", "rafGap", "res", "vis", "wsBytes"];
+const SHARED_KEYS = ["env", "marks", "nav", "rafGap", "res", "vis", "wsBytes", "wsBytesByHost"];
 const ORIGIN = "http://h:1";
 const NAV = [{ type: "reload", responseEnd: 210.4, domContentLoadedEventEnd: 655.6, loadEventEnd: 0 }];
 const PAINTS = [{ name: "first-paint", startTime: 388.2 }, { name: "first-contentful-paint", startTime: 401.7 }];
@@ -1145,13 +1151,19 @@ test("iosMajor, envInfo and orientation: the iPhone's version, the iPad's deskto
   assertIdentifiersOnly(e);
 });
 
-/** a harness whose page has everything the beacon reads, with the switches settable */
+/** federation's totals for the manager's life per remote host position as window.__rompFed.wsBytesByHost returns them: two hosts attached */
+const FED = { h1: 20_000, h2: 5_000 };
+/** a harness whose page has everything the beacon reads, with the switches settable; `fed` is the federation map, mutable */
 function beaconHarness(sw: BeaconSwitches, over: Partial<PerfDeps> = {}) {
   const marks: Record<string, unknown> = { ...MARKS };
+  const fed: Record<string, number> = { ...FED };
   const env = { standalone: true, iosMajor: 17, touch: true, vw: 390, vh: 664, dpr: 3, entryTypes: ["paint", "resource", "navigation"], ric: false };
   const entries = (t: string) => (t === "navigation" ? NAV : t === "resource" ? RES : t === "paint" ? PAINTS : []);
-  const h = harness({ switches: () => ({ ...sw }), entries, marks: () => marks, env: () => ({ ...env }), ...over });
-  return { ...h, sw, marks, env };
+  // every position federation's totals name is attached at the flush unless the test says otherwise (fedAttached)
+  const bytes = over.fedBytes || (() => fed);
+  const fedAttached = over.fedAttached || (() => { const m = bytes(); return m && typeof m === "object" ? Object.keys(m) : null; });
+  const h = harness({ switches: () => ({ ...sw }), entries, marks: () => marks, fedBytes: bytes, fedAttached, env: () => ({ ...env }), ...over });
+  return { ...h, sw, marks, env, fed };
 }
 
 test("share OFF: the minute row's keys are exactly today's, whatever the page could tell", () => {
@@ -1170,6 +1182,7 @@ test("share ON: the first row carries nav, res, marks and env once, every row vi
   h.frame(p, { type: "session" }, 10);
   h.clock.wall += 60_000;
   h.marks.wsBytes = 5000 + 12_345;
+  h.fed.h1 = FED.h1 + 4_321;   // h1's sockets delivered 4321 characters this minute; h2's nothing
   p.tick();
   const d = minuteRows(h.posted)[0].data;
   assert.deepEqual(Object.keys(d).sort(), [...TODAY_KEYS, ...SHARED_KEYS].sort());
@@ -1179,23 +1192,26 @@ test("share ON: the first row carries nav, res, marks and env once, every row vi
   assert.deepEqual(d.env, { standalone: true, iosMajor: 17, touch: true, vw: 390, vh: 664, dpr: 3, entryTypes: ["paint", "resource", "navigation"], ric: false, dv: 1757100000 }, "the dist token rides env from the shim's marks");
   assert.deepEqual(d.vis, { hiddenN: 0, visibleN: 0, hiddenMs: 0 });
   assert.equal(d.wsBytes, 12_345, "the characters the shim counted since the minute began");
+  assert.deepEqual(d.wsBytesByHost, { h1: 4_321, h2: 0 }, "per remote host position, the same unit, since the minute began; a host that sent nothing reads 0");
   assert.deepEqual(d.rafGap, { n: 0, worst: 0 });
   assertIdentifiersOnly(d);
-  // the second minute: the once-per-page fields are gone, the per-minute ones stay, the byte delta is this minute's
+  // the second minute: the once-per-page fields are gone, the per-minute ones stay, the byte deltas are this minute's
   h.frame(p, { type: "session" }, 10);
   h.marks.wsBytes = 5000 + 12_345 + 700;
+  h.fed.h2 = FED.h2 + 88;
   h.clock.wall += 60_000;
   p.tick();
   const e = minuteRows(h.posted)[1].data;
-  assert.deepEqual(Object.keys(e).sort(), [...TODAY_KEYS, "rafGap", "vis", "wsBytes"].sort());
+  assert.deepEqual(Object.keys(e).sort(), [...TODAY_KEYS, "rafGap", "vis", "wsBytes", "wsBytesByHost"].sort());
   assert.equal(e.wsBytes, 700);
+  assert.deepEqual(e.wsBytesByHost, { h1: 0, h2: 88 }, "the baselines moved to the previous row's totals");
   // the pane's aspect flips (a divider drag, a resize, a rotation): env again, nothing else of the once-per-page set
   h.env.vw = 664; h.env.vh = 390;
   h.frame(p, { type: "session" }, 10);
   h.clock.wall += 60_000;
   p.tick();
   const f = minuteRows(h.posted)[2].data;
-  assert.deepEqual(Object.keys(f).sort(), [...TODAY_KEYS, "env", "rafGap", "vis", "wsBytes"].sort());
+  assert.deepEqual(Object.keys(f).sort(), [...TODAY_KEYS, "env", "rafGap", "vis", "wsBytes", "wsBytesByHost"].sort());
   assert.equal(f.env.vw, 664);
   // the same aspect again: no env
   h.frame(p, { type: "session" }, 10);
@@ -1246,15 +1262,197 @@ test("share ON on a page without the APIs: nav and res are null, marks empty, ws
   p.tick();
   const d = minuteRows(h.posted)[0].data;
   assert.equal(d.nav, null); assert.equal(d.res, null); assert.deepEqual(d.marks, {}); assert.equal(d.env, null); assert.equal(d.wsBytes, null);
+  assert.equal("wsBytesByHost" in d, false, "no federation (the shell, VS Code): the key is left off, not written null");
   assert.deepEqual(d.vis, { hiddenN: 0, visibleN: 0, hiddenMs: 0 }); assert.deepEqual(d.rafGap, { n: 0, worst: 0 });
-  // a throwing reader reads the same as an absent one
-  const g = harness({ switches: () => ({ share: true, mute: false }), raf: null, entries: () => { throw new Error("no"); }, marks: () => { throw new Error("no"); }, env: () => { throw new Error("no"); } });
+  // a throwing reader reads the same as an absent one: every reader throws here, the two federation readers included (the
+  // harness's defaults return null, an ABSENT reader, which the assertion on wsBytesByHost below did not exercise until
+  // the maintainer's round 1 of the field, tests-1, 2026-09-20; the safe() guards at the collector's two federation reads are what this pins)
+  const g = harness({ switches: () => ({ share: true, mute: false }), raf: null, entries: () => { throw new Error("no"); }, marks: () => { throw new Error("no"); }, env: () => { throw new Error("no"); },
+                      fedBytes: () => { throw new Error("no"); }, fedAttached: () => { throw new Error("no"); } });
   const q = createPerfTelemetry("shell", g.deps);
   g.frame(q, { type: "x" }, 1);
   g.clock.wall += 60_000;
   assert.doesNotThrow(() => q.tick());
   const e = minuteRows(g.posted)[0].data;
   assert.equal(e.nav, null); assert.equal(e.res, null); assert.equal(e.env, null); assert.equal(e.wsBytes, null);
+  assert.equal("wsBytesByHost" in e, false, "a throwing federation reader reads as none");
+});
+
+// ── wsBytesByHost (2026-09-19): the per-position rule and the collector's baselines ──
+
+test("bytesByHost: the minute's characters per remote host position from federation's totals against the minute's baselines, for the positions attached at the flush or delivered to in the minute; a position with no baseline counts from 0; every qualifying position keeps its own key, however many; a key off the h<n> pattern or a non-number is ignored; no position reads null", () => {
+  const all = (m: Record<string, unknown>) => Object.keys(m);
+  assert.equal(bytesByHost(null, {}, []), null, "no federation");
+  assert.equal(bytesByHost({}, {}, []), null, "federation with no remote host ever attached");
+  assert.equal(bytesByHost({ h0: 5, host: 9, more: 3, h2x: 1 }, {}, ["h0", "host"]), null, "nothing on the pattern: no position");
+  assert.deepEqual(bytesByHost({ h1: 500, h2: 40 }, { h1: 100, h2: 40 }, ["h1", "h2"]), { h1: 400, h2: 0 }, "an attached host that received nothing reads 0");
+  assert.deepEqual(bytesByHost({ h1: 500, h2: 40 }, { h1: 100, h2: 40 }, ["h1"]), { h1: 400 }, "a detached host that received nothing in the minute has no key");
+  assert.deepEqual(bytesByHost({ h1: 500, h2: 40 }, { h1: 100, h2: 40 }, []), { h1: 400 }, "a host that received characters carries them whether or not it is attached at the flush: the detach minute");
+  assert.equal(bytesByHost({ h1: 500, h2: 40 }, { h1: 500, h2: 40 }, []), null, "nothing attached, nothing received: null, and the caller leaves the key off");
+  assert.deepEqual(bytesByHost({ h1: 500, h2: 40 }, { h1: 100 }, ["h1", "h2"]), { h1: 400, h2: 40 }, "a host attached mid-minute (no baseline) counts from 0");
+  assert.deepEqual(bytesByHost({ h1: 90 }, { h1: 100 }, ["h1"]), { h1: 0 }, "a total below its baseline (a page that cannot happen, guarded anyway) clamps to 0, never negative");
+  assert.equal(bytesByHost({ h1: 90 }, { h1: 100 }, []), null, "…and a clamped 0 on a detached host is silence: no key");
+  assert.deepEqual(bytesByHost({ h1: 100.6 }, { h1: 0 }, ["h1"]), { h1: 101 }, "whole characters");
+  assert.deepEqual(bytesByHost({ h2: 7, h1: 3 }, {}, []), { h1: 3, h2: 7 }, "positions in numeric order whatever the map's");
+  assert.deepEqual(bytesByHost({ h1: 1, h2: "2" as any, h3: NaN, h4: Infinity }, {}, ["h1", "h2", "h3", "h4"]), { h1: 1 }, "a non-number or a non-finite total is ignored");
+  assert.deepEqual(bytesByHost({ h1: 500, h2: 40 }, { h1: 100, h2: 40 }, null), { h1: 400 }, "federation cannot say who is attached (a bundle before the read): a position is on the row for the minute's characters alone");
+  const many: Record<string, number> = {}; for (let i = 1; i <= 8; i++) many["h" + i] = i * 1000;
+  const named = bytesByHost(many, { h1: 500 }, all(many));
+  assert.deepEqual(named, { h1: 500, h2: 2000, h3: 3000, h4: 4000, h5: 5000, h6: 6000, h7: 7000, h8: 8000 }, "every qualifying position keeps its own key: no cap, no fold key");
+  assert.deepEqual(Object.keys(named!), ["h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8"], "in numeric order, and no key of another shape");
+  assert.deepEqual(bytesByHost({ h1: 1, h5: 9 }, { h5: 9 }, ["h1", "h5"]), { h1: 1, h5: 0 }, "a fifth position attached and idle reads 0 under its own key");
+  assert.deepEqual(bytesByHost({ h1: 1, h5: 9 }, { h5: 9 }, ["h1"]), { h1: 1 }, "a fifth position detached and silent has no key, like any other");
+  // an ordinal past 2**53 (no manager mints one; the window slot is unvalidated) passes the pattern and cannot round-trip through
+  // Number: a key rebuilt from the parsed ordinal missed its own entry and landed as NaN, which JSON writes as null, the one
+  // value the field never carries (the maintainer's round 1, regression-6, 2026-09-20). The key is carried as matched, so the entry keeps its number.
+  assert.deepEqual(bytesByHost({ h9007199254740993: 5 }, {}, null), { h9007199254740993: 5 }, "an ordinal past 2**53 keeps the key it was matched under: never rebuilt as a lossy number, never null");
+  // the sibling road on the same unvalidated slot: two finite totals whose difference overflows to Infinity, which passes the
+  // clamp and JSON writes as null; the position is left off the row, as a non-finite total is (the author's pass-1 verify, 2026-09-20)
+  const MAX = 1.7976931348623157e308;
+  assert.equal(bytesByHost({ h1: MAX }, { h1: -MAX }, ["h1"]), null, "an overflowing difference leaves the position off, and the map with no other position is null, never {h1: Infinity}");
+  assert.deepEqual(bytesByHost({ h1: MAX, h2: 5 }, { h1: -MAX }, ["h1", "h2"]), { h2: 5 }, "…and the other positions keep their keys");
+  assertIdentifiersOnly(named);
+});
+
+test("the detach minute: a host that received characters in the minute and detached before the flush carries its position on the row closing that minute and not on the row after; an attached host with no characters carries 0; the key is absent when no host is attached at the flush and none received characters; a re-attached host keeps its position; a fifth and later position is named like the first", () => {
+  const fed: Record<string, number> = {};
+  let attached: string[] = [];
+  const h = beaconHarness({ share: true, mute: false }, { raf: null, fedBytes: () => fed, fedAttached: () => attached });
+  const p = createPerfTelemetry("feed", h.deps);
+  const minute = () => { h.frame(p, { type: "feed" }, 10); h.clock.wall += 60_000; p.tick(); return minuteRows(h.posted)[minuteRows(h.posted).length - 1].data; };
+  // minute 1: h1 attaches and delivers
+  fed.h1 = 3_000; attached = ["h1"];
+  assert.deepEqual(minute().wsBytesByHost, { h1: 3_000 });
+  // minute 2: h1 delivers 200 and then detaches (a /tunnels answer omits it): the flush finds it gone
+  fed.h1 += 200; attached = [];
+  assert.deepEqual(minute().wsBytesByHost, { h1: 200 }, "the row closing the detach's minute carries the position: the characters are the minute's, whoever is attached at the flush");
+  // minute 3: h1 detached and silent
+  const r3 = minute();
+  assert.equal("wsBytesByHost" in r3, false, "no host attached at the flush and none received characters: the field is absent, and no h1: 0 for the manager's life");
+  // minute 4: h2 attaches (a second position) and delivers nothing (a down host; an up one hears a keepalive every 10 s)
+  fed.h2 = 0; attached = ["h2"];
+  assert.deepEqual(minute().wsBytesByHost, { h2: 0 }, "an attached idle host carries 0; the detached silent h1 has no key");
+  // minute 5: h1 re-attaches under its old position (federation's history holds it) and delivers
+  fed.h1 += 50; attached = ["h1", "h2"];
+  assert.deepEqual(minute().wsBytesByHost, { h1: 50, h2: 0 }, "a re-attached host keeps its position; the idle attached host still reads 0");
+  // a fifth position, named like the first: detached with characters carries them under its own key; detached and silent has no key; attached and idle reads 0
+  fed.h3 = 0; fed.h4 = 0; fed.h5 = 10; attached = ["h1", "h2", "h3", "h4"];
+  assert.deepEqual(minute().wsBytesByHost, { h1: 0, h2: 0, h3: 0, h4: 0, h5: 10 }, "a detached fifth host's characters are on the row under h5");
+  assert.deepEqual(minute().wsBytesByHost, { h1: 0, h2: 0, h3: 0, h4: 0 }, "…and silent, it has no key");
+  attached = ["h1", "h2", "h3", "h4", "h5"];
+  assert.deepEqual(minute().wsBytesByHost, { h1: 0, h2: 0, h3: 0, h4: 0, h5: 0 }, "attached and idle, it reads 0");
+  for (const r of minuteRows(h.posted)) if (r.data.wsBytesByHost) assertIdentifiersOnly(r.data.wsBytesByHost);
+});
+
+test("wsBytesByHost on the collector: the per-position baselines carry across an idle minute and a muted one, a host appearing mid-minute counts from 0 under the next position, the key is absent until a remote host exists and present while one is attached, and a fifth and sixth host are named", () => {
+  const fed: Record<string, number> = {};   // the page starts with no remote host
+  const h = beaconHarness({ share: true, mute: false }, { raf: null, fedBytes: () => fed });
+  const p = createPerfTelemetry("feed", h.deps);
+  h.frame(p, { type: "feed" }, 10);
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.equal("wsBytesByHost" in minuteRows(h.posted)[0].data, false, "no remote host ever attached: no key");
+  // a host attaches and delivers in the second minute: counted from 0 (no baseline for h1)
+  fed.h1 = 3_000;
+  h.frame(p, { type: "feed" }, 10);
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.deepEqual(minuteRows(h.posted)[1].data.wsBytesByHost, { h1: 3_000 });
+  // an idle minute: the hosts keep delivering (keepalives, frames the pane never handles), no frame is timed, nothing is sent
+  fed.h1 += 250; fed.h2 = 40;   // a second host attached during the idle minute
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.equal(minuteRows(h.posted).length, 2, "an idle minute sends nothing");
+  h.frame(p, { type: "feed" }, 10);
+  fed.h1 += 60; fed.h2 += 5;
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.deepEqual(minuteRows(h.posted)[2].data.wsBytesByHost, { h1: 310, h2: 45 }, "the idle minute's characters ride the row that follows: the baselines carried");
+  // a muted minute: measured, no row built, the baselines carry the same way
+  h.sw.mute = true;
+  h.frame(p, { type: "feed" }, 10);
+  fed.h1 += 500;
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.equal(minuteRows(h.posted).length, 3, "a muted minute sends nothing");
+  h.sw.mute = false;
+  h.frame(p, { type: "feed" }, 10);
+  fed.h1 += 70;
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.deepEqual(minuteRows(h.posted)[3].data.wsBytesByHost, { h1: 570, h2: 0 }, "the muted minute's 500 and this minute's 70; h2 sent nothing and reads 0 while attached");
+  // a fifth and a sixth host: named like the first, no cap
+  fed.h3 = 1; fed.h4 = 2; fed.h5 = 300; fed.h6 = 400;
+  h.frame(p, { type: "feed" }, 10);
+  h.clock.wall += 60_000;
+  p.tick();
+  const r = minuteRows(h.posted)[4].data.wsBytesByHost;
+  assert.deepEqual(r, { h1: 0, h2: 0, h3: 1, h4: 2, h5: 300, h6: 400 });
+  assert.deepEqual(Object.keys(r), ["h1", "h2", "h3", "h4", "h5", "h6"]);
+  // the baseline is per position: the next minute's h5 and h6 are their own deltas
+  fed.h5 += 10; fed.h6 += 20;
+  h.frame(p, { type: "feed" }, 10);
+  h.clock.wall += 60_000;
+  p.tick();
+  assert.deepEqual(minuteRows(h.posted)[5].data.wsBytesByHost, { h1: 0, h2: 0, h3: 0, h4: 0, h5: 10, h6: 20 });
+  assert.equal(slowRows(h.posted).length, 0);
+});
+
+// The detach-minute rule through the real composition (the design's node test): a FederationManager's closeRemote into
+// the collector's flush, the collector wired to the manager's two readers as browserDeps wires them on a page
+// (fedBytes from wsBytesByHost(), fedAttached from attachedHostOrdinals()). The test above feeds the collector hand-written
+// maps and federation-ws-bytes-by-host.test.ts pins the manager's getters across a detach; this one runs both real halves
+// together, so a shape the two stubs agree on but the halves do not (a position spelled one way by the getter and another
+// by the collector's filter; a total pruned by closeRemote before the flush reads it) goes red here.
+test("the detach minute through the real composition: a FederationManager's remote conn receives a frame, closeRemote detaches the host, and the collector wired to the manager's own readers files the host's characters on the row closing that minute and no key on the row after", () => {
+  const g: any = globalThis;
+  const saved: Record<string, [boolean, unknown]> = {};
+  for (const k of ["window", "localStorage", "WebSocket", "location"]) saved[k] = [k in g, g[k]];
+  class FakeWS {
+    static made: FakeWS[] = [];
+    readyState = 0;
+    onopen: (() => void) | null = null;
+    onmessage: ((ev: any) => void) | null = null;
+    onclose: ((ev: any) => void) | null = null;
+    onerror: (() => void) | null = null;
+    constructor(public url: string) { FakeWS.made.push(this); }
+    send(): void {}
+    close(): void { this.readyState = 3; }
+  }
+  g.window = { dispatchEvent: () => {}, __rompLocalSend: () => {}, sessionStorage: { getItem: () => "" }, parent: { postMessage: () => {} },
+               __rompDialTerms: () => ({ app: "feed", iid: "PAGEIID-0001", active: "", col: "", skeleton: 0, provrows: 0, proto: 2, delta: 1 }) };
+  g.localStorage = { getItem: () => null, setItem: () => {} };
+  g.WebSocket = FakeWS;
+  g.location = { protocol: "http:", host: "hub.local:1", search: "?wid=hublab" };
+  try {
+    const fm: any = new FederationManager();
+    fm.app = "feed";
+    // the browser's wiring (perf-telemetry.ts browserDeps reads the same two getters off window.__rompFed): the manager's
+    // totals for the manager's life and the positions attached at the flush
+    const h = beaconHarness({ share: true, mute: false }, { raf: null, fedBytes: () => fm.wsBytesByHost(), fedAttached: () => fm.attachedHostOrdinals() });
+    const p = createPerfTelemetry("feed", h.deps);
+    fm.openRemote("TESTHOST", true);
+    const ws = FakeWS.made[FakeWS.made.length - 1];
+    ws.readyState = 1; ws.onopen!();
+    const text = JSON.stringify({ type: "feed", now: 500, buildId: 1, asks: [], ledgers: [] });
+    ws.onmessage!({ data: text });   // the remote's frame: its characters onto the host's position in the manager
+    assert.deepEqual(fm.wsBytesByHost(), { h1: text.length }, "the manager counted the frame under h1");
+    assert.deepEqual(fm.attachedHostOrdinals(), ["h1"]);
+    fm.closeRemote("TESTHOST");   // a /tunnels answer omitted the host: detached before the minute's flush
+    assert.equal(fm.conns.has("TESTHOST"), false, "detached");
+    assert.deepEqual(fm.attachedHostOrdinals(), [], "nothing attached at the flush");
+    h.frame(p, { type: "feed" }, 10);
+    h.clock.wall += 60_000;
+    p.tick();
+    assert.deepEqual(minuteRows(h.posted)[0].data.wsBytesByHost, { h1: text.length }, "the row closing the detach's minute carries the host's characters under its position, read through the real getter");
+    h.frame(p, { type: "feed" }, 10);
+    h.clock.wall += 60_000;
+    p.tick();
+    assert.equal("wsBytesByHost" in minuteRows(h.posted)[1].data, false, "the row after: the host is detached and silent, so no key, through the real attachment reader");
+    assertIdentifiersOnly(minuteRows(h.posted)[0].data.wsBytesByHost);
+  } finally {
+    for (const [k, [had, v]] of Object.entries(saved)) { if (had) g[k] = v; else delete g[k]; }
+  }
 });
 
 test("vis: the hide counts and flushes, the return counts and adds the hidden stretch; a minute spent hidden reports its own span hidden", () => {
@@ -1401,15 +1599,17 @@ test("a switch flipped in the gear reaches the collector through the storage eve
   assert.equal("env" in minuteRows(h.posted)[0].data, true);
 });
 
-test("installPerfTelemetry reads the page: the gear's store, the timeline entries, the shim's marks object and the environment; a store that throws reads both switches off", () => {
+test("installPerfTelemetry reads the page: the gear's store, the timeline entries, the shim's marks object, federation's per-host totals and the environment; a store that throws reads both switches off", () => {
   const g: any = globalThis;
   let t = 0;
+  const fedLive: Record<string, number> = { h1: 4000 };
   const win = standIn({
     performance: { now: () => t, getEntriesByType: (k: string) => (k === "navigation" ? NAV : k === "resource" ? RES : k === "paint" ? PAINTS : []) },
     navigator: { userAgent: PHONE_UA, maxTouchPoints: 5, standalone: true },
     location: { href: "http://h:1/chat?token=abc&wid=11111111" },
     localStorage: { getItem: (k: string) => (k === SETTINGS_KEY ? JSON.stringify({ perfShare: true, compact: true }) : null) },
     __rompPerfMarks: { wsOpen: 120, bundleReady: 300, firstFrame: 455, wsBytes: 8000, dv: 1757100000 },
+    __rompFed: { wsBytesByHost: () => fedLive, attachedHostOrdinals: () => Object.keys(fedLive) },   // federation's two getters (federation.ts start()), the page's one remote host at h1, attached
     PerformanceObserver: Object.assign(class { observe() {} disconnect() {} }, { supportedEntryTypes: ["resource", "navigation", "paint", "mark"] }),
   });
   win.innerWidth = 390; win.innerHeight = 664; win.devicePixelRatio = 3;
@@ -1432,6 +1632,7 @@ test("installPerfTelemetry reads the page: the gear's store, the timeline entrie
     assert.equal(rafs.length, 1, "the gap loop armed through the page's requestAnimationFrame");
     a!.timed("session", () => { t += 10; });
     win.__rompPerfMarks.wsBytes = 8000 + 2500;
+    fedLive.h1 = 4000 + 321;
     intervalCb!();
     assert.equal(sent.length, 1);
     const d = sent[0].data;
@@ -1440,8 +1641,15 @@ test("installPerfTelemetry reads the page: the gear's store, the timeline entrie
     assert.deepEqual(d.nav, { type: "reload", responseEnd: 210, domContentLoaded: 656, loadEventEnd: 0 });
     assert.equal(Object.keys(d.res).length, 6);
     assert.equal(d.wsBytes, 2500);
+    assert.deepEqual(d.wsBytesByHost, { h1: 321 }, "read through window.__rompFed.wsBytesByHost, differenced against the install-time total");
     assert.equal(d.ua, "safari-ios");
     assertIdentifiersOnly(d);
+    // the second minute: h1 delivers nothing and stays attached, so the row carries h1: 0 through the page's
+    // attachedHostOrdinals reader (unwired, the position would be absent, as a detached silent host's is)
+    a!.timed("session", () => { t += 10; });
+    intervalCb!();
+    assert.equal(sent.length, 2);
+    assert.deepEqual(sent[1].data.wsBytesByHost, { h1: 0 }, "an attached idle host reads 0: the attachment is read through window.__rompFed.attachedHostOrdinals");
   } finally {
     delete g.window;
     delete g.document;

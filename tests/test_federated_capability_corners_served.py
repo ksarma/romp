@@ -52,6 +52,9 @@ class that names no hub of its own: pointed at a checkout of the PR before the r
 fails-before lever (the stand-in's card never shows and the Outline files delta-unapplied rows; the pre-T278c
 corner's timeline lane freezes at the seed's six bars while the pre-delta corner's still moves on whole frames).
 ROMP_CORNER_REPORT_DIR, when set, gets one JSON per class with everything recorded, for a written record.
+ROMP_CORNER_TWO_HOSTS (any value) runs TwoHostsBytesByHost, a hub with TWO checked-in remotes whose feed page's minute
+row is cross-checked against the sockets' own byte counts (wsBytesByHost, 2026-09-19); skipped without it, and set by CI's
+served step since 2026-09-20.
 
 This lab boots subprocess kernels and drives Chromium; it loads no romp code in-process, so it carries no in-process
 state-isolation preamble and is not scanned by tests/test_state_isolation_order.py (as its two siblings). Synthetic
@@ -107,6 +110,16 @@ def _state_root(lab, name):
 def _root_knob(name):
     v = (os.environ.get(name) or "").strip()
     return os.path.abspath(v) if v else None
+
+
+def _need_browser():
+    """Skip unless the extension's playwright and a Chromium are installed here (CI installs neither)."""
+    if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
+        raise unittest.SkipTest("extension deps absent (npm ci not run here), the served lab needs them")
+    probe = subprocess.run(["node", "-e", "const p=require(process.argv[1]);process.stdout.write(p.chromium.executablePath())",
+                            os.path.join(EXT, "node_modules", "playwright")], capture_output=True, text=True)
+    if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
+        raise unittest.SkipTest("no playwright browser on this box, the served lab needs one (CI installs none)")
 
 
 def _serves(root, route):
@@ -181,7 +194,10 @@ const hook = (o) => {
         try {
           const m = JSON.parse(ev.data);
           if (m && m.type !== "ka") {
-            const f = { sock: idx, t: String(m.type), slot: m.slot ? String(m.slot) : "", len: String(ev.data).length, at: Date.now() };
+            const f = { sock: idx, t: typeof m.type === "string" ? m.type : "", slot: typeof m.slot === "string" ? m.slot : "", len: String(ev.data).length, at: Date.now() };   // type and slot as the client reads them: a string, else none (the author's fixer pass after the maintainer's round 4)
+            for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof m[k] === "number" || (typeof m[k] === "string" && (k === "gen" || k === "newGen"))) f[k] = m[k];   // the stamp fields (the revs as numbers, the gens as the kernel's strings), no content: the drive a redial's held member is derived from
+            if ("gen" in m) f.genKey = true;   // the key's presence, whatever its value: held_pair tells a present gen the client cannot read (a null, a boolean, an object, a list: no value copied above) from none (the author's pass after the maintainer's round 4; until then this hook set neither flag and such a frame read as gen-less here)
+            if ("newGen" in m) f.newGenKey = true;   // the same for newGen: a composed frame whose newGen the client cannot read is a refusal, never a per-cycle delta
             if (m.type === "feed" || m.type === "feedDelta") { f.asks = Array.isArray(m.asks) ? m.asks.length : null; f.buildId = m.buildId; }
             if (m.type === "feed") f.rest = JSON.stringify(Object.fromEntries(Object.entries(m).filter(([k]) => k !== "asks" && k !== "ledgers" && k !== "now" && k !== "buildId"))).length;
             if (m.type === "delta") { f.coll = Object.keys(m.coll || {}); f.restKeys = Object.keys(m.rest || {}); f.restAll = !!m.restAll; const set = ((m.coll || {}).turns || {}).set; f.setKeys = set ? Object.keys(set) : []; }
@@ -334,12 +350,7 @@ class _Corner(unittest.TestCase):
 
     @classmethod
     def _boot(cls):
-        if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
-            raise unittest.SkipTest("extension deps absent (npm ci not run here), the served lab needs them")
-        probe = subprocess.run(["node", "-e", "const p=require(process.argv[1]);process.stdout.write(p.chromium.executablePath())",
-                                os.path.join(EXT, "node_modules", "playwright")], capture_output=True, text=True)
-        if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
-            raise unittest.SkipTest("no playwright browser on this box, the served lab needs one (CI installs none)")
+        _need_browser()
         cls._knobs()
         if cls.hub_root is None:   # the fails-before lever, for every class that names no hub of its own
             cls.hub_root = _root_knob("ROMP_CORNER_HUB_ROOT")
@@ -583,11 +594,13 @@ class _Corner(unittest.TestCase):
 
     # ---- the assertions the decoded corners share ----
     def _assert_dials(self, caps):
+        """Every page's relay dial carries its app, delta=1 and the caps term derived from the frames its host's previous socket
+        received (tests/test_federated_dial_terms_served.py assert_relay_dials: the decoder word, plus the held members the
+        conn's bases give a redial; the decoder word alone on a first dial and on a kernel whose frames carry no gen), or none
+        where this corner strips it."""
         for app in self.apps:
-            qs = parse_qs(urlsplit(self._relay_dial(app)).query)
-            self.assertEqual(qs.get("app"), [app])
-            self.assertEqual(qs.get("delta"), ["1"], "the page's delta term rides the %s relay dial (since 2026-09-15)" % app)
-            self.assertEqual(qs.get("caps"), (["feedDelta"] if caps else None), "the %s relay dial's caps term: %r" % (app, qs))
+            page = self._page(app)
+            _dial.assert_relay_dials(self, app, page["dials"], page["frames"], caps=caps)
 
     def _assert_change_posted(self):
         self._driver_ran()
@@ -932,6 +945,280 @@ class CornerBothOld(CornerOldLocal):
         cls.remote_root = _root_knob("ROMP_CORNER_OLD_REMOTE_ROOT")
         if not (cls.hub_root and cls.remote_root):
             raise unittest.SkipTest("optional: ROMP_CORNER_OLD_HUB_ROOT and ROMP_CORNER_OLD_REMOTE_ROOT both needed")
+
+
+
+# ── wsBytesByHost, served (2026-09-19; knob-gated) ──
+HOST_A = "TESTHOSTA"
+HOST_B = "TESTHOSTB"
+TWO_HOSTS = (HOST_A, HOST_B)
+SETTLE_MS = 12000   # past one kernel keepalive period (KEEPALIVE_S 10 s): every relay socket receives a `ka`, bytes the host sent
+
+# The Chromium driver for the two-host lab: the share switch on before the page's scripts run; every socket's dial URL, the
+# host it is a relay to, and the characters of EVERY text frame it receives (keepalives and all, in the unit federation.ts
+# and the shim count: String.length), plus a count of its keepalives and whether it has held a full feed frame; then, in
+# ONE synchronous step so no frame lands between, the sockets' totals, federation's own map and the collector's flush
+# (window.__rompPerf.tick(), the collector's public door: the timer's minute would otherwise be the wait).
+DRIVER_BYTES = r"""
+import { createRequire } from "node:module";
+import fs from "node:fs";
+const require = createRequire(process.env.EXT_PKG);
+const { chromium } = require("playwright");
+const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+let browser;
+try { browser = await chromium.launch(cfg.launch || {}); }
+catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+const context = await browser.newContext({ viewport: { width: 1200, height: 700 } });
+const page = await context.newPage();
+const out = { dials: [], hostOf: {}, bytes: {}, ka: {}, fedHosts: null, fedBefore: null, fedAfter: null, hadPerf: false, rowsPosted: 0, died: null };
+page.on("pageerror", () => {});
+await page.addInitScript(() => { try { localStorage.setItem("romp:settings", JSON.stringify({ perfShare: true })); } catch (e) {} });
+await page.addInitScript(() => {
+  window.__dials = []; window.__hostOf = {}; window.__bytes = {}; window.__ka = {}; window.__full = {}; window.__posted = 0; window.__frames = [];
+  const W = window.WebSocket;
+  window.WebSocket = function (url, protos) {
+    const u = String(url); const idx = window.__dials.length; window.__dials.push(u);
+    const m = /\/remote\/([^/]+)\/ws/.exec(u); window.__hostOf[idx] = m ? decodeURIComponent(m[1]) : "";
+    window.__bytes[idx] = 0; window.__ka[idx] = 0;
+    const w = protos === undefined ? new W(u) : new W(u, protos);
+    w.addEventListener("message", (ev) => {
+      window.__bytes[idx] += (ev.data && ev.data.length) || 0;
+      try {
+        const j = JSON.parse(ev.data); if (j && j.type === "ka") window.__ka[idx]++; if (j && j.type === "feed") window.__full[idx] = true;
+        if (j && j.type !== "ka" && window.__hostOf[idx]) {   // a relay socket's frame: type, slot and stamp fields, no content (the drive expected_relay_caps reads)
+          const f = { sock: idx, t: typeof j.type === "string" ? j.type : "", slot: typeof j.slot === "string" ? j.slot : "" };   // type and slot as the client reads them: a string, else none (the author's fixer pass after the maintainer's round 4)
+          for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof j[k] === "number" || (typeof j[k] === "string" && (k === "gen" || k === "newGen"))) f[k] = j[k];   // the revs as numbers, the gens as the kernel's strings
+          if ("gen" in j) f.genKey = true;   // the key's presence, whatever its value: held_pair tells a present gen the client cannot read from none (the author's pass after the maintainer's round 4; this hook set neither flag before)
+          if ("newGen" in j) f.newGenKey = true;   // the same for newGen
+          window.__frames.push(f);
+        }
+      } catch (e) {}
+    });
+    const send = w.send.bind(w);
+    w.send = (d) => { try { const j = JSON.parse(d); if (j && j.type === "clientDiag" && j.surface === "perf" && j.what === "minute") window.__posted++; } catch (e) {} return send(d); };
+    return w;
+  };
+  window.WebSocket.prototype = W.prototype; window.WebSocket.CONNECTING = 0; window.WebSocket.OPEN = 1; window.WebSocket.CLOSING = 2; window.WebSocket.CLOSED = 3;
+});
+try {
+  await page.goto(cfg.url);
+  await page.waitForFunction((hosts) => hosts.every((h) => Object.keys(window.__hostOf).some((i) => window.__hostOf[i] === h && window.__full[i])), cfg.hosts, { timeout: 30000 });
+  await page.waitForTimeout(cfg.settleMs);
+  const snap = await page.evaluate(() => {
+    const fed = window.__rompFed, perf = window.__rompPerf;
+    const r = { dials: window.__dials.slice(), hostOf: Object.assign({}, window.__hostOf), bytes: Object.assign({}, window.__bytes), ka: Object.assign({}, window.__ka), frames: window.__frames.slice(),
+                fedHosts: fed && typeof fed.hosts === "function" ? fed.hosts() : null,
+                fedBefore: fed && typeof fed.wsBytesByHost === "function" ? fed.wsBytesByHost() : null,
+                hadPerf: !!(perf && typeof perf.tick === "function") };
+    if (r.hadPerf) perf.tick();
+    r.fedAfter = fed && typeof fed.wsBytesByHost === "function" ? fed.wsBytesByHost() : null;
+    r.rowsPosted = window.__posted;
+    return r;
+  });
+  Object.assign(out, snap);
+  await page.waitForTimeout(1500);
+} catch (e) { out.died = String(e).slice(0, 400); }
+console.log("RESULT:" + JSON.stringify(out));
+await browser.close();
+"""
+
+
+class TwoHostsBytesByHost(unittest.TestCase):
+    """A hub with TWO checked-in remotes (TESTHOSTA, TESTHOSTB, each owning `api` and `worker`), its feed page with the
+    share switch on. The page's minute row (the hub's client-diag, surface perf) carries wsBytesByHost: one number per
+    attached remote host by its POSITION on the page (h1 the host that first appeared to it), the text-frame characters
+    that host's relay socket delivered, keepalives included, in the unit the shim counts wsBytes in. The driver's socket
+    hook counts every relay socket's frames itself, so the row is cross-checked against the sockets' own totals per host,
+    exactly (the flush is forced in the same synchronous step as the snapshot); the position-to-host mapping is read from
+    the order the hosts first appeared to the page (federation's hosts(), attach order with nothing detached here), which
+    must agree with the hub's /tunnels row order the page read. The row names positions, never hosts; wsBytes stays the
+    local socket's figure. Run with ROMP_CORNER_TWO_HOSTS set (any value); skipped without it, as the other knob-gated
+    corners are (three kernels and a browser). CI's served step sets the knob (2026-09-20), so the lab runs there under
+    ROMP_SERVED_TESTS_REQUIRE, where its other skips (deps, browser, an empty drive) are failures as they are for every
+    served lab; the knob stays so a contributor clone and the Python matrix runners are unchanged."""
+    maxDiff = None
+
+    @classmethod
+    def setUpClass(cls):
+        if not (os.environ.get("ROMP_CORNER_TWO_HOSTS") or "").strip():
+            raise unittest.SkipTest("optional: ROMP_CORNER_TWO_HOSTS unset: the two-host lab is run by hand")
+        cls.procs = []
+        try:
+            cls._boot()
+        except BaseException:
+            cls.tearDownClass()
+            raise
+
+    @classmethod
+    def _boot(cls):
+        _need_browser()
+        cls.lab = tempfile.mkdtemp(prefix="federated-two-hosts-")
+        lab_dist.copy_dist(os.path.join(cls.lab, "dist"))
+        cls.hport, cls.htoken = _dial._free_port(), "testtok-hub-2h"
+        cls.remotes = {}
+        for host in TWO_HOSTS:
+            port, token = _dial._free_port(), "testtok-%s" % host.lower()
+            proc, _log = _dial._kernel(cls.lab, host.lower(), port, token, [(SID_R0, "api", 1), (SID_R1, "worker", 2)])
+            cls.procs.append(proc)
+            cls.remotes[host] = (port, token)
+        hp, cls.hlog = _dial._kernel(cls.lab, "hub", cls.hport, cls.htoken, [])
+        cls.procs.append(hp)
+        for host, (port, token) in cls.remotes.items():
+            _dial.checkin(cls.hport, cls.htoken, port, token, host=host)
+        # the order the hub lists the two (its /tunnels row order): the order the page's first poll opens them in, so the
+        # order positions are assigned in; read right before the drive
+        with urllib.request.urlopen("http://127.0.0.1:%d/tunnels?token=%s" % (cls.hport, cls.htoken), timeout=5) as r:
+            rows = json.loads(r.read().decode()).get("tunnels") or []
+        cls.tunnels_order = [t.get("host") for t in rows if t.get("hasToken") and t.get("localPort")]
+        cls.result, cls.driver_error = None, None
+        cls._drive()
+        cls.minute_rows = cls._read_minute_rows()
+
+    @classmethod
+    def _drive(cls):
+        cfg = os.path.join(cls.lab, "cfg.json")
+        with open(cfg, "w") as f:
+            json.dump({"url": "http://127.0.0.1:%d/feed?wid=%s&token=%s" % (cls.hport, WID, cls.htoken), "hosts": list(TWO_HOSTS), "settleMs": SETTLE_MS}, f)
+        driver = os.path.join(cls.lab, "driver.mjs")
+        with open(driver, "w") as f:
+            f.write(DRIVER_BYTES)
+        try:
+            p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=240,
+                               env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
+        except subprocess.TimeoutExpired as e:
+            so = e.stdout if isinstance(e.stdout, str) else (e.stdout or b"").decode()
+            cls.driver_error = "driver timed out; partial output:\n%s" % so
+            return
+        if p.returncode == 3:
+            raise unittest.SkipTest("no playwright browser on this box, the served leg needs one (CI installs none)")
+        if p.returncode != 0:
+            cls.driver_error = "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:]
+            return
+        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
+        if line is None:
+            cls.driver_error = "driver printed no result:\n" + p.stdout[-3000:] + p.stderr[-3000:]
+            return
+        cls.result = json.loads(line[len("RESULT:"):])
+
+    @classmethod
+    def _read_minute_rows(cls):
+        """The hub's perf minute rows from this page (its wid, app feed), once one carries wsBytesByHost (a bounded retry:
+        the row crosses the local socket after the driver's flush), else whatever landed."""
+        path = os.path.join(_state_root(cls.lab, "hub"), "client-diag.jsonl")
+        rows = []
+        for _ in range(40):
+            rows = []
+            try:
+                with open(path) as fh:
+                    for ln in fh:
+                        try:
+                            rec = json.loads(ln)
+                        except ValueError:
+                            continue
+                        d = rec.get("data") or {}
+                        if rec.get("surface") == "perf" and rec.get("what") == "minute" and rec.get("wid") == WID and d.get("app") == "feed":
+                            rows.append(rec)
+            except OSError:
+                rows = []
+            if any("wsBytesByHost" in (r.get("data") or {}) for r in rows):
+                break
+            time.sleep(0.3)
+        return rows
+
+    @classmethod
+    def tearDownClass(cls):
+        for p in getattr(cls, "procs", []):
+            try:
+                p.kill(); p.wait()
+            except Exception:
+                pass
+        shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
+
+    # ---- the readers, each guarded so a derived expectation never rests on nothing ----
+    def _driver_ran(self):
+        if getattr(type(self), "driver_error", None):
+            self.fail(type(self).driver_error)
+        if getattr(type(self), "result", None) is None:
+            raise unittest.SkipTest("the driver produced no result")
+        if self.result.get("died"):
+            self.fail("the driver died: %s" % self.result["died"])
+        self.assertTrue(self.result.get("hadPerf"), "the page published its collector (window.__rompPerf), whose tick() the driver called")
+        self.assertGreaterEqual(int(self.result.get("rowsPosted") or 0), 1, "the flush posted a minute row on the local socket")
+
+    def _hook_totals(self):
+        """Per host: the characters its relay socket(s) received and the keepalives among them, from the page's own hook.
+        Guarded: both hosts, each with bytes and at least one keepalive (the settle spans a keepalive period)."""
+        self._driver_ran()
+        totals, kas = {}, {}
+        for idx, host in self.result["hostOf"].items():
+            if not host:
+                continue
+            totals[host] = totals.get(host, 0) + int(self.result["bytes"][idx])
+            kas[host] = kas.get(host, 0) + int(self.result["ka"][idx])
+        self.assertEqual(sorted(totals), sorted(TWO_HOSTS), "one relay socket per checked-in host: %r" % (self.result["dials"],))
+        for h in TWO_HOSTS:
+            self.assertGreater(totals[h], 0, "%s's relay socket delivered frames" % h)
+            self.assertGreaterEqual(kas[h], 1, "%s's relay socket delivered a keepalive inside the settle, so the totals include one" % h)
+        return totals, kas
+
+    def _local_total(self):
+        self._driver_ran()
+        local = sum(int(self.result["bytes"][idx]) for idx, host in self.result["hostOf"].items() if not host)
+        self.assertGreater(local, 0, "the page's local socket delivered frames")
+        return local
+
+    def _positions(self):
+        """Position -> host, from the order the hosts first appeared to the page: federation's hosts() (attach order; nothing
+        detached in this lab), which must agree with the hub's /tunnels row order the page's first poll read. Guarded two."""
+        self._driver_ran()
+        fed_hosts = self.result.get("fedHosts")
+        self.assertEqual(sorted(fed_hosts or []), sorted(TWO_HOSTS), "federation lists both hosts: %r" % (fed_hosts,))
+        self.assertEqual(fed_hosts, self.tunnels_order, "the page's attach order is the hub's row order (the order positions are assigned in)")
+        return {"h%d" % (i + 1): h for i, h in enumerate(fed_hosts)}
+
+    def _row_sums(self):
+        """The page's minute rows summed: wsBytesByHost per position, wsBytes. Summed, not the last row: a page open past a
+        minute has flushed on the timer already, and each row is the characters since the previous one. Guarded non-empty."""
+        self._driver_ran()
+        rows = self.minute_rows
+        self.assertTrue(rows, "the hub filed a perf minute row for the feed page (wid %s)" % WID)
+        sums, ws = {}, 0
+        for r in rows:
+            d = r["data"]
+            for k, v in (d.get("wsBytesByHost") or {}).items():
+                sums[k] = sums.get(k, 0) + int(v)
+            ws += int(d.get("wsBytes") or 0)
+        self.assertTrue(sums, "a row carried wsBytesByHost: %r" % ([r["data"].keys() for r in rows],))
+        return sums, ws
+
+    # ---- the assertions ----
+    def test_the_relay_dials_carry_the_decoder_word_and_the_members_the_conns_bases_hold(self):
+        # derived from the drive (assert_relay_dials): each host's first dial states the decoder word alone, and a redial's
+        # member would be derived from the frames its previous socket recorded (none carries a gen on this checkout's kernels)
+        self._driver_ran()
+        checked = _dial.assert_relay_dials(self, "feed", self.result["dials"], self.result.get("frames"))
+        self.assertEqual(sorted(h for _i, h, _u in checked), sorted(TWO_HOSTS), "one relay dial per host: %r" % (checked,))
+        self.assertEqual(sorted(h for h in self.result["hostOf"].values() if h), sorted(TWO_HOSTS), "one relay dial per host")
+
+    def test_the_minute_row_carries_each_hosts_bytes_by_position_equal_to_its_sockets_own_count_keepalives_included(self):
+        totals, _kas = self._hook_totals()
+        pos = self._positions()
+        sums, _ws = self._row_sums()
+        self.assertEqual(sorted(sums), ["h1", "h2"], "two positions, no fold key, no host name: %r" % (sums,))
+        self.assertEqual(sums, {p: totals[h] for p, h in pos.items()},
+                         "each position's figure is that host's relay socket's own character count (positions %r; hook %r)" % (pos, totals))
+        self.assertEqual(sums, self.result["fedAfter"], "and federation's map for the manager's life at the flush says the same")
+        self.assertEqual(self.result["fedBefore"], self.result["fedAfter"], "nothing landed between the snapshot and the flush")
+        text = json.dumps(self.minute_rows)
+        for h in TWO_HOSTS:
+            self.assertNotIn(h, text, "no host name in the perf rows")
+
+    def test_wsBytes_stays_the_local_sockets_figure(self):
+        totals, _ = self._hook_totals()
+        _sums, ws = self._row_sums()
+        local = self._local_total()
+        self.assertLessEqual(ws, local, "wsBytes counts the local socket alone (its baseline can start after the socket's first frames, never before)")
+        self.assertLess(ws, local + min(totals.values()), "…and absorbed no remote socket's frames")
 
 
 if __name__ == "__main__":

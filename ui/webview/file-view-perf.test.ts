@@ -183,7 +183,7 @@ function collector(app: string, posted: any[]) {
     visible: () => true, hiddenPane: () => false,
     ua: "chrome-desktop", pageUrl: "http://h:1/" + app,
     windowEvents: null, documentEvents: null,
-    switches: () => ({ share: false, mute: false }), entries: () => null, marks: () => null, env: () => null,   // the beacon extension's deps: both switches off, nothing to read
+    switches: () => ({ share: false, mute: false }), entries: () => null, marks: () => null, fedBytes: () => null, fedAttached: () => null, env: () => null,   // the beacon extension's deps: both switches off, nothing to read
   };
   return { perf: createPerfTelemetry(app, deps), clock };
 }

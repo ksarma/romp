@@ -162,7 +162,13 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   `top` when any changed — and an unchanged board sends such a client nothing at
   all. A federated dashboard's relay sockets announce it too (`federation.ts`
   `REMOTE_DIAL_CAPS`, since 2026-09-18; the relay forwards the dial's query
-  whole). A consumer that announces nothing and dials no `delta=1` (a bundle
+  whole), and since 2026-09-19 a relay dial carries beside it the held members
+  its conn's own bases give it (`held:feed:<gen>.<rev>` from the pair beside the
+  raw feed base, `held:bars:<gen>.<rev>` from the receiver's bars base), each
+  omitted while its base holds no gen, which is every dial against a kernel that
+  stamps no generation on its frames; never the page's own caps, whose held
+  member is the pair the page holds for its LOCAL kernel.
+  A consumer that announces nothing and dials no `delta=1` (a bundle
   before the cap; a relay dialed by a dashboard bundle before 2026-09-15; the
   VS Code extension before 2026-09-16) stays on the full-frame path, which
   keeps its 60 s repost of the unchanged frame; one that dials `delta=1`
@@ -173,7 +179,19 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   the frame the merge reads and a remote host's delta onto the raw frame it
   holds for that host (`applyRemoteFeedDelta`), and re-emits a merged full
   frame, so every consumer still sees whole `feed` frames; a delta it cannot
-  apply gets a `needFullFeed` to the kernel that sent it and a re-base. A
+  apply gets a `needFullFeed` to the kernel that sent it and a re-base, and
+  since 2026-09-20 a delta whose apply THROWS (a malformed frame) is refused
+  the same way on both roads, bounded by progress: one bare ask per stall,
+  a `feedDelta-apply` row naming the road (wire or local), and after the
+  answering full a second throw stops the asking and tells the shell once,
+  the pane staying on its last frame until the next full or applying delta
+  lands (a full lands and shows whatever the latch; an applying delta alone
+  lifts the stop, so a throw after a quiet interval with no applying delta
+  between is read as the same stall and asks nothing); the remote bound
+  resets with its socket, the local one with the page alone, by choice: the
+  shim redials the local socket in-page and announces the reopen to the
+  manager (a `romp:wsup` event and an in-band `wsup` frame), and a reset on
+  that reopen is left to the maintainer. A
   remote host's view-delta patches (the timeline's bars; the feed from a kernel
   too old to read the caps term) are reassembled per relay socket
   (`Conn.viewDeltas`) before the merge. A build that carries no `ledgers`

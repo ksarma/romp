@@ -244,20 +244,30 @@ assert f["loaf"] == {"per_min": 0.0, "blocking_ms_per_min": 0.0, "worst_ms": 0, 
 
 @test "romp perf client: the kernel's capped rows are counted in the header and --json, a whole-row marker is skipped, and no phantom pane appears" {
     # Since 2026-09-18 the kernel bounds a client-diag row at 24 KiB (kernel.py _client_diag_line) in two shapes: a
-    # perf minute row over the bound sheds its per-minute figures (frames first) and names them under its capped key,
+    # perf minute row over the bound sheds its uncapped wsBytesByHost map whole, then its per-minute figures (frames
+    # first), and names them under its capped key,
     # keeping its span, heap and DOM; any other row over the bound becomes a marker, data {"capped": true, "bytes": N}
     # plus the pane's app when the row had one. The reader used to fold a marker as a pane with one zero-ms minute,
     # and a marker without app landed under a pane named "?"; a shed row read as an empty minute with nothing said.
     # Now the markers are skipped and both kinds are counted, in the header and in --json, so the loss is visible.
+    # The header counts the shed rows by WHAT they dropped (capped.dropped; shed_keys in --json): since the author's pass 1
+    # (the maintainer's round 1, regression-4) the ladder sheds the map first, a row can lose wsBytesByHost alone with its frames intact and folded, and the old
+    # wording, "shed frames", called that row's frames lost when they were not (the author's pass-1 verify, 2026-09-20). The
+    # third loss shape (the maintainer's round 4, kernel-1): a row a VALUE of which the kernel stored short (a string
+    # cut at 64 characters, nesting nulled past 8 levels) is kept whole otherwise and carries `cut`, the admitted keys
+    # it happened under; the reader counts those rows and names the keys (cut_rows, cut_keys), beside the shed count
+    # when the row also shed keys, so a stored value can be told from a whole one here too.
     run "$ROMP_SCRIPT" perf client
     [ "$status" -eq 0 ]
     [[ "$output" != *"capped whole"* ]]                  # nothing lost: the clause is absent, not zeroed
+    [[ "$output" != *"with a value cut"* ]]
     run "$ROMP_SCRIPT" perf client --json
     [ "$status" -eq 0 ]
     echo "$output" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
 assert d["shed_minute_rows"] == 0 and d["capped_rows"] == 0, (d["shed_minute_rows"], d["capped_rows"])
+assert d["cut_rows"] == 0 and d["cut_keys"] == {}, (d["cut_rows"], d["cut_keys"])
 '
     python3 - "$DIAG" <<'PY'
 import json, sys, time
@@ -270,16 +280,41 @@ shed = {"app": "chat", "since": (now - 75) * 1000, "span_ms": 60000,
         "loaf": {"n": 0, "blocking_ms": 0, "worst_ms": 0, "top": [], "src": "none"},
         "slow": {"sent": 0, "suppressed": 0, "suppressed_worst_ms": 0}, "heap_mb": 90.0, "dom": 3000, "visible": True, "hidden_pane": True, "ua": "chrome-desktop",
         "nav": {"ttfb": 120}, "capped": {"bytes": 30000, "dropped": ["frames"]}}
+# a timeline minute row the kernel shed the wsBytesByHost map from, the ladder's first step: its frames stayed and fold
+mapshed = {"app": "timeline", "since": (now - 70) * 1000, "span_ms": 60000,
+           "frames": {"tlBars": {"n": 6, "ms_sum": 60, "ms_max": 20, "n16": 1, "n100": 0, "hist": [0, 0, 0, 4, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0]}},
+           "free": {"n": 6, "p50": 10, "p90": 20, "max": 30},
+           "loaf": {"n": 0, "blocking_ms": 0, "worst_ms": 0, "top": [], "src": "none"},
+           "slow": {"sent": 0, "suppressed": 0, "suppressed_worst_ms": 0}, "heap_mb": 60.0, "dom": 1500, "visible": True, "hidden_pane": False, "ua": "chrome-desktop",
+           "capped": {"bytes": 25000, "dropped": ["wsBytesByHost"]}, "cut": ["loaf"]}   # and a long-frame attribution string in it was cut: the row is a shed row AND a cut row
+# the shell's minute row (no frame types) with a long-frame attribution string the kernel cut at 64 characters: kept whole
+# otherwise, it folds as the shell's pane and carries `cut` naming the key the cut fell under (kernel.py _client_diag_admit)
+cutrow = {"app": "shell", "since": (now - 65) * 1000, "span_ms": 60000,
+          "free": {"n": 3, "p50": 8, "p90": 12, "max": 15},
+          "loaf": {"n": 1, "blocking_ms": 80, "worst_ms": 120, "top": [{"k": "feed.js:render@1200", "ms": 100, "n": 1, "inv": "WebSocket.onmessage"}], "src": "loaf"},
+          "slow": {"sent": 0, "suppressed": 0, "suppressed_worst_ms": 0}, "heap_mb": 30.0, "dom": 200, "visible": True, "hidden_pane": False, "ua": "chrome-desktop",
+          "cut": ["loaf"]}
 with open(sys.argv[1], "a") as f:
     f.write(row(now - 15, W1, "minute", shed) + "\n"
             + row(now - 8, W1, "minute", {"capped": True, "bytes": 40000, "app": "chat"}) + "\n"
-            + row(now - 5, W1, "slowframe", {"capped": True, "bytes": 30000}) + "\n")
+            + row(now - 5, W1, "slowframe", {"capped": True, "bytes": 30000}) + "\n"
+            + row(now - 9, W1, "minute", mapshed) + "\n"
+            + row(now - 12, W1, "minute", cutrow) + "\n")
 PY
     run "$ROMP_SCRIPT" perf client
     [ "$status" -eq 0 ]
     [[ "$output" != *"· ?"* ]]                           # the marker without app makes no phantom pane
-    # the shed row counts as a minute row, the two markers count as capped, and neither marker counts as a row of either kind
-    [[ "$output" == *"2 dashboards, 3 panes, 6 minute rows, 1 slow frame row; 1 minute row shed frames, 2 rows capped whole"* ]]
+    # the two shed rows and the cut shell row count as minute rows, the two markers count as capped, and neither marker counts as a
+    # row of either kind; the header says what each shed row dropped: the chat row its frames, the timeline row the wsBytesByHost
+    # map alone; and it counts the rows with a cut value by the key the cut fell under: the shell row and the timeline row (a shed
+    # row too, counted under both shapes), loaf on both
+    [[ "$output" == *"2 dashboards, 5 panes, 8 minute rows, 1 slow frame row; 2 minute rows shed keys (frames on 1, wsBytesByHost on 1), 2 rows capped whole, 2 rows with a value cut (loaf on 2)"* ]]
+    # the shell's cut row folded as its own pane: the cut is named in the header, never a reason to drop the row
+    [[ "$output" == *"dashboard 11111111 · shell   chrome-desktop   1 min reported   heap 30.0 MB   dom 200   visible"* ]]
+    [[ "$output" != *"rows shed frames"* && "$output" != *"row shed frames"* ]]   # the old sentence, which called the map-shed row's frames lost
+    # the timeline pane's frames folded: the map-shed row kept them
+    [[ "$output" == *"dashboard 11111111 · timeline   chrome-desktop   1 min reported   heap 60.0 MB   dom 1500   visible"* ]]
+    [[ "$output" == *"tlBars          6.0/min     60 ms/min   p50 <8   p90 <16   p99 <16 ms   max 20   >16.7 ms 17%   >=100 ms 0%"* ]]
     # the chat pane folds the shed row by its span: one minute became two, with the last sample's heap and DOM unchanged
     [[ "$output" == *"dashboard 11111111 · chat   chrome-desktop   2 min reported   heap 90.0 MB   dom 3000   hidden (no viewport)"* ]]
     [[ "$output" == *"chatTail       15.0/min     30 ms/min"* ]]   # 30 frames and 60 ms over two minutes now
@@ -290,13 +325,86 @@ PY
     echo "$output" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
-assert d["shed_minute_rows"] == 1 and d["capped_rows"] == 2, (d["shed_minute_rows"], d["capped_rows"])
+assert d["shed_minute_rows"] == 2 and d["capped_rows"] == 2, (d["shed_minute_rows"], d["capped_rows"])
+assert d["shed_keys"] == {"frames": 1, "wsBytesByHost": 1}, d["shed_keys"]   # per key, the rows that dropped it
+assert d["cut_rows"] == 2 and d["cut_keys"] == {"loaf": 2}, (d["cut_rows"], d["cut_keys"])   # the third shape: per key, the rows a cut fell under
 panes = {(p["wid"], p["app"]): p for p in d["panes"]}
-assert set(panes) == {("11111111", "feed"), ("11111111", "chat"), ("22222222", "feed")}, set(panes)
+assert set(panes) == {("11111111", "feed"), ("11111111", "chat"), ("11111111", "timeline"), ("11111111", "shell"), ("22222222", "feed")}, set(panes)
+tl = panes[("11111111", "timeline")]
+assert tl["rows"] == 1 and tl["frames"]["tlBars"]["n"] == 6 and tl["total_ms_per_min"] == 60, tl   # the frames of the row that shed the map fold
 assert not any(p["app"] == "?" for p in d["panes"]), [p["app"] for p in d["panes"]]
 c = panes[("11111111", "chat")]
 assert c["minutes"] == 2 and c["rows"] == 2 and c["frames"]["chatTail"]["n"] == 30 and c["heap_mb"] == 90.0 and c["dom"] == 3000, c
 assert [m["total_ms"] for m in c["minutes_detail"]] == [60, 0], c["minutes_detail"]
+'
+    # a window whose one loss is a cut value shows the clause too (the loss visible on its own, the other two shapes at zero, their
+    # key lists not rendered at zero). The two cut keys are BUILT FROM THE ALLOWLIST (the maintainer's round 5, correctness-5: the
+    # fixture had posted `why`, a key the perf surface does not admit, so the leg pinned the rendering of a row no writer can emit,
+    # since the kernel builds the cut list from the admitted keys alone): two admitted perf keys whose values a poster can fill
+    # (loaf, a nested object with strings; env, likewise), read off kernel.py's CLIENT_DIAG_KEYS['perf'] and asserted admitted; the
+    # header renders the keys in sorted order (bin/romp sorts cut_keys), so the assertion is built in that order too. The kernel
+    # admits by key and never checks the poster, so the second key stands in for any admitted key a poster fills.
+    CUTKEYS="$(python3 - "$ROMP_SCRIPT" <<'PY'
+import re, sys, os
+src = open(os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])), "..", "kernel", "kernel.py"), encoding="utf-8").read()
+m = re.search(r'"perf": frozenset\(\((.*?)\)\),', src, re.S)
+assert m, "kernel.py: CLIENT_DIAG_KEYS['perf'] not found"
+admitted = set(re.findall(r'"([A-Za-z_]+)"', m.group(1)))
+for k in ("loaf", "env"):
+    assert k in admitted, ("not an admitted perf key", k)
+print(" ".join(sorted(["loaf", "env"])))
+PY
+)"
+    read -r CUT1 CUT2 <<< "$CUTKEYS"
+    [ -n "$CUT1" ] && [ -n "$CUT2" ]
+    python3 - "$DIAG" "$CUT1" "$CUT2" <<'PY'
+import json, sys, time
+now = int(time.time())
+W1 = "11111111-2222-3333-4444-555555555555"
+open(sys.argv[1], "w").write(json.dumps({"t": now - 10, "wid": W1, "surface": "perf", "what": "minute", "data": {
+    "app": "shell", "since": (now - 70) * 1000, "span_ms": 60000, "free": {"n": 3, "p50": 8, "p90": 12, "max": 15},
+    "loaf": {"n": 1, "blocking_ms": 80, "worst_ms": 120, "top": [{"k": "feed.js:render@1200", "ms": 100, "n": 1, "inv": "WebSocket.onmessage"}], "src": "loaf"},
+    "env": {"dv": 1, "entryTypes": ["longtask"]},
+    "slow": {"sent": 0, "suppressed": 0, "suppressed_worst_ms": 0}, "heap_mb": 30.0, "dom": 200, "visible": True, "hidden_pane": False, "ua": "chrome-desktop",
+    "cut": [sys.argv[2], sys.argv[3]]}}) + "\n")
+PY
+    run "$ROMP_SCRIPT" perf client
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"1 dashboard, 1 pane, 1 minute row, 0 slow frame rows; 0 minute rows shed keys, 0 rows capped whole, 1 row with a value cut ($CUT1 on 1, $CUT2 on 1)"* ]]
+    run "$ROMP_SCRIPT" perf client --json
+    [ "$status" -eq 0 ]
+    echo "$output" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert d["cut_rows"] == 1 and d["cut_keys"] == {sys.argv[1]: 1, sys.argv[2]: 1} and d["shed_minute_rows"] == 0 and d["capped_rows"] == 0, d
+' "$CUT1" "$CUT2"
+    # a loss and NO cut (the maintainer's round 5, regression-5, extra10-1, kernel-1): a window with a shed row and a cap marker and no
+    # cut value renders the shed and capped counts and no cut term at all (the clause had printed "0 rows with a value cut (no key
+    # named)" here); the shed row drops loaf, a key of the ladder the header used to leave unnamed (kernel-2: the shed clause is
+    # worded from shed_keys, so every key the ladder sheds is named)
+    python3 - "$DIAG" <<'PY'
+import json, sys, time
+now = int(time.time())
+W1 = "11111111-2222-3333-4444-555555555555"
+shed = {"app": "feed", "since": (now - 70) * 1000, "span_ms": 60000,
+        "frames": {"feed": {"n": 2, "ms_sum": 20, "ms_max": 12, "n16": 0, "n100": 0, "hist": [0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]}},
+        "free": {"n": 3, "p50": 8, "p90": 12, "max": 15}, "slow": {"sent": 0, "suppressed": 0, "suppressed_worst_ms": 0},
+        "heap_mb": 30.0, "dom": 200, "visible": True, "hidden_pane": False, "ua": "chrome-desktop",
+        "capped": {"bytes": 26000, "dropped": ["wsBytesByHost", "loaf"]}}
+open(sys.argv[1], "w").write(json.dumps({"t": now - 10, "wid": W1, "surface": "perf", "what": "minute", "data": shed}) + "\n"
+                              + json.dumps({"t": now - 8, "wid": W1, "surface": "perf", "what": "minute", "data": {"capped": True, "bytes": 40000, "app": "chat"}}) + "\n")
+PY
+    run "$ROMP_SCRIPT" perf client
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"1 dashboard, 1 pane, 1 minute row, 0 slow frame rows; 1 minute row shed keys (loaf on 1, wsBytesByHost on 1), 1 row capped whole"* ]]
+    [[ "$output" != *"with a value cut"* ]]
+    [[ "$output" != *"no key named"* ]]
+    run "$ROMP_SCRIPT" perf client --json
+    [ "$status" -eq 0 ]
+    echo "$output" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert d["shed_minute_rows"] == 1 and d["shed_keys"] == {"loaf": 1, "wsBytesByHost": 1} and d["capped_rows"] == 1 and d["cut_rows"] == 0 and d["cut_keys"] == {}, d
 '
     # a window holding cap markers alone is a loss to report, not an idle dashboard: the refusal names them
     python3 - "$DIAG" <<'PY'

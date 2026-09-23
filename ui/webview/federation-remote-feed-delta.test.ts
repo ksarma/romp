@@ -12,8 +12,11 @@
 // Synthetic only (host TESTHOST, placeholder uuids, the notes-api demo: sessions `api` and `worker`).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { FederationManager, REMOTE_REDIAL_MS } from "./federation";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { FederationManager, REMOTE_REDIAL_MS, REMOTE_STALE_MS } from "./federation";
 import * as fed from "./federation";
+import { GEN_MAX } from "./view-deltas";
 // the manager's announced capability, read off the module namespace so this file still bundles (and runs red) against a
 // federation.ts that predates the export: the wire word is asserted literally below, the export beside it
 const REMOTE_DIAL_CAPS: string | undefined = (fed as any).REMOTE_DIAL_CAPS;
@@ -46,31 +49,35 @@ function terms(): any {
   return { app: "fleet", iid: PAGE_IID, active: "", col: "", skeleton: 0, provrows: 1, proto: null, delta: 1 };
 }
 
-interface Rig { fm: any; emitted: any[]; sent: any[] }
+interface Rig { fm: any; emitted: any[]; sent: any[]; notified: any[] }
 
-async function withManager(fn: (rig: Rig) => void | Promise<void>): Promise<void> {
+/** `terms` replaces the page's __rompDialTerms (a function, or null for a page without the shim's seam). */
+async function withManager(fn: (rig: Rig) => void | Promise<void>, opts: { terms?: (() => any) | null } = {}): Promise<void> {
   const g: any = globalThis;
   const saved: Record<string, any> = {};
   const set = (k: string, v: any) => { saved[k] = { had: k in g, v: g[k] }; g[k] = v; };
   FakeWS.made = [];
   const emitted: any[] = [];   // what the merge hands the pane (no direct-delivery handler registered: emit dispatches on window)
   const sent: any[] = [];      // what goes to the LOCAL kernel (__rompLocalSend): diag rows, and a needFullFeed if the local path asks
+  const notified: any[] = [];  // what the manager posts to the shell (window.parent.postMessage): the apply-throw refusal's visible message (tellShell), hostsPending, reveal
   const realNow = Date.now;
   Date.now = () => clock;
   set("WebSocket", FakeWS);
   set("location", { protocol: "http:", host: "hub.local:1", search: "?wid=hublab" });
   set("localStorage", { getItem: () => null, setItem: () => {} });
-  set("window", {
+  const win: any = {
     dispatchEvent: (ev: any) => { if (ev && ev.data) emitted.push(ev.data); },
     __rompLocalSend: (m: any) => sent.push(m),
-    __rompDialTerms: () => terms(),
     sessionStorage: { getItem: () => "" },
-    parent: { postMessage: () => {} },
-  });
+    parent: { postMessage: (m: any) => notified.push(m) },
+  };
+  win.parent.postMessage = (m: any) => notified.push(m);
+  if (opts.terms !== null) win.__rompDialTerms = opts.terms || (() => terms());
+  set("window", win);
   try {
     const fm: any = new FederationManager();
     fm.app = "fleet";
-    await fn({ fm, emitted, sent });
+    await fn({ fm, emitted, sent, notified });
   } finally {
     Date.now = realNow;
     for (const [k, r] of Object.entries(saved)) { if (r.had) g[k] = r.v; else delete g[k]; }
@@ -132,6 +139,67 @@ test("every remote dial announces caps=feedDelta beside the page's terms, the re
     assert.equal(rq.get("reconnect"), "1");
     fm.conns.get(HOST).closed = true;
   });
+});
+
+// The caps term is REMOTE_DIAL_CAPS and nothing of the page's (2026-09-19): the page's caps string is never a source for a
+// remote dial. Its two hold words are the shim's on its OWN socket (readyGate: the kernel sends a client that announces it
+// nothing until its bundle's ready, and this manager posts its own ready on a first dial's open and dials a redial as
+// ready from accept) and the chat page's (chatResume, a hold this manager never answers), and a held member the page
+// states is the pair the PAGE holds for its LOCAL kernel, which the remote kernel would count a miss. These pin the
+// negative: terms carrying each of those yield exactly feedDelta on the first dial and the redial, and the three
+// no-caps corners (a page without __rompDialTerms, terms carrying no caps field, an empty caps string) yield the same.
+const capsOf = (ws: FakeWS) => qOf(ws.url).get("caps");
+/** dial, ack the ready, drop the socket and let the watchdog redial: [the first dial's caps, the redial's] */
+function firstAndRedial(fm: any): [string | null, string | null] {
+  fm.outbound({ type: "ready", proto: 2 });
+  fm.openRemote(HOST, true);
+  const first = last(FakeWS.made);
+  first.open();
+  first.frame({ type: "caps" });
+  first.readyState = 3;
+  clock += REMOTE_REDIAL_MS + 1000;
+  fm.watchdog(clock);
+  const redial = last(FakeWS.made);
+  assert.notEqual(redial, first, "the watchdog dialed again");
+  assert.equal(qOf(redial.url).get("reconnect"), "1");
+  fm.conns.get(HOST).closed = true;
+  return [capsOf(first), capsOf(redial)];
+}
+
+test("the page's caps never travel: terms carrying feedDelta,readyGate (the Outline), readyGate alone (the chat) and feedDelta,readyGate,chatResume,held:feed:x.1 each yield exactly feedDelta on the first dial and the redial", async () => {
+  await withManager(({ fm }) => {
+    assert.deepEqual(firstAndRedial(fm), ["feedDelta", "feedDelta"], "the Outline's caps: its readyGate stays home, its feedDelta is not read (the word is this manager's own)");
+  }, { terms: () => ({ ...terms(), caps: "feedDelta,readyGate" }) });
+  await withManager(({ fm }) => {
+    fm.app = "chat";
+    assert.deepEqual(firstAndRedial(fm), ["feedDelta", "feedDelta"], "the chat's caps: readyGate alone yields the decoder word alone");
+  }, { terms: () => ({ app: "chat", iid: PAGE_IID, active: "", col: "", skeleton: 1, provrows: 0, proto: 2, delta: 1, caps: "readyGate" }) });
+  await withManager(({ fm }) => {
+    fm.app = "chat";
+    const [first, redial] = firstAndRedial(fm);
+    assert.deepEqual([first, redial], ["feedDelta", "feedDelta"], "the chat's two holds and the page's LOCAL held pair: none of it rides a remote dial, on either dial");
+    for (const ws of FakeWS.made) assert.equal(qOf(ws.url).get("caps"), "feedDelta", "no dial carried readyGate, chatResume or held:feed:x.1: " + ws.url);
+  }, { terms: () => ({ app: "chat", iid: PAGE_IID, active: "", col: "", skeleton: 1, provrows: 0, proto: 2, delta: 1, caps: "feedDelta,readyGate,chatResume,held:feed:x.1" }) });
+});
+
+test("the three no-caps corners each yield exactly feedDelta: a page without __rompDialTerms, terms carrying no caps field, an empty caps string", async () => {
+  await withManager(({ fm }) => {
+    fm.openRemote(HOST, true);
+    assert.equal(capsOf(last(FakeWS.made)), "feedDelta", "no seam (a page before 2026-09-15): the decoder word alone");
+    assert.equal(qOf(last(FakeWS.made).url).get("delta"), null, "and none of the page's terms, as before");
+    fm.conns.get(HOST).closed = true;
+  }, { terms: null });
+  await withManager(({ fm }) => {
+    fm.openRemote(HOST, true);
+    assert.equal(capsOf(last(FakeWS.made)), "feedDelta", "terms carrying no caps field (the shim's __rompDialTerms states none)");
+    assert.equal(qOf(last(FakeWS.made).url).get("delta"), "1", "the page's other terms ride");
+    fm.conns.get(HOST).closed = true;
+  });
+  await withManager(({ fm }) => {
+    fm.openRemote(HOST, true);
+    assert.equal(capsOf(last(FakeWS.made)), "feedDelta", "an empty field (a page whose shim announces no cap)");
+    fm.conns.get(HOST).closed = true;
+  }, { terms: () => ({ ...terms(), caps: "" }) });
 });
 
 test("a remote host's feedDelta applies onto the raw frame held for it: removals by the kernel's bare ids land, and the merge reads the result prefixed whole", async () => {
@@ -527,4 +595,752 @@ test("late timers on a conn whose own replacement socket is CONNECTING, then OPE
     assert.equal(conn.viewDeltas, vd);
     conn.closed = true;
   });
+});
+
+// ── the held pair across a redial (2026-09-19) ───────────────────────────────────────────────────────────────────────
+// A kernel that stamps its frames (gen on the full and on each feedDelta) leaves the conn's raw base a pair (Conn.feedHeld):
+// (gen, 0) at the full, advanced by each delta that applies. connect()'s per-dial reset is gated per base, so a base holding
+// a pair survives the redial and remoteDialUrl writes it as held:feed:<gen>.<rev> beside REMOTE_DIAL_CAPS, on both redial
+// roads, with reconnect=1 and without, and the remote composes the feed from the declared rev instead of serving it whole.
+// A base holding no gen (every kernel in this repo today) is reset as before and declares nothing (tests 5 and 8 above
+// stand unchanged). The pair is read from the base alone: the page's own terms may carry a held:feed member (the pair the
+// page holds for its LOCAL kernel) and it never reaches a remote dial. The composed frame that answers a declaration (base
+// r, rev R, through R, gen g, newGen g2) applies onto the surviving base; a stamped delta whose gen differs, or whose base
+// is above the held rev, posts needFullFeed carrying the held pair on the arriving conn and applies nothing. The gens
+// are in the kernel's form (view-deltas.ts genOf): the boot's 16-hex token, '-', a decimal counter; strings, never numbers.
+const GEN_STAMP = "0123456789abcdef";
+const G = GEN_STAMP + "-7", G2 = GEN_STAMP + "-9", G3 = GEN_STAMP + "-11";
+const stamped = (over: Record<string, unknown> = {}) => ({ ...remoteFull(), gen: G, ...over });
+/** a per-cycle stamped delta from rev `base` to `base + 1`: card n set, in the stamping kernel's per-cycle shape, through
+ *  equal to rev (every stamped delta carries through; one carrying none is refused: the no-through case below) */
+const cycle = (gen: string, base: number, n: number) => ({ type: "feedDelta", gen, base, rev: base + 1, through: base + 1, now: 510 + n, buildId: 10 + n, asks: [card(SID_A, n)] });
+/** the page's terms carrying its LOCAL kernel's held pair and its hold words: none of it is a remote dial's */
+const pageTerms = () => ({ ...terms(), proto: 2, caps: "feedDelta,readyGate,held:feed:1.1" });
+const heldOf = (fm: any) => fm.conns.get(HOST).feedHeld;
+
+test("a conn whose raw base holds a pair redials declaring it on the onclose road: caps=feedDelta,held:feed:g.r beside reconnect=1, g.r the conn's applied pair and not the page's, no held:bars; the composed feedDelta that answers applies onto the surviving base and moves the pair to (newGen, through)", async () => {
+  await withManager(({ fm, emitted, sent }) => {
+    fm.outbound({ type: "ready", proto: 2 });
+    fm.openRemote(HOST, true);
+    const ws = last(FakeWS.made), conn = fm.conns.get(HOST);
+    assert.equal(qOf(ws.url).get("caps"), "feedDelta", "the first dial: no base yet, nothing declared");
+    ws.open();
+    ws.frame({ type: "caps" });   // the remote acked the page's ready: a later dial is a redial
+    ws.frame(stamped());
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 0 }, "the stamped full leaves the pair (gen, 0)");
+    ws.frame(cycle(G, 0, 2));
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "a per-cycle stamped delta advances it to (gen, rev)");
+    assert.deepEqual(last(feeds(emitted)).asks.map((a: any) => a.itemId).sort(), [SID_A + ":g1", SID_A + ":g2"].sort());
+    const before = feeds(emitted).length;
+    ws.readyState = 3;
+    const timers = heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }));
+    assert.equal(timers.length, 1);
+    timers[0]();
+    const ws2 = last(FakeWS.made);
+    assert.notEqual(ws2, ws, "a fresh socket");
+    assert.equal(fm.conns.get(HOST), conn, "…on the same conn");
+    const q = qOf(ws2.url);
+    assert.equal(q.get("caps"), "feedDelta,held:feed:" + G + ".1", "the redial declares the conn's pair beside the decoder word: not the page's held:feed:1.1, and no held:bars (a feed conn holds no bars base)");
+    assert.equal(q.get("reconnect"), "1");
+    assert.equal(q.get("delta"), "1", "the page's terms ride as before");
+    assert.ok(conn.feedRaw, "the mechanism: the gen-holding base survived the redial");
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 });
+    ws2.open();
+    assert.deepEqual(ws2.sent, [], "a redial posts no ready");
+    // the composed frame the declaration earns: everything from rev 1 through 4 in one delta, stamped with the new generation
+    ws2.frame({ type: "feedDelta", gen: G, newGen: G2, base: 1, rev: 4, through: 4, now: 600, buildId: 20, asks: [card(SID_A, 5)], removeAsks: [SID_A + ":g2"] });
+    assert.equal(feeds(emitted).length, before + 1, "the composed frame applied onto the surviving base and the merge moved once");
+    assert.deepEqual(last(feeds(emitted)).asks.map((a: any) => [a.itemId, a.sid]).sort(), [[SID_A + ":g1", HOST + ":" + SID_A], [SID_A + ":g5", HOST + ":" + SID_A]].sort(), "the merge reads the result prefixed");
+    assert.deepEqual(ws2.sent, [], "nothing asked: no needFullFeed");
+    assert.deepEqual(diagRows(sent, "feedDelta-nobase"), []);
+    assert.deepEqual(diagRows(sent, "feedDelta-stale"), []);
+    assert.deepEqual(heldOf(fm), { gen: G2, rev: 4 }, "the pair is (newGen, through)");
+    ws2.frame(cycle(G2, 4, 6));
+    assert.deepEqual(heldOf(fm), { gen: G2, rev: 5 }, "and the stream continues under the new generation");
+    fm.conns.get(HOST).closed = true;
+  }, { terms: pageTerms });
+});
+
+test("the watchdog's abandon-and-dial declares the same pair, without reconnect when the remote never acked the ready: the member rides a first dial's shape too", async () => {
+  await withManager(({ fm }) => {
+    fm.openRemote(HOST, true);   // no ready posted, no caps frame: the redial gate stays shut
+    const ws = last(FakeWS.made), conn = fm.conns.get(HOST);
+    ws.open();
+    ws.frame(stamped());
+    ws.frame(cycle(G, 0, 2));
+    ws.frame(cycle(G, 1, 3));
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 2 });
+    clock += REMOTE_STALE_MS + 1000;   // an OPEN socket quiet past the stale bound: the watchdog abandons it and dials
+    fm.watchdog(clock);
+    assert.equal(ws.onclose, null, "the watchdog abandoned the quiet socket");
+    const ws2 = last(FakeWS.made);
+    assert.notEqual(ws2, ws);
+    assert.equal(fm.conns.get(HOST), conn);
+    const q = qOf(ws2.url);
+    assert.equal(q.get("caps"), "feedDelta,held:feed:" + G + ".2", "declared without reconnect: a kernel that stamps its frames reads the member at the compose on either dial; no kernel in this repo stamps a gen yet, so nothing declares one today");
+    assert.equal(q.get("reconnect"), null);
+    assert.ok(conn.feedRaw, "the base survived");
+    fm.conns.get(HOST).closed = true;
+  }, { terms: pageTerms });
+});
+
+test("a stamped delta whose gen differs, or whose base is above the held rev, or whose through is below it or carrying no through, posts needFullFeed carrying the held pair on the arriving conn and applies nothing; the feedDelta-stale row names the cause (gen, ahead, behind, through: a word per field failure and a word per relation); the full the ask earns re-seeds the pair", async () => {
+  await withManager(({ fm, emitted, sent }) => {
+    const ws = attached(fm);   // a gen-less full first: the pair is absent
+    assert.equal(heldOf(fm), undefined);
+    ws.frame(stamped({ buildId: 2 }));
+    ws.frame(cycle(G, 0, 2));
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 });
+    const before = feeds(emitted).length, raw = fm.conns.get(HOST).feedRaw;
+    ws.frame({ type: "feedDelta", gen: GEN_STAMP + "-8", base: 1, rev: 2, now: 520, buildId: 30, asks: [card(SID_A, 9)] });
+    assert.deepEqual(ws.sent, [{ type: "needFullFeed", gen: G, rev: 1 }], "another generation: the ask carries the held pair, for the kernel to compose from");
+    ws.frame({ type: "feedDelta", gen: G, base: 3, rev: 4, now: 521, buildId: 31, asks: [card(SID_A, 9)] });
+    assert.equal(ws.sent.length, 2, "a base above the held rev: asked again");
+    assert.deepEqual(last(ws.sent), { type: "needFullFeed", gen: G, rev: 1 });
+    ws.frame({ type: "feedDelta", gen: G, base: 0, rev: 1, through: 0, now: 522, buildId: 32, asks: [card(SID_A, 9)] });
+    assert.equal(ws.sent.length, 3, "a composed frame reaching below the held rev: asked again");
+    ws.frame({ type: "feedDelta", gen: G, base: 1, rev: 2, now: 523, buildId: 33, asks: [card(SID_A, 9)] });   // no through: every stamped delta carries it
+    assert.equal(ws.sent.length, 4, "a stamped delta carrying no through: asked again");
+    ws.frame({ type: "feedDelta", gen: G, base: 0, rev: 1.5, through: 0, now: 524, buildId: 34, asks: [card(SID_A, 9)] });   // below the held rev AND a rev that is no safe integer
+    assert.equal(ws.sent.length, 5, "a frame below the held rev with a bad rev: asked again");
+    // the base field's own failure, a base that is no safe integer, on a frame whose base is NOT above the held rev and whose
+    // other fields pass (the maintainer's round 3, tests-2): a non-integer base above the held rev would read "base" on the relation's arm
+    // too under a ladder that lost the integer test (JS coercion makes 1.5 > 1 true), so that frame cannot pin the test;
+    // this one can, since without it the frame falls through to "disagree"
+    ws.frame({ type: "feedDelta", gen: G, base: 0.5, rev: 1, through: 1, now: 525, buildId: 35, asks: [card(SID_A, 9)] });
+    assert.equal(ws.sent.length, 6, "a base that is no safe integer: asked again");
+    assert.deepEqual(diagRows(sent, "feedDelta-stale"), [{ host: HOST, buildId: 30, why: "gen" }, { host: HOST, buildId: 31, why: "ahead" }, { host: HOST, buildId: 32, why: "behind" }, { host: HOST, buildId: 33, why: "through" }, { host: HOST, buildId: 35, why: "base" }],
+                     "a field's word for a field's own failure (gen; through not carried; a base that is no safe integer) and a relation's word for a relation's (ahead: the base above the held rev; behind: the through below it), the gate's tests in order: a frame below the held rev reads behind whatever its rev (the maintainer's round 3, extra6-1: base and through each carried a relation under their field's word); the row is latched on its word, so the second behind (buildId 34) files no row while its ask was sent");
+    assert.equal(feeds(emitted).length, before, "nothing applied, nothing emitted");
+    assert.equal(fm.conns.get(HOST).feedRaw, raw, "the base stands");
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "…and the pair with it");
+    assert.deepEqual(diagRows(sent, "feedDelta-nobase"), [], "not a no-base: a base is held");
+    assert.equal(sent.filter((x) => x && x.type === "needFullFeed").length, 0, "the local kernel is not asked");
+    // the full the ask earns, stamped with the kernel's new generation: the pair re-seeds and the stream applies from it
+    ws.frame(stamped({ gen: G3, buildId: 40 }));
+    assert.deepEqual(heldOf(fm), { gen: G3, rev: 0 });
+    ws.frame(cycle(G3, 0, 4));
+    assert.deepEqual(heldOf(fm), { gen: G3, rev: 1 });
+    assert.equal(ws.sent.length, 6, "no further ask");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+test("the vintage guard: a delta carrying no gen applies onto a base holding none and moves no pair, and that conn's redial declares nothing; a full carrying no gen after a gen-holding pair clears the pair and the next dial carries no held:feed; a stamped delta onto that pair-less base is refused with why unpaired and a bare needFullFeed carrying no gen and no rev", async () => {
+  await withManager(({ fm, emitted, sent }) => {
+    const ws = attached(fm);
+    assert.equal(heldOf(fm), undefined, "a full carrying no gen (every kernel in this repo today) leaves no pair");
+    ws.frame({ type: "feedDelta", now: 510, buildId: 2, asks: [card(SID_A, 2)] });
+    assert.deepEqual(last(feeds(emitted)).asks.map((a: any) => a.itemId).sort(), [SID_A + ":g1", SID_A + ":g2"].sort(), "the gen-less delta applied on the base's presence alone");
+    assert.deepEqual(ws.sent, []);
+    assert.equal(heldOf(fm), undefined, "…and moved no pair");
+    ws.readyState = 3;
+    const timers = heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }));
+    timers[0]();
+    const ws2 = last(FakeWS.made);
+    assert.equal(qOf(ws2.url).get("caps"), "feedDelta", "a gen-less base declares nothing: the redial is undeclared, as every remote redial is until the kernel stamps its frames");
+    assert.equal(fm.conns.get(HOST).feedRaw, undefined, "and the gen-less base was reset with the dead socket, as before");
+    ws2.open();
+    ws2.frame(stamped());
+    ws2.frame(cycle(G, 0, 3));
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 });
+    ws2.frame(remoteFull());   // a full carrying no gen after a gen-holding pair: a kernel rolled back to one before the stamp
+    assert.equal(heldOf(fm), undefined, "the pair is cleared by the gen-less full");
+    assert.ok(fm.conns.get(HOST).feedRaw, "the base is the new full");
+    // the ladder's first arm and the pair-less ask (the maintainer's round 3, tests-1): a stamped delta onto a base holding no pair is refused
+    // with the pair's word, and the ask carries no gen and no rev, since none is held to declare
+    const before2 = feeds(emitted).length, raw2 = fm.conns.get(HOST).feedRaw, asked = ws2.sent.length;
+    ws2.frame(cycle(G, 0, 4));
+    assert.deepEqual(ws2.sent.slice(asked), [{ type: "needFullFeed" }], "the bare ask: no gen, no rev");
+    assert.deepEqual(diagRows(sent, "feedDelta-stale"), [{ host: HOST, buildId: 14, why: "unpaired" }], "the pair's word: no pair is held for a stamped stream");
+    assert.equal(feeds(emitted).length, before2, "nothing applied");
+    assert.equal(fm.conns.get(HOST).feedRaw, raw2, "the base stands");
+    assert.equal(heldOf(fm), undefined, "and still no pair");
+    ws2.readyState = 3;
+    const timers2 = heldTimers(() => ws2.onclose!({ code: 1006, wasClean: false }));
+    timers2[0]();
+    assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta", "the next dial carries no held:feed");
+    fm.conns.get(HOST).closed = true;
+  }, { terms: pageTerms });
+});
+
+// The feed road's reading of the same shape the bars test pins (the author's pass-3 fixer pass, 2026-09-20): a delta carrying
+// newGen and through but no gen is a gen-less delta, applied on the base's presence alone, and moves no pair, so the two
+// roads agree that a newGen rides only a frame whose gen the gate matched.
+test("a feedDelta carrying newGen and through but no gen applies as a gen-less delta and moves no pair: the held pair stands and the redial declares it, never the newGen", async () => {
+  await withManager(({ fm, emitted }) => {
+    const ws = attached(fm);
+    ws.frame(stamped());
+    ws.frame(cycle(G, 0, 2));
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 });
+    const before = feeds(emitted).length;
+    ws.frame({ type: "feedDelta", newGen: G2, base: 1, rev: 4, through: 4, now: 530, buildId: 60, asks: [card(SID_A, 9)] });
+    assert.deepEqual(ws.sent, [], "applied: nothing asked");
+    assert.equal(feeds(emitted).length, before + 1, "emitted once");
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "no gen on the frame, so the pair does not move: the newGen is not adopted");
+    ws.readyState = 3;
+    const timers = heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }));
+    timers[0]();
+    assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta,held:feed:" + G + ".1", "the redial declares the held pair, never the newGen");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+// One base is the real shape: the kernel serves the feed payload to a feed-riding app's socket and the bars to a timeline's,
+// and each conn dials with one app, so a feed conn holds feedRaw and never a bars base and a timeline conn the reverse. The
+// two-base state is a harness construction (inbound stores a feed frame on any manager, and the receiver seeds a bars base
+// on any conn), checked for the shape of the members alone: each written from its own base, in this order.
+const SEP = String.fromCharCode(31);
+const remoteBarsStamped = (gen: string) => ({ type: "bars", gen, turns: { [SID_A]: [{ id: "seg-1", start: 1000, end: 1005, q: "first" }] }, judging: {}, messages: [], now: 500, warming: false });
+const barsCycle = (gen: string, base: number, id: string) => ({ type: "delta", slot: "bars", gen, base, rev: base + 1, coll: { turns: { set: { [SID_A + SEP + id]: { id, start: 1010, end: 1015, q: "next" } } } }, rest: { now: 505 } });
+
+test("the both-gen shape check: a conn whose raw feed base and receiver bars base each hold a pair redials with held:feed:g.r and held:bars:g.r both, each from its own base; the composed frames that answer apply onto each surviving base with nothing asked", async () => {
+  await withManager(({ fm, emitted }) => {
+    fm.openRemote(HOST, true);
+    const ws = last(FakeWS.made), conn = fm.conns.get(HOST);
+    ws.open();
+    ws.frame(stamped());
+    ws.frame(cycle(G, 0, 2));
+    ws.frame(remoteBarsStamped(G));
+    ws.frame(barsCycle(G, 0, "seg-2"));
+    ws.frame(barsCycle(G, 1, "seg-3"));
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 });
+    assert.deepEqual(conn.viewDeltas.held("bars"), { gen: G, rev: 2 }, "the receiver's one read: the bars base's pair");
+    assert.deepEqual(conn.viewDeltas.held("feed"), { gen: G, rev: 0 }, "the receiver's feed slot is seeded by every remote full and never patched on a feedDelta conn (it goes with the receiver); the dial's held:feed is the RAW base's pair at rev 1, not this rev 0");
+    const vd = conn.viewDeltas, before = feeds(emitted).length;
+    ws.readyState = 3;
+    const timers = heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }));
+    timers[0]();
+    const ws2 = last(FakeWS.made);
+    assert.equal(qOf(ws2.url).get("caps"), "feedDelta,held:feed:" + G + ".1,held:bars:" + G + ".2", "both members, each its own base's pair, in this order");
+    assert.equal(conn.viewDeltas, vd, "the receiver survived: its bars base holds a gen");
+    assert.ok(conn.feedRaw, "the raw base survived: it holds a gen");
+    ws2.open();
+    ws2.frame({ type: "feedDelta", gen: G, newGen: G2, base: 1, rev: 3, through: 3, now: 600, buildId: 20, asks: [card(SID_A, 5)] });
+    assert.equal(feeds(emitted).length, before + 1, "the composed feedDelta applied onto the surviving raw base");
+    assert.deepEqual(heldOf(fm), { gen: G2, rev: 3 });
+    ws2.frame({ type: "delta", slot: "bars", gen: G, newGen: G2, base: 2, rev: 5, through: 5, coll: { turns: { set: { [SID_A + SEP + "seg-9"]: { id: "seg-9", start: 1020, end: 1025, q: "ninth" } } } }, rest: { now: 600 } });
+    assert.deepEqual(conn.viewDeltas.held("bars"), { gen: G2, rev: 5 }, "the composed bars patch applied onto the surviving receiver base");
+    assert.deepEqual(ws2.sent, [], "nothing asked of the remote on either slot");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+// Every delta a stamping kernel sends carries `through` (equal to its rev on a per-cycle delta, R on a composed frame), so
+// through's presence does not tell a per-cycle delta from a composed one and the gate never keys on it: a per-cycle
+// delta stamped base r, rev r+1, through r+1 and no newGen passes the gate (through at or above the held rev) and leaves
+// (gen, r+1), the pair (gen, through). The redial then declares what the whole stream left.
+test("a per-cycle stamped delta carrying through equal to its rev applies under the gate and leaves (gen, rev), through's presence making it no composed frame; a composed frame after it leaves (newGen, through) and the redial declares that pair in the kernel's string form", async () => {
+  await withManager(({ fm, emitted }) => {
+    fm.outbound({ type: "ready", proto: 2 });
+    fm.openRemote(HOST, true);
+    const ws = last(FakeWS.made);
+    ws.open();
+    ws.frame({ type: "caps" });
+    ws.frame(stamped());
+    const before = feeds(emitted).length;
+    ws.frame({ ...cycle(G, 0, 2), through: 1 });   // the stamping kernel's per-cycle shape: gen, base, rev and through, through equal to rev, no newGen
+    assert.equal(feeds(emitted).length, before + 1, "applied: through at or above the held rev, the gate passed");
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "(gen, rev): the pair (gen, through), through equal to rev");
+    ws.frame({ ...cycle(G, 1, 3), through: 2 });
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 2 });
+    assert.deepEqual(ws.sent.filter((x: any) => x.type !== "ready"), [], "nothing asked (the first dial's own ready aside)");
+    ws.frame({ type: "feedDelta", gen: G, newGen: G2, base: 2, rev: 5, through: 5, now: 600, buildId: 20, asks: [card(SID_A, 5)] });
+    assert.deepEqual(heldOf(fm), { gen: G2, rev: 5 }, "a composed frame: (newGen, through), the newGen telling it from the per-cycle shape");
+    ws.readyState = 3;
+    const timers = heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }));
+    timers[0]();
+    assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta,held:feed:" + G2 + ".5", "the redial declares the pair the whole stream left, the gen as the kernel's string");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+// The pair advances to the frame's rev, and a stamped delta's rev IS its through (the design: through equal to rev on a
+// per-cycle delta, R on a composed frame); a frame whose two disagree is refused into needFullFeed carrying the held pair,
+// in either direction, because advancing to either number would declare a reach the stream never reached: (gen, 7) from a
+// delta that applied rev 2 (the fresh-1 find of the maintainer's round 1 addendum: the gate read through against the held rev alone), or (gen, 2) from one whose
+// stated reach was 7. The row's why is "disagree", the relation word (the fifth word of the author's pass 3): both revs are good safe
+// integers and no field failed, and the row carries the word alone, so a field's word ("rev") would hide the cause from
+// its reader; "rev" is a rev that is no safe integer, and it is read before the relation, so a non-integer rev that also
+// disagrees reads "rev".
+test("a stamped delta whose rev and through disagree is refused with why disagree and the held pair on the ask, in either direction and for a composed frame; a non-integer rev reads rev, disagreeing or not; the row is latched on its word and the remote's build while every refused frame asks; nothing applied, the pair stands, and the redial declares only what applied", async () => {
+  await withManager(({ fm, emitted, sent }) => {
+    fm.outbound({ type: "ready", proto: 2 });
+    fm.openRemote(HOST, true);
+    const ws = last(FakeWS.made);
+    ws.open();
+    ws.frame({ type: "caps" });
+    ws.frame(stamped());
+    ws.frame(cycle(G, 0, 2));
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 });
+    const before = feeds(emitted).length, raw = fm.conns.get(HOST).feedRaw;
+    ws.frame({ type: "feedDelta", gen: G, base: 1, rev: 2, through: 7, now: 520, buildId: 50, asks: [card(SID_A, 9)] });   // through past rev
+    assert.deepEqual(ws.sent.filter((x: any) => x.type !== "ready"), [{ type: "needFullFeed", gen: G, rev: 1 }], "refused: the ask carries the pair that applied, not (gen, 7)");
+    ws.frame({ type: "feedDelta", gen: G, base: 1, rev: 7, through: 2, now: 521, buildId: 51, asks: [card(SID_A, 9)] });   // rev past through
+    ws.frame({ type: "feedDelta", gen: G, newGen: G2, base: 1, rev: 4, through: 5, now: 522, buildId: 52, asks: [card(SID_A, 9)] });   // a composed frame whose two disagree
+    ws.frame({ type: "feedDelta", gen: G, base: 1, rev: 2.5, through: 2, now: 523, buildId: 53, asks: [card(SID_A, 9)] });   // gen, base and through pass; the rev is no safe integer: the rev field's own failure
+    ws.frame({ type: "feedDelta", gen: G, base: 1, rev: 2.5, through: 7, now: 524, buildId: 54, asks: [card(SID_A, 9)] });   // a non-integer rev that also disagrees with its through: the field word, read before the relation
+    assert.equal(ws.sent.filter((x: any) => x.type === "needFullFeed").length, 5, "each refused frame asks once: the ask is not latched (the bars road's needSlot is not either)");
+    assert.ok(ws.sent.filter((x: any) => x.type === "needFullFeed").every((x: any) => x.gen === G && x.rev === 1), "every ask carries the pair that applied");
+    assert.deepEqual(diagRows(sent, "feedDelta-stale"),
+                     [{ host: HOST, buildId: 50, why: "disagree" }, { host: HOST, buildId: 53, why: "rev" }],
+                     "the relation word for two good revs that disagree (not one rev to advance to), the field word for a rev that is no safe integer, whatever its through; the row is latched on its word and the remote's build (the maintainer's round 3, extra8-2; sayDeltaOnce), so the same word again on this conn files no second row");
+    // the latch's key carries the remote's build: the same word from the remote on another build is news and files again
+    fm.conns.get(HOST).peerSha = "a1b2c3d4e";
+    ws.frame({ type: "feedDelta", gen: G, base: 1, rev: 2, through: 7, now: 525, buildId: 55, asks: [card(SID_A, 9)] });
+    assert.equal(ws.sent.filter((x: any) => x.type === "needFullFeed").length, 6, "asked again");
+    assert.deepEqual(last(diagRows(sent, "feedDelta-stale")), { host: HOST, buildId: 55, why: "disagree" }, "the word again under another build files its own row");
+    assert.equal(diagRows(sent, "feedDelta-stale").length, 3);
+    assert.equal(feeds(emitted).length, before, "nothing applied, nothing emitted");
+    assert.equal(fm.conns.get(HOST).feedRaw, raw, "the base stands");
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "the pair is what applied");
+    ws.frame(cycle(G, 1, 3));   // a well-formed per-cycle delta after them (rev 2, through 2) applies as ever
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 2 });
+    assert.equal(feeds(emitted).length, before + 1);
+    ws.readyState = 3;
+    const timers = heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }));
+    timers[0]();
+    assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta,held:feed:" + G + ".2", "the redial declares the applied rev, never a stated reach");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+test("the gen's form: a non-empty string holding neither '.' nor ',' (the kernel's token and counter joined by '-'), at most GEN_MAX characters; a full carrying a value of any other form (a number, an empty string, a string carrying either separator or one over the cap) leaves no pair, and onto that gen-less base a delta carrying the same value applies as a gen-less one and the redial declares nothing (onto a base holding a pair it is refused: the author's pass-4 test below)", async () => {
+  const overCap = GEN_STAMP + "-" + "9".repeat(GEN_MAX - GEN_STAMP.length);   // GEN_MAX + 1 characters, all in the kernel's alphabet
+  assert.equal(overCap.length, GEN_MAX + 1);
+  for (const bad of [7, 0, "", GEN_STAMP + ".7", GEN_STAMP + ",7", null, true, overCap]) {
+    await withManager(({ fm, emitted }) => {
+      fm.outbound({ type: "ready", proto: 2 });
+      fm.openRemote(HOST, true);
+      const ws = last(FakeWS.made);
+      ws.open();
+      ws.frame({ type: "caps" });
+      ws.frame(stamped({ gen: bad }));
+      assert.equal(heldOf(fm), undefined, "no pair for a gen of this form: " + JSON.stringify(bad));
+      const before = feeds(emitted).length;
+      ws.frame({ ...cycle(G, 0, 2), gen: bad });
+      assert.equal(feeds(emitted).length, before + 1, "the delta applied on the base's presence, as a gen-less one does: " + JSON.stringify(bad));
+      assert.deepEqual(ws.sent.filter((x: any) => x.type !== "ready"), [], "nothing asked");
+      ws.readyState = 3;
+      const timers = heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }));
+      timers[0]();
+      assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta", "nothing declared for a base holding no gen: " + JSON.stringify(bad));
+      fm.conns.get(HOST).closed = true;
+    });
+  }
+});
+
+// Unparseable is not absent (the author's pass 4, 2026-09-20). GEN_MAX made a 65-character gen read as no stamp, so a foreign-generation
+// delta carrying one bypassed the gate and applied onto a base holding a gen (the length door); the same held for every
+// other form genOf cannot read (a number, an empty string, a separator) at both heads. Now a frame carrying a gen of ANY
+// form onto a base holding a pair enters the gate, and a value genOf cannot read is no match for the held gen: refused
+// with the field word, the ask carrying the held pair, nothing applied, the pair standing. The scope is the base holding a
+// pair (the minimal of the two options the maintainer's round 3 offered, applied to the feed and bars roads alike): onto a base holding no
+// gen such a frame applies as a gen-less one, as the form test above pins, since no pair is held there for a refusal to
+// protect.
+test("a delta carrying a gen genOf cannot read (one over GEN_MAX, a separator, a number, an empty string, null) onto a base holding a pair is refused with why gen and the held pair on the ask, never applied as a gen-less one: nothing emitted, the base and the pair stand", async () => {
+  const overCap = GEN_STAMP + "-" + "9".repeat(GEN_MAX - GEN_STAMP.length);
+  assert.equal(overCap.length, GEN_MAX + 1);
+  for (const bad of [overCap, GEN_STAMP + ".7", GEN_STAMP + ",7", 7, "", null, true]) {
+    await withManager(({ fm, emitted, sent }) => {
+      fm.outbound({ type: "ready", proto: 2 });
+      fm.openRemote(HOST, true);
+      const ws = last(FakeWS.made);
+      ws.open();
+      ws.frame({ type: "caps" });
+      ws.frame(stamped());
+      ws.frame(cycle(G, 0, 2));
+      assert.deepEqual(heldOf(fm), { gen: G, rev: 1 });
+      const before = feeds(emitted).length, raw = fm.conns.get(HOST).feedRaw;
+      ws.frame({ type: "feedDelta", gen: bad, base: 1, rev: 2, through: 2, now: 540, buildId: 70, asks: [card(SID_A, 9)] });
+      assert.deepEqual(ws.sent.filter((x: any) => x.type !== "ready"), [{ type: "needFullFeed", gen: G, rev: 1 }], "refused, the ask carrying the held pair: " + JSON.stringify(bad));
+      assert.deepEqual(diagRows(sent, "feedDelta-stale"), [{ host: HOST, buildId: 70, why: "gen" }], "the gen field's word: a value genOf cannot read is no match for the held gen: " + JSON.stringify(bad));
+      assert.equal(feeds(emitted).length, before, "nothing applied, nothing emitted: " + JSON.stringify(bad));
+      assert.equal(fm.conns.get(HOST).feedRaw, raw, "the base stands: " + JSON.stringify(bad));
+      assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "the pair stands: " + JSON.stringify(bad));
+      ws.readyState = 3;
+      heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }))[0]();
+      assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta,held:feed:" + G + ".1", "the redial declares the pair that applied: " + JSON.stringify(bad));
+      fm.conns.get(HOST).closed = true;
+    });
+  }
+});
+
+// The same rule one field over (the author's pass 4): a composed frame whose gen the gate matched but whose newGen genOf cannot read
+// used to fall back to the OLD gen and advance the pair to the frame's rev under it, so the redial declared a pair that
+// generation's stream never held. The gate now reads newGen where it reads gen: a present value genOf cannot read is a
+// refusal (why newGen, the field's own word), inside the gate and before the apply, so nothing applies and the pair stands.
+test("a composed frame whose gen matched but whose newGen genOf cannot read is refused with why newGen and the held pair on the ask: nothing applied, the pair does not advance under the old gen, and the redial declares what applied", async () => {
+  const overCap = GEN_STAMP + "-" + "9".repeat(GEN_MAX - GEN_STAMP.length);
+  for (const bad of [overCap, GEN_STAMP + ".9", GEN_STAMP + ",9", 9, "", null]) {
+    await withManager(({ fm, emitted, sent }) => {
+      fm.outbound({ type: "ready", proto: 2 });
+      fm.openRemote(HOST, true);
+      const ws = last(FakeWS.made);
+      ws.open();
+      ws.frame({ type: "caps" });
+      ws.frame(stamped());
+      ws.frame(cycle(G, 0, 2));
+      assert.deepEqual(heldOf(fm), { gen: G, rev: 1 });
+      const before = feeds(emitted).length, raw = fm.conns.get(HOST).feedRaw;
+      ws.frame({ type: "feedDelta", gen: G, newGen: bad, base: 1, rev: 4, through: 4, now: 541, buildId: 71, asks: [card(SID_A, 9)] });
+      assert.deepEqual(ws.sent.filter((x: any) => x.type !== "ready"), [{ type: "needFullFeed", gen: G, rev: 1 }], "refused, the ask carrying the held pair: " + JSON.stringify(bad));
+      assert.deepEqual(diagRows(sent, "feedDelta-stale"), [{ host: HOST, buildId: 71, why: "newGen" }], "the newGen field's own word: " + JSON.stringify(bad));
+      assert.equal(feeds(emitted).length, before, "nothing applied: " + JSON.stringify(bad));
+      assert.equal(fm.conns.get(HOST).feedRaw, raw, "the base stands: " + JSON.stringify(bad));
+      assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "the pair does not advance to rev 4 under the old gen: " + JSON.stringify(bad));
+      ws.readyState = 3;
+      heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }))[0]();
+      assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta,held:feed:" + G + ".1", "the redial declares (G, 1), never (G, 4): " + JSON.stringify(bad));
+      fm.conns.get(HOST).closed = true;
+    });
+  }
+});
+
+// A source file read as prose: a single line break and the comment marker after it read as one space and whitespace collapsed, so
+// a comment's wrapping is not part of any claim over its words, while a paragraph break (a blank line, or in a TypeScript copy a
+// line holding the comment marker alone) stays a break of its own that no statement regex below crosses, so two fragments in
+// different comments or paragraphs do not read as one sentence (the fixer pass over the second closing lens after
+// the maintainer's round 6, F2-1: the joiner had read every break as a space, and a statement split by a blank line had still
+// matched). The second argument says whether the copy is TypeScript, where a leading `*` is a comment marker; in markdown it is a
+// bullet and stays as text. The one joiner for the two source pins below, the pair statement's and the premise's (the closing
+// fixer pass after the maintainer's round 6, close-3: the premise pin's three statements had read the raw copies beside a second
+// joiner of its own, so they held by the wrap and not by the property).
+const asProse = (text: string, ts: boolean) =>
+  text
+    .replace(ts ? /\n[ \t]*(?:\/\/|\*)?[ \t]*\n\s*/g : /\n[ \t]*\n\s*/g, "\n\n")
+    .split("\n\n")
+    .map((para) => para.replace(ts ? /\n\s*(?:\/\/\s*|\*\s*)?/g : /\n\s*(?:\/\/\s*)?/g, " ").replace(/[ \t]+/g, " "))
+    .join("\n\n");
+
+// The one statement of what the declared pair does today (the author's pass 3, 2026-09-20): federation.ts says it once, at
+// Conn.feedHeld, in the words the other sites point at, and no comment on either road claims in the present tense that
+// kernel.py reads the pair at the compose (no kernel in this repo reads a held member or an ask's pair). A source pin, the
+// way perf-beacon-settings.test.ts pins the gear copy.
+test("federation.ts states once what the pair does today (no kernel in this repo stamps a gen yet, so nothing declares one today) and no comment on either road says kernel.py reads the pair at the compose", () => {
+  const UI = path.resolve(process.cwd(), "..", "ui", "webview");
+  // the comments' wrapping is not part of the claim: each file read through asProse
+  const flat = (f: string) => asProse(fs.readFileSync(path.join(UI, f), "utf8"), true);
+  const fedSrc = flat("federation.ts"), vdSrc = flat("view-deltas.ts");
+  const home = "no kernel in this repo stamps a gen yet, so nothing declares one today";
+  assert.equal(fedSrc.split("What the pair does today, stated here once").length, 2, "the home statement, once, at Conn.feedHeld");
+  assert.ok(fedSrc.includes(home) && vdSrc.includes(home), "both files carry the statement's words");
+  // the forbidden CLASS, not the wordings the author's pass 3 removed (its fixer pass: a comment of the class in other words passed
+  // the two exact regexes): kernel.py, or "the kernel" unqualified, said in the present tense to read a pair, member, gen,
+  // rev or "it" at the compose. "A kernel that stamps its frames reads the member at the compose" is the qualified
+  // statement the sites make and passes; "reads no pair" is the negation and passes.
+  const claim = /\b(kernel\.py|the kernel)\b(?![^.;]{0,30}?\bthat stamps\b)[^.;]{0,30}?\breads\b(?! no\b)[^.;]{0,40}?\b(pair|member|gen|rev|it)\b[^.;]{0,40}?\bat the compose\b/;
+  for (const shape of ["(kernel.py reads it at the compose)", "the kernel reads the member at the compose on either", "; kernel.py reads the held pair at the compose",
+                       "kernel.py, which reads the pair at the compose", "the kernel's handler reads the ask's gen and rev at the compose"]) {
+    assert.match(shape, claim, "the pin's own reach: " + shape);
+  }
+  for (const shape of ["a kernel that stamps its frames reads the member at the compose on either", "the kernel that stamps its frames reads the member at the compose",
+                       "kernel.py's handler above serves a full frame at once whatever the ask carries and reads no pair", "that kernel would read the declared member at the compose"]) {
+    assert.doesNotMatch(shape, claim, "the pin's own reach, the allowed side: " + shape);
+  }
+  for (const [name, src] of [["federation.ts", fedSrc], ["view-deltas.ts", vdSrc]]) {
+    assert.doesNotMatch(src, claim, name + ": kernel.py is not said to read the pair at the compose, in any words");
+  }
+});
+
+// The length bound (the author's pass 3, 2026-09-20): the form bounds the alphabet and not the digits, so genOf caps a stamp at GEN_MAX
+// characters (the form test's list holds the one-over case); a gen at the cap is a stamp, the pair holds and the redial
+// declares it, so the cap is exactly where it is stated.
+test("a gen of exactly GEN_MAX characters is a stamp: the pair holds and the redial declares it", async () => {
+  const atCap = GEN_STAMP + "-" + "9".repeat(GEN_MAX - GEN_STAMP.length - 1);
+  assert.equal(atCap.length, GEN_MAX);
+  await withManager(({ fm }) => {
+    fm.outbound({ type: "ready", proto: 2 });
+    fm.openRemote(HOST, true);
+    const ws = last(FakeWS.made);
+    ws.open();
+    ws.frame({ type: "caps" });
+    ws.frame(stamped({ gen: atCap }));
+    assert.deepEqual(heldOf(fm), { gen: atCap, rev: 0 }, "at the cap: a stamp");
+    ws.readyState = 3;
+    heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }))[0]();
+    assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta,held:feed:" + atCap + ".0", "declared at the cap");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+// ── the apply-throw refusal, BOTH roads (the maintainer's round 5, refusals-2, and the 19:31Z ruling: the local road guarded
+// too, with its own recovery, road word and bound) ──────────────────────────────────────────────────────────────────────────
+// applyFeedDelta guards the two list shapes it upserts into and, since the author's fixer pass after the maintainer's round 5 (refusal-5), the shape of `top`
+// (an object or absent: a string top spread its characters into the frame as keys and applied), so a malformed delta throws out of
+// upsertById or the top guard; until the author's pass after
+// the maintainer's round 5 the throw escaped ws.onmessage (a TypeError out of the handler, no ask, no row, the pane on its last frame) and, on the
+// local road, inbound into the shim's FIFO drain. Now feed-delta.ts's tryApplyFeedDelta catches it for both callers and each road
+// refuses it: nothing written (the base and the pair stand), one BARE needFullFeed per stall (the base's own content is a
+// suspect: a full carrying a null ask lands, and every well-formed delta after it throws in upsertById's walk of the base), a
+// feedDelta-apply row with its own word (asked, stopped) and its road (wire, local), latched per word; and the BOUND, keyed on
+// progress: a second throw while the ask is out asks nothing; a throw after the answering full landed (the feed arm) stops the
+// asking and tells the shell once, through the {romp: "notify"} post the shell's error center reads; a delta that applies clears
+// the latch; the remote latch resets with the socket (connect()), the local one lives for the page. The shell message is what
+// the person sees: their cards frozen at the last update, and the way out named.
+const notifies = (notified: any[]) => notified.filter((m) => m && m.romp === "notify");
+const badDelta = (buildId: number) => ({ type: "feedDelta", now: 510, buildId, asks: { not: "a list" } });   // ups.map is not a function
+const poisonedFull = (buildId: number) => ({ ...remoteFull(), buildId, asks: [null] });   // lands whole; the next delta's walk of the base throws
+const applyRows = (sent: any[]) => diagRows(sent, "feedDelta-apply");
+
+test("a remote feedDelta whose apply throws is REFUSED: one bare needFullFeed on the arriving conn, a feedDelta-apply row with why asked and road wire, nothing emitted, the base and the pair standing, no TypeError out of the handler; a second throw while the ask is out asks nothing and files nothing; the latch clears when a delta applies, and a later throw asks once more with the row latched", async () => {
+  for (const withPair of [false, true]) {
+    await withManager(({ fm, emitted, sent, notified }) => {
+      const ws = attached(fm);
+      if (withPair) { ws.frame(stamped({ buildId: 2 })); ws.frame(cycle(G, 0, 2)); assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }); }
+      const before = feeds(emitted).length, raw = fm.conns.get(HOST).feedRaw, held = heldOf(fm);
+      ws.frame(withPair ? { ...cycle(G, 1, 3), asks: { not: "a list" } } : badDelta(2));   // no throw escapes: the rig would fail here
+      assert.deepEqual(ws.sent, [{ type: "needFullFeed" }], "one BARE ask, never the held pair (the base's content is a suspect): pair=" + withPair);
+      assert.deepEqual(applyRows(sent), [{ host: HOST, buildId: withPair ? 13 : 2, why: "asked", road: "wire" }], "its own row: the word asked, the road wire");
+      assert.deepEqual(diagRows(sent, "feedDelta-stale"), []); assert.deepEqual(diagRows(sent, "feedDelta-nobase"), []);
+      assert.equal(feeds(emitted).length, before, "nothing emitted");
+      assert.equal(fm.conns.get(HOST).feedRaw, raw, "the base stands (nothing was written)");
+      assert.deepEqual(heldOf(fm), held, "and the pair stands");
+      assert.equal(fm.conns.get(HOST).feedApply, "asked");
+      assert.deepEqual(notifies(notified), [], "nothing told to the shell yet: the ask may repair it");
+      ws.frame(withPair ? { ...cycle(G, 1, 4), asks: [null] } : { type: "feedDelta", now: 511, buildId: 3, asks: [null] });   // a second throw while the ask is out
+      assert.equal(ws.sent.length, 1, "a second throw while the ask is out asks nothing (a second ask is a second full, the flood the bound stops)");
+      assert.equal(applyRows(sent).length, 1, "and files nothing");
+      ws.frame(withPair ? stamped({ buildId: 4 }) : { ...remoteFull(), buildId: 4 });   // the full the ask earned
+      assert.equal(fm.conns.get(HOST).feedApply, "answered", "the full landed: answered (the feed arm)");
+      ws.frame(withPair ? cycle(G, 0, 5) : { type: "feedDelta", now: 520, buildId: 5, asks: [card(SID_A, 5)] });   // a good delta applies
+      assert.equal(fm.conns.get(HOST).feedApply, undefined, "a delta that applies clears the latch: the stream is healthy again");
+      assert.equal(feeds(emitted).length, before + 2, "the full and the delta each emitted");
+      ws.frame(withPair ? { ...cycle(G, 1, 6), asks: { not: "a list" } } : badDelta(6));   // a later stall
+      assert.equal(ws.sent.length, 2, "a later throw asks once more (the bound is per stall)");
+      assert.deepEqual(last(ws.sent), { type: "needFullFeed" });
+      assert.equal(applyRows(sent).length, 1, "the row is latched per word and build (sayDeltaOnce): no second asked row");
+      assert.deepEqual(notifies(notified), [], "still nothing told: every stall so far was repaired or is being asked about");
+      fm.conns.get(HOST).closed = true;
+    });
+  }
+});
+
+test("the BOUND on the remote road: after the answering full lands a second throw stops the asking and tells the shell once (a feedDelta-apply row with why stopped, one notify naming the host); further throws ask nothing, file nothing and tell nothing; a clean full and an applying delta clear it", async () => {
+  await withManager(({ fm, emitted, sent, notified }) => {
+    const ws = attached(fm);
+    ws.frame(badDelta(2));
+    assert.equal(ws.sent.length, 1, "the rig: asked");
+    ws.frame(poisonedFull(3));   // the full the kernel sent back, itself poisoned: lands (prefixInbound and the merge take a null ask)
+    const before = feeds(emitted).length;
+    assert.equal(fm.conns.get(HOST).feedApply, "answered");
+    ws.frame({ type: "feedDelta", now: 520, buildId: 4, asks: [card(SID_A, 2)] });   // well-formed, and it throws in upsertById's walk of the poisoned base
+    assert.equal(ws.sent.length, 1, "the asking STOPPED: the full the kernel sent back did not repair the stream, and a second ask would earn the same full");
+    assert.deepEqual(applyRows(sent).map((r: any) => r.why), ["asked", "stopped"], "the rows: asked, then stopped, each once");
+    assert.deepEqual(applyRows(sent)[1], { host: HOST, buildId: 4, why: "stopped", road: "wire" });
+    assert.equal(fm.conns.get(HOST).feedApply, "stopped");
+    const told = notifies(notified);
+    assert.equal(told.length, 1, "the shell told once");
+    assert.equal(told[0].kind, "frozen", "the registered kind (kernel.py KINDS, KINDLBL, DESC and a chip; notify-kinds-registered.test.ts holds the registration), never the kindless catch-all");
+    assert.match(told[0].text, /^TESTHOST: its cards are frozen at their last update\./, "the message names the host and what the person sees");
+    assert.match(told[0].text, /reconnects\.$/, "and the way out");
+    assert.equal(feeds(emitted).length, before, "nothing emitted for the refused delta");
+    ws.frame({ type: "feedDelta", now: 521, buildId: 5, asks: [card(SID_A, 3)] });
+    ws.frame(badDelta(6));
+    assert.equal(ws.sent.length, 1, "two more throws: no ask");
+    assert.equal(applyRows(sent).length, 2, "no row");
+    assert.equal(notifies(notified).length, 1, "no second notify (the shell's center folds a repeat anyway; this side sends none)");
+    ws.frame({ ...remoteFull(), buildId: 7 });   // a clean full (a kernel restart, or the stream recovering)
+    assert.equal(fm.conns.get(HOST).feedApply, "stopped", "a full alone does not clear a stop (the last full did not repair it either)");
+    ws.frame({ type: "feedDelta", now: 530, buildId: 8, asks: [card(SID_A, 4)] });   // and a delta that applies
+    assert.equal(fm.conns.get(HOST).feedApply, undefined, "an applying delta clears the latch: progress is the reset");
+    assert.equal(feeds(emitted).length, before + 2);
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+test("the remote latch resets with the socket: from stopped, the redial's replacement socket serves a full and a throwing delta asks exactly once again (one ask per socket life for a stall the fulls never repair)", async () => {
+  await withManager(({ fm, sent, notified }) => {
+    fm.outbound({ type: "ready", proto: 2 });
+    fm.openRemote(HOST, true);
+    const ws = last(FakeWS.made);
+    ws.open();
+    ws.frame({ type: "caps" });
+    ws.frame(remoteFull());
+    ws.frame(badDelta(2)); ws.frame(poisonedFull(3)); ws.frame({ type: "feedDelta", now: 520, buildId: 4, asks: [card(SID_A, 2)] });
+    assert.equal(fm.conns.get(HOST).feedApply, "stopped", "the rig: stopped");
+    assert.equal(notifies(notified).length, 1);
+    ws.readyState = 3;
+    heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }))[0]();
+    const ws2 = last(FakeWS.made);
+    assert.notEqual(ws2, ws, "the rig: a fresh socket on the same conn");
+    assert.equal(fm.conns.get(HOST).feedApply, undefined, "connect() reset the latch with the socket: a new stream for the bound to judge");
+    ws2.open();
+    ws2.frame(remoteFull());
+    ws2.frame(badDelta(9));
+    assert.deepEqual(ws2.sent.filter((x: any) => x.type !== "ready"), [{ type: "needFullFeed" }], "asked once again on the new socket");
+    assert.equal(applyRows(sent).length, 2, "the rows stay latched per word and build (the same build: no third row)");
+    ws2.frame(badDelta(10));
+    assert.equal(ws2.sent.filter((x: any) => x.type !== "ready").length, 1, "and not twice");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+test("the LOCAL road's twin: a local feedDelta whose apply throws is refused with one bare needFullFeed to the LOCAL kernel (its recovery, the same handler the no-base arm asks), a feedDelta-apply row with host local and road local, nothing emitted, the merge's frame standing; a second throw asks nothing; an applying delta clears the latch", async () => {
+  await withManager(({ fm, emitted, sent, notified }) => {
+    attached(fm);
+    fm.inbound("", { type: "feed", now: 420, buildId: 9, asks: [card(SID_L, 1)], ledgers: [ledger(SID_L, "web")] });
+    const before = feeds(emitted).length, local = fm.perHostFeed[""];
+    fm.inbound("", { type: "feedDelta", now: 430, buildId: 10, asks: { not: "a list" } });   // no throw escapes inbound
+    assert.deepEqual(sent.filter((x) => x && x.type === "needFullFeed"), [{ type: "needFullFeed" }], "one bare ask to the local kernel");
+    assert.deepEqual(applyRows(sent), [{ host: "local", buildId: 10, why: "asked", road: "local" }], "its own row: the word local under host, the road local");
+    assert.equal(feeds(emitted).length, before, "nothing emitted");
+    assert.equal(fm.perHostFeed[""], local, "the merge's frame stands");
+    assert.equal(fm.localFeedApply, "asked");
+    fm.inbound("", { type: "feedDelta", now: 431, buildId: 11, asks: [null] });
+    assert.equal(sent.filter((x) => x && x.type === "needFullFeed").length, 1, "a second throw while the ask is out asks nothing");
+    assert.equal(applyRows(sent).length, 1);
+    fm.inbound("", { type: "feed", now: 440, buildId: 12, asks: [card(SID_L, 1)], ledgers: [ledger(SID_L, "web")] });   // the full the ask earned
+    assert.equal(fm.localFeedApply, "answered");
+    fm.inbound("", { type: "feedDelta", now: 450, buildId: 13, asks: [card(SID_L, 1, { text: "changed" })] });
+    assert.equal(fm.localFeedApply, undefined, "an applying delta clears the local latch");
+    assert.equal(last(feeds(emitted)).asks.find((a: any) => a.sid === SID_L).text, "changed", "and applied");
+    assert.deepEqual(notifies(notified), [], "nothing told");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+test("the LOCAL bound: after the local full landed a second throw stops the asking and tells the shell once, naming both ways out (the connection's reconnect, a page reload); further throws are silent; a later local full still shows (the cards refresh) and leaves the stop standing, by choice (the shim's in-page redial announces itself to this manager, as the romp:wsup event and the in-band wsup frame, and resets nothing here); the local road implicates no peer (host local, road local) and touches no remote socket", async () => {
+  await withManager(({ fm, emitted, sent, notified }) => {
+    const ws = attached(fm);
+    fm.inbound("", { type: "feed", now: 420, buildId: 9, asks: [card(SID_L, 1)], ledgers: [ledger(SID_L, "web")] });
+    fm.inbound("", { type: "feedDelta", now: 430, buildId: 10, asks: { not: "a list" } });
+    fm.inbound("", { type: "feed", now: 440, buildId: 11, asks: [null] });   // the answering full, poisoned
+    assert.equal(fm.localFeedApply, "answered", "the rig: answered");
+    const before = feeds(emitted).length;
+    fm.inbound("", { type: "feedDelta", now: 450, buildId: 12, asks: [card(SID_L, 2)] });   // throws in the walk of the poisoned base
+    assert.equal(sent.filter((x) => x && x.type === "needFullFeed").length, 1, "the asking stopped");
+    assert.deepEqual(applyRows(sent).map((r: any) => [r.host, r.why, r.road]), [["local", "asked", "local"], ["local", "stopped", "local"]]);
+    assert.equal(fm.localFeedApply, "stopped");
+    const told = notifies(notified);
+    assert.equal(told.length, 1, "the shell told once");
+    assert.equal(told[0].kind, "frozen", "the registered kind (kernel.py KINDS, KINDLBL, DESC and a chip; notify-kinds-registered.test.ts holds the registration), never the kindless catch-all");
+    assert.match(told[0].text, /^The cards are frozen at their last update\./);
+    assert.match(told[0].text, /They refresh when the connection reconnects or when you reload the page\.$/, "the local road's two ways out: the shim redials the local socket in-page after a drop and the feed arm shows the full it earns whatever the latch, or the page is reloaded (the author's fixer pass after the maintainer's round 5, refusal-3: the message had named the reload alone, on the premise that the local socket's life is the page's, which the shim's reconnect=1 redial refutes)");
+    assert.equal(feeds(emitted).length, before);
+    fm.inbound("", { type: "feedDelta", now: 451, buildId: 13, asks: { not: "a list" } });
+    assert.equal(sent.filter((x) => x && x.type === "needFullFeed").length, 1); assert.equal(applyRows(sent).length, 2); assert.equal(notifies(notified).length, 1);
+    // a later LOCAL full (the redialed socket's, or a kernel restart's): it lands and shows, the cards refreshing as the message
+    // says, and the stop stands (a full is not progress, and the shim's reopen, which reaches this manager as the romp:wsup event
+    // and the in-band wsup frame, resets the local bound by no rule of this manager's: the page's life is the bound's, by choice),
+    // so the next throw asks nothing and files nothing
+    fm.inbound("", { type: "feed", now: 460, buildId: 14, asks: [card(SID_L, 3)], ledgers: [ledger(SID_L, "web")] });
+    assert.equal(feeds(emitted).length, before + 1, "the later local full shows: the feed arm stores and emits every full whatever the latch");
+    assert.equal(last(feeds(emitted)).asks.find((a: any) => a.sid === SID_L).text, card(SID_L, 3).text, "and it is the full's content the cards now show");
+    assert.equal(fm.localFeedApply, "stopped", "the stop stands past the full (only an applying delta clears it; the shim's reopen resets nothing, by choice)");
+    fm.inbound("", { type: "feedDelta", now: 461, buildId: 15, asks: { not: "a list" } });
+    assert.equal(sent.filter((x) => x && x.type === "needFullFeed").length, 1, "a throw after the later full asks nothing"); assert.equal(applyRows(sent).length, 2, "and files nothing"); assert.equal(notifies(notified).length, 1, "and tells nothing further");
+    // the shim's reopen as this manager sees it (the maintainer's round 6, extra11-1: the earlier text said the manager sees no dial
+    // for the local socket, and it does, twice: kernel.py's ws.onopen dispatches romp:wsup, which localUp() takes, and enqueues
+    // {type:"wsup"} as a frame, which lands here); by choice it resets nothing on the local road: the latch stands, no row, no
+    // notify, no throw, and the reset on that event, with the saidLocalDelta clearing it would need, is the maintainer's call
+    fm.inbound("", { type: "wsup" });
+    assert.equal(fm.localFeedApply, "stopped", "the in-band wsup frame leaves the local latch as it is (a reset there is unruled)");
+    assert.equal(applyRows(sent).length, 2, "and files nothing"); assert.equal(notifies(notified).length, 1, "and tells nothing");
+    assert.deepEqual(ws.sent, [], "the remote socket carried nothing for any of it");
+    assert.equal(fm.conns.get(HOST).feedApply, undefined, "and the remote conn's latch is untouched");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+test("the local bound's stated reason is a choice, not a missing event: no copy says the manager sees no dial for the local socket, and federation.ts names the two events the shim's reopen sends it (the maintainer's round 6, extra11-1)", () => {
+  // kernel.py's shim, at ws.onopen after a redial: it dispatches the window event romp:wsup (localUp() takes it) and enqueues
+  // {type:"wsup"} as a frame the FIFO delivers to __rompFed.inbound, so the manager sees the reopen twice; the earlier text at
+  // four copies (federation.ts, docs/read-side.md, the ledger entry, this file) called the redial a dial the manager never sees,
+  // and the choice to leave the local bound on the page's life rested on that premise. The choice stands, stated as a choice.
+  const root = path.resolve(process.cwd(), "..");
+  const kernel = fs.readFileSync(path.join(root, "kernel", "kernel.py"), "utf8");
+  assert.match(kernel, /dispatchEvent\(new Event\("romp:wsup"\)\)/, "the rig: the shim dispatches romp:wsup at ws.onopen");
+  assert.match(kernel, /enqueue\(\{type:"wsup"\}\)/, "the rig: and enqueues the in-band wsup frame");
+  const copies: Record<string, string> = {
+    "federation.ts": fs.readFileSync(path.join(root, "ui", "webview", "federation.ts"), "utf8"),
+    "docs/read-side.md": fs.readFileSync(path.join(root, "docs", "read-side.md"), "utf8"),
+    "the ledger entry": fs.readFileSync(path.join(root, "upstream", "2026-09-19-relay-dial-page-caps-ws-bytes-by-host.md"), "utf8"),
+  };
+  // each copy is read as prose across its line breaks (asProse, the file's one joiner), for the refusals and the three statements
+  // alike, so a copy of the premise or of the statement wrapped over two lines is the same text as one on a line (the author's
+  // fixer pass after the maintainer's round 6, text-4: the pin had read the raw text, and federation.ts's own mention of the
+  // earlier wording sat across a break where the regex could not see it; the closing fixer pass after the maintainer's round 6,
+  // close-3: the three statements had still read the raw copies, so the federation.ts statement held by its phrase sitting on
+  // one line, and a reflow of that comment would have redded it for the wrong reason)
+  const prose: Record<string, string> = {};
+  for (const [name, text] of Object.entries(copies)) prose[name] = asProse(text, /\.ts$/.test(name));
+  assert.match(asProse("// the earlier text: a dial this manager never\n  // sees it", true), /a dial this manager never sees/, "the rig: the prose reader joins a wrapped comment");
+  assert.match(asProse("  // frame that\n  // reaches inbound()", true), /frame that reaches inbound\(\)/, "the rig: and a statement wrapped mid-phrase");
+  // a paragraph break is not a wrap: fragments in two comments or two paragraphs stay apart (F2-1 above)
+  assert.doesNotMatch(asProse("  // frame that\n\n  // reaches inbound()", true), /frame that reaches inbound\(\)/, "the rig: a blank line between two comments is a paragraph break, not a wrap");
+  assert.doesNotMatch(asProse(" * frame that\n *\n * reaches inbound()", true), /frame that reaches inbound\(\)/, "the rig: a line holding the comment marker alone is a paragraph break too");
+  assert.match(asProse("frame that\nreaches inbound()", false), /frame that reaches inbound\(\)/, "the rig: a wrapped markdown line joins");
+  assert.doesNotMatch(asProse("frame that\n\nreaches inbound()", false), /frame that reaches inbound\(\)/, "the rig: a markdown paragraph break does not");
+  assert.doesNotMatch(asProse("frame that\n* reaches inbound()", false), /frame that reaches inbound\(\)/, "the rig: a markdown bullet is text, not a comment marker");
+  for (const [name, text] of Object.entries(prose)) {
+    const hit = text.match(/(a dial (this|the) manager never sees|sees no dial|no dial event)/);
+    assert.equal(hit === null ? null : hit[0], null, name + " states the premise the shim's own code refutes, on one line or across a line break");
+  }
+  // the three statements, each tested on the joined copy (assert.ok over a test, so a failure names the claim and not the whole copy)
+  assert.ok(/in-band \{type:"wsup"\} frame that reaches inbound\(\)/.test(prose["federation.ts"]), "federation.ts names the event that exists and says the reset on it is unhandled by choice");
+  assert.ok(/by choice: the shim redials the local socket in-page and announces the reopen/.test(prose["docs/read-side.md"]), "the docs state the choice");
+  assert.ok(/announces the reopen to the manager, which resets nothing on it/.test(prose["the ledger entry"]), "the ledger entry states the choice");
+});
+
+test("a remote feedDelta whose `top` is a string onto a held pair is refused like any apply throw (the author's fixer pass after the maintainer's round 5, refusal-5): the pair stands at (G, 1), the raw base is unchanged and carries no index keys, one bare ask, the row asked on the wire road; before the guard it applied and moved the pair to (G, 2) with '0', '1', '2' as the frame's keys", async () => {
+  await withManager(({ fm, emitted, sent }) => {
+    const ws = attached(fm);
+    ws.frame(stamped({ buildId: 12 }));
+    ws.frame(cycle(G, 0, 1));
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "the rig: a held pair (G, 1)");
+    const raw = fm.conns.get(HOST).feedRaw, before = feeds(emitted).length, asks = ws.sent.length;
+    ws.frame({ ...cycle(G, 1, 2), top: "str" });
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "the pair stands: the throw is refused before Conn.feedHeld is written (the mirror reads (G, 2) from the recorded stamp fields: the feed-apply-throw-top-string row)");
+    assert.equal(fm.conns.get(HOST).feedRaw, raw, "the base is the same object");
+    assert.equal(Object.keys(fm.perHostFeed[HOST] || {}).some((k) => /^\d+$/.test(k)), false, "no index key reached the merged frame");
+    assert.equal(feeds(emitted).length, before, "nothing emitted");
+    assert.deepEqual(ws.sent.slice(asks), [{ type: "needFullFeed" }], "one bare ask");
+    assert.deepEqual(applyRows(sent), [{ host: HOST, buildId: 12, why: "asked", road: "wire" }], "the apply-throw row, asked, on the wire road");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+test("the two roads' latches are independent: a remote stall does not move the local latch and a local stall does not move the remote's, and each files under its own host and road", async () => {
+  await withManager(({ fm, sent }) => {
+    const ws = attached(fm);
+    fm.inbound("", { type: "feed", now: 420, buildId: 9, asks: [card(SID_L, 1)], ledgers: [ledger(SID_L, "web")] });
+    ws.frame(badDelta(2));
+    assert.equal(fm.conns.get(HOST).feedApply, "asked"); assert.equal(fm.localFeedApply, undefined);
+    fm.inbound("", { type: "feedDelta", now: 430, buildId: 10, asks: { not: "a list" } });
+    assert.equal(fm.localFeedApply, "asked"); assert.equal(fm.conns.get(HOST).feedApply, "asked");
+    assert.deepEqual(applyRows(sent).map((r: any) => [r.host, r.road]), [[HOST, "wire"], ["local", "local"]]);
+    assert.deepEqual(ws.sent, [{ type: "needFullFeed" }], "the remote ask on the remote socket");
+    assert.deepEqual(sent.filter((x) => x && x.type === "needFullFeed"), [{ type: "needFullFeed" }], "the local ask to the local kernel");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+// ── the fourth shape the served mirror does not read, an ACCEPTANCE (the maintainer's round 5, extra7-1) ───────────────────
+// Every remote frame passes the conn's receiver before the arms, and the receiver decodes the feed slot (a kernel too old to read
+// the caps term serves the feed as {type: "delta", slot: "feed"} patches), so such a patch reassembles into a {type: "feed"} frame
+// that enters the feed arm and RE-SEEDS Conn.feedHeld from the reassembled frame's gen: the patch's rest.gen (content no frame
+// recorder keeps), the receiver's feed base's gen with the rev reset, or nothing under restAll. The served mirror (held_pair,
+// tests/test_federated_dial_terms_served.py) reads no delta frame on the feed slot and holds the pair the deltas before it left,
+// so this is a divergence and not a refusal; the RECEIVER_BLIND rows feed-slotpatch-* hold these three readings, measured here. No
+// kernel in this repo sends the patch to a socket that announced caps=feedDelta, and none stamps a gen on that road.
+test("a delta slot:feed patch re-seeds the feed pair from the frame the receiver reassembles: rest.gen gives (rest.gen, 0), an empty rest the base's gen at rev 0, restAll with a rest carrying no gen clears it; the served mirror reads (G, 1) for all three", async () => {
+  const drive = async (patch: any) => {
+    let held: any = "unread";
+    await withManager(({ fm }) => {
+      fm.openRemote(HOST, true);
+      const ws = last(FakeWS.made);
+      ws.open();
+      ws.frame(stamped({ buildId: 2 }));
+      ws.frame(cycle(G, 0, 2));
+      assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "the rig: the pair the deltas left, the mirror's reading for every case below");
+      ws.frame({ type: "delta", slot: "feed", base: 0, rev: 1, coll: {}, ...patch });
+      held = heldOf(fm);
+      fm.conns.get(HOST).closed = true;
+    });
+    return held;
+  };
+  assert.deepEqual(await drive({ rest: { gen: G2, now: 600, buildId: 9 } }), { gen: G2, rev: 0 }, "rest.gen: re-seeded under the patch's own gen, content no recorder keeps");
+  assert.deepEqual(await drive({ rest: { now: 600, buildId: 9 } }), { gen: G, rev: 0 }, "an empty rest: the receiver's feed base's gen, the rev reset");
+  assert.equal(await drive({ rest: { type: "feed", now: 600 }, restAll: true }), undefined, "restAll with a rest carrying no gen: the reassembled frame carries none, the pair cleared");
 });

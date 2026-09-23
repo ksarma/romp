@@ -56,19 +56,65 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
 #rsettings .rs-judges { display: flex; gap: 18px; }
 #rsettings .rs-judges .rs-half { flex: 1 1 0; min-width: 0; }
 /* the per-setting description is a HOVER tooltip (the user 2026-06-23): hidden by default,
-   floats below the row on hover (absolute → no layout shift). */
+   floats below the row on hover (absolute → no layout shift). Since 2026-09-20 it opens on a KEYBOARD FOCUS too (:has(:focus-visible):
+   the row's checkbox or control holds a focus the browser would draw a ring for, a Tab or a screen reader's move, never a mouse
+   click: a click focuses the checkbox too and nothing blurs it, so keyed on :focus-within the description outlived the pointer and
+   covered the next row after every click, the maintainer's round 4 of the share field, ui-2; a tap is not :focus-visible either
+   and reads the description through the hover a touch browser leaves on the tapped row), so a keyboard user reads the description
+   a pointer user hovers; until then the disclosure under the Diagnostics share switch, the consent text for the phone's timing
+   rows, rendered for a pointer alone (the maintainer's round 3 of that field, ui-1). :focus-visible matches the focused element
+   itself where :focus-within matched its ancestors, so the row and the widget test for a descendant with :has() at the same
+   specificity, (0,1,0), and every specificity the comments below rely on holds. THE TEXT CONTROLS ARE THE ONE EXCEPTION to
+   "never a mouse click" (the author's fixer pass after the maintainer's round 4, panel-2): a focus in a text field is always
+   :focus-visible (every engine draws the caret, so a click into one matches as a Tab does), and the panel holds two rows with
+   one, the Pictures from the web textarea (General) and the Default directory input (Sessions): a click into either shows its
+   row's description until the field blurs, over the rows below it or above when parked low, the same reading a Tab into it
+   gives; the field is being edited, so the description is the row's help while it is. Kept, not excluded: keying them out
+   would cost the keyboard user the description of the two rows that take typing. The click leg pins it by control kind. */
 #rsettings .rs-sub { display: none; }
+/* TWO rules with one declaration block, the pointer's arms and the keyboard's (the maintainer's round 5, ui-3): a selector list
+   is unforgiving, one selector the engine cannot parse invalidates the whole rule, so with the four arms in one list an engine
+   without :has() (Chromium before 105, Firefox before 121, WebKit before Safari 15.4) dropped the show rule whole and no
+   description showed on ANY road, the pointer's included. Split, such an engine drops the keyboard rule alone and keeps the
+   pointer road: the degradation the sheet had before the keyboard road existed (a description the keyboard cannot reach, never
+   one nobody can). Every other :has() rule in this sheet is its own rule or a stand-down (display: none), so its loss on that
+   engine costs an extra tooltip or the keyboard road, and never a ROW's pointer road; the one exception is the Fast mode
+   BOX's own pointer road (the author's fixer pass after the maintainer's round 5, exclusions-2): the box's show rule needs :has() (the row
+   selected by its child's hover, the pair below), while the plain stand-down that hides the box's description under a
+   hovered row survives, so on such an engine a hover on the box shows the ROW's description in the box's place and the box's
+   own text (what fast mode is and costs, why a greyed box is greyed, a refusal) is reachable by no road there, the pointer's
+   included: the box's keyboard road is the pointer road's focus twin, and a twin whose pointer rule the engine drops stands
+   for nothing (the maintainer's round 6, regression-4: the test's model had counted it a keyboard twin standing). So the
+   model shows such an engine losing the keyboard road on every row (three keyboard twins), seven stand-downs (an extra
+   tooltip each) and the box's two roads. gear-sub-focus-browser.test.ts parses the sheet and holds both (no rule mixes a
+   :has() arm with a :has()-free arm; every :has() rule's loss is classified, the box's two roads by name, a keyboard twin
+   only when its pointer twin is :has()-free) and drives the model, the sheet with every :has() rule removed, in a browser,
+   reading a row and the box. Not :is() to make the list forgiving: two rules say it. The same
+   unforgiving list applies to :focus-visible (Chromium before 86, Firefox before 85, WebKit before Safari 15.4, the WebKit
+   generation that also lacks :has()): this sheet's :focus-visible arms all ride :has() rules but one, the grip's
+   `.rs-grip:hover, .rs-grip:focus-visible` rule below, the sheet's ONE selector list mixing a plain arm with a modern one; on
+   such an engine the whole rule goes and the grip loses its hover style with it (a hover colour and wash, no description and no
+   road). Upstream's rule from before this branch, left as it is here (splitting it is a two-line change on an upstream line,
+   the maintainer's call); the parsed-sheet pin names it as the one classified exception, so a second such list reds (the
+   author's fixer pass after the maintainer's round 5, exclusions-6). */
 #rsettings .rs-row:hover .rs-sub, #rsettings .rs-widget:hover .rs-sub { display: block; position: absolute; left: 0; right: 0; top: 100%; z-index: 10;
   margin-top: 2px; color: var(--text-soft, #cdd3da); font-size: 0.92em; line-height: 1.35; background: var(--input-bg, #1b1b1c); border: 1px solid var(--hairline, #3a3a3a);
   border-radius: 6px; padding: 6px 9px; box-shadow: 0 4px 14px #000000aa; pointer-events: none; }
-/* the popover opens ABOVE a row whose popover would run past the card's bottom (gear.js placeSub sets rs-up on hover): the card
-   is the modal's scroll box, and a popover past its bottom grew it a scrollbar and was clipped (the T408 read) */
+#rsettings .rs-row:has(:focus-visible) .rs-sub, #rsettings .rs-widget:has(:focus-visible) .rs-sub { display: block; position: absolute; left: 0; right: 0; top: 100%; z-index: 10;
+  margin-top: 2px; color: var(--text-soft, #cdd3da); font-size: 0.92em; line-height: 1.35; background: var(--input-bg, #1b1b1c); border: 1px solid var(--hairline, #3a3a3a);
+  border-radius: 6px; padding: 6px 9px; box-shadow: 0 4px 14px #000000aa; pointer-events: none; }
+/* the popover opens ABOVE a row whose popover would run past the card's bottom (gear.js placeSub sets rs-up on hover and on
+   focus): the card is the modal's scroll box, and a popover past its bottom grew it a scrollbar and was clipped (the T408 read) */
 #rsettings .rs-row.rs-up:hover .rs-sub, #rsettings .rs-widget.rs-up:hover .rs-sub { top: auto; bottom: 100%; margin-top: 0; margin-bottom: 2px; }
+#rsettings .rs-row.rs-up:has(:focus-visible) .rs-sub, #rsettings .rs-widget.rs-up:has(:focus-visible) .rs-sub { top: auto; bottom: 100%; margin-top: 0; margin-bottom: 2px; }
 /* the Fast mode box's own popover, positioned against its row like the row's (the box is static, so the row is the
    containing block and the popover keeps the row's width): the box carries rs-up itself (gear.js hostOf). Specificity
    (1,5,0): two classes above the hover rule and one above the row's own rs-up rule, so the box's placement wins whatever the
    row wears, whatever the order in this sheet */
 #rsettings .rs-row:hover .rs-fastin.rs-up .rs-sub { top: auto; bottom: 100%; margin-top: 0; margin-bottom: 2px; }
+/* the same on the keyboard (2026-09-20, the twins of the box's hover rules): the box's description shows while the focus is
+   inside the box (the pair below), placeSub places the box on focusin as on mouseover, and this opens it above the row */
+#rsettings .rs-row:has(:focus-visible) .rs-fastin.rs-up .rs-sub { top: auto; bottom: 100%; margin-top: 0; margin-bottom: 2px; }
 #rsettings .rs-sub code { background: #0d0d0d; border-radius: 3px; padding: 0 3px; }
 /* an inline live status beside a control (the login flow's "starting…") — visible when non-empty,
    never a popover (as an rs-sub it doubled the Account row's tooltip, 2026-09-02) */
@@ -79,10 +125,50 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
 #rsettings .rs-line { display: block; color: var(--text-muted, #9aa0a6); font-size: 0.92em; line-height: 1.35; margin-top: 1px; }
 /* ONE tooltip at a time: while a picker dropdown is open, or the pointer is on the tri-state
    'mixed' mark (whose own title names the differing hosts), the row's description stands down —
-   otherwise the native tooltip and the description popover stack (2026-09-02) */
-#rsettings .rs-row:has(#rs-cmap-list:not([hidden])) .rs-sub,
-#rsettings .rs-row:has(#rs-pal-list:not([hidden])) .rs-sub,
+   otherwise the native tooltip and the description popover stack (2026-09-02). The open picker is
+   read off the class rs-picking on its row (gear.js setListOpen, the one writer of a list's hidden,
+   toggles it at every site that moves a list: the maintainer's round 5, correctness-1), never off a
+   list's id, so the panel-wide stand-down below reads the same word and a new picker joins by
+   calling that writer. WHAT THIS RULE DOES NOT REACH (the author's fixer pass after the maintainer's round 5, exclusions-1 and -4): the
+   two list pickers (colormap, palette) are the only ones that call it; the HOUSE dropdowns (gear.js housePick: the judge
+   rows' model and effort pickers, the widget options' pickers, twelve in the panel today) write their menu's hidden
+   themselves and their rows never wear the class, so while one is open under the pointer the row's own description
+   shows beside and partly under the menu (the menu carries no native title, so no two tooltips stack; the pointer still
+   wins over a focus in another row), upstream's behaviour from before this branch and left as it stands here (routing
+   housePick through setListOpen is a behaviour change for twelve pickers, the maintainer's call); a row greyed by task
+   tracking off (rs-off, gear.js dressTracking: seven judge rows and two Debug rows) carries the "Enable task tracking"
+   title on the row itself and still shows its description on hover, a native title and a description together; and the
+   widget rows' grips, option wraps and demo spans carry titles of their own that hover beside the widget's description.
+   gear-sub-focus-browser.test.ts enters the house-dropdown state and records it; the other two it names as states its legs
+   do not enter. Specificity (1,3,0), the show rules' own, and after them, so the order decides. Two rules, not one
+   list: the mark's arm needs :has() and the class arm does not, and a list mixing them would lose both on an engine
+   without :has() (the rule the show rules above follow). */
+#rsettings .rs-row.rs-picking .rs-sub { display: none; }
 #rsettings .rs-row:has(.rs-mixed:hover) .rs-sub { display: none; }
+/* ONE tooltip across the PANEL (the maintainer's round 4 of the share field, correctness-1): a focus and a pointer rest on two
+   rows at once where one pointer cannot, and the show rule above is not scoped to any other row's state, so a keyboard focus in
+   one row and a pointer in another showed two descriptions, the second drawn inside the first when the rows were adjacent. THE
+   POINTER WINS wherever it has something to show, the rule every one-tooltip rule in this sheet follows (a hovered mark's title
+   over its row's description, a hovered box's description over its row's): while a row or a widget row SHOWING a description is
+   hovered, or any mixed mark is (its native title is the one tooltip), every description outside the hovered row stands down,
+   the focused row's included; the hovered row's own is exempt (:not(:hover)), so a pointer resting on the focused row changes
+   nothing. Over a row with neither (a section header, an Automation row's permanent line, the widgets' divider) nothing stands
+   down and the keyboard's description stays. Showing, not containing (the maintainer's round 5, correctness-1): a hovered row
+   whose own description is stood down by its open picker list (rs-picking, above) has nothing to show, so it stands nothing
+   down and the keyboard's description stays; keyed on the row containing a description, the open list hid the hovered row's
+   and this rule hid the focused row's, and nothing showed. Specificity (1,8,0), above the box's show twin (1,5,0) below, so the
+   stand-down wins whatever the order in this sheet; the .rs-widget branch is there because the widget rows live in their grids,
+   not in a .rs-row.
+   ONE EXCEPTION, within a judge row (the author's fixer pass after the maintainer's round 4, panel-4): with the keyboard focus
+   inside a Fast mode box and the pointer on the ROW's label, the description shown is the BOX's, not the row's the pointer rests
+   on: the pair's twins below stand the row's down at (1,4,0) over the hover show rule's (1,3,0) and show the box's at (1,5,0) over
+   the row-hover stand-down's (1,4,0), the head's behaviour kept. So within a row the box wins whenever either road rests on the
+   box, one description either way; across rows the pointer wins. The box pair's rules select EVERY box in the row (`.rs-fastin
+   .rs-sub` under the row), so the in-row rule is exact for one box per row, which is every judge row today; a row carrying two
+   boxes would show both boxes' descriptions on either road (the author's prep for the maintainer's round 5, road D). The census leg pins both by
+   name and reads the bound (at most one box per row). */
+#rsettings .rs-card:has(.rs-row:hover:not(.rs-picking) .rs-sub, .rs-widget:hover .rs-sub, .rs-mixed:hover) .rs-row:not(:hover) .rs-sub,
+#rsettings .rs-card:has(.rs-row:hover:not(.rs-picking) .rs-sub, .rs-widget:hover .rs-sub, .rs-mixed:hover) .rs-widget:not(:hover) .rs-sub { display: none; }
 /* A setting whose value differs between the connected machines: the checkbox goes tri-state, and this
    says so in words beside the label, because an indeterminate box alone is easy to read straight past.
    Label size, section grey — the hover line names which machines. */
@@ -103,8 +189,27 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
 #rsettings .rs-fastin.rs-off { color: var(--text-faint, #6e7681); cursor: default; }
 #rsettings .rs-fastin.rs-off input { opacity: .4; cursor: default; }
 #rsettings .rs-row:hover .rs-fastin .rs-sub { display: none; }
+/* the same while the row holds a KEYBOARD FOCUS (2026-09-20): a Tab into the Fast mode box focuses its checkbox, which puts the
+   row in :has(:focus-visible) and would show the row's description AND the box's nested one, stacked; on the keyboard the row's
+   shows, until the pair's twins below stand it down for the box's own */
+#rsettings .rs-row:has(:focus-visible) .rs-fastin .rs-sub { display: none; }
 #rsettings .rs-row:has(.rs-fastin:hover) > .rs-sub { display: none; }
 #rsettings .rs-row:has(.rs-fastin:hover) .rs-fastin .rs-sub { display: block; }
+/* the pair's twins (2026-09-20): while a KEYBOARD FOCUS is inside the box (a Tab onto its checkbox: `.rs-fastin :focus-visible`,
+   the descendant form, since a :has() cannot nest a :has() and the box itself is never the focused element) the row's description
+   stands down and the box's own shows, as while the box is hovered, so what a pointer reads on the box (what Fast mode is and costs, why a
+   greyed box is greyed, a refusal) a keyboard reads on its checkbox; until these, a focus in the box showed the ROW's
+   description and the box's reached a pointer alone. Specificities (1,4,0) and (1,5,0), the hover pair's own, so they win
+   over the focus show rule and the focus stand-down above as the hover pair wins over its. A greyed box is disabled and
+   takes no focus, so its "why greyed" text stays the pointer's (a disabled control's own rule, from before this sheet). */
+#rsettings .rs-row:has(.rs-fastin :focus-visible) > .rs-sub { display: none; }
+#rsettings .rs-row:has(.rs-fastin :focus-visible) .rs-fastin .rs-sub { display: block; }
+/* one tooltip while a mark is hovered, on the keyboard too (2026-09-20, the fixer pass over the twins): a focus and a pointer
+   rest on two elements at once where one pointer cannot, so with the focus inside the box and the pointer on the ROW's mixed
+   mark the show twin above kept the box's description open beside the mark's native title (the mark rule stands the row's
+   down at (1,4,0) and loses to the twin's (1,5,0)); this stands the box's down while any mark in its row is hovered, at the
+   twin's specificity and after it, so the order breaks the tie. Pointer gone, the twin shows it again on the focus alone. */
+#rsettings .rs-row:has(.rs-mixed:hover) .rs-fastin .rs-sub { display: none; }
 /* the label's nowrap keeps the box and its word together; the hint must NOT inherit it, or it runs off
    the card as one line with the Opus-only condition and the premium cut off at the right edge */
 #rsettings .rs-fastin .rs-sub { white-space: normal; }

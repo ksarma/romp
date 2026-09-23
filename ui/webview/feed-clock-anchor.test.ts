@@ -100,7 +100,7 @@ test("federation stamps the arrival beside the frame on the wire path, drops it 
   // delta protocol kept beside upstream's slot deltas, upstream/2026-09-05-two-delta-protocols.md; 2026-09-07 fold);
   // and a remote host's feedDelta applied onto that host's raw frame (applyRemoteFeedDelta, since remote dials
   // announce feedDelta, 2026-09-18), which arrives on the relay socket the same way
-  assert.match(FED, /this\.perHostFeed\[host\] = applyFeedDelta\(base, m\);\n\s*this\.perHostFeedAt\[host\] = Date\.now\(\);/, "a delta's arrival: it carries the kernel's `now` too");
+  assert.match(FED, /this\.perHostFeed\[host\] = r\.next;\n\s*this\.perHostFeedAt\[host\] = Date\.now\(\);/, "a delta's arrival (the checked apply's result, feed-delta.ts tryApplyFeedDelta: a throw is refused before any write and stamps nothing): it carries the kernel's `now` too");
   assert.match(FED, /this\.perHostFeed\[host\] = prefixInbound\(host, next\);\n\s*this\.perHostFeedAt\[host\] = Date\.now\(\);/, "a remote delta's arrival, stamped beside the prefixed frame it produced");
   assert.equal((FED.match(/perHostFeedAt\[host\] = Date\.now\(\)/g) || []).length, 3, "stamped where a frame or a delta comes off the wire and nowhere else, never on an emit");
 });

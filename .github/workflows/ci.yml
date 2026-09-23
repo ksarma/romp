@@ -368,11 +368,24 @@ jobs:
         # this step does not run; see the install step above). The matrix jobs are unchanged: still no
         # browser, still skipping these. --durations=20 names the slowest labs in the log: this step is
         # the job's long phase (12 min 44 s on main, 2026-09-14, against the job's cap above), and every
-        # served lab added grows it, so the next growth should be visible by name.
+        # served lab added grows it, so the next growth should be visible by name. Two additions on 2026-09-20
+        # (the maintainer's round 1 of the wsBytesByHost review), both pinned by tests/test_served_labs_under_ci.py: the pytest line
+        # names tests/test_relay_dial_declares_held_pair.py by file, a raw-socket kernel leg that needs the built
+        # dist this job has and no browser, so no glob names it and it ran in no job (its filename is plain on
+        # purpose, so the conftest's REQUIRE rule does not read it; the module itself turns its precondition
+        # skips, no built dist or a kernel that never served, into failures under the switch, and its gen-key
+        # skip alone stays a skip here); and ROMP_CORNER_TWO_HOSTS
+        # runs the two-host lab (TwoHostsBytesByHost in the corners module), about a minute of three kernels
+        # and Chromium, whose knob keeps every other runner unchanged. The figure above (12 min 44 s) is 2026-09-14's; read
+        # from the Actions API on 2026-09-21, this step ran 26 min 47 s, 28 min 18 s and 29 min 50 s on main's three latest
+        # runs (5e5ee79ed, 68d043742 and 5b8df8f5c; the jobs 29 min 03 s, 31 min 07 s and 33 min 24 s) and 28 min 21 s on
+        # this branch (job 106182603399, the job 31 min 32 s), against the 40-minute cap above; the cap and the job's
+        # structure are main's item, unchanged here.
         working-directory: ${{ github.workspace }}
         env:
           ROMP_SERVED_TESTS_REQUIRE: "1"
           ROMP_SERVED_TESTS_ENGINES: chromium
+          ROMP_CORNER_TWO_HOSTS: "1"
         run: |
           python -m pip install --upgrade pip pytest pytest-timeout cryptography
-          python -m pytest tests/test_*_browser.py tests/test_*_served.py -q -rs -p no:cacheprovider --durations=20 --timeout=600 --timeout-method=thread
+          python -m pytest tests/test_*_browser.py tests/test_*_served.py tests/test_relay_dial_declares_held_pair.py -q -rs -p no:cacheprovider --durations=20 --timeout=600 --timeout-method=thread

@@ -3485,18 +3485,34 @@ def _client_diag_append(fp, line):
 # CLIENT_DIAG_ROW_SAY_MAX are named and one more line counts the rest, and the latch holds CLIENT_DIAG_SAID_MAX pairs in
 # all, then says so once and falls silent, so neither one wide row nor a poster with an unbounded key vocabulary can
 # grow it or silence the other surfaces (review finds, 2026-09-18). Every string value is cut at CLIENT_DIAG_STR_MAX
-# characters, at any depth. A row whose JSON runs past CLIENT_DIAG_ROW_MAX bytes keeps its surface, what and app and
+# characters, at any depth, and a value nested past CLIENT_DIAG_DEPTH_MAX is stored as null; a row any value of which
+# was cut or nulled so carries CLIENT_DIAG_CUT_KEY, the admitted keys under which it happened (a kernel-written marker
+# beside `capped`, admitted by no surface, so a poster cannot forge one), and the kernel says so once per surface and key
+# on stderr, as it says a dropped key (the maintainer's round 3 of the wsBytesByHost field, 2026-09-20: a value-level loss was the
+# one silent loss on this road, and a cut string looked like a whole one to every reader). A row whose JSON runs past
+# CLIENT_DIAG_ROW_MAX bytes keeps its surface, what and app and
 # carries {"capped": true, "bytes": N} as its data (said once per surface and what), except a perf minute row, which
-# sheds its per-minute figures first (CLIENT_DIAG_MINUTE_SHED, _client_diag_line): the collector sends nav, res, marks
+# sheds keys in a fixed order first (CLIENT_DIAG_MINUTE_SHED, _client_diag_line: the uncapped wsBytesByHost map, then its
+# per-minute figures): the collector sends nav, res, marks
 # and env exactly once per page, and a whole-row marker lost them for the page's life (review find, 2026-09-18). The
-# bound is derived from the collector's own caps (perf-telemetry.ts), so no row it can build is shed or capped:
+# bound is derived from the collector's own caps (perf-telemetry.ts), so no row it can build is shed or capped while
+# its wsBytesByHost map, the one key without a cap, is under the crossing derived below; past it the map alone is
+# shed, whole, as the ladder's first step, and the rest of the row is stored as posted:
 # MAX_FRAME_TYPES named wire types plus their fold and as many `fed:` keys are 66 frame entries, the wire keys at most
 # 38 characters (the `delta:` prefix and a 32-character identifier) and the `fed:` keys at most 42 (`fed:delta:` and the
 # identifier, since federation.ts times a frame as `fed:` plus its classified type), each with a 14-bucket histogram,
 # 16.5 KB at six-digit counts; MAX_TOP long-frame keys at the string cut, the free sample, the slow counts and the
 # envelope add about 1.4 KB (17.9 KB share off); the shared fields (MAX_RES named resources and the fold, nav, marks,
-# env, vis, wsBytes, rafGap) add about 3.4 KB (21.3 KB share on). 24 KiB holds both with margin (today's minute rows run
-# to 2.5 KB); above it the shed and the marker are the backstops for a row no collector builds. The table lists the
+# env, vis, wsBytes, wsBytesByHost at eight positions and rafGap) add about 3.5 KB (21.5 KB share on); the map has
+# no cap on positions: the worst-case row test states eight at nine digits each, 155 bytes, and reads the count, the
+# bytes and the share-on figure back from this comment against the row it builds. 24 KiB holds that row and leaves
+# 3110 bytes under the bound (today's minute rows run to 2.5 KB). Each further position adds 17 bytes at a one-digit
+# ordinal, 18 at two and 19 at three (the separator, the quoted key and a nine-digit count), so on that row the map
+# crosses the bound at 177 positions, and on a smaller row later; the ladder test derives the cost and
+# the crossing from the row it builds and reads them back here and from docs/reference.md's copy. Over the bound the ladder (CLIENT_DIAG_MINUTE_SHED)
+# sheds the map first and whole, which returns any row the collector builds to the figures above, under the bound;
+# the frames, the long-frame report, the free sample and the slow counts go next and the whole-row marker last,
+# backstops for a row no collector builds. The table lists the
 # keys as the posters build them: perf-telemetry.ts (minute, slowframe), the pane shim (staleDiag, the return rows,
 # wsclose, wsconnfail, page-load), the reload core's held row, the shell scripts, federation.ts, render.ts and
 # scroll-write.ts, strip.ts, feed.ts, fleet.ts, waiting.ts. The kernel's own rows (surface kernel: _note_ws_open and
@@ -3504,17 +3520,80 @@ def _client_diag_append(fp, line):
 # (said once per what), so a forged wsopen cannot land beside the kernel's; the entry names the kernel's own keys. A
 # surface not in the table keeps no key at all, and a data that is not an object is stored as null.
 CLIENT_DIAG_STR_MAX = 64
-CLIENT_DIAG_ROW_MAX = 24 * 1024   # above the collector's worst case with share on (21.3 KB; the derivation above)
+CLIENT_DIAG_ROW_MAX = 24 * 1024   # above the collector's worst case with share on and eight positions (21.5 KB; the derivation above)
 CLIENT_DIAG_DEPTH_MAX = 8      # nesting past this reads null: the rows are flat or two deep
 CLIENT_DIAG_SAID_MAX = 512     # (surface, key) pairs the stderr latch holds; at the bound one more line says so and nothing else is said
 CLIENT_DIAG_ROW_SAY_MAX = 8    # foreign keys of ONE row said by name; the rest are one counting line, so a row spends at most this many latch entries and one
-# a perf minute row over CLIENT_DIAG_ROW_MAX sheds these, in this order, until its line fits; the row's other keys (the
-# small per-minute figures and the once-per-page nav, res, marks and env) stay, and `capped` names what was shed
-CLIENT_DIAG_MINUTE_SHED = ("frames", "loaf", "free", "slow")
+CLIENT_DIAG_CUT_KEY = "cut"    # the marker a row carries when a value under an admitted key was cut or nulled by _client_diag_scrub: the list of those keys,
+                               # written by the kernel after the admit and admitted by no surface (a poster's key of this name is dropped as foreign),
+                               # so a reader can tell a stored value from a whole one (the maintainer's round 3 of wsBytesByHost, 2026-09-20)
+# a perf minute row over CLIENT_DIAG_ROW_MAX sheds these, in this order, until its line fits, and `capped` names what was
+# shed. wsBytesByHost goes first (the maintainer's round 1, regression-4, 2026-09-20): it is the one key the collector does not cap (one position
+# per attached host), so a row the collector builds is over the bound only through it, and shedding it whole returns the
+# row to the derived worst case, which fits; it is never cut to the positions that fit, so a stored map is never read as
+# a host count. The rest is the backstop for a row no collector builds: the frame histograms, then the long-frame report,
+# the free sample and the slow counts, largest first; the once-per-page nav, res, marks and env stay
+CLIENT_DIAG_MINUTE_SHED = ("wsBytesByHost", "frames", "loaf", "free", "slow")
 CLIENT_DIAG_KEYS = {
     "perf": frozenset(("app", "since", "span_ms", "frames", "free", "loaf", "slow", "dom", "visible", "hidden_pane", "ua", "heap_mb",   # minute
                        "type", "ms",                                                # slowframe (app, dom, loaf as above)
-                       "nav", "res", "marks", "env", "vis", "wsBytes", "rafGap")),  # the shared fields, on when the gear says so
+                       "nav", "res", "marks", "env", "vis", "wsBytes", "rafGap",     # the shared fields, on when the gear says so
+                       "wsBytesByHost")),   # the shared field the user approved on 2026-09-19 (the bytes each attached host sent, one number per host, no
+                                            # content): {h1: int, h2: int, ...}, one key per attached host and no cap,
+                                            # the text-frame characters each REMOTE host's sockets delivered in the
+                                            # minute (wsBytes's unit; the two are disjoint), keyed by the host's attach ORDINAL in the pane document that
+                                            # counts (one federation manager per pane document; the row's app names the pane): h1 the first remote host it
+                                            # attached, assigned when the host first attaches, kept for that document's life and never shifting on a
+                                            # detach (a re-attached host keeps its ordinal), so h2 names one host across every row that document files.
+                                            # A position is per pane document, so a page with several panes mints several positions for one machine (one per
+                                            # document; two panes of the same app are two documents), and the file then holds more rows per host than a per-page
+                                            # grain would give. Nothing on the row names the document, so rows from different panes of one wid are never folded
+                                            # or compared as one position space.
+                                            # The map's keys carry positions and no host name, a property the COLLECTOR holds: federation.ts mints each
+                                            # key as 'h' plus the attach ordinal (wsBytesByHost) and perf-telemetry.ts's bytesByHost keeps a key only in
+                                            # the h<n> form (a regular-expression test in the page bundle, the one enforcement of the property; the kernel has
+                                            # none); the kernel admits the top-level key and does not inspect the map's keys, as it inspects no
+                                            # nested key of any admitted object (marks, env, nav, res, frames, loaf and federation's counts alike): a
+                                            # nested string VALUE is cut at CLIENT_DIAG_STR_MAX, a nested key is stored as posted (_client_diag_admit,
+                                            # _client_diag_scrub), and a row a value of which was cut carries the cut marker naming the key
+                                            # (CLIENT_DIAG_CUT_KEY, said once on stderr). Host names reach this file wherever an admitted VALUE can hold
+                                            # one, in four forms, and tests/test_client_diag_allowlist.py classifies every admitted key of every surface by
+                                            # content, following each value to its producers (a field is a carrier if any producer chain can put a host name
+                                            # in it, classified by that chain's range and never by the field's typical content), so a new key fails there
+                                            # until classified: a bare name under a `host` key (the shell's push-test row; every federation row that carries
+                                            # its conn's host, the hostconn, feedDelta-nobase, feedDelta-stale, feedDelta-apply, sendqueue and senddrop rows
+                                            # (the poll rows carry an empty host, the local nobase and apply rows the word local), a set the same test
+                                            # derives from federation.ts's diag call sites; and the kernel's own
+                                            # wsopen row for a spliced relay, written by _note_ws_open); a host-prefixed session id, <host>:<uuid>, when the
+                                            # row concerns a remote session (the chat surface's sid, id, ids and active: federation.ts prefixes every remote
+                                            # session id the page holds, and the cut at CLIENT_DIAG_STR_MAX keeps the head, prefix included; and the shell's
+                                            # tap-pending-land and tap-vanish-land rows' sid8, the first 8 characters of the push ledger row's sid, which
+                                            # the test push files as the active tab's whole data-id and the relay prefixes with its origin, so a host name's
+                                            # first 8 characters or a short host whole, on every row of both kinds that concerns a remote session); a
+                                            # host-keyed map (federation's feedmerge counts); and a host name at the tail of a postal message id,
+                                            # <epoch>.<pid>_<hex>.<host> (postal_service.py _unique bakes the delivering kernel's postal host in): the feed
+                                            # surface's id, appeared and gone carry item ids, and a parked hand-off's card id is parked: plus that message
+                                            # id (the card's own kernel's postal host, on a single-kernel page the page's own machine's, of which 5 to 11
+                                            # characters survive the cut) and a quarantined relay's is quarantine: plus the held mail's id (its origin
+                                            # kernel's postal host, 0 to 4 characters surviving), on every row of the kind that names such a card, filed on
+                                            # routine use and not gated by the share switch; and the chat surface's anchor on one road, a landing miss for a
+                                            # deep link the timeline's message connector filled with a postal message id, the last 12 characters of it, a
+                                            # host of up to 11 characters whole. The chat road is older than this field, is not gated by the perf share
+                                            # switch, and is filed on routine use (a send, a scroll, a tab set: up to 40 scroll rows a minute per kind), so
+                                            # on a federated page it is the most frequent host-carrying row type; the position-to-name MAP itself follows
+                                            # from the rows that record a host at attach (federation's hostconn open rows of the same pane document), not
+                                            # from chat or feed rows alone, which name a host without its position. Two maps need no client-diag
+                                            # row at all: GET /tunnels, the authenticated route whose row order the positions are assigned in, a position-to-name
+                                            # map in its own right, and the state directory this file sits in, whose host registries sit beside this file:
+                                            # remotes.json holds the attached set, written in the /tunnels row order (list_remotes and _remotes_rows_for_save
+                                            # read one dict), so a holder of it maps any position to a name with no client-diag row and no page-life correlation,
+                                            # the order being the kernel's own attached-host order persisted in the same state directory as this file;
+                                            # remotes-known.json holds every host ever attached
+                                            # or trusted, attached ones included, each with a lastAttachedAt stamp refreshed by every writer (attach, detach,
+                                            # trust and share: _known_note), written with the newest stamp first (_known_save), so it names the hosts and not
+                                            # their order. Reading either is itself a join, and what any of these roads yields is exact for a pane life that attached
+                                            # one host; for several it is an order inference, holding while remotes.json still carries the row order the pane's
+                                            # /tunnels answer had. This entry says that and no more.
     "pane-shim": frozenset(("app", "why", "ready", "quietMs", "hidden",                                         # staleDiag rows
                             "decision", "resumed", "hiddenMs", "frozenMs", "quietAtResumeMs", "resent",         # return
                             "ms", "bytesSince", "redialed",                                                     # return-fresh
@@ -3528,7 +3607,8 @@ CLIENT_DIAG_KEYS = {
                         "sub", "rows", "err", "getNotifications", "displayed", "vanished", "superseded", "sid8", "ageS", "shape", "kind", "sw",
                         "decision", "hiddenMs", "quietMs", "attempts", "firstFailMs", "ms")),                    # D3 (2026-09-18): the shell socket's return-probe row (all fixed identifiers / enum members)
     "federation": frozenset(("host", "ev", "why", "quietMs", "foreground", "msgType", "rs", "flushed", "held", "unread", "endedUnread",
-                             "code", "clean", "detached", "pendingDropped", "buildId", "counts", "gt", "superseded")),
+                             "code", "clean", "detached", "pendingDropped", "buildId", "counts", "gt", "superseded",
+                             "road")),   # feedDelta-apply (the maintainer's round 5 of wsBytesByHost, refusals-2): which road the throwing delta arrived on, wire or local, a fixed word
     "chat": frozenset(("sid", "error", "held", "got", "distVer", "path", "mdLen", "queuedLeft", "ids", "n", "active", "ts", "len", "route",
                        "id", "load", "first", "recovered", "hadRestore", "perMinute",
                        "writer", "before", "after", "delta", "stick", "gesture", "sh", "ch",
@@ -3563,19 +3643,38 @@ def _client_diag_say(surface, key, text):
     print("[client-diag] %s: surface %r, %s" % (text, surface, key), file=sys.stderr)
 
 
-def _client_diag_scrub(v, depth=0):
+# what _client_diag_scrub can do to a value short of keeping it whole, by the word it records in its `losses` list, and the
+# clause the one stderr line per (surface, key) says for it
+_CLIENT_DIAG_LOSS = {
+    "cut": "a string over %d characters is stored as its first %d" % (CLIENT_DIAG_STR_MAX, CLIENT_DIAG_STR_MAX),
+    "depth": "a value nested past depth %d is stored as null" % CLIENT_DIAG_DEPTH_MAX,
+    "type": "a value of no JSON type is stored as null",
+}
+
+
+def _client_diag_scrub(v, losses=None, depth=0):
     """A value as the file keeps it: strings cut at CLIENT_DIAG_STR_MAX, numbers, booleans and null as they are,
-    objects and lists walked to CLIENT_DIAG_DEPTH_MAX (deeper reads null), anything else null."""
+    objects and lists walked to CLIENT_DIAG_DEPTH_MAX (deeper reads null), anything else null. `losses`, when the caller
+    passes a list, gets a word from _CLIENT_DIAG_LOSS appended for every value this did not keep whole, at any depth, so
+    the caller can say the loss and mark the row (_client_diag_admit; the maintainer's round 3 of wsBytesByHost, 2026-09-20: a value
+    cut here looked like a whole one to every reader). The "type" arm is unreachable on the posted road, whose data is
+    json.loads output (every value is of a JSON type), and stands for a direct caller."""
     if isinstance(v, str):
+        if len(v) > CLIENT_DIAG_STR_MAX and losses is not None:
+            losses.append("cut")
         return v[:CLIENT_DIAG_STR_MAX]
     if v is None or isinstance(v, (bool, int, float)):
         return v
     if depth >= CLIENT_DIAG_DEPTH_MAX:
+        if losses is not None:
+            losses.append("depth")
         return None
     if isinstance(v, dict):
-        return {k: _client_diag_scrub(x, depth + 1) for k, x in v.items()}
+        return {k: _client_diag_scrub(x, losses, depth + 1) for k, x in v.items()}
     if isinstance(v, list):
-        return [_client_diag_scrub(x, depth + 1) for x in v]
+        return [_client_diag_scrub(x, losses, depth + 1) for x in v]
+    if losses is not None:
+        losses.append("type")
     return None
 
 
@@ -3584,18 +3683,33 @@ def _client_diag_admit(surface, data):
     null for a data that is not an object. Every foreign key is dropped; of one row's, at most CLIENT_DIAG_ROW_SAY_MAX
     are said by name (once each on stderr) and one more line counts the rest, so a single row carrying hundreds of
     foreign keys spends a handful of the kernel-wide latch's entries, not all of them, and the other surfaces are
-    still said afterwards (review find, 2026-09-18: one 600-key row used to silence the latch for the kernel's life)."""
+    still said afterwards (review find, 2026-09-18: one 600-key row used to silence the latch for the kernel's life).
+    A value the scrub did not keep whole (a string cut at CLIENT_DIAG_STR_MAX, a nesting past CLIENT_DIAG_DEPTH_MAX or a
+    value of no JSON type stored as null, at any depth under the key) is said once per surface and key too, and the row
+    carries CLIENT_DIAG_CUT_KEY naming the admitted keys it happened under, in the row's key order (attributed to the
+    top-level key: the scrub sees no key), so a stored value can be told from a whole one, which no reader could before
+    (the maintainer's round 3 of wsBytesByHost, 2026-09-20). The marker is written after the admit and admitted by no surface, so a
+    poster's own key of that name is dropped as foreign and never lands as a forged marker."""
     if not isinstance(data, dict):
         if data is not None:
             _client_diag_say(surface, "data", "a row's data is not an object and is stored as null")
         return None
     allowed = CLIENT_DIAG_KEYS.get(surface)
-    out, dropped = {}, []
+    out, dropped, cut = {}, [], []
     for k, v in data.items():
         if allowed is not None and k in allowed:
-            out[k] = _client_diag_scrub(v)
+            losses = []
+            out[k] = _client_diag_scrub(v, losses)
+            if losses:
+                cut.append(k)
+                kinds = sorted(set(losses), key=list(_CLIENT_DIAG_LOSS).index)
+                _client_diag_say(surface, "key %r, cut" % str(k)[:CLIENT_DIAG_STR_MAX],
+                                 "a value under the key is not stored whole (%s; the row's %s key names it)"
+                                 % ("; ".join(_CLIENT_DIAG_LOSS[x] for x in kinds), CLIENT_DIAG_CUT_KEY))
         else:
             dropped.append(k)
+    if cut:
+        out[CLIENT_DIAG_CUT_KEY] = cut
     if dropped:
         why = ("dropping a key the surface's allowlist does not admit" if allowed is not None
                else "dropping a key of a surface no allowlist names")
@@ -3609,10 +3723,12 @@ def _client_diag_admit(surface, data):
 
 def _client_diag_line(rec):
     """The row's line for the file. Past CLIENT_DIAG_ROW_MAX bytes of JSON its data is replaced by the cap marker
-    {"capped": true, "bytes": N} plus the row's `app` where it has one, except in a perf minute row: that sheds its per-minute figures (CLIENT_DIAG_MINUTE_SHED,
-    in that order) until the line fits and carries what it shed under `capped` ({"bytes": N, "dropped": [...]}, N the
-    line's bytes before the shed), so the once-per-page fields the collector sends exactly once (nav, res, marks, env)
-    reach the file however many frame types the minute saw; a minute row that does not fit even then takes the marker.
+    {"capped": true, "bytes": N} plus the row's `app` where it has one, except in a perf minute row: that sheds
+    CLIENT_DIAG_MINUTE_SHED's keys in that order, the uncapped wsBytesByHost map first and whole (never cut to the
+    positions that fit), then its per-minute figures, until the line fits, and carries what it shed under `capped`
+    ({"bytes": N, "dropped": [...]}, N the line's bytes before the shed), so the once-per-page fields the collector sends
+    exactly once (nav, res, marks, env) reach the file however many hosts the pane attached or frame types the minute
+    saw; a minute row that does not fit even then takes the marker.
     Deterministic on the kernel's side alone: the collector never learns which rows were capped."""
     line = json.dumps(rec)
     if len(line) <= CLIENT_DIAG_ROW_MAX:    # ASCII-escaped JSON: one byte per character
@@ -3629,7 +3745,7 @@ def _client_diag_line(rec):
             trimmed = json.dumps(dict(rec, data=dict(kept, capped={"bytes": n, "dropped": shed})))
             if len(trimmed) <= CLIENT_DIAG_ROW_MAX:
                 _client_diag_say(rec.get("surface"), "what %r, shed" % rec.get("what"),
-                                 "a minute row over %d bytes is stored without some of its per-minute figures (its capped key names them)" % CLIENT_DIAG_ROW_MAX)
+                                 "a minute row over %d bytes is stored without some of its keys (its capped key names them)" % CLIENT_DIAG_ROW_MAX)
                 return trimmed + "\n"
     _client_diag_say(rec.get("surface"), "what %r" % rec.get("what"), "a row over %d bytes is stored capped" % CLIENT_DIAG_ROW_MAX)
     marker = {"capped": True, "bytes": n}
@@ -67623,6 +67739,11 @@ locate:"a click that should have jumped to a message in the chat couldn't find i
 cleared:"a /clear in a session dropped still-open cards at the boundary; Undo on the feed restores them",
 refused:"a setting that could not be saved, a state file that could not be read, or a restart the manager refused. A change you made (a lane or tab setting, a card bell, a lane order) was not saved because romp could not read or write the file that holds it; nothing changed, the entry carries the reason, and the same change can be tried again. Or one of those files could not be read (the last values are shown until it can), or held bytes romp could not parse and was moved aside, so what it held starts over as defaults. Or the kernel asked its manager to restart and the manager refused (it does not hold the serve token the kernel sent, or cannot read its own): nothing restarted, and the entry carries the status and the way out",
 undelivered:"something you sent never reached a session. Either the kernel it was addressed to has no session by that id (on a board showing more than one machine, the pane addressed the wrong one), or it holds a record for that session that would not read, or it could not read the comment threads' store while resolving a session name, or it could not read or write the session's goals file; the dialog that announced it says which. Nothing was delivered. A message you typed is kept verbatim in undelivered.jsonl under ~/.local/state/romp, and a refused reply, interrupt, end or compact files a row there with no text; a clear, drop or undo refused over the goals file writes nothing there"};
+// `frozen` (the maintainer's round 6 of the wsBytesByHost review, ui-1): the kind of the two messages the apply-throw refusal
+// posts (federation.ts refuseRemoteApply and refuseLocalApply), which posted the kindless catch-all before and landed unlabelled;
+// registered in all three tables here, on lines of its own after them, and worn in the warning yellow (its chip rule beside k-refused):
+// the cards are stale, not lost, and the person can act on it, so it is labelled, explained and mutable like every other kind
+KINDS.push('frozen');KINDLBL.frozen='cards frozen';DESC.frozen="a machine's cards stopped updating: a live update could not be applied and neither could the fresh copy the machine sent back, so the cards shown for it are frozen at their last update. Nothing is lost. A remote machine's cards refresh when its connection reconnects; the local machine's when the connection reconnects or the page is reloaded";
 // the toggles ARE the chips (same pill, same colours) — lit = shown, dimmed = muted. Built once on a
 // STABLE container; only classes flip on click, so the buttons stay click-safe.
 if(filtBar)KINDS.forEach(function(k){var b=document.createElement('span');
@@ -72594,6 +72715,7 @@ def _landing():
             "border-radius:999px;line-height:1.4;white-space:nowrap;border:1px solid transparent}"
             ".rerr-chip.k-stalled,.rerr-chip.k-warn{color:#ffd166;border-color:rgba(255,209,102,0.6)}"
             ".rerr-chip.k-refused{color:#ffd166;border-color:rgba(255,209,102,0.6)}"   # a change that did not land: the warning yellow, its own kind
+            ".rerr-chip.k-frozen{color:#ffd166;border-color:rgba(255,209,102,0.6)}"   # cards frozen at their last update (the maintainer's round 6 of the wsBytesByHost review, ui-1): stale, not lost, so the warning yellow
             # "not sent" rides with the follow-up-failed red: both mean a message of yours didn't land, and
             # this one is the harder loss of the two — nothing was delivered at all (the user 2026-07-29)
             ".rerr-chip.k-nudge,.rerr-chip.k-undelivered{color:#ff6a6a;border-color:rgba(255,106,106,0.6)}"
