@@ -3746,8 +3746,8 @@ def _via_duplicate(pa, direct_bus):
     that predates the field. Duplicates are folded everywhere gossip is consumed: display
     (via_reach), addressing (peer_route), and the agent list — a direct link always wins over a
     relay hop, and never renders beside it. NOT the deadness mirror: _remote_sids_document has its own
-    gate (_direct_row_speaks), since a direct row that is carried or held down cannot speak for a
-    session started on its host since, and a dialable PEERS row alone says nothing about what runs
+    gate (_direct_row_speaks), since a direct row that is carried, held down or over a cached roster cannot
+    speak for a session started on its host since, and a dialable PEERS row alone says nothing about what runs
     there now (round 3 of fork PR #897, the reviewer's ruling)."""
     far = pa.get("via")
     if not far:
@@ -3990,7 +3990,10 @@ def _direct_row_speaks(peers, far, far_bus):
     when it carries that bus id (`far_bus`, the viaBus a hub stamps on its gossip: the identity that survives
     nickname drift, since the far host's own row may sit under the alias the kernel dials rather than the name the
     hub knows it by), or is filed under that name and does not carry a DIFFERENT known bus id, AND the kernel does
-    not hold its link down under the name it is filed under (_link_down). Both identities are tried: a hub that
+    not hold its link down under the name it is filed under (_link_down), AND its roster is an ANSWERED listing
+    (`presenceAnswered`, the bit its last exchange carried, which both recorders keep on the row; round 3 of fork PR
+    #897, the reviewer's verifier at the eleventh commit, by execution through the real builder, handler, writer and
+    reader). Both identities are tried: a hub that
     predates viaBus reaches the row by name, and a row under another name is reached by bus id (a hub that predates
     viaBus gossiping a host peered here under another name reaches no row by either, so its word stands as its own
     via row, as the display fold cannot fold it by name either). A name match YIELDS to a known different bus id
@@ -4001,16 +4004,27 @@ def _direct_row_speaks(peers, far, far_bus):
     id on both sides (a bus id is minted per process, BUS_ID, so a restart parts the two ids until the first
     exchange with the restarted bus reaches each side: the conservative side for that interval, and
     _remote_sids_document's carry drops the via row once the hub's word folds again). A row with no bus id, or a
-    gossip with no viaBus, matches by name as before. A carried row (the previous process's word) and a heard row
-    held down speak for nothing here: their rosters predate the restart or the drop, and a session started on the
-    far host since is in neither, so the hub's fresher word about that host stands beside them as a via row
-    (_remote_sids_document; round 3 of fork PR #897, the reviewer's ruling: never discard a heard source's word)."""
+    gossip with no viaBus, matches by name as before. THREE states of a direct row speak for nothing here, and the
+    hub's fresher word about the host stands beside the row as a via row (_remote_sids_document; round 3 of fork PR
+    #897, the reviewer's ruling: never discard a heard source's word): a carried row (the previous process's word)
+    and a heard row held down, whose rosters predate the restart or the drop, and a heard row whose last exchange
+    served a CACHED roster (`presenceAnswered` False: its kernel listing did not answer and its presence producer
+    served the last answered rows), whose roster predates any session started on the host since that listing. A
+    session started on the far host in any of the three is in no roster of the row's. The eleventh commit's gate read
+    heard and not held down alone, so a hub's answered word about a session started on a host during that host's
+    blink folded into the cached row, the session was in no row, and the hub, vouching for absence, let rule 5
+    presume it closed until the host's next dial (one exchange interval; the reviewer's verifier drove the road
+    through the real builder, handler, writer and reader). The cached row still vouches for the PRESENCE of the sids
+    it names (_remote_sids_document, `reachable`); it is the fold, a claim about what runs on the host NOW, that its
+    silence cannot carry. The host's next exchange that carries an answered listing lets its row speak again, the
+    same event that restores its absence vouch, and the carry then drops the via row."""
     far, far_bus = str(far or ""), str(far_bus or "")
     for key, st in peers.items():
         row_bus = str(st.get("busId") or "")
         same_bus = bool(far_bus and row_bus == far_bus)
         other_bus = bool(far_bus and row_bus and row_bus != far_bus)
-        if (same_bus or (key == far and not other_bus)) and not _link_down(str(key)):
+        if ((same_bus or (key == far and not other_bus)) and not _link_down(str(key))
+                and st.get("presenceAnswered") is True):   # ...and its roster an answered listing, not a cache
             return str(key)
     return None
 
@@ -4042,8 +4056,10 @@ def _remote_sids_document(now, previous):
                heartbeat (the session's own beat is its own answer), False for the legacy list (no listing this
                process can speak for answered for it) and for a row carried from a file that predates the field
                (the restricted side); a payload lacking the field is unanswered, so an older peer cannot reopen
-               the road the field closes. A row kept across processes keeps its bit; a carried row vouches for
-               nothing anyway, heard being the first condition of both flags
+               the road the field closes. The bit is also the fold's gate: a heard row over a cache does not speak
+               for its host, so a hub's word about that host stands as a via row beside it (_direct_row_speaks; the
+               reviewer's verifier at the eleventh commit). A row kept across processes keeps its bit; a carried row
+               vouches for nothing anyway, heard being the first condition of both flags
       reachable  heard and not expired and not linkDown: the source vouches for the PRESENCE of every sid it
                names (rule 4); computed HERE, the one home of the gate. A cached roster vouches for presence
                too: the sessions it names were live at the last answered listing, and the roster is stale
@@ -4091,14 +4107,18 @@ def _remote_sids_document(now, previous):
     a source.
     A HUB'S WORD about a host this bus also holds directly is never discarded (round 3 of fork PR #897, the
     reviewer's ruling). The gossip folds into the far host's own row ONLY when that row is heard in this
-    process and the kernel does not hold its link down, matched by the bus id the hub stamps on the gossip
+    process, the kernel does not hold its link down and its roster is an ANSWERED listing (`answered`: a row
+    whose last exchange served a cache speaks for nothing about a session started on its host since; the
+    eleventh commit's gate read heard and not held down alone, and the reviewer's verifier found the road by
+    execution), matched by the bus id the hub stamps on the gossip
     (viaBus), since the row may sit under the alias the kernel dials, or by the name the hub uses for the
     host when the row carries no different known bus id (_direct_row_speaks: a name match yields to a known
     different bus id, because a row under the hub's name for a host whose busId is not the gossip's viaBus is
     another bus, another machine the hub calls by that name or this one restarted under a new id, and cannot
     speak for a session started there; the reviewer's verifier found the collision by execution): the direct
     row then speaks for the host and no via row is written. Otherwise, the direct row carried from the
-    previous file, or heard but held down, or absent, or another bus under that name, the hub's
+    previous file, or heard but held down, or heard over a cached roster, or absent, or another bus under
+    that name, the hub's
     word stands as a via row under via:<hub>/<far>, a key no host name can collide with, so the two rows
     stand side by side: the direct row's last roster still protects the sids it named, and the hub's fresher
     word names a session started on that host since (at round 2's head the gossip was folded whatever the
@@ -4106,7 +4126,7 @@ def _remote_sids_document(now, previous):
     closed; at round 1's head every gossiped sid was named). The via row's link is the hub's
     (_source_link_down, _source_link_up). A via row whose hub is not heard is carried like any key,
     heard=false, and is DROPPED by the carry once the direct host speaks again (its exchange arriving with
-    its link not held down, the same gate), since its own row then names what runs there and the hub's older
+    its link not held down and an answered listing, the same gate), since its own row then names what runs there and the hub's older
     word would otherwise name a sid for the file's life; and a carried via row is dropped as well when the
     hub's CURRENT gossip about that host folded at this write (`folded`, the via keys the fold consumed): a
     hub knows one machine by a name, so its word about the host now stands in the direct row and its earlier
@@ -4134,15 +4154,24 @@ def _remote_sids_document(now, previous):
     hub that stamps no viaBus (from before the field) renaming a far host leaves its old-name row the same
     way, there being no bus id to match the two names by. The
     gossip is never added to the direct row as a naming source: that would credit the host with a word it
-    did not give. The residual, disclosed as a bound and not closed by a timer: a direct row heard and not
-    held down whose roster is OLDER than the hub's gossip folds it, so a session started on that host since
-    its last exchange is in no row until its next exchange names it, a window of one exchange interval of
-    that host, closed by that exchange (the event). The population of that residual is every heard row the
-    kernel does not hold down, the rows with no link state included: a far bus filed under the hostname it
-    declares before this bus's own dial has folded it under the alias the kernel notifies (no PEERS row, so
-    no link to hold down) folds the hub's gossip like a row the kernel holds up, and a session started there
-    since its last dial to us is in no row until its next dial (the event that closes it, the same
-    one-exchange bound). The display and routing consumers keep their own fold (_via_duplicate: a direct
+    did not give. The residual, disclosed as a bound and not closed by a timer: a direct row heard, not
+    held down and ANSWERED whose roster is OLDER than the hub's gossip folds it, so a session started on that
+    host since its last exchange is in no row until its next exchange names it, a window of one exchange
+    interval of that host, closed by that exchange (the event). The population of that residual is every
+    heard row the kernel does not hold down whose last exchange carried an answered listing, the rows with no
+    link state included: a far bus filed under the hostname it declares before this bus's own dial has folded
+    it under the alias the kernel notifies (no PEERS row, so no link to hold down) folds the hub's gossip like
+    a row the kernel holds up, and a session started there since its last dial to us is in no row until its
+    next dial (the event that closes it, the same one-exchange bound). A heard row whose last exchange served
+    a CACHED roster is NOT in that population: it speaks for nothing (_direct_row_speaks), so the hub's word
+    about its host stands beside it as a via row, and a session started there during the blink that the hub
+    names is rule 4's by that row (the eleventh commit's gate folded the hub's word into the cached row and so
+    put the cached row into this population, one exchange interval of a live session presumed closed while the
+    hub vouched; the reviewer's verifier found the road by execution). A session started on the cached host that NO hub names is
+    still presumed closed while another host, answered and its link up, vouches for absence, as a session
+    started on a down host is under round 2's rule (one vouching host, none naming): the gate stops the cached
+    host's own fold and vouch, not the presumption from another host's word. The display and routing
+    consumers keep their own fold (_via_duplicate: a direct
     link wins over a relay hop on screen and on the wire); the mirror does not use it, because what the
     reader weighs is each source's word and whether this process can vouch for it."""
     hosts = {}
@@ -4172,7 +4201,7 @@ def _remote_sids_document(now, previous):
                 current_word.add((str(host), far_bus))
             if _direct_row_speaks(peers, far, far_bus):
                 folded.add(_remote_sids_via_key(host, far))
-                continue                              # heard directly, its link not held down: its own row speaks
+                continue                              # heard directly, its link not held down, its roster answered: its own row speaks
             row = hosts.setdefault(_remote_sids_via_key(host, far),
                                    {"kind": "via", "sids": [], "heard": True, "expired": False, "seenAt": 0,
                                     "via": str(host), "host": far, "viaBus": far_bus, "answered": True})

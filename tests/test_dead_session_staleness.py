@@ -46,6 +46,10 @@ and writer): the exchange carries `presenceAnswered` in both payload builders, b
 carry `answered` (the seventh flag the reader requires) and rule 5 needs an answered listing behind the roster, released
 by the next exchange that answers; the reader's reason names the cause (listing unanswered). At the tenth commit such a
 host vouched for absence, and a session started there during the blink was presumed closed (the cached roster phase).
+Since the fifteenth commit a heard row over a cache is the third state, beside carried and held down, in which a direct
+row speaks for nothing about a session started on its host since, so a hub's word about that host stands as a via row
+beside the cached row (the reviewer's verifier at the eleventh commit, by execution: the gate folded the hub's answered
+word into the cached row, and rule 5 presumed a session the hub named closed while the hub vouched).
 The fixtures here write the bus's document shape (_bus_wrote) and every test that writes one
 asserts the ladder's verdict, the rule that answered and its reason, so a fixture at a path nothing
 reads turns its test red. SYNTHETIC fixtures only; private synthetic sids; hostname TESTHOST."""
@@ -108,6 +112,8 @@ SPOKE_NEW = "a11f0001-1111-4222-8333-000000000015"   # a session started on the 
 #                                                      hub alone; it ends across a bus restart, before the hub is heard again
 BLINKED = "a11f0001-1111-4222-8333-000000000016"     # a session started on HOST2 while HOST2's kernel listing did not answer: its
 #                                                      exchange served the last answered rows, which do not name it
+HUB_NAMED = "a11f0001-1111-4222-8333-000000000017"   # a session started on HOST2 during a later blink that the hub, its own exchange
+#                                                      with HOST2 answered, names while HOST2's row here is still the cache
 
 RULE_5 = (True, 5, "no-reachable-host-names-it")               # the ladder's verdicts, (closed, rule, why), as
 RULE_4 = (False, 4, "named-by-reachable-host")                 # _presumed_closed_verdict spells them; a fixture
@@ -643,7 +649,22 @@ class ReaderFollowsTheWriter(unittest.TestCase):
                     session, is the event: rule 4 for it, rule 5 again for a sid nothing names. Then the dialer's half the
                     same way: the real handler's response, built while this process's listing does not answer, folded by
                     the real dialer's fold (peer_exchange_apply) as B's word carries the bit False and B vouches for
-                    presence alone; the response built once the listing answers releases it;
+                    presence alone; the response built once the listing answers releases it. Then the hub's word
+                    beside the cached row (the reviewer's verifier at the eleventh commit, by execution through the real
+                    builder, handler, writer and reader): B's kernel blinks again and a session starts on B meanwhile; B's
+                    dial serves the cache; the hub, notified up and heard through the real fold, its own exchange with B
+                    answered, names the session: a heard row over a cache is the third state, beside carried and held
+                    down, in which a direct row speaks for nothing about a session started on its host since, so the hub's
+                    word stands as a via row beside B's cached row, carrying B's bit as the hub stamped it, and the session
+                    is rule 4's (at the eleventh commit the gate read heard and not held down alone, the hub's word folded
+                    into the cached row, and the hub, vouching for absence, let rule 5 presume the session closed for one
+                    exchange interval of B: a live session presumed closed while another host vouched). An eleventh
+                    restart; the kernel seeds every link up; B is heard first, still over the cache (the restarted producer
+                    primed from its disk twin), the second hub heard and vouching for absence, the hub not heard: the
+                    carried via row stands beside the cached row, so the session is cannot-determine by the hub's last
+                    word, never rule 5 (a carry letting the cached row speak drops the row, and the second hub's vouch
+                    settles a live session). B's exchange that answers, naming the session, is the event: B speaks, the via
+                    row is dropped by the carry, and the hub's next exchange folds;
       legacy shape  the whitespace list a bus before 2026-09-22 wrote, at the bus's path: the reader
                     answers cannot-determine for the sid it does not name AND for the one it does, and
                     says once in the judge's log that the file is not the shape the bus writes; it is
@@ -699,7 +720,8 @@ class ReaderFollowsTheWriter(unittest.TestCase):
         out = subprocess.run([sys.executable, "-c", r"""
 import contextlib, io, json, os, sys, time
 (tests_dir, bin_dir, remote, remote2, dead, host_a, host_b, carried, other, alias, declared, far_sid, hub, gossiped, later,
- collided, ended, decl_named, spoke_kept, spoke_gone, hub_declared, spoke, spoke_declared, hub2, spoke_new, blinked) = sys.argv[1:27]
+ collided, ended, decl_named, spoke_kept, spoke_gone, hub_declared, spoke, spoke_declared, hub2, spoke_new, blinked,
+ hub_named) = sys.argv[1:28]
 sys.path.insert(0, tests_dir)
 from romp_load import load_source
 pm = load_source("romp_postal_oneroot", os.path.join(bin_dir, "romp-postal-service"))
@@ -991,6 +1013,34 @@ listing_answers([other, blinked])
 resp, status = pm11.peer_exchange_handle(b_request(pm11, [other, blinked]))
 pm11.peer_exchange_apply(host_b, {}, resp)
 out["cacheResponseAnswers"] = cache_phase(pm11, resp)
+# THE HUB'S WORD BESIDE THE CACHED ROW (the reviewer's verifier at the eleventh commit): B's kernel blinks again and a session
+# (hub_named) starts on B meanwhile; B's dial to us serves the cache; the hub, its own exchange with B answered, names the
+# session through the real fold. The cached row speaks for nothing about it, so the hub's word stands as a via row beside it.
+# Then the same with the hub NOT heard: an eleventh restart, B heard first over the cache, a second hub vouching for absence.
+# B's exchange that answers is the event
+def cache_hub_phase(bus, payload):                 # cache_phase plus the verdict for the session the hub names
+    got = cache_phase(bus, payload)
+    got["hubNamed"] = verdict(hub_named)
+    return got
+listing_blinks()                                   # B's kernel restarts again; hub_named starts on B meanwhile, in no roster yet
+req, out["cacheHubBlinkDialStatus"] = b_dials_us(pm11)
+out["cacheHubBlink"] = cache_hub_phase(pm11, req)  # B's exchange served the cache; the hub not heard yet: hub_named in no row
+notify(pm11, hub, True)
+our_dial_lands(pm11, [other, blinked, hub_named], spoke, [spoke_kept])   # the hub's exchange with B answered: its builder stamps B's bit True
+out["cacheHubWord"] = cache_hub_phase(pm11, req)
+pm12, out["restartMemory11"] = restarted("romp_postal_oneroot_restarted_eleventh", pm11)
+pm12.KERNEL_BASE = "http://127.0.0.1:9"           # the listing still does not answer in the new process
+notify(pm12, host_b, True)                         # the kernel's seeds: every link up, nothing heard yet
+notify(pm12, hub, True)
+notify(pm12, hub2, True)
+req, out["cacheHubCarriedDialStatus"] = b_dials_us(pm12)   # B heard first, its exchange still a cache (the disk twin primes the producer)
+hub2_gossip(pm12, [spoke_kept])                    # the second hub heard, answered, its link up: it vouches for absence; the hub not heard
+out["cacheHubWordCarried"] = cache_hub_phase(pm12, req)
+listing_answers([other, blinked, hub_named])       # B's listing answers, naming the session started during the blink
+req, status = b_dials_us(pm12)
+out["cacheHubWordReleased"] = cache_hub_phase(pm12, req)   # the event: B speaks, the carried via row is dropped
+our_dial_lands(pm12, [other, blinked, hub_named], spoke, [spoke_kept])   # the hub heard at last: its word folds
+out["cacheHubWordFolds"] = cache_hub_phase(pm12, req)
 bus_file.write_text(remote + "\n")                 # the shape a bus before 2026-09-22 wrote
 err = io.StringIO()
 with contextlib.redirect_stderr(err):
@@ -1006,7 +1056,8 @@ out["oldPathText"] = old_path.read_text()
 out["controlOldPathOnly"] = ask(dead)
 print(json.dumps(out))
 """, HERE, BIN, REMOTE, REMOTE2, DEAD, HOST, HOST2, CARRIED, OTHER, ALIAS, DECLARED, FARSID, HUB, GOSSIPED, LATER, COLLIDED,
-                              ENDED, DECL_NAMED, SPOKE_KEPT, SPOKE_GONE, HUB_DECLARED, SPOKE, SPOKE_DECLARED, HUB2, SPOKE_NEW, BLINKED],
+                              ENDED, DECL_NAMED, SPOKE_KEPT, SPOKE_GONE, HUB_DECLARED, SPOKE, SPOKE_DECLARED, HUB2, SPOKE_NEW, BLINKED,
+                              HUB_NAMED],
                              capture_output=True, text=True, env=full,
                              cwd=str(home), timeout=120)
         assert out.returncode == 0, "%s child failed: %s" % (shape, out.stderr[-2000:])
@@ -1690,6 +1741,81 @@ print(json.dumps(out))
                 self.assertEqual((ranswers["payloadAnswered"], self._v(ranswers, "nobody"), self._v(ranswers, "blinked")),
                                  (True, RULE_5, RULE_4), "the response built once the listing answers releases it")
                 self.assertEqual((ranswers["answered"] or {}).get(HOST2), True)
+
+    def test_a_hubs_answered_word_about_a_directly_held_host_stands_beside_that_hosts_cached_row_until_it_answers(self):
+        """Round 3 of fork PR #897, the reviewer's verifier at the eleventh commit, by execution through the real builder,
+        handler, writer and reader: B is heard with its link up, but its exchange served a cache while a session started on
+        B during the blink, and the hub, its own exchange with B answered, names that session. A heard row over a cache is
+        the third state, beside carried and held down, in which a direct row speaks for nothing about a session started
+        on its host since, so the hub's word stands as a via row beside B's row, carrying B's bit as the hub stamped it,
+        and the session is rule 4's (at the eleventh commit the gate read heard and not held down alone, the hub's word
+        folded into the cached row, and the hub, vouching for absence, let rule 5 presume the session closed for one
+        exchange interval of B: a live session presumed closed while another host vouched). The same with the hub NOT
+        heard: after a restart B is heard first, still over the cache, and a second hub vouches for absence; the carried
+        via row stands, so the session is cannot-determine by the hub's last word, never rule 5. B's exchange that
+        answers, naming the session, is the event: B speaks, the via row is dropped by the carry, and the hub's next
+        exchange folds. The verdicts are pinned first, then the payloads' bits and the rows."""
+        L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
+        carried = (HOST + " (not heard)", ALIAS + " (not heard)", HUB + " (not heard)", HUB2 + " (not heard)")
+        beats = (self.HB + REMOTE + " (not heard, expired)", self.HB + REMOTE2 + " (not heard)")
+        vias = (VIA_SPOKE + " (not heard)", VIA_SPOKE2 + " (not heard)")
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                word = got["cacheHubWord"]
+                self.assertEqual(self._v(word, "hubNamed"), RULE_4,
+                                 "THE RULE: B's exchange served a cache while a session started on B during the blink, and the hub, "
+                                 "its exchange with B answered, names it: the hub's word stands as a via row beside B's cached row, "
+                                 "so the session is live on another host, rule 4 (a gate on heard and not held down alone folds the "
+                                 "hub's word into the cached row, the session is in no row, and the hub, vouching for absence, lets "
+                                 "rule 5 presume it closed: the false settle the reviewer's verifier found at the eleventh commit)")
+                self.assertEqual((got["cacheHubBlinkDialStatus"], got["cacheHubCarriedDialStatus"]), (200, 200))
+                blink = got["cacheHubBlink"]
+                self.assertEqual((blink["payloadAnswered"], blink["payloadSids"]), (False, sorted([OTHER, BLINKED])),
+                                 "B's request serves the last answered rows, marked a cache")
+                self.assertEqual(self._v(blink, "hubNamed"), NO_VOUCH(*carried, HOST2 + " (listing unanswered)", *beats, *vias),
+                                 "before the hub is heard the session is in no row and no source vouches: cannot-determine, the "
+                                 "reason naming B with its listing unanswered")
+                self.assertEqual((self._v(word, "other"), self._v(word, "blinked"), self._v(word, "nobody")), (RULE_4, RULE_4, RULE_5),
+                                 "B's cached roster vouches for the presence of the sids it names; the hub, answered and its link up, "
+                                 "vouches for absence, so a sid nothing names is rule 5's")
+                self.assertEqual((word["hosts"][HOST2], (word["answered"] or {}).get(HOST2)),
+                                 (L(True, False, False, True, True, False, sorted([OTHER, BLINKED])), False),
+                                 "B's row: heard, its link up, reachable, its roster a cache, vouching for presence alone")
+                self.assertEqual((word["hosts"][VIA_B], (word["answered"] or {}).get(VIA_B)),
+                                 (L(True, False, False, True, True, True, sorted([OTHER, BLINKED, HUB_NAMED])), True),
+                                 "the hub's word about B beside B's row, carrying B's bit as the hub stamped it (B's exchange with "
+                                 "the hub answered): heard, the hub's link up, vouching (a writer folding it into the cached row "
+                                 "writes no such row)")
+                # the carry's half: the hub not heard
+                self.assertEqual(got["restartMemory11"], {"heartbeats": 0, "peers": 0, "links": 0, "freshObject": True},
+                                 "the eleventh restart is a fresh module object, its memory and its link table empty")
+                car = got["cacheHubWordCarried"]
+                self.assertEqual(self._v(car, "hubNamed"), LOST(VIA_B + " (not heard)"),
+                                 "THE CARRY'S HALF: B heard first over the cache, the hub not heard, the second hub vouching for "
+                                 "absence: the hub's carried word still names the session, so it is cannot-determine by that word "
+                                 "(a carry letting the cached row speak drops the via row, the session is in no row, and the second "
+                                 "hub's vouch lets rule 5 presume it closed)")
+                self.assertEqual((car["payloadAnswered"], car["payloadSids"]), (False, sorted([OTHER, BLINKED])),
+                                 "B's first request in the new process serves the last answered rows, primed from the disk twin, "
+                                 "marked a cache")
+                self.assertEqual((self._v(car, "other"), self._v(car, "nobody")), (RULE_4, RULE_5),
+                                 "B's cached roster still vouches for the presence of the sid it names; the second hub vouches for "
+                                 "absence, so a sid nothing names is rule 5's")
+                self.assertEqual(car["hosts"][HOST2], L(True, False, False, True, True, False, sorted([OTHER, BLINKED])))
+                self.assertEqual(car["hosts"][VIA_B], L(False, False, False, True, False, False, sorted([OTHER, BLINKED, HUB_NAMED])),
+                                 "the carried via row: not heard, the seed's linkUp, vouching for nothing, the hub's last word kept")
+                rel = got["cacheHubWordReleased"]
+                self.assertEqual((rel["payloadAnswered"], rel["payloadSids"]), (True, sorted([OTHER, BLINKED, HUB_NAMED])))
+                self.assertEqual((self._v(rel, "hubNamed"), self._v(rel, "nobody")), (RULE_4, RULE_5),
+                                 "the event: B's exchange with an answered listing names the session, rule 4 by B's own row")
+                self.assertNotIn(VIA_B, rel["hosts"],
+                                 "the via row is DROPPED by the carry once B speaks on an answered listing (a carry that keeps it "
+                                 "leaves the hub's older word naming a sid for the file's life)")
+                self.assertEqual((rel["hosts"][HOST2], (rel["answered"] or {}).get(HOST2)),
+                                 (L(True, False, False, True, True, True, sorted([OTHER, BLINKED, HUB_NAMED])), True))
+                folds = got["cacheHubWordFolds"]
+                self.assertNotIn(VIA_B, folds["hosts"], "the hub heard at last: its word folds, B speaks")
+                self.assertEqual((self._v(folds, "hubNamed"), self._v(folds, "nobody")), (RULE_4, RULE_5))
 
     def test_a_mirror_of_the_legacy_shape_is_cannot_determine_and_said_once(self):
         for shape, got in self.got.items():

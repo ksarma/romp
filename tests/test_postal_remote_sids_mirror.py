@@ -68,7 +68,14 @@ the kernel holds up whose exchange served the last answered rows through a kerne
 the bit riding both payload builders (the real request builder and the real response builder, one module playing both
 buses) and recorded by both recorders, released by the next exchange that carries an answered listing, a payload
 lacking the field or carrying a non-boolean reading unanswered, a via row carrying the far host's bit and not the
-hub's, and the bit stated for a heartbeat, the legacy list and a row carried from a file that predates the field.
+hub's, and the bit stated for a heartbeat, the legacy list and a row carried from a file that predates the field; and
+the hub's word beside a CACHED direct row (the reviewer's verifier at the eleventh commit, by execution through the real
+builder, handler, writer and reader): a heard row over a cache is the third state, beside carried and held down, in
+which a direct row speaks for nothing about a session started on its host since, so a hub's answered word about such a
+session stands as a via row beside the cached row, carrying the far host's bit as the hub stamped it, and with the hub
+not heard the carried via row stands beside the cached row, until the far host's exchange that answers, the event (at
+the eleventh commit the gate read heard and not held down alone, the hub's word folded into the cached row, and the
+hub, vouching for absence, let rule 5 presume a live session closed for one exchange interval of the far host).
 tests/test_dead_session_staleness.py ReaderFollowsTheWriter
 runs this writer and the judge's reader together over one root; tests/test_postal_bus_lifetime.py
 MonitorTick pins the poll's write. SYNTHETIC fixtures only: private synthetic sids, hostname TESTHOST."""
@@ -1211,6 +1218,87 @@ class Mirror(unittest.TestCase):
         pm._write_remote_sids()
         self.assertEqual((self._reach()[VIA_FAR][4], self._answered()[VIA_FAR]), ([C, D], False),
                          "every element about the host must carry the bit for the row to be answered")
+
+    def test_a_hubs_answered_word_about_a_directly_held_host_stands_beside_that_hosts_cached_row_until_it_answers(self):
+        """Round 3 of fork PR #897, the reviewer's verifier at the eleventh commit, by execution through the real builder,
+        handler, writer and reader: a heard row whose last exchange served a CACHED roster is the third state, beside
+        carried and held down, in which a direct row speaks for nothing about a session started on its host since
+        (_direct_row_speaks). The far host's kernel blinks and a session starts there meanwhile; its dial to us, built
+        by the real builder under this process's listing state and handed to the real handler as the far host's, serves
+        the last answered rows marked a cache; the hub, whose own exchange with the far host was answered, names the new
+        session. At the eleventh commit the gate read heard and not held down alone, so the hub's word folded into the
+        cached row, the session was in no row, and the hub, vouching for absence, let rule 5 presume it closed for one
+        exchange interval of the far host (the cached row had joined the fold residual's population). Now the hub's word
+        stands as a via row beside the cached row, carrying the far host's bit as the hub stamped it, answered, so the
+        reader answers rule 4 for the session; with the hub NOT heard, the carried via row stands beside the cached row
+        (a carry letting the cached row speak drops it, and the session is in no row while any other host vouches). The
+        far host's next exchange that answers is the event: its row speaks, the via row is dropped by the carry, and
+        the hub's next gossip folds. The composition with the reader's verdicts is tests/test_dead_session_staleness.py
+        ReaderFollowsTheWriter (the cached roster phase, the hub's word beside the cached row)."""
+        self._forget_presence_cache()
+        self._notify(FAR, up=True)
+        self._notify(HUB, up=True)
+
+        def far_dials_us():                                   # the far host's request, the real builder's under THIS process's
+            req = pm.build_exchange_request(FAR, wait=False)   # listing state, handed to the real handler as the far host's
+            req["host"], req["busId"] = FAR, "far-bus"
+            resp, status = pm.peer_exchange_handle(req)
+            self.assertEqual(status, 200, resp)
+            return req
+        gossip = lambda *sids: [{"id": s, "name": "api", "via": FAR, "viaBus": "far-bus", "viaAnswered": True} for s in sids]
+        self._local_listing_answered([{"id": C, "name": "tests"}])
+        far_dials_us()
+        self._peer(HUB, gossip(C), answered=True)             # the hub's word about the far host as it reported it, answered
+        pm._write_remote_sids()
+        self.assertEqual(self._reach(), {HUB: (True, False, False, True, []), FAR: (True, False, False, True, [C])},
+                         "both heard with their links up on answered rosters: the gossip folds, the direct row speaks")
+        # the far host's kernel blinks; a session (D) starts there meanwhile; its dial to us serves the cache
+        self._local_listing_unanswered()
+        req = far_dials_us()
+        self.assertEqual((req.get("presenceAnswered"), [a["id"] for a in req["presence"]]), (False, [C]),
+                         "the blink: the far host's request serves the last answered rows, marked a cache")
+        self._peer(HUB, gossip(C, D), answered=True)          # the hub's next exchange: its own exchange with the far host
+        pm._write_remote_sids()                               # answered, it names the session started during the blink
+        self.assertEqual(self._reach(), {HUB: (True, False, False, True, []), FAR: (True, False, False, True, [C]),
+                                         VIA_FAR: (True, False, False, True, [C, D])},
+                         "THE RULE: the direct row is heard and not held down but its roster is a cache, so it speaks for "
+                         "nothing about a session started on the far host since, and the hub's word stands beside it as a via "
+                         "row naming that session (D): the reader answers rule 4 for D by the hub's row (a gate on heard and "
+                         "not held down alone, the eleventh commit's, folds the gossip into the cached row, D is in no row, and "
+                         "the hub vouching for absence lets rule 5 presume it closed until the far host's next dial)")
+        self.assertEqual((self._vouch()[FAR], self._answered()[FAR]), ((True, True, False), False),
+                         "the cached row still vouches for the presence of the sid it names and not for absence")
+        self.assertEqual((self._vouch()[VIA_FAR], self._answered()[VIA_FAR]), ((True, True, True), True),
+                         "the via row carries the FAR host's bit as the hub stamped it, answered (the far host's exchange with "
+                         "the hub answered), following the hub's link: it vouches for presence and absence")
+        row = self._doc()["hosts"][VIA_FAR]
+        self.assertEqual((row["kind"], row["via"], row["host"], row["viaBus"]), ("via", HUB, FAR, "far-bus"))
+        # THE CARRY'S HALF: the hub not heard. A restart; the kernel seeds both links up; the far host dials us first, its
+        # exchange still a cache (the producer's memory outlives the bus's table here, as the disk twin primes a real one)
+        self._restart()
+        pm.PEERS.clear()
+        self._notify(FAR, up=True)
+        self._notify(HUB, up=True)
+        req = far_dials_us()
+        self.assertEqual(req.get("presenceAnswered"), False)
+        self.assertEqual(self._reach(), {HUB: (False, False, False, False, []), FAR: (True, False, False, True, [C]),
+                                         VIA_FAR: (False, False, False, False, [C, D])},
+                         "the carried via row stands beside the cached direct row, heard=false, the hub's last word about the "
+                         "far host still naming D (a carry letting the cached row speak drops it here, so D is in no row, "
+                         "cannot-determine by nothing, and rule 5's as soon as any other host vouches for absence)")
+        self.assertEqual((self._vouch()[FAR], self._vouch()[VIA_FAR]), ((True, True, False), (False, True, False)),
+                         "the cached row vouches for presence alone; the carried via row, the seed's linkUp, for nothing")
+        # the event: the far host's next exchange that answers, naming the session
+        self._local_listing_answered([{"id": C, "name": "tests"}, {"id": D, "name": "api"}])
+        req = far_dials_us()
+        self.assertEqual(req.get("presenceAnswered"), True)
+        self.assertEqual(self._reach(), {HUB: (False, False, False, False, []), FAR: (True, False, False, True, [C, D])},
+                         "the direct row speaks again on an answered listing: the via row is DROPPED by the carry (a carry "
+                         "that keeps it leaves the hub's older word naming D for the file's life once D ends there)")
+        self.assertEqual((self._vouch()[FAR], self._answered()[FAR]), ((True, True, True), True))
+        self._peer(HUB, gossip(C, D), answered=True)          # the hub heard again: its word folds, the direct row speaks
+        pm._write_remote_sids()
+        self.assertEqual(sorted(self._reach()), sorted([HUB, FAR]), "no via row while the far host speaks for itself")
 
     def test_a_row_carried_from_a_file_before_the_answered_bit_reads_unanswered(self):
         """A restart over a mirror the round-2 shape wrote (six flags, no `answered`): the carried row gets the bit False,
