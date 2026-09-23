@@ -105,9 +105,10 @@ row passed every pin); the release's order across a write that fails, at the tem
 entry kept and the row re-emitted heard until a write succeeds; the previous-read's bytes (round 3 of fork PR #897, the
 reviewer's ruling, the twentieth commit, and its ruling of 14:57Z, the twenty-second): a file whose bytes are not UTF-8 no
 longer fails every write, a document nested past the JSON parser's depth neither (RecursionError, found by the twentieth
-commit's builder), and a carried row's values are coerced, never dropped: its flags bool(), a busId that is not a str
-ignored, each sid str() and then validated, one that fails the session-id shape dropped and counted; one bad byte costs one
-sid, never the document (the replacing decode for the JSON parse alone, the whitespace list keeping the strict decode, so
+commit's builder; the class is the interpreter's, and the cases derive it from the parse, the twenty-fifth), and a carried
+row's values are coerced, never dropped: its flags bool(), a busId that is not a str ignored, each sid str() and then
+validated, one that fails the session-id shape dropped and counted; one bad byte costs one sid, never the document (the
+replacing decode for the JSON parse alone, the whitespace list keeping the strict decode, so
 garbage whose runs look like session ids is never carried as legacy sids), with one line in the bus log naming the file
 and the count; a byte-order mark read before the document and before the list; and a previous file the read cannot read
 whole carrying no row and MARKING the document with the cause and the second, said once, for each such file (an empty
@@ -126,6 +127,7 @@ import contextlib
 import io
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -171,6 +173,25 @@ def _listing_record():
 def _forget_listing(value=None):
     """Set the record to `value` (None: no listing read yet in this "process")."""
     pm._LOCAL_LISTING[0] = value
+
+
+def _nested_parse_raises(data):
+    """(the class json.loads raises on the document `data` in THIS interpreter, or None when it returns; the depth of its
+    nesting). The class a parse of a document nested past the parser's depth raises is the interpreter's (round 3 of fork PR
+    #897, the reviewer's ruling of 17:47Z, the twenty-fifth commit): since 3.14 the depth guard depends on the machine's
+    stack, and on a CI runner's 3.14t json.loads parsed the 100000 levels these cases plant to the end and raised
+    JSONDecodeError (a ValueError), where this box's 3.12 and 3.14t raise RecursionError. So a case that plants such a
+    document parses the SAME bytes here, decoded as both parses decode them, asserts that the parse raised, failing by the
+    interpreter and the depth when it returns (its premise, a file the parse cannot read, gone), and asserts the class it
+    derived. That the product catches both classes is pinned once, by tests/test_dead_session_staleness.py
+    ReaderFollowsTheWriter test_the_writers_previous_read_and_the_reader_catch_both_classes_a_nested_parse_can_raise. The
+    same function, the same shape, stands in that module's child as nested_parse_raises."""
+    depth = len(data) - len(data.lstrip(b"["))
+    try:
+        json.loads(data.decode("utf-8-sig"))
+    except Exception as e:
+        return type(e).__name__, depth
+    return None, depth
 
 
 class Mirror(unittest.TestCase):
@@ -1326,7 +1347,7 @@ class Mirror(unittest.TestCase):
         files = (("text that is not JSON, a stray brace", doc.replace('"sids"', '"sids"}', 1).encode(), "JSONDecodeError"),
                  ("the document cut short after a literal the whitespace parser would take for a session id",
                   doc[:doc.index("true") + 4].encode(), "JSONDecodeError"),
-                 ("nesting past the parser's depth", ("[" * 100000 + "\n").encode(), "RecursionError"),
+                 ("nesting past the parser's depth", ("[" * 100000 + "\n").encode(), None),   # None: derived from the parse
                  ("a JSON list", b"[1, 2]\n", "a JSON list, not a document with a hosts table"),
                  ("a JSON object whose hosts are a list", b'{"v": 2, "hosts": []}\n', "a JSON dict, not a document"),
                  ("a text naming no session id", b"??? !!!\n", "JSONDecodeError"),
@@ -1338,6 +1359,10 @@ class Mirror(unittest.TestCase):
                   "UnicodeDecodeError"))
         for name, data, error in files:
             with self.subTest(file=name):
+                if error is None:                  # the nested document: the class this interpreter's parse of these bytes raises
+                    error, depth = _nested_parse_raises(data)
+                    self.assertIsNotNone(error, "json.loads returned on the document nested %d deep on %s: the case's premise, "
+                                         "a file the parse cannot read, is gone" % (depth, sys.version))
                 self.path.write_bytes(data)
                 pm.HEARTBEATS.clear()
                 pm.HEARTBEATS[A] = ("web", self.now)
@@ -1398,17 +1423,23 @@ class Mirror(unittest.TestCase):
 
     def test_a_file_nested_past_the_parsers_depth_carries_nothing_marks_the_document_and_the_write_replaces_it(self):
         """Round 3 of fork PR #897, the twentieth commit, found by its builder in the class of the bytes: a document nested past
-        the JSON parser's depth raises RecursionError, which is not a ValueError, so the previous-read's parse let it pass and
-        every write failed, the file never replaced. The parse catches it, the write rewrites the file from memory, and since
-        the twenty-second commit the document is marked, the rows it may have held being lost."""
+        the JSON parser's depth raised RecursionError on this box, which is not a ValueError, so the previous-read's parse let it
+        pass and every write failed, the file never replaced. The parse catches it, the write rewrites the file from memory, and
+        since the twenty-second commit the document is marked, the rows it may have held being lost. The class in the cause is
+        the one this interpreter's parse of the same bytes raises (_nested_parse_raises; the reviewer's ruling of 17:47Z, the
+        twenty-fifth commit)."""
         deep = "[" * 100000 + "\n"
         self.path.write_text(deep)
+        raised, depth = _nested_parse_raises(self.path.read_bytes())
+        self.assertIsNotNone(raised, "json.loads returned on the document nested %d deep on %s: the case's premise, a file the "
+                             "parse cannot read, is gone" % (depth, sys.version))
         pm.HEARTBEATS[A] = ("web", self.now)
         lines = self._write_saying()
         self.assertNotEqual(self.path.read_text(), deep,
                             "the write replaced the file (a parse catching ValueError alone fails every write: %r)" % lines)
         self.assertEqual(self._rows(), {HB + A: (True, False, [A])}, "rewritten from memory alone: the nesting carries nothing")
-        self.assertIn("RecursionError", (self._mark() or {}).get("cause", ""), "marked with the cause")
+        self.assertIn(raised, (self._mark() or {}).get("cause", ""), "marked with the cause, the class this interpreter's parse "
+                      "raised")
 
     def test_the_lost_carry_mark_is_carried_until_every_linked_host_is_heard_since_it_and_then_cleared(self):
         """Round 3 of fork PR #897, the reviewer's ruling of 14:57Z, clause 2 (the twenty-second commit): the mark is carried by

@@ -918,7 +918,13 @@ class ReaderFollowsTheWriter(unittest.TestCase):
       legacy shape  the whitespace list a bus before 2026-09-22 wrote, at the bus's path: the reader
                     answers cannot-determine for the sid it does not name AND for the one it does, and
                     says once in the judge's log that the file is not the shape the bus writes; it is
-                    never read as an empty roster.
+                    never read as an empty roster;
+      both classes  the reviewer's ruling of 17:47Z, the twenty-fifth commit, run last, after the control. The class
+                    json.loads raises on the nested document is the interpreter's (RecursionError on this box,
+                    JSONDecodeError on a CI runner's 3.14t), so the nested phase above derives it from the parse; here
+                    json.loads is stubbed to raise each class in turn on the nested document: the last restart's
+                    previous-read carries nothing and marks the document with that class in the cause, and the reader
+                    answers unparsable, said naming that class.
     The control isolates the old path: with the bus's file removed and a line at STATE/remote-sids, the
     judge's read path until 2026-09-22, the reader answers cannot-determine, so the read MOVED to the
     bus's file rather than widening to both, and a reverted read fails this pin by its own message. The
@@ -1392,7 +1398,15 @@ out["bytesWritten"] = mirror_phase(nobody=dead, other=other)
 data = bus_file.read_bytes()                       # the writer's own document, one byte inside the sid B names made a stray byte
 bus_file.write_bytes(data.replace(other.encode(), other[:-1].encode() + b"\xff"))
 out["strayByte"] = mirror_phase(nobody=dead, other=other)
-bus_file.write_text("[" * 100000 + "\n")           # nested past the JSON parser's depth: RecursionError, which is not a ValueError
+def nested_parse_raises(data):                     # (the class json.loads raises on the document `data` in THIS interpreter,
+    depth = len(data) - len(data.lstrip(b"["))     # or None when it returns; the depth of its nesting): the class is the
+    try:                                           # interpreter's since 3.14 (the reviewer's ruling of 17:47Z, the twenty-fifth
+        json.loads(data.decode("utf-8-sig"))       # commit; tests/test_postal_remote_sids_mirror.py _nested_parse_raises)
+    except Exception as e:
+        return type(e).__name__, depth
+    return None, depth
+bus_file.write_text("[" * 100000 + "\n")           # nested past the JSON parser's depth: the class its parse raises, derived here
+out["deepParse"] = list(nested_parse_raises(bus_file.read_bytes())) + [sys.version]   # from the bytes both parses read
 out["deepRead"] = mirror_phase(nobody=dead, other=other)
 exchange(pm15, host_b, [other], bus_id="bus-b2")   # B's next exchange: the write replaces it, carrying nothing
 out["deepWritten"] = mirror_phase(nobody=dead, other=other)
@@ -1596,6 +1610,34 @@ old_path.write_text(remote + "\n")
 out["oldPath"] = str(old_path)
 out["oldPathText"] = old_path.read_text()
 out["controlOldPathOnly"] = ask(dead)
+# BOTH CLASSES, ONE PIN (round 3 of fork PR #897, the reviewer's ruling of 17:47Z, the twenty-fifth commit): json.loads, the json
+# module's attribute both modules call, stubbed to raise each class in turn on the nested document; the writer's previous-read
+# and the reader over it, each outcome recorded, a raise out of either by its type
+def stubbed_loads(cls, real):
+    def loads(s, *args, **kwargs):
+        text = s.decode("utf-8-sig") if isinstance(s, (bytes, bytearray)) else s
+        if text.startswith("[" * 1000):
+            raise cls("stubbed: the parse of the nested document raises %s" % cls.__name__)
+        return real(s, *args, **kwargs)
+    return loads
+out["catchBoth"] = {}
+for both_cls in (ValueError, RecursionError):
+    bus_file.write_text("[" * 100000 + "\n")
+    both_real = json.loads
+    json.loads = stubbed_loads(both_cls, both_real)
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            try:
+                both_rows, both_mark = pm26._remote_sids_previous(bus_file, now)
+                both_previous = {"hosts": both_rows, "mark": both_mark}
+            except Exception as e:
+                both_previous = ["raised", type(e).__name__, str(e)[:80]]
+            both_verdict = caught(dead)
+    finally:
+        json.loads = both_real
+    out["catchBoth"][both_cls.__name__] = {"previous": both_previous, "verdict": both_verdict,
+                                           "log": [ln for ln in err.getvalue().splitlines() if ln.startswith("romp-judge:")]}
 print(json.dumps(out))
 """, HERE, BIN, REMOTE, REMOTE2, DEAD, HOST, HOST2, CARRIED, OTHER, ALIAS, DECLARED, FARSID, HUB, GOSSIPED, LATER, COLLIDED,
                               ENDED, DECL_NAMED, SPOKE_KEPT, SPOKE_GONE, HUB_DECLARED, SPOKE, SPOKE_DECLARED, HUB2, SPOKE_NEW, BLINKED,
@@ -2527,28 +2569,59 @@ print(json.dumps(out))
 
     def test_a_document_nested_past_the_parsers_depth_is_unparsable_and_the_next_write_replaces_it(self):
         """Round 3 of fork PR #897, the twentieth commit, found by its builder in the class of the bytes: a document nested past
-        the JSON parser's depth raises RecursionError, which is not a ValueError, so the reader raised it out of the ladder and
-        the writer's previous-read failed every write. Both parses catch it: the reader answers unparsable, said once, and the
-        writer's next write replaces the file, carrying nothing. On both root shapes."""
+        the JSON parser's depth raised RecursionError on this box, which is not a ValueError, so the reader raised it out of the
+        ladder and the writer's previous-read failed every write. Both parses catch it: the reader answers unparsable, said once,
+        and the writer's next write replaces the file, carrying nothing. On both root shapes. THE CLASS IS DERIVED (the
+        reviewer's ruling of 17:47Z, the twenty-fifth commit): since 3.14 the parser's depth guard depends on the machine's stack,
+        and a CI runner's 3.14t parsed the 100000 levels and raised JSONDecodeError at the end, so the child parses the same
+        bytes in the same interpreter (nested_parse_raises) and the line and the mark must name the class that parse raised; a
+        parse that returns fails this case, naming the interpreter and the depth. That the product catches both classes is
+        pinned once, by test_the_writers_previous_read_and_the_reader_catch_both_classes_a_nested_parse_can_raise."""
         L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
         for shape, got in self.got.items():
             with self.subTest(shape=shape):
+                raised, depth, version = got["deepParse"]
+                self.assertIsNotNone(raised, "json.loads returned on the document nested %d deep on %s: the case's premise, a "
+                                     "file the parse cannot read, is gone" % (depth, version))
                 read = got["deepRead"]
                 self.assertEqual((self._v(read, "nobody"), self._v(read, "other")), (UNPARSABLE, UNPARSABLE),
                                  "nesting past the parser's depth: the unparsable arm for every sid (a reader catching ValueError "
                                  "alone raises RecursionError out of the ladder, recorded as 'raised')")
                 self.assertEqual(len(read["log"]), 1, "said once: %r" % read["log"])
-                self.assertIn("RecursionError", read["log"][0], "the line says what failed")
+                self.assertIn(raised, read["log"][0], "the line says what failed, the class this interpreter's parse raised")
                 wrote = got["deepWritten"]
                 self.assertNotEqual(self._v(wrote, "nobody"), RULE_5, "a file the writer cannot read whole: a sid nothing names "
                                     "is never rule 5's while the mark stands (the twenty-second commit)")
-                self.assertIn("RecursionError", (wrote["mark"] or {}).get("cause", ""), "the document is marked with the cause: %r"
-                              % wrote["mark"])
+                self.assertIn(raised, (wrote["mark"] or {}).get("cause", ""), "the document is marked with the cause, the class "
+                              "this interpreter's parse raised: %r" % wrote["mark"])
                 self.assertEqual((self._v(wrote, "nobody"), self._v(wrote, "other")), (CARRY_LOST(wrote["mark"]), RULE_4),
                                  "the writer replaced the file (a previous-read catching ValueError alone fails every write); a sid "
                                  "nothing names is not established while the mark stands")
                 self.assertEqual(wrote["hosts"], {HOST2: L(True, False, False, True, True, True, [OTHER])},
                                  "the nested document carried nothing: B's row alone")
+
+    def test_the_writers_previous_read_and_the_reader_catch_both_classes_a_nested_parse_can_raise(self):
+        """Round 3 of fork PR #897, the reviewer's ruling of 17:47Z, the twenty-fifth commit (the both classes phase of the
+        class docstring): the class json.loads raises on a document nested past its depth is the interpreter's, RecursionError
+        on this box and JSONDecodeError, a ValueError, on a CI runner's 3.14t, so the three cases that plant one derive the class
+        from the parse, and this test pins, once, that the product catches both. json.loads stubbed to raise each class in turn
+        on the nested document: the writer's previous-read (postal_service.py _remote_sids_previous) carries nothing and marks
+        the document with that class in the cause, and the reader (judge.py _remote_sids_mirror) answers unparsable, said once
+        naming that class. A catch narrowed to ValueError alone lets the stubbed RecursionError out of either, recorded as
+        'raised', where on an interpreter that raises JSONDecodeError the three cases stay green. On both root shapes."""
+        for shape, got in self.got.items():
+            for cls in ("ValueError", "RecursionError"):
+                with self.subTest(shape=shape, raised=cls):
+                    both = got["catchBoth"][cls]
+                    self.assertIsInstance(both["previous"], dict, "the writer's previous-read caught the stubbed %s (a catch "
+                                          "narrowed to ValueError alone lets RecursionError out): %r" % (cls, both["previous"]))
+                    self.assertEqual(both["previous"]["hosts"], {}, "the nested document carries nothing")
+                    self.assertIn("(%s: stubbed" % cls, (both["previous"]["mark"] or {}).get("cause", ""),
+                                  "the document is marked with the class in the cause: %r" % both["previous"])
+                    self.assertEqual(self._v(both, "verdict"), UNPARSABLE, "the reader answers unparsable (a reader catching "
+                                     "ValueError alone raises RecursionError out of the ladder, recorded as 'raised')")
+                    self.assertEqual(len(both["log"]), 1, "said once: %r" % both["log"])
+                    self.assertIn("(%s: stubbed" % cls, both["log"][0], "the line names the class")
 
     def test_a_carried_rows_values_of_the_wrong_types_are_coerced_never_dropped(self):
         """Round 3 of fork PR #897, the reviewer's ruling on its refuters' corrections, the twentieth commit (the foreign rows
