@@ -114,9 +114,9 @@ sys.executable most of all), a call of a function defined in the module or of a 
 return, a star import's), a passthrough's splatted argv, and a keywords splat a spawn is handed alone; and, for a
 spawn with no site (_SpawnScan._list_unread), a Python child's -c program that mentions the kernel and calls a callee
 the scan cannot name or a dynamic road (a child that runs the kernel as __main__ through runpy or an exec of its
-source among them; N79 to N91, N93), and a text in the argv, outside such a program, that spells a name one of whose
-declarations holds romp-kernel as text (what globals()[...], a %-mapping over locals(), eval or getattr reads by name;
-N67 to N78). What it does not list, in the classes found so far, each held by a PLANT_TABLE row: a program handed on
+source among them; N79 to N91, N93, N103), and a text in the argv or executable=, outside such a program, that spells
+a name one of whose declarations holds romp-kernel as text (what globals()[...], a %-mapping over locals(), eval,
+getattr or a shell's environment variable reads by name; N67 to N78, N101, N102). What it does not list, in the classes found so far, each held by a PLANT_TABLE row: a program handed on
 the child's stdin (input=, stdin=, communicate(); N92); an argv mutated by append, extend or insert
 (N29); a spawn function reached through functools.partial or getattr (N30); a spawn function outside the subprocess
 module (os.execv, os.posix_spawn, asyncio.create_subprocess_exec; N31), and the subprocess module's getoutput and
@@ -821,21 +821,13 @@ class _SpawnScan:
         return (pieces is not None and any(isinstance(p, str) and any(c.isspace() for c in p) for p in pieces)
                 and not self._python_child_at(elts, i, scope, loose=True))
 
-    def _names_python(self, node, scope, seen=frozenset()):
-        """Does `node` name a Python interpreter: sys.executable by its binding (_callee_names), or a string whose last
-        path component is python with a version (PYTHON_PROGRAM: python3, /usr/bin/python3.12), directly or through a
-        name every declaration of which names one? Anything else is no Python interpreter the scan can name."""
+    def _names_python(self, node, scope):
+        """Does `node` name a Python interpreter: sys.executable by its binding (_callee_names: the attribute, or a name
+        bound to it), or a string whose last path component is python with a version (PYTHON_PROGRAM: python3,
+        /usr/bin/python3.12)? Anything else is no Python interpreter the scan can name."""
         if isinstance(node, (ast.Name, ast.Attribute)) and "sys.executable" in self._callee_names(node, scope):
             return True
-        if isinstance(node, ast.Constant):
-            return isinstance(node.value, str) and bool(PYTHON_PROGRAM.search(node.value))
-        if isinstance(node, ast.Name):
-            decls, where = scope.resolve(node.id)
-            key = (id(where), node.id)
-            self._visit(decls)
-            return bool(decls) and key not in seen and all(
-                d.value is not None and self._names_python(d.value, self.bindings.scope_of(d.value), seen | {key}) for d in decls)
-        return False
+        return isinstance(node, ast.Constant) and isinstance(node.value, str) and bool(PYTHON_PROGRAM.search(node.value))
 
     def _program_texts(self, node, scope, seen=frozenset()):
         """A -c program's Python source, as far as the scan can assemble it: ([(text, opaque names)], read through a
@@ -902,10 +894,10 @@ class _SpawnScan:
 
     def _literal_sequences(self, node, scope, seen):
         """The literal lists or tuples a join's argument holds, as ([(elements, the scope they are read in)], read
-        through a name): a list or tuple with no splat, or a name every declaration of which binds one (`"\\n".join(LINES)`);
-        (None, ...) for anything else."""
+        through a name): a list or tuple, or a name every declaration of which binds one (`"\\n".join(LINES)`); (None,
+        ...) for anything else. A splat among the elements is a piece no text is assembled from (_program_texts)."""
         if isinstance(node, (ast.List, ast.Tuple)):
-            return (None if any(isinstance(e, ast.Starred) for e in node.elts) else [(node.elts, scope)]), False
+            return [(node.elts, scope)], False
         if not isinstance(node, ast.Name):
             return None, False
         decls, where = scope.resolve(node.id)
@@ -2463,6 +2455,13 @@ PLANT_TABLE = (
     ("A46 a -c program under an interpreter the scan cannot name, the path quoted (a command-string element, read at the "
      "shell's words)", 'caught-by-argv', 1,
      'subprocess.run([INTERP, "-c", "exec \'bin/romp-kernel\' --serve"])'),
+    ('A47 the path quoted as the whole -c program, no whitespace in it, of a shell named through a name bound to '
+     "its path (read at the shell's words only as a shell's program)", 'caught-by-argv', 2,
+     'SH = "/bin/sh"\nsubprocess.Popen([SH, "-c", "\'bin/romp-kernel\'"])'),
+    ('A48 the path quoted as the whole -c program of a shell found by shutil.which', 'caught-by-argv', 1,
+     'subprocess.Popen([shutil.which("bash"), "-c", "\'bin/romp-kernel\'"])'),
+    ("A49 the path quoted as the whole program of a login shell's -lc (the flag in a cluster)", 'caught-by-argv', 1,
+     'subprocess.Popen(["bash", "-lc", "\'bin/romp-kernel\'"])'),
     ('N1 a same-named local in another function', 'no-spawn', None,
      'def a():\n    k = os.path.join(BIN, "romp-kernel")\ndef b():\n    k = [sys.executable, "-m", "pytest"]\n    subprocess.run(k)'),
     ('N2 p beside -p', 'no-spawn', None,
@@ -2471,7 +2470,7 @@ PLANT_TABLE = (
      'k = os.path.join(BIN, "romp-kernel")\nopen(k).read()\nsubprocess.run([sys.executable, "-m", "pytest", "-k", "boot"])'),
     ('N4 src beside src/main.ts', 'no-spawn', None,
      'src = open(os.path.join(BIN, "romp-kernel")).read()\nsubprocess.run(["node", "src/main.ts"])'),
-    ('N5 km beside import km', 'no-spawn', None,
+    ('N5 km beside import km, inside the program of a Python -c child (exclusion (b))', 'no-spawn', None,
      'km = load_source("romp_kernel_x", os.path.join(BIN, "romp-kernel"))\nsubprocess.run([sys.executable, "-c", "import km"])'),
     ('N6 kernel beside grep kernel', 'no-spawn', None,
      'kernel = os.path.join(BIN, "romp-kernel")\nsubprocess.run(["grep", "kernel", "docs"])'),
@@ -2709,6 +2708,17 @@ PLANT_TABLE = (
      'subprocess.run([sys.executable, "-c", "def load():\\n    return load_source(\'k\', \'bin/romp-kernel\')\\nload()"])'),
     ('N99 a Python -c child of python3 named by its path, behind -W error and -B, that loads the kernel (exclusion (b))', 'no-spawn', None,
      'subprocess.run(["/usr/bin/python3", "-W", "error", "-B", "-c", "km = load_source(\'k\', \'bin/romp-kernel\')"])'),
+    ('N100 a -c child of python3 behind env that loads the kernel by a quoted path: read as Python and not at the '
+     "shell's words, and exclusion (b) takes no interpreter behind env (the comparison names it)", 'no-spawn', None,
+     'subprocess.run(["env", "python3", "-c", "km = load_source(\'k\', \'bin/romp-kernel\')"])'),
+    ("N101 an environment variable a bash -c program in an f-string expands, set to the kernel's path (a text the "
+     'shell reads by name, listed)', 'no-spawn', None,
+     'KERNEL = os.path.join(BIN, "romp-kernel")\nos.environ["KERNEL"] = KERNEL\n'
+     'subprocess.run(["bash", "-c", f"exec ${{KERNEL}} --port {PORT}"])'),
+    ("N102 Popen's executable= read from globals() by the bound name (a text a run-time lookup reads, listed)", 'no-spawn', None,
+     'KERNEL = os.path.join(BIN, "romp-kernel")\nsubprocess.Popen(["kernel", "--serve"], executable=globals()["KERNEL"])'),
+    ('N103 a Python -c child whose argv, held in a name, starts the kernel through __import__ (a dynamic road, listed)', 'no-spawn', None,
+     'cmd = [sys.executable, "-c", "__import__(\'subprocess\').run([\'bin/romp-kernel\'])"]\nsubprocess.run(cmd)'),
     ('R1 a rebinding in one function', 'refused-loud', (4, 2, 3),
      'def t():\n    k = os.path.join(BIN, "romp-kernel")\n    k = [sys.executable, "-m", "pytest", "-k", "boot"]\n    subprocess.run(k)'),
     ('R2 two module-level bindings that disagree', 'refused-loud', (3, 1, 2),
