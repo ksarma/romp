@@ -88,8 +88,9 @@
 // let never written) refused as loading a placeholder that names no file, the wrong reason, beside the catch variable, the
 // class's control; and a module named like the launcher loaded through a path call or a placeholder chain, bound as the launcher by
 // its spelling before round 7 (class shared, gap null, no refusal) and resolved since, beside the real launcher through the same
-// path call, with the placeholder splitting the launcher's name and the launcher's .cjs twin, read as the launcher before round 7
-// and by its own content since; and a playwright package's or the launcher's name bound to a name, returned from a function, held
+// path call, with the placeholder splitting the launcher's name, class none at the round-6 head and refused as naming no file
+// before round 6, refused through no closed form since, and the launcher's .cjs twin, read as the launcher before round 7 and by
+// its own content since; and a playwright package's or the launcher's name bound to a name, returned from a function, held
 // in an object literal that is a call's argument or standing in a conditional's branch or a logical's operand as one, handed to a
 // callee the walker knows no loader for, class none with no refusal before round 7 and refused by THE SAFETY NET since, beside the
 // literal control, the controls of the clause's own reading and the boundaries the census header states; and Promise.allSettled
@@ -101,7 +102,13 @@
 // .tsx the bundler loads and a .jsx spelling of the launcher, each refused as naming no file before; a .jsx module loaded as spelled,
 // skipped as no script before, class none with no refusal; a .js spelling beside a declaration file alone, read as the
 // declaration before, which the bundler never loads; and a .js spelling with a .js beside the launcher, bound as the launcher
-// before round 7 when the .ts came first), every one is red under
+// before round 7 when the .ts came first; and, from the author's closing pass after the review's round 7, a folded text naming the
+// package bound to a name and handed to a callee the walker knows no loader for (a + chain of literals, a template, a + chain
+// assigned), class none with no refusal before round 7, a + chain through a const folded as the template's substitution is (a
+// placeholder before the pass, so the text named nothing and the net passed it silently), beside the template's control, a
+// const a require loads also read in a test's title, own Firefox with no refusal before round 7 and refused since, the bound-name
+// clause's stated over-refusal, and Promise["allSettled"] over an array holding the call, swallow [] before and after, the swallow
+// rule's respelled-form witness), every one is red under
 // the census before round 6 (the module at the round-5 head) unless the table names it held with its reason, and the same test holds
 // the table to that statement. A module
 // whose classification throws for any other reason is refused by name and the census goes on, executed over a synthetic root by a
@@ -1087,7 +1094,8 @@ const PLANT_TABLE: Plant[] = [
   // which launches Firefox: the spelled path first, so the .js is read and not the launcher (bound as the launcher before round 7,
   // when the .ts came first, and read as the .js since the round's first build); with the .cts beside the main tree's .cjs twin it
   // holds the spelled path first at both roads under the bundler's mapping, where a .cjs never reaches the launcher's .ts. The
-  // parity test after resolveLocal's bases test holds each planted specifier's file equal to the bundler's.
+  // parity test after resolveLocal's bases test holds each relative literal specifier a plant loads by a form the bundler resolves,
+  // through the local road (resolveLocal), to the bundler's file; resolveSpec's reading is held by p370, p371, p373 and p376.
   { dir: W, root: "no-cjs-twin", file: "p370-r7b-m1-cts-beside-the-launcher.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p370-r7b-m1-cts-beside-the-launcher.test.ts:2: loads ui/webview/real-viewer-leg.cts, which names a playwright package (playwright)" }, // m1: require("./real-viewer-leg.cjs"), no .cjs beside the launcher, a .cts there (before round 7: class shared, gap null, no refusal, bound as the launcher)
   { dir: W, file: "p371-r7b-m2-mts-beside-the-launcher.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p371-r7b-m2-mts-beside-the-launcher.test.ts:2: loads ui/webview/real-viewer-leg.mts, which names a playwright package (playwright)" }, // m2: import { inBrowser } from "./real-viewer-leg.mjs", no .mjs beside the launcher, a .mts there (before round 7: class shared, gap null, no refusal)
   { dir: W, file: "p372-r7b-m3-js-spelling-reaches-a-tsx.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p372-r7b-m3-js-spelling-reaches-a-tsx.test.ts:2: loads ui/webview/bundler-tsx-helper.tsx, which names a playwright package (playwright)" }, // m3: require("./bundler-tsx-helper.js") with the .tsx alone (before round 7: loads ./bundler-tsx-helper.js, which names no file)
@@ -1095,6 +1103,25 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p374-r7b-m5-jsx-module-loaded-as-spelled.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p374-r7b-m5-jsx-module-loaded-as-spelled.test.ts:2: loads ui/webview/bundler-jsx-helper.jsx, which names a playwright package (playwright)" }, // m5: require("./bundler-jsx-helper.jsx") (before round 7: class none, no refusal, the .jsx skipped as no script)
   { dir: W, file: "p375-r7b-m6-js-spelling-with-a-declaration-file-alone.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p375-r7b-m6-js-spelling-with-a-declaration-file-alone.test.ts:2: loads ./bundler-dts-only.js, which names no file in the tree" }, // m6: require("./bundler-dts-only.js") beside bundler-dts-only.d.ts alone (before round 7: class none, no refusal, the declaration read)
   { dir: W, root: "no-cjs-twin", file: "p376-r7b-m7-js-file-beside-the-launcher.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p376-r7b-m7-js-file-beside-the-launcher.test.ts:2: loads ui/webview/real-viewer-leg.js, which names a playwright package (playwright)" }, // m7: require("./real-viewer-leg.js") with a real-viewer-leg.js beside the launcher (before round 7: class shared, gap null, no refusal, bound as the launcher, the .ts first)
+  // The author's closing pass after the review's round 7, from the round's verification. p377 to p379: THE BOUND-NAME clause's
+  // folded-text half, a + chain of literals bound to a const, a template bound to a const and a + chain of literals assigned to a
+  // let, each handed to a callee the walker knows no loader for (class none with no refusal before round 7, refused by the clause
+  // since the round's loads build, which no row witnessed: an arm that routed string literals alone to the clause left every row
+  // green). p380 to p382: a + chain whose operand is an identifier bound to a const literal, handed to a foreign callee as the
+  // argument or through a const, folded to a placeholder before the pass (the text named nothing), so the net passed it silently
+  // while the template spelling, p383, was refused before and after. p384: a const a require loads, also read in a test's title,
+  // the over-refusal the bound-name clause states (own Firefox with no refusal before round 7). p385: Promise["allSettled"] over an
+  // array holding the call, a bracketed member, the respelled-form witness of the swallow rule (swallow [] before and after while
+  // the rejection is swallowed at run time).
+  { dir: W, file: "p377-r7v-f1-plus-of-literals-bound-to-a-const.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p377-r7v-f1-plus-of-literals-bound-to-a-const.test.ts:3: " + NET_HEAD + NET_BOUND_PW("name", 4) + NET_NO_REACH }, // f1: const name = "play" + "wright"; load(name) to a foreign callee (before round 7: class none, no refusal)
+  { dir: W, file: "p378-r7v-f2-template-bound-to-a-const.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p378-r7v-f2-template-bound-to-a-const.test.ts:4: " + NET_HEAD + NET_BOUND_PW("name", 5) + NET_NO_REACH }, // f2: const part = "wright"; const name = `play${part}`; load(name) (before round 7: class none, no refusal)
+  { dir: W, file: "p379-r7v-f3-plus-of-literals-assigned.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p379-r7v-f3-plus-of-literals-assigned.test.ts:4: " + NET_HEAD + NET_BOUND_PW("name", 5) + NET_NO_REACH }, // f3: let name = ""; name = "play" + "wright"; load(name) (before round 7: class none, no refusal)
+  { dir: W, file: "p380-r7v-w1-const-plus-literal-argument.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p380-r7v-w1-const-plus-literal-argument.test.ts:4: " + NET_HEAD + NET_PW + NET_NO_REACH }, // w1: const head = "play"; load(head + "wright") (before the closing pass after round 7: class none, no refusal, the operand a placeholder)
+  { dir: W, file: "p381-r7v-w3-literal-plus-const-argument.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p381-r7v-w3-literal-plus-const-argument.test.ts:4: " + NET_HEAD + NET_PW + NET_NO_REACH }, // w3: const tail = "wright"; load("play" + tail) (before the pass: class none, no refusal)
+  { dir: W, file: "p382-r7v-w6-const-plus-literal-bound-to-a-const.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p382-r7v-w6-const-plus-literal-bound-to-a-const.test.ts:4: " + NET_HEAD + NET_BOUND_PW("name", 5) + NET_NO_REACH }, // w6: const head = "play"; const name = head + "wright"; load(name) (before the pass: class none, no refusal)
+  { dir: W, file: "p383-r7v-w8-template-argument-control.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p383-r7v-w8-template-argument-control.test.ts:4: " + NET_HEAD + NET_PW + NET_NO_REACH, holds: "a pin of an arm no plant carried: foldText's template arm, which folds a substitution that is an identifier bound to one const literal, so const head = \"play\"; load(`${head}wright`) handed to a callee the walker knows no loader for is refused by the net's literal sentence under the census before round 6, at the round-6 head and since, the control beside p380 to p382, whose + spelling of the same text the fold read as a placeholder until the author's closing pass after round 7" }, // w8: the template spelling, refused before and after
+  { dir: W, file: "p384-r7v-c05-bound-name-read-in-a-title.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["firefox"], playwright: ["playwright"], launches: [".launch("], launcherImported: false, refused: "p384-r7v-c05-bound-name-read-in-a-title.test.ts:2: " + NET_HEAD + NET_BOUND_PW("PKG", 4) + NET_REACH }, // c05: const PKG = "playwright"; require(PKG), and PKG read in the test's title (before round 7: own Firefox, no refusal)
+  { dir: W, file: "p385-r7v-y02-bracketed-allsettled-residual.test.ts", leg: true, cls: "shared", gap: null, swallow: [], holds: "a stated residual boundary: the swallow read takes its spellings on the call itself, so Promise[\"allSettled\"] over an array holding the call, await Promise[\"allSettled\"]([inBrowser(t, body)]), a bracketed member, is not read, swallow [] under the census before round 6 and since while the rejection is swallowed at run time, the witness of the respelled forms the census header's swallow clause names since the author's closing pass after round 7" }, // y02: allSettled by a bracketed member
 ];
 const bundleOf = (p: Plant): string => "out-tests/" + p.dir + "/" + p.file.replace(/\.test\.ts$/, ".test.js");
 
@@ -1372,8 +1399,8 @@ test("every planted form under tests/fixtures/browser-legs-plants is classified 
   // and vscode-extension/ (the relative-node-modules subtree aside, which a test of its own reads over a synthetic root), derived
   // from the tree, so a root added without rows, or rows naming a root that is not there, is red here and no plant goes unread
   const ownRoots = fs.readdirSync(PLANTS, { withFileTypes: true }).filter((e) => e.isDirectory() && !["ui", "vscode-extension", "relative-node-modules"].includes(e.name)).map((e) => e.name).sort();
-  assert.deepEqual(ownRoots, [...new Set(PLANT_TABLE.flatMap((p) => (p.root ? [p.root] : [])))].sort(), "every directory of the fixture tree beside ui/ and vscode-extension/ (relative-node-modules aside) is a plants root of its own that rows name, and every root a row names is such a directory");
-  for (const o of ownRoots) assert.ok(fs.existsSync(path.join(PLANTS, o, "ui", "webview", "real-viewer-leg.ts")), "the plants root " + o + " carries its own stub ui/webview/real-viewer-leg.ts for its plants to import");
+  assert.deepEqual(ownRoots, [...new Set(PLANT_TABLE.flatMap((p) => (p.root ? [p.root] : [])))].sort(), "every directory of the fixture tree beside ui/ and vscode-extension/ (relative-node-modules aside) is a plants root of its own that rows name, and every root a row names is such a directory. Holds a PROPERTY, the tree's roots against the table's");
+  for (const o of ownRoots) assert.ok(fs.existsSync(path.join(PLANTS, o, "ui", "webview", "real-viewer-leg.ts")), "the plants root " + o + " carries its own stub ui/webview/real-viewer-leg.ts for its plants to import. Holds a PROPERTY of the fixture tree");
   const onDisk = [W, "vscode-extension/src"].flatMap((d) => fs.readdirSync(path.join(PLANTS, d)).filter((f) => f.endsWith(".test.ts")).map((f) => d + "/" + f))
     .concat(ownRoots.flatMap((o) => [W, "vscode-extension/src"].filter((d) => fs.existsSync(path.join(PLANTS, o, d))).flatMap((d) => fs.readdirSync(path.join(PLANTS, o, d)).filter((f) => f.endsWith(".test.ts")).map((f) => o + "/" + d + "/" + f)))).sort();
   assert.deepEqual(onDisk, PLANT_TABLE.map((p) => (p.root ? p.root + "/" : "") + p.dir + "/" + p.file).sort(), "the plant table names every fixture and no other (a fixture added without a row is a plant with no expected outcome)");
@@ -1518,7 +1545,7 @@ test("the census resolves each planted specifier to the file the bundler loads (
         const res = await esbuild.build({ stdin: { contents: "require(" + JSON.stringify(spec) + ");\n", resolveDir: dir, sourcefile: ENTRY, loader: "js" }, bundle: true, write: false, metafile: true, platform: cfg.platform, format: cfg.format, resolveExtensions: cfg.resolveExtensions, nodePaths: cfg.nodePaths, logLevel: "silent", absWorkingDir: root, outdir: path.join(root, "out-parity"),
           plugins: [{ name: "resolve-only", setup(b: any) { b.onLoad({ filter: /.*/ }, () => ({ contents: "", loader: "js" })); } }] });
         const inputs = Object.keys(res.metafile.inputs).filter((k) => path.resolve(root, k) !== path.join(dir, ENTRY));
-        assert.equal(inputs.length, 1, id + " loads " + spec + ": the bundler's metafile holds the entry and the one file the specifier names, got " + JSON.stringify(Object.keys(res.metafile.inputs)));
+        assert.equal(inputs.length, 1, id + " loads " + spec + ": the bundler's metafile holds the entry and the one file the specifier names, got " + JSON.stringify(Object.keys(res.metafile.inputs)) + ". Holds a PROPERTY of the build");
         bundlerFile = path.relative(root, path.resolve(root, inputs[0]));
       } catch (e) {
         // the bundler's own "cannot resolve" is its reading that no file answers the spelling; any other failure is no reading, red
@@ -1611,8 +1638,8 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // ranges are held to abut: p246 to p248, the three plants of THE SAFETY NET's arms that had none, are the round-5 range's (refused
   // by the census before round 6, red under the census before round 5), so a moved R5_LAST alone cannot slide them into the round-6
   // population, whose statement (red under the census before round 6) would be false for them and which this test cannot re-run
-  const R6_FIRST = 249, R6_LAST = 376;
-  const R6_HELD = ["p252", "p260", "p261", "p266", "p275", "p276", "p277", "p278", "p279", "p290", "p291", "p297", "p298", "p303", "p304", "p305", "p308", "p309", "p310", "p311", "p326", "p334", "p341", "p342", "p345", "p346", "p353", "p363", "p365", "p366", "p367", "p368"];
+  const R6_FIRST = 249, R6_LAST = 385;
+  const R6_HELD = ["p252", "p260", "p261", "p266", "p275", "p276", "p277", "p278", "p279", "p290", "p291", "p297", "p298", "p303", "p304", "p305", "p308", "p309", "p310", "p311", "p326", "p334", "p341", "p342", "p345", "p346", "p353", "p363", "p365", "p366", "p367", "p368", "p383", "p385"];
   const R6_CARRIED: string[] = [];
   const inRound6 = (p: Plant) => num(p) >= R6_FIRST && num(p) <= R6_LAST;
   const r5 = PLANT_TABLE.filter(inRound5);
@@ -1667,7 +1694,11 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // spelling, or a .js spelling with a .js beside the launcher, bound as the launcher, class shared, gap null, no refusal, a .js
   // spelling of a .tsx and a .jsx spelling of the launcher refused as naming no file, a .jsx module skipped as no script and a
   // declaration file read, before round 6 and at the round-6 head, where the row expects the twin's or the helper's content read,
-  // the launcher bound or the no-file sentence), unless R6_HELD names it with
+  // the launcher bound or the no-file sentence), and, from the author's closing pass after the round's verification, a folded text
+  // bound to a name and handed to a foreign callee, p377 to p379, and a + chain through a const, p380 to p382 (class none with no
+  // refusal before round 6 and at the round-6 head, where the row expects THE SAFETY NET's sentence), and a const a require loads
+  // also read in a test's title, p384 (own Firefox with no refusal, where the row expects the bound-name clause's refusal), unless
+  // R6_HELD names it with
   // holds set (the renamed-parameter control, the two name-position controls, the argument-position control, the five read-position
   // controls, the literal control and the path-call control of the literal chain, and, of the swallow read, the .finally and bare
   // .then controls, the Promise.all control, the wrapper-in-try residual and the never-awaited try boundary, and, from the closing
@@ -1677,7 +1708,8 @@ test("the plant table says which of its 51 round-3 rows (p38 to p88) discriminat
   // p310, and the chain nested inside a path call's argument stated as a boundary, p311; and, from the review's round 7, the real
   // launcher through a path call, p326, the literal handed to a foreign callee, p334, the bound-name clause's boundaries, p341, p342
   // and p353, its controls, p363, p366, p367 and p368, the climb's boundary, p365, and the swallow rule's two further witnesses,
-  // Promise.allSettled over a bound array and over its spread, p345 and p346); a round-6 builder who adds a row moves R6_LAST to
+  // Promise.allSettled over a bound array and over its spread, p345 and p346; and, from the author's closing pass after it, the
+  // template's control, p383, and the swallow rule's respelled-form witness, p385); a round-6 builder who adds a row moves R6_LAST to
   // it and, when the row stays green under that census, adds it to
   // R6_HELD with holds set (the round-5 population above is closed)
   const NOT_RERUN6 = " (the discrimination was established by running the census before round 6, the module at the round-5 head, over the plants, recorded in the PR's notes, and is not re-run here, since that census is not in the tree at test time: this assertion holds the table's statement, not the fact)";
@@ -1766,7 +1798,7 @@ test("the lexical read's scope set is the compiler's grammar, not the shapes a r
   assert.equal(valueKinds.length, 16, "the coverage rule derives the value-scope kinds from canHaveLocals, never from a list here, and there are 16 at typescript 5.9.3, the version this count was derived at: an empty derivation cannot pass, and a compiler that admits more kinds or fewer reds here, the deliberate re-derivation point (holds a PROPERTY of the compiler in use); got " + JSON.stringify(valueKinds.map(kindName)));
   assert.deepEqual(valueKinds.filter((k) => !seen.has(k)).map(kindName), [], "the synthetic source carries every kind canHaveLocals admits outside the JSDoc range and the stated type-level list: a kind named here (one a compiler upgrade added) is compared by nobody until a snippet carries it and the walker's set is judged against it. Holds a PROPERTY");
   assert.deepEqual([...TYPE_LEVEL].filter((k) => !canLocals.includes(k)).map(kindName), [], "every kind of the stated type-level list is one canHaveLocals admits, so the list names only kinds the rule would otherwise demand: a kind named here is stale in the list. Holds a PROPERTY");
-  for (const k of ["CaseBlock", "ModuleDeclaration", "ClassStaticBlockDeclaration"]) assert.ok(seen.has(ts.SyntaxKind[k]), "the synthetic source carries a " + k + " the binder gives locals to, the kinds the review's round 6 found missing from the walker's set (a guard on the comparison's input, beside the coverage rule)");
+  for (const k of ["CaseBlock", "ModuleDeclaration", "ClassStaticBlockDeclaration"]) assert.ok(seen.has(ts.SyntaxKind[k]), "the synthetic source carries a " + k + " the binder gives locals to, the kinds the review's round 6 found missing from the walker's set: subsumed by the coverage assertion above while canHaveLocals admits these three kinds (a source that lacks one fails coverage first), so it cannot red alone and names the three for a reader. Holds a PROPERTY");
   // the delegation: the walker reads these two exports and no second definition. A text pin on WHERE the predicates are bound
   // (classify's isScope and holdsVarsOf are each an arrow over the export), read through the compiler's tree of the module; the
   // BEHAVIOUR is executed by the plants p312 to p317 (the readers and the stop), which the comparison above cannot see
@@ -1774,15 +1806,15 @@ test("the lexical read's scope set is the compiler's grammar, not the shapes a r
   const bound: Record<string, string[]> = { isScope: [], holdsVarsOf: [] };
   const visit = (n: any) => { if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text in bound && n.initializer) bound[n.name.text].push(n.initializer.getText(msf)); ts.forEachChild(n, visit); };
   visit(msf);
-  assert.deepEqual(bound, { isScope: ["(n) => isLexicalScope(ts, n)"], holdsVarsOf: ["(n) => holdsVarScope(ts, n)"] }, "classify binds isScope and holdsVarsOf once each, as arrows over the exported isLexicalScope and holdsVarScope, so the set this test pins is the walker's own (a pin on where the predicate is bound, not on what it reads: the plants p312 to p317 execute the readers and the stop)");
+  assert.deepEqual(bound, { isScope: ["(n) => isLexicalScope(ts, n)"], holdsVarsOf: ["(n) => holdsVarScope(ts, n)"] }, "classify binds isScope and holdsVarsOf once each, as arrows over the exported isLexicalScope and holdsVarScope, so the set this test pins is the walker's own (a pin on where the predicate is bound, not on what it reads: the plants p312 to p317 execute the readers and the stop). Holds the SENTENCE, the initializer's source text");
 });
 
-test("the relative node_modules road (n09, extra5-3), over a synthetic root whose vscode-extension/node_modules is the extension's own: a test module that imports playwright by a relative path into node_modules is class own with the engine and the launch read, one that requires it so the same, one that loads a helper doing so is refused by name as loading a module that names a playwright package, and one that spells the path as the argument of a call the walker knows no loader for is refused by THE SAFETY NET's relative-path kind (keyed on resolveSpec, the fold's own reader); the plants live under tests/fixtures/browser-legs-plants/relative-node-modules, outside the tree the table enumerates, since their path resolves only beside a node_modules the fixtures cannot carry (before round 5 each was class none with no refusal: the walker read the path as a local module and the census skipped a file under node_modules, a silent Firefox or WebKit leg; under the net alone the first three were refused by the relative-path kind, n09c through its helper)", async (t) => {
+test("the relative node_modules road (n09, extra5-3), over a synthetic root whose vscode-extension/node_modules is the extension's own: a test module that imports playwright by a relative path into node_modules is class own with the engine and the launch read, one that requires it so the same, one that loads a helper doing so is refused by name as loading a module that names a playwright package, and one that spells the path as the argument of a call the walker knows no loader for is refused by THE SAFETY NET's relative-path kind (keyed on resolveSpec, the fold's own reader), and one that binds the path to a const handed to such a call is refused by THE BOUND-NAME clause's relative-path kind (n09e, the author's closing pass after the review's round 7: class none with no refusal before round 7, and no row witnessed the clause's relative-path arm); the plants live under tests/fixtures/browser-legs-plants/relative-node-modules, outside the tree the table enumerates, since their path resolves only beside a node_modules the fixtures cannot carry (before round 5 each was class none with no refusal: the walker read the path as a local module and the census skipped a file under node_modules, a silent Firefox or WebKit leg; under the net alone the first three were refused by the relative-path kind, n09c through its helper)", async (t) => {
   const { census, classOf } = await load();
   const RELPW = path.join(PLANTS, "relative-node-modules", "ui", "webview");
   const { root } = syntheticRoot(t, []);
   const files = fs.readdirSync(RELPW).sort();
-  assert.deepEqual(files, ["n09a-relative-node-modules-import.test.ts", "n09b-relative-node-modules-require.test.ts", "n09c-relative-node-modules-helper.test.ts", "n09d-relative-node-modules-unknown-callee.test.ts", "relpw-helper.ts"], "the fixture directory holds the four plants and the helper, and nothing else (a plant added without a row below is a plant with no expected outcome)");
+  assert.deepEqual(files, ["n09a-relative-node-modules-import.test.ts", "n09b-relative-node-modules-require.test.ts", "n09c-relative-node-modules-helper.test.ts", "n09d-relative-node-modules-unknown-callee.test.ts", "n09e-relative-node-modules-bound-name.test.ts", "relpw-helper.ts"], "the fixture directory holds the five plants and the helper, and nothing else (a plant added without a row below is a plant with no expected outcome)");
   for (const f of files) fs.copyFileSync(path.join(RELPW, f), path.join(root, "ui", "webview", f));
   // the precondition, derived from the fixture rather than restated (a package name spelled as a call's argument here would be the
   // p74 form in a module of the tree, and the net refused this file on that spelling when the precondition was first written so):
@@ -1791,7 +1823,7 @@ test("the relative node_modules road (n09, extra5-3), over a synthetic root whos
   assert.ok(fs.existsSync(path.join(root, "ui", "webview", spelled, "package.json")), "the extension's node_modules carries the package the plants spell by relative path (" + spelled + "; npm ci installs it): without it the load names no file and the refusal would be the missing-module one, not the census's reading of the package, so the precondition is asserted rather than left to the rows");
   const c = census(root);
   const bundle = (file: string) => "out-tests/ui/webview/" + file.replace(/\.test\.ts$/, ".test.js");
-  assert.equal(c.byBundle.size, 4, "the census read the four plants and nothing else");
+  assert.equal(c.byBundle.size, 5, "the census read the five plants and nothing else");
   // the two direct loads: class own, the package recorded under the spelled path, the engine read through the binding, the launch read
   const own: [string, string][] = [["n09a-relative-node-modules-import.test.ts", "firefox"], ["n09b-relative-node-modules-require.test.ts", "webkit"]];
   for (const [file, engine] of own) {
@@ -1816,8 +1848,15 @@ test("the relative node_modules road (n09, extra5-3), over a synthetic root whos
   assert.equal(netRow.refusals.length, 1, "n09d: one refusal, the net's: " + JSON.stringify(netRow.refusals));
   assert.ok(netRow.refusals[0].includes(netWant), "n09d: refused by name with the path and the line (holds the SENTENCE through the NET_ constants); expected a refusal containing " + JSON.stringify(netWant) + ", got " + JSON.stringify(netRow.refusals));
   assert.equal(classOf(netRow), "none", "n09d: class none, no reach");
-  for (const r of [helperRow, netRow]) assert.ok(c.refusals.includes(r.refusals[0]), r.rel + ": the refusal reaches the census's own list (the CLI exits 2 on it)");
-  assert.equal(c.refusals.length, 2, "two refusals on the census's list, n09c's and n09d's");
+  // the path bound to a const and handed to the unknown callee: THE BOUND-NAME clause's relative-path kind, at the declaration's line
+  // with the line of the reference no fold read
+  const boundRow = c.byBundle.get(bundle("n09e-relative-node-modules-bound-name.test.ts")) as Rec;
+  const boundWant = "n09e-relative-node-modules-bound-name.test.ts:3: " + NET_HEAD + "a relative path into node_modules naming a playwright package bound to spec and read at line 4 where no fold of the walker accounts for it: \"../../vscode-extension/node_modules/playwright\"" + NET_NO_REACH;
+  assert.equal(boundRow.refusals.length, 1, "n09e: one refusal, the net's: " + JSON.stringify(boundRow.refusals));
+  assert.ok(boundRow.refusals[0].includes(boundWant), "n09e: refused by the bound-name clause's relative-path kind, the bound name and the reference's line named (holds the SENTENCE); expected a refusal containing " + JSON.stringify(boundWant) + ", got " + JSON.stringify(boundRow.refusals));
+  assert.equal(classOf(boundRow), "none", "n09e: class none, no reach");
+  for (const r of [helperRow, netRow, boundRow]) assert.ok(c.refusals.includes(r.refusals[0]), r.rel + ": the refusal reaches the census's own list (the CLI exits 2 on it)");
+  assert.equal(c.refusals.length, 3, "three refusals on the census's list, n09c's, n09d's and n09e's");
   assert.deepEqual(c.legs, own.map(([f]) => bundle(f)).sort(), "the legs are the two direct loads");
 });
 
@@ -1972,7 +2011,7 @@ test("THE BOUND-NAME clause says what the arm does (extra6-1, the review's round
   // its controls), so a
   // witness dropped from the prose, or a row named that the arm neither refuses nor holds, reds here.
   const header = moduleHeader();
-  assert.ok(!header.includes("the hand-on refusals' when it is not"), "the retired clause is absent: no hand-on refusal of the walker reads a name bound to a text, so the header may not say one closes a load through such a name when the callee is no loader (the round-6 review's extra6-1; the arm that does is THE SAFETY NET's bound-name road). Holds the SENTENCE");
+  assert.ok(!header.includes("the hand-on refusals' when it is not"), "the retired clause is absent: no hand-on refusal of the walker reads a name bound to a text, so the header may not say one closes a load through such a name when the callee is no loader (the round-6 review's extra6-1; the arm that does is THE SAFETY NET's bound-name road). Holds the SENTENCE, the retired spelling alone: a guard against a revert, not against the false claim respelled, which the rows the clause names disprove by execution");
   const from = header.indexOf("THE BOUND-NAME clause ("), to = header.indexOf("A let or var written after its declaration is no closed form", from);
   assert.ok(from >= 0 && to > from, "the clause runs from 'THE BOUND-NAME clause (' to 'A let or var written after its declaration is no closed form' (holds the SENTENCE at both ends: a reword of either moves this pin)");
   const clause = header.slice(from, to);
@@ -1989,7 +2028,7 @@ test("THE BOUND-NAME clause says what the arm does (extra6-1, the review's round
   const firstMention = (r: string): string => (r.includes(NET_HEAD) ? r.split(NET_HEAD)[1] : "");
   const refusedRows = PLANT_TABLE.filter((p) => typeof p.refused === "string" && SENTENCE.test(firstMention(p.refused))).map(idOf);
   const heldRows = PLANT_TABLE.filter((p) => typeof p.holds === "string" && p.holds.includes("the bound-name clause")).map(idOf);   // its boundaries and its controls, each holds naming the clause
-  assert.ok(refusedRows.length > 0 && heldRows.length > 0, "the clause has rows to name, refused and held: an empty derivation is no evidence (derived: " + JSON.stringify({ refusedRows, heldRows }) + ")");
+  assert.ok(refusedRows.length > 0 && heldRows.length > 0, "the clause has rows to name, refused and held: an empty derivation is no evidence (derived: " + JSON.stringify({ refusedRows, heldRows }) + "). Holds a PROPERTY, the derivation's non-emptiness");
   assert.deepEqual(named, [...refusedRows, ...heldRows].sort(byNum), "the clause names exactly the rows the bound-name clause refuses (its sentence the refusal's first mention) and the held rows whose holds names the clause, its boundaries and its controls: a witness dropped from the prose, or a row named that the clause neither refuses nor holds, reds here (holds a PROPERTY, the prose's ids against the table's)");
 });
 

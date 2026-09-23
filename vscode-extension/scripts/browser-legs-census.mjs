@@ -10,19 +10,25 @@
 // the list's one home, which ui/webview/ci-browser-legs-census.test.ts holds equal to the directories esbuild.js testBuild
 // compiles by building that config's entry points with a metafile and comparing, in both directions, with what census() read)
 // it derives:
-//   launcher:  the module imports ui/webview/real-viewer-leg.ts by RESOLVED path (relative to the module, by the bundler's mapping:
-//              a script spelling names the file that stands at that path when one does, and otherwise the bundler's rewrite of it,
+//   launcher:  the module imports ui/webview/real-viewer-leg.ts by RESOLVED path (relative to the module, by the bundler's mapping
+//              for a script spelling: the file that stands at that path when one does, and otherwise the bundler's rewrite of it,
 //              a .js or .jsx as the .ts, then the .tsx beside it, a .cjs as the .cts and a .mjs as the .mts, never as the .ts, so
 //              a real-viewer-leg.cjs or .js beside the launcher, which the bundler loads for that spelling, is read by its own
 //              content and not as the launcher (p348, p349, p376), and so is the .cts or the .mts a .cjs or .mjs spelling reaches
-//              when no such file stands (p370, p371); the census test bundles each planted specifier with esbuild and holds the
-//              file the census resolves equal to the one the bundler loads; the .ts suffix added to a spelling with none; a
-//              specifier FOLDED
+//              when no such file stands (p370, p371); the census test's parity pin bundles each relative literal specifier a plant
+//              loads by a form the bundler resolves (an import or export that is not type-only, import =, a require or import() of
+//              a literal) and holds the file the local road resolves (resolveLocal) equal to the one the bundler loads, while this
+//              road's own reading, resolveSpec's, is held by the rows p370, p371, p373 and p376; a spelling with NO script
+//              extension is read by a hand-kept order, not the bundler's: resolveSpec adds the .ts and candidatesOf tries the .ts
+//              first, where the bundler tries the path itself and then the .tsx before the .ts, so a .tsx beside a .ts of the same
+//              name, the file the bundler loads, is not the file this census reads, a divergence stated here and not yet closed,
+//              which no plant carries (the parity pin finds none over the plants); a specifier FOLDED
 //              from pieces resolves by the same rule, a concatenation of literals through resolveSpec and a chain that crossed a
 //              path call or carries a placeholder piece through resolveLocal, beside the module and under the repo root and
 //              vscode-extension/, and binds the launcher only when it lands on the launcher's file, never because its text spells
-//              the launcher's name, while a folded specifier whose placeholder piece names the launcher or is dropped on the way
-//              to the launcher's file is refused, since the file it loads when run is unread: p323 to p330 and p347) under any
+//              the launcher's name, while a folded specifier that names the launcher and carries a placeholder piece, or whose
+//              placeholder piece is dropped on the way to the launcher's file, is refused, since the file it loads when run is
+//              unread: p323 to p330 and p347) under any
 //              binding form (named, aliased, namespace, default, import-equals, require(),
 //              module.require(), await import(), a createRequire-bound loader (createRequire by its own name or through its import
 //              alias) or the launcher's own exported requireCjs, by its named import, as a
@@ -125,7 +131,8 @@
 //              reached through a name, a spread or another expression, or a swallowing form spelled otherwise (a bracketed member,
 //              a destructured or .call-applied allSettled), is not read. Its witnesses: a .catch on a name the call's promise was
 //              bound to (p309), a .catch on the result of Promise.all, race or any over an array holding the call (p310), and
-//              Promise.allSettled over a name an array holding the call was bound to (p345) or over a spread of that name (p346).
+//              Promise.allSettled over a name an array holding the call was bound to (p345) or over a spread of that name (p346),
+//              and Promise["allSettled"] over an array holding the call, a bracketed member (p385).
 //              REPORTED, not refused (such a leg is admitted to the roster; the count over the tree is printed by the census test;
 //              rosterGap never reads it). Before the review's round 6 the read was a try statement of the same function alone.
 //   embedded:  a string or template literal whose TEXT loads a playwright package (a child-process driver's source): counted
@@ -139,9 +146,9 @@
 //              non-literal require) is no driver to the walker, class none from it, and THE SAFETY NET refuses the module when
 //              the name stands in a specifier-capable position of that text; a string inside a driver's text is not read as a
 //              driver of its own. A
-//              template with substitutions and a `+` concatenation are FOLDED before the text is read (a substitution that is
-//              an identifier bound to one const literal takes its value; any other piece a placeholder, which the code read
-//              sees as an identifier), so a driver assembled
+//              template with substitutions and a `+` concatenation are FOLDED before the text is read (a substitution, or a `+`
+//              operand since the author's closing pass after round 7, that is an identifier bound to one const literal takes its
+//              value; any other piece a placeholder, which the code read sees as an identifier), so a driver assembled
 //              from pieces is read; a piece the fold cannot take (a value from the environment) is the third residual below.
 //   REFUSALS:  a form the walker cannot classify refuses with file and line, never reports it absent: an import or loader
 //              specifier that is not a string literal and folds through no closed form (a let or var some statement of the module
@@ -295,8 +302,12 @@
 // a module with one load read through and a second handed on passes it on the second (the hand-on refusals above name that
 // form, for a binding and, since round 6, for a load where it stands: a class field, an object property, a promise callback, an
 // argument, a return); a driver text that parses with a diagnostic is read by the regex alone; the net reads the text of a literal, a template
-// or a `+` chain where it stands and folds no identifier at a use: it reads the NAME a text is bound to instead, THE BOUND-NAME
-// clause (the review's round 6, extra6-1, built in round 7). A text naming a playwright package or the launcher that stands,
+// or a `+` chain where it stands, folding an identifier only as a template's substitution or a `+` operand bound to one const
+// literal (foldText; before the author's closing pass after round 7 a `+` operand was a placeholder, so `load(head + "wright")`
+// with head a const "play" was class none with no refusal while the template spelling was refused: p380, p381 and p382, p383 the
+// template's control), and folds no other identifier at a use: it reads the NAME a text is bound to instead, THE BOUND-NAME
+// clause (the review's round 6, extra6-1, built in round 7). A text (a literal, or a template or `+` chain foldText folds) naming
+// a playwright package or the launcher that stands,
 // directly or through the climb above, as a declaration's initializer (a const, a let or var, a parameter's or a binding element's
 // default) or as the right side of any assignment is a mention at that site, ACCOUNTED only when every value reference to the name
 // it binds (by lexical scope; a property name, a declaration's own name, a type position, a label and a plain assignment's target
@@ -307,9 +318,12 @@
 // declaration, or a property, an element, a class field or a destructuring pattern as the target. Before round 7 each was class
 // none with no refusal under the census and the net alike, and the walker's hand-on refusals, which read a binding of a module,
 // never a name bound to a text, closed none of them (p332, p333, p335, p336, p337, p338, p339, p340, p354, p355, p356, p357, p358,
-// p359, p360, p369; p363, p366, p367 and p368 are the controls of the clause's own reading, each passing with no refusal). The clause
-// over-refuses on the safe side: a bound name also read outside any load (a test's title, a message) is refused though that
-// reference loads nothing, and the remedy is to spell the load where it is made. A text RETURNED from a function, as a return
+// p359, p360, p369, and a folded text so bound, a `+` chain of literals, a template and a `+` chain assigned, p377, p378 and p379,
+// with a `+` chain through a const, p382, read since the author's closing pass after round 7, and a relative path into node_modules
+// so bound, n09e in the relative node_modules road's own test; p363, p366, p367 and p368 are the controls of the clause's own
+// reading, each passing with no refusal). The clause over-refuses on the safe side: a bound name also read outside any load (a
+// test's title, a message) is refused though that reference loads nothing (p384, a const a require loads, also read in a test's
+// title, own Firefox with no refusal before round 7), and the remedy is to spell the load where it is made. A text RETURNED from a function, as a return
 // statement's expression or an arrow's expression body, is refused where it stands, in any function of the module, the return
 // arm: it follows no call, so the text is refused whoever calls the function (p343, p364); a text that leaves a function by any
 // other road, a generator's yield, is past its reach, class none with no refusal (p353). A text held in an array or an object
@@ -1086,8 +1100,10 @@ export function classify(ts, file, src, opts = {}) {
    *  only on the call, so a promise or an array holding the call reached through a name, a spread or another expression, or a
    *  swallowing form spelled otherwise (a bracketed member, a destructured or .call-applied allSettled), is not read. Its witnesses: a
    *  .catch on a name the call's promise was bound to (p309), a .catch on the result of Promise.all, race or any over an array holding
-   *  the call (p310), and Promise.allSettled over a name an array holding the call was bound to (p345) or over a spread of that name
-   *  (p346). The closing pass after round 6 stated p309 and p310, the review's round 7 the rule and the last two. */
+   *  the call (p310), Promise.allSettled over a name an array holding the call was bound to (p345) or over a spread of that name
+   *  (p346), and Promise["allSettled"] over an array holding the call, a bracketed member (p385). The closing pass after round 6
+   *  stated p309 and p310, the review's round 7 the rule, p345 and p346, and the author's closing pass after it the bracketed
+   *  member's witness. */
   const swallowed = (n) => {
     for (let p = n.parent; p; p = p.parent) if (ts.isTryStatement(p) && p.catchClause && p.tryBlock.pos <= n.pos && n.end <= p.tryBlock.end) return true;
     let q = up(n);
@@ -1400,12 +1416,16 @@ export function classify(ts, file, src, opts = {}) {
   const DRIVER_RE = /(require|import)\s*\(\s*["'`](playwright(-core)?|@playwright\/test)["'`]|from\s+["'`](playwright(-core)?|@playwright\/test)["'`]/;
   /** The text of a string built from pieces, folded before the driver regex reads it: a literal; a template whose substitutions
    *  are identifiers bound to one const literal (any other substitution a <placeholder>, which matches nothing: the third
-   *  residual); a + chain of such. */
+   *  residual); a + chain of such, whose operand that is an identifier bound to one const literal takes its value as a
+   *  substitution does (the author's closing pass after the review's round 7: before it such an operand was a placeholder, so
+   *  `load(head + "wright")` with head a const "play" folded to `<head>wright`, named nothing, and passed THE SAFETY NET silently
+   *  while the template spelling of the same text was refused, p380 to p382). */
   const foldText = (x) => {
     x = unwrap(x);
     const l = literalName(x); if (l !== null) return l;
     if (ts.isTemplateExpression(x)) { let t = x.head.text; for (const sp of x.templateSpans) { const inner = ts.isIdentifier(unwrap(sp.expression)) ? constInitializer(unwrap(sp.expression)) : undefined; const v = inner ? literalName(unwrap(inner)) : null; t += (v !== null && v !== undefined ? v : "<" + sp.expression.getText(sf) + ">") + sp.literal.text; } return t; }
     if (ts.isBinaryExpression(x) && x.operatorToken.kind === ts.SyntaxKind.PlusToken) return foldText(x.left) + foldText(x.right);
+    if (ts.isIdentifier(x)) { const inner = constInitializer(x); const v = inner ? literalName(unwrap(inner)) : null; if (v !== null) return v; }   // a + operand bound to one const literal (a bare identifier reaches here only as one)
     return "<" + x.getText(sf).slice(0, 40) + ">";
   };
   const noteEmbedded = (n) => { const line = lineOf(n); if (!embedded.some((e) => e.line === line)) embedded.push({ line, what: "playwright loaded by source held in a string (a child-process driver)" }); };
@@ -1652,7 +1672,10 @@ const fileAt = (p) => { try { return fs.statSync(p).isFile() ? p : null; } catch
  *  beside it, a .cjs as the .cts, a .mjs as the .mts, and no other spelling is rewritten (the rewrite the installed bundler's
  *  resolver applies, read from its own resolution of each spelling: a .cjs never reaches a .ts, nor a .mjs). resolveSpec (the
  *  launcher's road) and candidatesOf (the local road) both read it, after the file that stands at the spelled path, and the census
- *  test's parity pin bundles each planted specifier and holds the file the census resolves equal to the one the bundler loads.
+ *  test's parity pin bundles each relative literal specifier a plant loads by a form the bundler resolves and holds the file the
+ *  local road resolves (resolveLocal, through candidatesOf) equal to the one the bundler loads, the rows p370, p371, p373 and p376
+ *  holding resolveSpec's reading. A spelling with no script extension is not rewritten here: resolveSpec and candidatesOf read it
+ *  by their own order, which is not the bundler's (the header's launcher clause states the divergence).
  *  Returns the rewritten paths in order, or null for a spelling the bundler does not rewrite. */
 const BUNDLER_REWRITES = [[/\.jsx?$/, [".ts", ".tsx"]], [/\.cjs$/, [".cts"]], [/\.mjs$/, [".mts"]]];
 const rewritesOf = (raw) => { const hit = BUNDLER_REWRITES.find(([re]) => re.test(raw)); return hit ? hit[1].map((ext) => raw.replace(hit[0], ext)) : null; };
