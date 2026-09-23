@@ -20,23 +20,22 @@ of the subprocess module: through the name the module imports the library under,
 any name, or an assignment that binds a name to either) whose argv HOLDS the kernel's path as an element, or whose
 `executable=` is the path: a string, an f-string, a % or a .format template that is the path or has it as ANY whole
 word (a shell command: a word bounded by whitespace or the string's edge whose text ends in the kernel's name, or that
-ends in a placeholder whose value is the path; a string the shell reads, the argv when it is a string, the program
-after a shell's -c (the shell found as the argv's first element past the option words before the flag, `bash -e -c`,
-`bash -o pipefail -c`, or right before it) and an element holding whitespace that is no Python child's program (a
-command string handed to `su -c` or `script -qc`), is read at the words the shell splits it into as well, its quotes
-removed and its operators apart, so `exec 'bin/romp-kernel'` and `bin/romp-kernel& wait` hold the path), a path joined
-onto it (os.path.join, Path, /,
-either operand of +, any element of a str.join over a literal list, the callee of the join resolved by binding as well,
-so `from os.path import join`, `import os.path as osp` and `j = os.path.join` reach it), a path-preserving wrapper of
-one (str, os.fspath, .resolve(), joinpath), any value of an `or` or a conditional, a walrus's value, the default of an
-env-override lookup (`os.environ.get(key, KERNEL)`, `os.getenv(key, KERNEL)`), the element expression or an iterable of
-a comprehension argv (its own targets never resolved), the element a subscript takes from a literal dict by key or from
-a literal list or tuple by index, or a name or self.X target bound to any of those in the scope the call reads, the
-name resolved to its declaration by tests/ast_bindings.py (the function the call is in, its enclosing functions, then
-the module; a class body encloses no method; self.X per concrete class, the method's class and every class of the
-module below it, each reading the self.X writes of its method resolution order and the class-body binding of X nearest
-in that order, each class's reading decided as a name's is, a path for any class being the path and two classes that
-read it differently no refusal).
+ends in a placeholder whose value is the path; a string the shell reads, the argv when it is a string, the program after
+a shell's -c (the shell found as the argv's first element past the option words before the flag, `bash -e -c`, `bash -o
+pipefail -c`, or right before it) and an element holding whitespace that is no Python child's program (a command string
+handed to `su -c` or `script -qc`), is read at the words the shell splits it into as well, its quotes removed and its
+operators apart, so `exec 'bin/romp-kernel'` and `bin/romp-kernel& wait` hold the path), a path joined onto it
+(os.path.join, Path, /, either operand of +, any element of a str.join over a literal list, the callee of the join
+resolved by binding as well, so `from os.path import join`, `import os.path as osp` and `j = os.path.join` reach it), a
+path-preserving wrapper of one (str, os.fspath, .resolve(), joinpath), any value of an `or` or a conditional, a walrus's
+value, the default of an env-override lookup (`os.environ.get(key, KERNEL)`, `os.getenv(key, KERNEL)`), the element
+expression or an iterable of a comprehension argv (its own targets never resolved), the element a subscript takes from a
+literal dict by key or from a literal list or tuple by index, or a name or self.X target bound to any of those in the
+scope the call reads, the name resolved to its declaration by tests/ast_bindings.py (the function the call is in, its
+enclosing functions, then the module; a class body encloses no method; self.X per concrete class, the method's class and
+every class of the module below it, each reading the self.X writes of its method resolution order and the class-body
+binding of X nearest in that order, each class's reading decided as a name's is, a path for any class being the path and
+two classes that read it differently no refusal).
 The reads that key on a SPELLING, each because the binding cannot reach it: any other dotted target (`cfg.kernel`,
 `Lab.KERNEL`) by the target's text, which ast_bindings.Bindings.resolve_target says; a name no scope binds (a snippet's
 `subprocess`, a star import's `join`) by its own spelling; a method (.resolve(), .format(), .strip()) by the method's
@@ -44,15 +43,15 @@ name, its receiver a value and not a module; the bin directory of a CLI join (`o
 directory name's shape; a shell by its name or path (sh, bash, dash, zsh, ksh, mksh, ash), and Python by its name or
 path beside sys.executable (python3, /usr/bin/python3.12); in a Python child's -c program, a callee by the last part of
 the name it denotes (a process starter, a dynamic road) and the program's mention of the kernel (romp-kernel or bin/romp
-in its text); a text's words, against the names one of whose declarations holds romp-kernel as text (the listing
-below); and the trio by its text (_hermetic). The CLI counts only with a kernel verb (KERNEL_VERBS: up, the verb that starts one) as the next argv
-element, the next word of a command string, or, in a string the shell reads, a word the shell may hand it as its first
-argument (`bin/romp up;`, `bin/romp 'up'`, `(bin/romp up)`, past a redirection), a splatted next element being no verb;
-the comment at KERNEL_VERBS says why each verb is in or out. The element's INDEX is not read: a wrapper launch
-(`["timeout", "30", KERNEL]`) is a kernel process, and so, an accepted false red, is a grep or a git over the kernel's
-file, the side that requires the trio; a subscript whose slice the scan cannot read (`SCRIPTS[i]`) is read as any
-element of its container, the same side. A name bound twice in the scope the call reads by declarations that do not
-read it, once to the path and once to something else, is refused loudly (UnreadableSpawn, naming the call's line and
+in its text); a text's words, against the names one of whose declarations holds romp-kernel as text (the listing below);
+and the trio by its text (_hermetic). The CLI counts only with a kernel verb (KERNEL_VERBS: up, the verb that starts
+one) as the next argv element, the next word of a command string, or, in a string the shell reads, a word the shell may
+hand it as its first argument (`bin/romp up;`, `bin/romp 'up'`, `(bin/romp up)`, past a redirection), a splatted next
+element being no verb; the comment at KERNEL_VERBS says why each verb is in or out. The element's INDEX is not read: a
+wrapper launch (`["timeout", "30", KERNEL]`) is a kernel process, and so, an accepted false red, is a grep or a git over
+the kernel's file, the side that requires the trio; a subscript whose slice the scan cannot read (`SCRIPTS[i]`) is read
+as any element of its container, the same side. A name bound twice in the scope the call reads by declarations that do
+not read it, once to the path and once to something else, is refused loudly (UnreadableSpawn, naming the call's line and
 both declarations), never read either way; a declaration with no readable value beside one bound to the path leaves the
 path standing. The refusal comes before the trio is read, so a module that carries the trio is refused as well, and
 unittest idioms reach it (rows R4 and R5): a subclass's setUp writing self.X before super().setUp() spawns it, and its
@@ -63,10 +62,10 @@ the declarations that do not read it: holding the path, the name is the path wha
 adds the path to a base without it is caught; lacking the path while they hold it (`KERNEL = os.path.dirname(KERNEL)`),
 a rebinding away from the path, refused loudly the same way; neither, no path. A string that MENTIONS the path inside a
 word (a -c program that load_sources the kernel, `load_source('k', %r)`), a comment or a docstring is not a kernel
-process: that is the in-process shape in a child, met by the bus belt below like the in-process shape itself (the
-ruling point below). A Python -c child's program (the interpreter found for the flag names no shell) is read as Python as
-well, its text assembled from the templates, joins and names that build it, a %r placeholder a string literal ending in
-the path the scan reads its value as; a spawn site in that program is a site of the call that starts the child.
+process: that is the in-process shape in a child, met by the bus belt below like the in-process shape itself (the ruling
+point below). A Python -c child's program (the interpreter found for the flag names no shell) is read as Python as well,
+its text assembled from the templates, joins and names that build it, a %r placeholder a string literal ending in the
+path the scan reads its value as; a spawn site in that program is a site of the call that starts the child.
 The scan replaced a regex pair on 2026-09-21, in the author's pass applying the ruling of PR #850's eighth review
 round: the old KERNEL_NAME pattern took any name bound on ONE line that spelled romp-kernel as a name bound to the
 kernel's path and looked for it as a whole WORD in every subprocess call span, so a local `p` bound to TEXT that
@@ -107,35 +106,35 @@ size the tree has. The table over the tree is ONE derivation per process (tests/
 ROADS_KEY), each module parsed once (its source_and_tree, the parse every census in the process shares): the trio
 test, the guard test, the comparison case and the --roads arm read that one table, and the peers test's walk reads the
 same parses (PR #850's ninth review round, after each had scanned or parsed the tree on its own).
-The residual, as a rule: whatever the scan does not read is no path. What it LISTS, under `# unresolved:` with its
-kind: a name or target in an argv that resolves to a declaration with no readable value (a parameter, an import, a
-loop or with target, an unpacking the scan cannot split) or to none at all (an attribute of an imported module,
-sys.executable most of all), a call of a function defined in the module or of a name no scope binds (a helper's
-return, a star import's), a passthrough's splatted argv, and a keywords splat a spawn is handed alone; and, for a
-spawn with no site (_SpawnScan._list_unread), a Python child's -c program that mentions the kernel and calls a callee
-the scan cannot name or a dynamic road (a child that runs the kernel as __main__ through runpy or an exec of its
-source among them; N79 to N91, N93, N103), and a text in the argv or executable=, outside such a program, that spells
-a name one of whose declarations holds romp-kernel as text (what globals()[...], a %-mapping over locals(), eval,
-getattr or a shell's environment variable reads by name; N67 to N78, N101, N102). What it does not list, in the classes found so far, each held by a PLANT_TABLE row: a program handed on
-the child's stdin (input=, stdin=, communicate(); N92); an argv mutated by append, extend or insert
-(N29); a spawn function reached through functools.partial or getattr (N30); a spawn function outside the subprocess
-module (os.execv, os.posix_spawn, asyncio.create_subprocess_exec; N31), and the subprocess module's getoutput and
-getstatusoutput (N47); a star import's spawn functions other than Popen, which the scan reads by their spelling (N48);
-a program that starts a kernel other than romp-kernel and the CLI at bin/romp (bin/romp-serve, which execs
-romp-kernel; romp-manager up, which romp up execs; romp up found on PATH; N45); the CLI composed from its directory
-other than by a path function's arguments (an f-string, +, a Path division held in a name), or joined to its verb by
-+ (N46); a comprehension flattening nested literal lists (N49); a mapping a %-template reads whole when the scan
+The residual, as a rule: whatever the scan does not read is no path. What it LISTS, under `# unresolved:` with its kind:
+a name or target in an argv that resolves to a declaration with no readable value (a parameter, an import, a loop or
+with target, an unpacking the scan cannot split) or to none at all (an attribute of an imported module, sys.executable
+most of all), a call of a function defined in the module or of a name no scope binds (a helper's return, a star
+import's), a passthrough's splatted argv, and a keywords splat a spawn is handed alone; and, for a spawn with no site
+(_SpawnScan._list_unread), a Python child's -c program that mentions the kernel and calls a callee the scan cannot name
+or a dynamic road (a child that runs the kernel as __main__ through runpy or an exec of its source among them; N79 to
+N91, N93, N103), and a text in the argv or executable=, outside such a program, that spells a name one of whose
+declarations holds romp-kernel as text (what globals()[...], a %-mapping over locals(), eval, getattr or a shell's
+environment variable reads by name; N67 to N78, N101, N102). What it does not list, in the classes found so far, each
+held by a PLANT_TABLE row: a program handed on the child's stdin (input=, stdin=, communicate(); N92); an argv mutated
+by append, extend or insert (N29); a spawn function reached through functools.partial or getattr (N30); a spawn function
+outside the subprocess module (os.execv, os.posix_spawn, asyncio.create_subprocess_exec; N31), and the subprocess
+module's getoutput and getstatusoutput (N47); a star import's spawn functions other than Popen, which the scan reads by
+their spelling (N48); a program that starts a kernel other than romp-kernel and the CLI at bin/romp (bin/romp-serve,
+which execs romp-kernel; romp-manager up, which romp up execs; romp up found on PATH; N45); the CLI composed from its
+directory other than by a path function's arguments (an f-string, +, a Path division held in a name), or joined to its
+verb by + (N46); a comprehension flattening nested literal lists (N49); a mapping a %-template reads whole when the scan
 cannot read its values (a dict filled by subscript, locals(); N50); a class attribute bound outside the module's class
 bodies and methods (setattr on a class, a subclass of another module's base; N51); a self-reference through a loop
-target (N52); and a consumer call's arguments (a builtin, a function imported from any module, a helper of another
-test module included, or any method but the path-preserving ones: `os.path.relpath(K)`, `shutil.which(K)`,
-`K.replace(...)`; N32). A shape in none of these classes is unread by the same rule. The comparison case measures the
-split with the regex pair: the rows whose label says the regex missed them too carry no call it flags, and that is
-held; every other match the scan neither reads nor lists is named unless an exclusion proves it, which the rows whose
-label says the comparison names them hold (a name that reaches a one-line binding the scan cannot read, the CLI's verb
-handed by xargs, parallel or the shell's positional parameters, a -c child that starts the kernel through a process
-starter the scan reads only by its spelling), as do the consumer plants of the comparison case (N32 binds its path
-across two lines, which the regex misses too).
+target (N52); and a consumer call's arguments (a builtin, a function imported from any module, a helper of another test
+module included, or any method but the path-preserving ones: `os.path.relpath(K)`, `shutil.which(K)`, `K.replace(...)`;
+N32). A shape in none of these classes is unread by the same rule. The comparison case measures the split with the regex
+pair: the rows whose label says the regex missed them too carry no call it flags, and that is held; every other match
+the scan neither reads nor lists is named unless an exclusion proves it, which the rows whose label says the comparison
+names them hold (a name that reaches a one-line binding the scan cannot read, the CLI's verb handed by xargs, parallel
+or the shell's positional parameters, a -c child that starts the kernel through a process starter the scan reads only by
+its spelling), as do the consumer plants of the comparison case (N32 binds its path across two lines, which the regex
+misses too).
 
 Ruling point, the maintainers' to decide (2026-09-21): a child interpreter that load_sources the kernel
 (`[sys.executable, "-c", <program>]`) is read here as NOT a kernel process. It is the in-process shape one process
@@ -996,7 +995,7 @@ class _SpawnScan:
         """Does every road of callee `node` end in a name the scan can give: a chain of attributes over a name, the name
         unbound (its own spelling) or bound only by imports and by assignments to a name or an attribute that are
         themselves fully named, or (`root`, the callee itself) by defs of the program?"""
-        while isinstance(node, ast.Attribute):
+        while isinstance(node, ast.Attribute):   # loop-ok: climbs the callee's tree
             node = node.value
         if not isinstance(node, ast.Name):
             return False
@@ -1078,7 +1077,7 @@ def _interpreter_at(elts, i):
     takes one (OPTION_ARGUMENTS: `bash -o pipefail -c`, `python3 -W error -c`); None when any other word stands between
     (`sudo -u lab sh -c`, `su -c` read from the flag's side), the reading that names no interpreter."""
     j = 1
-    while j < i - 1:
+    while j < i - 1:   # loop-ok: each pass consumes at least one element
         e = elts[j]
         if not (isinstance(e, ast.Constant) and isinstance(e.value, str) and len(e.value) > 1 and e.value[0] in "-+"):
             return None
