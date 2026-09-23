@@ -1001,22 +1001,42 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
 
 const pkgRequire = createRequire(path.resolve(process.cwd(), "package.json"));   // vscode-extension/: esbuild.js and its esbuild, as editor-lazy.test.ts requires them
 const ROOT = path.resolve(process.cwd(), "..");
-const MODULE_SUFFIX = /\.(ts|mts|cts|js|mjs|cjs)$/;
-const TEST_OR_TYPES = /\.(test|d)\.[mc]?ts$/;
+const MODULE_SUFFIX = /\.(ts|mts|cts|tsx|js|mjs|cjs|jsx)$/;   // the partitions' module class: every suffix the compiler parses (a .tsx or .jsx under its own ScriptKind)
+const TEST_OR_TYPES = /\.(test|d)\.([mc]?ts|tsx)$/;             // the listing's tests-and-types class: a test of any module suffix (`.test.tsx` included) and a `.d.ts`
+const STYLE_SUFFIX = /\.css$/;                                   // the styles class: the page stylesheets among the bundles' inputs, not modules
+const FIXTURE_DIR = /^ui\/webview\/anchor-map-fixtures\//;      // the listing's one non-module directory, the anchor map's fixtures (.md, .json, .py, .html, .csv, .svg and a .gitattributes today)
+/** A PARTITION, never a filter (the maintainer's round 7 ruling, extra7-1): every file goes to the first class whose test matches it, and a
+ *  file no class takes is a red naming it and its suffix, so a file of a kind the census has not named (a `.tsx` module a page bundle loads,
+ *  a stylesheet of a new suffix, a stray file in the directory) is loud where a suffix filter dropped it in silence. */
+function partition(files: string[], classes: Array<[string, RegExp]>, where: string): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const [k] of classes) out[k] = [];
+  const rest: string[] = [];
+  for (const f of files) { const c = classes.find(([, re]) => re.test(f)); if (c) out[c[0]].push(f); else rest.push(f); }
+  assert.deepEqual(rest, [], where + ": every file is in one of the named classes (" + classes.map(([k]) => k).join(", ") + "); a file none takes is named here with its suffix and is given a class or excluded by name, never dropped: " + rest.map((f) => f + " (" + (path.extname(f) || "no suffix") + ")").join(", "));
+  return out;
+}
 /** The modules the page bundles load: esbuild's metafile of the shipped `webview` config (vscode-extension/esbuild.js exports the config and
  *  emits no metafile of its own) built in memory, nothing written, the shape ui/webview/editor-lazy.test.ts builds the editor chunk with;
  *  every input keyed by its path relative to vscode-extension/, made repo-relative here with forward slashes. Inputs under node_modules are
- *  third-party and left out; the `.css` inputs are not modules. Built once, in the census cell, its one caller (the memo below holds that
+ *  third-party and left out; the rest are partitioned into modules and styles (the `.css` inputs), the remainder asserted empty. Built once,
+ *  in the census cell, its one caller (the memo below holds that
  *  build, so a failed build rejects the promise the census awaits and reds that cell with esbuild's message); the witness cell runs
  *  synthetic sources through the walker (censusViewWrites) and needs no build. */
 let bundledP: Promise<string[]> | null = null;
 function bundledModules(): Promise<string[]> {
   if (!bundledP) bundledP = (async () => {
-    const { webview } = pkgRequire("./esbuild.js") as { webview: import("esbuild").BuildOptions };
+    const { webview } = pkgRequire("./esbuild.js") as { webview?: import("esbuild").BuildOptions };
+    // the config is checked before it is spread (a spread of undefined is legal) and the build's metafile before it is read: esbuild resolves
+    // an undefined config or an empty entry list with zero inputs and zero errors, and the census would then red three assertions later
+    // blaming modules that stopped being loaded, with the figure 0 loaded in a parenthesis (the maintainer's round 7 ruling, extra7-2)
+    assert.ok(webview && typeof webview === "object" && Array.isArray(webview.entryPoints) && webview.entryPoints.length > 0, "vscode-extension/esbuild.js's `webview` export, the shipped page config this census builds in memory, is an object with a non-empty entryPoints array (a renamed export or an emptied entry list builds nothing): got " + (webview && typeof webview === "object" ? "an object whose entryPoints is " + JSON.stringify(webview.entryPoints) : String(webview)));
     const esbuild = pkgRequire("esbuild") as typeof import("esbuild");
     const r = await esbuild.build({ ...webview, write: false, metafile: true, logLevel: "silent" });
-    return Object.keys(r.metafile!.inputs).filter((k) => !k.includes("node_modules/") && MODULE_SUFFIX.test(k))
-      .map((k) => path.relative(ROOT, path.resolve(process.cwd(), k)).split(path.sep).join("/")).sort();
+    const inputs = Object.keys(r.metafile!.inputs);
+    assert.ok(inputs.length > 0, "the in-memory build of the shipped webview config produced nothing: esbuild's metafile lists no input (" + Object.keys(r.metafile!.outputs).length + " outputs, " + r.errors.length + " errors), so there is no loaded set to census");
+    const own = inputs.filter((k) => !k.includes("node_modules/")).map((k) => path.relative(ROOT, path.resolve(process.cwd(), k)).split(path.sep).join("/"));
+    return partition(own, [["modules", MODULE_SUFFIX], ["styles", STYLE_SUFFIX]], "the page bundles' inputs outside node_modules").modules.sort();
   })();
   return bundledP;
 }
@@ -1091,15 +1111,19 @@ test("every module the page bundles load, read with the compiler: the only write
   // WHAT IS READ: every module the page bundles LOAD, derived from esbuild's metafile of the shipped `webview` config built in memory
   // (bundledModules above), each parsed with the compiler, as the hover-class ownership census parses render.ts's bundle
   // (compact-seam-exec.test.ts) and the censuses above parse render.ts. The metafile, and not a directory listing or the compiler's file list
-  // under vscode-extension/tsconfig.json: it is literally the import closure the pages run, recursive by construction and suffix-agnostic
-  // (`.ts`, `.mts`, `.js`, `.mjs`, `.cjs` alike), so it reaches the two `.js` modules in ui/webview and the five modules outside it named
+  // under vscode-extension/tsconfig.json: it is literally the import closure the pages run, recursive by construction and of every suffix,
+  // PARTITIONED (never filtered) into modules, every suffix the compiler parses (`.ts`, `.mts`, `.cts`, `.tsx`, `.js`, `.mjs`, `.cjs`,
+  // `.jsx`; a .tsx or .jsx parsed under its own ScriptKind), and styles (the `.css` inputs), the remainder asserted empty naming any other
+  // suffix (the maintainer's round 7 ruling, extra7-1), so it reaches the two `.js` modules in ui/webview and the five modules outside it named
   // below, which tsconfig's file list (no allowJs; the test helpers under ui/ included) misses, and it leaves out the seven modules in the
-  // directory no page loads, which a listing counts. The directory is read too, recursively, and the two are tied by EQUALITY both ways,
+  // directory no page loads, which a listing counts. The directory is read too, recursively and through the same partition (tests and types,
+  // modules, styles and the anchor map's fixture directory, the remainder asserted empty), and the two are tied by EQUALITY both ways,
   // never a floor: the directory's modules no page bundle loads are exactly the seven named below (reached from tests, from one another and
   // from the viewer bench under tools/, never from a page entry), and the loaded modules outside the directory are exactly the five named
   // below (the timeline panel's prebuilt bundle and four vendored track-changents modules, display.js reached from track-logic.js through
   // the vendored package's own exports map), so a module that starts or stops being loaded, appears outside the directory or leaves it, is
-  // named here or reds, and a module in the directory that a page bundle loads but the listing's filter hides (a test, a `.d.ts`) reds too.
+  // named here or reds, and a module in the directory that a page bundle loads but the listing's partition files under tests and types (a
+  // test, a `.d.ts`) reds too.
   // The walk is the loaded set: a module no page runs mints nothing the kernel receives. The tests are excluded because a test's literal is
   // not a minter the page runs (the bundles are built from the production modules alone), and because this census's own reverse plants and
   // the fixture rows in this file would red it.
@@ -1127,7 +1151,10 @@ test("every module the page bundles load, read with the compiler: the only write
   // loads, is named or reds.
   const loaded = await bundledModules();
   const loadedSet = new Set(loaded);
-  const listed = filesUnder(path.resolve(ROOT, "ui", "webview")).filter((f) => MODULE_SUFFIX.test(f) && !TEST_OR_TYPES.test(f));
+  // the directory's listing through the same partition: tests and types first (a `.test.ts` is a module by suffix and is not listed), then
+  // modules, styles and the anchor map's fixture directory; a file in none of the four reds naming its suffix
+  const parts = partition(filesUnder(path.resolve(ROOT, "ui", "webview")), [["tests and types", TEST_OR_TYPES], ["modules", MODULE_SUFFIX], ["styles", STYLE_SUFFIX], ["the anchor map's fixtures", FIXTURE_DIR]], "the files under ui/webview (recursive)");
+  const listed = parts.modules;
   const UNLOADED = [   // under ui/webview, loaded by no page bundle: reached from tests, from one another and from the viewer bench under tools/, never from a page entry
     "ui/webview/feed-flip.ts",                   // the feed's FLIP-pass predicate, executed by feed-flip.test.ts
     "ui/webview/file-view-outline-fixture.ts",   // the Outline's synthetic fixture, shared by file-view-outline.test.ts and its browser leg
@@ -1144,14 +1171,15 @@ test("every module the page bundles load, read with the compiler: the only write
     "vendor/track-changents/obsidian/src/track-cm.js",       // imported by editor-chunk.ts and track-decorations.ts
     "vendor/track-changents/obsidian/src/track-logic.js",    // imported by track-decorations.ts
   ];
-  assert.deepEqual(listed.filter((m) => !loadedSet.has(m)), UNLOADED, "the modules under ui/webview (recursive) that no page bundle loads are exactly the seven named, reached from tests, from one another and from the viewer bench under tools/ and never from a page entry: a module that stops being loaded, or a named one that starts, or leaves the directory, is named here or reds (" + listed.length + " listed, " + loaded.length + " loaded)");
+  assert.deepEqual(listed.filter((m) => !loadedSet.has(m)), UNLOADED, "the modules under ui/webview (recursive; the listing's module class, every suffix the compiler parses, tests and types apart) that no page bundle loads are exactly the seven named, reached from tests, from one another and from the viewer bench under tools/ and never from a page entry: a module that stops being loaded, or a named one that starts, or leaves the directory, is named here or reds (" + listed.length + " listed, " + loaded.length + " loaded)");
   assert.deepEqual(loaded.filter((m) => !m.startsWith("ui/webview/")), OUTSIDE, "the modules a page bundle loads from outside ui/webview are exactly the five named: a sixth, or one gone from the bundles, reds here");
   const listedSet = new Set(listed);
-  assert.deepEqual(loaded.filter((m) => m.startsWith("ui/webview/") && !listedSet.has(m)), [], "a module under ui/webview that a page bundle loads and the listing's filter hides (a `.test.ts`, a `.d.ts`): the two equalities above compare the listed modules with the loaded ones, so a production import of a test module is named here or reds (the author's fixer pass over the pass after the maintainer's round 6, its verifier (a))");
+  assert.deepEqual(loaded.filter((m) => m.startsWith("ui/webview/") && !listedSet.has(m)), [], "a module under ui/webview that a page bundle loads and the listing's partition files under tests and types (a `.test.ts`, a `.test.tsx`, a `.d.ts`): the two equalities above compare the listed modules with the loaded ones, so a production import of a test module is named here or reds (the author's fixer pass over the pass after the maintainer's round 6, its verifier (a))");
   assert.ok(loadedSet.has("ui/webview/render.ts") && loadedSet.has("ui/webview/scroll-write.ts"), "render.ts and scroll-write.ts are among the loaded modules");
   const modules = loaded;   // the walk IS the derived set
   const c = newViewCensus();
-  for (const m of modules) censusViewWrites(m, m === "ui/webview/render.ts" ? SF : ts.createSourceFile(m, fs.readFileSync(path.resolve(ROOT, m), "utf8"), ts.ScriptTarget.Latest, true, /\.[mc]?js$/.test(m) ? ts.ScriptKind.JS : ts.ScriptKind.TS), c);
+  const kindOf = (m: string): ts.ScriptKind => /\.tsx$/.test(m) ? ts.ScriptKind.TSX : /\.jsx$/.test(m) ? ts.ScriptKind.JSX : /\.[mc]?js$/.test(m) ? ts.ScriptKind.JS : ts.ScriptKind.TS;   // an admitted .tsx or .jsx parses under its own kind: JSX under the TS kind misparses in silence (the maintainer's round 7 ruling, extra7-1)
+  for (const m of modules) censusViewWrites(m, m === "ui/webview/render.ts" ? SF : ts.createSourceFile(m, fs.readFileSync(path.resolve(ROOT, m), "utf8"), ts.ScriptTarget.Latest, true, kindOf(m)), c);
   assert.ok(c.posts >= 20, "the clientDiag posts across the modules, from the trees (" + c.posts + "; " + c.opaque + " with a data the tree cannot attribute: an identifier bound elsewhere, a parameter, a key built from a string value; outside the census and held by the kernel's allowlist and value bound)");
   for (const b of ["scrollWriteRow", "spacerRow", "tailChangeRow", "tailMutRow", "unitChangeRow"]) assert.ok(c.builders.has(b), "a builder scrollDiagRow is handed, by name from render.ts's tree: " + b + " (all: " + [...c.builders].sort().join(", ") + ")");
   const diag = c.sites.filter((s) => c.builders.has(s.owner) || inDataLiteral(c, s));
