@@ -31,8 +31,8 @@
 # job installs. A leg with no line runs only under the Test step, before the job installs a browser.
 # tools/ci-browser-legs.test.mjs (CI's Shell job, no node_modules) runs this script over synthetic trees, with a stub node
 # on PATH that records the node --test call and writes the record a case hands it, and with the real node and the real
-# reporter. `--check` runs the pre-run checks alone and starts no node --test (it does not check that the bundles are built,
-# which the step's run does).
+# reporter. `--check`, read as the first argument alone, runs the pre-run checks alone and starts no node --test (it does
+# not check that the bundles are built, which the step's run does).
 # After node --test it reads the run's record from scripts/ci-browser-legs-reporter.mjs (one line per result, attributed to
 # its bundle by node's own record of the file; node's TAP record names no file for a pass, so it cannot say which leg a pass
 # belongs to) and derives, per rostered leg, that A TEST OF ITS BUNDLE PASSED: at least one result attributed to it is a pass

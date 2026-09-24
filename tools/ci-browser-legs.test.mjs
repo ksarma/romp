@@ -43,27 +43,28 @@
 //   - the script the step calls (vscode-extension/scripts/ci-browser-legs.sh) exists, is executable and runs node --test
 //     over the roster array (no xargs, so node's status is the step's on every platform) with the reporter
 //     scripts/ci-browser-legs-reporter.mjs beside the spec reporter; run on synthetic trees with a stub node on PATH that
-//     records the node --test call and writes the record a case hands it, run through a link to the tree on every platform
-//     (so the post-run read's key on the physical path is held where the temporary directory is no link), it refuses a
-//     missing roster file, a stale line, a duplicate, a missing bundle and a malformed line (nine malformed shapes: six
-//     shown with their whitespace as bash's %q spells it, and three non-canonical spellings), each red naming the line and
-//     the remedy; runs the pre-run checks alone under --check, which refuses a stale, a duplicate and a malformed line as
-//     the step's run does; hands node every line of a roster whose last line has no newline; prints "no legs in the roster"
-//     and starts no node on an empty roster; and after node --test reads the reporter's record and derives, per rostered
-//     leg, that at least one result attributed to it is a pass with no skip or todo, a test and not a suite, and not marked
-//     as node's file-level result, red naming the leg when it has no such pass and no failure outside a todo (todo-only, a
-//     describe() that registers none, a file that registered nothing, a failure inside a todo; a leg with a failure outside
-//     a todo is node's red, passed through); turns a skipped test the record attributes to a rostered bundle into a red
-//     naming the test, its reason and the switch's state in the run (set to 1 as the step has it, or unset as a local run
-//     may); reds a failure inside a todo by name, and a file that failed as a whole by name, worded by node's rule (its
-//     process exited non-zero or was cut at --test-timeout outside any one test's result, a counting pass beside it
-//     included) and pointing at the spec output for the cause; prints the lost-browser remedy beside a leg whose failure
-//     message begins with inBrowser's cannot-launch phrase; and passes node's own failure status through. The two
-//     remedies that move a leg off the step, after an unrun leg and after a skip under the switch, take its line out of
-//     the roster, each read from the script's stderr. The reporter itself is executed here over synthetic
-//     bundles with a real node --test (the shapes above, a bundle that throws at load, and a name holding a tab and a
-//     newline), and so is the composition: the script with the real node and the real reporter over those shapes as
-//     rostered legs, and over a leg whose test passes and whose error comes after the test ended;
+//     records the node --test call and writes the record a case hands it, run through a link to the tree on every
+//     platform (so the post-run read's key on the physical path is held where the temporary directory is no link), it
+//     refuses a missing roster file, a stale line, a duplicate, a missing bundle and a malformed line (nine malformed
+//     shapes: six shown with their whitespace as bash's %q spells it, and three non-canonical spellings), each red naming
+//     the line and the remedy; runs the pre-run checks alone under --check (the script reads it as its first argument
+//     alone), which refuses a stale, a duplicate and a malformed line as the step's run does; hands node every line of a
+//     roster whose last line has no newline; prints "no legs in the roster" and starts no node on an empty roster; and
+//     after node --test reads the reporter's record and derives, per rostered leg, that at least one result attributed to
+//     it is a pass with no skip or todo, a test and not a suite, and not marked as node's file-level result, red naming
+//     the leg when it has no such pass and no failure outside a todo (todo-only, a describe() that registers none, a file
+//     that registered nothing, a failure inside a todo; a leg with a failure outside a todo is node's red, passed
+//     through); turns a skipped test the record attributes to a rostered bundle into a red naming the test, its reason
+//     and the switch's state in the run (set to 1 as the step has it, or unset as a local run may); reds a failure inside
+//     a todo by name, and a file that failed as a whole by name, worded by node's rule (its process exited non-zero or
+//     was cut at --test-timeout outside any one test's result, a counting pass beside it included) and pointing at the
+//     spec output for the cause; prints the lost-browser remedy beside a leg whose failure message begins with
+//     inBrowser's cannot-launch phrase; and passes node's own failure status through. The two remedies that move a leg
+//     off the step, after an unrun leg and after a skip under the switch, take its line out of the roster, each read from
+//     the script's stderr. The reporter itself is executed here over synthetic bundles with a real node --test (the
+//     shapes above, a bundle that throws at load, and a name holding a tab and a newline), and so is the composition: the
+//     script with the real node and the real reporter over those shapes as rostered legs, and over a leg whose test
+//     passes and whose error comes after the test ended;
 //   - the phrase the script reads a lost browser by is a literal in ui/webview/real-viewer-leg.ts's source, the SHARED
 //     PHRASE between the helper and the script, so a reword on either side is red here rather than a remedy dropped in
 //     silence. That pin reads text and guards the phrase alone: that inBrowser FAILS with it under the switch and skips
