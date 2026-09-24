@@ -9,9 +9,10 @@
 //   4 the directive: skip, todo, or - (a skipped test reports as a pass with a skip; a todo test reports as a pass or a fail with
 //     a todo, and node counts neither as a failure, so a real assertion failure inside a todo leaves node's exit at 0);
 //   5 file-level or test: node enqueues one test per FILE (nesting 0, line 1, column 1, named by the path argument as node
-//     received it) and reports it as a pass only when the file registered no test of its own, and as a fail when the file timed
-//     out under --test-timeout or threw at load; so a file-level pass is a leg that ran nothing, and a file-level fail names the
-//     file that failed as a whole;
+//     received it) and reports it as a pass only when the file registered no test of its own, and as a fail by node's rule for
+//     failing a file as a whole: the file's process exits non-zero or is cut at --test-timeout outside any one test's result,
+//     whatever the cause (the spec output carries it); so a file-level pass is a leg that ran nothing, and a file-level fail
+//     names the file that failed as a whole;
 //   6 the test's name; 7 the skip or todo reason of a pass, or the failure's message (the cause's, when node wrapped it);
 //   8 the failure type (testCodeFailure, testTimeoutFailure, ...) or -.
 // A backslash, tab, newline or carriage return inside a name or a message is written \\ \t \n \r, so a line is one result.

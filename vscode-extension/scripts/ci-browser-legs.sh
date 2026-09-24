@@ -6,8 +6,9 @@
 # and the reason, instead of skipping. Before node --test this script checks the roster file alone, and every red names
 # the line (or the file) and what to do:
 #   - the roster file is not in vscode-extension/: restore it;
-#   - a malformed line (a bundle path is out-tests/<dir>/<name>.test.js; a trailing space, tab or carriage return counts),
-#     printed with its whitespace visible, as bash's %q spells it: fix the line;
+#   - a malformed line (a bundle path is out-tests/<dir>/<name>.test.js and canonical, no empty, . or .. segment, since node
+#     resolves a bundle to its canonical spelling and a line spelled otherwise matches no result of the run; a trailing space,
+#     tab or carriage return counts), printed with its whitespace visible, as bash's %q spells it: fix the line;
 #   - a duplicate line: remove one;
 #   - a line whose source (ui/webview/<name>.test.ts for out-tests/ui/webview/<name>.test.js) is not in the tree, because
 #     the source moved or was deleted: fix the line;
@@ -43,7 +44,8 @@
 # not run; a leg whose results all fail is node's red, passed through. Beside that property: a test skipped is red naming
 # the test, its reason and the switch's state in the run (with the switch unset, as a local run may have it, the remedy is
 # to run with it set); a failure inside a todo is red (node discards it: # fail 0, exit 0); a file that failed as a whole
-# (node's file-level result failing: a timeout under the run's --test-timeout, or a throw at load) is red naming the file;
+# (node's file-level result failing: node fails a file as a whole when its process exits non-zero or is cut at the run's
+# --test-timeout outside any one test's result) is red naming the file and pointing at the spec output above for the cause;
 # and a failed test whose message BEGINS with the phrase inBrowser fails with when it cannot launch (the switch's name; a
 # message that merely quotes that phrase after other text, as a leg embedding a child run's output does, is an ordinary
 # failure) is printed beside its leg with the remedy: the runner lost its browser, check the Chromium install step. One pass
@@ -67,13 +69,23 @@ if [ ! -f "$ROSTER" ]; then echo "ci-browser-legs: $ROSTER is not in vscode-exte
 fail=0
 red() { echo "ci-browser-legs: $*" >&2; fail=1; }
 source_of() { local rel=${1#out-tests/}; printf '%s/%s.test.ts' "$ROOT" "${rel%.test.js}"; }
-well_formed() { [[ "$1" =~ ^out-tests/[^[:space:]]+\.test\.js$ ]]; }
+# a bundle path: out-tests/<dir>/<name>.test.js with no whitespace, and canonical, every segment after out-tests/ non-empty
+# and neither . nor .., the spelling normalizing leaves unchanged. Node resolves a bundle to that spelling and the post-run
+# read keys a line by it; the duplicate check below reads only the lines that pass here, so it compares canonical paths.
+well_formed() {
+  [[ "$1" =~ ^out-tests/[^[:space:]]+\.test\.js$ ]] || return 1
+  local seg rest="${1#out-tests/}/"
+  while [ -n "$rest" ]; do
+    seg=${rest%%/*}; rest=${rest#*/}
+    case "$seg" in ''|.|..) return 1;; esac
+  done
+}
 # the lines seen so far, one "bundle<TAB>line number" per line, for the duplicate check
 roster_seen=""
 seen_at() { awk -v k="$1" -F '\t' '$1 == k { print $2; exit }' <<<"$2"; }
 malformed() {   # $1 the file, $2 the line number, $3 the LINE: red with the whitespace visible
   local shown; shown=$(printf '%q' "$3")
-  red "$1 line $2: $shown is not a bundle path (out-tests/<dir>/<name>.test.js; a trailing space, tab or carriage return counts and is shown here as bash's %q spells it): fix the line"
+  red "$1 line $2: $shown is not a bundle path (out-tests/<dir>/<name>.test.js in its canonical spelling, no empty, . or .. segment; a trailing space, tab or carriage return counts and is shown here as bash's %q spells it): fix the line"
 }
 
 legs=()
@@ -147,7 +159,7 @@ while IFS=$'\t' read -r kind leg a b c d e f g; do
       echo "ci-browser-legs: $leg: '$a' failed inside a todo ($b): node discards the failure (# fail 0, exit 0), so the step would read green over a broken test: remove the todo, or fix the test and remove it" >&2
       [ "$status" -ne 0 ] || status=1;;
     FILEFAIL)
-      echo "ci-browser-legs: $leg failed as a whole ($a: $b): a file that timed out under node's --test-timeout, or threw at load, ran no test that counts" >&2
+      echo "ci-browser-legs: $leg failed as a whole ($a: $b): node fails a file as a whole when its process exits non-zero or is cut at the run's --test-timeout outside any one test's result: read the spec output above for the cause" >&2
       [ "$status" -ne 0 ] || status=1;;
     LOST)
       echo "ci-browser-legs: $leg: '$a' failed under $switch_state because inBrowser could not launch ($b): the runner lost its browser: check the Chromium install step" >&2

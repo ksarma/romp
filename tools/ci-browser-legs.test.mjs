@@ -15,8 +15,9 @@
 //   - the step carries a timeout-minutes of its own that fits the margin under the job's cap at the measured head (the job's
 //     comment derives it and names the same number), and the script passes node a --test-timeout above the largest own
 //     { timeout } a rostered leg passes and under the step's bound, so a hung leg fails by name before the step is cut;
-//   - the roster is well formed: every line is a bundle path (out-tests/<dir>/<name>.test.js), no line is duplicated, and
-//     every line names a source that exists in the tree;
+//   - the roster is well formed: every line is a bundle path in its canonical spelling (out-tests/<dir>/<name>.test.js with
+//     no empty, . or .. segment, the spelling path.posix.normalize leaves unchanged, read by wellFormed), no line is
+//     duplicated, and every line names a source that exists in the tree;
 //   - each home of the roster rule, read in its named section (the roster's # lines, the Browser legs step's own comments,
 //     the script's header, CONTRIBUTING.md whole), states it in the same words: the rule, who checks it, that nothing reads a
 //     leg's source for it, its examples as examples (the list after "examples, not the whole set:" holds exactly the
@@ -29,20 +30,25 @@
 //   - the script the step calls (vscode-extension/scripts/ci-browser-legs.sh) exists, is executable and runs node --test
 //     over the roster array (no xargs, so node's status is the step's on every platform) with the reporter
 //     scripts/ci-browser-legs-reporter.mjs beside the spec reporter; run on synthetic trees with a stub node on PATH that
-//     records the node --test call and writes the record a case hands it, it refuses a missing roster file, a stale line, a
-//     duplicate, a missing bundle and a malformed line (six shapes, each shown with its whitespace visible), each red naming
-//     the line and the remedy; runs the pre-run checks alone under --check; prints "no legs in the roster" and starts no
-//     node on an empty roster; and after node --test reads the reporter's record and derives, per rostered leg, that at
-//     least one result attributed to it is a pass with no skip or todo, a test and not a suite, and not node's file-level
-//     result, red naming the leg otherwise (todo-only, a describe() that registers none, a file that registered nothing, a
-//     failure inside a todo); turns a skipped test into a red naming the test, its reason and the switch's state in the run
-//     (set to 1 as the step has it, or unset as a local run may); reds a failure inside a todo and a file that failed as a
-//     whole (timed out, or threw at load) by name; prints the lost-browser remedy beside a leg whose failure names the
-//     switch; and passes node's own failure status through. The two remedies that move a leg off the step, after an unrun
-//     leg and after a skip under the switch, take its line out of the roster, each read from the script's stderr. The
-//     reporter itself is executed here over synthetic bundles with a real node --test (the shapes above, a bundle that throws
-//     at load, and a name holding a tab and a newline), and so is the composition: the script with the real node and the
-//     real reporter over those shapes as rostered legs;
+//     records the node --test call and writes the record a case hands it, run through a link to the tree on every platform
+//     (so the post-run read's key on the physical path is held where the temporary directory is no link), it refuses a
+//     missing roster file, a stale line, a duplicate, a missing bundle and a malformed line (nine malformed shapes: six
+//     shown with their whitespace as bash's %q spells it, and three non-canonical spellings), each red naming the line and
+//     the remedy; runs the pre-run checks alone under --check, which refuses a stale, a duplicate and a malformed line as
+//     the step's run does; hands node every line of a roster whose last line has no newline; prints "no legs in the roster"
+//     and starts no node on an empty roster; and after node --test reads the reporter's record and derives, per rostered
+//     leg, that at least one result attributed to it is a pass with no skip or todo, a test and not a suite, and not node's
+//     file-level result, red naming the leg otherwise (todo-only, a describe() that registers none, a file that registered
+//     nothing, a failure inside a todo); turns a skipped test into a red naming the test, its reason and the switch's state
+//     in the run (set to 1 as the step has it, or unset as a local run may); reds a failure inside a todo by name, and a
+//     file that failed as a whole by name, worded by node's rule (its process exited non-zero or was cut at --test-timeout
+//     outside any one test's result, a counting pass beside it included) and pointing at the spec output for the cause;
+//     prints the lost-browser remedy beside a leg whose failure names the switch; and passes node's own failure status
+//     through. The two remedies that move a leg off the step, after an unrun leg and after a skip under the switch, take
+//     its line out of the roster, each read from the script's stderr. The reporter itself is executed here over synthetic
+//     bundles with a real node --test (the shapes above, a bundle that throws at load, and a name holding a tab and a
+//     newline), and so is the composition: the script with the real node and the real reporter over those shapes as
+//     rostered legs, and over a leg whose test passes and whose error comes after the test ended;
 //   - the phrase the script reads a lost browser by is a literal in ui/webview/real-viewer-leg.ts's source, the SHARED
 //     PHRASE between the helper and the script, so a reword on either side is red here rather than a remedy dropped in
 //     silence. That pin reads text and guards the phrase alone: that inBrowser FAILS with it under the switch and skips
@@ -223,7 +229,12 @@ test('no step before the Test step installs a Playwright browser or restores its
 
 // ── the roster and the tree ───────────────────────────────────────────────────────────────────────────────
 
-const WELL_FORMED = /^out-tests\/\S+\.test\.js$/;
+/** A roster line is a bundle path in its canonical spelling: out-tests/<dir>/<name>.test.js with no whitespace, and the
+ *  spelling path.posix.normalize leaves unchanged (no empty, . or .. segment). Node resolves a bundle to that spelling, so a
+ *  line spelled otherwise matches no result of the run, and two spellings of one bundle pass a check keyed on spelling. The
+ *  roster test below and the refusal case call this one check; the script's well_formed states it as a segment rule. */
+const BUNDLE_SHAPE = /^out-tests\/\S+\.test\.js$/;
+const wellFormed = (line) => BUNDLE_SHAPE.test(line) && path.posix.normalize(line) === line;
 const sourceOf = (bundle) => path.join(REPO, bundle.replace(/^out-tests\//, '').replace(/\.test\.js$/, '.test.ts'));
 /** Roster lines: [{ n, bundle }], comments and blanks dropped. */
 function parseRoster(text) {
@@ -237,7 +248,7 @@ test('the roster is well formed: each line is a bundle path naming a source in t
   assert.ok(roster.length > 0, ROSTER + ' holds at least one line (the switch test is rostered, below): an empty roster would pass the loop below over nothing');
   const seen = new Map();
   for (const e of roster) {
-    assert.match(e.bundle, WELL_FORMED, ROSTER + ' line ' + e.n + ' (' + JSON.stringify(e.bundle) + '): a line is a bundle path, out-tests/<dir>/<name>.test.js (a trailing space, tab or carriage return counts; the quoting shows it)');
+    assert.ok(wellFormed(e.bundle), ROSTER + ' line ' + e.n + ' (' + JSON.stringify(e.bundle) + '): a line is a bundle path in its canonical spelling, out-tests/<dir>/<name>.test.js with no empty, . or .. segment (a trailing space, tab or carriage return counts; the quoting shows it)');
     assert.ok(!seen.has(e.bundle), where(ROSTER, e) + ' duplicates line ' + seen.get(e.bundle) + ': remove one');
     seen.set(e.bundle, e.n);
     const src = sourceOf(e.bundle);
@@ -356,6 +367,10 @@ test('the CI-only files under vscode-extension/ (the roster, the script and the 
 
 // ── the script ────────────────────────────────────────────────────────────────────────────────────────
 
+/** The failed-as-a-whole red's words after the file and node's failure: node's rule for failing a file as a whole, which
+ *  holds whatever the cause, and where the cause is (the spec output above the red), so the red lists no causes to go stale. */
+const FILEFAIL_RULE = 'node fails a file as a whole when its process exits non-zero or is cut at the run\'s --test-timeout outside any one test\'s result: read the spec output above for the cause';
+
 function bash(args, opts = {}) {
   const r = spawnSync('bash', args, { encoding: 'utf8', ...opts });
   assert.equal(r.error, undefined, 'bash runs: ' + (r.error && r.error.message));
@@ -390,11 +405,19 @@ test('the script exists, is executable, runs node --test over the roster array (
  *  the file) that runs the script with the switch set to 1 as the step does (stub.switch names another value; null runs it
  *  unset, as a local run may; stub.check runs --check; stub.report is the record the stub writes; stub.exit its exit;
  *  stub.real runs the real node); `node` in its result is the argument list of the node --test call without the reporter
- *  flags. `ext` is the physical path of the tree's vscode-extension, as node spells a bundle in its record, and
- *  `rec(bundle, fields...)` spells one record line for that bundle (the reporter's eight fields, the path first). */
+ *  flags. The tree sits in a base directory beside a link to it, and `root` is the link: the script runs through it on every
+ *  platform, so its post-run read, which keys the roster's lines by the physical path (pwd -P) as node resolves a bundle, is
+ *  held on a plain temporary directory too (ubuntu, where the Shell job runs), not only where os.tmpdir() sits behind a link;
+ *  a key on the logical path reds every leg that passed. `ext` is the physical path of the tree's vscode-extension, as node
+ *  spells a bundle in its record, and `rec(bundle, fields...)` spells one record line for that bundle (the reporter's eight
+ *  fields, the path first). */
 function syntheticTree(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cbl-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'cbl-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(base, 'tree'));
+  const root = path.join(base, 'link');
+  fs.symlinkSync(path.join(base, 'tree'), root, 'dir');
+  assert.notEqual(fs.realpathSync(root), root, 'the synthetic tree is reached through a link, so the script\'s logical and physical paths differ');
   const ext = path.join(root, 'vscode-extension');
   for (const d of ['vscode-extension/scripts', 'vscode-extension/out-tests/ui/webview', 'ui/webview', 'bin']) fs.mkdirSync(path.join(root, d), { recursive: true });
   fs.copyFileSync(SCRIPT, path.join(ext, 'scripts', 'ci-browser-legs.sh'));
@@ -438,8 +461,8 @@ function syntheticTree(t) {
   return { run, root, ext: real, rec, A, B };
 }
 
-test('the script runs the rostered legs through node --test when the roster is well formed and current, runs the pre-run checks alone under --check (which does not require the bundle), and prints "no legs in the roster" and starts no node on an empty roster', (t) => {
-  const { run, rec, A, B } = syntheticTree(t);
+test('the script runs the rostered legs through node --test when the roster is well formed and current, a last line with no newline included, runs the pre-run checks alone under --check (which does not require the bundle), and prints "no legs in the roster" and starts no node on an empty roster', (t) => {
+  const { run, root, rec, A, B } = syntheticTree(t);
   // the stub's record: a's one test passed (with no record a rostered leg is red as unrun, the property the post-run test executes)
   const ok = run('# header\n\n' + A + '\n', { report: rec(A, 'pass', 'test', '-', 'test', 'leg a opens the page', '', '-') });
   assert.equal(ok.status, 0, 'a well-formed roster whose sources and bundles are present runs clean, exit 0; stderr:\n' + ok.err);
@@ -456,9 +479,19 @@ test('the script runs the rostered legs through node --test when the roster is w
   assert.equal(empty.status, 0, 'an empty roster exits 0 (the guard, not a red); stderr:\n' + empty.err);
   assert.ok(empty.out.includes('no legs in the roster'), 'the guard says so: ' + JSON.stringify(empty.out));
   assert.equal(empty.node, null, 'node was not started: with no file arguments node --test would run its default glob');
+  // a last line with no newline, which the roster loop's guard reads (read fails at the end of the file with the line filled):
+  // node receives every line. Without the guard a one-line roster reads as empty and a two-line roster drops its last leg,
+  // both exiting 0 in silence, so the assertion is on the lines node received and not on the exit alone
+  fs.writeFileSync(path.join(root, 'vscode-extension', B), '');   // b's bundle, so both lines of the two-line roster run
+  const passes = rec(A, 'pass', 'test', '-', 'test', 'leg a opens the page', '', '-') + rec(B, 'pass', 'test', '-', 'test', 'leg b opens the page', '', '-');
+  const oneLine = run(A, { report: passes });
+  const twoLines = run(A + '\n' + B, { report: passes });
+  assert.deepEqual([oneLine.node, twoLines.node], [['--test', A], ['--test', A, B]], 'a roster whose last line has no newline hands node every line, a one-line roster and a two-line roster alike (the exit alone does not tell: the empty-roster path exits 0 too); stdout:\n' + oneLine.out + twoLines.out);
+  assert.equal(oneLine.status, 0, 'the one-line roster with no final newline runs clean; stderr:\n' + oneLine.err);
+  assert.equal(twoLines.status, 0, 'the two-line roster whose last line has no newline runs clean; stderr:\n' + twoLines.err);
 });
 
-test('the script refuses, naming the line and the remedy, on: a missing roster file, a stale line, a duplicate, a missing bundle, and a malformed line (six shapes, each shown with its whitespace visible as bash\'s %q spells it); every refusal after the roster is read ends with the summary line, and no leg ran', (t) => {
+test('the script refuses, naming the line and the remedy, on: a missing roster file, a stale line, a duplicate, a missing bundle, and a malformed line (nine malformed shapes: six shown with their whitespace as bash\'s %q spells it, and three non-canonical spellings, a dot segment, a doubled slash and a dot-dot segment, one of them beside the canonical spelling of the same bundle); every refusal after the roster is read ends with the summary line, and no leg ran; --check refuses a stale line, a duplicate and a malformed line the same way', (t) => {
   const { run, A, B } = syntheticTree(t);
   const C = 'out-tests/ui/webview/c-browser.test.js';
   const SUMMARY = 'ci-browser-legs: the roster is malformed or stale, or a rostered bundle is not built (above); no leg ran';
@@ -475,15 +508,36 @@ test('the script refuses, naming the line and the remedy, on: a missing roster f
   refused(run('# header\n' + A + '\n' + C + '\n'), ROSTER + ' line 3: \'' + C + '\' names ui/webview/c-browser.test.ts, which is not in the tree (the source moved or was deleted): fix the roster line');
   refused(run(A + '\n' + A + '\n'), ROSTER + ' line 2: \'' + A + '\' duplicates line 1: remove one');
   refused(run(B + '\n'), ROSTER + ' line 1: \'' + B + '\' is not under out-tests/ (the Test step\'s npm test builds it; locally, node esbuild.js --tests): build the bundles before this step');
-  // a malformed line: the LINE is shown as bash's %q spells it, so an invisible cause (a carriage return, a tab, a trailing
-  // space, leading whitespace) is visible in the red: a source path in place of a bundle path, a carriage return at the end, a
-  // tab and pasted text after the path, a leading tab, spaces then a tab before the path, and a trailing space
-  refused(run('ui/webview/a-browser.test.ts\n'), ROSTER + ' line 1: ui/webview/a-browser.test.ts is not a bundle path (out-tests/<dir>/<name>.test.js; a trailing space, tab or carriage return counts and is shown here as bash\'s %q spells it): fix the line');
+  // a malformed line, nine shapes. Three non-canonical spellings of a bundle that is present: node resolves each to the
+  // canonical spelling, so the post-run read would attribute no result to the line and red a leg that passed, and a
+  // duplicate check keyed on spelling would pass one bundle rostered twice. A bundle path is canonical (no empty, . or ..
+  // segment), so each is malformed, the tree test's wellFormed first, then the script, alone and beside the canonical line
+  const DOT = 'out-tests/./ui/webview/a-browser.test.js', SLASHES = 'out-tests/ui//webview/a-browser.test.js', DOTDOT = 'out-tests/ui/../ui/webview/a-browser.test.js';
+  for (const line of [DOT, SLASHES, DOTDOT]) assert.equal(wellFormed(line), false, 'the tree test\'s check refuses ' + JSON.stringify(line) + ', which path.posix.normalize spells ' + JSON.stringify(path.posix.normalize(line)) + ': a bundle path is canonical');
+  assert.equal(wellFormed(A), true, 'the tree test\'s check admits the canonical spelling ' + A);
+  refused(run(DOT + '\n'), ROSTER + ' line 1: ' + DOT + ' is not a bundle path (out-tests/<dir>/<name>.test.js in its canonical spelling, no empty, . or .. segment;');
+  refused(run(SLASHES + '\n'), ROSTER + ' line 1: ' + SLASHES + ' is not a bundle path');
+  refused(run(DOTDOT + '\n'), ROSTER + ' line 1: ' + DOTDOT + ' is not a bundle path');
+  refused(run(A + '\n' + DOT + '\n'), ROSTER + ' line 2: ' + DOT + ' is not a bundle path');
+  // six more, each LINE shown as bash's %q spells it, so an invisible cause (a carriage return, a tab, a trailing space,
+  // leading whitespace) is visible in the red: a source path in place of a bundle path, a carriage return at the end, a tab and
+  // pasted text after the path, a leading tab, spaces then a tab before the path, and a trailing space
+  refused(run('ui/webview/a-browser.test.ts\n'), ROSTER + ' line 1: ui/webview/a-browser.test.ts is not a bundle path (out-tests/<dir>/<name>.test.js in its canonical spelling, no empty, . or .. segment; a trailing space, tab or carriage return counts and is shown here as bash\'s %q spells it): fix the line');
   refused(run(A + '\r\n'), ROSTER + ' line 1: $\'' + A + '\\r\' is not a bundle path');
   refused(run(A + '\tpasted text\n'), ROSTER + ' line 1: $\'' + A + '\\tpasted text\' is not a bundle path');
   refused(run('\t' + A + '\n'), ROSTER + ' line 1: $\'\\t' + A + '\' is not a bundle path');
   refused(run('  \t' + A + '\n'), ROSTER + ' line 1: $\'  \\t' + A + '\' is not a bundle path');
   refused(run(A + ' \n'), ROSTER + ' line 1: ' + A + '\\  is not a bundle path');
+  // --check runs the same pre-run checks and skips only the bundle check: a stale line, a duplicate and a malformed line are
+  // each refused there as in the step's run (exit 1, the named red, the summary line, no node), with no agreement line
+  const refusedUnderCheck = (roster, needle) => {
+    const r = run(roster, { check: true });
+    refused(r, needle);
+    assert.ok(!r.out.includes('the roster is well formed'), '--check prints no agreement line after a refusal:\n' + r.out);
+  };
+  refusedUnderCheck('# header\n' + A + '\n' + C + '\n', ROSTER + ' line 3: \'' + C + '\' names ui/webview/c-browser.test.ts, which is not in the tree (the source moved or was deleted): fix the roster line');
+  refusedUnderCheck(A + '\n' + A + '\n', ROSTER + ' line 2: \'' + A + '\' duplicates line 1: remove one');
+  refusedUnderCheck('ui/webview/a-browser.test.ts\n', ROSTER + ' line 1: ui/webview/a-browser.test.ts is not a bundle path');
 });
 
 test('after node --test the script derives per rostered leg that at least one attributable pass ran, red otherwise (todo-only, a describe() that registers none, a file that registered nothing, a failure inside a todo); reds a skipped test naming the test, its reason and the switch\'s state; reds a failure inside a todo and a file that failed as a whole by name; prints the lost-browser remedy beside a leg whose failure names the switch; passes node\'s status through; the unrun and the skip remedies take the line out of the roster', (t) => {
@@ -537,10 +591,18 @@ test('after node --test the script derives per rostered leg that at least one at
   const two = run(A + '\n' + B + '\n', { report: PASS + rec(B, 'pass', 'test', 'todo', 'test', 'leg b todo', '', '-') });
   assert.equal(two.status, 1, 'two rostered legs, one that ran nothing: exit 1; stderr:\n' + two.err);
   assert.ok(two.err.includes('ci-browser-legs: ' + B + ': no test of this leg passed') && !two.err.includes('ci-browser-legs: ' + A + ': no test'), 'the leg that ran nothing is named and the one that passed is not:\n' + two.err);
-  // a file that failed as a whole (node's file-level result failing: a timeout under --test-timeout, or a throw at load)
+  // a file that failed as a whole: node's file-level result failing, which node reports when the file's process exits
+  // non-zero or is cut at --test-timeout outside any one test's result; the red states that rule and points at the spec
+  // output for the cause, whatever the cause was, and says nothing of how many tests counted. First a counting pass beside a
+  // file-level timeout (a later test hung, or an open handle kept the process alive to the bound: the record cannot say
+  // which): red by node's rule, the pass counted, so no unrun red and no line saying the file ran no test that counts
+  const passThenCut = run(A + '\n', { report: PASS + rec(A, 'fail', 'test', '-', 'file-level', A, 'test timed out after 240000ms', 'testTimeoutFailure'), exit: 1 });
+  assert.equal(passThenCut.status, 1, 'a file cut at the bound after a counting pass is red; stderr:\n' + passThenCut.err);
+  assert.ok(passThenCut.err.includes('ci-browser-legs: ' + A + ' failed as a whole (testTimeoutFailure: test timed out after 240000ms): ' + FILEFAIL_RULE), 'a file cut at --test-timeout after a counting pass is red naming the file and the failure type, worded by node\'s rule and pointing at the spec output for the cause:\n' + passThenCut.err);
+  assert.ok(!passThenCut.err.includes('no test of this leg passed') && !passThenCut.err.includes('ran no test that counts'), 'the pass counts: no unrun red, and no line says the file ran no test that counts:\n' + passThenCut.err);
   const timedOut = run(A + '\n', { report: rec(A, 'fail', 'test', '-', 'file-level', A, 'test timed out after 300000ms', 'testTimeoutFailure'), exit: 1 });
   assert.equal(timedOut.status, 1, 'node\'s failure stands');
-  assert.ok(timedOut.err.includes('ci-browser-legs: ' + A + ' failed as a whole (testTimeoutFailure: test timed out after 300000ms): a file that timed out under node\'s --test-timeout, or threw at load, ran no test that counts'), 'a file that failed as a whole is red naming the file and the failure type:\n' + timedOut.err);
+  assert.ok(timedOut.err.includes('ci-browser-legs: ' + A + ' failed as a whole (testTimeoutFailure: test timed out after 300000ms): ' + FILEFAIL_RULE), 'a file that failed as a whole is red naming the file and the failure type, worded by node\'s rule:\n' + timedOut.err);
   assert.ok(!timedOut.err.includes('no test of this leg passed'), 'a failed file is node\'s red, not called unrun on top:\n' + timedOut.err);
   // node's own exit status is the step's: the roster array is node's argument list, with no xargs to map it (GNU 123, BSD 1)
   const failed = run(A + '\n', { report: rec(A, 'fail', 'test', '-', 'test', 'leg a opens the page', 'an assertion of the leg\'s own failed', 'testCodeFailure'), exit: 1 });
@@ -616,7 +678,7 @@ test('the reporter, executed with a real node --test over synthetic bundles: one
   assert.ok(lines.every((f) => f.length === 8), 'eight fields per line');
 });
 
-test('the composition, executed: the script with the real node and the real reporter over the shapes as rostered legs reds todo-only, describe-none, nothing and a failure inside a todo by leg, names the skip, prints the lost-browser remedy, reds a file that threw at load as failed as a whole, and passes a clean roster', (t) => {
+test('the composition, executed: the script with the real node and the real reporter over the shapes as rostered legs reds todo-only, describe-none, nothing and a failure inside a todo by leg, names the skip, prints the lost-browser remedy, reds a file that threw at load as failed as a whole, and passes a clean roster; a leg whose test passes and whose error comes after the test ended is red as failed as a whole by node\'s rule, its pass counted', (t) => {
   const { run, root } = syntheticTree(t);
   const S = writeShapes(path.join(root, 'vscode-extension'));
   // each shape's source in the tree, since the script refuses a line whose source is absent (the text decides nothing here)
@@ -637,6 +699,19 @@ test('the composition, executed: the script with the real node and the real repo
   const clean = run(S.describePass + '\n', { real: true });
   assert.equal(clean.status, 0, 'a leg whose test passes inside a describe(): green; stderr: ' + clean.err);
   assert.equal(clean.err, '', 'nothing on stderr');
+  // a leg whose test passes and whose error comes after the test ended (a timer's throw, as an unawaited inBrowser call
+  // rejects under the switch on a runner with no browser): node counts the pass, then fails the file as a whole, since its
+  // process exits non-zero outside any one test's result. The red is node's rule, the pass is counted (no unrun red), and no
+  // line says the file ran no test that counts; the spec output the red points at carries the error
+  const afterEnd = 'out-tests/ui/webview/after-end-browser.test.js';
+  fs.writeFileSync(path.join(root, 'vscode-extension', afterEnd), 'const { test } = require("node:test");\ntest("passes, then its unawaited work fails", () => { setTimeout(() => { throw new Error("a synthetic failure after the test ended"); }, 100); });\n');
+  fs.writeFileSync(path.join(root, 'ui', 'webview', 'after-end-browser.test.ts'), shared + 'test("x", async (t) => { await inBrowser(t, async () => {}); });\n');
+  const late = run(afterEnd + '\n', { real: true });
+  assert.equal(late.status, 1, 'node fails the file whose error came after its test ended, and the script passes that through; stderr:\n' + late.err);
+  const lateRed = late.err.split('\n').find((l) => l.startsWith('ci-browser-legs: ' + afterEnd + ' failed as a whole ('));
+  assert.ok(lateRed !== undefined && lateRed.endsWith('): ' + FILEFAIL_RULE), 'the file whose error came after its test ended is red as failed as a whole, worded by node\'s rule and pointing at the spec output for the cause: ' + JSON.stringify(lateRed) + '; stderr:\n' + late.err);
+  assert.ok(!late.err.includes('no test of this leg passed') && !late.err.includes('ran no test that counts'), 'the leg\'s pass counts: no unrun red, and no line says the file ran no test that counts:\n' + late.err);
+  assert.ok(late.out.includes('a synthetic failure after the test ended'), 'the spec output above the red carries the error the red points at:\n' + late.out);
 });
 
 test('each example the roster rule\'s homes name reads green, executed: the script with the real node and the real reporter over one synthetic rostered leg of each example in EXAMPLES exits 0 with nothing on stderr, each failure marked as it happens; a control that awaits the catch example\'s stand-in for inBrowser with no try reads red with the lost-browser remedy, so that green is the catch\'s doing', (t) => {
