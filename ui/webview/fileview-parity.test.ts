@@ -105,8 +105,10 @@ const RULES = [
   // blocks keyed on the img's attribute, byte-equal in both sheets (file-figure-open.test.ts derives the set by the attribute)
   "@media screen { .fileview-md img[data-fv-figweb]:hover {", "@media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md img[data-fv-figweb] {",
   // the margin at rest on every pointer, 3px up and down and 3px plus 0.3em across the line, so the ring of var(--bg) the two rules
-  // above carry under the outline covers no neighbouring ink (the file review's round 14, correctness-2 with extra5-1 and extra5-2,
-  // the margin measured per axis on the two margin rulings of 2026-09-24), held byte for byte too
+  // above carry under the outline covers no neighbouring ink at the picture's own text size, and where the picture is in smaller
+  // text than an italic or bold italic f glued before it, covers that f's ink only within the bound the sheets' comment states (the
+  // file review's round 14, correctness-2 with extra5-1 and extra5-2, the margin measured per axis on the two margin rulings of
+  // 2026-09-24), held byte for byte too
   "@media screen { .fileview-md img[data-fv-figweb] {",
   // the web control's full opacity at rest, its focus ring off its border, its press cue off, and the dead link holding the dress,
   // dimming by colour (the painted-contrast ask of 2026-09-23): four more one-line screen blocks held byte for byte

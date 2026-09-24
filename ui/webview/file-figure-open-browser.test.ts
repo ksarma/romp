@@ -977,7 +977,8 @@ const SMALLER_BOUND: [number, number] = [1, 4];
  *  glyph, and an italic run glued to a picture in two nested small elements (SMALLER_RUN), held to SMALLER_BOUND. */
 const PANE_NEIGHBOURS: Scene[] = [...RUNS, ...HEADINGS, ["cfloat", "a left float in a note callout", ["the glyph after it"]],
   ["nss", "an italic f run glued to a picture in two nested small elements", GLUED, SMALLER_BOUND]];
-/** The ring covers no neighbouring ink and the dash beside a neighbour reads 3:1 on both sides (the file review's round 14,
+/** The ring covers no neighbouring ink at the picture's own text size, and the ink of a run glued before a picture in smaller text
+ *  only within the scene's bound, and the dash beside a neighbour reads 3:1 on both sides (the file review's round 14,
  *  correctness-2 with extra5-1 and extra5-2, and the margin ruling of 2026-09-24): a box-shadow takes no layout and paints with the
  *  picture in tree order, so the ring covers whatever stands before the picture within its width, and text painted after the picture
  *  paints over the ring, where the dash's outer side reads that text. For each scene the clip around the picture and its neighbours
@@ -1294,7 +1295,8 @@ test("in a browser: a remote picture under the floor (20 by 20, from the second 
         push(theme, "the mark on hover inside a dead link", await paintedRatio(page, "deadbuild", "mark", "hover"));
         // the mark on hover on the grounds its line read against before its ring of var(--bg), each by the worst dash-to-ring read (the
         // file review's round 14, correctness-2 with extra5-1 and extra5-2; FAILS BEFORE the ring: the dark highlight at 2.40:1, its
-        // tint on both sides of the dashes), and the ring on hover covering no neighbouring ink with the dash beside it at 3:1 (ringCoversNoNeighbour)
+        // tint on both sides of the dashes), and the ring on hover covering no neighbouring ink at the picture's own text size with the
+        // dash beside it at 3:1 (ringCoversNoNeighbour)
         for (const [alt, ground] of RING_GROUNDS) {
           await page.mouse.move(5, 5);
           const g = await imgAt(alt);
@@ -1322,7 +1324,7 @@ test("in a browser: a remote picture under the floor (20 by 20, from the second 
       }
       await page.mouse.move(5, 5);
       await page.evaluate(() => document.body.classList.remove("theme-light"));
-      assert.deepEqual(fails, [], "every state a click or a key opens the tab from inside a dead link, the press held included, and the mark on hover on the grounds of a highlight, a table header, an even row and a callout, on a fine pointer, paint the dress at 3:1, and the ring on hover covers no neighbouring ink, the dash beside it at 3:1 (a property pin read off the page):\n" + fails.join("\n"));
+      assert.deepEqual(fails, [], "every state a click or a key opens the tab from inside a dead link, the press held included, and the mark on hover on the grounds of a highlight, a table header, an even row and a callout, on a fine pointer, paint the dress at 3:1, and the ring on hover covers no neighbouring ink at the picture's own text size, the dash beside it at 3:1 (a property pin read off the page):\n" + fails.join("\n"));
       assert.deepEqual(errors, [], "no page errors");
       await page.close();
     });
@@ -1379,8 +1381,8 @@ test("in a browser, under CDP touch emulation (hover none, a coarse pointer) ena
       // the control's own background, the ground the sheet controls (read in both themes: a pixel the border's edge smoothed can
       // match the fill in one theme by chance, never in both)
       assert.equal(dark.get("big")!.outer, "rgb(51, 51, 51)", "dark theme: the pixel above the web control's top border is the picture's own fill");
-      // the ring at rest covers no neighbouring ink, the dash beside it at 3:1 (the file review's round 14, correctness-2 with extra5-1 and
-      // extra5-2, and the margin ruling of 2026-09-24)
+      // the ring at rest covers no neighbouring ink at the picture's own text size, the dash beside it at 3:1 (the file review's
+      // round 14, correctness-2 with extra5-1 and extra5-2, and the margin ruling of 2026-09-24)
       await ringCoversNoNeighbour(page, "dark theme, at rest under touch emulation", fails, (m) => t.diagnostic(m));
       // the theme flipped on the body; the control's border colour TRANSITIONS to the light value (.fileview-btn's 0.12 s
       // border-color ease) while the outline has no transition, so the light read waits for the control's transitionend (bounded)
@@ -1427,7 +1429,7 @@ test("in a browser, under CDP touch emulation (hover none, a coarse pointer) ena
       await pressedLegible(page, "deadcap", "light theme, a mouse press under touch emulation", fails, (m) => t.diagnostic(m));
       await page.evaluate(() => new Promise<void>((done) => { const c = document.querySelectorAll(".fileview-md img")[2].nextElementSibling as HTMLElement; c.addEventListener("transitionend", () => done(), { once: true }); setTimeout(done, 1500); document.body.classList.remove("theme-light"); }));
       await frames(page, 2);
-      assert.deepEqual(fails, [], "every state a tap or a press opens the tab from paints the dress at 3:1, the VS Code bound is exact, and the ring at rest covers no neighbouring ink, the dash beside it at 3:1 (a property pin read off the page):\n" + fails.join("\n"));
+      assert.deepEqual(fails, [], "every state a tap or a press opens the tab from paints the dress at 3:1, the VS Code bound is exact, and the ring at rest covers no neighbouring ink at the picture's own text size, the dash beside it at 3:1 (a property pin read off the page):\n" + fails.join("\n"));
       // the web control at rest at full opacity (a local one keeps 0.8), read after the painted reads so their red comes first
       assert.equal(touch.imgs[2].controlOpacity, "1", "the web control visible at rest at full opacity");
       // the dead link's words, a residual the sheets' comment states and this its witness: the rule dims the anchor's colour, so the
@@ -1514,9 +1516,10 @@ test("in Chromium launched as a trackpad-plus-touchscreen laptop (hover: hover, 
 
 // ── the ring's neighbour pin on the Files pane ─────────────────────────────────────────────────────────────────────────────────
 // (the margin ruling of 2026-09-24, on the file review's round 14, correctness-2 with extra5-1 and extra5-2) The margin keeps the ring
-// off the neighbours on each axis by what they need: across the line, the ink a glyph paints past its own box toward the picture (an
-// f's hook, a slanted run's last letter) and the text a float wraps, which starts at the float's margin box and paints after the
-// picture; up and down, the lines above and below. At a margin of the ring's width on every side the runs of f lost that ink to the
+// off the neighbours on each axis by what they need: across the line, the ink a glyph set in the picture's own text size paints past
+// its own box toward the picture (an f's hook, a slanted run's last letter) and the text a float wraps, which starts at the float's
+// margin box and paints after the picture; up and down, the lines above and below. At a margin of the ring's width on every side the
+// runs of f lost that ink to the
 // ring and the text a note callout wraps beside a left-floated picture painted its first glyph in the ring's outer pixel, where the
 // dash's outer side read it at 2.06:1 dark and 2.91:1 light on the Files pane. The pane's report holds the runs of f the tiny report
 // holds and that float, its words those it wrapped then. Since the second margin ruling of 2026-09-24 the margin across the line is

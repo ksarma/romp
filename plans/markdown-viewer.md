@@ -8515,8 +8515,9 @@ the one the control's dashed border wears at rest (the file review's round 13, u
 under the outline, a box-shadow of `var(--bg)` 3px wide, so both sides of every dash and the gaps between them read that ground
 whatever the page paints behind the picture (inside a ==highlight== the dark theme's dashes had read 2.40:1 against its tint, and a
 table header, an even row or a callout fell under 3:1 on a VS Code editor ground inside the stated bound), with a margin at rest
-under screen on every pointer, 3px up and down and 3px plus 0.3em across the line, each axis the least that keeps the ring off the
-neighbours' ink by screenshot pixels (across the line the ring's 3px and the reach of an italic or bold italic f past its own box
+under screen on every pointer, 3px up and down and 3px plus 0.3em across the line, each axis the least, by screenshot pixels, that
+keeps the ring off neighbouring ink at the picture's own text size (across the line the ring's 3px and the reach of an italic or
+bold italic f past its own box
 toward the picture, 4px at the default text size and more as the text grows, so the margin is 7.485px at the default size and grows
 with the text, in a heading and at every text size, for an f set in the picture's own text size; the em is the picture's, so a
 picture in smaller text than an italic or bold italic f glued before it, inside `<small>`, `<sub>` or `<sup>`, inside two nested

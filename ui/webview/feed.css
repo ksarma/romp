@@ -1983,10 +1983,11 @@ a.fileview-gh-note { border-style: dashed; }
    line's outer side kept the tint). A box-shadow takes no layout and paints with the picture in tree order, so a bare ring covered its
    width of whatever stood before the picture on its line, and text painted after the picture paints over the ring, where the dash's
    outer side reads it. A margin at rest under `screen` on every pointer (a margin keyed on hover moved the picture from under a
-   pointer at its edge, and the hover toggled frame by frame) keeps the ring off the neighbours' ink, each axis the least that does,
-   measured by screenshot pixels on the chat modal, the feed and the Files pane, at rest under touch, on the touchscreen laptop and on
-   hover on a fine pointer, and on the chat modal at a device scale of 2, in both themes (the file review's round 14, correctness-2
-   with extra5-1 and extra5-2; the two margin rulings of 2026-09-24). Across the line 3px plus 0.3em of the picture's own text size,
+   pointer at its edge, and the hover toggled frame by frame) keeps the ring off neighbouring ink at the picture's own text size,
+   each axis the least that does, measured by screenshot pixels on the chat modal, the feed and the Files pane, at rest under touch,
+   on the touchscreen laptop and on hover on a fine pointer, and on the chat modal at a device scale of 2, in both themes (the file
+   review's round 14, correctness-2 with extra5-1 and extra5-2; the two margin rulings of 2026-09-24). Across the line 3px plus 0.3em
+   of the picture's own text size,
    7.485px at the viewer's default size: the ring's 3px and the ink an italic or bold italic f paints past its own box toward the
    picture, 4px at the default size and more as the text grows, so the margin grows with the text and clears that f, set in the
    picture's own text size, at every text size from 100% to 200% and in a level-1 and a level-2 heading (at a fixed 7px an italic f
@@ -2055,7 +2056,7 @@ a.fileview-gh-note { border-style: dashed; }
 @media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md .fv-figopen-web { opacity: 1; } }   /* the web control at rest at full, where a local one keeps 0.8: at 0.8 the picture under it showed through its dashed line (the comment above); never print */
 @media screen { .fileview-md .fv-figopen-web:focus-visible { outline-offset: 2px; } }   /* the focus ring 2px off the web control's border, so its dashed line shows under a keyboard focus (the comment above) */
 @media screen { .fileview-md .fv-figopen-web:active { transform: none; } }   /* the press cue off on the web control alone: the release that opens the tab comes while it is held, so the pressed paint is held to 3:1 too (the comment above) */
-@media screen { .fileview-md img[data-fv-figweb] { margin: 3px calc(3px + 0.3em); } }   /* 3px up and down, the ring's width, and 3px plus 0.3em across the line, 7.485px at the default text size, each axis the least that keeps the ring below off the neighbours' ink (the comment above); at rest on every pointer, never keyed on hover, never print */
+@media screen { .fileview-md img[data-fv-figweb] { margin: 3px calc(3px + 0.3em); } }   /* 3px up and down, the ring's width, and 3px plus 0.3em across the line, 7.485px at the default text size, each axis the least that keeps the ring below off neighbouring ink at the picture's own text size (the comment above, which states the bound where the picture is in smaller text than an italic or bold italic f glued before it); at rest on every pointer, never keyed on hover, never print */
 @media screen { .fileview-md img[data-fv-figweb]:hover { outline: 1px dashed var(--outbound-line); outline-offset: 1px; box-shadow: 0 0 0 3px var(--bg); } }
 @media screen and (hover: none), screen and (any-pointer: coarse) { .fileview-md img[data-fv-figweb] { outline: 1px dashed var(--outbound-line); outline-offset: 1px; box-shadow: 0 0 0 3px var(--bg); } }   /* touch, and a coarse pointer beside a hovering one: a picture under the floor has no control and its tooltip never shows to a finger, so the mark stands at rest; never print */
 @media screen { .fileview-md a.fv-dead:has(.fv-figopen-web), .fileview-md a.fv-dead:has(img[data-fv-figweb]) { opacity: 1; color: color-mix(in srgb, currentColor 70%, transparent); } }   /* a dead link holding the outbound dress dims by colour, not by opacity, which dimmed the dress inside it (the comment above); print keeps the opacity */
