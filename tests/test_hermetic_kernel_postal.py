@@ -2808,10 +2808,10 @@ PLANT_TABLE = (
      'subprocess.run([sys.executable, "-c", "import _posixsubprocess; _posixsubprocess.fork_exec([\'bin/romp-kernel\'])"])'),
     ('N109 a Python -c child calling a function that runs a text: timeit.timeit, and code.InteractiveInterpreter.runsource '
      'through the class (the comparison names it)', 'no-spawn', None,
-     'subprocess.run([sys.executable, "-c", "import timeit; timeit.timeit(\\"import subprocess; '
-     'subprocess.run([\'bin/romp-kernel\', \'--serve\'])\\", number=1)"])\n'
+     'subprocess.run([sys.executable, "-c", "import timeit; timeit.timeit(\\"import os; '
+     'os.system(\'\\\\\\"bin/romp-kernel\\\\\\" --serve\')\\", number=1)"])\n'
      'subprocess.run([sys.executable, "-c", "import code; code.InteractiveInterpreter.runsource(code.InteractiveInterpreter(), '
-     '\\"import subprocess; subprocess.run([\'bin/romp-kernel\', \'--serve\'])\\")"])'),
+     '\\"import os; os.system(\'\\\\\\"bin/romp-kernel\\\\\\" --serve\')\\")"])'),
     ('N110 a Python -c child with a placeholder in an attribute, in an imported name, or glued into a name (the comparison '
      'names it)', 'no-spawn', None,
      'subprocess.run([sys.executable, "-c", "import subprocess; subprocess.%s([\'bin/romp-kernel\'])" % VERB])\n'
