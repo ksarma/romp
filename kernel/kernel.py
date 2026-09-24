@@ -58297,11 +58297,11 @@ def _media_policy_headers(mime):
     gets an opaque origin, so it can reach nothing of the dashboard's.
 
     `sandbox` stops scripts, not loads. Under it alone the opened tab fetched every host its markup named
-    (executed in Chromium, 2026-09-23): an <image> href and xlink:href, a CSS @import and a
-    foreignObject <img>, each with that browser's SameSite=None cookies for the host, and a fill, a mask
-    and a CSS fill paint reference, none of it behind the gear's list of hosts a viewed file's pictures may
-    load from; this change's own probe added an <feImage>, a CSS cursor, a background image, an @font-face
-    source, a stylesheet <link>, a preload, a prefetch, an <iframe> and a <video>. The fetch directives
+    (executed in Chromium, 2026-09-23): an <image> href and xlink:href, a CSS @import, a foreignObject
+    <img>, a fill, a mask and a CSS fill paint reference, none of it behind the gear's list of hosts a
+    viewed file's pictures may load from; this change's own probe added an <feImage>, a CSS cursor, a
+    background image, an @font-face source, a stylesheet <link>, a preload, a prefetch, an <iframe> and a
+    <video>. The fetch directives
     stop those loads. default-src 'none' is the fallback of every fetch directive, so it refuses each load
     the document would make, to any host and to this kernel too, which serves nothing at a relative path
     (/file needs its query). Three directives then allow back what an exported figure carries inline:

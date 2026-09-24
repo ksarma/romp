@@ -3,7 +3,7 @@
 
 A hermetic lab kernel (the served labs' environment, tests/test_ship_reship_served.py kernel_env: its own state root,
 port and token) serves one synthetic session and the real /feed, /chat and / pages from a copy of the built bundle. A
-request logger on 127.0.0.1:Q records each request's path, Referer, Sec-Fetch-Dest, Sec-Fetch-Site, Cookie and Host. The
+request logger on 127.0.0.1:Q records each request's path, Referer, Sec-Fetch-Dest and Sec-Fetch-Site. The
 browser reaches it under two names, each another origin and another site to the pages (served from 127.0.0.1):
 http://localhost:Q, a name Chromium counts as trustworthy and so sends its Sec-Fetch headers to, and
 http://remote.invalid:Q (Chromium's --host-resolver-rules maps the name to 127.0.0.1), a host the file viewer's figure
@@ -568,9 +568,9 @@ class _DocSink6(_DocSink4):
 
 
 class _Logger(BaseHTTPRequestHandler):
-    """The second server: logs every request's path and the headers that say who asked and what rode along (Referer,
-    Sec-Fetch-Dest, Sec-Fetch-Site, Cookie, Host) into the class's list, answers a paint document for any .svg and a PNG
-    for any .png, and serves its own log at /__log (not logged: the driver's wait reads it)."""
+    """The second server: logs every request's path and the headers that say who asked (Referer, Sec-Fetch-Dest,
+    Sec-Fetch-Site) into the class's list, answers a paint document for any .svg and a PNG for any .png, and serves its
+    own log at /__log (not logged: the driver's wait reads it)."""
     log = None
 
     def do_GET(self):
@@ -579,8 +579,7 @@ class _Logger(BaseHTTPRequestHandler):
             self.send_response(200); self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body); return
         self.log.append({"path": self.path, "referer": self.headers.get("Referer"), "dest": self.headers.get("Sec-Fetch-Dest"),
-                         "site": self.headers.get("Sec-Fetch-Site"), "cookie": self.headers.get("Cookie"),
-                         "host": self.headers.get("Host")})
+                         "site": self.headers.get("Sec-Fetch-Site")})
         p = self.path.split("?")[0]
         if p.endswith(".svg"):
             body, ctype = (b'<svg xmlns="http://www.w3.org/2000/svg"><defs><pattern id="p" width="1" height="1"><rect width="1" '
@@ -917,7 +916,7 @@ class PaintRefsOnKernelPages(unittest.TestCase):
         # the fix: sanitizeMd's paint pass and the strip's paint arm removed every remote url() on the inert body
         with self.subTest("no request reached the logger"):
             self.assertEqual(self._logged("N-"), [], "the notice card's body made requests to another host; each with its path, "
-                             "Referer, Sec-Fetch-Dest, Sec-Fetch-Site and Cookie")
+                             "Referer, Sec-Fetch-Dest and Sec-Fetch-Site")
         with self.subTest("no attribute in the card names the logger"):
             self.assertEqual([a for a in attrs if self.notice_remote in a["value"]], [], "an attribute in the card names the logger")
         with self.subTest("the page reached the logger"):
