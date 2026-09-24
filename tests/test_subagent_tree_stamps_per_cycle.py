@@ -3141,7 +3141,8 @@ class DependencyKey(_World):
     fold from its
     own entry's notes, which two cases pin against a memo entry replaced by a lookup on a thread that holds no scope and
     one cleared whole; a path one build reported under two keys is recorded as
-    their disagreement (_chat_build_deps), which no re-stat equals, a rule pinned at the unit level; the project
+    their disagreement (_chat_build_deps), which no re-stat equals, a rule pinned at the unit level and on the live
+    road tests/test_subagent_tree_memo.py FaultBelowTheRoot pins; the project
     directory stays out of every record, the residual two cases here witness, one
     for a build that found the file nowhere and one for a build that found it. An own place holding what the walk
     refuses is noted nothing, so a tab over it is served from its first build on, as is an
