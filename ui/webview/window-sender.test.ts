@@ -1,0 +1,73 @@
+// windowSender's truth table (window-sender.ts): which sender a window message is attributed to, from its source and
+// origin, for a framed pane and for a top-level page.
+import { test } from "node:test";
+import * as assert from "node:assert/strict";
+import { windowSender } from "./window-sender";
+
+const ORIGIN = "http://127.0.0.1:1";
+const parent = { name: "the shell" };
+const framed = { parent, location: { origin: ORIGIN } };
+const other = { name: "another window" };
+
+test("a sourceless event is this document's own dispatch; a missing event is foreign", () => {
+  assert.equal(windowSender({ source: null, origin: "" }, framed), "dispatch", "the shim's and federation's kernel frames");
+  const bare: { source?: unknown; data: unknown } = { data: { type: "session" } };
+  assert.equal(windowSender(bare, framed), "dispatch",
+    "a handler called with a plain object (no source at all) is a direct call from this document's own script");
+  assert.equal(windowSender(null, framed), "foreign");
+  assert.equal(windowSender(undefined, framed), "foreign");
+});
+
+test("this window is self, whatever the origin says", () => {
+  assert.equal(windowSender({ source: framed, origin: ORIGIN }, framed), "self");
+  assert.equal(windowSender({ source: framed, origin: "null" }, framed), "self");
+});
+
+test("the parent is the embedder, whatever the origin says", () => {
+  assert.equal(windowSender({ source: parent, origin: ORIGIN }, framed), "embedder", "the romp shell");
+  assert.equal(windowSender({ source: parent, origin: "https://example.invalid" }, framed), "embedder",
+    "a parent on another origin is still the parent");
+});
+
+test("the VS Code webview host is a peer: window.parent in VS Code's frame never refers to the host", () => {
+  // VS Code's script in the webview's frame sets window.parent to the frame itself (older releases delete it), and the
+  // host forwards the extension's messages from its own window on the webview's origin.
+  const VSCODE = "vscode-webview://11111111-2222-3333-4444-555555555555";
+  const host = { name: "the VS Code webview host" };
+  const replaced: { parent?: unknown; location: { origin: string } } = { location: { origin: VSCODE } };
+  replaced.parent = replaced;
+  const deleted = { location: { origin: VSCODE } };
+  for (const [what, frame] of [["parent replaced by the frame", replaced], ["parent deleted", deleted]] as const) {
+    assert.equal(windowSender({ source: host, origin: VSCODE }, frame), "peer", "the host's post, " + what);
+    assert.equal(windowSender({ source: frame, origin: VSCODE }, frame), "self", "a same-window post, " + what);
+    assert.equal(windowSender({ source: { name: "a sandboxed frame" }, origin: "null" }, frame), "foreign",
+      "a sandboxed frame, " + what);
+    assert.equal(windowSender({ source: host, origin: "https://example.invalid" }, frame), "foreign",
+      "a window on another origin, " + what);
+  }
+});
+
+test("another window on this document's origin is a peer; any other origin is foreign", () => {
+  assert.equal(windowSender({ source: other, origin: ORIGIN }, framed), "peer", "a second chat column");
+  assert.equal(windowSender({ source: other, origin: "null" }, framed), "foreign", "a sandboxed iframe's opaque origin");
+  assert.equal(windowSender({ source: other, origin: "https://example.invalid" }, framed), "foreign");
+  assert.equal(windowSender({ source: other, origin: "http://127.0.0.1:2" }, framed), "foreign", "same host, another port");
+  assert.equal(windowSender({ source: other }, framed), "foreign", "no origin at all");
+});
+
+test("an opaque own origin never makes a peer: \"null\" matches nothing", () => {
+  const opaque = { parent, location: { origin: "null" } };
+  assert.equal(windowSender({ source: other, origin: "null" }, opaque), "foreign");
+  assert.equal(windowSender({ source: parent, origin: "null" }, opaque), "embedder", "the parent is still the parent");
+  assert.equal(windowSender({ source: other, origin: "null" }, { parent }), "foreign", "no location: no peer");
+});
+
+test("a top-level page (its parent is itself) has no embedder: a same-window post is self", () => {
+  const top: { parent?: unknown; location: { origin: string } } = { location: { origin: ORIGIN } };
+  top.parent = top;
+  assert.equal(windowSender({ source: top, origin: ORIGIN }, top), "self");
+  assert.equal(windowSender({ source: other, origin: ORIGIN }, top), "peer");
+  assert.equal(windowSender({ source: other, origin: "null" }, top), "foreign");
+  const orphan = { location: { origin: ORIGIN } };
+  assert.equal(windowSender({ source: other, origin: "null" }, orphan), "foreign", "no parent at all");
+});
