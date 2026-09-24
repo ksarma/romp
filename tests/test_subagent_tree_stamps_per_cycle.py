@@ -151,7 +151,13 @@ validation's D - 1 in dirStats (Guards, round 3 of #882, extra6-1); an
 unreadable session directory resolves every agent again on every read, {lstat: CALLS x (3A + 1), stat: CALLS x A x
 (D + 2)} under the tree, with no counter moved but the project directory's one stamp stat (Guards); and the chat
 signature of a tab whose build walked S sibling trees re-stats its D + 1 + S x D + K recorded paths every cycle, and a
-directory created under any sibling directory rebuilds the tab (DependencyKey).
+directory created under any sibling directory rebuilds the tab (DependencyKey). (11) The walks that find the file, each
+priced per walk through the real _pusher_cycle (round 4 of #882, extra6-1), each walk's calls recorded apart and keyed
+on that walk alone: a nested file found at k, {lstat: W + 1 + (k + 1) + R} under the tree with no listing of the
+project directory and no entry stat, at two or more values of k, one landing in a workflow directory walking every
+nested agent again and not the flat one; a flat file, {lstat: 2}; and a file under a sibling's tree, the own tree's miss
+part in full, one listing, the entry stats up to and including the found sibling's directory and none after it, and the
+candidates up to the found directory in its tree (FoundRoads).
 
 Named mutants, each applied alone at this head and red on the cases named (each run is recorded outside the repo with its
 command, interpreter and head):
@@ -184,6 +190,8 @@ command, interpreter and head):
   case;
 - a flat walk that records the own tree's directories among its stamps, the A x D form: the outside-a-cycle flat case,
   on its re-check stats and dirStats;
+- the miss-walk unit, a walk that goes on past the file it found through the rest of the own tree, the project directory
+  and every sibling before answering it: FoundRoads, each case, on its per-walk census or its project-directory calls;
 - a derived slot's line removed from any one of its ten open and clear sites: SlotSites, on the {function: count}
   equality (a tree slot's line removed reds its premise);
 - each half of the spy's patch of glob._StringGlobber's held functions removed alone, mutants of this module: SpyRoads'
@@ -1568,6 +1576,219 @@ class MissPathRoads(_World):
                          "(os.stat and os.lstat on the tree's directories, dirStats, hit, miss) over one pusher cycle with a command "
                          "row: %r; keyed on (D, D, (D - 1) + D, 1, 0) = %r: the owner lookup's re-check of the D stamps before the "
                          "tree's read, once per cycle, then the one validation" % (got, (D, D, (D - 1) + D, 1, 0)))
+
+
+class FoundRoads(_World):
+    """(11) The agent-file walks that find the file, each a term of the cost home (_subagent_tree_memo_report's docstring;
+    round 4 of #882, extra6-1: the home priced a walk that finds the file as one that misses). Driven through the real
+    _pusher_cycle with the stubbed job's CALLS reads. Each walk's own calls are recorded apart (_walks: the calls made
+    while one _subagent_file_walk runs, by the spies' census under a tree and by path), so every count keys on one walk
+    and, for a nested file, on k, the index of the directory it found the file in among its tree's directories (the root
+    at 0), never on a cycle total alone: summed over walks at several k, the lstats of the found unit can equal those of
+    the miss unit, where the listing and the entry stats cannot. W is the own root's lstats by the walk's lstat of its
+    type and by os.path.realpath, W' os.path.realpath's of a sibling's subagents place, and R os.path.realpath's under a
+    tree for a found file's path, each counted by running the call. Every count is derived from D, k, E and those."""
+
+    FLAT = "a%016x" % 0x7cfa          # an agent whose file sits at the flat place, subagents/agent-<id>.jsonl
+    SIBLING = "a%016x" % 0x7cfb       # an agent whose file sits under a sibling session's tree
+
+    def _add_flat_agent(self):
+        """One more live agent, its file and sidecar at the own root, the tree aged and the memos re-warmed outside any
+        scope (setUp's idiom), so its memo entry stands. Returns its file."""
+        (self.sub / ("agent-%s.meta.json" % self.FLAT)).write_text(json.dumps(
+            {"agentType": "Workflow", "description": "tidy note flat", "spawnDepth": 1, "toolUseId": "toolu_stamps_flat"}))
+        f = self.sub / ("agent-%s.jsonl" % self.FLAT)
+        f.write_text("")
+        self.live_aids.append(self.FLAT)
+        self.addCleanup(km._SUBAGENT_FILE_CACHE.pop, (self.path, self.FLAT), None)
+        _age(self.sub)
+        self._forget_memos()
+        aw = km._session_awaiting(SID, self.path, True)
+        self.assertEqual((aw or {}).get("count"), A + 1, "the re-warm sees the A agents and the flat one: %r" % (aw,))
+        entry = km._SUBAGENT_FILE_CACHE.get((self.path, self.FLAT))
+        self.assertEqual(entry[1] if entry else None, f, "premise: the flat agent's file resolved at the flat place")
+        self.assertEqual([place for place, _m in entry[0]], [str(self.sub)], "premise: its memo entry holds the own root's stamp alone")
+        return f
+
+    def _w(self):
+        """W: the own root's lstats by an lstat of its type and os.path.realpath, as the walk takes them."""
+        own = str(self.sub)
+        with self._spy() as sp:
+            os.lstat(own)
+            os.path.realpath(own)
+        return sp.total()["dir_lstat"]
+
+    @staticmethod
+    def _realpath_lstats(spy, p):
+        """os.path.realpath's lstats of `p` under the spy's tree, counted by running it."""
+        with spy as sp:
+            os.path.realpath(str(p))
+        return sp.tree_calls().get("lstat", 0)
+
+    def _cycle(self, spies, count):
+        """One pusher cycle under the spies and a _PathCalls, with each _subagent_file_walk call recorded apart: its agent
+        id, its answer, each spy's census over the call ({class: count} under that spy's tree) and the path calls made
+        inside it ({(class, path): count}). Returns (the job's record, the walks, the counters' delta)."""
+        rec, walks = {}, []
+        km._turn_notify_tick = self._awaiting_job(rec)
+        pc = _PathCalls()
+        real = km._subagent_file_walk
+
+        def diff(before, after):
+            return {k: n - before.get(k, 0) for k, n in after.items() if n - before.get(k, 0)}
+
+        def recorder(path, agent_id, *a, **k):
+            ident = threading.get_ident()
+            c0 = [dict(sp.census.get(ident, {})) for sp in spies]
+            p0 = dict(pc.walk)
+            out = real(path, agent_id, *a, **k)
+            walks.append({"aid": agent_id, "answer": out,
+                          "census": [diff(c, dict(sp.census.get(ident, {}))) for c, sp in zip(c0, spies)],
+                          "calls": diff(p0, dict(pc.walk))})
+            return out
+        b = self._stats()
+        with contextlib.ExitStack() as st:
+            for sp in spies:
+                st.enter_context(sp)
+            st.enter_context(mock.patch.object(km, "_subagent_file_walk", recorder))
+            st.enter_context(pc)                          # after the recorder: its walk depth covers the recorder's call
+            km._pusher_cycle()
+        self.assertEqual(rec.get("counts"), [count] * CALLS, "each of the %d reads counted %d rows: %r" % (CALLS, count, rec))
+        return rec, walks, self._delta(b)
+
+    @staticmethod
+    def _proj_calls(walk, proj):
+        """(listings of the project directory, os.stat of its entries, os.stat of the directory itself) inside one walk."""
+        calls = walk["calls"]
+        listings = calls.get(("listdir", proj), 0) + calls.get(("scandir", proj), 0)
+        entries = sum(n for (c, p), n in calls.items() if c == "stat" and os.path.dirname(p) == proj)
+        return listings, entries, calls.get(("stat", proj), 0)
+
+    def test_a_landing_in_one_workflow_directory_walks_each_nested_agent_once_at_its_own_k_while_the_flat_agent_is_served(self):
+        """A nested file found at k costs, per walk, W + 1 + (k + 1) + R lstats under the tree (W of the own root, the
+        flat place's, k + 1 candidates, the first of them the flat place's path again, and R of the found file's path)
+        with the tree read served and no listing of the project directory and no entry stat; and the walk's unit is the
+        agent's memo entry, which for a nested file holds every directory of the own tree. One sidecar lands in the last
+        workflow directory (index D - 1, holding no agent), so the cycle's first read walks the tree, and every nested
+        agent's entry, holding that directory's stamp, walks again at its first lookup, once per cycle, while the flat
+        agent's entry holds the own root's stamp alone, which the landing did not move, so it walks not at all. Keys: the
+        agents that walked (the A nested ones, once each; not the flat one), then per walk (its census under the tree,
+        listings of the project directory, stats of its entries) by equality with ({lstat: W + 1 + (k + 1) + R}, 0, 0),
+        at the A agents' indices, two or more distinct values of k. Red under the miss-walk unit (a walk that goes on past
+        the file it found through the rest of the own tree and the project directory): {lstat: W + 1 + D + R}, one
+        listing and E entry stats per walk."""
+        flat_file = self._add_flat_agent()
+        W = self._w()
+        at = {aid: self.dirs.index(str(self.wfroot / ("wf_%016x" % i))) for i, aid in enumerate(self.aids)}
+        files = {aid: Path(self.dirs[at[aid]]) / ("agent-%s.jsonl" % aid) for aid in self.aids}
+        R = {aid: self._realpath_lstats(self._spy(), f) for aid, f in files.items()}
+        self.assertTrue(all(k < D - 1 for k in at.values()), "premise: the last workflow directory holds no agent: %r" % (at,))
+        last = Path(self.dirs[-1])
+        (last / "agent-a0000000000007cee.meta.json").write_text(json.dumps(
+            {"agentType": "Workflow", "description": "tidy note landed", "spawnDepth": 1, "toolUseId": "toolu_stamps_landed"}))
+        proj = str(Path(self.path).parent)
+        rec, walks, d = self._cycle([self._spy()], A + 1)
+        self.assertEqual(sorted(w["aid"] for w in walks), sorted(self.aids),
+                         "the agents that walked in the cycle: %r; keyed on the A nested agents, once each: each entry holds the last "
+                         "workflow directory's stamp, which the landing moved; the flat agent's entry holds the own root's alone, "
+                         "which it did not (its hit re-checks one directory and is served)" % ([w["aid"] for w in walks],))
+        self.assertEqual(km._SUBAGENT_FILE_CACHE[(self.path, self.FLAT)][1], flat_file, "the flat agent is still answered its file")
+        ks = []
+        for w in walks:
+            aid = w["aid"]
+            k = at[aid]
+            ks.append(k)
+            self.assertEqual(w["answer"], files[aid], "the walk found %s's file" % aid)
+            got = (w["census"][0],) + self._proj_calls(w, proj)[:2]
+            want = ({"lstat": W + 1 + (k + 1) + R[aid]}, 0, 0)
+            self.assertEqual(got, want,
+                             "one walk that found its file at k = %d: (calls under the tree by class, listings of the project directory, "
+                             "stats of its entries) %r; keyed on ({lstat: W + 1 + (k + 1) + R}, 0, 0) = %r at W = %d, R = %d: the own root's "
+                             "W, the flat place's lstat, k + 1 candidates and R, the tree read served, and nothing of the project directory "
+                             "(the miss walk's unit pays {lstat: W + 1 + D + R} with D = %d, one listing and E entry stats)"
+                             % (k, got, want, W, R[aid], D))
+        self.assertGreaterEqual(len(set(ks)), 2, "premise: the walks found their files at two or more values of k: %r" % (ks,))
+        self.assertEqual((d["hit"], d["miss"]), (0, 1), "the tree itself: the cycle's one walk after the landing moved its stamp: %r" % (d,))
+
+    def test_a_flat_agents_walk_pays_the_own_subagents_directorys_lstat_and_the_flat_places_and_nothing_else_under_the_tree(self):
+        """A flat file costs, per walk, the own root's stamp (served when the tree is held, as it is after the cycle's
+        first read), the own subagents directory's lstat and the flat place's lstat: {lstat: 2} under the tree, with no
+        candidate under the tree's directories, no realpath and nothing of the project directory. The flat agent's memo
+        entry is dropped, so its first lookup in the cycle walks, once. Keys: the agents that walked (the flat one alone,
+        once), then (its census under the tree, listings of the project directory, stats of its entries and of the
+        directory itself) by equality with ({lstat: 2}, 0, 0, 0). Red under the miss-walk unit ({lstat: W + 1 + D + R},
+        one listing, E entry stats and the project directory's stamp)."""
+        flat_file = self._add_flat_agent()
+        km._SUBAGENT_FILE_CACHE.pop((self.path, self.FLAT), None)
+        proj = str(Path(self.path).parent)
+        rec, walks, d = self._cycle([self._spy()], A + 1)
+        self.assertEqual([w["aid"] for w in walks], [self.FLAT], "the agents that walked in the cycle: the flat one alone, once")
+        w = walks[0]
+        self.assertEqual(w["answer"], flat_file, "the walk found the flat file")
+        got = (w["census"][0],) + self._proj_calls(w, proj)
+        self.assertEqual(got, ({"lstat": 2}, 0, 0, 0),
+                         "the flat walk: (calls under the tree by class, listings of the project directory, stats of its entries, stats of "
+                         "the directory) %r; keyed on ({lstat: 2}, 0, 0, 0): the own subagents directory's lstat and the flat place's, "
+                         "the own root's stamp served" % (got,))
+
+    def test_an_agent_found_under_a_siblings_tree_stats_the_entries_up_to_that_sibling_and_its_candidates_up_to_the_found_directory(self):
+        """A file under a sibling's tree costs, per walk: the own tree's part of the miss walk in full ({lstat: W + 1 + D}
+        under the own tree: W, the flat place's lstat and D candidates), the project directory's stamp and one listing
+        of it, one os.stat per entry sorted up to and including the found sibling's directory and none after it, and at
+        the found sibling its root's stamp (an own stat before its tree's first read in the cycle), its tree read (a walk
+        here, the tree not in the memo), and W' + (k + 1) + R lstats (realpath of its subagents place, the candidates up
+        to the found directory at k, realpath of the found file's path). The world: two sibling session directories
+        sorted after the own session's entries, the first holding the agent's file in its tree at k = 2 of S_d = 4
+        directories, the second a tree of its own. Keys: the agents that walked (this one alone, once), the premise E = 4
+        entries with the found sibling's at index 2, then per the walk, each by equality: the own tree's census; (the
+        project directory's listings, its entry stats, its stamp stats) == (1, 3, 1); the found sibling's census
+        {stat: 1, lstat: S_d + W' + (k + 1) + R, scandir: S_d}; and no call on any path of the second sibling. Red under
+        the miss-walk unit: E entry stats, S_d candidates in the found sibling's tree, and the second sibling read."""
+        proj = Path(self.path).parent
+        found_sess = proj / "11111111-2222-3333-4444-7c7c7c7c7c7e"
+        after_sess = proj / "11111111-2222-3333-4444-7c7c7c7c7c7f"
+        sib = found_sess / "subagents"
+        sib_dirs = [str(sib), str(sib / "workflows"), str(sib / "workflows" / "wf_a"), str(sib / "workflows" / "wf_b")]
+        for p in sib_dirs[2:]:
+            os.makedirs(p)
+        after = after_sess / "subagents"
+        (after / "workflows").mkdir(parents=True)
+        f = Path(sib_dirs[2]) / ("agent-%s.jsonl" % self.SIBLING)
+        f.write_text("")
+        for r in (sib, after):
+            _age(r)
+            self.addCleanup(km._SUBAGENT_TREES.pop, str(r), None)
+            self.addCleanup(km._SUBAGENT_META_CACHE.pop, str(r), None)
+        self.live_aids.append(self.SIBLING)
+        self.addCleanup(km._SUBAGENT_FILE_CACHE.pop, (self.path, self.SIBLING), None)
+        entries = sorted(proj.iterdir())
+        E, at_entry = len(entries), entries.index(found_sess)
+        self.assertEqual((E, at_entry), (4, 2), "premise: the project directory's entries, the own session's two, then the found sibling's "
+                                                "directory at index 2, then the second sibling's: %r" % ([e.name for e in entries],))
+        k, S_d = sib_dirs.index(str(f.parent)), len(sib_dirs)
+        W = self._w()
+        sib_spy = lambda: _Spy(set(sib_dirs), sib)
+        W1 = self._realpath_lstats(sib_spy(), sib)
+        R = self._realpath_lstats(sib_spy(), f)
+        rec, walks, d = self._cycle([self._spy(), sib_spy()], A + 1)
+        self.assertEqual([w["aid"] for w in walks], [self.SIBLING], "the agents that walked in the cycle: this one alone, once")
+        w = walks[0]
+        self.assertEqual(w["answer"], f, "the walk found the file under the sibling's tree")
+        self.assertEqual(w["census"][0], {"lstat": W + 1 + D},
+                         "calls under the own tree in the walk: %r; keyed on {lstat: W + 1 + D} = {lstat: %d}: the own tree's part of "
+                         "the miss walk in full, the tree read served" % (w["census"][0], W + 1 + D))
+        got = self._proj_calls(w, str(proj))
+        self.assertEqual(got, (1, at_entry + 1, 1),
+                         "the project directory in the walk, (listings, entry stats, stamp stats): %r; keyed on (1, %d, 1): one listing, "
+                         "the entries sorted up to and including the found sibling's directory and none after it (E = %d), and one "
+                         "own stamp" % (got, at_entry + 1, E))
+        want = {"stat": 1, "lstat": S_d + W1 + (k + 1) + R, "scandir": S_d}
+        self.assertEqual(w["census"][1], want,
+                         "calls under the found sibling's tree in the walk: %r; keyed on %r at S_d = %d, W' = %d, k = %d, R = %d: its root's "
+                         "stamp, its tree's walk (S_d lstats and listings), realpath of its place, k + 1 candidates and realpath of the "
+                         "found file's path" % (w["census"][1], want, S_d, W1, k, R))
+        touched = {key: n for key, n in w["calls"].items() if key[1] == str(after_sess) or key[1].startswith(str(after_sess) + os.sep)}
+        self.assertEqual(touched, {}, "calls on the second sibling, sorted after the found one, in the walk: %r; keyed on none" % (touched,))
 
 
 class PerCycleNotSticky(_World):
