@@ -11,10 +11,13 @@
 //   - the step exists once in that job, directly after the Chromium install step (by step NAMES), with the switch and
 //     the run line, in the job's default working directory, and no step before the Test step installs or caches
 //     Playwright (the property plans/markdown-viewer.md's CI sentence states and tools/markdown-viewer-plan-gate-adopt.test.mjs
-//     pins, restated here so the two pins cannot disagree); every file path the step's comment names is in the tree;
+//     pins, restated here so the two pins cannot disagree); every file path the step's comment names (each token shaped
+//     like a file name whose suffix begins with a letter) is in the tree;
 //   - the step carries a timeout-minutes of its own that fits the margin under the job's cap at the measured head (the job's
-//     comment derives it and names the same number), and the script passes node a --test-timeout above the largest own
-//     { timeout } a rostered leg passes and under the step's bound, so a hung leg fails by name before the step is cut;
+//     comment derives it and names the same number), and the script passes node a --test-timeout above every timeout:
+//     value a rostered source spells, each read as a digit literal (_ separators allowed) or refused by name (the check's
+//     guarantee is that no single value exceeds the file bound, and a leg's whole-file seconds are measured in the PR's
+//     body), and under the step's bound, so a hung leg fails by name before the step is cut;
 //   - the roster is well formed: every line is a bundle path in its canonical spelling (out-tests/<dir>/<name>.test.js with
 //     no empty, . or .. segment, the spelling path.posix.normalize leaves unchanged, read by wellFormed), no line is
 //     duplicated, and every line names a source that exists in the tree;
@@ -133,6 +136,12 @@ function jobCap(job) {
   return { cap: Number(/(\d+)$/.exec(capLine)[1]), capLine };
 }
 
+/** The file paths a comment names: each token shaped like a file name (segments that each begin with a letter and hold
+ *  letters, digits, _, . and -, joined by /) whose last suffix begins with a letter (\.[A-Za-z][\w-]*), read over the
+ *  comment with its line breaks and # markers folded to one space. */
+const PATH_TOKEN = /(?<![\w.\/<>-])(?:[A-Za-z][\w.-]*\/)*[A-Za-z][\w-]*(?:\.[\w-]+)*\.[A-Za-z][\w-]*\b/g;
+const commentPaths = (comment) => [...comment.replace(/\n\s*#\s?/g, ' ').matchAll(PATH_TOKEN)].map((m) => m[0]);
+
 test('the step exists once in the ' + JOB + ' job, directly after the Chromium install step, with the switch, the run line and the job\'s default working directory, and every file path its comment names is in the tree', () => {
   const job = extensionJob();
   const all = steps(job);
@@ -164,8 +173,14 @@ test('the step exists once in the ' + JOB + ' job, directly after the Chromium i
   assert.ok(comment.includes(ROSTER), 'the comment names the roster');
   // every file path the comment names is in the tree, resolved from the repository root or from vscode-extension/ (the job's
   // default working directory, which the comment's scripts/ paths are relative to), so a comment that points a reader at a
-  // file the tree no longer holds is red here (holds the property over the paths the comment spells with a file suffix)
-  const named = [...comment.replace(/\n\s*#\s?/g, ' ').matchAll(/(?<![\w.\/<>-])(?:[A-Za-z][\w.-]*\/)*[A-Za-z][\w-]*(?:\.[\w-]+)*\.(?:txt|ts|mjs|js|sh|md|yml|py)\b/g)].map((m) => m[0]);
+  // file the tree no longer holds is red here. The reader's rule (commentPaths): a token shaped like a file name whose last
+  // suffix begins with a letter is a path the tree must hold, whatever the suffix, so the lockfile's .json is read as the
+  // script's .sh is, and a figure such as 1.86 is not (its suffix begins with a digit). A token with a dot that is not a
+  // file, a Latin abbreviation or a member name such as Promise.allSettled or process.exit, reads as a path too and is red
+  // here naming it, so the step comment spells none: the roster rule's words there name allSettled, and ending the process,
+  // without the object
+  assert.deepEqual(commentPaths('# the lockfile vscode-extension/package-lock.json, a/b.toml and c.css,\n# measured at 1.86 s'), ['vscode-extension/package-lock.json', 'a/b.toml', 'c.css'], 'the path reader reads a token shaped like a file name with any suffix that begins with a letter, across a comment\'s line break, and no figure (a reader keyed on a list of suffixes goes silent at the next suffix)');
+  const named = commentPaths(comment);
   assert.ok(named.length > 0, 'the comment names files by path (none read means the path reader stopped matching, not that the comment names none)');
   const gone = named.filter((p) => !fs.existsSync(path.join(REPO, p)) && !fs.existsSync(path.join(EXT, p)));
   assert.deepEqual(gone, [], 'the step\'s comment names a file the tree does not hold (from the repository root or from vscode-extension/): ' + JSON.stringify(gone) + '; the paths read: ' + JSON.stringify(named));
@@ -178,8 +193,26 @@ function testTimeoutMs() {
   assert.equal(m.length, 1, 'the script passes node --test one --test-timeout: ' + JSON.stringify(m));
   return Number(m[0].slice('--test-timeout='.length));
 }
+/** The bound pin's reds over rostered sources ([{ bundle, src, text }]) against node's per-file bound `ms`. Every timeout:
+ *  key in a source is read or refused, never skipped: the key bare or quoted, with or without a space before its colon
+ *  (['"]?timeout['"]?\s*:), and its value token, from the colon to the next comma, closing brace or closing parenthesis,
+ *  trimmed. A token of digits, with _ separators or none (/^\d[\d_]*$/), is read with its separators removed, and is red when
+ *  it reaches the file bound. Any other token (an exponent spelling, an identifier, an expression) is red naming the bundle,
+ *  the source and the token, with the remedy to spell the value as a literal. A Playwright call's own timeout: option is read
+ *  by the same rule: a per-call bound above the file bound is a real cut too. */
+function boundReds(sources, ms) {
+  const reds = [];
+  for (const s of sources) {
+    for (const m of s.text.matchAll(/(?<![\w$])['"]?timeout['"]?\s*:([^,})]*)/g)) {
+      const token = m[1].trim(), at = s.bundle + ' (source ' + s.src + ') spells timeout: ' + token;
+      if (!/^\d[\d_]*$/.test(token)) reds.push(at + ', which this pin cannot read as a number: spell the value as a literal (digits, _ separators allowed), so it is held under node\'s --test-timeout');
+      else if (Number(token.replace(/_/g, '')) >= ms) reds.push(at + ' (' + Number(token.replace(/_/g, '')) + ' ms), which reaches node\'s --test-timeout (' + ms + ' ms): the file bound would cut the leg before its own bound fires, so raise --test-timeout in the script (under the step\'s bound) or lower the value');
+    }
+  }
+  return reds;
+}
 
-test('the step is bounded twice: its own timeout-minutes fits the margin under the job\'s cap at the measured head and the job\'s comment derives that number; node\'s --test-timeout in the script sits above the largest own { timeout } a rostered leg passes and under the step\'s bound, so a hung leg fails by name before the step is cut', () => {
+test('the step is bounded twice: its own timeout-minutes fits the margin under the job\'s cap at the measured head and the job\'s comment derives that number; node\'s --test-timeout in the script sits above every timeout: value a rostered source spells, each read as a digit literal or refused by name, and under the step\'s bound, so a hung leg fails by name before the step is cut', () => {
   const job = extensionJob();
   const { cap, capLine } = jobCap(job);
   const step = steps(job).find((s) => s.name === STEP);
@@ -202,17 +235,33 @@ test('the step is bounded twice: its own timeout-minutes fits the margin under t
   assert.ok(about, 'the job comment holds one passage about the Browser legs step, from "The Browser legs step below" to "in the same PR."');
   assert.ok(!/\d+ min \d+ s/.test(about[0]) && !/\b\d+ s\b/.test(about[0]), 'the job comment\'s passage about this step carries no copy of the measured job time or the margin in seconds (one home: the step comment, read by this pin): ' + about[0]);
   assert.ok(about[0].includes('tools/ci-browser-legs.test.mjs'), 'that passage names this file as where the margin is derived: ' + about[0]);
-  // node's per-file bound: above every own { timeout: N } a rostered source passes (else a legitimate slow leg is cut), under
-  // the step's bound (else the step is cut nameless first)
+  // node's per-file bound: above every timeout: value a rostered source spells (else a legitimate slow leg is cut), under the
+  // step's bound (else the step is cut nameless first). First the reader, over synthetic sources. A separator spelling above
+  // the file bound is read whole (300_000 is 300000 ms, not 300) and is red. An exponent spelling and an identifier are
+  // refused by name, not read as a prefix or skipped. A quoted key with a space before its colon is read. A separator
+  // spelling under the bound passes
   const ms = testTimeoutMs();
-  const own = [];
+  const probe = (text) => boundReds([{ bundle: 'out-tests/ui/webview/probe-browser.test.js', src: 'ui/webview/probe-browser.test.ts', text }], ms);
+  const over = ms + 60000;
+  const separated = String(over).replace(/\B(?=(\d{3})+$)/g, '_'), exponent = over.toExponential().replace('+', '');
+  for (const [text, token, what] of [
+    ['test("x", { timeout: ' + separated + ' }, async () => {});', separated, 'a separator spelling above the file bound'],
+    ['test("x", { timeout: ' + exponent + ' }, async () => {});', exponent, 'an exponent spelling'],
+    ['test("x", { timeout: LEG_TIMEOUT_MS }, async () => {});', 'LEG_TIMEOUT_MS', 'an identifier'],
+    ['test("x", { \'timeout\' : ' + separated + ' }, async () => {});', separated, 'a quoted key with a space before its colon'],
+  ]) {
+    const reds = probe(text);
+    assert.ok(reds.length === 1 && reds[0].includes('out-tests/ui/webview/probe-browser.test.js') && reds[0].includes('ui/webview/probe-browser.test.ts') && reds[0].includes('timeout: ' + token), 'the bound pin reds ' + what + ' (' + JSON.stringify(text) + '), naming the bundle, the source and the token as spelled: ' + JSON.stringify(reds));
+  }
+  assert.ok(probe('test("x", { timeout: ' + exponent + ' }, () => {});')[0].includes('spell the value as a literal'), 'a refused token carries the remedy, to spell the value as a literal');
+  assert.deepEqual(probe('test("x", { timeout: 1_000 }, () => {});\npage.waitForFunction(f, null, { timeout: 5000 });'), [], 'a separator spelling under the file bound, and a Playwright call\'s own timeout: under it, pass');
+  const sources = [];
   for (const e of parseRoster(read(path.join(EXT, ROSTER)))) {
     const src = sourceOf(e.bundle);
     if (!fs.existsSync(src)) continue;   // a stale line is the well-formed test's red
-    for (const m of read(src).matchAll(/\btimeout:\s*(\d+)/g)) own.push({ bundle: e.bundle, ms: Number(m[1]) });
+    sources.push({ bundle: e.bundle, src: path.relative(REPO, src), text: read(src) });
   }
-  const largest = own.reduce((a, b) => (b.ms > a.ms ? b : a), { bundle: '(no rostered source passes a timeout)', ms: 0 });
-  assert.ok(ms > largest.ms, 'node\'s --test-timeout (' + ms + ' ms) exceeds the largest own timeout a rostered leg passes (' + largest.ms + ' ms in ' + largest.bundle + '), so a leg that runs to its own bound is not cut by the file bound');
+  assert.deepEqual(boundReds(sources, ms), [], 'the check\'s guarantee: no single timeout: value in a rostered source exceeds node\'s --test-timeout (' + ms + ' ms): each is read, or refused by name, and each sits below the file bound. The file bound cuts a file\'s whole run, so a leg whose timed tests together outlast it is cut all the same: a leg\'s whole-file seconds are measured in the PR\'s body, not here');
   assert.ok(ms < bound * 60 * 1000, 'node\'s --test-timeout (' + ms + ' ms) is under the step\'s bound (' + bound + ' min = ' + bound * 60 * 1000 + ' ms), so a hung file fails by name before the step is cut');
 });
 
@@ -715,16 +764,19 @@ test('the composition, executed: the script with the real node and the real repo
 });
 
 test('each example the roster rule\'s homes name reads green, executed: the script with the real node and the real reporter over one synthetic rostered leg of each example in EXAMPLES exits 0 with nothing on stderr, each failure marked as it happens; a control that awaits the catch example\'s stand-in for inBrowser with no try reads red with the lost-browser remedy, so that green is the catch\'s doing', (t) => {
-  // witnesses of what the step cannot see, the examples each home of the roster rule names: a mechanism that closes one of
-  // them turns this red, and the homes' list and EXAMPLES move with it. Each leg that stands for a failure writes a mark beside
-  // its bundle when the failure happens, so the green below is read over a run in which each of those failures happened
+  // witnesses of what the step cannot see, the examples each home of the roster rule names. The witnesses model each example as
+  // node's record shows it (a passing test, and for the todo example a todo beside it), so a change to the script or the
+  // reporter that reads one of these examples from node's record turns this red, and the homes' list and EXAMPLES move with it.
+  // No witness loads playwright: a mechanism keyed on playwright's launch needs witnesses that launch, so the witness set is
+  // rewritten, not only re-read, when the follow-up lands. Each leg that stands for a failure writes a mark beside its bundle
+  // when the failure happens, so the green below is read over a run in which each of those failures happened
   const { run, root, ext } = syntheticTree(t);
   const phrase = scriptPhrase();
   const head = 'const { test } = require("node:test"); const fs = require("node:fs"); const { spawnSync } = require("node:child_process");\n';
   const w = (name, body) => { fs.writeFileSync(path.join(root, 'vscode-extension', 'out-tests', 'ui', 'webview', name + '-browser.test.js'), head + body); fs.writeFileSync(path.join(root, 'ui', 'webview', name + '-browser.test.ts'), '// the synthetic source of a witness leg: its presence is what the script reads\n'); return 'out-tests/ui/webview/' + name + '-browser.test.js'; };
   const legs = EXAMPLES.map((e) => ({ ...e, bundle: w(e.name, e.leg(phrase)) }));
   const r = run(legs.map((l) => l.bundle).join('\n') + '\n', { real: true });
-  assert.equal(r.status, 0, 'each example reads green (exit 0): a change that makes the step see one of them turns this red, and the four homes of the roster rule drop that example, and EXAMPLES its entry, in the same change; stderr:\n' + r.err);
+  assert.equal(r.status, 0, 'each example reads green (exit 0): a change to the script or the reporter that reads one of these examples from node\'s record turns this red, and the four homes of the roster rule drop that example, and EXAMPLES its entry, in the same change. The witnesses model each example as node\'s record shows it: a mechanism keyed on playwright\'s launch needs witnesses that launch, so the witness set is rewritten, not only re-read, when the follow-up lands; stderr:\n' + r.err);
   assert.equal(r.err, '', 'nothing on stderr for the examples (no red and no remedy line)');
   assert.deepEqual(r.node, ['--test', ...legs.map((l) => l.bundle)], 'node --test ran every witness leg');
   for (const l of legs.filter((e) => e.marked)) {

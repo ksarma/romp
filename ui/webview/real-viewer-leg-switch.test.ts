@@ -5,8 +5,11 @@
 // test below began as fork PR 860's test of this behaviour, copied with its mechanism unchanged (two lines differed: the
 // comment's name for the leg it drives, and the --test-name-pattern that picks it); this branch adds a third arm, the switch
 // set to a non-"1" non-empty value ("yes"), which executes the arming rule every header states (any non-empty value arms
-// it) and is OFFERED to 860 for its copy, so the two branches carry one mechanism and, until 860 takes the arm, not one test;
-// the leg it drives is this file's own, above it, which opens a page through inBrowser. The mechanism: a child
+// it) and is OFFERED to 860 for its copy, so the two branches carry one mechanism and, until 860 takes the arm, not one test.
+// This branch also asserts, under both armed arms, that the failure's message begins with the phrase the step's script
+// reads a lost browser by, read at run time from vscode-extension/scripts/ci-browser-legs.sh, which 860 does not have, so
+// that assertion stays this branch's and the offer to 860 is the third arm alone.
+// The leg it drives is this file's own, above it, which opens a page through inBrowser. The mechanism: a child
 // `node --test --test-name-pattern=<leg> <this bundle>` with an env BUILT from four variables (never inherited: the runner's
 // NODE_TEST_CONTEXT would put the child's report on this process's channel, and an ambient switch would leak into the
 // "unset" arm) and PLAYWRIGHT_BROWSERS_PATH pointed at a fresh empty directory, so the real pw.chromium.launch() throws; with
@@ -39,9 +42,18 @@ test("ROMP_BROWSER_LEGS_REQUIRE, read in the shared launch helper, turns the bro
   // module reported a FAILURE here where the file's contract says every browser leg skips with a stated reason); derived from
   // the same module read the helper's launch guards on (playwrightInstalled), never a two-way alternation. The assertions read
   // the property (the switch's name and the reason on the failure's line; the reason on the skip) and not the helper's
-  // connective wording, which is the shared helper's to choose.
+  // connective wording, which is the shared helper's to choose. Under the switch they also read that the failure's message
+  // begins with the phrase the step's script reads a lost browser by (its awk -v msg= literal, with $SWITCH as the script sets
+  // it), read from the script at run time, so the executed message and the script's reader are held to one another: the
+  // script prints its lost-browser remedy only beside a failure whose message begins with that phrase.
   const why = playwrightInstalled() ? "no playwright browser" : "playwright is not installed under vscode-extension";
   const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const script = fs.readFileSync(path.join(EXT, "scripts", "ci-browser-legs.sh"), "utf8");
+  const lit = /awk -v msg="([^"]+)"/.exec(script), sw = /^SWITCH=(\S+)$/m.exec(script);
+  if (!lit || !sw) assert.fail("vscode-extension/scripts/ci-browser-legs.sh sets SWITCH and hands awk the phrase it reads a lost browser by (awk -v msg=\"...\")");
+  const phrase = lit[1].replace(/\$SWITCH\b/g, sw[1]);
+  // the failure's TAP error field, from its start: quoted, or a block scalar whose value opens the next line
+  const begins = new RegExp("^\\s*error: [\"'|-]*\\s*" + esc(phrase), "m");
   t.diagnostic("the reason a browser leg names on this machine: " + why);
   const empty = fs.mkdtempSync(path.join(EXT, "out-tests", "no-browsers-"));
   try {
@@ -54,10 +66,12 @@ test("ROMP_BROWSER_LEGS_REQUIRE, read in the shared launch helper, turns the bro
     const req = run({ ROMP_BROWSER_LEGS_REQUIRE: "1" });
     assert.match(req.stdout, /^# fail 1$/m, "the leg failed under the switch\n" + req.stdout.slice(-1500));
     assert.match(req.stdout, new RegExp("ROMP_BROWSER_LEGS_REQUIRE[^\\n]*" + esc(why)), "the switch: a failure naming it and the reason (" + why + ") on one line\n" + req.stdout.slice(-1500));
+    assert.match(req.stdout, begins, "under \"1\": the failure's message begins with the phrase the step's script reads a lost browser by (" + phrase + "), so the script prints its lost-browser remedy beside the leg\n" + req.stdout.slice(-1500));
     // any non-empty value arms it (the headers' rule, executed): a value that is not "1" fails the leg the same way
     const yes = run({ ROMP_BROWSER_LEGS_REQUIRE: "yes" });
     assert.match(yes.stdout, /^# fail 1$/m, "the leg failed under the switch set to \"yes\" (any non-empty value arms it)\n" + yes.stdout.slice(-1500));
     assert.match(yes.stdout, new RegExp("ROMP_BROWSER_LEGS_REQUIRE[^\\n]*" + esc(why)), "under \"yes\": a failure naming the switch and the reason (" + why + ") on one line\n" + yes.stdout.slice(-1500));
+    assert.match(yes.stdout, begins, "under \"yes\": the failure's message begins with the phrase the step's script reads a lost browser by (" + phrase + ")\n" + yes.stdout.slice(-1500));
     const plain = run({});
     assert.match(plain.stdout, /^# skipped 1$/m, "without the switch the leg skips\n" + plain.stdout.slice(-1500));
     assert.match(plain.stdout, new RegExp(esc(why)), "and the skip names the reason (" + why + ")\n" + plain.stdout.slice(-1500));
