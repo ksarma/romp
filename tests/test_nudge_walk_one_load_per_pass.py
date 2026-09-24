@@ -50,12 +50,14 @@ decorator without functools.wraps would hand the census its wrapper's source), a
 helper's body or into Sessions.backend_for's is a new kernel call site, so the birth pin's per-spelling count reds on it too
 (the judge side of that pin reads the set of called spellings and no count, so in a judge helper's body the census alone sees
 a door call), while a loader that would reach a body under
-another name, or through a string, is refused where that name is born, by a pin over the kernel's and the judge's whole
-source (every loader by attribute the callee of a call; no alias, bare name, parameter or keyword spells one, no string constant
-spells a door whole wherever it appears and whatever receives it (an ASCII bytes literal decoded, surrounding whitespace stripped and
-str.lower applied read as the name: the three transforms _door_text undoes, one member of each family and not the family), and none
-containing the name reaches a dynamic lookup, a dict read or a subscript key; in the kernel, jd bound only by its one module-level load,
-with no attribute store named jd and no constant reading as jd; a name completed at run time from constants that spell no
+another name, or through a string, is refused, when that name is born in kernel/kernel.py or kernel/judge.py, by a pin over those
+two files, each read whole (every loader by attribute the callee of a call; no alias, bare name, parameter or keyword spells one, no
+string constant spells a door whole wherever it appears and whatever receives it (an ASCII bytes literal decoded, surrounding
+whitespace stripped and str.lower applied read as the name: the three transforms _door_text undoes, one member of each family and
+not the family), and none containing the name reaches a dynamic lookup, a dict read or a subscript key; in kernel/kernel.py, no
+identifier field binding jd but its one module-level load, no attribute store named jd and no constant reading as jd whole, while jd
+bound through a longer constant (a statement handed to exec or compile, a key sliced from a longer text) and a rebinding written in
+any other file are outside that rule; a name completed at run time from constants that spell no
 door whole and either carry the name in one piece to none of those receivers or reach one in a text those three transforms do not
 restore (a bytes literal in another codec, a strip of other characters, another case fold) is outside every static pin here, a limit the
 enumeration holds on its side, and so is jd completed at run time from constants none of which reads as jd (`'j' + 'd'`, a join); the
@@ -96,9 +98,7 @@ below the loaders) or a second judge module loaded under another name with a cac
 each per session in the pass loop, re-taken at this head (named by role in the round-9 paragraph below), over its 43 cases, one at a time with
 the kernel, the judge and this module hashed before the plant, across the run and after the revert: the first two leave every case
 green with no file changed across a run, so they stay outside every witness here; the third has been refused since the consolidation
-pass by the kernel-wide birth pin, whose called population names `_PJ.load_goals_shared` as a fifth loader spelling, so a second judge
-module reached under another name, or under jd by a binding, an attribute store or a constant the pin reads, is outside both execution
-witnesses and inside the static pin, which reds alone while every execution case stays green; and
+pass by the birth pin, whose called population names `_PJ.load_goals_shared` as a fifth loader spelling; and
 the alias control beside them reds the shared reconciliation on each of the harness cases that drive a pass, and the birth pin, the
 figures in the current head's paragraph below (the door witness's cases run outside any pass, each drive calling the door once under
 _drive, hit, compare_miss and dup priming the cache with a call of their own before the drive's window and the refuse case calling
@@ -365,7 +365,7 @@ plants (correctness-2, regression-2), re-taken at the head the round-4 ruling re
 3.12 and reverted with the kernel, the judge and this module hashed before and after: the kernel opening and parsing the store
 file itself, and the kernel calling jd._read_store_json, each per session in the pass loop, 20 passed each and no file changed
 across a run; a second judge module loaded under another name, rebound to the state and its shared door called per session,
-reds the kernel-wide birth pin alone, naming `_PJ.load_goals_shared` as a fifth loader spelling (1 failed, 19 passed; every case
+reds the birth pin alone, naming `_PJ.load_goals_shared` as a fifth loader spelling (1 failed, 19 passed; every case
 green at both earlier heads, before the pin); the alias control, the shared door bound at kernel import
 and called per session, 6 failed, 14 passed, the shared reconciliation on every harness case and the birth pin; and the count
 pin: the sentence's count set to a stale figure reds the Docs case naming both figures (1 failed, 19 passed).
@@ -377,7 +377,7 @@ nine; every state below was re-taken by the consolidator at the head of the roun
 fixes add two, the walker pin and the fill-road case), each landed on kernel/kernel.py, kernel/judge.py or this module and reverted
 with the file checked clean, the module run single-process on 3.12 through the clean runner; a figure from an earlier head names
 that head by role. The loader-naming string constant (correctness-1, tests-1,
-extra6-1): the kernel-wide pin refuses a constant whose whole text is one of the four door spellings wherever it appears and whatever
+extra6-1): the birth pin refuses a constant whose whole text is one of the four door spellings wherever it appears and whatever
 receives it, and a constant that merely contains the name where it reaches a listed lookup, a dict read or a subscript key; by
 whole-text equality the kernel and the judge carry zero such constants (the substring rule with docstrings excluded would cost the
 judge three error strings and the kernel none), so the rule has no exception and needs no exemption row. Seven whole-spelling
@@ -1311,7 +1311,7 @@ def _loader_sites(obj, needle):
     "load_goals_shared")` (the string built by concatenation too), `exec` or `eval` of a string, `compile` of one,
     `operator.attrgetter("load_goals_shared")`, `vars(jd)["load_goals_shared"]` or `jd.__dict__[...]`,
     `jd.__getattribute__("load_goals_shared")`, and `getattr` on an `importlib.import_module` result (the consolidation pass: the
-    limit named in full; the sample case holds the getattr form at no site). The kernel-wide pin, _loader_births, refuses, in the
+    limit named in full; the sample case holds the getattr form at no site). The birth pin, _loader_births, refuses, in the
     kernel and the judge, a string CONSTANT whose whole text is a door's name wherever it appears and whatever receives it (the
     value rule of the round-4 fixes: methodcaller, itemgetter, getattr_static, a partial of getattr, a match-mapping key and any
     dispatcher nobody listed receive the same refused constant), and a constant that merely CONTAINS the name where it reaches one
@@ -1340,7 +1340,7 @@ def _loader_sites(obj, needle):
     the JoinedStr's FormattedValue and its Call on every interpreter, and reads the f-string's literal text on none. Derives: the
     sites from the AST of `obj`'s source as inspect gives it. Bounds: the three node kinds read, Name, Attribute and alias, and the
     substring rule over the needle, so a loader in any other node or in a string is no site, each form held on the side it falls by
-    the loader enumeration (_LOADER_FORMS) and, for the string and assembled classes, by the kernel-wide pin's verdict over the form's
+    the loader enumeration (_LOADER_FORMS) and, for the string and assembled classes, by _loader_births' verdict over the form's
     file; and the object handed, the wrapper behind a decorator without functools.wraps, which the identity check of the
     replaced-helpers census and the walk census holds first."""
     src = textwrap.dedent(inspect.getsource(obj))
@@ -1493,8 +1493,10 @@ def _loader_births(path, judge):
     the module green. The limit that remains is what the two clauses' boundary leaves out, stated by that boundary and not by a
     list of examples: a constant that spells no door whole after the three transforms _door_text undoes, and either carries the
     name in one piece to no listed lookup, dict read or subscript key, or reaches one in a text those three transforms do not
-    restore, however the name is completed at run time; and for the jd rule, a constant that reads as jd after none of those
-    transforms, however jd is completed at run time (`'j' + 'd'`, a join). A concatenation, a format or an f-string that splits the needle (`"load_"
+    restore, however the name is completed at run time; and for the jd rule, which reads a constant only when its whole text reads
+    as jd, a constant that reads as jd after none of those transforms, however jd is completed at run time (`'j' + 'd'`, a join),
+    and a constant that carries jd inside a longer text, a statement handed to exec or compile or a key sliced from a longer
+    constant (`globals()["xjd"[1:]]`). A concatenation, a format or an f-string that splits the needle (`"load_"
     + "goals_shared"`, `"load_%s_shared" % "goals"`, `f"load_{'goals'}_shared"`), a needle-keeping concatenation handed to an
     unlisted callable (`functools.partial(getattr, jd)("load_goals_" + "shared")`), a reversed literal, a bytes literal in a codec
     other than ASCII (the name encoded as utf-16 and decoded at getattr: it reaches the listed lookup, in bytes the ASCII read does
@@ -3744,8 +3746,9 @@ class TheCountersOneSite(unittest.TestCase):
         _NUDGE_WALK_STATS is one of the admitted forms (the one module-level assignment of its dict display with "loads" among
         its keys, a plain or augmented store to a constant key, `.get` with a constant key, a `dict(...)` copy), any other form
         named by line, and exactly one of them writes the "loads" key: the look's bump. The counter's name has no other spelling
-        in any kernel module whose text holds it in any case (every kernel/*.py read as text, and each that holds the name parsed
-        and walked with _walk, so the population is derived and the kernel is in it or the case reds): no node names it in an
+        in the files the glob kernel/*.py matches in the kernel's real directory, non-recursive, whose text holds it in any letter
+        case (each of those files read as text, and each whose text holds the name parsed and walked with _walk, so the kernel is
+        among them or the case reds): no node names it in an
         identifier field its class declares (_IDENTIFIER_FIELDS), the kernel's Names excepted; no str or bytes constant reads as
         it whole through _door_text, wherever it appears; and none whose text so read contains it reaches a subscript key or a
         call of a name in _DYNAMIC_LOOKUPS or _DICT_READS, the slice, the arguments and the keyword values walked (the consumer
@@ -3765,10 +3768,15 @@ class TheCountersOneSite(unittest.TestCase):
         counter say, to a callee the clause does not list, as the doors' needle-keeping constant at an unlisted callable is of
         that class (exec bound to another name, functools.partial(exec, ...), code.InteractiveInterpreter(...).runsource,
         builtins.__dict__['exec']; a verifier of the contained-name clause planted each in the kernel or the judge, a real write
-        with this case green); a spelling in escape sequences alone, in a module whose text holds the name in no case; and a
-        write that reaches the dict with no spelling of its name at all (a function in another kernel module that finds the dict
-        through sys.modules by its keys, a scan of globals().values() for a dict holding the counter's keys) are outside this
-        census, and the last outside any static census. Execution is what catches such a write, on a road a case drives and
+        with this case green); a spelling in escape sequences alone, in a kernel/*.py file whose text holds the name in no letter
+        case; and a write that reaches the dict with no spelling of its name at all (a function in another kernel module that finds
+        the dict through sys.modules by its keys, a scan of globals().values() for a dict holding the counter's keys) are outside
+        this census, and the last outside any static census. So is a module in a file that glob does not match, whatever its text
+        spells: in cli/, postal/ or any other directory, in a subdirectory of kernel/, or in a file of kernel/ not named *.py, which
+        load_source loads just as well (review round 9, extra5-1: the refuters' helper as cli/c7x.py and as kernel/c7sub/c7x.py,
+        loaded by a load_source line in the kernel and called first in _nudge_fire_list, moved the counter on a direct call with the
+        module green, and the same file as kernel/c7x.py red this case, naming its constant's line). Execution is what catches such a
+        write, on a road a case drives and
         asserts memos.nudgeWalk.loads on: such a case, reading the counter on that pass against the walk's recorded calls or an
         exact figure, reds on the extra write, and a write on a road no such case drives is caught by nothing here, a driven road
         among them (the staging census before round 9: an assembled-name write in the wake sweep's skip branch for a failed or
@@ -3781,9 +3789,28 @@ class TheCountersOneSite(unittest.TestCase):
         _pass); a reader below the judge's loaders or beside its module, the kernel opening and parsing the store file itself or calling
         `jd._read_store_json`, outside the recorders and the reconciliations (the module docstring, _pass); a read by the look or the
         gate of the other pass session's store, which lands in that session's count and is held by the ceilings, no assertion checking
-        that each reads only the session it looks at (_pass); a second judge module, reached under another name or under jd by a
-        binding, an attribute store or a constant the birth pin reads, outside the execution witnesses and refused by the birth pin
-        alone (the module docstring); a load through a door of the judge module onto its cache or its counters that no recorder wraps,
+        that each reads only the session it looks at (_pass); a second judge module, refused by the birth pin only where
+        kernel/kernel.py or kernel/judge.py spells a door of it in a form the pin reads (a call by attribute whose spelling is outside
+        the called population the pin pins, `_PJ.load_goals_shared(sid)`, in the kernel any base but jd, a jd.<door> call site added
+        in the kernel, which moves the per-spelling count unless a call site of the same spelling is removed with it, a door reference
+        that is not the callee of a call, or a constant that spells a door whole or carries the name to a listed lookup, a dict read
+        or a subscript key) and, in kernel/kernel.py alone, where jd is bound to it by an identifier field, an attribute store named
+        jd or a constant whose whole text reads as jd, the pin then red alone while every execution case stays green, and neither the
+        module's own binding under another name nor a name assembled at run time (the assembled class) being such a form (the birth
+        case, _loader_births; the control of review round 9, extra5-2: the second judge written in the kernel as `_PJ`, its shared
+        door called, red the birth pin, naming `_PJ.load_goals_shared` in the called dict); a second judge module reached any other
+        way, the reader beside the judge's module named above, outside every witness here, execution included: one bound in either
+        file and reached through a judge function that is not a door (one that loads inside it, `tasks_for` say), one loaded in any
+        other file, and one bound under jd from any file but kernel/kernel.py (an attribute store on the kernel module, written in
+        kernel/judge.py or in cli/) or in kernel/kernel.py by a statement handed to exec or compile, reached through the kernel's
+        existing jd.<door> call sites, while a loader spelled in any file but those two is outside the pin and a call from there
+        through the real judge's doors is caught only by the recorders and the reconciliations on a road a case drives, within the
+        reconciliations' limit (the item on a load through a door no recorder wraps) (the module docstring, _pass, the birth case;
+        the witnesses of review round 9, extra5-2: a second judge loaded in another kernel file, a second judge bound in the kernel
+        and reached through a judge function that is not a door, and jd rebound to a second judge from cli/ and from a def of the
+        judge, each called from the look with the module green and the second module's reads counted, while a cli/ module calling
+        the real judge's shared door from the look red the pass, the recorder naming its caller); a load through a door of the judge module
+        onto its cache or its counters that no recorder wraps,
         or through a reference to a door taken before a recorder stood, noticed by the reconciliations and not named (the module
         docstring, _pass); a load written on a boundary wrapper's hand-off line, named for the kernel caller and counted under that
         caller's mechanism, since the step-over is line-granular (the module docstring); a call through load_goals_or_fault, which no
@@ -3806,10 +3833,19 @@ class TheCountersOneSite(unittest.TestCase):
         the gate factory (the wrapper class of _LIMITS, _loader_sites, _the_named_def); a loader reached through a string constant,
         outside the site census and refused by the birth pin in the kernel and the judge where the constant, read through _door_text,
         spells a door whole or carries the name to a listed lookup, a dict read or a subscript key, and one reached under a name bound
-        outside the scanned body, refused by the same pin (the string and outside classes); a loader name completed at run time from
+        outside the scanned body, refused by the same pin where that name is bound in the kernel or the judge (the string and outside
+        classes); a loader name completed at run time from
         constants that spell no door whole after the transforms _door_text undoes and either carry the name in one piece to no listed
-        lookup, dict read or subscript key or reach one in a text those transforms do not restore, and jd completed at run time from
-        constants none of which reads as jd, each outside every static pin (the assembled class, _loader_births, the birth case); a
+        lookup, dict read or subscript key or reach one in a text those transforms do not restore, jd completed at run time from
+        constants none of which reads as jd, and jd bound through a constant that carries it inside a longer text, a statement handed
+        to exec or compile and a key sliced from a longer constant among them, outside the jd rule, which reads a constant only when
+        its whole text reads as jd, each outside every static pin, a second judge module bound this way being a reader beside the
+        judge's module whose loads through the kernel's existing jd.<door> call sites no witness here sees, execution included, while
+        a call site added for it moves the birth pin's per-spelling count unless a call site of the same spelling is removed with it
+        (the assembled class, _loader_births, the birth case; the witnesses of review round 9, extra6-1: jd rebound to a second judge
+        by exec in the tick around a shared-door call per session, with one existing call site of that spelling removed, left the
+        module green with the second module's reads counted, and the exec and compile forms in a def left the birth and site cases
+        green, while a globals() key of jd on the line after the exec red the birth case at that line); a
         loader named in no code (prose, a string annotation, a keyword spelled like one), no site by the census's own rule (the none
         class); a census form nobody listed, held by nothing, since the enumeration is a sample and its limit texts are read by no
         assertion, and the class each missed form is filed under, a classification by hand (TheCensusOverEveryForm); a stub installed
@@ -3832,11 +3868,20 @@ class TheCountersOneSite(unittest.TestCase):
         _door_text does not undo, from constants none
         of which reads as it whole or carries it whole into a subscript key, a listed lookup or a dict read, a constant carrying the
         name whole to a callee the contained-name clause does not list (exec bound to another name, a partial of exec), and a spelling
-        in escape sequences alone, in a module whose text holds the name in no letter case, each outside the counter census, and a write
+        in escape sequences alone, in a kernel/*.py file whose text holds the name in no letter case, each outside the counter census, and a write
         that reaches the counter with no spelling of its name, outside any static census, all of them caught only by execution, on a
         road a case drives and asserts memos.nudgeWalk.loads on, so a write on a road no such case drives is caught by nothing, a driven
         road among them: the wake sweep's skip branch for a failed or moot record, reached on those rows of the case whose records the
-        sweep does not own, which does not read the counter (the site case); the counter census's contained-name clause, which fails
+        sweep does not own, which does not read the counter (the site case); the counter census's population, the files the glob
+        kernel/*.py matches in the kernel's real directory, non-recursive, each read as text and each whose text holds the counter's
+        name in any letter case parsed and walked, so a module in a file that glob does not match is outside the counter census
+        whatever its text spells, in cli/, postal/ or any other directory, in a subdirectory of kernel/, or in a file of kernel/ not
+        named *.py, which load_source loads just as well, and a write of the counter from such a module is caught only by execution,
+        on a road a case drives and reads memos.nudgeWalk.loads on, and by nothing elsewhere (the site case; the witnesses of review
+        round 9, extra5-1: the refuters' helper as cli/c7x.py and as kernel/c7sub/c7x.py, loaded by the kernel and called first in
+        _nudge_fire_list, moved the counter on a direct call with the module green, the same helper in cli/ called from the look
+        before the bump red by execution, and the same file as kernel/c7x.py red the site case); the counter census's contained-name
+        clause, which fails
         closed: a constant that only contains the counter's name, in any letter case, fails the site case at a subscript key, a listed
         lookup or a dict read even when it reaches no counter (os.environ.get of a variable named ROMP_NUDGE_WALK_STATS_TRACE, say),
         and a legitimate one would need an exemption row with its reason, the shape _loader_births states for its whole-spelling
@@ -3967,15 +4012,17 @@ class TheCountersOneSite(unittest.TestCase):
                                       "key, or a `dict(...)` copy; any other form (an alias, a key that is not a constant, a method that "
                                       "writes, a second definition) could write the counter where this census does not read: %s"
                                       % (name, "; ".join(outside)))
-        # every other spelling of the counter's name, in every kernel module whose text holds it in any case (the population derived
-        # from the text of every kernel/*.py): a node naming it in an identifier field its class declares (in the kernel a Name is
+        # every other spelling of the counter's name, in each file the glob kernel/*.py matches, non-recursive, whose text holds it
+        # in any case (a file outside that glob, in cli/, in a subdirectory of kernel/ or not named *.py, is not read): a node naming it in
+        # an identifier field its class declares (in the kernel a Name is
         # classified above), a constant reading as it whole through _door_text wherever it appears, and a constant CONTAINING it where
         # it reaches a subscript key, a listed lookup or a dict read (_loader_births' consumer clause, copied: the slice, the arguments
         # and the keyword values walked with _walk, each constant reported once, before the whole-text rule reads it)
         texts = {p.name: p.read_text(encoding="utf-8") for p in sorted(Path(os.path.realpath(km.__file__)).parent.glob("*.py"))}
         population = [f for f, text in texts.items() if name.lower() in text.lower()]
-        self.assertIn(KERNEL_FILE, population, "the census reads every kernel module whose text holds %s in any case, and the kernel "
-                                               "defines it (a derived population fails on empty): %r of %d modules"
+        self.assertIn(KERNEL_FILE, population, "the census reads each file the glob kernel/*.py matches in the kernel's directory, "
+                                               "non-recursive, whose text holds %s in any case, and the kernel defines it (a derived "
+                                               "population fails on empty): %r of %d files"
                                                % (name, population, len(texts)))
         spellings = []
         for fname in population:
@@ -3999,7 +4046,7 @@ class TheCountersOneSite(unittest.TestCase):
                 if what is not None:
                     ln = getattr(n, "lineno", 0)
                     spellings.append("%s line %d, %s: %s" % (fname, ln, what, flines[ln - 1].strip() if ln else ""))
-        self.assertEqual(spellings, [], "no other spelling of %s in the kernel modules whose text holds it, %s: no node naming it in an "
+        self.assertEqual(spellings, [], "no other spelling of %s in the kernel/*.py files whose text holds it, %s: no node naming it in an "
                                         "identifier field (an attribute on any receiver, a keyword, a parameter, an import alias, a global "
                                         "declaration, a def; outside the kernel a Name as well), no str or bytes constant whose text reads "
                                         "as it whole through _door_text, and none whose text so read contains it reaching a subscript key "
@@ -4193,12 +4240,14 @@ class TheCountersOneSite(unittest.TestCase):
         helper nothing else sees it (the consolidation pass: every such form scanned as no site on 3.10 through 3.13 while a recorder
         saw the real load; a verifier of that pass then planted the two subscript forms and the dict read as a real load in
         _closer_settled, and the first cut of this pin, which read a dynamic lookup's arguments alone, let all three pass). So the
-        kernel and the judge are each read once, whole, where any such name would be born, by _loader_births: in the kernel every
+        kernel and the judge are each read once, whole, by _loader_births: in the kernel every
         reference to a loader by attribute is the callee of a call, no alias, bare name, parameter or keyword spells one, no string
         constant spells a door whole wherever it appears and whatever receives it, none containing the name reaches a dynamic
-        lookup, a dict read or a subscript key, and jd is bound only by the module-level load, with no attribute store named jd and
-        no constant reading as jd, so a second judge module standing behind a jd.<door> call through any of those forms, which the
-        per-spelling count reads as the kernel's own judge, is a birth (review round 8, extra5-2); in the judge every bare loader name is the callee of a call or the loader a
+        lookup, a dict read or a subscript key, and no identifier field binds jd but the module-level load, no attribute store is
+        named jd and no constant reads as jd whole, so a second judge module bound to jd in the kernel through any of those forms and
+        standing behind a jd.<door> call, which the per-spelling count reads as the kernel's own judge, is a birth (review round 8,
+        extra5-2), while jd bound through a longer constant (a statement handed to exec or compile, a key sliced from a longer text)
+        and a rebinding written in any other file are outside that rule; in the judge every bare loader name is the callee of a call or the loader a
         boundary wrapper hands to _or_fault, the doors are defined once each and undecorated, and the same list of births is
         empty (its three error strings that mention a door contain the name and spell none whole, so the value rule reports them
         not). The population read is asserted too, so an empty file or a moved door cannot pass as clean: the kernel calls the
@@ -4213,7 +4262,10 @@ class TheCountersOneSite(unittest.TestCase):
         another case fold are not undone) and either carry the name in one piece to no listed lookup, dict read or subscript key or
         reach one in a text those three transforms do not restore is spelled as a door in no constant the pin reads (the `assembled`
         class of _LIMITS, which the enumeration holds on that side), and jd completed at run time from constants none of which reads
-        as jd is read by no rule here. Review round 4,
+        as jd, or bound through a constant that carries it inside a longer text (a statement handed to exec or compile, a key sliced
+        from a longer constant), is read by no rule here, since the jd rule reads a constant only when its whole text reads as jd
+        (review round 9, extra6-1: the exec and compile forms in a kernel def left this case green, and a globals() key of jd on the
+        line after the exec red it at that line). Review round 4,
         correctness-1, tests-1 and extra6-1: the string class was stated closed by a list of receivers, nine lookups, four dict
         reads and a subscript slice, and six working doors on no list passed the pin with a real load in a replaced helper's body;
         the pin keys on the door's spelling now, the closed set, and the receivers need no listing. Derives: the births, the called
@@ -4235,8 +4287,10 @@ class TheCountersOneSite(unittest.TestCase):
         self.assertEqual(born, [], "%s: a loader bound to another name, or reached through a string, is a body the census cannot read; every "
                                    "reference to a loader in the kernel is the callee of a call spelled jd.<door>(...), so no other name is born, "
                                    "no string constant spells one whole, wherever it appears and whatever receives it, none containing the "
-                                   "name reaches a dynamic lookup, a dict read or a subscript key, and the judge's name jd is bound only by the "
-                                   "kernel's one module-level load, never stored as an attribute and never spelled by a constant: %s"
+                                   "name reaches a dynamic lookup, a dict read or a subscript key, and in the kernel no identifier field binds "
+                                   "the judge's name jd but its one module-level load, no attribute store is named jd and no constant reads as "
+                                   "jd whole (jd bound through a longer constant, a statement handed to exec or compile or a key sliced from a "
+                                   "longer text, and a rebinding written in any other file are outside this rule): %s"
                                    % (KERNEL_FILE, "; ".join("line %d, %s" % b for b in born)))
         self.assertEqual(called, {"jd.load_goals": 27, "jd.load_goals_or_fault": 9, "jd.load_goals_shared": 7, "jd.load_goals_shared_or_fault": 15},
                          "%s: the kernel calls the judge's doors by attribute and no other loader spelling, at exactly these call sites per "
@@ -4332,7 +4386,7 @@ class TheCountersOneSite(unittest.TestCase):
                          "a loader reached through a string, getattr here (exec, eval, compile, operator.attrgetter, vars(), __dict__ and "
                          "__getattribute__ the same, and getattr on an importlib.import_module result), is spelled in no Name, Attribute or "
                          "alias node and is outside the census: the limit _loader_sites's docstring states, held by the census reading code and "
-                         "not strings. The kernel-wide pin refuses the constant in the kernel and the judge: one spelling a door whole wherever "
+                         "not strings. The birth pin refuses the constant in the kernel and the judge: one spelling a door whole wherever "
                          "it appears and whatever receives it, and one containing the name where it reaches those callables, a dict read or "
                          "a subscript key, each read with an ASCII bytes literal decoded, surrounding whitespace stripped and str.lower applied; a "
                          "name completed at run time from constants that spell no door whole and either carry it in one piece to none of those "
@@ -4349,7 +4403,7 @@ class TheCountersOneSite(unittest.TestCase):
 # into the target's source, the site count for the needle "jd.load_goals_shared", and, for a form the census answers no site
 # for, the stated limit it falls under (_LIMITS). The expectations are the lens's, read on 3.10 through 3.13 and identical there
 # but for the three gated forms, plus four rows a consolidation-pass verifier's forms added (F07c, F07d, F07e, F30d: the string
-# class split by what the kernel-wide pin refuses) and three rows the round-3 fixes added (F61, F62, F63: the t-string and the
+# class split by what the pin refuses) and three rows the round-3 fixes added (F61, F62, F63: the t-string and the
 # type-parameter nodes that 3.14 and 3.12 add, so the grammar table's newest classes are read by the census and not only listed);
 # the round-4 fixes moved F07d from the assembled class to the string class and F45 from none to string (the pin refuses a constant
 # spelling a door whole wherever it appears, so the name bound to a variable is read where it is bound and a dict key spelled whole
@@ -4360,11 +4414,11 @@ class TheCountersOneSite(unittest.TestCase):
 # cased, a padded and a bytes constant the pin's three normalisations read as the name, at a listed lookup, bound first or as a
 # subscript key; F72 to F74, on the assembled side: a needle-keeping concatenation handed to two unlisted callables and a reversed
 # literal, transforms the pin does not undo). The bodies' `romp_judge` is the stub's name when loaded. For a form of the string or
-# the assembled class the enumeration also runs the kernel-wide pin, _loader_births, over the form's file and expects a birth from
+# the assembled class the enumeration also runs _loader_births over the form's file and expects a birth from
 # the first and none from the second, so each class is held on the side it falls.
 _STUB_JUDGE, _STUB_KERNEL = "romp_judge_c7pin_stub", "romp_kernel_c7pin_stub"
 # The preamble binds jd by the kernel's own statement, _JD_LOAD, over a stand-in load_source that answers the stub judge, so the jd rule
-# of the kernel-wide pin reads a form's file as it reads the kernel (an import-as binding here is a birth under that rule).
+# of _loader_births reads a form's file as it reads the kernel (an import-as binding here is a birth under that rule).
 _FORM_PRE = ("import functools, importlib, operator, sys\n"
              "from pathlib import Path\n"
              "HERE = Path()\n"
@@ -4380,7 +4434,8 @@ _LIMITS = {
               "first, a dict key spelled whole, methodcaller, itemgetter over vars(jd), a partial of getattr, a match-mapping key, an "
               "f-string of the whole name, an ASCII bytes literal decoded, a whitespace-padded constant stripped, an upper-cased one "
               "lowered, or any receiver "
-              "nobody listed): the limit _loader_sites states, refused by the kernel-wide pin, _loader_births: a constant spelling a door "
+              "nobody listed): the limit _loader_sites states, refused in kernel/kernel.py and kernel/judge.py by the birth pin, "
+              "_loader_births: a constant spelling a door "
               "whole wherever it appears and whatever receives it, and a constant containing the name where it reaches a listed lookup, a "
               "dict read or a subscript key, each read through _door_text (an ASCII bytes literal decoded, surrounding whitespace stripped, "
               "str.lower); the enumeration runs that "
@@ -4392,7 +4447,7 @@ _LIMITS = {
                  "format that splits the needle, an f-string interpolating a piece, a needle-keeping concatenation handed to an unlisted "
                  "callable, a reversed literal, a bytes literal in another codec at getattr, a chars-strip at an unlisted receiver, any "
                  "other transform undone at run time): spelled as a door in no node and in no constant either census reads, so outside "
-                 "every static pin in this module, the kernel-wide pin included, as is jd completed at run time from constants none of which "
+                 "every static pin in this module, the birth pin included, as is jd completed at run time from constants none of which "
                  "reads as jd ('j' + 'd', a join), which the pin's jd rule reads in no constant; the enumeration runs that pin over each form of this "
                  "class and expects no birth, so the class is held on the side it falls, and the class is stated by the pin's boundary "
                  "rather than by its examples (the rows hold the split, the interpolation, the unlisted receiver, the reversal, the "
@@ -4400,7 +4455,7 @@ _LIMITS = {
                  "which the round-5 paragraph records)",
     "outside": "a loader that reaches the scanned body under a name bound outside it (a module-level alias, an import alias at module "
                "level, a module-level dict or partial, a closure variable, a parameter, a class or instance attribute when only the "
-               "method is scanned): the birth the kernel-wide pin refuses in the kernel and the judge",
+               "method is scanned): a birth, which the birth pin refuses in the kernel and the judge",
     "wrapper": "the object handed to the census is not the body (a decorator without functools.wraps hands it the wrapper; "
                "functools.wraps around another function points inspect at that function): the limit the replaced-helpers census's "
                "identity check holds for the fixture's helpers",
@@ -4714,7 +4769,7 @@ class TheCensusOverEveryForm(unittest.TestCase):
     enumeration as the module's own check, so a census that visits one node kind less reds here naming the form (the alias
     finding of the build's verifier pass after the round-2 fixes: over Name and Attribute alone, an import alias inside a
     helper's body was no site, and no sample said so). The loader
-    forms of the string and the assembled classes are also run through the kernel-wide pin, _loader_births, over the form's own
+    forms of the string and the assembled classes are also run through _loader_births over the form's own
     file: a birth from every string form and none from any assembled form, so the pin is held against the input it refuses and
     the input it lets pass over the forms the rows list; every limit text of _LIMITS, the string and the assembled texts among them,
     is a message no assertion reads, so an overstatement in any of them beyond the listed forms is not caught here (a verifier of the
@@ -4724,7 +4779,7 @@ class TheCensusOverEveryForm(unittest.TestCase):
     cannot overstate; the staging census before round 9 found it naming the string and the assembled texts alone, and each text of
     _LIMITS rewritten false, one at a time and all at once, left the module green while a key renamed red the enumeration).
     Derives: each row's answer by execution of the census on the running interpreter, the gated rows' SyntaxError below their
-    version, and the kernel-wide pin's verdict over every string and assembled row's file. Bounds: the rows of _LOADER_FORMS,
+    version, and _loader_births' verdict over every string and assembled row's file. Bounds: the rows of _LOADER_FORMS,
     _BUMP_FORMS and _HANDOFF_FORMS, the lens's enumeration, a sample of Python's forms and not a population (no module can
     enumerate the language's forms, so a form nobody listed is held by nothing here); the classes of _LIMITS and each row's class,
     a classification by hand; and the counts pinned, each table's rows and the missed forms by class, tripwires that make an edit
@@ -4793,7 +4848,7 @@ class TheCensusOverEveryForm(unittest.TestCase):
             if limit in ("string", "assembled"):
                 born = _loader_births(self._path(fid), judge=False)[0]
                 self.assertEqual(bool(born), limit == "string",
-                                 "%s (%s): the kernel-wide pin, _loader_births, over this form's file %s; a form of the string class spells a door "
+                                 "%s (%s): _loader_births over this form's file %s; a form of the string class spells a door "
                                  "whole in a constant, wherever it appears and whatever receives it, or hands a constant containing the name to a "
                                  "listed lookup, a dict read or a subscript key, the text read with an ASCII bytes literal decoded, surrounding whitespace "
                                  "stripped and str.lower applied, and the pin refuses it (a birth); a form of the assembled class spells the name whole in no "
@@ -4807,7 +4862,7 @@ class TheCensusOverEveryForm(unittest.TestCase):
                 limits[limit] = limits.get(limit, 0) + 1
         self.assertEqual(counted + sum(limits.values()) + len(gated), 122, "every row was counted, a limit, or gated: %d, %r, %r" % (counted, limits, gated))
         self.assertEqual(limits, {"string": 26, "assembled": 9, "outside": 9, "wrapper": 2, "none": 5},
-                         "the missed forms by limit: the lens's classification with its string class split by what the kernel-wide pin refuses "
+                         "the missed forms by limit: the lens's classification with its string class split by what the pin refuses "
                          "(the round-4 fixes moved F07d and F45 into the string class, a constant spelling a door whole being refused wherever "
                          "it appears, and added nine string rows, four for the doors the round found on no list, one for the f-string of the "
                          "whole name handed to getattr and four for the subscript keys the slice walk reaches, and one assembled row for the "
@@ -5214,7 +5269,7 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
                                      "answer: %s" % "; ".join(accept))
         # what each drive parsed, held real (review round 7, extra6-1: the rewrite dropped the round-6 per-row line, and a row narrowed
         # to a stand-in source kept every case green; that line was one bit per row, so it is not restored in its shape). The sources a
-        # roster row may read are derived from live objects and no table: the text of the module files the censuses read, the real
+        # roster row may read are derived from live objects and no table: the text of the module files the roster's censuses read, the real
         # source of a function the kernel or the judge binds (the def's own name, defined in that module's file, its dedented
         # inspect.getsource the text the source censuses parse), or a grammar-corpus row
         module_files = (__file__, km.__file__, jd.__file__)
@@ -5249,14 +5304,14 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
         verdicts = [(row, source, real_source(source)) for row, source in parsed]
         unreal = ["%s parsed %s; first line %r" % (row, verdict, (source.splitlines() or [""])[0])
                   for row, source, verdict in verdicts if verdict.startswith("not real")]
-        self.assertEqual(unreal, [], "every source a roster drive parsed is real: one of the module files the censuses read, the real source of "
+        self.assertEqual(unreal, [], "every source a roster drive parsed is real: one of the module files the roster's censuses read, the real source of "
                                      "a function the kernel or the judge binds (the def's own name, defined in that module's file, its dedented "
                                      "inspect.getsource equal to the source) or a grammar-corpus row, each derived from the live objects. A "
                                      "stand-in source is a census over nothing, and a def of this module is no kernel or judge function under "
                                      "the rule. Which real source a row reads is its drive's, held here only to be real: %s" % "; ".join(unreal))
         read = sorted({verdict for _row, _source, verdict in verdicts if verdict.startswith("file ")})
         self.assertEqual(read, sorted("file %s" % os.path.basename(os.path.realpath(f)) for f in module_files),
-                         "every module file the censuses read (this module's, the kernel's and the judge's, named from each module's own "
+                         "every module file the roster's censuses read (this module's, the kernel's and the judge's, named from each module's own "
                          "__file__) is parsed by some roster row; a file no row parses is a census that stopped reading it: parsed %r" % read)
         # the refuse side, per position ALONE: a census that walks one position through _walk and reads another by hand refuses the
         # plant _walk meets and passes over the one in the hand-read position, so one refusal over a plant at several positions is not
