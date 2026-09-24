@@ -4075,11 +4075,11 @@ class TheCountersOneSite(unittest.TestCase):
                                       "writes, a second definition) could write the counter where this census does not read: %s"
                                       % (name, "; ".join(outside)))
         # every other spelling of the counter's name, in each file the glob kernel/*.py matches, non-recursive, whose text holds it
-        # in any case (a file outside that glob, in cli/, in a subdirectory of kernel/ or not named *.py, is not read): a node naming it in
-        # an identifier field its class declares (in the kernel a Name is
-        # classified above), a constant reading as it whole through _door_text wherever it appears, and a constant CONTAINING it where
-        # it reaches a subscript key, a listed lookup or a dict read (_loader_births' consumer clause, copied: the slice, the arguments
-        # and the keyword values walked with _walk, each constant reported once, before the whole-text rule reads it)
+        # in any case (a file outside that glob, in cli/, postal/ or any other directory, in a subdirectory of kernel/, or in a file
+        # of kernel/ not named *.py, is not read): a node naming it in an identifier field its class declares (in the kernel a Name
+        # is classified above), a constant reading as it whole through _door_text wherever it appears, and a constant CONTAINING it
+        # where it reaches a subscript key, a listed lookup or a dict read (_loader_births' consumer clause, copied: the slice, the
+        # arguments and the keyword values walked with _walk, each constant reported once, before the whole-text rule reads it)
         files = sorted(Path(os.path.realpath(km.__file__)).parent.glob("*.py"))
         texts = {p.name: p.read_text(encoding="utf-8") for p in files}
         # the refusal, over every file the glob matches and before the population filter below: the file's text as the interpreter
