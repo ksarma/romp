@@ -373,8 +373,9 @@ class _Spy:
     directory (normalization is lexical), test_open_road_a_symlinked_spelling_of_the_root; and pathlib on 3.10, which
     calls the os functions it bound at import (the pathlib of 3.11 to 3.14 looks them up at call time, or lists through
     the globber patched above, and is counted), test_open_road_pathlib_on_3_10. An os.statvfs planted on the served tree
-    read, guarded so that it cannot raise on a root removed while held, leaves the module green, where an os.listdir,
-    os.readlink or os.path.exists planted there, guarded the same way, reds it by the class's name."""
+    read, guarded so that it cannot raise on a root removed while held, leaves the module green, where an os.listdir or
+    an os.readlink planted there, guarded the same way, or an os.path.exists, which does not raise, reds it by the
+    class's name."""
     KEYS = ("dir_stat", "dir_lstat", "file_stat")
     CLASSES = ("stat", "lstat", "scandir", "listdir", "access", "readlink", "open", "walk")   # the os functions wrapped; io.open and io.FileIO beside them
 
