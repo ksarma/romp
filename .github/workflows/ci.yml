@@ -149,8 +149,9 @@ jobs:
         # box venvs carry no anyio; the one box road that would load it, tests/README.md's PYTHONPATH recipe,
         # which puts that site on the path before pytest starts, passes the same flag), so no pytest process
         # the two checks below read loads a plugin the box's default run does not, unless something loads
-        # anyio's plugin again by its entry-point name or its module name (-p anyio or -p anyio.pytest_plugin
-        # after the flag, PYTEST_PLUGINS, plugins= on pytest.main), which neither check reads: the flag is on
+        # anyio's plugin again by its entry-point name or its module name (among them -p anyio or
+        # -p anyio.pytest_plugin after the flag, PYTEST_PLUGINS, plugins= on pytest.main), which neither check
+        # reads: the flag is on
         # both of this file's pytest lines and on every pytest the suite starts in the cell's interpreter in a
         # form the launcher census reads (tests/test_ci_sdk_pin.py holds both populations, this file's by its population
         # check and the suite's by its launcher census, whose read, refusals and residual _launchers_in's docstring
@@ -167,7 +168,8 @@ jobs:
         # as a value rather than called where it is written (a Thread target, functools.partial, a parameter default, a
         # tuple, a walrus or a conditional expression, among others); and outside its read are a string anywhere else,
         # or one held in a variable or built with %, + or .format, an argv assembled one element at a time, an option it
-        # does not take apart that no pytest follows, a wrapper-headed argv built away from the call, a call reached
+        # does not take apart that no pytest follows, other than a cluster ending in m before a name, a wrapper-headed
+        # argv built away from the call, a call reached
         # through a name the census does not resolve (a string call through tuple unpacking, a conditional expression or
         # a parameter default, an import by name from a module that does not define the call, a relative one included, a
         # class or instance attribute, getattr, importlib or runpy, a builtin or a module name such a star import
@@ -236,12 +238,13 @@ jobs:
           # test spawns imports it. The stance of ROMP_SERVED_TESTS_REQUIRE below. Off (a box), that road
           # warns and the host case skips, saying so. tests/test_ci_sdk_pin.py's population check holds
           # this on every pytest invocation in this file, not on this step's text: each command that runs
-          # pytest here sets the switch to exactly 1 in the env Actions merges for it (workflow, job, step,
-          # each an env: key line as this file writes them, or a prefix on the command; a quoted value read
-          # as written) or is listed there by job and step name with a reason the test checks (the
+          # pytest here sets the switch to exactly 1 in the env Actions merges for it (pytest_invocations'
+          # docstring there states the merge; among the forms it reads are an env: key line of the
+          # workflow, the job or the step as this file writes them, and a prefix on the command; a quoted
+          # value read as written) or is listed there by job and step name with a reason the test checks (the
           # served-page step alone today, whose job installs no SDK), and each passes -p no:anyio with no
           # listing. The check does not run the shell: a step whose run block spells the switch other
-          # than as that prefix (an unset, an export, an assignment), or whose job's other run blocks
+          # than as that prefix (among them an unset, an export, an assignment), or whose job's other run blocks
           # spell it (a write to $GITHUB_ENV reaches the steps after), is red until read, and so is any
           # other line here that spells the switch outside an env: key line it reads (among them an aliased
           # or flow env:, a quoted or spaced key, a key-shaped line deeper than its block's keys, a step's
@@ -249,13 +252,18 @@ jobs:
           # key's own line, which may set the switch without spelling it, is refused. Any write of the
           # switch that does not spell its name is outside it, among them one in a run block (env -i, an
           # indirect unset, a loop over the environment), in a shell: or defaults key, by a script or action
-          # a step calls, or to $GITHUB_ENV. It reads a run block as written,
+          # a step calls, or to $GITHUB_ENV, except on this step, where run_pytest_status refuses those it
+          # can see: a shell: here or a defaults: on the job or the workflow, a second command or anything
+          # before the pytest command (env -i, an unset), and a run block of this job that spells
+          # GITHUB_ENV; a write by a script or action a step calls, or one to $GITHUB_ENV that does not
+          # spell the name, stays outside. It reads a run block as written,
           # and GitHub substitutes a ${{ }} expression into the block before the shell reads it, so a
           # step whose run block holds one and spells pytest anywhere in it, in a comment line or a
           # trailing comment too, is red until the value moves to an env: key the block reads as a shell
           # variable (the substituted text can end a comment with a newline and run what follows it);
-          # anything that rewrites a pytest command's arguments after that (a shell function or alias, a
-          # python earlier on PATH, a step's shell:) is outside the check, except on this step, where it
+          # anything that rewrites a pytest command's arguments after that (among them a shell function or
+          # alias, a python earlier on PATH, a step's shell:; pytest_invocations' docstring in
+          # tests/test_ci_sdk_pin.py states the read) is outside the check, except on this step, where it
           # refuses those it can see: a function or alias is a second command here, this step's shell: is
           # refused, and so is a $GITHUB_PATH write spelled in a run block of this job, which could put
           # another python earlier on PATH; a write to $GITHUB_PATH that does not spell the name stays
@@ -265,14 +273,16 @@ jobs:
           # test_the_forms_the_allowlist_accepts_are_the_forms_ci_yml_uses holds equal to the forms this
           # file uses: block mappings and sequences two columns per level, one-line plain and quoted
           # scalars without escapes, one-line flow sequences of them, a literal block as a step's run,
-          # comments; on a name: or working-directory: key a non-null plain scalar with no comment, and
+          # blank lines and comments; on a name: or working-directory: key a non-null plain scalar with no
+          # comment, and
           # no value on an env: key's line), or the check refuses it by name, valid YAML included (an
           # anchor, an alias, a folded block, a quoted scalar over two lines, among others): a form the
           # check does not accept is refused by name; reword the step in an accepted form. Every line here that
           # spells pytest, outside a comment or a name: key's own line and other than a pip install, is
           # read as a command or is red until it is read (its line census), and so is a job key it does
-          # not read; a run line that never spells pytest, a pytest run by a script or action a step
-          # calls, and the other workflow files are outside it. It also holds this step's failure to the
+          # not read; among what it leaves unread (pytest_invocations' docstring in tests/test_ci_sdk_pin.py
+          # states the read in full) are a run line that never spells pytest, a pytest run by a script or
+          # action a step calls, and the other workflow files. It also holds this step's failure to the
           # cell: this step's exit status is pytest's and the cell's is the step's (run_pytest_status in
           # tests/test_ci_sdk_pin.py; its docstring is the rule). So each of these is red at its line,
           # among others: an if: or a continue-on-error on this step or its job; the command followed by
@@ -280,8 +290,12 @@ jobs:
           # among them); an argument outside its option allowlist (--collect-only, --co and --setup-plan
           # among the refused); a shell: here, or a defaults: on the job or the workflow; a key of this
           # step's merged env outside its env allowlist (PYTEST_ADDOPTS and BASH_ENV among them); and a
-          # run block of this job that spells GITHUB_ENV, GITHUB_PATH or BASH_ENV. A write to those files
-          # that does not spell their names, such as one by a script or action a step calls, is outside it.
+          # run block of this job that spells GITHUB_ENV, GITHUB_PATH or BASH_ENV. Outside it, among others
+          # (run_pytest_status's docstring states the residual): a write to those files that does not spell
+          # their names, such as one by a script or action a step calls; a command that names its
+          # interpreter or pytest by a path; and an earlier step whose run block changes the runner without
+          # spelling those names, such as one that replaces or shadows the python on PATH, reinstalls
+          # pytest, or deletes or edits test files.
           ROMP_SDK_REQUIRE: "1"
           # The free-threaded cell runs with the GIL off, stated rather than defaulted (a 't'
           # build disables it by default, and an extension that lacks free-threading support

@@ -68,9 +68,9 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   child or in process through `pytest.main`, block with `-p no:anyio`, so no
   pytest process that `tests/test_ci_sdk_pin.py` reads loads a plugin the box's
   default run does not, unless something loads anyio's plugin again by its
-  entry-point name or its module name (`-p anyio` or `-p anyio.pytest_plugin`
-  after the flag, `PYTEST_PLUGINS`, `plugins=` on `pytest.main`), which the
-  module does not read (the step's comment in
+  entry-point name or its module name (among them `-p anyio` or
+  `-p anyio.pytest_plugin` after the flag, `PYTEST_PLUGINS`, `plugins=` on
+  `pytest.main`), which the module does not read (the step's comment in
   `ci.yml` has the reasons and the measurement; the module holds the flag on
   both populations, the workflow's lines and the launchers under `tests/` in the
   forms its launcher census reads, and `_launchers_in`'s docstring in it states
@@ -78,7 +78,8 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   leaves unread: a pytest command in a string held in a variable or built with
   `%`, `+` or `.format`, a string anywhere else, an argv assembled one element
   at a time, an argv whose interpreter options the census does not take apart
-  and after which nothing spells pytest, a wrapper-headed argv such as
+  and after which nothing spells pytest, a cluster ending in m before a name
+  aside, a wrapper-headed argv such as
   `["env", "pytest"]` built away from the call that runs it (`_argv_command`'s
   docstring states the argv rule), and a call reached through a name the census
   does not resolve, such as a string call through tuple unpacking, a

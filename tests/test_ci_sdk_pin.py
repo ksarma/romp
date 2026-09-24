@@ -23,16 +23,18 @@ This module holds five things, and it never skips: a pin that skips reports gree
    CHECK over the workflow's pytest invocations (PytestPopulation, ListedInvocations and PopulationCheckReds below;
    round 3's ruling, 2026-09-20, replacing two pins on the Run pytest step's text alone):
    every command that runs pytest in ci.yml passes `-p no:anyio`, and either sets ROMP_SDK_REQUIRE=1 in the environment
-   GitHub Actions merges for it, as the file writes it (an env: key line of the workflow's env, the job's or the
-   step's, in the file's own layout, or a VAR=value prefix on the command; later scopes override earlier; any other
-   line that spells the switch is red, below) or is listed in SWITCH_LISTED by (job, step name) with a reason whose premises the test
+   GitHub Actions merges for it, as the file writes it (pytest_invocations' docstring states the merge; among the
+   forms it reads are an env: key line of the workflow's env, the job's or the step's, in the file's own layout, and a
+   VAR=value prefix on the command; later scopes override earlier; any other line that spells the switch is red,
+   below) or is listed in SWITCH_LISTED by (job, step name) with a reason whose premises the test
    checks over every pytest line of the step; an invocation that does neither is named with its job, step and file
    line, and so is one whose step name another pytest-running step of the job shares (`ambiguous`: the key would name
    two steps, and GitHub Actions does not require unique names). The population is derived from
-   the file's text by pytest_invocations (its docstring is the rule: `python -m pytest`, `python -mpytest`, a bare
-   `pytest` or `py.test` at command position, in a named or unnamed step in the file's own layout, in a one-line plain
-   or quoted scalar or a `run: |` literal block, backslash continuations joined as the shell joins them, comment lines
-   and pip installs excluded), and the two invocations the file is known to
+   the file's text by pytest_invocations (its docstring is the rule; among the forms it reads are `python -m pytest`,
+   `python -mpytest`, and a bare `pytest` or `py.test` at command position, in a named or unnamed step in the file's
+   own layout, in a one-line plain or quoted scalar or a `run: |` literal block, with backslash continuations joined as
+   the shell joins them; comment lines and pip installs give no row, the expression rule below aside), and the two
+   invocations the file is known to
    hold, the Python matrix step's Run pytest (the switch and the flag) and the vscode-extension job's served-page
    step (the flag; listed for the switch, since its job installs no SDK), are asserted present, so an empty read is
    red. The flag has no list: the constant pins the SDK alone, its dependency closure resolves fresh on every run (26
@@ -47,8 +49,9 @@ This module holds five things, and it never skips: a pin that skips reports gree
    The check reads ci.yml's text, and that is its residual. The YAML it reads is held to an allowlist (the owner's
    allowlist design, 2026-09-24): every line of ci.yml is in a form the real file uses, or the scan (yaml_line_forms,
    run in PytestPopulation) refuses it by name at its line. The accepted forms, YAML_FORMS_ACCEPTED, are derived from
-   the file by the scan itself (CI's shape installs no YAML library), and PytestPopulation asserts that the file uses
-   every one and that each of its lines is in one: blank and comment lines; block mappings and block sequences, each
+   the file by the scan itself (CI's shape installs no YAML library), and PytestPopulation's
+   test_the_forms_the_allowlist_accepts_are_the_forms_ci_yml_uses asserts that the file uses every one and that each
+   of its lines is in one: blank and comment lines; block mappings and block sequences, each
    nested block two columns past its parent key, a sequence's entries opening with a key, the keys spelled as ci.yml
    spells them and none twice in one mapping; on a key's line, a plain scalar that opens with no YAML indicator and
    holds no `: `, a single-quoted scalar without `''`, a double-quoted scalar without a backslash, or a flow sequence of
@@ -72,18 +75,19 @@ This module holds five things, and it never skips: a pin that skips reports gree
    2026-09-23): the line census in PytestPopulation holds each such line to the span of lines the parser read for a
    row, so a pytest line outside every run (an action's input) or in a layout the parser does not read is red at its
    line (a line joined to the next by a backslash counts when the joined text spells pytest, joined as the shell joins
-   it); a mention the parser reads but not as a command (a wrapper such as `uvx pytest`, a `$PYTEST` variable, an
-   option cluster such as `python -Impytest`) is red as `unparsed` until the parser reads it; and a line where a job
-   key goes that the parser does not read as one (a key carrying its value) is red, so no step is read under the job
-   above it. Outside the check: a run line that never spells pytest (a `$RUNNER` set elsewhere, `make test`), a pytest
-   run by a script or action a step calls, and every other workflow file under .github/workflows/. The flag half keys
-   on the words `-p` and `no:anyio`, consecutive in the command's arguments as the shell splits them (so the spelling
-   inside a quoted argument is not the flag), the switch half on the merged value reading exactly 1 (a quoted value
-   read verbatim, so `"1 "` is not 1, and a plain value to YAML's comment, so `1#x` is not 1), and their messages say
-   so. Both read the run text as written, and GitHub substitutes a `${{ }}` expression into that text before the
-   shell reads it (`${{ '#' }}` before the flag, or a matrix value '#' there, cuts the flag off as a comment), so a
-   step whose run text holds `${{` and spells pytest anywhere in it, in a comment line or a trailing comment too, is
-   `unparsed`, red until the value moves to an env: key and the run text reads it as a shell variable (the
+   it); a mention the parser reads but not as a command (among them a wrapper such as `uvx pytest`, a `$PYTEST`
+   variable, an option cluster such as `python -Impytest`) is red as `unparsed` until the parser reads it; and a line
+   where a job key goes that the parser does not read as one (a key carrying its value) is red, so no step is read under
+   the job above it. Outside the check, among others (pytest_invocations' docstring states the read in full): a run line
+   that never spells pytest (a `$RUNNER` set elsewhere, `make test`), a pytest run by a script or action a step calls,
+   and every other workflow file under .github/workflows/. The flag half keys on the words `-p` and `no:anyio`,
+   consecutive in the command's arguments as the shell splits them (so the spelling inside a quoted argument is not the
+   flag), the switch half on the merged value reading exactly 1 (a quoted value read verbatim, so `"1 "` is not 1, and a
+   plain value to YAML's comment, so `1#x` is not 1), and their messages say so. Both read the run text as written, and
+   GitHub substitutes a `${{ }}` expression into that text before the shell reads it (`${{ '#' }}` before the flag, or a
+   matrix value '#' there, cuts the flag off as a comment), so a step whose run text holds `${{` and spells pytest
+   anywhere in it, in a comment line or a trailing comment too, is `unparsed`, red until the value moves to an env: key
+   and the run text reads it as a shell variable (the
    allowlist's second verify pass, 2026-09-24: such a step read ok, or listed, while pytest ran without the flag; round
    5's ruling A, 2026-09-24: a step whose only pytest spelling sat in a comment gave no row, and the substituted text
    can end the comment with a newline and run pytest, so such a step now gives an unparsed row at its first line that
@@ -99,16 +103,19 @@ This module holds five things, and it never skips: a pin that skips reports gree
    `&`, a second command or command line (an earlier `trap 'exit 0' EXIT` among them), an argument word outside
    RUN_PYTEST_OPTIONS (--collect-only, --co and --setup-plan among the refused), a step's shell: or a job's or the
    workflow's defaults:, a key of the step's merged env outside RUN_PYTEST_ENV (PYTEST_ADDOPTS and BASH_ENV among
-   them), and a run text of the job that spells GITHUB_ENV, GITHUB_PATH or BASH_ENV; its residual is a write that does
-   not spell those names, such as one by a script or action a step calls. The switch half
+   them), and a run text of the job that spells GITHUB_ENV, GITHUB_PATH or BASH_ENV; among its residual (its docstring
+   states it in full): a write that does not spell those names, such as one by a script or action a step calls; a
+   command that names its interpreter or pytest by a path, which may be a script; and an earlier step whose run text
+   changes the runner without spelling those names, such as one that replaces or shadows the python on PATH,
+   reinstalls pytest, or deletes or edits test files. The switch half
    reads what the run text does to the variable only by its spelling (round 4's ruling, 2026-09-23): a step whose run text spells ROMP_SDK_REQUIRE anywhere other than as a VAR=value prefix on
-   its pytest command (an unset, export, declare, env -u or assignment, on an earlier line or before the command on
-   its own line; a comment too), or whose job's other run texts spell it (a write to $GITHUB_ENV sets it for the steps
-   after), is `unparsed`, red until read, since the parser does not run the shell. And every line of ci.yml that spells
-   the switch, outside a comment, is an env: key line the merge read (a bare key at its block's first key indent, its
-   value on that line) or lies in a run text the parser read, or the switch census in PytestPopulation names it
-   (review round 4's verify, 2026-09-23; switch_line_census's docstring is the rule), each red at its line, among them
-   an env: written as an alias or a flow mapping, a quoted or spaced key, a key-shaped line deeper than its block's
+   its pytest command (among them an unset, export, declare, env -u or assignment, on an earlier line or before the
+   command on its own line; a comment too), or whose job's other run texts spell it (a write to $GITHUB_ENV sets it for
+   the steps after), is `unparsed`, red until read, since the parser does not run the shell. And every line of ci.yml
+   that spells the switch, outside a comment, is an env: key line the merge read (a bare key at its block's first key
+   indent, its value on that line) or lies in a run text the parser read, or the switch census in PytestPopulation names
+   it (review round 4's verify, 2026-09-23; switch_line_census's docstring is the rule), each red at its line, among
+   them an env: written as an alias or a flow mapping, a quoted or spaced key, a key-shaped line deeper than its block's
    keys (inside another key's block scalar, that key's text to YAML), and a step's shell: or a job's defaults that
    spells the switch, and the forms among them the scan does not accept are refused as well; the switch's value
    continued past its line or written as a block scalar, a key-shaped line inside another key's quoted scalar over
@@ -217,19 +224,19 @@ This module holds five things, and it never skips: a pin that skips reports gree
    positional arguments of asyncio.create_subprocess_exec and of the os.exec and os.spawn l forms (execl, execle,
    execlp, execlpe, spawnl, spawnle, spawnlp, spawnlpe; a spawn form's mode and an e form's env set aside), read as
    that argv. And a call of pytest.main or pytest.console_main, or of _pytest.config's main or console_main, by a name
-   the census resolves for it (an import from the module that defines the call, an alias, a star import from such a
-   module, a name assigned from one; looked up by scope, as Python looks it up: the call's own scope (for a call in a
-   decorator, a default, an annotation, a return annotation or a type parameter of a def or lambda, or in a class's
-   decorators, bases or keywords, the scope around that def or class, where Python evaluates it; an annotation deferred
-   from 3.14 and a type parameter's lazy bound are read too, a row where they may never run), the functions around it
-   with class bodies skipped, their global declarations with them, the module; a binding under a global declaration
-   counted at the module and one under a nonlocal declaration in the enclosing function that binds the name): a pytest
-   session in the calling process, where plugin autoload runs again whatever flag the outer run was given, so its argv,
-   the first positional argument or args=, carries the flag itself. The flag check keys on the argv's constant elements
-   (`-p` then `no:anyio`, or `-pno:anyio`), so a flag carried by a variable reads as absent, the safe side, and the
-   message says so. The modules known to spawn pytest are asserted present, so an empty read is red, and there is no
-   count to keep; the derivation case prints the listing (python -m pytest tests/test_ci_sdk_pin.py -q -p
-   no:cacheprovider -p no:anyio
+   the census resolves for it (among them an import from the module that defines the call, an alias, a star import
+   from such a module, a name assigned from one; looked up by scope, as Python looks it up: the call's own scope (for a
+   call in a decorator, a default, an annotation, a return annotation or a type parameter of a def or lambda, or in a
+   class's decorators, bases or keywords, the scope around that def or class, where Python evaluates it; an annotation
+   deferred from 3.14 and a type parameter's lazy bound are read too, a row where they may never run), the functions
+   around it with class bodies skipped, their global declarations with them, the module; a binding under a global
+   declaration counted at the module and one under a nonlocal declaration in the enclosing function that binds the
+   name): a pytest session in the calling process, where plugin autoload runs again whatever flag the outer run was
+   given, so its argv, the first positional argument or args=, carries the flag itself. The flag check keys on the
+   argv's constant elements (`-p` then `no:anyio`, or `-pno:anyio`), so a flag carried by a variable reads as absent,
+   the safe side, and the message says so. The modules known to spawn pytest are asserted present, so an empty read is
+   red, and there is no count to keep; the derivation case prints the listing (python -m pytest tests/test_ci_sdk_pin.py
+   -q -p no:cacheprovider -p no:anyio
    -k ChildPytestLaunchers -rP). What the census leaves unread is its residual, and _launchers_in's docstring is the
    one text that states its read, its refusals and that residual in full; what follows gives examples of each (round
    5's ruling G, 2026-09-24). Unparsed and red, among them: a pytest command in a constant string or f-string written
@@ -260,7 +267,8 @@ This module holds five things, and it never skips: a pin that skips reports gree
    (the second verify pass, 2026-09-23, found `run = main` in a function, main from the star import, read as the
    function's own and passed). Outside the read, among others: a string anywhere else, or one held in a variable or
    built with %, + or .format; an argv assembled one element at a time (append calls); an option element the census
-   does not take apart that no element spelling pytest follows (`-BW error -m <name>`); a wrapper-headed argv built
+   does not take apart, other than a cluster ending in m right before an element that is not a constant, that no
+   element spelling pytest follows (`-BW error -m <name>`); a wrapper-headed argv built
    away from the call that runs it; any call reached through a name the census does not resolve (a string call through
    a name bound other than by an import or a plain or annotated assignment: tuple unpacking, a walrus, a conditional
    expression, a parameter default, where an in-process call's value bound that way is refused, above; a name imported
@@ -279,7 +287,7 @@ This module holds five things, and it never skips: a pin that skips reports gree
    2026-09-23, found the prefilter skipping a star import too, and it now parses one). OUTSIDE_THE_READ, and the walk's
    case for the modules the prefilter skips, hold cases of these, each with no row. What the flag
    buys, in every pytest process the census and the population check read in which nothing loads the plugin again by its
-   entry-point name or its module name (`-p anyio` or `-p anyio.pytest_plugin` after the flag on the line,
+   entry-point name or its module name (among them `-p anyio` or `-p anyio.pytest_plugin` after the flag on the line,
    PYTEST_PLUGINS in the environment, plugins= handed to pytest.main; both checks key on the flag's spelling and read
    none of these): anyio's plugin is absent from that process's plugin set as it is from the box's default run's. The
    sets are not equal, and nothing here says they are: the box's default run loads pytest-xdist's two plugins, which no
@@ -1024,12 +1032,12 @@ def _env_block(text, env_indent, keys_out=None):
     forms have none (a value continued past its line, a block scalar and a key-shaped line inside one are refused by the
     scan), and a mapping nested under a key is that key's value, not keys of this block. `keys_out`, when a list is
     given, receives (offset of the key's line in `text`, name) for every key line read (the switch census,
-    switch_line_census, counts those lines as read). Not read: an `env:` line that carries anything after the colon but
-    a comment (a value on the env: line in any form, an expression, an alias, an anchor and a flow mapping among them:
-    the scan refuses each; until round 5's ruling D, 2026-09-24, it accepted an expression there, and `env: ${{
-    fromJSON(vars.E) }}` was skipped here while it set the step's env), a line at the key indent this regex does
-    not read as a key (a quoted or spaced key, refused by the scan; a hyphenated name, which is not the switch), and a
-    key on a last line with no newline after it, which the pattern needs (refused by the scan)."""
+    switch_line_census, counts those lines as read). Not read, among others: an `env:` line that carries anything after
+    the colon but a comment (a value on the env: line in any form, an expression, an alias, an anchor and a flow mapping
+    among them: the scan refuses each; until round 5's ruling D, 2026-09-24, it accepted an expression there, and `env:
+    ${{ fromJSON(vars.E) }}` was skipped here while it set the step's env), a line at the key indent this regex does
+    not read as a key (among them a quoted or spaced key, refused by the scan, and a hyphenated name, which is not the
+    switch), and a key on a last line with no newline after it, which the pattern needs (refused by the scan)."""
     pad = " " * env_indent
     # the block's lines: those indented past `env:`, blank lines, and comment lines at any indent, which YAML skips
     # wherever they sit (until the allowlist build, 2026-09-24, a comment line indented no further than `env:` ended the
@@ -1267,15 +1275,15 @@ def pytest_invocations(src, read=None, switch_read=None):
     (yaml_line_forms, the owner's allowlist design, 2026-09-24), whose two-column nesting is this layout; every other
     form is refused by the scan at its line and not read here, so the parser models no YAML beyond the accepted forms (a
     form the scan does not accept is refused by name; reword the step in an accepted form). A step in any other layout
-    (steps at indent 4 or 8, `-   name:`, a flow mapping, a quoted or spaced `run` key) gives no row here; the scan
-    refuses it, pytest_line_census reds its pytest line, and unread_job_keys a job key this parser does not read. The
-    run forms read are _step_run's; comment lines are skipped (the expression rule above aside); a line ending in an
-    unescaped backslash is joined with the next the way the shell joins it (_continues, _join_continuation: nothing inserted).
-    Outside this parser by construction: a pytest run by a
+    (among them steps at indent 4 or 8, `-   name:`, a flow mapping, a quoted or spaced `run` key) gives no row here;
+    the scan refuses it, pytest_line_census reds its pytest line, and unread_job_keys a job key this parser does not
+    read. The run forms read are _step_run's; comment lines are skipped (the expression rule above aside); a line ending
+    in an unescaped backslash is joined with the next the way the shell joins it (_continues, _join_continuation:
+    nothing inserted). Outside this parser by construction, among others: a pytest run by a
     script or action the workflow calls, a run line that never spells pytest (a `$RUNNER` variable set elsewhere, or
-    `make test`), and anything that rewrites a pytest command's arguments after the run text is read (a shell function
-    or alias the run text defines, a python earlier on PATH, a step's shell: or a job's defaults; run_pytest_status
-    refuses those it can see on the Run pytest step)."""
+    `make test`), and anything that rewrites a pytest command's arguments after the run text is read (among them a
+    shell function or alias the run text defines, a python earlier on PATH, a step's shell: or a job's defaults;
+    run_pytest_status refuses those it can see on the Run pytest step)."""
     sections = _top_sections(src)
 
     def env_of(text, indent, base, scope, job=None, step=None):
@@ -1495,13 +1503,14 @@ def switch_line_census(src):
     mapping's key line unread) or a flow mapping, a quoted or spaced key, a key-shaped line deeper than its block's keys (inside
     another key's block scalar, that key's text to YAML), a step's `shell:` or a job's `defaults: run: shell:` that
     spells the name, a line in a layout the parser does not read. Read here as a key line, and refused by the allowlist
-    scan instead (yaml_line_forms): the switch's key line when its value is continued past the line or is a block scalar
-    (until the allowlist, 2026-09-24, this census read such a key as not clean and named it), and a key-shaped switch
-    line at the key indent inside another key's quoted scalar over several lines. Until 2026-09-23 each of these read ok
-    beside a pytest step that ran with the switch at 0, `1 0` or unset. Keyed on the spelling over the whole file, so a
-    name: or an if: that spells the switch reds too: rename it. What this census cannot see is a write that does not
-    spell the name (module docstring, item 1); a value on an env: key's own line, which may set the switch without
-    spelling it (`env: ${{ fromJSON(vars.E) }}`), is refused by the scan (round 5's ruling D, 2026-09-24)."""
+    scan instead (yaml_line_forms), among them: the switch's key line when its value is continued past the line or is a
+    block scalar (until the allowlist, 2026-09-24, this census read such a key as not clean and named it), and a
+    key-shaped switch line at the key indent inside another key's quoted scalar over several lines. Until 2026-09-23
+    each of these read ok beside a pytest step that ran with the switch at 0, `1 0` or unset. Keyed on the spelling over
+    the whole file, so a name: or an if: that spells the switch reds too: rename it. What this census cannot see is a
+    write that does not spell the name (module docstring, item 1); a value on an env: key's own line, which may set the
+    switch without spelling it (`env: ${{ fromJSON(vars.E) }}`), is refused by the scan (round 5's ruling D,
+    2026-09-24)."""
     read, switch_read = [], []
     pytest_invocations(src, read, switch_read)
     covered = {e["line"] for e in switch_read}
@@ -2160,13 +2169,14 @@ def _env_key_lines(text, env_indent):
 
 def run_pytest_status(src):
     """What holds pytest's failure to the cell (round 5's ruling C, 2026-09-24; this docstring is the rule, in full): the
-    Run pytest step's (MATRIX_STEP) exit status is pytest's, and the cell's is the step's. Anything on that step, its job
-    or the workflow that can discard pytest's failure, or let pytest exit 0 without running the suite, is refused by name
-    at its line. Its examples: an if: or a continue-on-error: on the step or the job (a skipped step or job reports
-    success, and continue-on-error passes over the failure); the command followed by `||`, a pipe (a step with no shell:
-    runs under GitHub's default bash -e, without pipefail, so a pipe's status is its last command's) or a trailing `&`,
-    each of which drops pytest's status. Until the ruling nothing held this: with any of those on the step the module read
-    green (the refuter's mutants, 89 passed). The check reads five parts:
+    Run pytest step's (MATRIX_STEP) exit status is pytest's, and the cell's is the step's. Whatever the five parts below
+    read on that step, its job or the workflow that can discard pytest's failure, or let pytest exit 0 without running
+    the suite, is refused by name at its line; what they do not read is the residual, at the end. Its examples: an if:
+    or a continue-on-error: on the step or the job (a skipped step or job reports success, and continue-on-error passes
+    over the failure); the command followed by `||`, a pipe (a step with no shell: runs under GitHub's default bash -e,
+    without pipefail, so a pipe's status is its last command's) or a trailing `&`, each of which drops pytest's status.
+    Until the ruling nothing held this: with any of those on the step the module read green (the refuter's mutants, 89
+    passed). The check reads five parts:
     1. no if:, continue-on-error: or shell: key on the step; no if:, continue-on-error: or defaults: key on the job; and
        no defaults: at the top level, since a shell: or a defaults: sets the shell the run text runs under.
     2. The run text is one command line (blank lines and comment lines aside, a backslash continuation joined as the
@@ -2187,11 +2197,13 @@ def run_pytest_status(src):
        follows it a command (pytest_invocations' expression rule): a write to $GITHUB_ENV sets a variable for the steps
        after, PYTEST_ADDOPTS or BASH_ENV among them, and a write to $GITHUB_PATH puts another python first on PATH for
        them.
-    The residual: a write to those files that does not spell their names, such as one by a script or action a step
-    calls (actions/setup-python writes both) or one through `${{ github.env }}`; and a command that names its
-    interpreter or pytest by a path, which may be a script. Returns (the file line of the step's command line that
-    PYTEST_CMD_RE reads as pytest, whatever else is refused on it, [(line, text, reason)] refused); a missing job, step
-    or run text is a refusal."""
+    Among the residual: a write to those files that does not spell their names, such as one by a script or action a
+    step calls (actions/setup-python writes both) or one through `${{ github.env }}`; a command that names its
+    interpreter or pytest by a path, which may be a script; and an earlier step whose run text changes the runner
+    without spelling those names, such as one that replaces or shadows the python on PATH, reinstalls pytest, or deletes
+    or edits test files, since the five parts read the job's other steps only for those names. Returns (the file line of
+    the step's command line that PYTEST_CMD_RE reads as pytest, whatever else is refused on it, [(line, text, reason)]
+    refused); a missing job, step or run text is a refusal."""
     lines_of = src.splitlines()
     read, refused = [], []
 
@@ -2302,10 +2314,12 @@ class PytestPopulation(unittest.TestCase):
     goes is a job the parser reads, so no step is read under the job above it; and every line of the file is in a YAML
     form the file itself uses (the allowlist, yaml_line_forms, the owner's allowlist design, 2026-09-24), the forms
     derived from the file, so the parser and the censuses read no YAML they do not model; and the Run pytest step's exit
-    status is pytest's and the cell's the step's (run_pytest_status, round 5's ruling C, 2026-09-24). Outside the check:
-    a run line that never spells pytest, a pytest run by a script or action a step calls, anything that rewrites a
-    pytest command's arguments after the run text is read (a shell function or alias, a python earlier on PATH, a
-    step's shell:; on the Run pytest step run_pytest_status refuses those it can see), and any other workflow file."""
+    status is pytest's and the cell's the step's (run_pytest_status, round 5's ruling C, 2026-09-24). Outside the check,
+    among others (pytest_invocations' docstring states the read in full, and run_pytest_status's what it holds on the
+    Run pytest step and its residual): a run line that never spells pytest, a pytest run by a script or action a step
+    calls, anything that rewrites a pytest command's arguments after the run text is read (among them a shell function
+    or alias, a python earlier on PATH, a step's shell:; on the Run pytest step run_pytest_status refuses those it can
+    see), and any other workflow file."""
     def setUp(self):
         self.src = open(WF).read()
         self.found = pytest_invocations(self.src)
@@ -3194,6 +3208,11 @@ class PopulationCheckReds(unittest.TestCase):
             ("an earlier step's write to $GITHUB_PATH",
              splice(name, '      - name: Put a tool first\n        run: echo "$HOME/fake" >> "$GITHUB_PATH"\n' + name, 1),
              "spells GITHUB_PATH"),
+            # spells neither GITHUB_ENV nor GITHUB_PATH, so only the BASH_ENV entry of RUN_PYTEST_WRITE_NAMES refuses it
+            ("an earlier step's write of BASH_ENV through ${{ github.env }}",
+             splice(name, '      - name: Set bash env\n'
+                          '        run: echo "BASH_ENV=$HOME/pre.sh" >> "${{ github.env }}"\n' + name, 1),
+             "spells BASH_ENV"),
         )
         for label, (src, line), why in plants:
             with self.subTest(plant=label):
@@ -3933,17 +3952,18 @@ def _argv_command(elts):
     as one and reports unparsed, (None, None) for an argv that is not a pytest command. The property, not a spelling;
     this docstring is the census's argv rule in full, and the other texts that state it give examples and point here.
     A launcher: `-m pytest` as two elements, or `-mpytest` as one, after an INTERPRETER HEAD through interpreter options
-    only. The head is any element that is not a constant (sys.executable, a name, a call, a starred tail) or a
-    python-named constant (`python`, `python3.12`, a path to one), wherever it sits, so `uv run python -m pytest` reads.
-    Until 2026-09-21 the pair was read at indices 1 and 2 alone, and `python -B -m pytest`, the repo's own recipe, was
-    outside the census with no red. Also a launcher: `-m pytest` as the first two elements (the interpreter joins the
-    argv elsewhere, an extend), and pytest or py.test by name or path as argv[0].
+    only. The head is any element that is not a constant (among them sys.executable, a name, a call, a starred tail) or
+    a python-named constant (`python`, `python3.12`, a path to one), wherever it sits, so `uv run python -m pytest`
+    reads. Until 2026-09-21 the pair was read at indices 1 and 2 alone, and `python -B -m pytest`, the repo's own
+    recipe, was outside the census with no red. Also a launcher: `-m pytest` as the first two elements (the interpreter
+    joins the argv elsewhere, an extend), and pytest or py.test by name or path as argv[0].
     The options between the head and the -m (round 5's ruling B, 2026-09-24): an option element is read only where the
     census takes it apart one option at a time: a single letter that takes no value (INTERPRETER_NO_VALUE_LETTERS, the
     letters CPython documents: -B, -u, -I and the rest), -X or -W with its value (the next element, or attached, as in
     `-Werror`), -m with its module (the next element, or attached, as in `-mpytest`), and -c, which ends the options. An
-    element that starts with a dash and is not option-shaped (`-` or `--` alone, or an element holding whitespace, which
-    is no option) is passed over, as every element starting with a dash was before the ruling.
+    element that starts with a dash and is not option-shaped (one OPTION_SHAPED_RE does not match: among them `-` or
+    `--` alone, a dash before a digit or another non-letter such as `-1`, and an element holding whitespace, which is no
+    option) is passed over, as every element starting with a dash was before the ruling.
     Unparsed, after such a head and its options: a `-m` whose next element is not a constant (a module name the census
     cannot read: it may be pytest); an element that is not a constant right before the constant `pytest` (an option the
     census cannot read: it may be -m); -m, attached or not, with a module in the pytest package other than pytest
@@ -4086,35 +4106,37 @@ def _launchers_in(src, filename):
     SHELL_NAMES, run with -c, else a multi-word element, a `-c` string running pytest.main among them), or a constant
     element named pytest or py.test by basename after argv[0], a wrapper's (`env pytest`, `timeout 60 py.test`) and a
     pip line's alike, with no exemption (round 5's ruling B, 2026-09-24); an in-process call whose argv is not a
-    list or tuple literal (a name, or no argument at all, which reads sys.argv); and a read of an IN_PROCESS_CALLS path,
-    through any name or attribute the resolution takes to one, other than as a call's callee or as the whole value of a
-    plain or annotated assignment to bare names, which the resolution binds and follows to its calls (held_in_process;
-    round 5's ruling F, 2026-09-24): pytest.main held as a value, as a Thread or Process target, in functools.partial,
-    map, an executor's submit or asyncio.to_thread, through `.__call__`, as a parameter default, in a tuple, a walrus or
-    a conditional expression, among others, is called by code the census does not read, and a pytest session it starts
-    in this process loads the plugins the outer run excluded. A module that does not parse is one unparsed row. A list
-    or tuple on the right of an `in` test is a set of names, not an argv, and is not read. Not read, stated as the
-    residual (test_each_form_outside_the_read_gives_no_row holds cases of it, each with no row): an argv assembled one
-    element at a time (append calls); an
-    option element _argv_command does not take apart that no element spelling pytest follows (its docstring); an argv
-    whose pytest follows a wrapper, built away from the call that runs it; a command string held in a variable or
-    built with %, + or .format, a `-c` string held in a variable among them; any
-    call reached through a name this resolution does not reach and does not refuse, among them a string call through a
-    name bound other than by an import or a plain or annotated assignment (tuple unpacking, a walrus, a conditional
-    expression, a parameter default; the in-process call's value bound that way is refused, above), one imported by
-    name from a module that does not define the call (a helper that re-exports pytest.main; the census reads the name as
-    no launcher) or by a relative import (which binds nothing the census reads), an attribute of a class or an instance
+    list or tuple literal (among them a name, or no argument at all, which reads sys.argv); and a read of an
+    IN_PROCESS_CALLS path, through any name or attribute the resolution takes to one, other than as a call's callee or
+    as the whole value of a plain or annotated assignment to bare names, which the resolution binds and follows to its
+    calls (held_in_process; round 5's ruling F, 2026-09-24): pytest.main held as a value, as a Thread or Process target,
+    in functools.partial, map, an executor's submit or asyncio.to_thread, through `.__call__`, as a parameter default,
+    in a tuple, a walrus or a conditional expression, among others, is called by code the census does not read, and a
+    pytest session it starts in this process loads the plugins the outer run excluded. A module that does not parse is
+    one unparsed row. A list or tuple on the right of an `in` test is a set of names, not an argv, and is not read. Not
+    read, stated as the residual (test_each_form_outside_the_read_gives_no_row, and for the modules the prefilter skips
+    test_the_walk_parses_a_module_holding_a_star_import_and_what_it_skips_gives_no_row, hold cases of it, each with no
+    row): an argv assembled one element at a time (append calls); an option element _argv_command does not take apart,
+    other than a cluster ending in m right before an element that is not a constant, that no element spelling pytest
+    follows (its docstring); an argv whose pytest follows a wrapper, built away from the call that runs it; a command
+    string held in a variable or built with %, + or .format, a `-c` string held in a variable among them; any call
+    reached through a name this resolution does not reach and does not refuse, among them a string call through a name
+    bound other than by an import or a plain or annotated assignment (tuple unpacking, a walrus, a conditional
+    expression, a parameter default; the in-process call's value bound that way is refused, above), one imported by name
+    from a module that does not define the call (a helper that re-exports pytest.main; the census reads the name as no
+    launcher) or by a relative import (which binds nothing the census reads), an attribute of a class or an instance
     (`T.m`, `self.m`: `m = pytest.main` in a class body, the assignment followed and the attribute not), one reached
-    through getattr, importlib or
-    runpy, beside a star import from a module the census does not read, a builtin name or a module name no scope binds
-    (UNBOUND_MODULES), read as the builtin or the module, which the star import may rebind, a name a function binds from
-    such a star import's name other than by a plain or annotated assignment from a name or an attribute (from a call's
-    result or a subscript, as a parameter or a loop target), read as the function's own, and a call in a class body
-    through a name the class binds, read as the class's binding, where the body reads the name past the class until that
-    binding runs (a class body's call of the module's pytest.main before the class binds the name to something else
-    gives no row; found closing the first verify pass, 2026-09-23); and a string that spells pytest anywhere else (a
-    script written to a file, an exec; the suite's synthetic tool-call fixtures spell `uv run pytest -q` by the dozen),
-    which is data, not a command."""
+    through getattr, importlib or runpy, beside a star import from a module the census does not read, a builtin name or
+    a module name no scope binds (UNBOUND_MODULES), read as the builtin or the module, which the star import may rebind,
+    a name a function binds from such a star import's name other than by a plain or annotated assignment from a name or
+    an attribute (from a call's result or a subscript, as a parameter or a loop target), read as the function's own, and
+    a call in a class body through a name the class binds, read as the class's binding, where the body reads the name
+    past the class until that binding runs (a class body's call of the module's pytest.main before the class binds the
+    name to something else gives no row; found closing the first verify pass, 2026-09-23); every module the walk never
+    hands here: child_pytest_launchers skips without a parse a module whose text spells neither pytest nor py.test and
+    holds no star import (PYTEST_TEXT_RE, STAR_IMPORT_TEXT_RE; its docstring states the prefilter and why), so nothing
+    in it is read or refused; and a string that spells pytest anywhere else (a script written to a file, an exec; the
+    suite's synthetic tool-call fixtures spell `uv run pytest -q` by the dozen), which is data, not a command."""
     base = os.path.basename(filename)
     try:
         tree = ast.parse(src, filename=filename)
