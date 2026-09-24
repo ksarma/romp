@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A subagents tree is validated at most once per pusher cycle and once per jobs pass (2026-09-19).
+"""The agent-file lookup's stamp re-checks and the launch folds are held per cycle on #1822's tree scope (2026-09-19).
 
 The walk memo (tests/test_subagent_tree_memo.py) made a read of a session's subagents tree cost one lstat per known
 directory instead of a listing. But the agent-file lookup's memo (_subagent_file) re-validates a hit by stat-ing every
@@ -12,27 +12,32 @@ pass one more. On one deployed kernel _dir_stamp's one os.stat was the top self 
 percent of the samples by that profile's reading, and another's memo counters showed 24.5 million validation lstats in
 6.8 hours over 1,294 directories (2026-09-19; the user 2026-09-05, who wanted the one-core kernel investigated).
 
-The fix keys the validation on the event a time window would have stood in for: the cycle and the pass. Each opens a
-thread-confined scope (_subagent_scope_open in _pusher_cycle and _jobs_cycle, closed in their finally blocks); the
-first reader of a tree in the cycle validates or walks it and holds the (directories, stats) pair and each directory's
-stamp; every later reader of the tree on that thread in the cycle is served it with no stat, the agent-file lookup's
-re-check of its directories included (what the re-check's other stamps cost: the cost home, _subagent_tree_memo_report's
-docstring); and the agents' launch folds are held for the cycle too (_awaiting_nest). A change on disk after the
-validation is seen by the NEXT cycle's first reader, one cycle later at most. Nothing failed is held for the cycle; a
-launch fold that did not read the file is held for the CALL that observed the fault alone (two lifetimes; round 1 of #882
-found that returned without any hold it was folded once per owner lookup, A x (A - 1) times per read where the parent's
-call-local memo folded A).
+The fix keys the re-checks on the event a time window would have stood in for: the cycle. #1822 (upstream, 2026-09-18)
+holds each subagents root's sample once per cycle in _live_scope.subagent_trees, which the pusher cycle, the jobs pass
+and a connect push's chat loop open and clear (the try and finally blocks of _pusher_cycle and _jobs_cycle,
+_chat_push_scopes_open and _chat_push_scopes_close): the first reader of a root on that thread validates or walks it,
+and every later reader is served the (directories, stats) pair with no lstat, counted under `scoped`. This branch
+derives two slots from those samples, opened and cleared at exactly the sites that open and clear the tree slot
+(SlotSites): the stamp index, _live_scope.subagent_stamps, filled from each pair as it is stored, from which _dir_stamp
+answers the agent-file lookup's re-check of a held tree's directories with no stat (what the re-check's other stamps
+cost: the cost home, _subagent_tree_memo_report's docstring); and the launch folds, _live_scope.subagent_launches, one
+fold per agent per cycle, pass or push (_awaiting_nest). A change on disk after the sample is seen by the NEXT cycle's first reader,
+one cycle later at most. The store differs from #1822's in one rule: a sample that reported a fault below its root is
+not held, where #1822 holds any answer with a directory (Guards). Nothing failed is held for the cycle; a launch fold
+that did not read the file is held for the CALL that observed the fault alone (two lifetimes; round 1 of #882 found that
+returned without any hold it was folded once per owner lookup, A x (A - 1) times per read where the parent's call-local
+memo folded A).
 
 Pinned here, through the REAL cycle functions so the clearing point tested is the wired one: (1) the bound: one pusher
 cycle and one jobs pass with three _session_awaiting calls each cost D os.lstat on the tree's directories (the one
 validation), 0 os.stat on them, dirStats plus D - 1, one hit, scoped moved by the asks the scope answered (the premise
 that every read reached the memo is asserted per read and by shape, the first ask validated and every later one served,
-never by a count of asks per read; round 1 of #882's extra8-1) and A agent-file stats (one fold per agent), where before the scope
-each call paid A x D os.stat, D lstats and A file stats, and the scope's reads moved no counter; with an agent row whose
+never by a count of asks per read; round 1 of #882's extra8-1) and A agent-file stats (one fold per agent), where with none of
+the three slots each call paid A x D os.stat, D lstats and A file stats; with an agent row whose
 file is nowhere the miss walk runs once per cycle and its dependency notes to the chat build cost no stat on the tree's
 directories (round 1 of #882's correctness-1:
 the own tree's note was a fresh stat, one per walk), and two such rows share the project directory's one stamp stat, an own
-stat _dir_stamp holds in the scope keyed by directory under root None (dirStats moves by (D - 1) + 1 at one row and at two,
+stamp _dir_stamp holds in the stamp index keyed by directory (dirStats moves by (D - 1) + 1 at one row and at two,
 where the cost term as stated before the owner's pass before round 2 of #882, per agent, predicted (D - 1) + G; the term's
 one home is _subagent_tree_memo_report's docstring); the scope is closed after the cycle; the bound's counts are backed by a
 census, by call class, of the filesystem calls under the tree made through the classes the spy wraps (os.stat, os.lstat,
@@ -53,7 +58,7 @@ threads: a pusher cycle and a jobs pass running at once each validate once with 
 by the other's; (4) the guards, each against the input it refuses and the input it accepts: a forget that evicts the
 root makes the next read in the same scope walk again while a forget that evicts nothing leaves the scope serving; a
 stamp stat that raises is answered (dir, None) and not held while one that succeeds is held; a walk with a failed
-listing is not held while a clean one is, and a walk that stored a racy stamp (the real window, one directory written at
+listing is not held while a clean one is (the store rule in which this branch differs from #1822), and a walk that stored a racy stamp (the real window, one directory written at
 the walk) is held for the cycle like a clean one, its pair and its stamps, and walked again by the next cycle's first read
 (round 1 of #882: every case closed the window, so the hold had no executed pin and the opposite policy stayed green); a
 launch fold that did not read the file is folded once per read (the call-local
@@ -72,7 +77,7 @@ other held tree is still served, and a second read with no entry standing moves 
 characterized: a root removed while the same thread's scope holds it is served, pair and stamps, at no stat until that
 scope ends (the served call precedes the root's lstat, so no pop runs and the gen stands), and the next scope's first read
 finds it gone; and the scoped counter at every edge of these, asserted: a served read of a held root, removed or not,
-lands in served, and a stale hold dropped at the lookup, a missing-root pop and a replaced-root pop move it by nothing (a
+lands in scoped, and a stale hold dropped at the lookup, a missing-root pop and a replaced-root pop move it by nothing (a
 stale hold dropped after the forget reads (hit, miss, scoped, evict) == (0, 1, 0, 1)), so hit + miss + scoped is the reads
 answered a tree; (5) the invalidation is scoped to what became stale (since 2026-09-21,
 round 1 of #882's ruling): an eviction of a root drops from every open scope that root's pair, the stamps indexed from it and the launch folds
@@ -143,6 +148,43 @@ unreadable session directory resolves every agent again on every read, {lstat: C
 (D + 2)} under the tree, with no counter moved but the project directory's one stamp stat (Guards); and the chat
 signature of a tab whose build walked S sibling trees re-stats its D + 1 + S x D + K recorded paths every cycle, and a
 directory created under any sibling directory rebuilds the tab (DependencyKey).
+
+Named mutants, each applied alone at this head and red on the cases named (each run is recorded outside the repo with its
+command, interpreter and head):
+- the fix reverted (kernel/kernel.py of the review base: fork main, #1822 and the dependency-key fix): the bound's
+  pusher case, on its os.stat count on the tree's directories (CALLS x A x D);
+- a sticky slot, _pusher_cycle's try reopening one map carried across cycles: (2) for each slot, the samples at the
+  case where a directory and an agent land between cycles, the stamp index at the stamps' release case (by identity)
+  and the launch folds at the appended-launch case;
+- a module-level slot, both loops bound to one shared map: (3), on the jobs thread's lstats for the samples and on each
+  slot's identity for the stamp index and the launch folds;
+- the root checked on disk before the held pair is served: the bound's pusher case (its lstats) and the served-paths
+  census;
+- a held fault, a stamp whose stat raised held as (dir, None): Guards' raising-stamp case and MissPathRoads'
+  absent-sibling case;
+- a held unclean walk (#1822's store rule, any answer with a directory held): Guards' failed-listing case;
+- a launch fold's fault re-folded per owner lookup, and one held for the cycle: Guards' faulted-fold case, each;
+- the fault producer's `on` append deleted, and its except branch's: Guards' producer case, each;
+- own stamps keyed per agent and directory (the lookup's agent id read from the stack, since _dir_stamp is given none),
+  and an own stamp not held: the two-row case, each, on dirStats D + 1, with the one-row case green;
+- no stamp index, an index holding own stamps alone (no fill from the stored pair), and call-local launch folds (#1822's
+  _awaiting_nest map): both bound cases, the first two on the tree's os.stat count and the third on the agent-file stats;
+- scoped not counted: both bound cases, through _assert_asks;
+- a dependency note from a fresh stat, and a note of the root alone taken from the pair's stat: DependencyKey's
+  listed-child case, each, and the fresh stat its sibling-root case too;
+- a memo hit that replays nothing, a held fold that replays nothing, a held fold that replays the agent-file memo entry's
+  notes (the cleared-memo case), and a path reported under two keys that keeps the first: DependencyKey, each;
+- under a symlinked subagents/, a fault on the own place read as absence, and the own flat place excluded at the flat
+  check: DependencyKey's symlinked-subagents fault cases, each;
+- dirStats not counting _dir_stamp's stats: the outside-a-cycle case, the two-row case and MissPathRoads' command-row
+  case;
+- a derived slot's line removed from any one of its ten open and clear sites: SlotSites, on the {function: count}
+  equality (a tree slot's line removed reds its premise);
+- the spy's patch of glob._StringGlobber's held functions removed, a mutant of this module: SpyRoads'
+  test_closed_road_path_rglob on 3.13.
+The eviction table's mutants (no eviction record from the forget or from either pop, a stamp or a launch fold served
+without its root's vouch, a table clear that records no generation) have nothing to mutate at this head, which carries no
+eviction table.
 
 Every count is derived in the test from the world's sizes (D and A, and where a case adds them G, K, S, M, E and the
 interpreter's own realpath count, taken by running it), never written out. The cycle's jobs that read the tree through
