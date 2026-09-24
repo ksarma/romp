@@ -213,6 +213,15 @@ class AgentEnd(unittest.TestCase):
     def test_an_agent_is_released_when_its_cli_dies_while_idle(self):
         self._released_at_the_end(AID, self.agent, lambda: self._session_gone())   # neither ended nor detached: a crash
 
+    def test_an_agent_is_released_when_its_cli_is_cut_mid_turn(self):
+        heals = []
+        real = self.be._heal_cut_session
+        self.be._heal_cut_session = lambda sess, oom: (heals.append(sess), real(sess, oom))
+        self.be._oom_killed_scope = lambda sess: None                      # no scope read
+        self.be._ensure = lambda sid, on_boot_settled=None: None           # the heal's resume does not start a CLI
+        self._released_at_the_end(AID, self.agent, lambda: self._session_gone(inflight=1))   # died mid-turn: a cut
+        self.assertEqual(heals, [self.s], "the cut road ran: the heal was called once for this session")
+
     def test_a_detached_session_ends_no_agent(self):
         size = self._fold_while_running(AID, self.agent)
         km._begin_checkpoint_cycle()                                     # drains the agent's start
@@ -496,6 +505,18 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual(self._weight(self.wf_agent), wf_size)
         self.assertEqual((self._stat("releaseLost"), self._stat("released")), (2, {}))
 
+    def test_with_no_checkpoint_directory_the_release_keeps_the_entry_and_says_why(self):
+        size = self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        em.set_checkpoint_dir(lambda: None)                              # no checkpoint directory (tearDown binds one again)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            km._begin_checkpoint_cycle()
+        self.assertEqual(self._weight(self.agent), size, "the entry is kept")
+        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, {}))
+        self.assertIn("no checkpoint directory", err.getvalue(), "said under the writes-off cause, which names a missing "
+                      "directory: %r" % err.getvalue())
+
     def test_a_write_that_wrote_nothing_keeps_the_entry(self):
         size = self._fold_while_running(AID, self.agent)
         self._stop(AID)
@@ -542,7 +563,20 @@ class AgentEnd(unittest.TestCase):
         self.assertFalse(em._ckpt_file(self.agent).exists(), "no document written for a file that is gone")
         self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": size}})
 
-    def test_events_past_the_queue_bound_are_releases_given_up(self):
+    def test_an_owed_release_whose_file_is_gone_is_released_with_the_drop_writes_off(self):
+        size = self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        km.CKPT_CONVERGE_BYTES = 1                                       # deferred for the budget, the drop writes still on
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._weight(self.agent), size, "precondition: the release is owed")
+        os.unlink(self.agent)
+        km.CKPT_CONVERGE_BYTES = 8 * 1024 * 1024
+        km.CKPT_CONVERGE_MS = 0                                          # the drop writes off only when the owed release is paid
+        km._begin_checkpoint_cycle()
+        self.assertIsNone(self._weight(self.agent), "released: nothing to write, everything to release")
+        self.assertEqual((self._stat("released"), self._stat("releaseLost")), ({"agentEnded": {"count": 1, "bytes": size}}, 0))
+
+    def test_the_end_dropped_past_the_queue_bound_is_a_release_given_up_and_the_start_is_not(self):
         self.be._AGENT_LIVE_MAX = 2                                      # this backend's bound, for the test
         # the queue holds two, so start(WF_AID) drops start(AID) and stop(WF_AID) drops stop(AID): of the two events dropped,
         # the stop is a release and the start is not
@@ -564,6 +598,14 @@ class AgentEnd(unittest.TestCase):
             km._begin_checkpoint_cycle()
         self.assertEqual(self._stat("releaseLost"), 0, "the two events dropped past the bound were starts: none is counted")
         self.assertNotIn("recordCache.releaseLost", err.getvalue())
+
+    def test_every_end_dropped_past_the_queue_bound_is_counted(self):
+        self.be._AGENT_LIVE_MAX = 2
+        # stop(AID) and stop(WF_AID) drop the two starts; start(AID3) drops stop(AID) and stop(AID3) drops stop(WF_AID)
+        self._start(AID); self._start(WF_AID); self._stop(AID); self._stop(WF_AID); self._start(AID3); self._stop(AID3)
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._begin_checkpoint_cycle()
+        self.assertEqual(self._stat("releaseLost"), 2, "the two ends dropped past the bound are two releases given up")
 
     def test_an_end_that_raises_does_not_lose_the_rest_of_the_batch(self):
         size = self._fold_while_running(AID, self.agent)

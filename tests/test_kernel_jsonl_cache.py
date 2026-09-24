@@ -318,34 +318,38 @@ class DropAfterQuiescentFold(unittest.TestCase):
         t = time.time() - em._DROP_AFTER_QUIESCENT_S - 60
         os.utime(old, (t, t))
         parked, go, box = threading.Event(), threading.Event(), {}
-        scan, real_write, real_stripe = em._scan_jsonl_stream, em._drop_write, em._read_stripe
+        scan, real_writes_on, real_stripe = em._scan_jsonl_stream, em.checkpoint_drop_writes_on, em._read_stripe
 
         def parking_scan(*a, **k):                                    # the reader waits inside its byte pull, holding the stripe
             if threading.current_thread() is box.get("reader"):
                 parked.set(); go.wait(10)
             return scan(*a, **k)
 
-        def drop_write(key, ent, *a, **k):                            # between the fold's read and the drop's pop, the file
-            if key == old and "reader" not in box:                    #  grows and a reader starts pulling it
+        def drop_writes_on(*a, **k):                                  # between the fold's read and the drop's pop (the drop's
+            #                                                           first step asks whether its write is on), the file grows
+            #                                                           and a reader starts pulling it. Keyed on the caller, so
+            #                                                           the hook is the same wherever the drop's check lives
+            if sys._getframe(1).f_code.co_name in ("_drop_quiescent_entry", "_drop_write") and "reader" not in box:
                 with open(old, "a") as f:
                     f.write(json.dumps({"uuid": "u30", "type": "user"}) + "\n")
                 box["reader"] = threading.Thread(target=em._read_jsonl_incremental, args=(old,))
+                self.addCleanup(lambda: (go.set(), box["reader"].join(10)))
                 box["reader"].start()
                 parked.wait(10)
                 box["armed"] = True                                   # the fold's own read took the stripe before this
-            return real_write(key, ent, *a, **k)
+            return real_writes_on(*a, **k)
 
         def stripe(path):                                             # the drop reaching for that stripe lets the reader go on
             if box.get("armed") and threading.current_thread() is not box.get("reader") and str(path) == old:
                 go.set()
             return real_stripe(path)
-        em._scan_jsonl_stream, em._drop_write, em._read_stripe = parking_scan, drop_write, stripe
+        em._scan_jsonl_stream, em.checkpoint_drop_writes_on, em._read_stripe = parking_scan, drop_writes_on, stripe
         try:
             self._fold({}, old, drop_after="quiescent")
             go.set()
             box["reader"].join(10)
         finally:
-            em._scan_jsonl_stream, em._drop_write, em._read_stripe = scan, real_write, real_stripe
+            em._scan_jsonl_stream, em.checkpoint_drop_writes_on, em._read_stripe = scan, real_writes_on, real_stripe
         self.assertTrue(parked.is_set() and not box["reader"].is_alive(), "precondition: the reader parked, then finished")
         st = em.record_cache_stats()
         self.assertEqual((st["dropped"], st["droppedBytes"]), (0, 0), "the drop popped nothing")
