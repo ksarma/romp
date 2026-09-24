@@ -947,9 +947,9 @@ SHARED_CALL_KEYS = ("hit", "miss", "compare_miss", "absent", "fallback")
 # carrying a top-level _unread key reaches it with no code change, since nothing between the parse and the arm strips the key, and
 # the door witness drives it (the unread road, 0 hand-offs, outside any pass). The witness reads from the same lists, per bump site,
 # whether its list hands off, ties each road's hand-off column to the count over its sites, and derives the no-hand-off sites of
-# hand-off keys, that arm alone today, which no row of UNDRIVEN_SITES may hold: _pass's writer reconciliation counts every bump of a
-# hand-off key as a load, so a pass that reached such a site reds there, loud, and its only witness is a drive that reads 0 hand-offs
-# at it.
+# hand-off keys, that arm alone when read on 2026-09-24, which no row of UNDRIVEN_SITES may hold: _pass's writer reconciliation
+# counts every bump of a hand-off key as a load, so a pass that reached such a site reds there, loud, and its only witness is a drive
+# that reads 0 hand-offs at it.
 SHARED_HANDOFF_KEYS = ("absent", "fallback", "corrupt", "unreadable_journal")
 # The door's second bumps, read from load_goals_shared's body (judge.py): below the call-key bumps the fill road, entered after the
 # miss or compare_miss bump, bumps at most one of these and returns (by execution, TheDoorBumpsAtMostOneSecondKeyPerCall).
@@ -964,7 +964,7 @@ SHARED_HANDOFF_KEYS = ("absent", "fallback", "corrupt", "unreadable_journal")
 # The third, that a call bumps AT MOST ONE second key, is carried by execution: TheDoorBumpsAtMostOneSecondKeyPerCall drives one
 # road per key of both rosters, a second road for the unreadable_journal key's second site, and the raise roads ROADS lists, on the
 # real door, and reads the counters per call, and ties each drive to the door's bump SITES by a trace of the door's frames, every site of
-# the door driven by a row, or stated undriven with its reason, none today (review
+# the door driven by a row, or stated undriven with its reason, none when read on 2026-09-24 (review
 # round 6, lens two: a second site under an already driven key was on no driven road with the module green). The roster pin's
 # AST clauses are an early warning for that premise: they refuse the forms they name (a second-key bump that is not a statement of a
 # list, an assignment's value, a with item or a lambda body, say; a second-key list holding two; a list not ending in a return or a
@@ -1029,10 +1029,10 @@ CASE_JD = ("_freeze_store",)
 TICK_REBOUND_KM = {}
 TICK_REBOUND_JD = {}
 # _INTERPRETER_GLOBALS: the names the interpreter itself writes into a module's globals, which are no case's rebinding and which
-# _restore's check sets aside. One today: `__warningregistry__`, which the warnings module creates in the globals of the frame a
-# warning is attributed to the first time one is raised from that module's code (warnings.warn's globals.setdefault, before the
-# filters decide what becomes of the warning; the C path does the same), so the first warning of a process raised from the kernel
-# inside a harness case would otherwise be named a leak at that case's cleanup, deleted there, and named again at the next
+# _restore's check sets aside: `__warningregistry__` alone when read on 2026-09-24, which the warnings module creates in the globals
+# of the frame a warning is attributed to the first time one is raised from that module's code (warnings.warn's globals.setdefault,
+# before the filters decide what becomes of the warning; the C path does the same), so the first warning of a process raised from
+# the kernel inside a harness case would otherwise be named a leak at that case's cleanup, deleted there, and named again at the next
 # (review round 7, a records pass re-taking the first paragraph's bypass plants at the round's head: the plant that opens the store
 # file in the kernel's pass loop left its handle to the collector, whose unclosed-file warning carries the kernel's frame, and five
 # harness cases red at their cleanup naming this name and no stub). A bound, not a derivation: which names the interpreter writes
@@ -1210,8 +1210,9 @@ def _traversal_references(tree):
     ImportFrom.names and this read raised AttributeError on it before the refusal, the one position of the grammar where the
     refusal did not come first; the witness files such a raise as an exception that is not the refusal); the
     name-keying's false positive, the price of keying on the closed set, is that `from os import walk` and any star import are
-    references too, bought off by a _WALK_EXEMPT row if this module ever needs one (clean today: the module from-imports load_source
-    and Path only); and `getattr`, a getattr on any first argument whose second argument holds the name in
+    references too, bought off by a _WALK_EXEMPT row if this module ever needs one (clean when read on 2026-09-24: the module's
+    from-imports name load_source, Path and, in the sample case's under_an_alias, load_goals_shared, none of them a traversal name,
+    and none is a star import); and `getattr`, a getattr on any first argument whose second argument holds the name in
     a string constant anywhere under it, read through _walk over that argument the way the birth pin reads a constant, so a
     no-placeholder f-string (`getattr(ast, f"walk")`, a JoinedStr holding the Constant) is a reference beside the plain string
     (review round 5, extra5-1: the form tested the argument itself as a Constant, the sibling of the defect round 4 ruled on the
@@ -1219,7 +1220,7 @@ def _traversal_references(tree):
     first cut keyed the attribute and getattr forms on the names the ast module was imported under, an open set of roads to the
     module, and a verifier of the round-4 fixes walked a tree through each of the four roads above with the pin green (the list
     shape the round's ruling names, one more time); the names are the closed set, so the forms key on them alone, which is
-    clean today: each traversal reference of this module sits inside _walk or in an exempt row. `owner` is the enclosing
+    clean when read on 2026-09-24: each traversal reference of this module sits inside _walk or in an exempt row. `owner` is the enclosing
     top-level def, `Class.method` for a method, `Class` for a class body, `<module>` otherwise, found by walking each module-body
     def's subtree (through _walk, as every reader here walks). Keyed on the names of _TRAVERSAL, the finder is wrong in both directions: an
     innocent use of a listed name needs a _WALK_EXEMPT row (the parent maps in _loader_births and _census_floor list a walked node's
@@ -1323,8 +1324,9 @@ def _loader_sites(obj, needle):
     no constant it reads and is outside every static pin in this module (a verifier of the consolidation pass planted the two
     subscript forms and the dict read as a real load in a replaced helper and the module stayed green, the round-4 refuters planted
     six doors on no list the same way, and a verifier of the round-4 fixes a bytes literal decoded, a padded constant stripped and a
-    cased one lowered; _LIMITS names the two classes, string and assembled, and the enumeration runs the pin over each form of both
-    and expects a birth from the first class and none from the second). A name bound OUTSIDE obj's source is no site in
+    cased one lowered; _LIMITS states the refused constants as its string class and the names completed at run time as its assembled
+    class, and the enumeration runs the pin over each form of those classes and expects a birth from each string form and none from
+    each assembled form). A name bound OUTSIDE obj's source is no site in
     obj either (a module-level alias of a door, an import alias at module level, a module-level dict or partial, a closure
     variable, a parameter, a class or instance attribute when only the method is scanned): the same pin refuses every such birth
     in the kernel and the judge, where the alias is spelled. And the census reads the object it is handed: behind a decorator
@@ -3199,7 +3201,7 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
     UNDRIVEN_SITES both ways and none in both; the keys ROADS expects against both rosters both ways; the rows against the class's
     method names both ways; per site, whether the statement list holding it hands the read to load_goals (_door_hands_off, the roster
     pin's predicate), each row's hand-off column against the count over its sites, and the no-hand-off sites of hand-off keys, the
-    _unread arm alone today, each executed by a drive and in no row of UNDRIVEN_SITES; the counters per call from the real
+    _unread arm alone when read on 2026-09-24, each executed by a drive and in no row of UNDRIVEN_SITES; the counters per call from the real
     _SHARED_STATS and goal_io loads. Bounds: the expected call-key and second-key deltas per road and each road's arrangement,
     hand-written and held by execution; the arrangement's limit, at most one node in the store, one sid and one call per drive
     (until the round-7 close this sentence said every drive seeds a one-node store, false for the five drives that seed none), so
@@ -3234,11 +3236,11 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
     }
     # The door's bump sites no drive reaches, (key, ordinal) -> the reason, derived against the door's own sites by the coverage case
     # (every site is in a row of ROADS or here, none in both), so a site added to the door reds there naming its line until a drive
-    # reaches it or a row here says why none does. Empty: every site of the door is driven today. The `if store.get("_unread")` arm,
-    # the second unreadable_journal site, stood here until the round-7 fixes on the ground of the door's own comment, which calls the
-    # arm unreachable while the journal's rows arrive as lines; that is true of the replay's mark and not of the arm, which a store
-    # file carrying a top-level _unread key reaches (the unread road). A future site no drive can reach states its (key, ordinal) and
-    # the reason here; the coverage case's derivation does not change.
+    # reaches it or a row here says why none does. Empty when read on 2026-09-24: every site of the door is driven. The
+    # `if store.get("_unread")` arm, the second unreadable_journal site, stood here until the round-7 fixes on the ground of the door's
+    # own comment, which calls the arm unreachable while the journal's rows arrive as lines; that is true of the replay's mark and not
+    # of the arm, which a store file carrying a top-level _unread key reaches (the unread road). A future site no drive can reach
+    # states its (key, ordinal) and the reason here; the coverage case's derivation does not change.
     UNDRIVEN_SITES = {}
 
     def _sites(self):
@@ -3374,9 +3376,9 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
                              "disagreement is a hand-off the list does not show, through a temporary or an alias of the loader, or a list "
                              "that hands off on a road whose drive reads no load)"
                              % (road, loads, sum(1 for site in road_sites if hands[site]), sorted((site, hands[site]) for site in road_sites)))
-        # a bump of a hand-off key whose list does not hand off (the door's _unread arm today): _pass's writer reconciliation counts
-        # every bump of a hand-off key as a load, so a pass that reached it would red there, and its only witness is a drive that
-        # reads 0 hand-offs at it; such a site is never left to a statement
+        # a bump of a hand-off key whose list does not hand off (the door's _unread arm when read on 2026-09-24): _pass's writer
+        # reconciliation counts every bump of a hand-off key as a load, so a pass that reached it would red there, and its only witness
+        # is a drive that reads 0 hand-offs at it; such a site is never left to a statement
         silent = sorted(site for site, off in hands.items() if site[0] in SHARED_HANDOFF_KEYS and not off)
         self.assertEqual(sorted(set(silent) - driven), [],
                          "a bump site of a hand-off key whose statement list does not hand the read to load_goals is executed by a drive, "
@@ -4866,8 +4868,8 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
                          "Python %s defines exactly the table's concrete classes at or below its version: missing %r (a name the table lists "
                          "for this version that the interpreter lacks: a misspelling, a gate set too low, or a class the interpreter removed, "
                          "for which no since-gate edit is correct: give the table a removal gate for the entry before listing the class as "
-                         "absent; the version column is a lower bound alone today, since no released or beta interpreter has removed a "
-                         "listed class), early %r (a class the interpreter "
+                         "absent; the version column is a lower bound alone, since no interpreter had removed a listed class when read on "
+                         "2026-09-24, on 3.10 through 3.14 and on 3.15.0b4), early %r (a class the interpreter "
                          "defines before the version the table says adds it)" % (version, sorted(expected - present), sorted(present - expected)))
         self.assertEqual(_AST_KNOWN, frozenset(classes[n] for n in present), "the class set _walk refuses against is the same table, by identity")
         for n in sorted(present):
