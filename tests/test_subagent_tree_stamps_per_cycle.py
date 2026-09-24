@@ -46,7 +46,10 @@ own entry; a class outside that set, os.statvfs say, is outside the census, the 
 docstring and witnessed in (8)) pinned by equality, {lstat: D, stat: A} over the cycle and {} on each
 served path (the tree read, the stamp, the agent-file hit), so a read through a wrapped class the counts do not see fails by
 name (the owner's pass before round 2 of #882: a guarded listing on the served path left the module green); and a read
-outside any cycle (a thread with no cycle scope open) still pays per call, with dirStats now counting the stats of both validators;
+outside any cycle (a thread with no tree scope open) pays per call, each agent's memo hit re-checking one stamp per
+directory its walk read (round 4 of #882, extra6-3): D for a nested agent, 1 for a flat one, and for an agent found
+nowhere the own tree's D and the project directory's 1, one failing stat per absent sibling place and S_d per sibling
+tree its walk read, with dirStats counting the validation's lstats and _dir_stamp's successful stats and not the failing ones;
 (2) per cycle, not sticky: a directory and a fourth agent landing between two cycles are seen by the second cycle's
 first read (a re-walk; the listing equals os.walk's and the sidecar reaches the map) while its later reads that cycle
 cost nothing, a launch appended to an agent's transcript between two cycles is folded by the second cycle's first read
@@ -179,6 +182,8 @@ command, interpreter and head):
   check: DependencyKey's symlinked-subagents fault cases, each;
 - dirStats not counting _dir_stamp's stats: the outside-a-cycle case, the two-row case and MissPathRoads' command-row
   case;
+- a flat walk that records the own tree's directories among its stamps, the A x D form: the outside-a-cycle flat case,
+  on its re-check stats and dirStats;
 - a derived slot's line removed from any one of its ten open and clear sites: SlotSites, on the {function: count}
   equality (a tree slot's line removed reds its premise);
 - each half of the spy's patch of glob._StringGlobber's held functions removed alone, mutants of this module: SpyRoads'
@@ -990,10 +995,11 @@ class BoundPerCycleAndPerPass(_World):
                          % (sp.tree_calls(), classes))
 
     def test_outside_a_cycle_every_reader_validates_for_itself_and_dirstats_counts_both_validators(self):
-        """A read on a thread with no cycle scope open holds nothing and pays what it paid: the
-        tree's validation and, per agent, the file memo's re-check of every directory its walk read. That cost is now
-        VISIBLE: dirStats counts both validators' directory stats (the lstat half alone before this change, so the field
-        figure across the deploy is not one series)."""
+        """A read on a thread that holds no tree scope (which readers those are: the cost home,
+        _subagent_tree_memo_report's docstring) holds nothing and pays per call: the tree's validation and, per agent, the
+        file memo's re-check of one stamp per directory its walk read, which for this world's nested agents is the whole
+        tree, D each. dirStats counts the validation's D - 1 lstats and the re-check's stats (_dir_stamp's, counted since
+        2026-09-19). The flat and the found-nowhere agents' re-checks are the two cases after this one."""
         self.assertIsNone(_scope(), "no scope is open on this thread outside a cycle")
         b = self._stats()
         with self._spy() as sp:
@@ -1012,6 +1018,102 @@ class BoundPerCycleAndPerPass(_World):
                          "dirStats %d; expected (D - 1) + A x D = %d: the validation's lstats AND the stamp re-checks' stats, both "
                          "counted since 2026-09-19 (_dir_stamp counts each os.stat it takes); the lstat half alone, D - 1 = %d, "
                          "was the count before" % (d["dirStats"], (D - 1) + A * D, D - 1))
+
+    def test_outside_a_cycle_a_flat_agents_hit_re_checks_the_one_directory_its_walk_read(self):
+        """The re-check's unit is the agent's own walk, not the tree (round 4 of #882, extra6-3: the cost home priced every
+        read's re-check at A_s x D_s). A flat agent's walk reads the own root's stamp and finds the file at the flat place
+        before any tree read, so its memo entry holds that one stamp and a hit re-checks one directory. The A agents'
+        files and sidecars are moved to the own root, the memos re-warmed outside any scope, and one _session_awaiting
+        read is made outside any scope. Keys: the premise (each agent's entry resolves to the flat place and holds the own
+        root's stamp alone), then (os.stat and os.lstat on the tree's directories, os.stat on its files, dirStats, hit,
+        miss, scoped) by equality with (A, D, A, (D - 1) + A, 1, 0, 0): one re-check stat per agent, the one validation,
+        one fold per agent. Red under a kernel whose flat walk records the own tree's directories among its stamps, the
+        A x D form (dir_stat A x D, dirStats (D - 1) + A x D)."""
+        own = str(self.sub)
+        for i, aid in enumerate(self.aids):
+            wf = self.wfroot / ("wf_%016x" % i)
+            for name in ("agent-%s.jsonl" % aid, "agent-%s.meta.json" % aid):
+                os.rename(str(wf / name), str(self.sub / name))
+        _age(self.sub)
+        self._forget_memos()
+        aw = km._session_awaiting(SID, self.path, True)          # the warm read, outside any scope
+        self.assertEqual((aw or {}).get("count"), A, "the warm read sees the A agents: %r" % (aw,))
+        for aid in self.aids:
+            entry = km._SUBAGENT_FILE_CACHE.get((self.path, aid))
+            self.assertEqual(entry[1] if entry else None, self.sub / ("agent-%s.jsonl" % aid), "premise: %s resolved at the flat place" % aid)
+            self.assertEqual([place for place, _m in entry[0]], [own], "premise: %s's memo entry holds the own root's stamp alone: %r" % (aid, entry[0]))
+        self.assertIsNone(_scope(), "no scope is open on this thread")
+        b = self._stats()
+        with self._spy() as sp:
+            aw = km._session_awaiting(SID, self.path, True)
+        t, d = sp.total(), self._delta(b)
+        self.assertEqual((aw or {}).get("count"), A)
+        got = (t["dir_stat"], t["dir_lstat"], t["file_stat"], d["dirStats"], d["hit"], d["miss"], d["scoped"])
+        want = (A, D, A, (D - 1) + A, 1, 0, 0)
+        self.assertEqual(got, want,
+                         "(os.stat and os.lstat on the tree's directories, os.stat on its files, dirStats, hit, miss, scoped) over one "
+                         "read outside any scope with A = %d flat agents: %r; keyed on %r: each agent's hit re-checks the one directory "
+                         "its walk read, the own root (A stats, not the A x D = %d of the tree), beside the one validation's D lstats "
+                         "(D - 1 in dirStats) and one fold per agent" % (A, got, want, A * D))
+
+    def test_outside_a_cycle_an_agent_found_nowhere_re_checks_the_own_tree_the_project_directory_and_each_sibling_place(self):
+        """The found-nowhere agent's own term outside a scope (round 4 of #882, extra6-3: the cost home's per-read re-check
+        left it out). Its walk read the own tree, the project directory and every sibling session directory's subagents
+        place, so a hit re-checks each: D stats on the own tree and 1 on the project directory, both counted, one failing
+        stat on each absent sibling place, not counted, and S_d on each sibling tree the walk read, counted. The world adds
+        one live row whose file exists nowhere, K = 1 session directory with no subagents/ and one sibling session with a
+        tree of S_d = 2 directories; the memos are re-warmed outside any scope, and one _session_awaiting read is made
+        outside any scope. Keys, counted inside _dir_stamp by path (_PathCalls): (stats on the own tree, on the project
+        directory, on the absent place, on the sibling tree) by equality with ((A + 1) x D, 1, 1, S_d), the A agents' D
+        each beside the found-nowhere agent's; and dirStats by equality with (D - 1) + A x D + (D + 1) + S_d, the absent
+        place's failing stat not in it."""
+        proj = Path(self.path).parent
+        absent_sess = proj / "11111111-2222-3333-4444-7c7c7c7cd000"
+        (absent_sess / "tool-results").mkdir(parents=True)
+        absent = str(absent_sess / "subagents")
+        sib = proj / "11111111-2222-3333-4444-7c7c7c7cd001" / "subagents"
+        (sib / "workflows").mkdir(parents=True)
+        sib_dirs = [str(sib), str(sib / "workflows")]
+        S_d = len(sib_dirs)
+        _age(sib)
+        for r in (str(sib), absent):
+            self.addCleanup(km._SUBAGENT_TREES.pop, r, None)
+            self.addCleanup(km._SUBAGENT_META_CACHE.pop, r, None)
+        ghost = "a%016x" % 0x7cf9
+        self.live_aids.append(ghost)
+        self.addCleanup(km._SUBAGENT_FILE_CACHE.pop, (self.path, ghost), None)
+        self._forget_memos()
+        aw = km._session_awaiting(SID, self.path, True)          # the warm read, outside any scope: the ghost's walk runs
+        self.assertEqual((aw or {}).get("count"), A + 1, "the warm read sees the A agents and the row nobody owns: %r" % (aw,))
+        entry = km._SUBAGENT_FILE_CACHE.get((self.path, ghost))
+        self.assertIsNotNone(entry, "premise: the found-nowhere agent's miss is memoized")
+        self.assertIsNone(entry[1], "premise: its file is nowhere")
+        places = sorted(place for place, _m in entry[0])
+        self.assertEqual(places, sorted(self.dirs + [str(proj), absent] + sib_dirs),
+                         "premise: its memo entry holds a stamp for each directory its walk read (the own tree, the project directory, "
+                         "the absent place and the sibling tree), once each: %r" % (places,))
+        self.assertIsNone(dict(entry[0])[absent], "premise: the absent place's stamp is (place, None)")
+        self.assertIsNone(_scope(), "no scope is open on this thread")
+        b = self._stats()
+        with self._spy() as sp, _PathCalls(("_dir_stamp",)) as pc:
+            aw = km._session_awaiting(SID, self.path, True)
+        t, d = sp.total(), self._delta(b)
+        self.assertEqual((aw or {}).get("count"), A + 1)
+        got = (pc.count("stat", self.dirs, within="_dir_stamp"), pc.count("stat", [proj], within="_dir_stamp"),
+               pc.count("stat", [absent], within="_dir_stamp"), pc.count("stat", sib_dirs, within="_dir_stamp"))
+        want = ((A + 1) * D, 1, 1, S_d)
+        self.assertEqual(got, want,
+                         "os.stat inside _dir_stamp over one read outside any scope, (on the own tree, on the project directory, on the "
+                         "absent sibling place, on the sibling tree): %r; keyed on ((A + 1) x D, 1, 1, S_d) = %r: each of the A agents "
+                         "re-checks the own tree's D, and the found-nowhere agent the D, the project directory, the absent place and "
+                         "the sibling tree's S_d = %d" % (got, want, S_d))
+        self.assertEqual(t["dir_stat"], (A + 1) * D, "the spy's count of os.stat on the own tree agrees: %d" % t["dir_stat"])
+        want_ds = (D - 1) + A * D + (D + 1) + S_d
+        self.assertEqual(d["dirStats"], want_ds,
+                         "dirStats %d; keyed on (D - 1) + A x D + (D + 1) + S_d = %d: the validation's lstats, the A agents' re-checks "
+                         "and the found-nowhere agent's counted stats (the own tree, the project directory and the sibling tree), the "
+                         "absent place's failing stat uncounted" % (d["dirStats"], want_ds))
+        self.assertEqual((d["hit"], d["miss"], d["scoped"]), (1, 0, 0), "one validation of the own tree, no walk, nothing scoped: %r" % (d,))
 
 
 class MissPathRoads(_World):
