@@ -7687,10 +7687,11 @@ test("round 6, second commit, THE ALIAS ROAD and THE HEAD SPLICE: an alias the c
       ['EV-eval-words', 'nad', 'eval cp ../base/report.md report.md', A, ['text', 'through `eval`']],
       ['EV-eval-var', 'nad', "c='cp ../base/report.md report.md'; eval \"$c\"", A, 'name'],   // was the residual (a script held in a variable); since round 6's fourth commit the value is a candidate text of `$c` (THE HEAD CANDIDATES) and eval's script is read
       ['EV-trap', 'nad', "trap 'cp ../base/report.md report.md' EXIT", A, ['text', 'through `trap`']],
-      // round 7 of fork PR #780 review, thirty-eighth commit: trap's action is read whatever words name its signal, so a handler set on a
-      // signal spelled any way is refused where its text names a tracked file: a name bare or with SIG, in lower case, a number, each name
-      // a trap takes that is not a signal, and (the thirty-ninth commit) a name a trap takes that no shell's list prints (the README pin in
-      // tools/file-review-plan-bash-guard.test.mjs points here; its signal census holds the hook to every spelling a present shell's trap takes)
+      // round 7 of fork PR #780 review, thirty-eighth commit: trap's action is read whichever of these words names its signal, so a handler
+      // set on each is refused where its text names a tracked file: a name bare or with SIG, in lower case, a number, each name a trap takes
+      // that is not a signal, and (the thirty-ninth commit) a name a trap takes that no shell's list prints (the README pin in
+      // tools/file-review-plan-bash-guard.test.mjs points here; its signal census holds the hook to each spelling a present shell's trap
+      // takes among the candidate names and the six spellings it derives)
       ['EV-trap-INT', 'nad', "trap 'cp ../base/report.md report.md' INT; kill -INT $$", A, ['text', 'through `trap`']],
       ['EV-trap-SIGTERM', 'nad', "trap 'cp ../base/report.md report.md' SIGTERM; kill -TERM $$", BZ, ['text', 'through `trap`']],   // dash takes no SIG prefix: its trap fails and the signal ends it
       ['EV-trap-lower', 'nad', "trap 'cp ../base/report.md report.md' int; kill -INT $$", BD, ['text', 'through `trap`']],   // zsh takes no lower-case name

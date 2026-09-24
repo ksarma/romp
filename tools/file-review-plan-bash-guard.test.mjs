@@ -230,18 +230,23 @@ const ledger = read('upstream', '2026-09-18-track-guard-non-literal-targets.md')
 // bash, ZERR in zsh, each named in its shell's manual under trap. The census test after the pin runs `trap : NAME` in each present shell over
 // every candidate it derives (the names each shell prints, the SIG names the system's <signal.h> defines as the C preprocessor reads it, CLD
 // among them, node's os.constants.signals, and this list), each bare and with SIG, as spelled, in lower case and in title case, and reds on a
-// spelling a shell takes that the pin does not read; a name a trap takes that no source there holds is beyond it. SIGNAL_WORD reads each name as a word, bare or
+// spelling a shell takes that the pin does not read; a name a trap takes that no source there holds is beyond it. SIGNAL_WORD reads each name bare or
 // with the SIG prefix, in any case (bash takes `int` and `sigint`, dash takes `int`: EV-trap-lower and EV-trap-sigint-lower in
-// tools/romp-track-bash-guard.test.mjs), and inflected as English inflects a word (SIGNAL_INFLECTION: INTs, BUSes, EXITed, piped, EXITing,
+// tools/romp-track-bash-guard.test.mjs; the case witness in the pin below runs every mix of upper and lower case), and inflected as English inflects a word (SIGNAL_INFLECTION: INTs, BUSes, EXITed, piped, EXITing,
 // piping, STOPped, QUITting, a plural or verb ending with the last letter doubled or a final e dropped before it), as the eval and trap stems
-// are read inflected; SIGNAL_UPPER reads a name in upper case, or SIG and an upper-case run (a name another system's list adds), anywhere in a
-// word (nonINT, INThandlers, unSIGTHR). A name in lower or mixed case glued to letters beyond an inflection is not read, since in lower case
-// a name opens or ends many English words (print, still, interrupt, terminal, pipeline): the third boundary the README pin states.
+// are read inflected; its boundaries are letters alone, so a name joined to a digit, an underscore or ASCII punctuation is read (sigint_handler,
+// on_exit, sigint2, SigInt_handler: the fortieth commit, after the reviewer's verifier found those forms unread by boundaries that also
+// stopped at a digit or an underscore; the boundary witness in the pin below runs each name in each of the six spellings SIGNAL_SPELLINGS
+// makes beside each printable ASCII character that is not a letter). SIGNAL_UPPER reads a name in upper case, or SIG and an upper-case run (a
+// name another system's list adds), anywhere in a word (nonINT, INThandlers, unSIGTHR). A name in lower or mixed case glued to letters beyond
+// an inflection is not read, since in lower case a name opens or ends many English words (print, still, interrupt, terminal, pipeline): the
+// third boundary the README pin states.
 const SIGNAL_NAMES = ['HUP', 'INT', 'QUIT', 'ILL', 'TRAP', 'ABRT', 'IOT', 'BUS', 'FPE', 'KILL', 'USR1', 'SEGV', 'USR2', 'PIPE', 'ALRM', 'TERM',
   'STKFLT', 'CHLD', 'CLD', 'CONT', 'STOP', 'TSTP', 'TTIN', 'TTOU', 'URG', 'XCPU', 'XFSZ', 'VTALRM', 'PROF', 'WINCH', 'IO', 'POLL', 'PWR', 'SYS',
   'RTMIN', 'RTMAX', 'EMT', 'INFO', 'EXIT', 'ERR', 'DEBUG', 'RETURN', 'ZERR'];
+const SIGNAL_SPELLINGS = (bare) => { const title = bare[0] + bare.slice(1).toLowerCase(); return [bare, `SIG${bare}`, bare.toLowerCase(), `sig${bare.toLowerCase()}`, title, `Sig${title}`]; };
 const SIGNAL_INFLECTION = '(?:e?s|e?d|ing|(?<=([A-Za-z]))\\1(?:es|ed|ing))?';   // the group captures the name's last letter, so only that letter doubles
-const SIGNAL_WORD = new RegExp(`(?<![A-Za-z0-9_])(?:sig)?(?:${SIGNAL_NAMES.map((n) => (n.endsWith('E') ? `${n}|${n.slice(0, -1)}(?=ing)` : n)).join('|')})(?:[+-]\\d+)?${SIGNAL_INFLECTION}(?![A-Za-z0-9_])`, 'gi');
+const SIGNAL_WORD = new RegExp(`(?<![A-Za-z])(?:sig)?(?:${SIGNAL_NAMES.map((n) => (n.endsWith('E') ? `${n}|${n.slice(0, -1)}(?=ing)` : n)).join('|')})(?:[+-]\\d+)?${SIGNAL_INFLECTION}(?![A-Za-z])`, 'gi');
 const SIGNAL_UPPER = new RegExp(`[A-Za-z0-9_]*(?:SIG[A-Z0-9]+|${SIGNAL_NAMES.join('|')})[A-Za-z0-9_]*`, 'g');
 const signalNamesIn = (text) => [...new Set([...(text.match(SIGNAL_WORD) || []), ...(text.match(SIGNAL_UPPER) || [])])];
 
@@ -266,21 +271,26 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
   // SIGINT passes;', ' a handler the shell runs on EXIT passes;' and ' a handler for SIGTERM, SIGHUP or ERR passes;', and the thirty-seventh
   // commit's pattern, which read the word signal and no signal's name, stayed green), including every name a present shell's trap takes and
   // inflected or glued forms (the thirty-ninth commit; the verifier's ' a handler set for CLD passes;', a name zsh's trap takes that no list
-  // prints, and ' handlers for INTs pass;' and ' handlers run on EXITs pass;', read by neither pattern, stayed green): with THE RESIDUAL
-  // PROPERTY's statement (whose classes name eval as a script the class holds and as a producer's consumer; the developer-surface pin below
-  // holds it identical) and CLAUSE set aside, and each phrase below set aside where it stands exactly once (the B2 clause's names set by an
-  // eval, which keep the working directory's verdict, node's `--eval=` option, the exit status among the kinds of shell option the guard takes
-  // as inert, and piped in its ordinary sense, a text or a group fed through a pipe, four places, none a claim that a command passes), the row
-  // holds neither stem, eval or trap, in any case, at a word's start or inside a word, no word signal, and no signal's name (SIGNAL_NAMES, bare
-  // or with SIG, in any case, inflected, or in upper case anywhere in a word); an inflected form (evals, evaled, traps, trapped), a prefixed
-  // form (untrapped, reevaluated) or a handler named by its signal (SIGINT, int, EXIT, RTMIN+3, CLD, INTs, EXITed, nonINT) as passing reds
-  // here, and the witness assertions below red when either pattern stops reading an inflected or glued form. Three spellings are beyond a pin
-  // on words, stated here and not read: a signal given by its number, since the row holds numbers from 0 to 64 in other senses (the witness
-  // assertion below reds when it no longer does, and the number can join the pin then); a name in lower or mixed case glued to letters beyond
-  // an inflection (unint, Intx), since the row holds lower-case words a name opens or ends (pipeline, into, error: the witness assertion below
-  // reds when none stands, and the reading can widen then); and a paraphrase that uses none of these words (on interrupt, when the shell
-  // ends). The executed rows the message names hold the behaviour: a trap's action is refused where it names a tracked file whatever words
-  // name its signal, and the signal census below holds it for every spelling a present shell's trap takes
+  // prints, and ' handlers for INTs pass;' and ' handlers run on EXITs pass;', read by neither pattern, stayed green), and a name joined to a
+  // digit or an underscore (the fortieth commit; the verifier's ' a sigint_handler function passes;', ' a handler set in a function named
+  // on_exit passes;', ' an exit_handler set by the command passes;' and ' handlers for sigint2 pass;' stayed green, since SIGNAL_WORD's
+  // boundaries also stopped at a digit or an underscore, while ' an int-handler passes;' went red): with THE RESIDUAL PROPERTY's statement
+  // (whose classes name eval as a script the class holds and as a producer's consumer; the developer-surface pin below holds it identical) and
+  // CLAUSE set aside, and each phrase below set aside where it stands exactly once (the B2 clause's names set by an eval, which keep the
+  // working directory's verdict, node's `--eval=` option, the exit status among the kinds of shell option the guard takes as inert, and piped
+  // in its ordinary sense, a text or a group fed through a pipe, four places, none a claim that a command passes), the row holds neither stem,
+  // eval or trap, in any case, at a word's start or inside a word, no word signal, and no signal's name (SIGNAL_NAMES, bare or with SIG, in any
+  // case, inflected, joined to a printable ASCII character that is not a letter, or in upper case anywhere in a word); an inflected form
+  // (evals, evaled, traps, trapped), a prefixed form (untrapped, reevaluated) or a handler named by its signal (SIGINT, int, EXIT, RTMIN+3,
+  // CLD, INTs, EXITed, nonINT, sigint_handler, on_exit, sigint2) as passing reds here, and the witness assertions below red when either
+  // pattern stops reading an inflected or glued form, or SIGNAL_WORD stops reading a name beside a printable ASCII character that is not a
+  // letter or in a mix of upper and lower case. Three spellings are beyond a pin on words, stated here and not read: a signal given by its number, since the row holds numbers
+  // from 0 to 64 in other senses (the witness assertion below reds when it no longer does, and the number can join the pin then); a name in
+  // lower or mixed case glued to letters beyond an inflection (unint, Intx), since the row holds lower-case words a name opens or ends
+  // (pipeline, into, error: the witness assertion below reds when none stands, and the reading can widen then); and a paraphrase that uses
+  // none of these words (on interrupt, when the shell ends). The behaviour is held by execution, not here: a trap's action is refused where it
+  // names a tracked file for the signal word each executed row the message names carries, and, by the signal census below, for each spelling
+  // a present shell's trap takes among the names and the six spellings the census derives
   const propStart = row.indexOf('THE RESIDUAL PROPERTY. The guard refuses a write only when');
   const propEndText = 'A shape outside these classes that reaches a tracked file is a rule to state, not a residual.';
   const propEnd = row.indexOf(propEndText, propStart);
@@ -304,8 +314,24 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
     for (const f of [`non${n}`, `${n}handlers`, `re${n}ed`, `unSIG${n}`]) assert.ok(signalNamesIn(` handlers for ${f} pass; `).includes(f), `the README pin reads ${f}, the name ${n} in upper case glued to letters (SIGNAL_UPPER)`);
   }
   assert.ok(signalNamesIn(' a handler for unSIGTHR passes; ').includes('unSIGTHR'), 'the README pin reads SIG and an upper-case run glued to letters, a name another system adds (SIGNAL_UPPER)');
+  // the boundary witness (the fortieth commit): every name in each of the six spellings SIGNAL_SPELLINGS makes, with each printable ASCII
+  // character that is not a letter (a space, a digit, an underscore, punctuation) before it, after it and on both sides, is read as that
+  // spelling by SIGNAL_WORD (on_exit, sigint_handler, sigint2, SigInt_handler), so a boundary class that stops at one of those characters, on
+  // either side, reds here even while the committed row holds no such word
+  const JOINERS = Array.from({ length: 0x7f - 0x20 }, (_, i) => String.fromCharCode(0x20 + i)).filter((c) => !/[A-Za-z]/.test(c));
+  assert.ok(['_', ' ', '-', ...'0123456789'].every((c) => JOINERS.includes(c)), 'the boundary witness runs the underscore, each digit, the space and the hyphen');
+  for (const n of SIGNAL_NAMES) for (const s of SIGNAL_SPELLINGS(n)) for (const c of JOINERS) for (const f of [`x${c}${s}`, `${s}${c}x`, `x${c}${s}${c}x`]) {
+    assert.ok(signalNamesIn(` handlers for ${f} pass; `).includes(s), `the README pin reads ${s} in ${JSON.stringify(f)}, the name ${n} joined to ${JSON.stringify(c)}, a character that is not a letter (SIGNAL_WORD's boundaries)`);
+  }
+  // the case witness (the fortieth commit): every name in every mix of upper and lower case, bare and after SIG in every mix, is read as
+  // spelled, so a pattern that reads the six spellings and not every mix reds here
+  const caseMixes = (w) => [...new Set(Array.from({ length: 2 ** w.length }, (_, m) => [...w].map((ch, i) => ((m >> i) & 1 ? ch.toLowerCase() : ch.toUpperCase())).join('')))];
+  assert.ok(caseMixes('int').includes('iNt') && caseMixes('SIG').length === 8, 'the case witness runs every mix, iNt among them');
+  for (const n of SIGNAL_NAMES) for (const s of [...caseMixes(n), ...caseMixes('SIG').flatMap((p) => caseMixes(n).map((b) => p + b))]) {
+    assert.ok(signalNamesIn(` handlers for ${s} pass; `).includes(s), `the README pin reads ${s}, the name ${n} in a mix of upper and lower case (SIGNAL_WORD ignores case)`);
+  }
   const TRAP_ROWS = ['EV-trap', 'EV-trap-INT', 'EV-trap-SIGTERM', 'EV-trap-lower', 'EV-trap-sigint-lower', 'EV-trap-num', 'EV-trap-zero', 'EV-trap-ERR', 'EV-trap-ZERR', 'EV-trap-DEBUG', 'EV-trap-RETURN', 'EV-trap-SIGEXIT', 'EV-trap-CLD'];
-  assert.deepEqual(signalNamesIn(rest), [], `hooks/README.md: outside THE RESIDUAL PROPERTY and CLAUSE no clause names a signal by its name, bare or with SIG, in any case, inflected, or in upper case anywhere in a word (a trap's action the guard reads is refused where it names a tracked file whatever words name its signal: ${TRAP_ROWS.join(', ')} in tools/romp-track-bash-guard.test.mjs, and every spelling a present shell's trap takes by the signal census in this file; a word used in another sense joins the phrases set aside above with its context)`);
+  assert.deepEqual(signalNamesIn(rest), [], `hooks/README.md: outside THE RESIDUAL PROPERTY and CLAUSE no clause names a signal by its name, bare or with SIG, in any case, inflected, joined to a printable ASCII character that is not a letter, or in upper case anywhere in a word (a trap's action the guard reads is refused where it names a tracked file, for the signal word each of ${TRAP_ROWS.join(', ')} in tools/romp-track-bash-guard.test.mjs carries, and for each spelling a present shell's trap takes among the names and spellings the signal census in this file derives; a word used in another sense joins the phrases set aside above with its context)`);
   assert.ok(/(?<![\w.-])(?:6[0-4]|[1-5]?[0-9])(?![\w.])/.test(rest), 'hooks/README.md: the witness of the number boundary, a number a trap takes (0 to 64) standing in the row in another sense, so a pin on numbers would red the committed row; with none left, a signal given by its number can join the pin');
   const lowerGlued = (rest.match(/[A-Za-z0-9_]+/g) || []).filter((t) => !signalNamesIn(` ${t} `).length && SIGNAL_NAMES.some((n) => t.toLowerCase().includes(n.toLowerCase())));
   assert.ok(lowerGlued.length > 0, 'hooks/README.md: the witness of the glued boundary, a word in lower or mixed case holding a name glued to letters beyond an inflection (pipeline, into, error) standing in the row, so a pin reading a name in any case inside a word would red the committed row; with none left, that reading can join the pin');
@@ -325,25 +351,25 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
 // in title case, since bash takes a name in any case: `int`, `Int`, `SigInt`). And the spellings its trap TAKES, `trap : NAME` in a subshell
 // per spelling, over the candidates: every name a shell printed, the SIG names the system's <signal.h> defines as the C preprocessor reads it
 // (`cpp -dM`, which holds CLD, IOT and POLL beside the signals' own names), node's os.constants.signals and SIGNAL_NAMES, each in the six
-// spellings; a mixed case beyond those six is read by the pin (SIGNAL_WORD ignores case) but is not measured or judged one by one here. The
+// spellings; a mixed case beyond those six is not measured or judged one by one here. The
 // pin must read every name printed and every spelling taken: a trap takes names no list prints
 // (zsh's CLD), which the thirty-eighth commit's census, reading the printed lists alone, could not see. A shell or a preprocessor that does
 // not start, exits other than 0 or gives no name is reported NOT RUN with the reason on stderr and read no further (CI's runner has no zsh; a
 // program present but refusing is the same case as one absent), and the test reds when no shell printed a list or no shell's trap was
 // measured, so it never passes on nothing read. A number (dash prints one for a signal it has no name for) is not a name: a signal given by
-// its number is the boundary the README pin states. Then every spelling a present shell's trap takes sets a trap whose action the hook
+// its number is the boundary the README pin states. Then each spelling a present shell's trap takes, of those measured, sets a trap whose action the hook
 // refuses where it names a tracked file: evaluate, the function the hook runs on its payload, judges `trap 'cp ../base/report.md report.md'
 // SPELLING` from the docs/ folder of a scratch project tracking docs/report.md and must refuse it by the tracked file's name through `trap`,
-// so the README pin's message (a trap's action is refused whatever words name its signal) holds for every spelling taken, where the executed
+// so the README pin's message (a trap's action is refused for each spelling a present shell's trap takes among the names and spellings this
+// census derives) holds for each spelling measured as taken, where the executed
 // rows in tools/romp-track-bash-guard.test.mjs carry one spelling each (a hook that skipped a trap's action on CLD passed the thirty-eighth
 // commit's rows while zsh wrote: the verifier).
 const SIGNAL_LISTS = { bash: ['--norc', '--noprofile', '-c', 'trap -l'], zsh: ['-f', '-c', 'print -r -- $signals'], dash: ['-c', 'kill -l'] };
 const SIGNAL_SHELL_C = { bash: ['--norc', '--noprofile', '-c'], zsh: ['-f', '-c'], dash: ['-c'] };
 const TRAP_TAKES = 'for n in "$@"; do (trap : "$n") 2>/dev/null && printf \'%s\\n\' "$n"; done; true';   // prints each spelling this shell's trap takes
 const notRunWhy = (r, none) => (r.error ? `did not start (${r.error.code})` : r.status !== 0 ? `exited ${r.status ?? r.signal}` : none);
-const SIGNAL_SPELLINGS = (bare) => { const title = bare[0] + bare.slice(1).toLowerCase(); return [bare, `SIG${bare}`, bare.toLowerCase(), `sig${bare.toLowerCase()}`, title, `Sig${title}`]; };
 
-test('round 7, thirty-eighth and thirty-ninth commits: the signal names the README pin reads include every name each present shell prints for its trap and every spelling its trap takes, bare and with SIG, as printed, in lower case and in title case, and the hook refuses a trap set with each spelling taken whose action names a tracked file', async () => {
+test('round 7, thirty-eighth and thirty-ninth commits: the signal names the README pin reads include every name each present shell prints for its trap and each spelling its trap takes of the candidate names the census derives, bare and with SIG, as printed, in lower case and in title case, and the hook refuses a trap set with each spelling taken whose action names a tracked file', async () => {
   const listed = [];
   const candidates = new Set([...SIGNAL_NAMES, ...Object.keys(os.constants.signals).map((k) => k.replace(/^SIG/, ''))]);
   for (const [sh, argv] of Object.entries(SIGNAL_LISTS)) {
