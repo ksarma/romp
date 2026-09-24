@@ -3939,6 +3939,12 @@ class ChildPytestLaunchers(unittest.TestCase):
         ("a chain of two such bindings, one annotated",
          'from helpers_x import *\ndef go():\n    a: object = main\n    b = a\n    return b(["-q"])\n',
          "unparsed", "a name the function go binds from a name the star import from helpers_x may bring or rebind"),
+        # an assignment under a nonlocal declaration binds in the enclosing function, so it is that function's binding
+        # the call reads (found by a mutant of this pass's own fix: keyed on the assigning function, the case gave no row)
+        ("such a binding made by a nested function under nonlocal, the outer function calling",
+         'from helpers_x import *\ndef go():\n    m = print\n    def arm():\n        nonlocal m\n        m = main\n    arm()\n'
+         '    return m(["-q"])\n',
+         "unparsed", "a name the function go binds from a name the star import from helpers_x may bring or rebind"),
         ("a function's binding from an attribute of a module import such a star import may rebind, the flag passed",
          'import pytest\nfrom helpers_x import *\ndef go():\n    run = pytest.main\n    return run(["-q", "-p", "no:anyio"])\n',
          "unparsed", "a name the function go binds from a name the star import from helpers_x may bring or rebind"),
