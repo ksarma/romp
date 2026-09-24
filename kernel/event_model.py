@@ -706,8 +706,10 @@ _RECORD_CACHE_STATS = {"inserts": 0, "evictions": 0, "evictedBytes": 0, "budgetE
 #                                          and an append are not whole reads and are not counted here.
 _RECORD_CACHE_STATS.update({   # the release at an agent's end (release_entry, 2026-09-24):
     "released": {},            #  reason -> {"count", "bytes"}: entries a release popped (the reason today: agentEnded)
-    "releaseDeferred": 0,      #  releases owed to the next pusher cycle: its checkpoint budget refused the document write, or a
-    #                             read replaced the entry between the write and the pop (paid by checkpoint_pay_owed_releases)
+    "releaseDeferred": 0,      #  deferrals of a release to the next pusher cycle, one per deferral, so a release refused on N
+    #                             cycles counts N and the figure is not the number owed now: its checkpoint budget refused the
+    #                             document write, or a read replaced the entry before the pop or was still pulling the file's bytes
+    #                             when the pop came (paid by checkpoint_pay_owed_releases)
     "releaseLost": 0,          #  releases given up, the entry left to the count cap: no document could be written (the drop writes
     #                             off, no checkpoint directory, a write that wrote nothing), a bounded queue of them overflowed, or
     #                             resolving one raised

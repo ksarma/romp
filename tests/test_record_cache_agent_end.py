@@ -397,14 +397,17 @@ class AgentEnd(unittest.TestCase):
     def test_a_release_the_cycle_budget_refuses_waits_for_the_next_cycle(self):
         size = self._fold_while_running(AID, self.agent)
         self._stop(AID)
-        km.CKPT_CONVERGE_BYTES = 1                                       # no room for the document this cycle
+        km.CKPT_CONVERGE_BYTES = 1                                       # no room for the document, two cycles running
         km._begin_checkpoint_cycle()
         self.assertEqual(self._weight(self.agent), size, "the entry stays this cycle")
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._weight(self.agent), size, "and the next")
+        self.assertEqual(self._stat("releaseDeferred"), 2, "each refused cycle counts one deferral")
         km.CKPT_CONVERGE_BYTES = 8 * 1024 * 1024
         km._begin_checkpoint_cycle()
         self.assertIsNone(self._weight(self.agent), "released at the next cycle with room")
         self.assertTrue(em._ckpt_file(self.agent).exists())
-        self.assertEqual((self._stat("releaseDeferred"), self._stat("released")), (1, {"agentEnded": {"count": 1, "bytes": size}}))
+        self.assertEqual((self._stat("releaseDeferred"), self._stat("released")), (2, {"agentEnded": {"count": 1, "bytes": size}}))
         self._start(AID)
         km._begin_checkpoint_cycle()
         self.assertEqual(self._stat("falseEnds"), 1, "the agent starting after its owed release was paid is a false end")
@@ -586,6 +589,63 @@ class AgentEnd(unittest.TestCase):
         with contextlib.redirect_stderr(err):
             km._begin_checkpoint_cycle()
         self.assertEqual((err.getvalue(), self._stat("releaseLost")), ("", 2), "counted again, said once")
+
+    # ---- the bounds, and a rebind ----
+
+    def test_the_release_marks_keep_the_newest_up_to_the_count_cap(self):
+        paths = []
+        for i in range(3):
+            p = os.path.join(self.root, "released-%d.jsonl" % i)
+            _append(p, _agent_lines(AID, 0, 2))
+            em._read_jsonl_incremental(p)                                # a whole entry, weighing its file
+            paths.append(p)
+        saved = em._JSONL_CACHE_MAX
+        em._JSONL_CACHE_MAX = 2                                          # the marks share the cache's count cap, lowered once
+        self.addCleanup(setattr, em, "_JSONL_CACHE_MAX", saved)          #  the three entries are in (a cap binds at an insert)
+        em.checkpoint_cycle_begin(8 * 1024 * 1024)
+        self.assertEqual([em.release_entry(p, "agentEnded") for p in paths], ["released"] * 3, "precondition: three releases")
+        self.assertEqual(list(em._RELEASED_MARKS), paths[1:], "the two newest marks, oldest first")
+
+    def test_the_owed_releases_past_their_bound_give_up_the_oldest(self):
+        saved = em._DROP_OWED_MAX
+        em._DROP_OWED_MAX = 2
+        self.addCleanup(setattr, em, "_DROP_OWED_MAX", saved)
+        keys = [os.path.join(self.root, "owed-%d.jsonl" % i) for i in range(3)]
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            for k in keys:
+                em._owe_release(k, "agentEnded")
+        self.assertEqual(list(em._RELEASE_OWED), keys[1:], "the oldest owed release is the one gone")
+        self.assertEqual((self._stat("releaseLost"), self._stat("releaseDeferred")), (1, 3), "one given up, three deferrals")
+        self.assertEqual(err.getvalue().count("recordCache.releaseLost"), 1, "said once on stderr: %r" % err.getvalue())
+
+    def test_the_released_ends_past_their_bound_forget_the_oldest(self):
+        saved = km._AGENT_RELEASED_MAX
+        km._AGENT_RELEASED_MAX = 2
+        self.addCleanup(setattr, km, "_AGENT_RELEASED_MAX", saved)
+        agent3 = os.path.join(os.path.dirname(self.agent), "agent-%s.jsonl" % AID3)
+        _append(agent3, _agent_lines(AID3, 0, 40))
+        for aid, path in ((AID, self.agent), (WF_AID, self.wf_agent), (AID3, agent3)):
+            em._read_jsonl_incremental(path)                             # a whole entry for the release to take
+            self._start(aid); self._stop(aid)
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._stat("released")["agentEnded"]["count"], 3, "precondition: three ends released")
+        self.assertEqual(list(km._AGENT_RELEASED), [(SID, WF_AID), (SID, AID3)], "the first end is the one forgotten")
+
+    def test_a_checkpoint_directory_rebind_forgets_an_owed_release(self):
+        size = self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        km.CKPT_CONVERGE_BYTES = 1
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._weight(self.agent), size, "precondition: the release is owed")
+        other = os.path.join(self.root, "checkpoints-rebound")
+        em.set_checkpoint_dir(lambda: Path(other))                       # the state is rebound before the owed release is paid
+        km.CKPT_CONVERGE_BYTES = 8 * 1024 * 1024
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._stat("released"), {}, "nothing released")
+        self.assertEqual(self._weight(self.agent), size, "the entry is whole")
+        for d in (self.ckdir, other):
+            self.assertEqual([f for _r, _d, fs in os.walk(d) for f in fs], [], "no document in %s" % os.path.basename(d))
 
     def test_a_cycle_over_a_backend_without_the_queue_does_nothing(self):
         for be in (None, False, object()):                               # not built, unavailable, a double without the queue

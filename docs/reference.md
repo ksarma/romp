@@ -3080,8 +3080,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   each cycle's start, writes an ended agent's checkpoint document and then
   drops its records, so a later fold restores a tail from the document):
   `released` (per reason, today `agentEnded`, with `count` and `bytes`),
-  `releaseDeferred` (releases owed to the next cycle: its checkpoint budget
-  refused the write, or a read replaced the entry before the drop),
+  `releaseDeferred` (deferrals of a release to the next cycle, one per
+  deferral, so a release refused on N cycles counts N and the figure is not
+  the number owed now: its checkpoint budget refused the write, or a read
+  replaced the entry before the drop or was still reading the file when the
+  drop came),
   `releaseLost` (releases given up, the entry left to the count cap: no
   document could be written, as with `ROMP_CKPT_CONVERGE_MS=0`, a bounded
   queue overflowed, or resolving one raised; said once on stderr per
