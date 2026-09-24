@@ -8,10 +8,12 @@
 // not in the tree costs the next reader the search it was meant to save, so every such claim is checked
 // against the source. The three prose surfaces beside the plan that state the numeric exception's boundary
 // (docs/install.md, the hook's row in hooks/README.md, the ledger entry) are held to the hook's set here too,
-// since round 3's mutation pass (2026-09-19) inverted each and nothing went red. Synthetic: only the repo's own text.
+// since round 3's mutation pass (2026-09-19) inverted each and nothing went red. Synthetic: only the repo's own text, and the
+// signal lists the shells present print (the census of the README pin's signal names).
 // Run: node --test tools/file-review-plan-bash-guard.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -216,6 +218,21 @@ test('the Tests and Docs sections name the modules and the doc sentences this sl
 const installDoc = read('docs', 'install.md').replace(/\s+/g, ' ');
 const ledger = read('upstream', '2026-09-18-track-guard-non-literal-targets.md').replace(/\s+/g, ' ');
 
+// THE SIGNAL NAMES the README pin reads (round 7 of fork PR #780 review, thirty-eighth commit): a signal's name is a word of a closed list,
+// unlike a paraphrase, so the pin reads every one. The list: the names bash's `trap -l`, zsh's `$signals` and dash's `kill -l` print on
+// Linux, the SIG prefix taken off (RTMIN and RTMAX with their offsets, `RTMIN+3`, `RTMAX-2`, which the pattern reads); EMT and INFO, which
+// the BSD list adds and no Linux shell prints, so the census checks them only on a runner whose shells print them (the CI shell job's weekly
+// macOS cell); and the names a trap takes that are not signals, EXIT in every shell, ERR and DEBUG in bash and zsh, RETURN in bash, ZERR in
+// zsh. SIGNAL_WORD reads each bare or with the SIG prefix, in any case (bash takes `int` and `sigint`, dash takes `int`: EV-trap-lower and
+// EV-trap-sigint-lower in tools/romp-track-bash-guard.test.mjs), and SIG_UPPER reads any upper-case word that opens with SIG, a name another
+// system's list adds included. The census test after the pin reds when a present shell prints a name SIGNAL_WORD does not read.
+const SIGNAL_NAMES = ['HUP', 'INT', 'QUIT', 'ILL', 'TRAP', 'ABRT', 'IOT', 'BUS', 'FPE', 'KILL', 'USR1', 'SEGV', 'USR2', 'PIPE', 'ALRM', 'TERM',
+  'STKFLT', 'CHLD', 'CONT', 'STOP', 'TSTP', 'TTIN', 'TTOU', 'URG', 'XCPU', 'XFSZ', 'VTALRM', 'PROF', 'WINCH', 'IO', 'POLL', 'PWR', 'SYS',
+  'RTMIN', 'RTMAX', 'EMT', 'INFO', 'EXIT', 'ERR', 'DEBUG', 'RETURN', 'ZERR'];
+const SIGNAL_WORD = new RegExp(`(?<![A-Za-z0-9_])(?:sig)?(?:${SIGNAL_NAMES.join('|')})(?:[+-]\\d+)?(?![A-Za-z0-9_])`, 'gi');
+const SIG_UPPER = /(?<![A-Za-z0-9_])SIG[A-Z0-9]+/g;
+const signalNamesIn = (text) => [...new Set([...(text.match(SIGNAL_WORD) || []), ...(text.match(SIG_UPPER) || [])])];
+
 test('the install guide, the hook\'s README row and the ledger entry say a name built from $RANDOM or $SECONDS is refused inside a tracked project, in every shell, and the hook\'s numeric set is the process id alone; the README row states what passes unread as the residual property does', () => {
   assert.ok(installDoc.includes('A temp file named only by the shell\'s process id (`$$`), at an absolute path where no tracked file could land'), 'docs/install.md: the exception, as the code allows it');
   assert.ok(installDoc.includes('still runs; a name built from `$RANDOM` or `$SECONDS` is refused, since a script can reassign those'), 'docs/install.md: the refused names, with the reason');
@@ -233,12 +250,18 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
   assert.ok(!row.includes('(eval, xargs, a script held in a variable)'), 'hooks/README.md: the round-5 parenthetical is gone');
   // keyed on the names' stems, not on whole words (round 7 of fork PR #780 review, thirty-seventh commit; the reviewer's verifier appended
   // ' a text set by traps passes;' and ' evals of such a text pass;' after CLAUSE, and the thirty-sixth commit's patterns, which matched eval and
-  // trap as whole words only, stayed green): with THE RESIDUAL PROPERTY's statement (whose classes name eval as a script the class holds and as a
-  // producer's consumer; the developer-surface pin below holds it identical) and CLAUSE set aside, and each phrase below set aside where it stands
-  // exactly once (the B2 clause's names set by an eval, which keep the working directory's verdict, and node's `--eval=` option, neither a claim
-  // that a command passes), the row holds neither stem, eval or trap, in any case, at a word's start or inside a word, and no signal, the thing a
-  // trap is set on; an inflected form (evals, evaled, traps, trapped), a prefixed form (untrapped, reevaluated) or a signal's handler named as
-  // passing reds here. A paraphrase that uses none of these words is beyond a pin on words; the executed rows the message names hold the behaviour
+  // trap as whole words only, stayed green), and on every signal's name (the thirty-eighth commit; the verifier appended ' a handler set for
+  // SIGINT passes;', ' a handler the shell runs on EXIT passes;' and ' a handler for SIGTERM, SIGHUP or ERR passes;', and the thirty-seventh
+  // commit's pattern, which read the word signal and no signal's name, stayed green): with THE RESIDUAL PROPERTY's statement (whose classes name
+  // eval as a script the class holds and as a producer's consumer; the developer-surface pin below holds it identical) and CLAUSE set aside, and
+  // each phrase below set aside where it stands exactly once (the B2 clause's names set by an eval, which keep the working directory's verdict,
+  // node's `--eval=` option, and the exit status among the kinds of shell option the guard takes as inert, none a claim that a command passes),
+  // the row holds neither stem, eval or trap, in any case, at a word's start or inside a word, no word signal, and no signal's name (SIGNAL_NAMES,
+  // bare or with SIG, in any case); an inflected form (evals, evaled, traps, trapped), a prefixed form (untrapped, reevaluated) or a handler named
+  // by its signal (SIGINT, int, EXIT, RTMIN+3) as passing reds here. Two spellings are beyond a pin on words, stated here and not read: a signal
+  // given by its number, since the row holds numbers from 0 to 64 in other senses (the witness assertion below reds when it no longer does, and
+  // the number can join the pin then), and a paraphrase that uses none of these words (on interrupt, when the shell ends). The executed rows the
+  // message names hold the behaviour: a trap's action is refused where it names a tracked file whatever words name its signal
   const propStart = row.indexOf('THE RESIDUAL PROPERTY. The guard refuses a write only when');
   const propEndText = 'A shape outside these classes that reaches a tracked file is a rule to state, not a residual.';
   const propEnd = row.indexOf(propEndText, propStart);
@@ -246,18 +269,48 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
   let rest = row.slice(0, propStart) + row.slice(propEnd + propEndText.length);
   assert.equal(rest.split(CLAUSE).length, 2, 'hooks/README.md: CLAUSE stands once outside the property');
   rest = rest.split(CLAUSE).join(' ');
-  for (const phrase of ['by a `read`, a loop, an eval, a sourced file or a function call', "and node's `--eval=` with its code"]) {
+  for (const phrase of ['by a `read`, a loop, an eval, a sourced file or a function call', "and node's `--eval=` with its code", 'the inert allowlist (exit status, tracing, history recording']) {
     assert.equal(rest.split(phrase).length, 2, `hooks/README.md: the phrase set aside stands exactly once: ${phrase}`);
     rest = rest.split(phrase).join(' ');
   }
   assert.deepEqual(rest.match(/[a-z]*(?:eval|trap|signal)[a-z]*/gi) || [], [], 'hooks/README.md: outside THE RESIDUAL PROPERTY and CLAUSE no clause names eval, trap or a signal in any spelling, an inflected or prefixed form included (a text the guard reads in either is refused where it names a tracked file: EV-eval, EV-eval-var, EV-trap; a text it cannot read passes only as CLAUSE says: RT-read-var-head, RT-xargs)');
+  const TRAP_ROWS = ['EV-trap', 'EV-trap-INT', 'EV-trap-SIGTERM', 'EV-trap-lower', 'EV-trap-sigint-lower', 'EV-trap-num', 'EV-trap-zero', 'EV-trap-ERR', 'EV-trap-ZERR', 'EV-trap-DEBUG', 'EV-trap-RETURN', 'EV-trap-SIGEXIT'];
+  assert.deepEqual(signalNamesIn(rest), [], `hooks/README.md: outside THE RESIDUAL PROPERTY and CLAUSE no clause names a signal by its name, bare or with SIG, in any case (a trap's action the guard reads is refused where it names a tracked file whatever words name its signal: ${TRAP_ROWS.join(', ')} in tools/romp-track-bash-guard.test.mjs; a word used in another sense joins the phrases set aside above with its context)`);
+  assert.ok(/(?<![\w.-])(?:6[0-4]|[1-5]?[0-9])(?![\w.])/.test(rest), 'hooks/README.md: the witness of the number boundary, a number a trap takes (0 to 64) standing in the row in another sense, so a pin on numbers would red the committed row; with none left, a signal given by its number can join the pin');
   const guardTestSrc = read('tools', 'romp-track-bash-guard.test.mjs');
-  for (const id of ['EV-eval', 'EV-eval-var', 'EV-trap']) assert.ok(guardTestSrc.includes(`['${id}', 'nad', `), `the executed row ${id} the clause's message points at stands in the guard's test`);
+  for (const id of ['EV-eval', 'EV-eval-var', ...TRAP_ROWS]) assert.ok(guardTestSrc.includes(`['${id}', 'nad', `), `the executed row ${id} the clause's message points at stands in the guard's test`);
   for (const id of ['RT-read-var-head', 'RT-xargs']) assert.ok(guardTestSrc.includes(`['${id}', '`), `the residual row ${id} the clause's message points at stands in THE RESIDUAL TABLE`);
   assert.ok(ledger.includes('a target whose only expansions are `$$` or `${$}`, the shell\'s process id, at an absolute path outside every project in play is allowed, and no other expansion is numeric'), 'the ledger entry: the exception (round 5: no other expansion is numeric; a name the guard resolves is allowed by the path it names, which the old "nothing else is" denied)');
   assert.ok(ledger.includes('the process id is the one OPAQUE expansion allowed inside a tracked project'), 'the ledger entry says what the exception is the one of');
   assert.ok(ledger.includes('so a `log.$RANDOM` inside a tracked project is refused in every shell, a deliberate false refusal recoverable in one step'), 'the ledger entry: the refused names');
   assert.ok(hook.includes("const NUMERIC_EXPANSIONS = ['$$', '${$}'];"), 'the set every clause describes');
+});
+
+// THE SIGNAL CENSUS (round 7 of fork PR #780 review, thirty-eighth commit): SIGNAL_NAMES is typed above, so this test reads each present
+// shell's own list and reds on a name SIGNAL_WORD does not read, in each of its four spellings (bare, with SIG, and both in lower case).
+// The shells start as the guard's test starts them (bash --norc --noprofile, zsh -f, dash, the environment PATH alone), so no startup
+// file of the account's runs. A shell that does not start, exits other than 0 or prints no name is reported NOT RUN with the reason on
+// stderr and read no further (CI's runner has no zsh; a shell present but refusing is the same case as one absent), and the test reds when
+// no shell printed a list, so it never passes on nothing read. A number (dash prints one for a signal it has no name for) is not a name:
+// a signal given by its number is the boundary the README pin states.
+const SIGNAL_LISTS = { bash: ['--norc', '--noprofile', '-c', 'trap -l'], zsh: ['-f', '-c', 'print -r -- $signals'], dash: ['-c', 'kill -l'] };
+
+test('round 7, thirty-eighth commit: the signal names the README pin reads include every name each present shell prints for its trap, bare, with SIG and in lower case', () => {
+  const listed = [];
+  for (const [sh, argv] of Object.entries(SIGNAL_LISTS)) {
+    const r = spawnSync(sh, argv, { encoding: 'utf8', env: { PATH: process.env.PATH }, input: '', timeout: 20000 });
+    const names = r.status === 0 ? String(r.stdout).split(/\s+/).filter((w) => w && !/^\d+\)?$/.test(w)) : [];
+    if (!names.length) {
+      console.error(`NOT RUN: real ${sh} ${r.error ? `did not start (${r.error.code})` : r.status !== 0 ? `exited ${r.status ?? r.signal}` : 'printed no signal name'}, so its signal list was not read: the README pin's signal census`);
+      continue;
+    }
+    listed.push(sh);
+    for (const name of names) {
+      const bare = name.replace(/^SIG/, '');
+      for (const s of [bare, `SIG${bare}`, bare.toLowerCase(), `sig${bare.toLowerCase()}`]) assert.ok(signalNamesIn(` ${s} `).includes(s), `${sh} prints ${name} for its trap, and the README pin reads ${s} (a name SIGNAL_NAMES lacks)`);
+    }
+  }
+  assert.ok(listed.length > 0, 'no shell printed its signal list, so the census read nothing');
 });
 
 // Round 4's contract paragraph (2026-09-19): the guard is best-effort against known write forms, its default on an
