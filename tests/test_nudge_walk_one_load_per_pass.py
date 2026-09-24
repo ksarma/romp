@@ -3836,7 +3836,11 @@ class TheCountersOneSite(unittest.TestCase):
         that reaches the counter with no spelling of its name, outside any static census, all of them caught only by execution, on a
         road a case drives and asserts memos.nudgeWalk.loads on, so a write on a road no such case drives is caught by nothing, a driven
         road among them: the wake sweep's skip branch for a failed or moot record, reached on those rows of the case whose records the
-        sweep does not own, which does not read the counter (the site case); the increment's value, which no census reads (a `+= 2` or a
+        sweep does not own, which does not read the counter (the site case); the counter census's contained-name clause, which fails
+        closed: a constant that only contains the counter's name, in any letter case, fails the site case at a subscript key, a listed
+        lookup or a dict read even when it reaches no counter (os.environ.get of a variable named ROMP_NUDGE_WALK_STATS_TRACE, say),
+        and a legitimate one would need an exemption row with its reason, the shape _loader_births states for its whole-spelling
+        constants, while this census has no exemption rows (the site case); the increment's value, which no census reads (a `+= 2` or a
         `+= 1.0` is a bump), held by the served counter's delta (_bump_sites, the bump forms B03 and B04); a second-key bump on a road
         no drive takes, a compare_miss entering the dup or refuse arm, the hand-off itself raising, or other state no drive arranges (a
         drive has at most one node, one sid and one call), and one placed in a callee of the door, seen by the counters alone (the door
