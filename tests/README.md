@@ -130,16 +130,17 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   name (`env = os.environ`; an annotated or a chained assignment is not read), or a
   parameter of the def a call at import resolves to (a function, a method, or a
   class's `__new__` or `__init__`) that the call passes it to or that defaults to it
-  (a lambda's parameter is not read; each of these unread shapes is on the list of
-  what stays outside the scan, named below), a subscript whose key a `for` over string
-  literals binds),
+  (a lambda's parameter is not read, nor a parameter of a def or class bound inside
+  a function; each of these unread shapes is on the list of what stays outside the
+  scan, named below), a subscript whose key a `for` over string literals binds),
   EQUALS the licensed set `LICENSED_MODULE_LEVEL_WRITES` there, an equality and never
   a floor, and every write meets its licence's condition. A name is read through its
   first binding alone: bound again by any binding the module's code spells (a star
   import counting as a binding of every name), it is unreadable, and a write
   through it fails the test naming the file and line; a rebinding through the
-  module's namespace (`globals()`, `sys.modules`) is not seen, and is one of the
-  shapes listed outside the scan. What stays outside the scan
+  module's namespace (`globals()`, `vars()`, `sys.modules`) or by a string `exec`
+  runs is not seen, and each is one of the shapes listed outside the scan. What
+  stays outside the scan
   is listed in one place, the comment above `_Module` in that module, each shape
   with a plant the scan is held to recording nothing for. The licences
   are per name and checkable, each with a condition on

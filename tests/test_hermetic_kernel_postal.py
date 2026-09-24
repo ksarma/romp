@@ -95,8 +95,8 @@ call at import the scan can resolve to a def or class under tests/ (a module-loc
 tests-local module, a bare decorator, an instantiation; two such calls exist today, both to
 test_asm_checkpoint.kernel_module(), whose setdefault of the browser switch is licensed; since round 2 of fork PR #894
 a def in any import-time block or class body, every binding of a name, a re-export, a metaclass's hooks and a base's
-__init_subclass__, the mapping passed into a parameter of such a def (not a lambda's), and a bare name read as a call
-only where Python calls it),
+__init_subclass__, the mapping passed into a parameter of such a def (not a lambda's, nor one of a def or class bound
+inside a function), and a bare name read as a call only where Python calls it),
 with what stays outside the scan named above _Module; and every licence carries a checkable value condition (a value written through a name is read
 through the name) and every temporary licence a since date, held by _licence_table_faults. The third commit of the same
 day closes the second verification's findings: the call resolver reads a dotted `import tests.helper` and a star import,
@@ -202,7 +202,12 @@ class _EnvNames:
     mapping to, or whose default is the mapping (_environ_params; round 2 of fork PR #894, the reviewer's ruling of
     round 1, where the parameter route was missed silently). A lambda's parameter is never one, whether the lambda
     defaults it to the mapping or is called with it: the lambda is read where it stands with every parameter
-    unreadable, and the comment above _Module names that ([lambda-parameter], with its two plants). Beside those, the
+    unreadable, and the comment above _Module names that ([lambda-parameter], with its two plants). Nor is a parameter
+    of a def or class bound inside a function, whether a call there passes it the mapping or its default is the mapping
+    (`def _o(): def _i(env): env[K] = v; _i(os.environ)`): _resolve never resolves a call to a def or class bound inside
+    a function, so the nested code is read where it stands as part of the function around it, every parameter unreadable,
+    as a lambda is ([nested-def-parameter], with its plants; the verifier's finding on round 2's thirteenth commit of
+    fork PR #894, where only the lambda was named). Beside those, the
     names bound to a dict literal or to `dict(...)` of keywords, which an `update(NAME)` reads through the name
     (tests/test_update_banner_confirm_served.py updates its DEAD_PORTS that way at import).
     THE RULE (the reviewer's ruling of round 1 on fork PR #894, where the first binding was read as the only one and a
@@ -220,16 +225,17 @@ class _EnvNames:
     delete, a mutating method, an augmented assignment, an alias, a use inside a def, a rebinding) makes it unreadable, so
     an update through it is loud (UnreadableEnvWrite naming the module and the line), since no list of mutations can
     enumerate aliasing. What the rule does not read: a binding or a mutation made through the module's namespace rather
-    than spelled by name (`globals()["k"] = v`, `vars()["D"][K] = v`, `sys.modules[__name__].D[K] = v`) or by another
-    module that imports this one back; the comment above _Module names it ([namespace-rebinding]) with its reason and
-    its plants. Built from the code that runs at import (a class body's bindings among it, read as the module's:
-    the body runs at import, and a name bound in both scopes is bound twice); a function's own bindings are added when
-    the function is walked (`within`), its parameters shadowing every table. `bindings` (since the fixup of 2026-09-22,
-    the verifier's finding that five licences had no value condition) is every name bound at import, to its value
-    expression when its one binding is an assignment and None otherwise, so a licence's value check reads a value
-    written through a name (`_ROOT = tempfile.mkdtemp(); os.environ["XDG_STATE_HOME"] = _ROOT`, `_STATE_TD.name`), and a
-    name rebound by any form above stays a name the check cannot read (_shown_value says so); _resolved does the
-    substitution."""
+    than spelled by name (`globals()["k"] = v`, `vars()["k"] = v`, `sys.modules[__name__].k = v`, setattr on the
+    module, `vars()["D"][K] = v`, `sys.modules[__name__].D[K] = v`), by another module that imports this one back, or by
+    a string that exec runs (`exec("k = v")`); the comment above _Module names them ([namespace-rebinding],
+    [exec-eval]) with the reason and the plants. Built from the code that runs at import (a class body's bindings among
+    it, read as the module's: the body runs at import, and a name bound in both scopes is bound twice); a function's own
+    bindings are added when the function is walked (`within`), its parameters shadowing every table. `bindings` (since
+    the fixup of 2026-09-22, the verifier's finding that five licences had no value condition) is every name bound at
+    import, to its value expression when its one binding is an assignment and None otherwise, so a licence's value check
+    reads a value written through a name (`_ROOT = tempfile.mkdtemp(); os.environ["XDG_STATE_HOME"] = _ROOT`,
+    `_STATE_TD.name`), and a name rebound by any form above stays a name the check cannot read (_shown_value says so);
+    _resolved does the substitution."""
 
     def __init__(self, tree=None):
         self.os_names = {"os"}
@@ -256,9 +262,16 @@ class _EnvNames:
 
     def _absorb_loop(self, n):
         """`for var in ("A", "B"): environ[var] = v` writes exactly A and B (conftest's service-env fixture, the guard
-        test's restore): the literals are read; a loop over anything computed, a name bound by two loops, or a name bound
-        by anything else as well (absorb marks those first), stays unreadable; a target that is not a bare name leaves
-        each name it binds unreadable."""
+        test's restore): the literals are read; a loop over anything computed, a name bound by two loops, or a name
+        bound as well by any other binding the module's code spells, stays unreadable (absorb marks what the import-time
+        walk hands it, an assignment of any kind, an import, a walrus or a `type` statement, before a module-level loop
+        is read here, and __init__ marks a with target, an except name, a match capture, a def or class name, a `global`
+        and a star import after it; either order leaves the name unreadable); a target that is not a bare name leaves
+        each name it binds unreadable. A rebinding the module does not spell is not seen, and the loop's literals are
+        still read: through the module's namespace (`globals()["k"] = v`, `vars()`, `sys.modules[__name__].k = v`,
+        setattr on the module) or by a string that exec runs (the verifier's finding on round 2's thirteenth commit of
+        fork PR #894, where this docstring said a name bound by anything else stays unreadable). The comment above
+        _Module names both ([namespace-rebinding], [exec-eval]), with a plant of a loop name for each form."""
         if isinstance(n.target, ast.Name):
             literal = (isinstance(n.iter, (ast.Tuple, ast.List)) and n.iter.elts
                        and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in n.iter.elts))
@@ -270,7 +283,8 @@ class _EnvNames:
 
     def _bind(self, name, value):
         """`name` bound at import to the expression `value`, or to None (bound by something that is not an assignment); a
-        second binding of any kind makes the name unreadable (None)."""
+        second binding handed here, of any kind, makes the name unreadable (None). A rebinding the module's code does not
+        spell is never handed here (_absorb_loop names those)."""
         self.bindings[name] = None if name in self.bindings else value
 
     def _bind_targets(self, targets):
@@ -342,8 +356,9 @@ class _EnvNames:
         return self
 
     def dict_items(self, name):
-        """{key: value node} of the dict literal `name` is bound to, or None when it is unreadable: bound more than once,
-        or referenced anywhere in its scope other than by one of _DICT_READS (_drop_dicts_referenced_outside_the_reads).
+        """{key: value node} of the dict literal `name` is bound to, or None when it is unreadable: bound more than once by
+        bindings the module's code spells, or referenced by name anywhere in its scope other than by one of _DICT_READS
+        (_drop_dicts_referenced_outside_the_reads, which names the references it does not see).
         The reference check runs when a write first reads a dict through its name, once per scope: over the whole module
         for a module-level dict (a use inside any def counts), over the function for a dict the function binds itself;
         the census reads a dict through its name in one module of the tree, so the other modules never pay for the walk."""
@@ -361,8 +376,9 @@ class _EnvNames:
         """Every tracked dict (a name bound once to a literal mapping) referenced anywhere under `scope` (the module's tree,
         or a function), in any nested scope, other than by one of _DICT_READS becomes unreadable (None). A reference is a
         Name node or a string that binds the name (_names_bound_by_a_string); one through the module's namespace
-        (`globals()["D"]`, `sys.modules[__name__].D`) or from another module is not seen, and the comment above _Module
-        names that ([namespace-rebinding]). One BFS walk:
+        (`globals()["D"]`, `sys.modules[__name__].D`), from another module or in a string that exec runs
+        (`exec("D[K] = v")`) is not seen, and the comment above _Module names those ([namespace-rebinding],
+        [exec-eval]). One BFS walk:
         ast.walk visits a parent before its children, so an allowed reference is recorded, by id(node) in a side table,
         before the name under it is reached."""
         tracked = {name for name, items in self.dicts.items() if items is not None}
@@ -478,8 +494,8 @@ class _Substitute(ast.NodeTransformer):
     `global` in a def, or any name after a star import, stays a name here (the reviewer's ruling of round 1 on fork PR
     #894: before it such a name resolved to its first assignment, and a licence's value check passed a value the module
     never writes; the star import since the verifier's finding on round 2). A name rebound through the module's
-    namespace (`globals()["_ROOT"] = v`) is not seen, and still resolves to its first assignment: the comment above
-    _Module names it ([namespace-rebinding])."""
+    namespace (`globals()["_ROOT"] = v`) or by a string that exec runs (`exec('_ROOT = v')`) is not seen, and still
+    resolves to its first assignment: the comment above _Module names both ([namespace-rebinding], [exec-eval])."""
 
     def __init__(self, bindings, seen=frozenset()):
         self.bindings, self.seen = bindings, seen
@@ -499,11 +515,12 @@ def _resolved(node, names):
     `os.path.join(_tmp, 'romp')` -> `os.path.join(tempfile.mkdtemp(), 'romp')`), so a licence's value check reads the
     value and not the name; the text of `node` itself where nothing substitutes (a name bound again by any binding the
     module's code spells, or bound by something other than an assignment, stays a name: THE RULE in _EnvNames); "" for
-    None. A name rebound through the module's namespace (`globals()["_ROOT"] = "/srv/real-state"`) is not seen and still
-    resolves to its first assignment, so a licence's value check passes the first value (the verifier's finding on round
-    2 of fork PR #894, where this docstring said a name bound again by anything stays a name); the comment above _Module
-    names it ([namespace-rebinding]), and the licence test holds that plant clean, so a change that starts reading it
-    reds."""
+    None. A name rebound through the module's namespace (`globals()["_ROOT"] = "/srv/real-state"`) or by a string that
+    exec runs (`exec('_ROOT = "/srv/real-state"')`) is not seen and still resolves to its first assignment, so a
+    licence's value check passes the first value (the verifier's findings on round 2 of fork PR #894, where this
+    docstring said a name bound again by anything stays a name, and on its thirteenth commit, where it named the
+    namespace alone); the comment above _Module names both ([namespace-rebinding], [exec-eval]), and the licence test
+    holds a plant of each clean, so a change that starts reading either reds."""
     if node is None:
         return ""
     # Contract: a parsed tree is read-only for every consumer, so the value is re-parsed from its text, never deep-copied.
@@ -731,7 +748,10 @@ def _compound_header(s):
     evaluates the object and the key of a subscript target and the object of an attribute target before each store, so
     a call in them (`for _d[_w()] in ...`, `for _w().x in ...`) runs at import and _reached_writes follows it like any
     call; a bare name in a target is a store or a reference, never a call (the verifier's finding on round 2 of fork PR
-    #894, where this docstring said nothing in a target ran as a call; the bare-name test plants all three)."""
+    #894, where this docstring said nothing in a target ran as a call). The bare-name test plants every position in a
+    for and in a with target (the target itself, a subscript's key and object, an attribute's object), a def named bare
+    in each and a call in each but the first (the verifier's finding on round 2's thirteenth commit, where the plants
+    held four of them)."""
     out = [getattr(s, a) for a in ("test", "iter", "subject") if getattr(s, a, None) is not None]
     if isinstance(s, (ast.For, ast.AsyncFor)):
         out.append(s.target)
@@ -853,20 +873,21 @@ def _import_time_defs(body):
 # verifier's finding on round 2 of fork PR #894, where a write in it passed silently); a base named bare (not called:
 # its __init_subclass__ chain, which creating the subclass runs); recursively through the callee's own calls, the
 # mapping followed into a parameter of the def the call resolves to that the call passes it to or that defaults to it
-# (_environ_params; passed into *args, **kwargs or a spread, it is loud; a lambda's parameter is not followed,
-# [lambda-parameter] below). A bare name anywhere else (a default, an if test, a with item, a for iterable, a for or
-# with target, an except type, a keyword other than metaclass=) is a reference or a store and not a call; a call inside
-# a for or with target's subscript or attribute runs and is followed (_compound_header), and so are the calls inside a
-# base or keyword expression. The whole callee is read, so a write or a call in a def or lambda nested in it counts
-# whether or not the callee calls it, and a module-level block's body is read whatever its test, an `if __name__ ==
-# "__main__":` body among them, which runs when the file runs as a script and not at import: both on the safe side. A
-# chain of calls is followed to _CALL_DEPTH_CAP (40) calls and raises past it, naming the chain (the deepest chain in the
-# tree, and how it is derived, is under _CALL_DEPTH_CAP). The census at round 2 of fork PR #894 finds two calls at
-# import that reach a write, both licensed: tests/test_intr_marks_memo.py and tests/test_merge_tx_sets_light.py call
-# test_asm_checkpoint.kernel_module() at module level (`import test_asm_checkpoint as TA; km = TA.kernel_module()`) and
-# its body setdefaults ROMP_KERNEL_NO_OPEN to "1" (the verifier's own walker had counted the shape empty, so the
-# module-alias form is one a resolver misses easily); no other call, decorator, metaclass or base it follows reaches
-# one.
+# (_environ_params; passed into *args, **kwargs or a spread, it is loud; a lambda's parameter is not followed, nor a
+# parameter of a def or class bound inside a function, [lambda-parameter] and [nested-def-parameter] below). A bare name
+# anywhere else (a default, an if test, a with item, a for iterable, a for or with target, an except type, a keyword
+# other than metaclass=) is a reference or a store and not a call; a call inside a for or with target's subscript or
+# attribute runs and is followed (_compound_header), and so are the calls inside a base or keyword expression. The whole
+# callee is read, so a write or a call in a def, class or lambda nested in it counts whether or not the callee calls it
+# (read where it stands, every parameter unreadable), and a module-level block's body is read whatever its test, an `if
+# __name__ == "__main__":` body among them, which runs when the file runs as a script and not at import: both on the
+# safe side. A chain of calls is followed to _CALL_DEPTH_CAP (40) calls and raises past it, naming the chain (the
+# deepest chain in the tree, and how it is derived, is under _CALL_DEPTH_CAP). The census at round 2 of fork PR #894
+# finds two calls at import that reach a write, both licensed: tests/test_intr_marks_memo.py and
+# tests/test_merge_tx_sets_light.py call test_asm_checkpoint.kernel_module() at module level (`import
+# test_asm_checkpoint as TA; km = TA.kernel_module()`) and its body setdefaults ROMP_KERNEL_NO_OPEN to "1" (the
+# verifier's own walker had counted the shape empty, so the module-alias form is one a resolver misses easily); no other
+# call, decorator, metaclass or base it follows reaches one.
 #
 # OUTSIDE the scan, named here so nobody mistakes the pin for wider than it is. This is the list's one home
 # (tests/README.md points here). Each entry's tag is a key of _OUTSIDE_THE_SCAN, whose plants
@@ -883,6 +904,13 @@ def _import_time_defs(body):
 #     env.__setitem__(K, v)`) or by a call of the lambda itself (`(lambda env: env.update(K=v))(os.environ)`): a lambda is
 #     read where it stands with every parameter unreadable (_EnvNames.within), and the parameter route (_environ_params)
 #     is followed for a def or class a call resolves to, never for a lambda.
+#   [nested-def-parameter] the mapping reaching a parameter of a def or class bound inside a function, by a call of it
+#     there (`def _o(): def _i(env): env[K] = v; _i(os.environ)`, the mapping passed by keyword, a nested class's
+#     __init__ called the same way) or by the parameter's default (`def _i(env=os.environ)`): _resolve reads the defs
+#     and classes bound in the module's import-time blocks and class bodies, never one bound inside a function, so that
+#     call is not followed, and the nested code is read where it stands as part of the function around it, with every
+#     parameter unreadable (_EnvNames.within), as a lambda is (the verifier's finding on round 2's thirteenth commit of
+#     fork PR #894, where only the lambda was named).
 #   [aliased-callee] a def or class called through anything but its own name, an import of it or a class's method: a
 #     module-level alias (`_g = _floor; _g()`, `_A = _Seam; _A()`), an expression (`[_floor][0]()`, `(_floor if x else
 #     None)()`), getattr (`getattr(module, "_floor")()`), functools.partial (`functools.partial(_floor)()`) or an
@@ -901,7 +929,10 @@ def _import_time_defs(body):
 #     bare its __init_subclass__, and no other special method is read.
 #   [call-result] a callee or a base bound to a call's result (`arm = make(); arm()`, `class K(make_base())`,
 #     `under_conftest = unittest.skipUnless(...)`): the call itself is followed, not what it returns.
-#   [exec-eval] `exec` or `eval` of a string.
+#   [exec-eval] `exec` or `eval` of a string: a write in it, and a binding or a mutation it makes (`exec("k = v")` after
+#     a loop binds k, `exec("D[K] = v")` on a tracked dict), which leaves the name read through its first binding, as
+#     under [namespace-rebinding]; the value side (`exec('_ROOT = "/srv/real-state"')`) is held clean by the licence test
+#     beside that entry's.
 #   [inherited-metaclass] a metaclass a class inherits from a base of another module (`class K(helper.B)` where B has
 #     `metaclass=M`).
 #   [inherited-method] a method a class inherits from a base of another module (`class K(helper.Base)`, then `K()` runs
@@ -915,7 +946,8 @@ def _import_time_defs(body):
 #     (`getattr(os, "environ")`) or through sys.modules.
 #   [from-os-putenv] `from os import putenv` or `from os import *`, then `putenv(K, v)`.
 #   [namespace-rebinding] a name rebound, or a tracked dict mutated, through the module's namespace rather than by a
-#     binding or a reference the module spells (`globals()["k"] = v`, `globals()["D"][K] = v`, `vars()["D"][K] = v`,
+#     binding or a reference the module spells (`globals()["k"] = v`, `vars()["k"] = v`, `sys.modules[__name__].k = v`,
+#     `setattr(sys.modules[__name__], "k", v)`, `globals()["D"][K] = v`, `vars()["D"][K] = v`,
 #     `sys.modules[__name__].D[K] = v`), or by a module it imports that reaches back into it through sys.modules: the
 #     name reads through its first binding (THE RULE in _EnvNames), so a write through it is recorded under the first
 #     binding's key and a licence's value check reads the first binding's value. The key side has the plants below;
@@ -1341,7 +1373,10 @@ _OUTSIDE_THE_SCAN = {
                            {"h_basefactory.py": "import os\nclass _B:\n    def __init_subclass__(cls, **kw):\n"
                                                 "        os.environ['{key}'] = '1'\ndef make_base():\n    return _B\n"})],
     "exec-eval": [_outside_plant("import os\nexec(\"os.environ['{key}'] = '1'\")\n"),
-                  _outside_plant("import os\neval(\"os.environ.update({key}='1')\")\n")],
+                  _outside_plant("import os\neval(\"os.environ.update({key}='1')\")\n"),
+                  # the verifier's finding on round 2's thirteenth commit: a binding or a mutation the string makes
+                  _outside_plant("import os\nfor k in ('ROMP_PLANTED_DECOY',):\n    pass\nexec(\"k = '{key}'\")\nos.environ[k] = '1'\n"),
+                  _outside_plant("import os\nD = {'ROMP_PLANTED_DECOY': '1'}\nexec(\"D['{key}'] = '1'\")\nos.environ.update(D)\n")],
     "inherited-metaclass": [_outside_plant("from h_meta import B\nclass _K(B):\n    pass\n",
                                    {"h_meta.py": "import os\nclass M(type):\n    def __init__(cls, *a):\n"
                                                  "        if cls.__name__ == '_K':\n            os.environ['{key}'] = '1'\n"
@@ -1366,6 +1401,15 @@ _OUTSIDE_THE_SCAN = {
     # the verifier's findings on round 2 of fork PR #894: shapes missed silently with none of them named here
     "lambda-parameter": [_outside_plant("import os\n_arm = lambda env=os.environ: env.__setitem__('{key}', '1')\n_arm()\n"),
                          _outside_plant("import os\n(lambda env: env.update({key}='1'))(os.environ)\n")],
+    # the verifier's finding on round 2's thirteenth commit: the lambda's class, a def or class bound inside a function
+    "nested-def-parameter": [_outside_plant("import os\ndef _o():\n    def _i(env):\n        env['{key}'] = '1'\n    _i(os.environ)\n_o()\n"),
+                             _outside_plant("import os\ndef _o():\n    def _i(env):\n        env['{key}'] = '1'\n"
+                                            "    _i(env=os.environ)\n_o()\n"),
+                             _outside_plant("import os\ndef _o():\n    def _i(env=os.environ):\n        env['{key}'] = '1'\n    _i()\n_o()\n"),
+                             _outside_plant("import os\ndef _o():\n    class _N:\n        def __init__(self, env):\n"
+                                            "            env['{key}'] = '1'\n    _N(os.environ)\n_o()\n"),
+                             _outside_plant("import os\nclass _C:\n    @staticmethod\n    def m():\n        def _i(env):\n"
+                                            "            env['{key}'] = '1'\n        _i(os.environ)\n_C.m()\n")],
     "aliased-callee": [_outside_plant("import os\ndef _floor():\n    os.environ['{key}'] = '1'\n_g = _floor\n_g()\n"),
                        _outside_plant("import os\nclass _Seam:\n    def __init__(self):\n        os.environ['{key}'] = '1'\n"
                                       "_A = _Seam\n_A()\n"),
@@ -1408,6 +1452,13 @@ _OUTSIDE_THE_SCAN = {
                       _outside_plant("import os\nclass _C:\n    def __del__(self):\n        os.environ['{key}'] = '1'\n_C()\n")],
     "namespace-rebinding": [_outside_plant("import os\nfor k in ('ROMP_PLANTED_DECOY',):\n    pass\nglobals()['k'] = '{key}'\n"
                                            "os.environ[k] = '1'\n"),
+                            # the verifier's finding on round 2's thirteenth commit: the other namespace forms of a name
+                            _outside_plant("import os\nfor k in ('ROMP_PLANTED_DECOY',):\n    pass\nvars()['k'] = '{key}'\n"
+                                           "os.environ[k] = '1'\n"),
+                            _outside_plant("import os, sys\nfor k in ('ROMP_PLANTED_DECOY',):\n    pass\n"
+                                           "sys.modules[__name__].k = '{key}'\nos.environ[k] = '1'\n"),
+                            _outside_plant("import os, sys\nfor k in ('ROMP_PLANTED_DECOY',):\n    pass\n"
+                                           "setattr(sys.modules[__name__], 'k', '{key}')\nos.environ[k] = '1'\n"),
                             _outside_plant("import os\nD = {'ROMP_PLANTED_DECOY': '1'}\nglobals()['D']['{key}'] = '1'\n"
                                            "os.environ.update(D)\n"),
                             _outside_plant("import os\nD = {'ROMP_PLANTED_DECOY': '1'}\nvars()['D']['{key}'] = '1'\n"
@@ -2806,7 +2857,9 @@ class HermeticKernelPostal(unittest.TestCase):
         fault at the eleventh commit). A name rebound through the module's namespace (`globals()["_ROOT"] = v`) is not
         seen, so its first assignment is the value checked and the write passes: that residual is named above _Module
         ([namespace-rebinding]) and held here as it is, so a change that starts reading it reds (the verifier's finding on
-        round 2 of fork PR #894, where _resolved's docstring said a name bound again by anything stays a name)."""
+        round 2 of fork PR #894, where _resolved's docstring said a name bound again by anything stays a name). The same
+        holds for a name rebound by a string that exec runs ([exec-eval]; the verifier's finding on round 2's thirteenth
+        commit, where the texts named the namespace alone), held here beside it."""
         def records_of(src, rel):
             out = collections.defaultdict(list)
             for name, rec in _module_level_records(ast.parse(src), rel):
@@ -2925,14 +2978,16 @@ class HermeticKernelPostal(unittest.TestCase):
                           "test_planted.py")
             self.assertEqual(len(faults), 1, faults)
             self.assertIn("bound more than once at import", faults[0])
-        # the disclosed residual [namespace-rebinding]: the rebinding through globals() is not seen, the value resolves to
-        # the first assignment, and the licence passes a value the module never writes
-        spoofed = ('import os, tempfile\n_ROOT = tempfile.mkdtemp()\nglobals()["_ROOT"] = "/srv/real-state"\n'
-                   'os.environ["XDG_STATE_HOME"] = _ROOT\n')
-        recs = _module_level_env_write_records(ast.parse(spoofed), "test_planted.py")
-        self.assertEqual([(w.key, w.resolved) for w, _n in recs], [("XDG_STATE_HOME", "tempfile.mkdtemp()")],
-                         "a namespace rebinding is not seen by the value resolver")
-        self.assertEqual(full(spoofed, "test_planted.py"), [], "the residual named above _Module, [namespace-rebinding]")
+        # the disclosed residuals [namespace-rebinding] and [exec-eval]: the rebinding through globals() or by a string
+        # exec runs is not seen, the value resolves to the first assignment, and the licence passes a value the module
+        # never writes
+        for tag, rebinding in (("namespace-rebinding", 'globals()["_ROOT"] = "/srv/real-state"'),
+                               ("exec-eval", "exec('_ROOT = \"/srv/real-state\"')")):
+            spoofed = 'import os, tempfile\n_ROOT = tempfile.mkdtemp()\n%s\nos.environ["XDG_STATE_HOME"] = _ROOT\n' % rebinding
+            recs = _module_level_env_write_records(ast.parse(spoofed), "test_planted.py")
+            self.assertEqual([(w.key, w.resolved) for w, _n in recs], [("XDG_STATE_HOME", "tempfile.mkdtemp()")],
+                             "a rebinding the module does not spell is not seen by the value resolver: %s" % rebinding)
+            self.assertEqual(full(spoofed, "test_planted.py"), [], "the residual named above _Module, [%s]" % tag)
         # the floor modules are licensed wholesale
         self.assertEqual(full('import os\nos.environ["ROMP_ANYTHING"] = "1"\n', "conftest.py"), [])
         # a re-asserted licence stands only while conftest re-asserts the name
@@ -3186,7 +3241,9 @@ class HermeticKernelPostal(unittest.TestCase):
         from its first binding whatever the module did with the name later at import, and a callee's parameter shadowed
         only the value table, so a write keyed by a rebound loop name, or by a parameter or a local of the same name,
         was recorded as the module-level loop's literal (a licensed name) while the module wrote another, a leak name
-        among them. Now any later binding makes the name unreadable, and a write through it is loud, naming the module
+        among them. Now any later binding the module's code spells makes the name unreadable (a rebinding through the
+        module's namespace or by a string exec runs is not seen: [namespace-rebinding] and [exec-eval] above _Module, each
+        with a plant of a loop name), and a write through it is loud, naming the module
         and the line: an assignment, an import, a def, a with target, a loop over a tuple target, and in a callee a
         parameter or a local assignment. At the round-1 head each was recorded as ROMP_KERNEL_NO_OPEN or
         ROMP_MANAGER_PORT (the reassigned loop name had been loud before that round's commits). A function's own loop over
@@ -3240,7 +3297,7 @@ class HermeticKernelPostal(unittest.TestCase):
             except UnreadableEnvWrite as e:
                 if "cannot read the key" not in str(e) or where not in str(e):
                     wrong.append("%s: loud, but not naming %r: %s" % (label, where, e))
-        self.assertEqual(wrong, [], "every later binding makes the name unreadable and the write loud, naming the module and line")
+        self.assertEqual(wrong, [], "every later binding the module spells makes the name unreadable and the write loud, naming the module and line")
         for body, keys in (('def _f():\n    for v in ("ROMP_A", "ROMP_B"):\n        os.environ[v] = "0"\n_f()', ["ROMP_A", "ROMP_B"]),
                            ('for v in ("ROMP_A", "ROMP_B"):\n    os.environ[v] = "0"', ["ROMP_A", "ROMP_B"]),
                            ('class _K:\n    for v in ("ROMP_A",):\n        os.environ[v] = "0"', ["ROMP_A"])):
@@ -3310,7 +3367,15 @@ class HermeticKernelPostal(unittest.TestCase):
         no plant, so a mutant that read a Name alone as the metaclass left every pin green. The fix of those findings adds
         three more, each read at round 2's twelfth commit and held by no plant, while _compound_header's docstring said
         nothing in a for or with target ran as a call: a call in a for or with target's key and a call in a for target's
-        attribute object run at import and are read, and a def named bare as a for target's key is not a call."""
+        attribute object run at import and are read, and a def named bare as a for target's key is not a call. The
+        verifier's finding on round 2's thirteenth commit: the texts say that of every for AND with target, but the plants
+        held four of its positions, so a mutant that read a bare name in a with target as a call, one that read a bare
+        name as a for target's attribute object as a call, and one that dropped an attribute with target from the block
+        header each left every pin green. The plants now hold each position in both statements: the target itself (a
+        store), a subscript target's key and object and an attribute target's object, with a def named bare in each (never
+        a call; as a subscript's object the store then raises TypeError, and the def still never runs) and a call in each
+        position a call can take (run at import, and read). The scan read every one of them that way at the thirteenth
+        commit; only the plants were missing."""
         self.maxDiff = None
         root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, root, True)
@@ -3328,7 +3393,19 @@ class HermeticKernelPostal(unittest.TestCase):
                  ("a def named as a for iterable", write + 'for _x in _w:\n    pass'),
                  ("a def named as an except type", write + 'try:\n    pass\nexcept _w:\n    pass'),
                  ("a def named in a keyword other than metaclass", write + 'class _K(flag=_w):\n    pass'),
-                 ("a def named bare as a for target's key", '_d = {}\n' + write + 'for _d[_w] in [1]:\n    pass'))
+                 ("a def named bare as a for target's key", '_d = {}\n' + write + 'for _d[_w] in [1]:\n    pass'),
+                 # the verifier's finding on round 2's thirteenth commit: every other position of a for or with target
+                 ("a def named bare as a for target (a store)", write + 'for _w in [1]:\n    pass'),
+                 ("a def named bare as a for target's subscript object", write + 'for _w[0] in [1]:\n    pass'),
+                 ("a def named bare as a for target's attribute object", write + 'for _w.x in [1]:\n    pass'),
+                 ("a def named bare as a with target (a store)", 'import contextlib\n' + write +
+                  'with contextlib.nullcontext(1) as _w:\n    pass'),
+                 ("a def named bare as a with target's key", 'import contextlib\n_d = {}\n' + write +
+                  'with contextlib.nullcontext(1) as _d[_w]:\n    pass'),
+                 ("a def named bare as a with target's subscript object", 'import contextlib\n' + write +
+                  'with contextlib.nullcontext(1) as _w[0]:\n    pass'),
+                 ("a def named bare as a with target's attribute object", 'import contextlib\n' + write +
+                  'with contextlib.nullcontext(1) as _w.x:\n    pass'))
         run = (("a metaclass's __init__ (the control)", 'class _M(type):\n    def __init__(cls, *a):\n'
                 '        os.environ["ROMP_POSTAL_PEERS"] = "0"\nclass _K(metaclass=_M):\n    pass'),
                ("a metaclass's __new__", 'class _M(type):\n    def __new__(mcs, *a):\n        os.environ["ROMP_POSTAL_PEERS"] = "0"\n'
@@ -3347,7 +3424,13 @@ class HermeticKernelPostal(unittest.TestCase):
                ("a call in a with target's key", 'import contextlib\n_d = {}\n' + write +
                 'with contextlib.nullcontext(1) as _d[_w()]:\n    pass'),
                ("a call in a for target's attribute object", 'import types\n' + write +
-                '    return types.SimpleNamespace()\nfor _w().x in [1]:\n    pass'))
+                '    return types.SimpleNamespace()\nfor _w().x in [1]:\n    pass'),
+               # the verifier's finding on round 2's thirteenth commit: the positions a call can take in both statements
+               ("a call as a for target's subscript object", write + '    return {}\nfor _w()["k"] in [1]:\n    pass'),
+               ("a call as a with target's subscript object", 'import contextlib\n' + write +
+                '    return {}\nwith contextlib.nullcontext(1) as _w()["k"]:\n    pass'),
+               ("a call in a with target's attribute object", 'import contextlib, types\n' + write +
+                '    return types.SimpleNamespace()\nwith contextlib.nullcontext(1) as _w().x:\n    pass'))
         wrong = []
         for label, body in never + run:
             keys = _module_level_env_writes(ast.parse("import os\n" + body + "\n"), "planted.py", root=root)
@@ -3504,7 +3587,11 @@ class HermeticKernelPostal(unittest.TestCase):
         at the comment and keeps no list of its own. The verifier's findings on round 2 of fork PR #894 found shapes the
         scan missed silently with none of them named (a metaclass's __prepare__, now read; the rest named under
         lambda-parameter, aliased-callee, callback, protocol-hook and namespace-rebinding, and a star import added to
-        held-otherwise and from-os-putenv), each with its plants."""
+        held-otherwise and from-os-putenv), each with its plants. The verifier's findings on round 2's thirteenth commit
+        found two of those classes wider than their plants: a def or class bound inside a function takes the mapping into
+        a parameter the way a lambda does, with the scan silent (now nested-def-parameter), and a loop name or a tracked
+        dict is rebound or mutated with the scan silent through vars(), sys.modules, setattr on the module or a string
+        that exec runs, as through globals() (plants added under namespace-rebinding and exec-eval)."""
         self.maxDiff = None
         text = open(os.path.join(HERE, "test_hermetic_kernel_postal.py"), encoding="utf-8").read()
         self.assertIn("OUTSIDE the scan, named here", text, "the list's one home is the comment above _Module")
