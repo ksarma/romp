@@ -50,8 +50,10 @@ legs named in `vscode-extension/ci-browser-legs.txt`, one compiled bundle path p
 the job's Chromium install with `ROMP_BROWSER_LEGS_REQUIRE=1`. The one shared launcher, `inBrowser` in
 `ui/webview/real-viewer-leg.ts`, reads the switch (any non-empty value arms it), and under the switch,
 `inBrowser` fails a launch it cannot make, naming the switch and the reason, instead of skipping. A PR
-that wants its legs run adds their bundle paths to the roster and puts the step's measured seconds in its
-body.
+that wants its legs run adds their bundle paths to the roster and puts each leg's own whole-file seconds,
+measured, in its body: node runs the rostered files concurrently, so the step's total does not give one
+leg's time, and node's `--test-timeout` in the step's script, which cuts each file's whole run at its
+bound, has to sit above it.
 
 The roster rule: under the switch, a rostered leg passes only when `inBrowser` has launched Chromium, and
 the leg does nothing that lets it pass otherwise (for example: it launches no browser of its own; nothing
@@ -70,8 +72,10 @@ detect. `tools/ci-browser-legs.test.mjs` runs a synthetic leg of each example an
 checks that every browser leg in the tree is rostered, and main has no such check. A leg with no line runs
 only under the Test step, before the job installs a browser. Of the code a leg runs, only `inBrowser`
 reads the switch, so a leg's own skip stays a skip and its own failed launch is never the failure naming
-the switch. Chromium is the one engine the job installs (a leg's Firefox and WebKit runs live elsewhere,
-a served pytest step or a local run).
+the switch. Chromium is the one engine the job installs, so a leg's Firefox and WebKit runs happen only
+in a local run. A Firefox or WebKit test in a rostered file would not run on the runner: it skips there,
+and the script reds a skipped test in a rostered file, or its launch fails, which node reds unless the
+leg swallows the failure and so breaks the roster rule. So such a test cannot sit in a rostered file.
 
 The step's script, `vscode-extension/scripts/ci-browser-legs.sh`, refuses before `node --test` a roster
 line that is malformed, duplicated or names a source that moved or was deleted, and a rostered bundle
