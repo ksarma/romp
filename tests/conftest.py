@@ -764,9 +764,14 @@ def restore_env(name, prior):
 # module's check. Which check reads such a fixture's write turns on when its setup runs against the two snapshots, not
 # on which test first uses it. A fixture a test requests by name (in its signature, in the signature of a fixture it
 # requests, or as autouse) is set up before the test's module- and function-scoped fixtures, highest scope first: when
-# the module's first test requests it (an autouse one always does), before this snapshot and every per-test snapshot of
-# _shared_state_restored, so neither check reads it; when a later test is the first to, after this snapshot and before
-# that test's, so this check names the module and the per-test check does not. A fixture requested at run time
+# the first of the module's tests to be set up requests it (an autouse one always does), before this snapshot and every
+# per-test snapshot of _shared_state_restored, so neither check reads it; when a later test is the first to, after this
+# snapshot and before that test's, so this check names the module and the per-test check does not. The first test to be
+# set up need not be the module's first: a test a skip or skipif mark skips, or an xfail mark with run=False ends, sets
+# up no fixture, this one included (pytest's skipping plugin ends it in its setup hook before any fixture is set up), so
+# a fixture requested by name by the first test that plugin does not end is read by neither check, however many tests
+# before it the plugin ended; a test skipped any other way (pytest.skip in its body or in a fixture, one of unittest's
+# skip decorators) has had this fixture set up first, and counts as set up. A fixture requested at run time
 # (request.getfixturevalue) is set up where the call runs: in a test's body or in a function-scoped fixture the test
 # requests by name, after that test's per-test snapshot, so both checks read it, the per-test one naming the test; in a
 # module-scoped fixture, after this snapshot and before the test's, so only this check does (the verifier's plants on
@@ -782,18 +787,19 @@ MODULE_ENV_FLOORS = {"ROMP_POSTAL_PORT": None}
 @pytest.fixture(scope="module", autouse=True)
 def _module_env_restored(request):
     """Fail naming the module when a watched name differs after the module's teardown from its value before the module's
-    setUpModule, setUpClass and module- and class-scoped fixtures ran (a fixture scoped above module that the module's
-    first test requests by name has run by then: the comment above says which requests each check reads). The watched
-    names, MODULE_WATCHED_ENV_NAMES: the seams _shared_state_restored watches per test
-    (_SEAM_ENV_NAMES: the sessions file, the serve token and the bus name) and the postal trio (peers, client-only and
-    the port). Not watched: PYTEST_CURRENT_TEST, which pytest writes for every phase, and every name this file
-    re-asserts before every test (the dead ports, the service-env, claude-config, catalog, scope and CLI-binary floors,
-    ROMP_SUPERVISED and the credential names), whose write here would read as a change on the module whose first test
-    it ran in. The one trio leg this file re-asserts, ROMP_POSTAL_PORT (popped before every test), is watched against
-    the value that re-assert gives it, unset (MODULE_ENV_FLOORS), rather than against the snapshot: a port a module
-    leaves set after its teardown reaches the next module's setUpModule, setUpClass and module fixtures, and every
-    child they spawn, before that module's first test pops it. Every name outside the list is outside this check: a
-    diff of the whole environment reds on the runner's own writes."""
+    setUpModule, setUpClass and module- and class-scoped fixtures ran (a fixture scoped above module that the first of
+    the module's tests to be set up requests by name has run by then: the comment above says which requests each check
+    reads, and which tests are not set up). The watched names, MODULE_WATCHED_ENV_NAMES: the seams
+    _shared_state_restored watches per test (_SEAM_ENV_NAMES: the sessions file, the serve token and the bus name) and
+    the postal trio (peers, client-only and the port). Not watched: PYTEST_CURRENT_TEST, which pytest writes for every
+    phase, and every name this file re-asserts before every test (the dead ports, the service-env, claude-config,
+    catalog, scope and CLI-binary floors, ROMP_SUPERVISED and the credential names), whose write here would read as a
+    change on the module in whose first test to be set up it ran. The one trio leg this file re-asserts,
+    ROMP_POSTAL_PORT (popped before every test), is watched against the value that re-assert gives it, unset
+    (MODULE_ENV_FLOORS), rather than against the snapshot: a port a module leaves set after its teardown reaches the
+    next module's setUpModule, setUpClass and module fixtures, and every child they spawn, before that module's first
+    test to be set up pops it. Every name outside the list is outside this check: a diff of the whole environment reds
+    on the runner's own writes."""
     before = {name: os.environ.get(name) for name in MODULE_WATCHED_ENV_NAMES}
     yield
     left = []

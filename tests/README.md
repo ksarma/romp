@@ -162,13 +162,18 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   it before every test); every other name is outside it. conftest pops every watched
   name at import, so the developer's shell does not change what the check reads. A
   write by a session- or package-scoped fixture is read by a check only when the
-  fixture's setup runs after that check's snapshot. One the module's first test
-  requests by name (an autouse one always is) runs before both snapshots, and
-  neither check reads it; one a later test is the first to request by name is named
-  by this check alone; one requested at run time (`request.getfixturevalue`) is
-  named by both from a test's body or a function-scoped fixture, and by this check
-  alone from a module-scoped fixture. The tree has no fixture scoped above module,
-  and the hermetic module holds that list at empty.
+  fixture's setup runs after that check's snapshot. One requested by name by the
+  first of the module's tests to be set up (an autouse one always is) runs before
+  both snapshots, and neither check reads it; one a later test is the first to
+  request by name is named by this check alone. The first test to be set up need
+  not be the module's first: a test a skip or skipif mark skips, or an xfail mark
+  with `run=False` ends, sets up no fixture (pytest ends it before any is set up),
+  while one skipped any other way (`pytest.skip` in its body or a fixture, or a
+  unittest skip decorator) is set up first. One requested at run time
+  (`request.getfixturevalue`) is named by both from a test's body or a
+  function-scoped fixture, and by this check alone from a module-scoped fixture.
+  The tree has no fixture scoped above module, and the hermetic module holds that
+  list at empty.
   `python -m tests.test_hermetic_kernel_postal --census` prints the counts by name
   and shape. The per-test half, set in setUp and put back by a cleanup registered
   right after the write (`restore_env` from `tests/conftest.py`, or a method of the
