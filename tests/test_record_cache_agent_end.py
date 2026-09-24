@@ -263,6 +263,18 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual(self._stat("falseEnds"), 1, "the released agent entered the live set again")
         self.assertEqual(self._stat("released")["agentEnded"]["bytes"], size)
 
+    def test_a_second_end_over_a_restored_tail_leaves_it_alone(self):
+        self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        km._begin_checkpoint_cycle()
+        km._agent_launch_ids(self.agent)                                 # a fold restores a tail weighing nothing
+        tail = self._ent(self.agent)
+        self.assertTrue(tail is not None and tail[5] > 0 and em._entry_weight(tail) == 0, "a restored tail")
+        self._start(AID); self._stop(AID)                                # resumed and ended again, nothing appended
+        km._begin_checkpoint_cycle()
+        self.assertIs(self._ent(self.agent), tail, "the restored tail stays: popping it frees nothing and costs a restore")
+        self.assertEqual(self._stat("released")["agentEnded"]["count"], 1, "one release, not two")
+
     def test_an_end_and_a_start_in_one_cycle_release_nothing(self):
         size = self._fold_while_running(AID, self.agent)
         self._stop(AID)
@@ -346,6 +358,34 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual(err.getvalue(), "", "said once per process")
         self.assertEqual(self._weight(self.wf_agent), wf_size)
         self.assertEqual((self._stat("releaseLost"), self._stat("released")), (2, {}))
+
+    def test_a_write_that_wrote_nothing_keeps_the_entry(self):
+        size = self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        real = em.checkpoint_write
+        em.checkpoint_write = lambda path, *a, **k: False               # a write due that writes nothing
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                km._begin_checkpoint_cycle()
+        finally:
+            em.checkpoint_write = real
+        self.assertEqual(self._weight(self.agent), size, "kept: without the document the next fold would read it whole")
+        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, {}))
+        self.assertIn("recordCache.releaseLost", err.getvalue())
+
+    def test_an_owed_release_whose_file_is_gone_is_released(self):
+        size = self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        km.CKPT_CONVERGE_BYTES = 1                                       # deferred for the budget
+        km._begin_checkpoint_cycle()
+        self.assertEqual(self._weight(self.agent), size)
+        os.unlink(self.agent)                                            # the transcript is deleted before the next cycle
+        km.CKPT_CONVERGE_BYTES = 8 * 1024 * 1024
+        km._begin_checkpoint_cycle()
+        self.assertIsNone(self._weight(self.agent), "nothing left to write, everything to release")
+        self.assertFalse(em._ckpt_file(self.agent).exists(), "no document written for a file that is gone")
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": size}})
 
     def test_events_past_the_queue_bound_are_releases_given_up(self):
         self.be._AGENT_LIVE_MAX = 2                                      # this backend's bound, for the test
