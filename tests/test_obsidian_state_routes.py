@@ -12,6 +12,7 @@ import ast
 import base64
 import contextlib
 import errno
+import gc
 import inspect
 import io
 import json
@@ -19,13 +20,13 @@ import os
 import re
 import socket
 import struct
-import sys
 import tempfile
 import threading
 import time
 import unittest
 import urllib.error
 import urllib.request
+import weakref
 from collections import Counter, namedtuple
 from http.server import ThreadingHTTPServer
 from romp_load import load_source
@@ -33,12 +34,6 @@ from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
-if __package__:                  # under pytest tests/ is a package: THE SAME parse_cache module object every census in
-    from . import parse_cache as PC   # the process shares (one parse per file, one derivation per key)
-else:                            # a direct run, or unittest from inside tests/: no package, the module by name
-    if HERE not in sys.path:
-        sys.path.insert(0, HERE)
-    import parse_cache as PC
 
 # Hermetic state BEFORE the loads -- they resolve their state root at import time, and only
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
@@ -440,12 +435,20 @@ def _kernel_modules():
     return sorted(f for f in os.listdir(_KERNEL_DIR) if f.endswith(".py"))
 
 
-def _parsed(name):
-    """kernel/<name>'s tree, through tests/parse_cache.py: parsed once per process and shared with every other census
-    that reads the file, so kernel/kernel.py is one parse between them. READ-ONLY, the cache's contract: no attribute is
-    written on a node and no node is copied (no copy.deepcopy); per-node data a test derives lives in a table keyed by
-    id(node) that the test owns."""
-    return PC.source_and_tree(os.path.join(_KERNEL_DIR, name))[1]
+_PARSES = {}   # kernel module file name -> how many times this module parsed it (_parse_kernel_module), read by pin (3)
+
+
+def _parse_kernel_module(name):
+    """kernel/<name>'s tree, parsed here and counted in _PARSES: the census's OWN parse, made inside its build, held in
+    the census and dropped with it, never through tests/parse_cache.py (_flag_census says why). READ-ONLY all the same:
+    no attribute is written on a node (the parser shares its singleton nodes, a Load or an operator, with every tree in
+    the process) and no node is copied; per-node data a test derives lives in a table keyed by id(node) that the test
+    owns."""
+    path = os.path.join(_KERNEL_DIR, name)
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    _PARSES[name] = _PARSES.get(name, 0) + 1
+    return ast.parse(text, filename=path)
 
 
 def _module_qual(module, name):
@@ -460,14 +463,15 @@ def _short(qual):
     return qual.rsplit(":", 1)[-1].rsplit(".", 1)[-1]
 
 
-def _source_functions():
-    """Every module of the kernel's directory, parsed (_kernel_modules): {qualified name (_module_qual): def} for every
-    module-level function and every method of a module-level class, and [(module, statement)] for the other top-level
-    and class-level statements. Read-only: the tests read these, never change them. Called once per process, inside the
-    census's one derivation (_flag_census)."""
+def _source_functions(trees):
+    """Every module of the kernel's directory, from its tree in `trees` ({module: tree}, the census's own parse, in
+    _kernel_modules' order): {qualified name (_module_qual): def} for every module-level function and every method of a
+    module-level class, and [(module, statement)] for the other top-level and class-level statements. Read-only: the
+    tests read these, never change them. Called once per build of the census, and the census is built once per module
+    run (_flag_census)."""
     fns, rest = {}, []
-    for module in _kernel_modules():
-        for node in _parsed(module).body:
+    for module, tree in trees.items():
+        for node in tree.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 fns[_module_qual(module, node.name)] = node
             elif isinstance(node, ast.ClassDef):
@@ -538,7 +542,8 @@ def _door_walk(fn, qual):
     population holds, so a setter call there reds loudly. An arm's test and its else branch belong to the enclosing door.
     The def's decorators, parameter defaults and annotations are walked too, under no door, so every node _mentions finds
     in `fn` is keyed. In pre-order (a node, then each child's whole subtree in turn), from an explicit stack: no closure
-    that refers to itself, so the census's build (_derive_flag_census) leaves no cycle behind (_flag_census)."""
+    that refers to itself, so the census's build (_derive_flag_census) leaves no cycle behind and dropping the census
+    frees it by reference count, with no collection (_flag_census)."""
     out = []
     top = frozenset({("no door", qual)})
     roots = list(fn.decorator_list) + [fn.args] + ([fn.returns] if fn.returns is not None else []) + list(fn.body)
@@ -684,6 +689,7 @@ _LOADERS = ("load_source", "spec_from_file_location")   # the calls a module loa
 _NO_CHILD = {"ctx", "op", "ops"}   # the fields holding an expression context or an operator, neither with a child node
 _CHILD_FIELDS = {}                 # node class -> its fields but those (_facts); keyed by class, never by a node
 _Facts = namedtuple("_Facts", "names callees seeded lane loads")
+_WALKS = None                      # {id(unit): _facts walks} while a build of the census runs (_flag_census), else None
 
 
 def _facts(node):
@@ -696,10 +702,13 @@ def _facts(node):
     (`load_source("romp_judge", HERE / "judge.py")`). It visits every node ast.walk(node) visits except an expression
     context or an operator (no child, no name, no call; a comparison's operators are read on the comparison), in a
     stack's order rather than a queue's, which no fact depends on: each is a count, a set or a flag. A type test
-    stands for isinstance, since the parser builds each node as its exact class. Read-only, as the cached trees must
-    be (_parsed). One walk per unit is round 1's cost cut on fork PR #909, the reviewer's ask after the PR's own
-    Python 3.10 cell hit CI's 25-minute wall: the census had walked every function once per fact and once per round of
-    _derive_roads, about 5 s of the module's run on 3.10."""
+    stands for isinstance, since the parser builds each node as its exact class. Read-only, as the trees must be
+    (_parse_kernel_module). One walk per unit is round 1's cost cut on fork PR #909, the reviewer's ask after the PR's
+    own Python 3.10 cell hit CI's 25-minute wall: the census had walked every function once per fact and once per round
+    of _derive_roads, about 5 s of the module's run on 3.10. While a build of the census runs, each call is counted in
+    the build's walk table (_WALKS, keyed by id(node)), which the mechanism pin reads: each unit walked exactly once."""
+    if _WALKS is not None:
+        _WALKS[id(node)] = _WALKS.get(id(node), 0) + 1
     Name, Attribute, Constant, Call, Expr, Compare, AST = (ast.Name, ast.Attribute, ast.Constant, ast.Call, ast.Expr,
                                                            ast.Compare, ast.AST)   # locals: the loop runs once per node
     names, callees, loads, text, needles, lane = {}, set(), set(), set(), [], False
@@ -752,9 +761,9 @@ def _facts(node):
 def _unit_facts(tree):
     """({id(unit): _facts(unit)}, loads) for one module's tree. The units are the pieces _source_functions splits a
     module into, each top-level statement but a class and each statement of a class's body, so every def in fns and
-    every statement in rest is one; the table is keyed by id(unit), the census's own, never an attribute on a cached
-    node. loads is the union of every unit's and of each class's parts outside its body (decorators, bases,
-    keywords): every node ast.walk(tree) visits but the module and the classes themselves, neither of them a call."""
+    every statement in rest is one; the table is keyed by id(unit), the census's own, never an attribute on a node.
+    loads is the union of every unit's and of each class's parts outside its body (decorators, bases, keywords): every
+    node ast.walk(tree) visits but the module and the classes themselves, neither of them a call."""
     table, loads = {}, set()
     for node in tree.body:
         units = [node]
@@ -770,19 +779,94 @@ def _unit_facts(tree):
     return table, frozenset(loads)
 
 
-_CENSUS_KEY = ("tests/test_obsidian_state_routes.py FlagWriterPopulation", _KERNEL_DIR)
+_CENSUS_BUILDS = 0   # the census's builds in this module's run (_flag_census), read by the mechanism pin
+
+
+class _Census(dict):
+    """The census's facts as ONE object that takes a weak reference (a plain dict cannot), so tearDownModule can read
+    that the facts are gone once FlagWriterPopulation drops them (pin 2 there)."""
+    __slots__ = ("__weakref__",)
 
 
 def _flag_census():
-    """FlagWriterPopulation's whole derivation behind ONE tests/parse_cache.py key (_CENSUS_KEY): built once per process
-    from the kernel directory's trees (read through the cache, parsed once per process with the other censuses) and this
-    class's sets, and read by every test of the class after. The build must leave no cycle behind, since the cache
-    freezes what is tracked when it returns (tests/parse_cache.py, the rule for a build): its value is plain data
-    (dicts, sets, tuples, the cached trees' own nodes and a table keyed by id(node)) and it makes no closure or object
-    that refers back to itself.
-    Unpinned, as a measurement: with the collector off, a collection right after this build found nothing unreachable
-    when the cache was adopted here, and again after round 1's one-walk cut on fork PR #909."""
-    return PC.derived(_CENSUS_KEY, lambda: _derive_flag_census(FlagWriterPopulation))
+    """Build FlagWriterPopulation's census (_derive_flag_census) from the class's sets and the kernel directory's trees,
+    which the build parses itself (_parse_kernel_module), and count the build (_CENSUS_BUILDS) and its _facts walks
+    (_WALKS, kept in the census as "walks"). The class's setUpClass calls it once per module run and holds the one
+    reference; its tearDownClass drops it, so the facts and the trees are freed before the next module's first test.
+    No test instance keeps a reference of its own.
+    WHY NOT tests/parse_cache.py's derived(): derived() memoises the value for the whole process and calls gc.freeze()
+    after a build, and the freeze is process-global. In CI's serial run this module sorts at about 61 percent, so its
+    build was the run's first freeze, and every later read of the kernel's perf snapshot (_PerfStats.snapshot reads
+    gc.get_freeze_count(), which walks the permanent generation on every call) paid per read for everything frozen here.
+    Measured at round 1 of fork PR #909 from the PR's own Python 3.10 cell: 58 s over main's cell at the same base,
+    most of it in the snapshot readers that sort after this module and in the thread-stop census, which reads the
+    frozen count itself (the reviewer's ruling of that round). So the module changes no collector state at all: no
+    gc.freeze, gc.disable or gc.collect, since the first is process-global and the other two walk every tracked object.
+    WHY NOT THE CACHE'S SHARED PARSE EITHER, this census's exception to tests/parse_cache.py's one-cache rule: read
+    through source_and_tree, which freezes nothing, the trees stayed in the cache, tracked, from this module until the
+    thread-stop census froze them, and every full collection in between walked them. Measured at round 2 of fork PR
+    #909 on Python 3.10, the 14 snapshot readers after this module, run in one process after it, took 34.5 to 41.2 s
+    with the trees read through the cache (16 full collections took 10.5 to 14.5 s of that) against main's 23.6 to
+    29.0 s; with the census's own parse, released with its facts, they took 25.3 to 27.2 s, inside main's run-to-run
+    spread, and Python 3.12 gave the same picture. What the exception costs: the thread-stop census, which sorts after
+    this module, parses the kernel's files itself, as it did before this census existed.
+    THE RULE FOR THE BUILD: it leaves no cycle behind, so that dropping the one reference frees the facts and the trees
+    by reference count, with no collection. Its value is plain data (dicts, sets, tuples, the trees and their nodes, and
+    tables keyed by id(node)) and it makes no closure or object that refers back to itself. A cycle through the held
+    object is pinned (tearDownModule's weak reference, pin 2). A cycle among the inner containers that does not pass
+    through the held object, or an inner container kept by another name, would leave the held object free and that pin
+    green, so that half is a measurement: with the collector off, a collection right after this build found nothing
+    unreachable when the census adopted tests/parse_cache.py, again after round 1's one-walk cut on fork PR #909, and
+    again at round 2 of that PR, where a collection right after dropping the census found nothing unreachable either."""
+    global _CENSUS_BUILDS, _WALKS
+    _CENSUS_BUILDS += 1
+    _WALKS = walks = {}
+    try:
+        census = _derive_flag_census(FlagWriterPopulation)
+    finally:
+        _WALKS = None
+    census["walks"] = walks
+    return census
+
+
+_FROZEN_BEFORE = None   # gc.get_freeze_count() before the module's first test (setUpModule), pin (1)'s first read
+_CENSUS_REF = None      # a weak reference to the census FlagWriterPopulation holds (its setUpClass), pin (2)'s subject
+
+
+def setUpModule():
+    """Pin (1)'s first read, before the module's first test and not at import (pytest imports every module at
+    collection, before any test runs): gc.get_freeze_count(), which tearDownModule reads again. Two reads only, since
+    each walks the permanent generation."""
+    global _FROZEN_BEFORE
+    _FROZEN_BEFORE = gc.get_freeze_count()
+
+
+def tearDownModule():
+    """The census's two pins on what the module leaves behind, read after its last test, and so after
+    FlagWriterPopulation's tearDownClass dropped the census, in the same process as setUpModule.
+    (1) The module froze nothing: gc.get_freeze_count() is not above what setUpModule read. The count is live and falls
+    when a frozen object dies, so an object an earlier module froze can lower it in between, while nothing but a freeze
+    inside the module raises it. Red under a build through tests/parse_cache.py's derived(), which freezes every object
+    tracked when its build returns (about 1.16 million in the module's own process at round 1 of fork PR #909).
+    (2) The census is gone: the weak reference setUpClass took is dead, read with no gc.collect(), since with no cycle
+    reference counting has already freed it, and a collection walks every tracked object (seconds at a serial cell's
+    heap). Red under a module-scope cache that keeps the census and under a build whose value refers back to itself. It
+    does not see a cycle among the inner containers that does not pass through the held object, or an inner container
+    kept by another name (_flag_census states that half as a measurement). Not read through gc.get_objects(), which
+    does not list frozen objects, so under a derived() build it would find nothing and pass for the wrong reason."""
+    problems = []
+    if _CENSUS_REF is not None and _CENSUS_REF() is not None:
+        problems.append("pin (2): the census FlagWriterPopulation held is alive after its tearDownClass dropped it: "
+                        "something else keeps it (a module-scope cache, a test's own reference) or it refers back to "
+                        "itself, a cycle that only a collection frees, and this module runs none")
+    frozen = gc.get_freeze_count()
+    if _FROZEN_BEFORE is not None and frozen > _FROZEN_BEFORE:
+        problems.append("pin (1): gc.get_freeze_count() rose from %d before the module's first test to %d after its "
+                        "last: something in the module froze the heap (tests/parse_cache.py's derived() freezes after "
+                        "a build), and every later read of the kernel's perf snapshot walks what is frozen"
+                        % (_FROZEN_BEFORE, frozen))
+    if problems:
+        raise AssertionError("; ".join(problems))
 
 
 def _derive_flag_census(cls):
@@ -797,12 +881,16 @@ def _derive_flag_census(cls):
     the roads (_derive_roads). Every unit of every module (each def and statement) is walked ONCE (_facts), and what
     the sets above and the tests read of a unit comes from that one walk: facts, keyed by id(unit), and loads, each
     module's files loaded by name. Each caller's door walk (_door_walk) is walked once here too, as door_walks, for
-    the five tests that key a caller's nodes to its doors."""
-    fns, rest = _source_functions()
+    the five tests that key a caller's nodes to its doors. trees holds each module's tree, the build's own parse
+    (_parse_kernel_module), so the mechanism pin enumerates the units of the very trees the build walked and the trees
+    go when the census goes. It returns one _Census; the build leaves no cycle behind, so dropping that object frees
+    everything here by reference count (_flag_census)."""
+    trees = {module: _parse_kernel_module(module) for module in _kernel_modules()}
+    fns, rest = _source_functions(trees)
     modules = frozenset(n for m in (km, km.jd) for n, v in vars(m).items() if isinstance(v, type(os)))
     facts, loads = {}, {}
-    for module in _kernel_modules():
-        table, loads[module] = _unit_facts(_parsed(module))
+    for module, tree in trees.items():
+        table, loads[module] = _unit_facts(tree)
         facts.update(table)
     of = {q: facts[id(fn)] for q, fn in fns.items()}
     namers = {q for q, f in of.items() if f.seeded}
@@ -813,10 +901,10 @@ def _derive_flag_census(cls):
     setters = cls.WRITERS.union(by_write, by_hook, by_flow)
     shorts = {_short(q) for q in setters}
     callers = {q for q, f in of.items() if q not in setters and f.names.keys() & shorts}
-    return {"fns": fns, "rest": rest, "modules": modules, "namers": namers, "writers": (by_write, by_hook, by_flow),
-            "setters": setters, "shorts": shorts, "callers": callers,
-            "roads": _derive_roads({q: f.names for q, f in of.items()}, setters), "facts": facts, "loads": loads,
-            "door_walks": {q: _door_walk(fns[q], q) for q in callers}}
+    return _Census(fns=fns, rest=rest, modules=modules, namers=namers, writers=(by_write, by_hook, by_flow),
+                   setters=setters, shorts=shorts, callers=callers,
+                   roads=_derive_roads({q: f.names for q, f in of.items()}, setters), facts=facts, loads=loads,
+                   door_walks={q: _door_walk(fns[q], q) for q in callers}, trees=trees)
 
 
 def _derive_roads(names, setters):
@@ -917,9 +1005,36 @@ class FlagWriterPopulation(unittest.TestCase):
     # do_POST's arm that hands _state_write_route the request: one arm for the route function's three paths
     ROUTE_ARMS = {frozenset({("route", "/flag"), ("route", "/views"), ("route", "/order")})}
 
-    def setUp(self):
-        self.census = _flag_census()
-        self.fns, self.rest, self.modules = self.census["fns"], self.census["rest"], self.census["modules"]
+    census = None   # the census (_flag_census), the ONE reference to it: set by setUpClass, dropped by tearDownClass
+
+    @classmethod
+    def setUpClass(cls):
+        """Build the census once for the class's run and hold it here; the weak reference is tearDownModule's pin
+        (2)."""
+        global _CENSUS_REF
+        super().setUpClass()
+        cls.census = _flag_census()
+        _CENSUS_REF = weakref.ref(cls.census)
+
+    @classmethod
+    def tearDownClass(cls):
+        """Drop the one reference, so reference counting frees the facts and the trees before the next module's first
+        test."""
+        cls.census = None
+        super().tearDownClass()
+
+    # the tests read the facts through the held census, never a copy of their own on the test instance
+    @property
+    def fns(self):
+        return self.census["fns"]
+
+    @property
+    def rest(self):
+        return self.census["rest"]
+
+    @property
+    def modules(self):
+        return self.census["modules"]
 
     def _namers(self):
         return self.census["namers"]
@@ -954,15 +1069,40 @@ class FlagWriterPopulation(unittest.TestCase):
         return self.census["door_walks"][q]
 
     def test_the_census_is_one_derivation_over_one_parse_per_module(self):
-        """tests/parse_cache.py's mechanism, read from its counters: the census is built once per process behind its one
-        key (_CENSUS_KEY) however many tests read it, and each module of the kernel's directory is parsed once per
-        process, a parse shared with every other census that reads the file (kernel/kernel.py among them). That the
-        trees stay read-only is checked by the thread-stop census's no-foreign-attribute pin, which walks every tree
-        the cache holds when it runs in the same process."""
-        self.assertTrue(_flag_census() is self.census, "every test reads the one memoised derivation")   # no repr of the census
-        self.assertEqual(PC.builds_of(_CENSUS_KEY), 1, "the census is derived once in this process")
-        self.assertEqual({m: PC.parses_of(os.path.join(_KERNEL_DIR, m)) for m in _kernel_modules()},
-                         {m: 1 for m in _kernel_modules()}, "each module of the kernel's directory, parsed once in this process")
+        """The census's mechanism, read from counts. It is built once in this module's run however many tests read it
+        (_CENSUS_BUILDS, which _flag_census keeps; a build per test reds here, and so that this holds whatever order the
+        tests run in, a second test of the class is run from here first, its whole run with setUp and tearDown). That
+        build walks each unit with _facts exactly once: each def in fns, each statement in rest, and each class's parts
+        outside its body, read from the build's walk table (a walk outside _facts, such as an ast.walk per fact, is
+        outside this count, and the module's measured time is the guard for it). And each module of the kernel's
+        directory is parsed once in this module's run, by the build's own parse (_PARSES, which _parse_kernel_module
+        keeps; the trees are the census's and go with it, _flag_census says why they are not the cache's). That the
+        module froze nothing and that the census is gone once the class drops it are read in tearDownModule (pins 1
+        and 2)."""
+        other = unittest.TestResult()
+        FlagWriterPopulation("test_the_setters_of_the_flags_store_are_the_two_the_doors_call").run(other)
+        self.assertEqual((other.testsRun, len(other.failures), len(other.errors)), (1, 0, 0),
+                         "a second test of the class ran green beside this one")
+        self.assertEqual(_CENSUS_BUILDS, 1, "the census is built once in this module's run, however many tests read it")
+        units = {}
+        for module, tree in self.census["trees"].items():
+            for node in tree.body:
+                parts = [node]
+                if isinstance(node, ast.ClassDef):
+                    body = {id(st) for st in node.body}
+                    parts = [p for p in ast.iter_child_nodes(node) if id(p) not in body] + node.body
+                for unit in parts:
+                    units[id(unit)] = (module, unit)
+        walks = self.census["walks"]
+        wrong = sorted("%s:%d %s walked %d times" % (m, getattr(u, "lineno", 0), type(u).__name__, walks.get(i, 0))
+                       for i, (m, u) in units.items() if walks.get(i, 0) != 1)
+        self.assertEqual(len(wrong), 0, "%d units of the kernel's directory not walked by _facts exactly once in the "
+                         "build, for example %s" % (len(wrong), wrong[:10]))
+        self.assertEqual(len(walks.keys() - units.keys()), 0,
+                         "_facts walked nodes that are not units of the kernel's trees")
+        self.assertEqual({m: _PARSES.get(m, 0) for m in _kernel_modules()}, {m: 1 for m in _kernel_modules()},
+                         "each module of the kernel's directory, parsed once in this module's run, by the census's "
+                         "build")
 
     def test_the_census_reads_every_module_the_kernel_loads(self):
         """A writer in the judge, called from a socket op on a client's field, writes a flag as surely as one in
@@ -1148,7 +1288,7 @@ class FlagWriterPopulation(unittest.TestCase):
         checked = set()
         for q in sorted(self._callers()):
             fn = self.fns[q]
-            parents = {id(c): p for p in ast.walk(fn) for c in ast.iter_child_nodes(p)}   # a side table: the cached tree is read-only
+            parents = {id(c): p for p in ast.walk(fn) for c in ast.iter_child_nodes(p)}   # a side table: the tree is read-only
             by_door = {}
             for door, node in self._door_walk_of(q):
                 by_door.setdefault(door, []).append(node)
