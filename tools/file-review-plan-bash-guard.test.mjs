@@ -234,10 +234,12 @@ const ledger = read('upstream', '2026-09-18-track-guard-non-literal-targets.md')
 // with the SIG prefix, in any case (bash takes `int` and `sigint`, dash takes `int`: EV-trap-lower and EV-trap-sigint-lower in
 // tools/romp-track-bash-guard.test.mjs; the case witness in the pin below runs every mix of upper and lower case), and inflected as English inflects a word (SIGNAL_INFLECTION: INTs, BUSes, EXITed, piped, EXITing,
 // piping, STOPped, QUITting, a plural or verb ending with the last letter doubled or a final e dropped before it), as the eval and trap stems
-// are read inflected; its boundaries are letters alone, so a name joined to a digit, an underscore or ASCII punctuation is read (sigint_handler,
-// on_exit, sigint2, SigInt_handler: the fortieth commit, after the reviewer's verifier found those forms unread by boundaries that also
-// stopped at a digit or an underscore; the boundary witness in the pin below runs each name in each of the six spellings SIGNAL_SPELLINGS
-// makes beside each printable ASCII character that is not a letter). SIGNAL_UPPER reads a name in upper case, or SIG and an upper-case run (a
+// are read inflected; its boundaries are the ASCII letters alone, so a name joined to any other character is read, a digit, an underscore,
+// punctuation, a tab or a character outside ASCII (sigint_handler, on_exit, sigint2, SigInt_handler: the fortieth commit, after the reviewer's
+// verifier found those forms unread by boundaries that also stopped at a digit or an underscore; the boundary witness in the pin below runs
+// every name in lower case beside every UTF-16 code unit, the unit the pattern reads, and each name in each of the six spellings
+// SIGNAL_SPELLINGS makes beside each printable ASCII character that is not a letter: the forty-first commit, after the verifier found the
+// fortieth commit's witness, printable ASCII alone, green with U+2026, U+2019 or the tab read as a letter). SIGNAL_UPPER reads a name in upper case, or SIG and an upper-case run (a
 // name another system's list adds), anywhere in a word (nonINT, INThandlers, unSIGTHR). A name in lower or mixed case glued to letters beyond
 // an inflection is not read, since in lower case a name opens or ends many English words (print, still, interrupt, terminal, pipeline): the
 // third boundary the README pin states.
@@ -280,11 +282,11 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
   // working directory's verdict, node's `--eval=` option, the exit status among the kinds of shell option the guard takes as inert, and piped
   // in its ordinary sense, a text or a group fed through a pipe, four places, none a claim that a command passes), the row holds neither stem,
   // eval or trap, in any case, at a word's start or inside a word, no word signal, and no signal's name (SIGNAL_NAMES, bare or with SIG, in any
-  // case, inflected, joined to a printable ASCII character that is not a letter, or in upper case anywhere in a word); an inflected form
+  // case, inflected, joined to any character that is not an ASCII letter, or in upper case anywhere in a word); an inflected form
   // (evals, evaled, traps, trapped), a prefixed form (untrapped, reevaluated) or a handler named by its signal (SIGINT, int, EXIT, RTMIN+3,
   // CLD, INTs, EXITed, nonINT, sigint_handler, on_exit, sigint2) as passing reds here, and the witness assertions below red when either
-  // pattern stops reading an inflected or glued form, or SIGNAL_WORD stops reading a name beside a printable ASCII character that is not a
-  // letter or in a mix of upper and lower case. Three spellings are beyond a pin on words, stated here and not read: a signal given by its number, since the row holds numbers
+  // pattern stops reading an inflected or glued form, or SIGNAL_WORD stops reading a name beside any character that is not an ASCII
+  // letter, starts reading a name in lower case glued to one, or stops reading a name in a mix of upper and lower case. Three spellings are beyond a pin on words, stated here and not read: a signal given by its number, since the row holds numbers
   // from 0 to 64 in other senses (the witness assertion below reds when it no longer does, and the number can join the pin then); a name in
   // lower or mixed case glued to letters beyond an inflection (unint, Intx), since the row holds lower-case words a name opens or ends
   // (pipeline, into, error: the witness assertion below reds when none stands, and the reading can widen then); and a paraphrase that uses
@@ -314,13 +316,38 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
     for (const f of [`non${n}`, `${n}handlers`, `re${n}ed`, `unSIG${n}`]) assert.ok(signalNamesIn(` handlers for ${f} pass; `).includes(f), `the README pin reads ${f}, the name ${n} in upper case glued to letters (SIGNAL_UPPER)`);
   }
   assert.ok(signalNamesIn(' a handler for unSIGTHR passes; ').includes('unSIGTHR'), 'the README pin reads SIG and an upper-case run glued to letters, a name another system adds (SIGNAL_UPPER)');
-  // the boundary witness (the fortieth commit): every name in each of the six spellings SIGNAL_SPELLINGS makes, with each printable ASCII
-  // character that is not a letter (a space, a digit, an underscore, punctuation) before it, after it and on both sides, is read as that
-  // spelling by SIGNAL_WORD (on_exit, sigint_handler, sigint2, SigInt_handler), so a boundary class that stops at one of those characters, on
-  // either side, reds here even while the committed row holds no such word
-  const JOINERS = Array.from({ length: 0x7f - 0x20 }, (_, i) => String.fromCharCode(0x20 + i)).filter((c) => !/[A-Za-z]/.test(c));
-  assert.ok(['_', ' ', '-', ...'0123456789'].every((c) => JOINERS.includes(c)), 'the boundary witness runs the underscore, each digit, the space and the hyphen');
-  for (const n of SIGNAL_NAMES) for (const s of SIGNAL_SPELLINGS(n)) for (const c of JOINERS) for (const f of [`x${c}${s}`, `${s}${c}x`, `x${c}${s}${c}x`]) {
+  // the boundary witness (the fortieth commit; the forty-first derives its population from the rule it pins, after the reviewer's verifier
+  // found the fortieth commit's, the printable ASCII characters that are not letters, green with U+2026, the one character outside ASCII the
+  // row holds, U+2019 or the tab read as a letter). The rule: a letter is [A-Za-z], and any other character beside a name is a boundary.
+  // SIGNAL_WORD has no u or v flag, so it reads a string as UTF-16 code units and each boundary looks at the one unit beside the match, whatever
+  // the spelling (the i flag folds no unit outside ASCII into [A-Za-z]); so the population is every unit from 0x0000 to 0xFFFF, split by the
+  // rule into JOINERS, the 65484 units that are not ASCII letters (the controls, a tab and a newline among them, every character outside ASCII
+  // up to U+FFFF, and each half of a surrogate pair, which is how a character above U+FFFF stands beside a name), and the 52 letters. Every name
+  // in lower case, a spelling SIGNAL_UPPER cannot read, is read with each joiner on both sides (a boundary that stops at that unit on either
+  // side leaves it unread) and is not read with a letter before it or after it (the third boundary, each side on its own); and every name in
+  // each of the six spellings SIGNAL_SPELLINGS makes, with each printable joiner (a space, a digit, an underscore, punctuation) before it, after
+  // it and on both sides, is read as that spelling (on_exit, sigint_handler, sigint2, SigInt_handler). A boundary class that stops at any unit
+  // that is not an ASCII letter, or reads a name in lower case glued to one, reds here even while the committed row holds no such word
+  assert.ok(!SIGNAL_WORD.unicode && !SIGNAL_WORD.unicodeSets, 'the boundary witness runs every UTF-16 code unit, the units SIGNAL_WORD reads while it has no u or v flag; with either flag it reads a character above U+FFFF as one unit, and the witness must run those');
+  const UNITS = Array.from({ length: 0x10000 }, (_, u) => String.fromCharCode(u));
+  const JOINERS = UNITS.filter((c) => !/[A-Za-z]/.test(c));
+  const LETTERS = UNITS.filter((c) => /[A-Za-z]/.test(c));
+  assert.ok(UNITS.length === 0x10000 && UNITS.every((c, u) => c.charCodeAt(0) === u) && LETTERS.length === 52 && JOINERS.length === 0x10000 - 52
+    && ['_', ' ', '-', ...'0123456789', '\t', '\n', '\u00a0', '\u2019', '\u2026', '\ud83d', '\ude00', '\uffff'].every((c) => JOINERS.includes(c)),
+    'the boundary witness runs every code unit from 0x0000 to 0xFFFF that is not one of the 52 ASCII letters, the underscore, each digit, the space, the hyphen, the tab, the newline, U+00A0, U+2019, U+2026, both halves of a surrogate pair and U+FFFF among them');
+  const unit = (c) => `U+${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}`;
+  const offRule = [];
+  let ran = 0;
+  for (const n of SIGNAL_NAMES) {
+    const s = n.toLowerCase();
+    for (const c of JOINERS) { ran++; if (!signalNamesIn(` handlers for x${c}${s}${c}x pass; `).includes(s)) offRule.push(`${s} unread with ${unit(c)} on both sides`); }
+    for (const c of LETTERS) for (const f of [`x${c}${s}`, `${s}${c}x`]) { ran++; if (signalNamesIn(` handlers for ${f} pass; `).includes(s)) offRule.push(`${s} read in ${f}`); }
+  }
+  assert.equal(ran, SIGNAL_NAMES.length * (JOINERS.length + 2 * LETTERS.length), 'the boundary witness ran every name against every code unit, each joiner once and each letter on each side');
+  assert.deepEqual(offRule.slice(0, 12), [], `the README pin reads every name in lower case beside each of the ${JOINERS.length} code units that are not ASCII letters, and none glued to an ASCII letter (SIGNAL_WORD's boundaries: ${offRule.length} readings off the rule, the first listed)`);
+  const PRINTABLE = JOINERS.filter((c) => c >= ' ' && c <= '~');
+  assert.ok(PRINTABLE.length === 0x7f - 0x20 - 52 && ['_', ' ', '-', ...'0123456789'].every((c) => PRINTABLE.includes(c)), 'the spelling witness runs every printable ASCII character that is not a letter, the underscore, each digit, the space and the hyphen among them');
+  for (const n of SIGNAL_NAMES) for (const s of SIGNAL_SPELLINGS(n)) for (const c of PRINTABLE) for (const f of [`x${c}${s}`, `${s}${c}x`, `x${c}${s}${c}x`]) {
     assert.ok(signalNamesIn(` handlers for ${f} pass; `).includes(s), `the README pin reads ${s} in ${JSON.stringify(f)}, the name ${n} joined to ${JSON.stringify(c)}, a character that is not a letter (SIGNAL_WORD's boundaries)`);
   }
   // the case witness (the fortieth commit): every name in every mix of upper and lower case, bare and after SIG in every mix, is read as
@@ -331,7 +358,7 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
     assert.ok(signalNamesIn(` handlers for ${s} pass; `).includes(s), `the README pin reads ${s}, the name ${n} in a mix of upper and lower case (SIGNAL_WORD ignores case)`);
   }
   const TRAP_ROWS = ['EV-trap', 'EV-trap-INT', 'EV-trap-SIGTERM', 'EV-trap-lower', 'EV-trap-sigint-lower', 'EV-trap-num', 'EV-trap-zero', 'EV-trap-ERR', 'EV-trap-ZERR', 'EV-trap-DEBUG', 'EV-trap-RETURN', 'EV-trap-SIGEXIT', 'EV-trap-CLD'];
-  assert.deepEqual(signalNamesIn(rest), [], `hooks/README.md: outside THE RESIDUAL PROPERTY and CLAUSE no clause names a signal by its name, bare or with SIG, in any case, inflected, joined to a printable ASCII character that is not a letter, or in upper case anywhere in a word (a trap's action the guard reads is refused where it names a tracked file, for the signal word each of ${TRAP_ROWS.join(', ')} in tools/romp-track-bash-guard.test.mjs carries, and for each spelling a present shell's trap takes among the names and spellings the signal census in this file derives; a word used in another sense joins the phrases set aside above with its context)`);
+  assert.deepEqual(signalNamesIn(rest), [], `hooks/README.md: outside THE RESIDUAL PROPERTY and CLAUSE no clause names a signal by its name, bare or with SIG, in any case, inflected, joined to any character that is not an ASCII letter, or in upper case anywhere in a word (a trap's action the guard reads is refused where it names a tracked file, for the signal word each of ${TRAP_ROWS.join(', ')} in tools/romp-track-bash-guard.test.mjs carries, and for each spelling a present shell's trap takes among the names and spellings the signal census in this file derives; a word used in another sense joins the phrases set aside above with its context)`);
   assert.ok(/(?<![\w.-])(?:6[0-4]|[1-5]?[0-9])(?![\w.])/.test(rest), 'hooks/README.md: the witness of the number boundary, a number a trap takes (0 to 64) standing in the row in another sense, so a pin on numbers would red the committed row; with none left, a signal given by its number can join the pin');
   const lowerGlued = (rest.match(/[A-Za-z0-9_]+/g) || []).filter((t) => !signalNamesIn(` ${t} `).length && SIGNAL_NAMES.some((n) => t.toLowerCase().includes(n.toLowerCase())));
   assert.ok(lowerGlued.length > 0, 'hooks/README.md: the witness of the glued boundary, a word in lower or mixed case holding a name glued to letters beyond an inflection (pipeline, into, error) standing in the row, so a pin reading a name in any case inside a word would red the committed row; with none left, that reading can join the pin');
