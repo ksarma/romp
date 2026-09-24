@@ -2653,7 +2653,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   parse store's slots, one per session, cut and leaf), `lazyIndexes` (the
   lazy indexes alive, a weak count), `materializedLruSlots` (the
   materialized-atom LRU's slots, not the atoms: on a kernel whose LRU holds
-  its atom lists weakly a collected list's slots stay until they expire, so
+  its atom lists weakly a collected list's slots stay until the next build,
+  re-registration or release removes them, so
   this is an upper bound on the live materialized atoms; where the LRU holds
   the lists strongly the two are equal; it is the same read as
   `asmIndex.resident`, repeated here so the holders sit together),
@@ -3148,16 +3149,31 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   callback the census missed), `resident` (the entries in the
   process-wide LRU, `cap` of them across every session: the machine's memory
   over 32 KiB, never under 500,000; the LRU holds each turn's atom list by a
-  weak reference, so a tree nobody holds any more keeps nothing resident but
-  entries that expire, and `resident` counts those too until they do:
-  before this (measured 2026-09-15) a strong reference kept every superseded
-  generation's atoms, and its whole index behind them, resident until they
-  aged past the cap, about 1.2 GiB on a box whose LRU sat exactly at its cap
-  of a million entries, and live atoms evicted by stale ones were rebuilt),
-  `evictions` (a live entry past the cap: its slot's memo dropped, never a
-  field in place), `expired` (an entry whose list has been collected, dropped
-  when it reaches the cap or when a live list registers a slot under the id the
-  dead one held, no slot touched either way), `released` (entries popped the moment the
+  weak reference, and a freed list's entries leave at the next build,
+  re-registration or release, so `resident` is the live entries plus those
+  of lists freed since the last of those. Before 2026-09-15 a strong
+  reference kept every superseded generation's atoms, and its whole index
+  behind them, resident until they aged past the cap, about 1.2 GiB on a box
+  whose LRU sat at its cap of a million entries, and live atoms
+  evicted by stale ones were rebuilt. Until 2026-09-24 a freed list's
+  entries stayed until the cap reached them, which on a large machine never
+  happened: 6.15 million entries against a cap of 7.73 million after 73
+  hours, most of them for freed lists. On that machine, with nine sessions,
+  the live entries are at most about 1.0 million, so the cap sits about 7.7
+  times above them: the cap is a backstop, and `evictions` counts what it
+  takes), `evictions` (a live entry past the cap: its slot's memo dropped,
+  never a field in place), `collected` (entries the collection event
+  removed: a list's weak reference queues itself when the list is freed,
+  and the next build, re-registration or release removes that list's
+  entries), `expired` (an entry whose list has been collected, dropped in
+  one of three ways, no slot touched in any case: by that removal, so every
+  `collected` entry counts here too; by the cap; or when a live list
+  registers a slot under the id the dead one held. `expired` minus
+  `collected` counts the last two, and it means something only while
+  `evictions` is flat: once the cap binds, it also removes entries whose
+  list was freed on another thread just before that list's callback ran,
+  with no callback missed. A `resident` that keeps rising while `evictions`
+  stays flat is the sign of a leak), `released` (entries popped the moment the
   assembly entry that owned their index was dropped or replaced, rather than
   a million entries later at the cap), `rowDecodes` (document rows decoded,
   a build's or a light read's), `userFacts` (below), and `restoredTurns`.

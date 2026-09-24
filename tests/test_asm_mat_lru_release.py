@@ -4,16 +4,24 @@ its index's entries at once (measured 2026-09-15). The LRU mapped (id(atoms), ro
 the LazyAtoms, and through it to the LazyIndex, its rows and its document, for every materialized atom, evicted only past
 the cap; every restore mints a new index, so 262 restores over 22 sessions sat the LRU exactly at its cap of 1,026,886
 entries holding mostly superseded generations (about 1.2 GiB at 1.3 to 2.1 KB an atom), and live atoms evicted by stale
-ones were rebuilt (7.4 M row decodes). Pinned here: a tree nobody holds is collected with its index and its entries expire
-at the next pass over the cap; an assembly entry that is dropped or replaced (the whole parse's put over a full cache, the
-demotion, the refused row) releases its index's entries and the current index's memo is untouched; a retained old view
+ones were rebuilt (7.4 M row decodes). Pinned here: a tree nobody holds is collected with its index and its entries leave
+at the next registration or release; an assembly entry that is dropped or replaced (the whole parse's put over a full cache,
+the demotion, the refused row) releases its index's entries and the current index's memo is untouched; a retained old view
 rebuilds a released slot through its own index, registers again, and takes nothing with it when it goes; the eviction pass
 tells a live entry (evictions) from a collected list's (expired) and touches no live slot for the latter; the LRU touch
 still orders evictions; an atom handed out is a fixed value across an eviction and a release; two threads building one
-slot share one object and one entry; a dead entry under a reused id is absent to the new list. Synthetic documents only."""
+slot share one object and one entry; a dead entry under a reused id is absent to the new list.
+
+The collection event (2026-09-24, CollectionEvent below): entries registered after a release (a tree that outlived its
+assembly entry reading a released slot again) belong to an index nothing releases again, so when that tree went they
+stood dead until the cap, and the cap (MemTotal / 32 KiB) never came: 6.15 million entries against a 7.73 million cap after
+73 hours, at least 87 percent of them for freed lists. Each list's own weak reference now queues itself when the list is
+freed, and the next registration or release removes that list's entries, counted `collected` and `expired`. Synthetic
+documents only."""
 import copy
 import gc
 import json
+import operator
 import os
 import sys
 import threading
@@ -58,7 +66,10 @@ def _reset():
     with em._MAT_LOCK:                                             # the LRU and its counters are process-wide: per test
         em._MAT_LRU.clear()
         em._ASM_INDEX_STATS.update(materialized=0, materializedBy={}, materializedByStage={}, resident=0, evictions=0,
-                                   released=0, expired=0)
+                                   released=0, expired=0, collected=0)
+        q = getattr(em, "_MAT_COLLECTED", None)                    # getattr: this file run against a source without the queue
+        if q is not None:                                          #  reds on behaviour, not at every setUp on the name
+            q.clear()
 
 
 class Synthetic(unittest.TestCase):
@@ -83,14 +94,14 @@ class Retention(Synthetic):
         gc.collect()
         self.assertIsNone(wl(), "the LRU held the list strongly")
         self.assertIsNone(wi(), "...and the index, its rows and its document behind it")
-        self.assertEqual(_entries(), (0, k), "its entries stand dead until a pass reaches them")
-        self.assertEqual(em.asm_index_stats()["resident"], k, "resident counts them until they expire")
+        self.assertEqual(_entries(), (0, k), "its entries stand dead until the next registration or release")
+        self.assertEqual(em.asm_index_stats()["resident"], k, "resident counts them until then: the read drains nothing")
         self.assertEqual([a["t"] for a in held], [1000 + i for i in range(k)], "the atoms a consumer holds are values, whole")
-        em._MAT_CAP = 1                                            # the next pass over the cap: a live list builds one atom
-        ix2, la2 = _mint(1, "b")
-        la2[0]
+        em._MAT_CAP = 1                                            # the next LRU operation, a live list building one atom, under a
+        ix2, la2 = _mint(1, "b")                                   #  cap the dead entries are over too: they leave, and the live
+        la2[0]                                                     #  entry is not evicted for them
         st = em.asm_index_stats()
-        self.assertEqual(_entries(), (1, 0), "the dead entries left from the old end, the live one stands")
+        self.assertEqual(_entries(), (1, 0), "the dead entries left, the live one stands")
         self.assertEqual((st["expired"], st["evictions"], st["resident"]), (k, 0, 1))
 
     def test_release_pops_the_indexs_entries_and_a_second_release_is_a_no_op(self):
@@ -116,10 +127,10 @@ class Accounting(Synthetic):
         self.assertEqual(em.asm_index_stats()["resident"], 4)
         del ixb, lb
         gc.collect()
-        self.assertEqual(_entries(), (2, 2), "B's entries stand dead at the old end")
-        la[2]                                                      # one over the cap: the oldest, B's dead entry, expires
-        st = em.asm_index_stats()
-        self.assertEqual((st["expired"], st["evictions"]), (1, 0))
+        self.assertEqual(_entries(), (2, 2), "B's entries stand dead at the old end until the next LRU operation")
+        la[2]                                                      # the next LRU operation: both of B's dead entries leave at once,
+        st = em.asm_index_stats()                                  #  at the drain before the registration, and no live entry is
+        self.assertEqual((st["expired"], st["evictions"]), (2, 0))  #  evicted for them
         self.assertEqual(_built(la), [0, 1, 2], "no slot of the live list is touched for a dead entry")
         la[3]
         st = em.asm_index_stats()
@@ -132,6 +143,26 @@ class Accounting(Synthetic):
         la[1]                                                      # the LRU touch: slot 1 is young again
         la[5]                                                      # ...so the eviction takes slot 2, not 1
         self.assertEqual(_built(la), [1, 3, 4, 5]); self.assertEqual(em.asm_index_stats()["evictions"], 2)
+
+    def test_a_dead_entry_the_queue_never_saw_is_expired_by_the_trim_and_not_counted_collected(self):
+        """The trim's dead branch stays for an entry whose reference is dead but was never queued: a list freed on another
+        thread in the moment between the collector clearing its reference and its callback queuing it, or an entry planted
+        with another reference, as here. The trim drops it as `expired` without `collected`, which is why expired minus
+        collected can rise without a missed callback once the cap binds."""
+        gx, gone = _mint(1, "u")
+        dead = weakref.ref(gone)                                   # a plain reference: no callback, never queued
+        del gx, gone
+        gc.collect()
+        self.assertIsNone(dead())
+        em._MAT_CAP = 2
+        with em._MAT_LOCK:
+            em._MAT_LRU[("TESTKEY", 0)] = (dead, 0)                # at the old end, under a key no list can hold
+        ixa, la = _mint(2, "v")
+        la[0]; la[1]                                               # the second build is one over the cap: the dead entry goes
+        self.assertEqual(_entries(), (2, 0), "the dead entry left at the old end, both live ones stand")
+        st = em.asm_index_stats()
+        self.assertEqual((st["expired"], st["evictions"]), (1, 0), "dropped as dead, no live slot evicted for it")
+        self.assertEqual(st["collected"], 0, "the trim counts it expired only: the drain never saw it")
 
 
 class Values(Synthetic):
@@ -290,8 +321,44 @@ class DroppedEntries(T.Harness):
         ix2, la2 = _mint(1, "b")
         la2[0]
         st = em.asm_index_stats()
-        self.assertEqual(_entries(), (1, 0), "...and expires at the next pass")
+        self.assertEqual(_entries(), (1, 0), "...and leaves at the next registration")
         self.assertEqual((st["expired"], st["evictions"]), (1, 0))
+
+    def test_a_demoted_entrys_retained_view_leaves_nothing_behind_once_collected_with_the_cap_at_its_default(self):
+        """The collection event on the production road, through the assembly: a restore, a demotion (a compaction after the
+        document) that releases the index, a retained view reading one released slot again (registered against an index
+        nothing releases again), the view freed, then one registration with the cap untouched. Red before the collection
+        event: the view's entry stood dead, since the cap it waited for never came."""
+        records, _ = G.SINGLE_FILE["compaction_atom"]
+        recs = records()
+        path = self.write("compaction_atom", recs)
+        self.parse(path); self.assertTrue(self.doc(path))
+        self.fresh()
+        tree = self.restore(path)
+        la = tree["turns"][0]["atoms"]
+        k = len(la); self.assertGreater(k, 1)
+        [dict(a) for a in la]
+        t1 = self.after(recs, 100)
+        with open(path, "a") as f:
+            f.write(json.dumps(G.compact_line(t1, "b_new", recs[-1].get("uuid"))) + "\n")
+            f.write(json.dumps(G.compact_summary_line(t1 + 1, "s_new", "b_new")) + "\n")
+        modes = []
+        self.parse(path, modes)
+        self.assertEqual(modes, ["full"])
+        self.assertEqual(em.asm_index_stats()["released"], k, "the demotion released the index")
+        la[0]                                                      # the retained view reads a released slot: registered again
+        self.assertEqual(_entries(), (1, 0))
+        wl = weakref.ref(la)
+        del tree, la
+        self._trees.clear()
+        gc.collect()
+        self.assertIsNone(wl(), "the view is freed")
+        self.assertGreater(em._MAT_CAP, 1000, "the cap is far above this test's entries: no pass over it takes part")
+        ix2, la2 = _mint(1, "g")
+        la2[0]                                                     # the next registration
+        self.assertEqual(_entries(), (1, 0), "the freed view's entry left at the registration after its collection")
+        st = em.asm_index_stats()
+        self.assertEqual((st["expired"], st["collected"], st["evictions"]), (1, 1, 0))
 
     def test_a_refused_row_drops_the_entry_and_releases_its_index(self):
         path = self.documented("compaction_atom", "r")
@@ -309,6 +376,205 @@ class DroppedEntries(T.Harness):
         st = em.asm_index_stats()
         self.assertEqual(st["released"], k - 1, "...and its index's built atoms left the LRU with it")
         self.assertEqual(_entries(id(la)), (0, 0)); self.assertEqual(_built(la), [])
+
+
+class CollectionEvent(Synthetic):
+    """A freed list's entries leave the LRU at the next registration or release, whether it dies by its last decref or in
+    a cycle, however it came to hold entries, and on whichever thread it dies. Each test asserts the LRU's (live, dead)
+    first, so that on a source without the event its red is the dead entries themselves; `collected` follows."""
+
+    def _read_after_release(self, k, tag):
+        """An index and one list of k rows: every slot built, the index released (its assembly entry dropped), then every
+        slot read again, as a tree that outlived the entry reads it. Returns (index, list)."""
+        ix, la = _mint(k, tag)
+        for i in range(k):
+            la[i]
+        self.assertEqual(ix.release(), k)
+        for i in range(k):
+            la[i]
+        self.assertEqual(_entries(id(la)), (k, 0), "the rebuilt slots registered again, against a released index")
+        return ix, la
+
+    def test_a_list_read_after_its_release_takes_its_entries_with_it_when_it_is_freed(self):
+        k = 5
+        ix, la = self._read_after_release(k, "a")
+        ix2, lb = _mint(1, "b")                                    # minted before the free: it cannot take the freed list's id
+        wl = weakref.ref(la)
+        del ix, la
+        gc.collect()
+        self.assertIsNone(wl(), "the list is freed")
+        lb[0]                                                      # the next registration, the cap far above
+        self.assertEqual(_entries(), (1, 0), "the freed list's entries left, the live one stands")
+        st = em.asm_index_stats()
+        self.assertEqual((st["resident"], st["expired"], st["collected"], st["evictions"]), (1, k, k, 0),
+                         "removed by the collection event, none by the cap")
+
+    def test_a_list_freed_without_any_release_takes_its_entries_with_it(self):
+        """The other population: a tree nobody holds whose index was never released (no assembly entry dropped)."""
+        k = 4
+        ix, la = _mint(k, "w")
+        for i in range(k):
+            la[i]
+        ix2, lb = _mint(1, "x")
+        wl = weakref.ref(la)
+        del ix, la
+        gc.collect()
+        self.assertIsNone(wl())
+        lb[0]
+        self.assertEqual(_entries(), (1, 0))
+        st = em.asm_index_stats()
+        self.assertEqual((st["released"], st["expired"], st["collected"], st["evictions"]), (0, k, k, 0))
+
+    def test_a_list_freed_inside_a_reference_cycle_takes_its_entries_with_it(self):
+        """The collector runs no callback for a weak reference that is itself garbage. The list's entries hold its
+        reference, which keeps it reachable from the LRU while any entry stands; a reference kept only on the index would
+        be garbage with a list and index collected together, and the entries would stay."""
+        k = 4
+        ix, la = self._read_after_release(k, "c")
+        ix2, lb = _mint(1, "d")
+        tree = {"atoms": la}
+        tree["self"] = tree                                        # the holder is a cycle: no decref frees the list
+        wl = weakref.ref(la)
+        was = gc.isenabled()
+        gc.disable()
+        try:
+            del ix, la, tree
+            self.assertIsNotNone(wl(), "only the collector can free it")
+        finally:
+            if was:
+                gc.enable()
+        gc.collect()
+        self.assertIsNone(wl())
+        lb[0]
+        self.assertEqual(_entries(), (1, 0))
+        st = em.asm_index_stats()
+        self.assertEqual((st["resident"], st["expired"], st["collected"], st["evictions"]), (1, k, k, 0))
+
+    def test_a_list_freed_under_the_lock_by_the_thread_that_minted_it_queues_without_a_deadlock(self):
+        """The callback can run at any decref, including one made while _MAT_LOCK is held, and the lock is not reentrant:
+        it takes no lock and only queues. The worker thread mints the list and drops its last reference under the lock (a
+        free-threaded build can hand a deallocation to the thread that owns the object, so a drop by a second thread may
+        run the callback elsewhere), and the queue's growth is read inside the lock, so the test fails when its case did
+        not run. A regression here, a callback that takes _MAT_LOCK, deadlocks the worker while it holds the lock; every
+        later test in this worker then blocks on the lock, so the red shows as a pytest timeout, not as an assertion."""
+        k = 3
+        ixn, ln = _mint(1, "n")                                    # minted before the free: it cannot take the freed list's id
+        seen, errors, done = {}, [], threading.Event()
+
+        def mint_and_drop_under_the_lock():
+            try:
+                ix, la = self._read_after_release(k, "m")
+                holder = [la]
+                seen["wl"] = weakref.ref(la)
+                own = getattr(la, "_ref", None)
+                del ix, la
+                q = getattr(em, "_MAT_COLLECTED", ())
+                with em._MAT_LOCK:
+                    seen["before"] = len(q)
+                    holder.clear()                                 # the last reference goes while this thread holds the lock
+                    seen["after"] = len(q)
+                    seen["mine"] = own is not None and any(r is own for r in list(q))
+            except BaseException as e:                             # noqa: BLE001  reported on the test's thread below
+                errors.append(e)
+            done.set()
+        t = threading.Thread(target=mint_and_drop_under_the_lock, daemon=True)
+        t.start(); t.join(10)
+        self.assertTrue(done.is_set(), "the drop under the lock returned: the callback took no lock")
+        self.assertEqual(errors, [])
+        self.assertIsNone(seen["wl"](), "the list is freed")
+        ln[0]
+        self.assertEqual(_entries(), (1, 0))
+        self.assertGreater(seen["after"], seen["before"], "the queue grew on the dropping thread while it held the lock")
+        self.assertTrue(seen["mine"], "...by the freed list's own reference")
+        st = em.asm_index_stats()
+        self.assertEqual((st["resident"], st["expired"], st["collected"]), (1, k, k))
+
+    def test_an_entry_a_live_list_holds_under_the_freed_lists_id_is_kept(self):
+        """The drain removes an entry only when it holds the freed list's own reference, never by id alone: an entry a live
+        list registered under the recycled id keeps its place, and its slot keeps its atom."""
+        k = 3
+        ix, la = self._read_after_release(k, "e")
+        lid = id(la)
+        ixl, live = _mint(1, "f")
+        a = live[0]
+        with em._MAT_LOCK:                                         # live's own entry moved under the freed list's key, as an id
+            own = em._MAT_LRU.pop((id(live), 0))                   #  recycled before a drain would leave it
+            em._MAT_LRU.pop((lid, 0))
+            em._MAT_LRU[(lid, 0)] = own
+        ixg, lg = _mint(1, "g")
+        wl = weakref.ref(la)
+        del ix, la
+        gc.collect()
+        self.assertIsNone(wl())
+        lg[0]                                                      # the drain runs here
+        self.assertEqual(_entries(), (2, 0), "the freed list's two other entries left; live's entry and lg's stand")
+        with em._MAT_LOCK:
+            kept = em._MAT_LRU.get((lid, 0))
+        self.assertIsNotNone(kept)
+        self.assertIs(kept[0](), live)
+        self.assertIs(list.__getitem__(live, 0), a, "its slot is untouched")
+        st = em.asm_index_stats()
+        self.assertEqual((st["expired"], st["collected"]), (k - 1, k - 1), "only the freed list's own entries left")
+
+    def test_a_freed_list_with_no_entry_changes_nothing(self):
+        ix, la = _mint(6, "h")
+        for i in range(6):
+            la[i]
+        ix.release()                                               # released and never read again: no entry stands
+        ixb, lb = _mint(1, "i")
+        del ix, la
+        gc.collect()
+        lb[0]
+        self.assertEqual(_entries(), (1, 0))
+        st = em.asm_index_stats()
+        self.assertEqual((st["resident"], st["expired"], st["collected"]), (1, 0, 0))
+
+    def test_a_freed_lists_entries_leave_at_the_next_release_with_no_registration(self):
+        """release() drains first, so the freed lists' entries leave there too, and `resident` after it counts no dead
+        entry."""
+        k = 4
+        ix, la = self._read_after_release(k, "p")
+        ixb, lb = _mint(2, "q")
+        lb[0]; lb[1]
+        wl = weakref.ref(la)
+        del ix, la
+        gc.collect()
+        self.assertIsNone(wl())
+        self.assertEqual(ixb.release(), 2)                         # no registration: the release alone
+        self.assertEqual(_entries(), (0, 0), "the freed list's entries left at the release")
+        st = em.asm_index_stats()
+        self.assertEqual((st["resident"], st["released"], st["expired"], st["collected"]), (0, k + 2, k, k))
+
+    def test_a_freed_lists_entries_leave_when_a_built_slot_registers_again(self):
+        """The hit road's re-registration (a built slot with no entry of its own) drains first too."""
+        k = 3
+        ixb, lb = _mint(1, "s")
+        lb[0]
+        ix, la = self._read_after_release(k, "r")
+        with em._MAT_LOCK:
+            em._MAT_LRU.pop((id(lb), 0))                           # lb's slot stays built with no entry
+        wl = weakref.ref(la)
+        del ix, la
+        gc.collect()
+        self.assertIsNone(wl())
+        m0 = em.asm_index_stats()["materialized"]
+        lb[0]                                                      # a hit: no build, the slot registers again
+        self.assertEqual(_entries(), (1, 0), "the freed list's entries left at the re-registration")
+        st = em.asm_index_stats()
+        self.assertEqual(st["materialized"], m0, "nothing was built")
+        self.assertEqual((st["expired"], st["collected"]), (k, k))
+
+    def test_the_in_place_list_methods_are_refused_so_a_lists_length_stays_what_it_was_at_mint(self):
+        """The drain visits rows 0 to n - 1, n taken at mint, so a list must not grow or reorder in place: +=, *=, clear and
+        reverse are refused beside the mutators the list already refused."""
+        ix, la = _mint(3, "t")
+        a0 = la[0]
+        for bad in (lambda: operator.iadd(la, [{}]), lambda: operator.imul(la, 2), la.clear, la.reverse):
+            with self.assertRaises(TypeError):
+                bad()
+        self.assertEqual(len(la), 3)
+        self.assertIs(la[0], a0)
+        self.assertEqual(la._ref.n, len(la), "the reference's row count covers every slot")
 
 
 if __name__ == "__main__":
