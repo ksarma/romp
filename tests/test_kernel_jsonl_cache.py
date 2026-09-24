@@ -472,7 +472,7 @@ class RecordCacheDefaultBudget(unittest.TestCase):
                 recs = em._read_jsonl_incremental(path)
                 self.assertGreater(len(recs), 20, "the fixture parsed")
                 ratio = _deep_size(recs) / os.path.getsize(path)
-                self.assertGreater(ratio, 1.0, "records take more than their file bytes (a walk that found nothing proves nothing)")
+                self.assertGreater(ratio, 1.0, "the walk measured the records")
                 self.assertLessEqual(budget * ratio, named, "%s: a full budget holds %.0f GiB of records (%.2f per file byte), more "
                                      "than the %.0f GiB it is named for" % (profile, budget * ratio / 2 ** 30, ratio, named / 2 ** 30))
         finally:
