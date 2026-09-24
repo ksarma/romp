@@ -6932,14 +6932,18 @@ const READER_COMMANDS = {
 
 // THE RECORDED OUTPUTS (round 6's fifteenth commit, 2026-09-22): what each reader command's shell printed for every form in the C and
 // the UTF-8 locale, stdout as latin1 (one character per byte, so a NUL or a byte at or above 0x80 survives the literal; one string
-// where the two locales agree), recorded from bash 5.2.21, zsh 5.9 and dash 0.5.12 by recordEscapeOutputs below; `plain bash` is
+// where the two locales agree), recorded by recordEscapeOutputs below from the shells its `shells` line names; `plain bash` is
 // bash's echo without `-e`, the as-spelled reading echo's union holds. Where a shell is present its live output is asserted equal to
 // its record, so the record is current on every box that can check it; where a shell is absent, its record stands in as that shell's
 // evidence and its live leg is NOT RUN by name. Before this the pin reasoned over the shells present alone: on the fork's CI at the
 // fourteenth commit (ubuntu, no zsh) every observed output for `\xg` agreed (`\xg` as spelled in bash and dash; a NUL in zsh, whose
 // `\x` reads zero hex digits) and held no NUL, so the hook's decline, right for a box with zsh, read as unjustified there.
+// THE LABELS (round 7's thirtieth commit, the reviewer's tests-2 and extra8-2): the `shells` line is the recorder's own, each shell it
+// ran labelled by what that shell reports (liveShellLabel), so a re-recording pasted over the record carries its label with its
+// outputs. The label is never pinned against the box running the file (a newer bash on a runner, with every output matching, would be a
+// red for no evidence): a present shell whose live version differs from its label, every output matching, prints one INFO line.
 const ESCAPE_OUTPUTS_RECORDED = {
-  shells: { bash: '5.2.21(1)-release', zsh: '5.9', dash: '0.5.12' },
+  shells: {"bash":"5.2.21(1)-release","zsh":"5.9","dash":"0.5.12-6ubuntu5"},
   outputs: {
     "echo bash": {"\\a":"A\u0007Z\n","\\b":"A\bZ\n","\\e":"A\u001bZ\n","\\E":"A\u001bZ\n","\\f":"A\fZ\n","\\n":"A\nZ\n","\\r":"A\rZ\n","\\t":"A\tZ\n","\\v":"A\u000bZ\n","\\\\":"A\\Z\n","\\\"":"A\\\"Z\n","\\'":"A\\'Z\n","\\?":"A\\?Z\n","\\q":"A\\qZ\n","\\8":"A\\8Z\n","\\/":"A\\/Z\n","\\0":"A\u0000Z\n","\\01":"A\u0001Z\n","\\012":"A\nZ\n","\\0101":"AAZ\n","\\1":"A\\1Z\n","\\12":"A\\12Z\n","\\101":"A\\101Z\n","\\1011":"A\\1011Z\n","\\x4":"A\u0004Z\n","\\x41":"AAZ\n","\\x411":"AA1Z\n","\\xg":"A\\xgZ\n","\\u41":"AAZ\n","\\u0041":"AAZ\n","\\u00411":"AA1Z\n","\\U1F600":["A\\U0001F600Z\n","AðZ\n"],"\\U0001F600":["A\\U0001F600Z\n","AðZ\n"],"\\c":"A"},
     "echo zsh": {"\\a":"A\u0007Z\n","\\b":"A\bZ\n","\\e":"A\u001bZ\n","\\E":"A\\EZ\n","\\f":"A\fZ\n","\\n":"A\nZ\n","\\r":"A\rZ\n","\\t":"A\tZ\n","\\v":"A\u000bZ\n","\\\\":"A\\Z\n","\\\"":"A\\\"Z\n","\\'":"A\\'Z\n","\\?":"A\\?Z\n","\\q":"A\\qZ\n","\\8":"A\\8Z\n","\\/":"A\\/Z\n","\\0":"A\u0000Z\n","\\01":"A\u0001Z\n","\\012":"A\nZ\n","\\0101":"AAZ\n","\\1":"A\\1Z\n","\\12":"A\\12Z\n","\\101":"A\\101Z\n","\\1011":"A\\1011Z\n","\\x4":"A\u0004Z\n","\\x41":"AAZ\n","\\x411":"AA1Z\n","\\xg":"A\u0000gZ\n","\\u41":"AAZ\n","\\u0041":"AAZ\n","\\u00411":"AA1Z\n","\\U1F600":["A\n","AðZ\n"],"\\U0001F600":["A\n","AðZ\n"],"\\c":"A"},
@@ -6954,9 +6958,24 @@ const ESCAPE_OUTPUTS_RECORDED = {
   },
 };
 const RECORDED_COMMANDS = { ...READER_COMMANDS, 'plain bash': ['bash', ['--norc', '--noprofile', '-c', 'echo "$F"']] };
-// the record's entries for the shells given, from this box's shells: pasted over the entries above when a shell's record is stale
+// a present shell's version as the shell itself reports it: bash's $BASH_VERSION and zsh's $ZSH_VERSION, and for dash, which has no
+// version query, its package's version where dpkg-query answers (the build that printed the outputs, its packaging revision included),
+// else "unknown"; the caller passes a shell the probe passed (the guarded spawnSync throws by name for any other)
+const SHELL_VERSION_ARGV = { bash: ['--norc', '--noprofile', '-c', 'printf %s "$BASH_VERSION"'], zsh: ['-f', '-c', 'printf %s "$ZSH_VERSION"'] };
+const liveShellLabel = (sh) => {
+  const r = Object.hasOwn(SHELL_VERSION_ARGV, sh) ? spawnSync(sh, SHELL_VERSION_ARGV[sh], { encoding: 'utf8', env: { PATH: process.env.PATH }, timeout: 10000 }) : _spawnSync('dpkg-query', ['-W', '-f=${Version}', sh], { encoding: 'utf8', timeout: 10000 });
+  const v = r.status === 0 ? String(r.stdout || '').trim() : '';
+  return v || 'unknown';
+};
+// one INFO line per present shell whose live version differs from the label the record carries for it (THE LABELS above), printed once
+// every output of the shell has matched the record, since a mismatch fails first
+const labelDriftLines = (present, labels, live) => present.filter((sh) => live[sh] !== labels[sh]).map((sh) => `INFO: live ${sh} is ${live[sh]} and the record's label for ${sh} is ${labels[sh]}; every output of this ${sh} matched the record, so the record stands (recordEscapeOutputs([${JSON.stringify(sh)}]) relabels it with its outputs)`);
+// the record's lines for the shells given, from this box's shells: the `shells` line, each shell given labelled live and every other as the
+// record holds it, pasted over the record's; then the outputs entries of the shells given, pasted over theirs when a shell's record is stale
 const recordEscapeOutputs = (shells) => {
-  const lines = [];
+  const labels = { ...ESCAPE_OUTPUTS_RECORDED.shells };
+  for (const sh of shells) labels[sh] = liveShellLabel(sh);
+  const lines = [`  shells: ${JSON.stringify(labels)},`];
   for (const [key, [sh, argv]] of Object.entries(RECORDED_COMMANDS)) {
     if (!shells.includes(sh)) continue;
     const m = {};
@@ -6991,7 +7010,7 @@ test("round 6, the escape readers by execution: every reader the hook derives (e
     const rec = recorded(key, form);
     if (!present.includes(sh)) { fromRecord++; return rec; }
     const outs = LOCALES.map((locale) => runIn(sh, argv, `A${form}Z`, locale));
-    for (const [k, locale] of LOCALES.entries()) if (!outs[k].equals(rec[k])) assert.fail(`${key} ${form} (${locale}): this ${sh} prints what the record holds for ${sh} ${ESCAPE_OUTPUTS_RECORDED.shells[sh]} (live ${JSON.stringify(outs[k].toString('latin1'))}, recorded ${JSON.stringify(rec[k].toString('latin1'))}); a stale record is re-recorded from recordEscapeOutputs([${JSON.stringify(sh)}]):\n${recordEscapeOutputs([sh])}`);   // the re-recording runs the shells: built on a mismatch alone
+    for (const [k, locale] of LOCALES.entries()) if (!outs[k].equals(rec[k])) assert.fail(`${key} ${form} (${locale}): this ${sh} prints what the record holds for ${sh} ${ESCAPE_OUTPUTS_RECORDED.shells[sh]} (this ${sh} reports ${liveShellLabel(sh)}; live ${JSON.stringify(outs[k].toString('latin1'))}, recorded ${JSON.stringify(rec[k].toString('latin1'))}); a stale record is re-recorded from recordEscapeOutputs([${JSON.stringify(sh)}]):\n${recordEscapeOutputs([sh])}`);   // the re-recording runs the shells: built on a mismatch alone
     return outs;
   };
   const undecodable = (outs) => outs.some((o) => o.includes(0) || [...o].some((b) => b >= 0x80)) || !outs.every((o) => o.equals(outs[0]));
@@ -7048,6 +7067,9 @@ test("round 6, the escape readers by execution: every reader the hook derives (e
   }
   assert.equal(unions + declined + quoteForms, ESCAPE_FORMS.length, `every form was either checked as a union (${unions}), declined for a reason the shells show (${declined}) or a quote form the operand's quoting cannot carry (${quoteForms})`);
   assert.ok(unions >= 20 && declined >= 5, `both kinds are populated (${unions} unions, ${declined} declined)`);
+  // THE LABELS: every output of every present shell matched its record by here, so a live version that differs from its label is a line, never a red
+  const live = Object.fromEntries(present.map((sh) => [sh, liveShellLabel(sh)]));
+  for (const line of labelDriftLines(present, ESCAPE_OUTPUTS_RECORDED.shells, live)) console.error(line);
   console.log(`# the escape readers: ${compared} reader comparisons over ${ESCAPE_FORMS.length} forms and ${unions} unions, ${present.length} shells live (${present.join(', ')}), ${absent.length} by record (${absent.join(', ') || 'none'}; ${fromRecord} outputs)`);
 });
 
@@ -7716,44 +7738,89 @@ const RESIDUAL_TABLE = [
   ['RT-q1-dir-target-option', 'a command name the resolver never reads', null, 'cmd=(cp); "${cmd[@]}" -t . ../base/report.md', ['bash', 'zsh']],
   ['RT-q1-unread-operand', 'a command name the resolver never reads', null, 'read c <<< cp; read t <<< report.md; $c ../base/report.md $t', ['bash', 'zsh']],
 ];
-// THE REFUSING PROGRAM (round 6's fifteenth commit, 2026-09-22): a program this box HAS may refuse to run the command it is given,
-// before running it. The fork's CI at the fourteenth commit had perf on its ubuntu runner, and perf without CAP_PERFMON printed
-// `Error:` and the perf-security text on stderr and exited 255 with the copy never made, so RT-perf-stat's writer measurement read
-// false where the row says bash writes. That is the class of a program the box lacks, not a row that stopped writing: NOT RUN with
-// the refusal as the reason, counted and printed like the lacking-program rows. The refusal is the PROGRAM's, established apart from
-// the row's write: the row's command with its copy replaced by `true` (WRITE_SPELLING, the copy every wrapper and reader row carries),
-// run in each present shell the row names as a writer (the row's own grammar: a `<(..)` or a descriptor form sh cannot parse), from the
-// row's cwd with the world's env. A nonzero exit that says why on stderr in EVERY one of them is a refusal, the first's first line the
-// reason (a bare label ending in a colon, perf's `Error:`, takes the line after it); the command running in any shell is none, a
-// nonzero exit that says nothing is none, and a command without the copy has no probe, so its miss reds as before. A row
-// is NOT RUN only when every writer leg left the subset unchanged AND its program refuses; a row of a refusing program that still
-// wrote reds (a contradiction to see), and a row that missed under a program that runs `true` reds as before (a defect, not a
-// refusal). The rows a box cannot run are derived from its programs alone and the rows not run are held equal to them, so a NOT RUN
-// never stands in for a miss the box could have measured, and on a box whose every program runs the table is a full measurement.
+// THE REFUSING PROGRAM (round 6's fifteenth commit, 2026-09-22; fail-closed since round 7's thirtieth commit, the reviewer's tests-1
+// and extra8-1): a program this box HAS may refuse to run the command it is given, before running it. The fork's CI at the fourteenth
+// commit had perf on its ubuntu runner, and perf without CAP_PERFMON printed `Error:` and the perf-security text on stderr and exited
+// 255 with the copy never made, so RT-perf-stat's writer measurement read false where the row says bash writes. That is the class of
+// a program the box lacks, not a row that stopped writing: NOT RUN with the refusal as the reason, counted and printed like the
+// lacking-program rows. The refusal is the PROGRAM's, established apart from the row's write by a PROBE: the row's command with its
+// copy (WRITE_SPELLING, the copy every wrapper and reader row carries) replaced by `touch WITNESS`, an absolute path of safe
+// characters under the world's own scratch (spelled bare, since the copy may sit inside the row's own quotes), run in each present
+// shell the row names as a writer (the row's own grammar: a `<(..)` or a descriptor form sh cannot parse), from the row's cwd with the
+// world's env. Until the thirtieth commit any nonzero exit that said something on stderr was a refusal, so a row broken by a shell
+// syntax error or a bad option, or a program that ran the command and then failed with a message, read as NOT RUN and passed (both
+// refuters reproduced each). A refusal now needs all three, in EVERY shell the probe runs in:
+//   (i) the probe PARSES in the shell (`bash -n`, `zsh -n`, `dash -n` over the probe text) and its run exits neither 126 nor 127, the
+//       shell's own statuses for a command it found and could not execute or did not find;
+//   (ii) the probe's stderr matches a RECORDED refusal shape for the row's program (REFUSAL_SHAPES below): a program with no recorded
+//       shape never refuses, and a failure its shapes do not describe is none;
+//   (iii) the WITNESS is ABSENT after the run: unlinked before each shell's parse and run, and again when the call ends, so neither an
+//       earlier shell nor the loop's call for the same row (the rows-not-run derivation below calls again) leaves one for a later read.
+// Anything else is no refusal, and the row reds as before. The first shell's first stderr line is the reason (a bare label ending in a
+// colon, perf's `Error:`, takes the line after it). A row is NOT RUN only when every writer leg left the subset unchanged AND its
+// program refuses; a row of a refusing program that still wrote reds (a contradiction to see), and a row that missed under a program
+// that ran the probe reds as before (a defect, not a refusal). What the witness cannot see: a sandboxed program that runs the command
+// but drops every write (a private mount over the world, say) leaves no witness either, so a program of that kind whose stderr matches
+// a recorded shape stays NOT RUN; the witness tells a program that ran the command where the world can see it from one that did not
+// run it, and no further. The rows a box cannot run are derived from its programs alone and the rows not run are held equal to them,
+// so a NOT RUN never stands in for a miss the box could have measured, and on a box whose every program runs the table is a full
+// measurement.
 const WRITE_SPELLING = /cp (?:\S*\/)?base\/report\.md (?:\S*\/)?report\.md/;
+// THE RECORDED REFUSAL SHAPES (round 7's thirtieth commit): per program, the stderr it prints when it refuses to run the command it is
+// handed, each recorded from a real refusal (measured 2026-09-24 as a non-root user, and for perf on the fork's CI runner too, whose text
+// RUNNER_PERF_REFUSAL holds): perf's paranoia text (the runner's `perf stat` without CAP_PERFMON; this box's `perf stat -e cycles`);
+// the "Operation not permitted" family, each line the program's own (strace's ptrace refusal, unshare's and nsenter's namespace
+// refusals, setpriv's and prlimit's privilege refusals, capsh's `unable to` and `failed to` lines, which carry no program prefix); and
+// eatmydata's failure to find itself behind a bin dir of links (the runner-shape harness below). setpriv exits 127 when its privilege
+// change fails (measured: `setpriv --reuid=0` prints its line and exits 127), so under (i) a setpriv refusal is never NOT RUN and its
+// row reds, the visible side; the thirtieth commit's real-refusal test pins that reach.
+const REFUSAL_SHAPES = {
+  perf: [/^\s*Access to performance monitoring and observability operations is limited\.\s*\n\s*Consider adjusting \/proc\/sys\/kernel\/perf_event_paranoid setting to open\s*$/m],
+  strace: [/^strace: [^\n]*: Operation not permitted$/m],
+  unshare: [/^unshare: [^\n]*: Operation not permitted$/m],
+  setpriv: [/^setpriv: [^\n]*: Operation not permitted$/m],
+  prlimit: [/^prlimit: [^\n]*: Operation not permitted$/m],
+  nsenter: [/^nsenter: [^\n]*: Operation not permitted$/m],
+  capsh: [/^(?:[Uu]nable|[Ff]ailed) [^\n]*: Operation not permitted$/m],
+  eatmydata: [/^E: eatmydata: unable to find 'eatmydata' in PATH$/m],
+};
 const refusalReason = (stderr) => {
   const lines = String(stderr || '').split('\n').map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return null;
   return (lines[0].endsWith(':') && lines.length > 1 ? `${lines[0]} ${lines[1]}` : lines[0]).slice(0, 200);
 };
 const shellArgv = (shell, cmd) => (shell === 'bash' ? ['--norc', '--noprofile', '-c', cmd] : shell === 'zsh' ? ['-f', '-c', cmd] : ['-c', cmd]);   // as the world runs a row
-// the refusal's reason when the program of `cmd` refuses to run its command in every shell of `shells` under `env` from `cwd`; null when
-// some shell runs it, a shell's nonzero exit says nothing, no shell is given, or cmd carries no copy to replace
-const refusalOf = (cmd, cwd, env, shells) => {
+const parseArgv = (shell, cmd) => (shell === 'bash' ? ['--norc', '--noprofile', '-n', '-c', cmd] : shell === 'zsh' ? ['-f', '-n', '-c', cmd] : ['-n', '-c', cmd]);   // read, not run: condition (i)
+const SAFE_WITNESS = /^\/[\w./-]+$/;
+// the refusal's reason when `program` refuses to run the probe of `cmd` in every shell of `shells` under `env` from `cwd`, the probe's
+// witness at `witness` (THE REFUSING PROGRAM's three conditions); null when a shell does not parse the probe, a run exits 0, 126 or 127
+// or is killed, a stderr matches no shape recorded for `program` (a program with none, or a nonzero exit that says nothing), the witness
+// is there after a run, no shell is given, or cmd carries no copy to replace; a witness path that cannot be spelled bare throws
+const refusalOf = (cmd, cwd, env, shells, { program = null, witness = null } = {}) => {
   if (!WRITE_SPELLING.test(cmd) || !shells.length) return null;
-  const probe = cmd.replace(WRITE_SPELLING, 'true');
+  const shapes = program !== null && Object.hasOwn(REFUSAL_SHAPES, program) ? REFUSAL_SHAPES[program] : null;
+  if (!shapes) return null;
+  if (typeof witness !== 'string' || !SAFE_WITNESS.test(witness)) throw new Error(`THE REFUSING PROGRAM's witness is an absolute path of safe characters, spelled bare into the probe: ${JSON.stringify(witness)}`);
+  const probe = cmd.replace(WRITE_SPELLING, () => `touch ${witness}`);
+  const clear = () => fs.rmSync(witness, { force: true });
+  fs.mkdirSync(path.dirname(witness), { recursive: true });
   let reason = null;
-  for (const shell of shells) {
-    const r = spawnSync(shell, shellArgv(shell, probe), { cwd, input: '', encoding: 'utf8', env, timeout: 20000 });
-    if (r.status === 0 || r.status === null) return null;
-    const why = refusalReason(r.stderr);
-    if (why === null) return null;
-    reason = reason ?? why;
-  }
+  try {
+    for (const shell of shells) {
+      clear();
+      if (spawnSync(shell, parseArgv(shell, probe), { cwd, input: '', encoding: 'utf8', env, timeout: 20000 }).status !== 0) return null;   // (i) the probe does not parse: the row's own command is broken
+      const r = spawnSync(shell, shellArgv(shell, probe), { cwd, input: '', encoding: 'utf8', env, timeout: 20000 });
+      if (fs.existsSync(witness)) return null;   // (iii) the program ran the command
+      if (r.status === 0 || r.status === null || r.status === 126 || r.status === 127) return null;   // (i) ran, killed, or the shell's own not-executable or not-found
+      const err = String(r.stderr || '');
+      if (!shapes.some((shape) => shape.test(err))) return null;   // (ii) a failure that is no recorded refusal of this program
+      reason = reason ?? refusalReason(err);
+    }
+  } finally { clear(); }
   return reason;
 };
 const REFUSAL_LINE = (program, reason, id) => `NOT RUN: real ${program} refuses to run on this runner (${reason}), so its evidence leg did not run: the residual table's ${id}`;
-test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could name that still reaches a tracked file, run through the hook (allowed) and the shells (the writers as measured), each under a class of THE RESIDUAL PROPERTY, and the property's paragraph on the hook header names every class; a row whose program is present but refuses to run here is NOT RUN with the refusal as its reason, and the rows not run are exactly the rows this box cannot run, derived from its programs (the fifteenth commit)", () => {
+test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could name that still reaches a tracked file, run through the hook (allowed) and the shells (the writers as measured), each under a class of THE RESIDUAL PROPERTY, and the property's paragraph on the hook header names every class; a row whose program is present but refuses to run here is NOT RUN with the refusal as its reason, and the rows not run are exactly the rows this box cannot run, derived from its programs (the fifteenth commit; the refusal established by a probe that parses, exits neither 126 nor 127, prints a refusal recorded for the program and leaves its witness absent, since round 7's thirtieth commit)", () => {
   const w = sixthPassWorld();
   const savedHome = process.env.HOME;
   process.env.HOME = w.HOME;
@@ -7764,6 +7831,7 @@ test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could na
     let lacking = 0;    // a program this box lacks, the row's own or one its command names
     let refusing = 0;   // a program this box has that refuses to run the command (THE REFUSING PROGRAM)
     const notRunIds = [];
+    const witnessOf = (id) => path.join(w.cwds.nas, `ran-${id}`);   // THE REFUSING PROGRAM's witness, under the world's own scratch
     for (const [id, cls, program, raw, writers, cwd = 'nad'] of RESIDUAL_TABLE) {
       assert.ok(Object.hasOwn(RESIDUAL_CLASSES, cls), `${id}: its class ${cls} is one the property states`);
       assert.ok(Object.hasOwn(w.cwds, cwd), `${id}: its cwd ${cwd} is one the world has`);
@@ -7775,7 +7843,7 @@ test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could na
       const results = shellsFor(A, `the residual table's ${id}`).map((shell) => [shell, w.run(cmd, w.cwds[cwd], shell)]);
       const writerLegs = results.filter(([shell]) => writers.includes(shell));
       if (program && writerLegs.length && writerLegs.every(([, r]) => !r.changed)) {   // every writer leg left the subset unchanged: the program's refusal, or a defect
-        const refusal = refusalOf(cmd, w.cwds[cwd], w.env, writerLegs.map(([shell]) => shell));
+        const refusal = refusalOf(cmd, w.cwds[cwd], w.env, writerLegs.map(([shell]) => shell), { program, witness: witnessOf(id) });
         if (refusal !== null) {
           assert.ok(results.every(([, r]) => !r.changed), `${id}: ${program} refuses to run here (${refusal}), so no shell wrote`);
           console.error(REFUSAL_LINE(program, refusal, id));
@@ -7793,7 +7861,7 @@ test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could na
     // not run are exactly these, so a NOT RUN never stands in for a miss the box could have measured, and on a box whose every program
     // runs (this one: the list is empty) the table is a full measurement
     const presentShells = shellsFor(A, null, SHELL_PROBE, () => {});   // the probe's lines stand above, once per row
-    const cannot = RESIDUAL_TABLE.filter(([, , program, raw, writers, cwd = 'nad']) => { const cmd = w.fill(raw); return (program && !toolPresent(program)) || !namedPresent(cmd, null, NAMED_PROBE, () => {}) || (program && refusalOf(cmd, w.cwds[cwd], w.env, presentShells.filter((s) => writers.includes(s))) !== null); }).map((r) => r[0]);
+    const cannot = RESIDUAL_TABLE.filter(([id, , program, raw, writers, cwd = 'nad']) => { const cmd = w.fill(raw); return (program && !toolPresent(program)) || !namedPresent(cmd, null, NAMED_PROBE, () => {}) || (program && refusalOf(cmd, w.cwds[cwd], w.env, presentShells.filter((s) => writers.includes(s)), { program, witness: witnessOf(id) }) !== null); }).map((r) => r[0]);
     assert.deepEqual(notRunIds, cannot, `the rows not run are exactly the rows this box cannot run, derived from its programs (${cannot.length}: ${cannot.join(', ') || 'none'})`);
     // the property on the hook header names every class of the table, in the words RESIDUAL_CLASSES pairs with it
     const header = fs.readFileSync(HOOK, 'utf8').replace(/\n\/\/ ?/g, ' ').replace(/\s+/g, ' ');
@@ -9829,7 +9897,15 @@ const runningPerf = (dir) => {
   fs.writeFileSync(path.join(bin, 'perf'), '#!/bin/sh\n# a perf that runs its workload\n[ "$1" = stat ] && shift\nwhile [ $# -gt 0 ]; do case "$1" in -o) shift 2;; --) shift; break;; -*) shift;; *) break;; esac; done\nexec "$@"\n', { mode: 0o755 });
   return bin;
 };
-test("round 6, fifteenth commit, THE REFUSING PROGRAM's helpers by execution: refusalReason takes the refusal's first line and, after a bare label, the line that follows; refusalOf runs the row's command with its copy replaced by true in the shells given under the env given: a perf that prints the runner's refusal and exits 255 in every shell is a refusal with that reason, a perf that runs its workload is none, a nonzero exit that says nothing is none, a command without the copy has no probe, and no shell is no refusal; the copy's spelling covers every cwd the table's rows write from; and every row whose program needs a capability, a namespace, a pty or a daemon the runner may deny has a probe", () => {
+// (round 7's thirtieth commit) a perf in the bin dir `dir`/`name` that walks perf stat's options as runningPerf does and then runs `body`
+const plantedPerf = (dir, name, body) => {
+  const bin = path.join(dir, name);
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'perf'), `#!/bin/sh\n# ${name}\n[ "$1" = stat ] && shift\nwhile [ $# -gt 0 ]; do case "$1" in -o) shift 2;; --) shift; break;; -*) shift;; *) break;; esac; done\n${body}\n`, { mode: 0o755 });
+  return bin;
+};
+const RUNNER_TEXT_SH = `printf '%s\\n' ${RUNNER_PERF_REFUSAL.map((l) => `'${l}'`).join(' ')} >&2`;   // the runner's refusal, as a sh line
+test("round 6, fifteenth commit, THE REFUSING PROGRAM's helpers by execution: refusalReason takes the refusal's first line and, after a bare label, the line that follows; refusalOf runs the row's command with its copy replaced by a witness's touch (true until round 7's thirtieth commit, whose test pins the three conditions) in the shells given under the env given: a perf that prints the runner's refusal and exits 255 in every shell is a refusal with that reason, a perf that runs its workload is none, a nonzero exit that says nothing is none, a command without the copy has no probe, and no shell is no refusal; the copy's spelling covers every cwd the table's rows write from; and every row whose program needs a capability, a namespace, a pty or a daemon the runner may deny has a probe", () => {
   assert.equal(refusalReason(`${RUNNER_PERF_REFUSAL.join('\n')}\n`), 'Error: Access to performance monitoring and observability operations is limited.', "the runner's text: the label and the line after it");
   assert.equal(refusalReason('strace: ptrace(PTRACE_TRACEME, ...): Operation not permitted\n'), 'strace: ptrace(PTRACE_TRACEME, ...): Operation not permitted', 'a one-line refusal is its line');
   assert.equal(refusalReason('unshare: unshare failed: Operation not permitted\nmore\n'), 'unshare: unshare failed: Operation not permitted', 'a first line that is no bare label stands alone');
@@ -9837,20 +9913,27 @@ test("round 6, fifteenth commit, THE REFUSING PROGRAM's helpers by execution: re
   assert.equal(refusalReason('\n \n'), null, 'blank lines: no reason');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-refusal-'));
   try {
-    fs.mkdirSync(path.join(dir, 'docs'));   // the cwd; the probe runs true, so nothing is written
+    fs.mkdirSync(path.join(dir, 'docs'));   // the cwd; the probe touches its witness under scratch/, so nothing is written here
     const cwd = path.join(dir, 'docs');
     const cmd = 'perf stat -o /dev/null cp ../base/report.md report.md';
     const env = (bin) => ({ PATH: `${bin}:${process.env.PATH}`, HOME: dir, LC_ALL: 'C.UTF-8' });
     const shells = shellsFor(['bash', 'dash'], "THE REFUSING PROGRAM's helpers");
     const refusing = refusingPerf(dir);
-    assert.equal(refusalOf(cmd, cwd, env(refusing), shells), 'Error: Access to performance monitoring and observability operations is limited.', "the refusing perf: a refusal with the runner's reason");
-    assert.equal(refusalOf(cmd, cwd, env(runningPerf(dir)), shells), null, 'the running perf: no refusal');
+    const perf = { program: 'perf', witness: path.join(dir, 'scratch', 'ran-helpers') };
+    assert.equal(refusalOf(cmd, cwd, env(refusing), shells, perf), 'Error: Access to performance monitoring and observability operations is limited.', "the refusing perf: a refusal with the runner's reason");
+    assert.equal(refusalOf(cmd, cwd, env(runningPerf(dir)), shells, perf), null, 'the running perf: no refusal');
     const silent = path.join(dir, 'silent');
     fs.mkdirSync(silent);
     fs.writeFileSync(path.join(silent, 'perf'), '#!/bin/sh\nexit 3\n', { mode: 0o755 });
-    assert.equal(refusalOf(cmd, cwd, env(silent), shells), null, 'a nonzero exit that says nothing is no refusal: the row reds as before');
-    assert.equal(refusalOf("printf '%s\\n' ../base/report.md report.md | xargs cp", cwd, env(refusing), shells), null, 'a command without the copy has no probe');
-    assert.equal(refusalOf(cmd, cwd, env(refusing), []), null, 'no shell to run the probe in: no refusal');
+    assert.equal(refusalOf(cmd, cwd, env(silent), shells, perf), null, 'a nonzero exit that says nothing is no refusal: the row reds as before');
+    // round 7's thirtieth commit (the reviewer's tests-1 and extra8-1): a perf that runs the command and exits nonzero with a message, the
+    // refuters' syntax-error mutant and a bad-option mutant are no refusal, so their rows red as before (each condition is pinned on its own
+    // in the thirtieth commit's tests)
+    assert.equal(refusalOf(cmd, cwd, env(plantedPerf(dir, 'ran-then-refused', `"$@"\n${RUNNER_TEXT_SH}\nexit 255`)), shells, perf), null, 'a perf that runs "$@" and exits nonzero with the refusal\'s message: no refusal');
+    assert.equal(refusalOf(`${cmd} )`, cwd, env(refusing), shells, perf), null, 'a syntax-error mutant (a stray parenthesis): no refusal');
+    assert.equal(refusalOf('perf stat --no-such-option -o /dev/null cp ../base/report.md report.md', cwd, env(plantedPerf(dir, 'bad-option', "echo \"  Error: unknown option \\`no-such-option'\" >&2\nexit 129")), shells, perf), null, 'a bad-option mutant: no refusal');
+    assert.equal(refusalOf("printf '%s\\n' ../base/report.md report.md | xargs cp", cwd, env(refusing), shells, perf), null, 'a command without the copy has no probe');
+    assert.equal(refusalOf(cmd, cwd, env(refusing), [], perf), null, 'no shell to run the probe in: no refusal');
     assert.ok(!fs.existsSync(path.join(dir, 'docs', 'report.md')), 'the probe wrote nothing');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   // the copy as the rows spell it from docs/, from the project root and from a cwd in no project
@@ -9862,7 +9945,11 @@ test("round 6, fifteenth commit, THE REFUSING PROGRAM's helpers by execution: re
   const without = withProgram.filter((r) => !WRITE_SPELLING.test(r[3]));
   assert.equal(withProbe.length + without.length, withProgram.length);
   for (const id of ['RT-perf-stat', 'RT-strace', 'RT-unshare-U', 'RT-setpriv', 'RT-setpriv-caps', 'RT-prlimit', 'RT-nsenter', 'RT-capsh', 'RT-fakeroot', 'RT-setarch', 'RT-linux64', 'RT-tmux-new', 'RT-dbus-run-session', 'RT-eatmydata', 'RT-script-wrapper', 'RT-rbash']) assert.ok(withProbe.some((r) => r[0] === id), `${id}, whose program the runner may deny, has a probe`);
-  console.log(`# the residual table's refusal probes: ${withProbe.length} rows with a probe (${new Set(withProbe.map((r) => r[2])).size} programs), ${without.length} without (${new Set(without.map((r) => r[2])).size} programs that write by their own nature, whose miss reds as before)`);
+  // round 7's thirtieth commit: the rows with a probe whose program has a recorded refusal shape, the only rows a refusal can file NOT RUN
+  const recorded = withProbe.filter((r) => Object.hasOwn(REFUSAL_SHAPES, r[2]));
+  assert.deepEqual(recorded.map((r) => r[0]), ['RT-strace', 'RT-unshare-U', 'RT-setpriv', 'RT-setpriv-caps', 'RT-perf-stat', 'RT-prlimit', 'RT-nsenter', 'RT-capsh', 'RT-eatmydata'], 'the probed rows whose program has a recorded shape');
+  assert.deepEqual([...new Set(recorded.map((r) => r[2]))].sort(), Object.keys(REFUSAL_SHAPES).sort(), 'every recorded program is a probed row\'s program');
+  console.log(`# the residual table's refusal probes: ${withProbe.length} rows with a probe (${new Set(withProbe.map((r) => r[2])).size} programs; ${recorded.length} rows of the ${Object.keys(REFUSAL_SHAPES).length} programs with a recorded refusal), ${without.length} without (${new Set(without.map((r) => r[2])).size} programs that write by their own nature, whose miss reds as before)`);
 });
 
 test("round 6, fifteenth commit, the runner's shape reproduced: the escape readers and the residual table run as a child of this file under a PATH linking every program but zsh, a perf that prints the runner's refusal and exits 255 ahead of it; the child passes; the escape readers print one NOT RUN line naming zsh's three readers and its record and compare every form in every reader; the residual table prints RT-perf-stat's NOT RUN line with the refusal as its reason, counts every refusal line it printed as a row not run for a refusing program (eatmydata refuses behind the harness's links too, unable to find itself, which is the rule at work), and holds its rows not run equal to the rows the shape cannot run", () => {
@@ -9874,12 +9961,17 @@ test("round 6, fifteenth commit, the runner's shape reproduced: the escape reade
     const out = String(r.stdout || '') + String(r.stderr || '');
     assert.equal(r.status, 0, `the child passes on the runner's shape: ${out.slice(0, 3000)}`);
     assert.ok(/^# pass 2$/m.test(out) && /^# fail 0$/m.test(out), `two tests, both passing: ${out.slice(-600)}`);
-    const esc = out.split('\n').filter((l) => /NOT RUN: real zsh is not on this runner, so its evidence leg did not run: the escape readers' 3 zsh readers over 34 forms and echo's union in zsh, the hook's readings compared to the outputs recorded from zsh 5\.9, not to a live zsh \(/.test(l));
+    // the line names the record's label for zsh as the record holds it (round 7's thirtieth commit: the label is the recorder's, so the pin reads it, never a copy of it)
+    const reEscape = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const zshReaders = Object.keys(guard.ESCAPE_READERS).filter((k) => k.endsWith(' zsh')).length;
+    const escLine = new RegExp(`NOT RUN: real zsh is not on this runner, so its evidence leg did not run: the escape readers' ${zshReaders} zsh readers over ${ESCAPE_FORMS.length} forms and echo's union in zsh, the hook's readings compared to the outputs recorded from zsh ${reEscape(ESCAPE_OUTPUTS_RECORDED.shells.zsh)}, not to a live zsh \\(`);
+    const esc = out.split('\n').filter((l) => escLine.test(l));
     assert.equal(esc.length, 1, `one NOT RUN line for zsh's readers (${esc.length}): ${esc.join(' | ')}`);
     assert.ok(out.includes(`# the escape readers: ${ESCAPE_FORMS.length * 9} reader comparisons over ${ESCAPE_FORMS.length} forms and `) && out.includes('2 shells live (bash, dash), 1 by record (zsh; '), `every form compared in every reader, zsh's by record: ${(out.match(/# the escape readers: [^\n]*/) || [''])[0]}`);
     const refusals = out.split('\n').filter((l) => /NOT RUN: real \S+ refuses to run on this runner \(/.test(l));
     const perf = refusals.filter((l) => l.includes(REFUSAL_LINE('perf', 'Error: Access to performance monitoring and observability operations is limited.', 'RT-perf-stat')));
     assert.equal(perf.length, 1, `one NOT RUN line for perf's refusal (${perf.length}): ${refusals.join(' | ')}`);
+    for (const l of refusals) { const program = (l.match(/NOT RUN: real (\S+) refuses to run on this runner \(/) || [])[1]; assert.ok(program && Object.hasOwn(REFUSAL_SHAPES, program), `every refusal on the runner's shape is a program's with a recorded shape (round 7's thirtieth commit): ${l}`); }
     const m = out.match(/# the residual table: (\d+) rows, (\d+) measured, (\d+) not run \((\d+) for a program this box lacks, (\d+) for a program that refuses to run here\); classes (\d+)/);
     assert.ok(m, `the child printed the table's summary: ${(out.match(/# the residual table[^\n]*/) || [''])[0]}`);
     assert.equal(Number(m[1]), RESIDUAL_TABLE.length, 'every row');
@@ -9891,6 +9983,252 @@ test("round 6, fifteenth commit, the runner's shape reproduced: the escape reade
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+
+// ── round 7 of fork PR #780 review, thirtieth commit (2026-09-24): the reviewer's tests-1 with extra8-1, and tests-2 with extra8-2 ─────
+//
+// THE REFUSING PROGRAM fails closed (the statement at refusalOf): a row is NOT RUN for a refusing program only when the probe parses in
+// the shell and exits neither 126 nor 127, its stderr matches a refusal recorded for the row's program, and the witness it would leave
+// is absent, in every shell it runs in. Each condition is pinned below by execution with the mutants and plants only it refuses (the
+// syntax error on the probe's second line, which bash and dash reach after running the first; the command a shell cannot find or
+// execute after the program; a program's own bad-option failure; a program that runs the command and then fails with a message), so
+// dropping any one condition reds a named pin; and the recorded shapes are measured against the real programs' refusals where the box
+// has the program. THE LABELS of the recorded outputs are the recorder's own, read from the shells it ran. The runner's shape (no zsh,
+// perf present and refusing) is reasoned over what is present: every leg over a shell asks shellsFor, every leg over a program asks
+// `command -v`, and a program that is absent, or runs a probe it would refuse elsewhere, prints a NOT RUN line naming why.
+const refusalWorld = () => {
+  const dir = outsideDir();
+  for (const d of ['docs', 'base', 'scratch']) fs.mkdirSync(path.join(dir, d));
+  fs.writeFileSync(path.join(dir, 'base', 'report.md'), 'base\n');
+  const env = (bin = null) => ({ PATH: bin ? `${bin}:${process.env.PATH}` : process.env.PATH, HOME: dir, LC_ALL: 'C.UTF-8' });
+  return { dir, cwd: path.join(dir, 'docs'), witness: path.join(dir, 'scratch', 'ran-probe'), env, rm: () => fs.rmSync(dir, { recursive: true, force: true }) };
+};
+const hasProgram = (p) => _spawnSync('sh', ['-c', `command -v ${p}`], { encoding: 'utf8' }).status === 0;   // plumbing, as the table's toolPresent
+const PERF_CMD = 'perf stat -o /dev/null cp ../base/report.md report.md';   // RT-perf-stat's command
+const RUNNER_REASON = 'Error: Access to performance monitoring and observability operations is limited.';
+
+test("round 7 of fork PR #780 review, thirtieth commit, THE REFUSING PROGRAM's condition (i): a probe that does not parse in its shell, or whose run exits 126 or 127, is no refusal, even where the program printed its recorded refusal and left no witness (the stray parenthesis the refuters planted, a syntax error on the probe's second line that bash and dash reach after running the first, a command after the program the shell cannot find, one it cannot execute); zsh, which parses the whole text first, refuses the one-line mutant too; and a run killed by a signal is none either", () => {
+  const r = refusalWorld();
+  try {
+    const refusing = refusingPerf(r.dir);
+    fs.writeFileSync(path.join(r.cwd, 'noexec'), 'true\n', { mode: 0o644 });   // a file the shell finds and cannot execute: 126
+    const perf = { program: 'perf', witness: r.witness };
+    const BD = shellsFor(['bash', 'dash'], "THE REFUSING PROGRAM's condition (i), the shells that run a probe's first line before its second line's syntax error");
+    assert.ok(BD.length >= 1, 'a shell to run the probes in');
+    const cases = [
+      ['the refusing perf (the control)', PERF_CMD, RUNNER_REASON],
+      ['a stray parenthesis after the copy (the refuters\' mutant)', `${PERF_CMD} )`, null],
+      ['a syntax error on the second line', `${PERF_CMD}\n)`, null],
+      ['a command the shell cannot find after the program', `${PERF_CMD}; nosuchcommand`, null],
+      ['a file the shell cannot execute after the program', `${PERF_CMD}; ./noexec`, null],
+    ];
+    assert.deepEqual(cases.map(([what, cmd]) => [what, refusalOf(cmd, r.cwd, r.env(refusing), BD, perf)]), cases.map(([what, , want]) => [what, want]), `condition (i) in ${BD.join(', ')}`);
+    for (const sh of shellsFor(['zsh'], "THE REFUSING PROGRAM's condition (i) in zsh")) assert.equal(refusalOf(`${PERF_CMD} )`, r.cwd, r.env(refusing), [sh], perf), null, 'zsh: the one-line mutant is no refusal');
+    // a run killed by a signal after the refusal's text: bash and zsh exec a lone program, so its kill ends the run (no status); dash forks it
+    // and reports 137, a nonzero exit (r7-c30-measure.log), so the leg is the shells that exec
+    const killed = plantedPerf(r.dir, 'killed', `${RUNNER_TEXT_SH}\nkill -9 $$`);
+    for (const sh of shellsFor(['bash', 'zsh'], "THE REFUSING PROGRAM's condition (i), a run killed by a signal in the shells that exec a lone program")) assert.equal(refusalOf(PERF_CMD, r.cwd, r.env(killed), [sh], perf), null, `${sh}: a run killed by a signal is no refusal`);
+    assert.ok(!fs.existsSync(r.witness), 'no witness is left behind');
+  } finally { r.rm(); }
+});
+
+test("round 7 of fork PR #780 review, thirtieth commit, THE REFUSING PROGRAM's condition (ii): the recorded refusal shapes are exactly the ruled programs' (perf's paranoia text, the \"Operation not permitted\" family of strace, unshare, setpriv, prlimit, nsenter and capsh, eatmydata's failure to find itself), each matching the texts recorded for it and no other program's, and no shell's syntax error, bad option, missing command, EACCES or other failure; by execution, a program's own bad option (real perf and strace where present, a planted perf everywhere), a failure no shape describes, a refusal printed under another program's name, and a program with no recorded shape are no refusal", () => {
+  const RECORDED = {
+    perf: [RUNNER_PERF_REFUSAL.join('\n'), 'Error:\nNo supported events found.\nAccess to performance monitoring and observability operations is limited.\nConsider adjusting /proc/sys/kernel/perf_event_paranoid setting to open\naccess to performance monitoring and observability operations for processes'],
+    strace: ['strace: ptrace(PTRACE_TRACEME, ...): Operation not permitted', 'strace: test_ptrace_get_syscall_info: PTRACE_TRACEME: Operation not permitted\nstrace: ptrace(PTRACE_TRACEME, ...): Operation not permitted'],
+    unshare: ['unshare: unshare failed: Operation not permitted'],
+    setpriv: ['setpriv: setresuid failed: Operation not permitted'],
+    prlimit: ['prlimit: failed to set the NOFILE resource limit: Operation not permitted'],
+    nsenter: ["nsenter: reassociate to namespace 'ns/mnt' failed: Operation not permitted"],
+    capsh: ['unable to raise CAP_SETPCAP for BSET changes: Operation not permitted', 'Unable to set group list for user: Operation not permitted'],
+    eatmydata: ["E: eatmydata: unable to find 'eatmydata' in PATH"],
+  };
+  const NOT_REFUSALS = [
+    "bash: -c: line 1: syntax error near unexpected token `)'", 'dash: 2: Syntax error: ")" unexpected', "zsh:2: parse error near `)'",
+    "  Error: unknown option `no-such-option'\n\n Usage: perf stat [<options>] [<command>]", "strace: unrecognized option '--no-such-option'\nTry 'strace -h' for more information.",
+    'perf: failed to write the stats file', 'bash: line 1: nosuchcommand: command not found', 'nosuchcommand: not found',
+    'nsenter: cannot open /proc/1/ns/user: Permission denied', "touch: cannot touch 'x': Operation not permitted", "E: eatmydata: unable to find 'touch' in PATH",
+    'Error:\nAccess to performance monitoring and observability operations is limited.',   // half the paranoia text: the shape is both lines
+  ];
+  assert.deepEqual(Object.keys(REFUSAL_SHAPES).sort(), ['capsh', 'eatmydata', 'nsenter', 'perf', 'prlimit', 'setpriv', 'strace', 'unshare'], 'the programs the reviewer named, and no other');
+  const matches = (p, t) => REFUSAL_SHAPES[p].some((shape) => shape.test(t));
+  for (const [p, texts] of Object.entries(RECORDED)) for (const t of texts) {
+    assert.ok(matches(p, t), `${p}: its recorded refusal matches its shape: ${t.split('\n')[0]}`);
+    for (const q of Object.keys(REFUSAL_SHAPES).filter((q) => q !== p)) assert.ok(!matches(q, t), `${q}'s shape does not take ${p}'s refusal: ${t.split('\n')[0]}`);
+  }
+  for (const t of NOT_REFUSALS) for (const p of Object.keys(REFUSAL_SHAPES)) assert.ok(!matches(p, t), `${p}'s shape takes no failure that is not its refusal: ${t.split('\n')[0]}`);
+  // by execution
+  const r = refusalWorld();
+  try {
+    const refusing = refusingPerf(r.dir);
+    const badOption = plantedPerf(r.dir, 'bad-option', "printf '%s\\n' \"  Error: unknown option \\`no-such-option'\" '' ' Usage: perf stat [<options>] [<command>]' >&2\nexit 129");
+    const otherFailure = plantedPerf(r.dir, 'other-failure', "echo 'perf: failed to write the stats file' >&2\nexit 1");
+    const shells = shellsFor(['bash', 'dash'], "THE REFUSING PROGRAM's condition (ii)");
+    const perf = { program: 'perf', witness: r.witness };
+    const cases = [
+      ['the refusing perf (the control)', PERF_CMD, r.env(refusing), perf, RUNNER_REASON],
+      ['a planted perf rejecting a bad option', 'perf stat --no-such-option -o /dev/null cp ../base/report.md report.md', r.env(badOption), perf, null],
+      ['a perf failing without its refusal', PERF_CMD, r.env(otherFailure), perf, null],
+      ["perf's refusal under strace's name", PERF_CMD, r.env(refusing), { program: 'strace', witness: r.witness }, null],
+      ['a program with no recorded shape', PERF_CMD, r.env(refusing), { program: 'fakeroot', witness: r.witness }, null],
+      ['no program named', PERF_CMD, r.env(refusing), { witness: r.witness }, null],
+    ];
+    const real = [
+      ['perf', 'real perf rejecting a bad option', 'perf stat --no-such-option -o /dev/null cp ../base/report.md report.md'],
+      ['strace', 'real strace rejecting a bad option', 'strace --no-such-option -o /dev/null cp ../base/report.md report.md'],
+    ];
+    for (const [p, what, cmd] of real) {
+      if (hasProgram(p)) cases.push([what, cmd, r.env(), { program: p, witness: r.witness }, null]);
+      else console.error(`NOT RUN: real ${p} is not on this runner, so its evidence leg did not run: THE REFUSING PROGRAM's condition (ii), ${what}`);
+    }
+    assert.deepEqual(cases.map(([what, cmd, env, opts]) => [what, refusalOf(cmd, r.cwd, env, shells, opts)]), cases.map(([what, , , , want]) => [what, want]), `condition (ii) in ${shells.join(', ')}`);
+    assert.ok(!fs.existsSync(r.witness), 'no witness is left behind');
+  } finally { r.rm(); }
+});
+
+test("round 7 of fork PR #780 review, thirtieth commit, THE REFUSING PROGRAM's condition (iii): a program that runs the command and then fails with a message is no refusal, its witness found at an absolute path (the plant that runs \"$@\" and prints the runner's refusal, the refuters' plant that runs it from /, the plant that runs it and fails otherwise)", () => {
+  const r = refusalWorld();
+  try {
+    const refusing = refusingPerf(r.dir);
+    const ranThenRefused = plantedPerf(r.dir, 'ran-then-refused', `"$@"\n${RUNNER_TEXT_SH}\nexit 255`);
+    const fromRoot = plantedPerf(r.dir, 'from-root', `cd / && "$@"\n${RUNNER_TEXT_SH}\nexit 255`);
+    const ranThenFailed = plantedPerf(r.dir, 'ran-then-failed', `"$@"\necho 'perf: failed to write the stats file' >&2\nexit 1`);
+    const shells = shellsFor(['bash', 'zsh', 'dash'], "THE REFUSING PROGRAM's condition (iii)");
+    const perf = { program: 'perf', witness: r.witness };
+    const cases = [
+      ['the refusing perf (the control)', r.env(refusing), RUNNER_REASON],
+      ['a perf that runs the command, then prints the refusal', r.env(ranThenRefused), null],
+      ['a perf that runs the command from /, then prints the refusal', r.env(fromRoot), null],
+      ['a perf that runs the command, then fails otherwise', r.env(ranThenFailed), null],
+    ];
+    assert.deepEqual(cases.map(([what, env]) => [what, refusalOf(PERF_CMD, r.cwd, env, shells, perf)]), cases.map(([what, , want]) => [what, want]), `condition (iii) in ${shells.join(', ')}`);
+    assert.ok(!fs.existsSync(r.witness), 'the witness a running plant left is gone when the call ends');
+  } finally { r.rm(); }
+});
+
+test("round 7 of fork PR #780 review, thirtieth commit, THE REFUSING PROGRAM's witness: unlinked before each shell's probe and when the call ends, so a stale one neither hides a refusal nor outlives the call, in every present shell; a witness path that cannot be spelled bare into the probe (a blank, a relative path, an expansion) throws", () => {
+  const r = refusalWorld();
+  try {
+    const refusing = refusingPerf(r.dir);
+    const shells = shellsFor(['bash', 'zsh', 'dash'], "THE REFUSING PROGRAM's witness");
+    const perf = { program: 'perf', witness: r.witness };
+    fs.writeFileSync(r.witness, 'stale\n');   // a witness an earlier call or shell left
+    assert.equal(refusalOf(PERF_CMD, r.cwd, r.env(refusing), shells, perf), RUNNER_REASON, 'a stale witness is unlinked before the probe, so it does not hide the refusal');
+    assert.ok(!fs.existsSync(r.witness), 'and none is left when the call ends');
+    for (const bad of [path.join(r.dir, 'scratch', 'ran probe'), 'scratch/ran-probe', `${r.dir}/scratch/ran-$x`]) assert.throws(() => refusalOf(PERF_CMD, r.cwd, r.env(refusing), shells, { program: 'perf', witness: bad }), /THE REFUSING PROGRAM's witness is an absolute path of safe characters/, `a witness spelled ${JSON.stringify(bad)} throws`);
+  } finally { r.rm(); }
+});
+
+test("round 7 of fork PR #780 review, thirtieth commit, THE RESIDUAL TABLE's own decision on RT-perf-stat under the refuters' plant (a perf that runs the copy from / and then prints the runner's refusal): every writer leg misses, the probe finds its witness, so no refusal is taken and the row's per-shell assertion reds where the fifteenth commit's rule filed it NOT RUN", () => {
+  // the row as the table runs it (the world's shells from docs/, the table's writers), the plant first on the world's PATH
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  const savedPath = w.env.PATH;
+  process.env.HOME = w.HOME;
+  try {
+    const row = RESIDUAL_TABLE.find((t) => t[0] === 'RT-perf-stat');
+    assert.ok(row && row[3] === PERF_CMD, 'the row is the command the plants run');
+    w.env.PATH = `${plantedPerf(w.W, 'from-root', `cd / && "$@"\n${RUNNER_TEXT_SH}\nexit 255`)}:${savedPath}`;   // under the world's root, which its rebuild keeps
+    const legs = shellsFor(row[4], "THE RESIDUAL TABLE's RT-perf-stat under the refuters' plant").map((shell) => [shell, w.run(w.fill(row[3]), w.cwds.nad, shell)]);
+    assert.ok(legs.length >= 1 && legs.every(([, l]) => !l.changed), `every writer leg misses under the plant: ${JSON.stringify(legs)}`);
+    assert.equal(refusalOf(w.fill(row[3]), w.cwds.nad, w.env, legs.map(([shell]) => shell), { program: 'perf', witness: path.join(w.cwds.nas, 'ran-RT-perf-stat') }), null, 'no refusal: the table reds the row, a program that ran is never NOT RUN');
+  } finally { w.env.PATH = savedPath; process.env.HOME = savedHome; w.rm(); }
+});
+
+test("round 7 of fork PR #780 review, thirtieth commit, THE RECORDED REFUSAL SHAPES against the real programs: each program the box has, provoked into refusing a probe (perf counting an event under the paranoia setting, strace under strace, unshare and nsenter into a mount namespace, prlimit above a lowered hard limit, capsh dropping a bound capability, eatmydata behind a bin dir of links), is a refusal whose recorded shape takes its stderr, in every present shell; setpriv refuses a uid change with its line and exit 127, which condition (i) never files NOT RUN; a program absent, or running the probe here, prints a NOT RUN line", () => {
+  const r = refusalWorld();
+  try {
+    const shells = shellsFor(['bash', 'zsh', 'dash'], 'THE RECORDED REFUSAL SHAPES against the real programs');
+    const links = linkAllBut(r.dir, []);   // eatmydata finds only links to itself here
+    const PROVOKED = [
+      ['perf', 'perf stat -e cycles -o /dev/null cp ../base/report.md report.md', r.env()],
+      ['strace', 'strace -f -o /dev/null strace -o /dev/null cp ../base/report.md report.md', r.env()],
+      ['unshare', 'unshare -m cp ../base/report.md report.md', r.env()],
+      ['nsenter', 'nsenter -t $$ -m cp ../base/report.md report.md', r.env()],
+      ['prlimit', 'ulimit -Sn 512; ulimit -Hn 512; prlimit --nofile=1024 cp ../base/report.md report.md', r.env()],
+      ['capsh', "capsh --drop=cap_sys_admin -- -c 'cp ../base/report.md report.md'", r.env()],
+      ['eatmydata', 'eatmydata cp ../base/report.md report.md', { PATH: links, HOME: r.dir, LC_ALL: 'C.UTF-8' }],
+      ['setpriv', 'setpriv --reuid=0 cp ../base/report.md report.md', r.env()],
+    ];
+    assert.deepEqual(PROVOKED.map(([p]) => p).sort(), Object.keys(REFUSAL_SHAPES).sort(), 'every recorded program is provoked');
+    const got = [];
+    const want = [];
+    for (const [p, cmd, env] of PROVOKED) {
+      if (!hasProgram(p)) { console.error(`NOT RUN: real ${p} is not on this runner, so its evidence leg did not run: THE RECORDED REFUSAL SHAPES, ${p}'s refusal`); continue; }
+      const witness = path.join(r.dir, 'scratch', `ran-${p}`);
+      const probe = cmd.replace(WRITE_SPELLING, () => `touch ${witness}`);
+      const direct = spawnSync(shells[0], shellArgv(shells[0], probe), { cwd: r.cwd, input: '', encoding: 'utf8', env, timeout: 20000 });
+      const ran = fs.existsSync(witness);
+      fs.rmSync(witness, { force: true });
+      if (ran) { console.error(`NOT RUN: real ${p} runs its provoked probe on this runner (a privilege it has here), so its evidence leg did not run: THE RECORDED REFUSAL SHAPES, ${p}'s refusal`); continue; }
+      const took = REFUSAL_SHAPES[p].some((shape) => shape.test(String(direct.stderr || '')));
+      if (p === 'setpriv') {
+        got.push([p, direct.status, took, refusalOf(cmd, r.cwd, env, shells, { program: p, witness })]);
+        want.push([p, 127, true, null]);
+        continue;
+      }
+      const reason = refusalOf(cmd, r.cwd, env, shells, { program: p, witness });
+      got.push([p, took, reason !== null]);
+      want.push([p, true, true]);
+      if (reason === null) console.error(`# ${p}'s provoked probe in ${shells[0]}: exit ${direct.status}, stderr ${JSON.stringify(String(direct.stderr || '').slice(0, 300))}`);
+    }
+    assert.deepEqual(got, want, 'each present program refuses with its recorded shape, and setpriv with its line and exit 127, no refusal');
+    console.log(`# the recorded refusal shapes against the real programs: ${got.length} measured (${got.map((g) => g[0]).join(', ')}) in ${shells.join(', ')}`);
+  } finally { r.rm(); }
+});
+
+test("round 7 of fork PR #780 review, thirtieth commit, THE LABELS of the recorded outputs: recordEscapeOutputs emits the record's shells line with each shell it ran labelled by that shell's own report ($BASH_VERSION, $ZSH_VERSION, dash's package version from dpkg-query, else unknown), never by the record's label, and every other shell's label as the record holds it, then outputs equal to the record's for every present shell; the drift line is one INFO line per present shell whose live version differs from its label, none where they agree and none for an absent shell; the mismatch message names the live version; and the runner-shape child reads zsh's label from the record", () => {
+  const present = shellsFor(['bash', 'zsh', 'dash'], 'THE LABELS of the recorded outputs');
+  const live = Object.fromEntries(present.map((sh) => [sh, liveShellLabel(sh)]));
+  if (present.includes('bash')) assert.equal(live.bash, SHELL_PROBE.bash.version, "bash's label is its $BASH_VERSION, as the probe reads it");
+  for (const sh of present.filter((s) => s !== 'dash')) assert.ok(/^\d+\.\d+/.test(live[sh]), `${sh} reports a version: ${live[sh]}`);
+  const saved = { ...ESCAPE_OUTPUTS_RECORDED.shells };
+  const planted = Object.fromEntries(Object.keys(saved).map((sh) => [sh, `planted-${sh}`]));
+  let text;
+  try {
+    Object.assign(ESCAPE_OUTPUTS_RECORDED.shells, planted);   // a label the recorder must not copy for a shell it ran, and must keep for one it did not
+    text = recordEscapeOutputs(present);
+  } finally { Object.assign(ESCAPE_OUTPUTS_RECORDED.shells, saved); }
+  const lines = text.split('\n');
+  const m = lines[0].match(/^ {2}shells: (\{.*\}),$/);
+  assert.ok(m, `the recorder's first line is the record's shells line: ${lines[0].slice(0, 120)}`);
+  assert.deepEqual(JSON.parse(m[1]), Object.fromEntries(Object.keys(saved).map((sh) => [sh, present.includes(sh) ? live[sh] : planted[sh]])), 'each shell it ran labelled live, every other as the record holds it');
+  const keys = Object.entries(RECORDED_COMMANDS).filter(([, [sh]]) => present.includes(sh)).map(([k]) => k);
+  assert.deepEqual(lines.slice(1), keys.map((k) => `    ${JSON.stringify(k)}: ${JSON.stringify(ESCAPE_OUTPUTS_RECORDED.outputs[k])},`), "the outputs lines are the record's entries: a paste over a current record changes nothing but a label");
+  // the drift line, in-process
+  const L = { bash: '5.2.21(1)-release', zsh: '5.9', dash: '0.5.12' };
+  assert.deepEqual(labelDriftLines(['bash', 'zsh', 'dash'], L, { ...L }), [], 'no line where every live version is its label');
+  assert.deepEqual(labelDriftLines(['bash', 'dash'], L, { bash: '5.3.3(1)-release', dash: '0.5.12' }), ["INFO: live bash is 5.3.3(1)-release and the record's label for bash is 5.2.21(1)-release; every output of this bash matched the record, so the record stands (recordEscapeOutputs([\"bash\"]) relabels it with its outputs)"], 'one line for the one present shell that drifted');
+  assert.deepEqual(labelDriftLines(['bash'], L, { bash: L.bash, zsh: '5.8' }), [], 'an absent shell drifts nothing');
+  // the escape readers' mismatch message names the live version beside the label, and the runner-shape child reads the label (source
+  // pins: the executed ones are the INFO child below and the runner-shape child, whose NOT RUN line match is built from the record)
+  const src = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
+  const escapeTest = (src.match(/^test\("round 6, the escape readers by execution[^]*?\n\}\);$/m) || [''])[0];
+  assert.ok(escapeTest.includes('(this ${sh} reports ${liveShellLabel(sh)}; live ') && escapeTest.includes('for (const line of labelDriftLines(present, ESCAPE_OUTPUTS_RECORDED.shells, live)) console.error(line);'), 'the escape readers test names the live version in its mismatch and prints the drift lines');
+  const child = (src.match(/^test\("round 6, fifteenth commit, the runner's shape reproduced[^]*?\n\}\);$/m) || [''])[0];
+  assert.ok(child.includes('reEscape(ESCAPE_OUTPUTS_RECORDED.shells.zsh)') && !/recorded from zsh \d/.test(child), "the runner-shape child's NOT RUN match reads zsh's label from the record, spelling no version");
+  console.log(`# the record's labels: ${Object.entries(saved).map(([sh, l]) => `${sh} ${l}${present.includes(sh) ? ` (live ${live[sh]})` : ' (not on this runner)'}`).join(', ')}`);
+});
+
+test("round 7 of fork PR #780 review, thirtieth commit, THE LABELS by execution: the escape readers, run as a child of this file under a dpkg-query that reports dash as 0.5.99, pass (every output still matches the record) and print exactly the INFO lines the live versions give, dash's among them, never a red", () => {
+  if (!shellsFor(['dash'], "THE LABELS by execution, a dash whose package reports another version").length) return;
+  const dir = outsideDir();
+  try {
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, 'dpkg-query'), '#!/bin/sh\n# a dash package of another version\nprintf %s 0.5.99\n', { mode: 0o755 });
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+    delete env.NODE_TEST_CONTEXT;
+    const c = _spawnSync(process.execPath, ['--test', '--test-name-pattern', 'round 6, the escape readers by execution', fileURLToPath(import.meta.url)], { env, encoding: 'utf8', timeout: 600000, maxBuffer: 64 * 1024 * 1024 });
+    const out = String(c.stdout || '') + String(c.stderr || '');
+    assert.equal(c.status, 0, `the child passes: ${out.slice(-2000)}`);
+    assert.ok(/^# pass 1$/m.test(out) && /^# fail 0$/m.test(out), `one test, passing: ${out.slice(-600)}`);
+    const present = shellsFor(['bash', 'zsh', 'dash'], null, SHELL_PROBE, () => {});
+    const live = { ...Object.fromEntries(present.map((sh) => [sh, liveShellLabel(sh)])), dash: '0.5.99' };
+    const expected = labelDriftLines(present, ESCAPE_OUTPUTS_RECORDED.shells, live);
+    assert.ok(expected.some((l) => l.startsWith('INFO: live dash is 0.5.99 and ')), 'dash drifts under the stub');
+    assert.deepEqual(out.split('\n').map((l) => (l.match(/INFO: live .*$/) || [null])[0]).filter(Boolean), expected, 'the child prints exactly the drift lines');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
 
 // ── round 7 of fork PR #780 review, seventeenth commit (2026-09-23): the reviewer's correctness-1, correctness-2 and extra6-2 ─────────
 //
