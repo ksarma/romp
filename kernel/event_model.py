@@ -676,6 +676,12 @@ def _record_cache_default_budget_bytes(meminfo_text=None):
 _JSONL_CACHE_BUDGET_BYTES = (int(float(os.environ["ROMP_RECORD_CACHE_BUDGET_MB"]) * 1024 * 1024)
                              if os.environ.get("ROMP_RECORD_CACHE_BUDGET_MB") else _record_cache_default_budget_bytes())
 _JSONL_CACHE_BYTES = [0]          # the sum of every held entry's weight, kept in step with _JSONL_CACHE under its lock
+_JSONL_CACHE_BYTES_MAX = [0]      # the most bytes the cache has held at once this life: raised at the one site the counter
+#                                   rises (_cache_insert_locked, under the lock), never lowered, so a new-maximum hour reads from two
+#                                   /perf reads (the growth analysis of 2026-09-20: the kernel's RSS stepped in the hours this maximum
+#                                   rose and did not come back once the entries went). It is the maximum of the ledger above, which a
+#                                   whole re-read of a held file replaces at the insert: the old records and the new ones are both alive
+#                                   for the length of that read, so the process's own peak can exceed this by up to the largest file
 _RECORD_CACHE_STATS = {"inserts": 0, "evictions": 0, "evictedBytes": 0, "budgetEvictions": 0, "dropped": 0, "droppedBytes": 0,
                        "wholeReads": {}}   # "kind<-caller" -> {"count", "bytes"}: every read that pulled a file WHOLE (from zero, or a
 #                                          tail entry upgraded to the whole file), named by the reader's kind and the first frame
@@ -733,15 +739,18 @@ def _cache_insert_locked(path, ent):
         _RECORD_CACHE_STATS["evictedBytes"] += _cache_pop_locked(next(iter(_JSONL_CACHE)))
     _JSONL_CACHE[path] = ent
     _JSONL_CACHE_BYTES[0] += w
+    if _JSONL_CACHE_BYTES[0] > _JSONL_CACHE_BYTES_MAX[0]:
+        _JSONL_CACHE_BYTES_MAX[0] = _JSONL_CACHE_BYTES[0]      # the life maximum (recordCache.bytesMax): the pop never lowers it
     _RECORD_CACHE_STATS["inserts"] += 1
 
 
 def record_cache_stats() -> dict:
-    """The record cache for /perf: entries, held bytes, the budget, and the counters (inserts, evictions by count and by
-    budget, evicted bytes, drop-after-fold drops)."""
+    """The record cache for /perf: entries, held bytes, the life maximum of held bytes (bytesMax, a gauge like bytes: the
+    judge child lists it in _SERVE_GAUGES so it rides current, never differenced), the budget, and the counters (inserts,
+    evictions by count and by budget, evicted bytes, drop-after-fold drops)."""
     with _JSONL_CACHE_LOCK:
-        out = {"entries": len(_JSONL_CACHE), "bytes": _JSONL_CACHE_BYTES[0], "budgetBytes": _JSONL_CACHE_BUDGET_BYTES,
-               "countCap": _JSONL_CACHE_MAX, **_RECORD_CACHE_STATS}
+        out = {"entries": len(_JSONL_CACHE), "bytes": _JSONL_CACHE_BYTES[0], "bytesMax": _JSONL_CACHE_BYTES_MAX[0],
+               "budgetBytes": _JSONL_CACHE_BUDGET_BYTES, "countCap": _JSONL_CACHE_MAX, **_RECORD_CACHE_STATS}
         table = _RECORD_CACHE_STATS.get("wholeReads")
         out["wholeReads"] = {k: dict(v) for k, v in table.items()} if isinstance(table, dict) else {}
         bys = _RECORD_CACHE_STATS.get("wholeReadsByStage")             # T401: the same reads per (stage, caller)

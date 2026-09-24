@@ -178,6 +178,7 @@ class RecordCacheByteBudget(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="jsonl-budget-")
         em._JSONL_CACHE.clear(); em._JSONL_CACHE_BYTES[0] = 0
+        getattr(em, "_JSONL_CACHE_BYTES_MAX", [0])[0] = 0            # the life maximum too (getattr: the module imports at a head without it)
         for k in em._RECORD_CACHE_STATS: em._RECORD_CACHE_STATS[k] = 0
         self._budget = em._JSONL_CACHE_BUDGET_BYTES
         self._real_scan = em._scan_jsonl_stream
@@ -190,6 +191,7 @@ class RecordCacheByteBudget(unittest.TestCase):
         em._JSONL_CACHE_BUDGET_BYTES = self._budget
         em._scan_jsonl_stream = self._real_scan
         em._JSONL_CACHE.clear(); em._JSONL_CACHE_BYTES[0] = 0
+        getattr(em, "_JSONL_CACHE_BYTES_MAX", [0])[0] = 0            # so no sibling test inherits this test's peak
 
     def _file(self, name, n):
         path = os.path.join(self.dir, name); _write_jsonl(path, n); return path
@@ -227,6 +229,32 @@ class RecordCacheByteBudget(unittest.TestCase):
         em._read_jsonl_incremental(big)
         self.assertIn(big, em._JSONL_CACHE, "a leaf is never refused")
         self.assertNotIn(small, em._JSONL_CACHE, "the budget then holds that one entry")
+        self.assertTrue(self._ledger_ok())
+
+    def test_the_life_maximum_of_held_bytes_survives_the_eviction(self):
+        # the growth analysis (2026-09-20): the kernel's RSS stepped in the hours the cache's held bytes set a new maximum
+        # and never came back once the entries went. bytesMax is the most the cache has held at once this life, never
+        # lowered, so a new-maximum hour reads from two /perf reads or two self-sample rows, not from watching bytes.
+        small = self._file("small.jsonl", 5); big = self._file("big.jsonl", 200)
+        em._read_jsonl_incremental(small); em._read_jsonl_incremental(big)
+        peak = os.path.getsize(small) + os.path.getsize(big)
+        st = em.record_cache_stats()
+        self.assertEqual((st["bytesMax"], st["bytes"]), (peak, peak))   # KeyError before the gauge: the stats carried bytes only
+        self.assertTrue(self._ledger_ok())
+        em._JSONL_CACHE_BUDGET_BYTES = os.path.getsize(big) // 2         # the next insert evicts small and big (oldest-used first)
+        third = self._file("third.jsonl", 5)
+        em._read_jsonl_incremental(third)
+        self.assertNotIn(big, em._JSONL_CACHE); self.assertIn(third, em._JSONL_CACHE)
+        st = em.record_cache_stats()
+        self.assertLess(st["bytes"], peak, "the held bytes fell with the eviction")
+        self.assertEqual(st["bytesMax"], peak, "the maximum held")
+        self.assertTrue(self._ledger_ok())
+        em._JSONL_CACHE_BUDGET_BYTES = self._budget                      # room again: a read past the old peak raises the maximum
+        bigger = self._file("bigger.jsonl", 300)
+        em._read_jsonl_incremental(bigger)
+        st = em.record_cache_stats()
+        self.assertGreater(st["bytes"], peak)
+        self.assertEqual(st["bytesMax"], st["bytes"], "a new peak is the new maximum")
         self.assertTrue(self._ledger_ok())
 
     def test_the_ledger_follows_appends_and_failures(self):
