@@ -1024,11 +1024,11 @@ class BoundPerCycleAndPerPass(_World):
         read's re-check at A_s x D_s). A flat agent's walk reads the own root's stamp and finds the file at the flat place
         before any tree read, so its memo entry holds that one stamp and a hit re-checks one directory. The A agents'
         files and sidecars are moved to the own root, the memos re-warmed outside any scope, and one _session_awaiting
-        read is made outside any scope. Keys: the premise (each agent's entry resolves to the flat place and holds the own
-        root's stamp alone), then (os.stat and os.lstat on the tree's directories, os.stat on its files, dirStats, hit,
-        miss, scoped) by equality with (A, D, A, (D - 1) + A, 1, 0, 0): one re-check stat per agent, the one validation,
-        one fold per agent. Red under a kernel whose flat walk records the own tree's directories among its stamps, the
-        A x D form (dir_stat A x D, dirStats (D - 1) + A x D)."""
+        read is made outside any scope. Keys: the premise (each agent's entry resolves to the flat place), then (os.stat
+        and os.lstat on the tree's directories, os.stat on its files, dirStats, hit, miss, scoped) by equality with (A, D,
+        A, (D - 1) + A, 1, 0, 0): one re-check stat per agent, the one validation, one fold per agent; then why, each
+        entry holding the own root's stamp alone, read after the figure. Red on the figure under a kernel whose flat walk
+        records the own tree's directories among its stamps, the A x D form (dir_stat A x D, dirStats (D - 1) + A x D)."""
         own = str(self.sub)
         for i, aid in enumerate(self.aids):
             wf = self.wfroot / ("wf_%016x" % i)
@@ -1041,7 +1041,6 @@ class BoundPerCycleAndPerPass(_World):
         for aid in self.aids:
             entry = km._SUBAGENT_FILE_CACHE.get((self.path, aid))
             self.assertEqual(entry[1] if entry else None, self.sub / ("agent-%s.jsonl" % aid), "premise: %s resolved at the flat place" % aid)
-            self.assertEqual([place for place, _m in entry[0]], [own], "premise: %s's memo entry holds the own root's stamp alone: %r" % (aid, entry[0]))
         self.assertIsNone(_scope(), "no scope is open on this thread")
         b = self._stats()
         with self._spy() as sp:
@@ -1055,6 +1054,9 @@ class BoundPerCycleAndPerPass(_World):
                          "read outside any scope with A = %d flat agents: %r; keyed on %r: each agent's hit re-checks the one directory "
                          "its walk read, the own root (A stats, not the A x D = %d of the tree), beside the one validation's D lstats "
                          "(D - 1 in dirStats) and one fold per agent" % (A, got, want, A * D))
+        for aid in self.aids:                                     # why: the stamps each entry holds, read after the figure
+            entry = km._SUBAGENT_FILE_CACHE.get((self.path, aid))
+            self.assertEqual([place for place, _m in entry[0]], [own], "%s's memo entry holds the own root's stamp alone: %r" % (aid, entry[0]))
 
     def test_outside_a_cycle_an_agent_found_nowhere_re_checks_the_own_tree_the_project_directory_and_each_sibling_place(self):
         """The found-nowhere agent's own term outside a scope (round 4 of #882, extra6-3: the cost home's per-read re-check
