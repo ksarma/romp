@@ -234,9 +234,10 @@ class ThreadOwnSendRefused(unittest.TestCase):
         """The kernel's routes that write a session flag, DERIVED from the source (fork PR #897, round 3, the reviewer's
         ruling on section D: the witness pins the population as a set, so a new route turns it red). Returns (writers,
         references). A WRITER is a function holding a call of a write door one of whose arguments, or whose receiver,
-        carries the flags path ("<module>" for a call outside every function). The doors: a call by bare name of
-        _write_state_json, _atomic_write or open, and a call of a method named replace, rename, write_text, write_bytes
-        or open, whatever its receiver (Path.open, os.open and io.open alike). An expression CARRIES the flags path when
+        carries the flags path ("<module>" for a call outside every function). The doors: a call named
+        _write_state_json, _atomic_write, open, replace, rename, write_text or write_bytes, by bare name or as a method
+        whatever its receiver (Path.open, os.open and io.open alike, and so a method named _atomic_write or a replace
+        imported from os). An expression CARRIES the flags path when
         it holds the constant "session-flags.json"; a name bound to the path by an assignment (plain or annotated) to a
         plain name, in the function at hand or outside every function (at module level, inside an if or a try there
         included), in any order; or a call, by bare name or as a method, of a PATH FUNCTION: a function one of whose own
@@ -258,14 +259,27 @@ class ThreadOwnSendRefused(unittest.TestCase):
         constants compared for equality in the tests of the if-statements whose body holds the mention, outermost first
         (the route's own selector leads: POST /flag's path in _state_write_route, the WebSocket op's type in
         Handler._dispatch_ws).
-        A text census cannot be complete, and this one covers the shapes above and no other. Each of them, and each rule
-        above that narrows one (a function's OWN return statements count, not a nested function's; a selector is a
-        string constant compared for equality), has a plant of its own in that test, so a census that drops one turns
-        that plant red (the thirty-seventh commit planted each that the thirty-sixth left without one). Among what it
-        does not see, each planted there and asserted NOT found, so this text moves if the census ever reaches one: a
-        path built by string concatenation (no constant equals the name), a write through a library function outside
-        the doors (shutil.copy), a write by another process (a subprocess), and a path handed as an argument to a
-        function that writes its parameter (the census follows no argument into its callee)."""
+        A text census cannot be complete, and this one covers the shapes above and no other. Each of those shapes has a
+        plant in that test that a census dropping or changing it turns red, and so does each rule that narrows one,
+        under a census widening it: a function's OWN return statements count, not a nested function's; a name counts in
+        the function that binds it and outside every function, not in another function; a binding is an assignment to a
+        plain name; a selector is a string constant compared for equality, taken from the tests of every if whose body
+        holds the mention. A plant may carry several shapes, as the test's first two do. The thirty-seventh commit said
+        each had a plant of its own while a census could drop, change or widen six of them and pass every plant in that
+        test: a path function with a return that does not carry the path beside one that does, a mention of a writer
+        through an attribute, a selector on the left of its comparison, the selectors of nested ifs outermost first, a
+        name bound in another function not counting, and a binding being an assignment to a plain name (the fourth and
+        fifth turned only the real kernel's set pin red, the others nothing). The thirty-eighth commit planted each, and
+        made each door name a door by bare name and as a method alike: until then two were doors by bare name alone and
+        four as methods alone (open was a door both ways), so a write through a method named _atomic_write or through a
+        replace imported from os was missed, and the plant of each is red under the census as it stood at the
+        thirty-seventh commit. Among what it does not see, each planted there and asserted NOT found, so this text moves
+        if the census ever reaches one: a path built by string concatenation (no constant equals the name), a write
+        through a library function outside the doors (shutil.copy), a write by another process (a subprocess), a path
+        handed as an argument to a function that writes its parameter (the census follows no argument into its callee),
+        a name bound other than by an assignment to a plain name (planted as unpacking into a tuple, a for loop's
+        target, an assignment expression and a parameter's default), and a name bound in another function through a
+        global statement."""
         import ast
         flags = "session-flags.json"
         tree = ast.parse(source)
@@ -316,8 +330,8 @@ class ThreadOwnSendRefused(unittest.TestCase):
             if not isinstance(node, ast.Call):
                 continue
             f = node.func
-            if not (isinstance(f, ast.Name) and f.id in ("_write_state_json", "_atomic_write", "open")
-                    or isinstance(f, ast.Attribute) and f.attr in ("replace", "rename", "write_text", "write_bytes", "open")):
+            if (getattr(f, "id", None) or getattr(f, "attr", None)) not in (
+                    "_write_state_json", "_atomic_write", "open", "replace", "rename", "write_text", "write_bytes"):
                 continue
             fn = function_of(node)
             if fn not in scoped:
@@ -352,15 +366,22 @@ class ThreadOwnSendRefused(unittest.TestCase):
         constant, reached by a new WebSocket arm; a path function calling another, two levels, beside a module-level
         name bound to a call of a path function that returns a module-level name; open called as a method, on a Path,
         on os and on io; and a module-level name bound inside a try beside a name bound to one the walk reaches later (a
-        branch's body). Since the thirty-seventh commit, a plant of its own, each in its own subtest, for every shape and
-        narrowing rule the census docstring lists that had none (a census dropping any one of them passed every plant
-        before): a path function called as a method, a module-level name bound by an annotated assignment, the path in a
-        door's keyword argument, a path function returning a name bound in it, the rename and write_bytes doors, a
-        module-level name bound inside an if, a mention of a writer that is not a call, a selector as a string constant
-        compared for equality alone, and a nested function's return being its own. Then what the census does NOT see,
-        one plant of each class its docstring names, each asserted not found, so the docstring moves if the census ever
-        reaches one: a path built by concatenation, shutil.copy, a subprocess, and a path handed to a helper that writes
-        its parameter."""
+        branch's body). The thirty-seventh commit added a plant in its own subtest for ten shapes and narrowing rules
+        the census docstring lists (a census dropping any one of them passed every plant before): a path function called
+        as a method, a module-level name bound by an annotated assignment, the path in a door's keyword argument, a path
+        function returning a name bound in it, the rename and write_bytes doors, a module-level name bound inside an if,
+        a mention of a writer that is not a call, a selector as a string constant compared for equality alone, and a
+        nested function's return being its own. It said that left none of them unplanted, and six were; the
+        thirty-eighth commit planted those, five here, each in its own subtest: a path function with a return that does
+        not carry the path beside one that does, a mention of a writer through an attribute, a selector on the left of
+        its comparison, the selectors of nested ifs outermost first, and a name bound in another function not counting
+        (the sixth, a binding being an assignment to a plain name, is planted with what the census does not see, below);
+        and the two door forms that commit added, a door name called as a method and one called by bare name. Then what
+        the census does NOT see, one plant of each class its docstring names, each asserted not found, so the docstring
+        moves if the census ever reaches one: a path built by concatenation, shutil.copy, a subprocess, a path handed to
+        a helper that writes its parameter, a name bound by unpacking into a tuple, by a for loop's target, by an
+        assignment expression and by a parameter's default, and a name bound in another function through a global
+        statement."""
         census = self._flag_writing_routes
         third_arm = ('def _set_session_flag(sid, flag, value):\n'
                      '    _write_state_json(jd.STATE / "session-flags.json", "{}")\n'
@@ -521,13 +542,56 @@ class ThreadOwnSendRefused(unittest.TestCase):
                    '    return cur\n'
                    'def _by_outer(cur):\n'
                    '    _atomic_write(_outer(cur), cur)\n',
-                   (set(), [])))
+                   (set(), [])),
+                  ("a path function with a return that does not carry the path beside one that does",
+                   'def _flags_path():\n'
+                   '    if jd.STATE is None:\n'
+                   '        return None\n'
+                   '    return jd.STATE / "session-flags.json"\n'
+                   'def _by_early_return(cur):\n'
+                   '    _atomic_write(_flags_path(), cur)\n',
+                   ({"_by_early_return"}, [])),
+                  ("a mention of a writer through an attribute",
+                   'class Handler:\n'
+                   '    def _set_flag(self, sid):\n'
+                   '        _write_state_json(jd.STATE / "session-flags.json", "{}")\n'
+                   '    def _dispatch_ws(self, msg, client):\n'
+                   '        if msg.get("type") == "setFlagSelf":\n'
+                   '            self._set_flag(msg["id"])\n',
+                   ({"_set_flag"}, [("Handler._dispatch_ws", ("setFlagSelf",), "_set_flag")])),
+                  ("a selector on the left of its comparison",
+                   setter + 'def _route(path, b):\n'
+                            '    if "/flag" == path:\n'
+                            '        _set_flag(b["id"])\n',
+                   ({"_set_flag"}, [("_route", ("/flag",), "_set_flag")])),
+                  ("the selectors of nested ifs, outermost first",
+                   setter + 'def _route(path, b):\n'
+                            '    if path == "/flag":\n'
+                            '        if b.get("op") == "set":\n'
+                            '            _set_flag(b["id"])\n',
+                   ({"_set_flag"}, [("_route", ("/flag", "set"), "_set_flag")])),
+                  ("a name bound in another function does not count",
+                   'def _where():\n'
+                   '    p = jd.STATE / "session-flags.json"\n'
+                   '    log(p)\n'
+                   'def _by_parameter(p, cur):\n'
+                   '    p.write_text(cur)\n',
+                   (set(), [])),
+                  ("a door name called as a method",
+                   'def _by_method_door(cur):\n'
+                   '    store._atomic_write(jd.STATE / "session-flags.json", cur)\n',
+                   ({"_by_method_door"}, [])),
+                  ("a door name called by bare name",
+                   'from os import replace\n'
+                   'def _by_bare_replace(tmp):\n'
+                   '    replace(tmp, jd.STATE / "session-flags.json")\n',
+                   ({"_by_bare_replace"}, [])))
         for label, src, expected in listed:
             with self.subTest(listed=label):
                 self.assertEqual(census(src), expected,
-                                 "EVERY SHAPE THE CENSUS DOCSTRING LISTS HAS A PLANT OF ITS OWN (round 4 of fork PR #897, "
-                                 "the thirty-seventh commit): %s. A census that drops it passes every other plant here, so "
-                                 "this plant is the one that turns red" % label)
+                                 "EVERY SHAPE AND NARROWING RULE THE CENSUS DOCSTRING LISTS HAS A PLANT (round 4 of fork "
+                                 "PR #897, the thirty-seventh and thirty-eighth commits): %s. A census that drops or changes "
+                                 "the shape, or widens the rule, turns this plant red" % label)
         unseen = (("a path built by string concatenation",
                    'def _by_concatenation(cur):\n'
                    '    _atomic_write(jd.STATE / ("session-" + "flags.json"), cur)\n'),
@@ -541,7 +605,28 @@ class ThreadOwnSendRefused(unittest.TestCase):
                    'def _save(p, cur):\n'
                    '    _atomic_write(p, cur)\n'
                    'def _by_argument(cur):\n'
-                   '    _save(jd.STATE / "session-flags.json", cur)\n'))
+                   '    _save(jd.STATE / "session-flags.json", cur)\n'),
+                  ("a name bound by unpacking into a tuple",
+                   'def _by_unpacking(cur):\n'
+                   '    base, p = jd.STATE, jd.STATE / "session-flags.json"\n'
+                   '    p.write_text(cur)\n'),
+                  ("a name bound by a for loop's target",
+                   'def _by_loop(cur):\n'
+                   '    for p in (jd.STATE / "session-flags.json",):\n'
+                   '        p.write_text(cur)\n'),
+                  ("a name bound by an assignment expression",
+                   'def _by_walrus(cur):\n'
+                   '    if (p := jd.STATE / "session-flags.json"):\n'
+                   '        p.write_text(cur)\n'),
+                  ("a name bound by a parameter's default",
+                   'def _by_default(cur, p=jd.STATE / "session-flags.json"):\n'
+                   '    p.write_text(cur)\n'),
+                  ("a name bound in another function through a global statement",
+                   'def _init():\n'
+                   '    global FLAGS_PATH\n'
+                   '    FLAGS_PATH = jd.STATE / "session-flags.json"\n'
+                   'def _by_global(cur):\n'
+                   '    _atomic_write(FLAGS_PATH, cur)\n'))
         for label, src in unseen:
             with self.subTest(unseen=label):
                 self.assertEqual(census(src), (set(), []),
