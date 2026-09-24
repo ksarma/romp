@@ -643,12 +643,17 @@ _JSONL_CACHE_MAX = 1024           # bounds MEMORY only (384 → 1024 on 2026-09-
                                   # the assembly cache's identity gate to a full parse.
 # A BYTE budget beside the count (the kernel memory work, 2026-09-11): the count bounded slots, never memory, and the
 # working set is files of every size (a 177 MB leaf and a 2 KB states log take one slot each), so the kernel climbed to
-# 5 to 8 GB between restarts holding every live and subagent transcript's records (about 1.7 bytes resident per file
-# byte). Each entry weighs the bytes it holds (the file size less a tail entry's offset); past the budget the least
-# recently used entries go first, one at a time, under the same LRU order the count uses, so a hot leaf survives a
-# cold flood of subagent files exactly as before. A single entry larger than the whole budget still inserts: a leaf is
-# never refused, the budget then holds that one entry. Counters under /perf recordCache.
-# The default is HALF of the machine's memory (the user's direction, 2026-09-11: use the memory we have), never under 4 GiB (2026-09-11, the day the budget shipped at 1 GiB):
+# 5 to 8 GB between restarts holding every live and subagent transcript's records (RECORD_CACHE_RESIDENT_PER_FILE_BYTE
+# below: the resident bytes a held file byte takes). Each entry weighs the bytes it holds (the file size less a tail
+# entry's offset); past the budget the least recently used entries go first, one at a time, under the same LRU order
+# the count uses, so a hot leaf survives a cold flood of subagent files exactly as before. A single entry larger than
+# the whole budget still inserts: a leaf is never refused, the budget then holds that one entry. Counters under /perf
+# recordCache.
+# The default is HALF of the machine's memory (the user's direction, 2026-09-11: use the memory we have), counted in
+# RESIDENT bytes (2026-09-24): an entry weighs FILE bytes, and its parsed records take RECORD_CACHE_RESIDENT_PER_FILE_BYTE
+# resident bytes per file byte, so half of MemTotal is divided by that factor to give the budget in the unit entries weigh.
+# Until then the half was compared with file bytes directly, and at the measured factor it named 1.6 times the machine,
+# a bound that could not bind before memory ran out. Never under 4 GiB of file bytes (2026-09-11, the day the budget shipped at 1 GiB):
 # the working set of a devbox running 50 sessions is their live leaves, read by every build in every pusher cycle, and
 # a budget below it does not save memory, it thrashes: 18 entries filled the 1 GiB, every build re-read whole
 # transcripts (14.9 GB read in the first 3.5 minutes, 724 evictions, one pusher cycle of 132 s, chat builds of 3 s
@@ -657,17 +662,27 @@ _JSONL_CACHE_MAX = 1024           # bounds MEMORY only (384 → 1024 on 2026-09-
 # mechanism. ROMP_RECORD_CACHE_BUDGET_MB still sets it outright.
 RECORD_CACHE_BUDGET_FLOOR_BYTES = 4 * 1024 ** 3
 RECORD_CACHE_BUDGET_FRACTION = 0.5
+RECORD_CACHE_RESIDENT_PER_FILE_BYTE = 3.2   # resident bytes per held file byte: the largest measured figure, rounded up
+#                                   (2026-09-24). Sources: 3.18 from one kernel's 73-hour life, RSS fitted against the running
+#                                   maximum of held bytes over its hourly /perf rows (R^2 0.995); 3.13 for the largest main transcript
+#                                   measured through this reader (RssAnon per file byte; 2.81 over all the main transcripts measured,
+#                                   2.61 for a full cache of real files). Every record carries its own copies of its key strings, and
+#                                   a string holding one character outside Latin-1 takes 2 or 4 bytes per character, which is why the
+#                                   factor is far above 1. The larger the factor, the smaller the budget in file bytes: this errs
+#                                   toward less memory
 
 
 def _record_cache_default_budget_bytes(meminfo_text=None):
-    """Half of MemTotal (from /proc/meminfo, or the text given), floored at 4 GiB; the floor alone when the file
-    is unreadable (macOS, a container without procfs)."""
+    """Half of MemTotal (from /proc/meminfo, or the text given) in resident bytes, converted to the file bytes entries
+    weigh (divided by RECORD_CACHE_RESIDENT_PER_FILE_BYTE), floored at 4 GiB; the floor alone when the file is unreadable
+    (macOS, a container without procfs)."""
     try:
         text = meminfo_text if meminfo_text is not None else open("/proc/meminfo", encoding="utf-8").read()
         for line in text.splitlines():
             if line.startswith("MemTotal:"):
                 kb = int(line.split()[1])
-                return max(RECORD_CACHE_BUDGET_FLOOR_BYTES, int(kb * 1024 * RECORD_CACHE_BUDGET_FRACTION))
+                return max(RECORD_CACHE_BUDGET_FLOOR_BYTES,
+                           int(kb * 1024 * RECORD_CACHE_BUDGET_FRACTION / RECORD_CACHE_RESIDENT_PER_FILE_BYTE))
     except Exception:
         pass
     return RECORD_CACHE_BUDGET_FLOOR_BYTES

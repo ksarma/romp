@@ -3065,7 +3065,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   nobody can log into) or when the request says `?stacks=1` (`romp perf
   stacks`, T401); `null` otherwise.
 - `recordCache`: the reader's record cache (the JSONL records held in memory):
-  `entries`, `bytes`, `budgetBytes`, `countCap`, `inserts`, `evictions`,
+  `entries`, `bytes` (the held entries' weight in FILE bytes), `budgetBytes`
+  (the byte budget in the same unit: half of MemTotal in resident bytes,
+  divided by the resident bytes a held file byte takes,
+  `RECORD_CACHE_RESIDENT_PER_FILE_BYTE` in `kernel/event_model.py`, never
+  under 4 GiB; `ROMP_RECORD_CACHE_BUDGET_MB` sets it outright), `countCap`, `inserts`, `evictions`,
   `evictedBytes`, `budgetEvictions`, `dropped` and `droppedBytes` (the
   quiescence drop), and `wholeReads`: every read that pulled a file whole,
   keyed `kind<-caller` (the reader's kind, one of `zero`, `rewrite`, `guard`,

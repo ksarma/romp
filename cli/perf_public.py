@@ -59,11 +59,12 @@ costs nothing here:
 4. The BOUND COARSENING: the memory-fraction bounds (BOUND_KEYS: `capBytes`, `budgetBytes`, `cap`, `bound`,
    `stageRingMax`, wherever the key appears) are kept and rounded UP to a power of two (public_bound), the key
    kept and the occupancy beside it untouched, so a bound that binds stays visible next to its `bytes` or
-   `entries`. Each is a fixed fraction of the machine's MemTotal (`recordCache.budgetBytes` is half of it,
-   `heap.hydrated.capBytes` a thirty-second, `checkpoints.docMemo.capBytes` and `asmCheckpoint.asmDocMemo.capBytes`
-   a five-hundred-twelfth, `asmIndex.cap` the memory over 32 KiB, `pusher.stageRingMax` one per 256 MiB,
-   `builds.feed.memo.bound` and `memos.spendTree.bound` a sixty-fourth, `memos.notices.bound` and
-   `memos.summaryAnchor.bound` a two-hundred-fifty-sixth; the judge child's copies of its tables carry the same
+   `entries`. Each is a fixed fraction of the machine's MemTotal (`recordCache.budgetBytes` is half of it in resident
+   bytes, converted to the file bytes the cache counts, `heap.hydrated.capBytes` a thirty-second,
+   `checkpoints.docMemo.capBytes` and `asmCheckpoint.asmDocMemo.capBytes` a five-hundred-twelfth, `asmIndex.cap`
+   the memory over 32 KiB, `pusher.stageRingMax` one per 256 MiB, `builds.feed.memo.bound` and
+   `memos.spendTree.bound` a sixty-fourth, `memos.notices.bound` and `memos.summaryAnchor.bound` a
+   two-hundred-fifty-sixth; the judge child's copies of its tables carry the same
    keys), so every export from one machine shared all ten exactly and one of them gave the machine's RAM to the
    kilobyte: a value derived from a machine fact is a machine string in a number's clothing (the third review
    round, 2026-09-18). A constant that happens to sit under one of the keys is coarsened too, at no cost.

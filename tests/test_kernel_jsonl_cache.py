@@ -383,16 +383,105 @@ class WholeReadsByCaller(unittest.TestCase):
         self.assertTrue(any(k.startswith("zero<-") and k.endswith("test_a_from_zero_read_is_named_for_its_caller_and_an_append_is_not") for k in keys), "%s" % keys)
 
 
+_WORDS = ("notes", "api", "schema", "field", "route", "handler", "migration", "index", "column", "request", "status",
+          "token", "fixture", "payload", "response", "validate", "the", "and", "for", "with", "from", "into")
+_WIDE = ("\u2192", "\u2713", "\u2014", "\u6570", "\u636e", "\U0001f600")   # outside Latin-1: the string holding one is stored wide
+
+
+def _claude_shaped(path, profile, target, seed):
+    """A synthetic transcript shaped like Claude Code's: user and assistant records of about thirty keys, nested message
+    and content blocks, tool calls and results, invented notes-api text, placeholder uuids. A share of the strings end in
+    a character outside Latin-1 (26 percent for a main transcript, 40 for an agent's), the shares measured on real ones
+    (2026-09-24), because such a string is stored at 2 or 4 bytes per character."""
+    import random
+    rnd = random.Random(seed)
+    wide = 0.26 if profile == "leaf" else 0.40
+
+    def text(n):
+        t = " ".join(rnd.choice(_WORDS) for _ in range(n))
+        return t + rnd.choice(_WIDE) if rnd.random() < wide else t
+
+    i = 0
+    with open(path, "w", encoding="utf-8") as f:
+        while f.tell() < target:
+            use = "toolu_%012d" % i
+            head = {"parentUuid": "11111111-2222-3333-4444-%012d" % i, "isSidechain": profile != "leaf", "userType": "external",
+                    "cwd": "/home/TESTHOST/notes-api", "sessionId": "11111111-2222-3333-4444-555555555555", "version": "2.1.261",
+                    "gitBranch": "main", "uuid": "11111111-2222-3333-4444-%012d" % (i + 1),
+                    "timestamp": "2026-09-24T10:%02d:%02d.%03dZ" % (i // 3600 % 60, i // 60 % 60, i % 1000)}
+            if i % 2 == 0:
+                rec = dict(head, type="assistant", requestId="req_%016d" % i, message={
+                    "id": "msg_%016d" % i, "type": "message", "role": "assistant", "model": "claude-test",
+                    "content": [{"type": "text", "text": text(rnd.randint(20, 400))},
+                                {"type": "tool_use", "id": use, "name": "Bash",
+                                 "input": {"command": "pytest -q tests/", "description": text(8)}}],
+                    "stop_reason": "tool_use", "stop_sequence": None,
+                    "usage": {"input_tokens": rnd.randint(1, 9999), "output_tokens": rnd.randint(1, 999),
+                              "cache_read_input_tokens": rnd.randint(0, 99999), "cache_creation_input_tokens": 0,
+                              "service_tier": "standard"}})
+            else:
+                rec = dict(head, type="user", toolUseResult={"stdout": text(rnd.randint(10, 600)), "stderr": "",
+                                                             "interrupted": False, "isImage": False},
+                           message={"role": "user", "content": [
+                               {"type": "tool_result", "tool_use_id": "toolu_%012d" % (i - 1), "is_error": False,
+                                "content": text(rnd.randint(10, 2500))}]})
+            f.write(json.dumps(rec) + "\n")
+            i += 1
+    return path
+
+
+def _deep_size(objs):
+    """sys.getsizeof summed over every object reachable from `objs` (dicts, lists, strings, numbers), each counted once: a
+    lower bound on the resident bytes the records take (no allocator overhead, no list slots beyond the object's own)."""
+    seen, stack, total = set(), list(objs), 0
+    while stack:
+        o = stack.pop()
+        if id(o) in seen:
+            continue
+        seen.add(id(o))
+        total += sys.getsizeof(o)
+        if isinstance(o, dict):
+            stack.extend(o.keys()); stack.extend(o.values())
+        elif isinstance(o, (list, tuple)):
+            stack.extend(o)
+    return total
+
+
 class RecordCacheDefaultBudget(unittest.TestCase):
     """The budget shipped at 1 GiB (2026-09-11) and sat below a 50-session working set: every build re-read whole transcripts
-    (14.9 GB in 3.5 min, 132 s pusher cycles). The default is a quarter of the machine's memory, never under 4 GiB."""
+    (14.9 GB in 3.5 min, 132 s pusher cycles). The default is half of the machine's memory in resident bytes, converted to
+    the file bytes entries weigh, never under 4 GiB of file bytes."""
 
-    def test_half_of_the_machine(self):
-        text = "MemTotal:       123634396 kB\nMemFree:        1 kB\n"
-        self.assertEqual(em._record_cache_default_budget_bytes(text), int(123634396 * 1024 * 0.5))
+    def test_a_full_budget_of_records_fits_in_the_memory_it_names(self):
+        """The budget names a fraction of MemTotal (RECORD_CACHE_BUDGET_FRACTION), and an entry weighs FILE bytes, so a full
+        budget of entries must fit in that fraction once parsed. This test checks the UNIT: synthetic Claude-shaped records
+        measured by a deep size walk, a lower bound on what they take, per file byte, times the default budget, against the
+        memory the fraction names. It does not check the factor's value: the synthetic records measure 1.73 to 2.26 per file
+        byte across 3.10 to 3.14t (2026-09-24), so a factor cut to about 2.3 still passes, below the real 2.61 to 3.18. That
+        figure, RECORD_CACHE_RESIDENT_PER_FILE_BYTE's 3.2, comes from a kernel's 73-hour life (RSS fitted against the running
+        maximum of held bytes, 3.18) and the largest main transcript measured (3.13 RssAnon per file byte), 2026-09-24. Red
+        before by the assertion: the budget was half of MemTotal in FILE bytes, so a full one held 1.7 to 2.3 times the memory
+        it named."""
+        mem_kb = 268435456                                            # a synthetic 256 GiB machine
+        budget = em._record_cache_default_budget_bytes("MemTotal: %d kB\n" % mem_kb)
+        named = mem_kb * 1024 * em.RECORD_CACHE_BUDGET_FRACTION      # the memory the budget is named for
+        d = tempfile.mkdtemp(prefix="jsonl-unit-")
+        try:
+            for profile, seed in (("leaf", 7), ("agent", 8)):
+                path = _claude_shaped(os.path.join(d, profile + ".jsonl"), profile, 512 * 1024, seed)
+                recs = em._read_jsonl_incremental(path)
+                self.assertGreater(len(recs), 20, "the fixture parsed")
+                ratio = _deep_size(recs) / os.path.getsize(path)
+                self.assertGreater(ratio, 1.0, "records take more than their file bytes (a walk that found nothing proves nothing)")
+                self.assertLessEqual(budget * ratio, named, "%s: a full budget holds %.0f GiB of records (%.2f per file byte), more "
+                                     "than the %.0f GiB it is named for" % (profile, budget * ratio / 2 ** 30, ratio, named / 2 ** 30))
+        finally:
+            em._JSONL_CACHE.clear(); em._JSONL_CACHE_BYTES[0] = 0
+            shutil.rmtree(d, ignore_errors=True)
 
     def test_never_under_four_gib(self):
-        self.assertEqual(em._record_cache_default_budget_bytes("MemTotal:  8000000 kB\n"), 4 * 1024 ** 3, "half of 8 GB is the floor")
+        self.assertEqual(em._record_cache_default_budget_bytes("MemTotal:  8000000 kB\n"), 4 * 1024 ** 3,
+                         "half of 8 GB, in file bytes, is under the floor")
         self.assertEqual(em._record_cache_default_budget_bytes("garbage"), 4 * 1024 ** 3, "no MemTotal: the floor")
 
     def test_the_environment_sets_it_outright(self):
