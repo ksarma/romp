@@ -2221,21 +2221,65 @@ def _module_name_bindings(tree):
     return counts, star
 
 
-def _registered_once(fn, bindings, star):
-    """True when the module-level fixture def `fn` is the one binding its name has at import (_module_name_bindings) and no
-    star import could bind it: pytest registers the fixtures it finds among the module's attributes after the import, so
-    a def whose name the module binds again afterwards (a later plain def, an assignment, an import, a del) is never
-    registered, and its body never runs (the verifier's finding on round 2 of fork PR #894: the reader counted a fixture
-    shadowed by a later `def _f(): yield` or `_f = None`, which a child pytest showed never ran). A binding before the def,
-    which the def replaces, is refused too (the safe side: bound once, not bound last)."""
-    return bindings[fn.name] == 1 and not star
+_FixtureNames = collections.namedtuple("_FixtureNames", "by_keyword unknown")
+
+
+def _fixture_names_by_keyword(tree):
+    """_FixtureNames(by_keyword, unknown) for every call in `tree` to one of pytest's fixture functions (_FIXTURE_FUNCTIONS,
+    under any spelling _fixture_spellings finds, wherever the call stands: a decorator, a call applied to a function or
+    passed one, a factory held in a name): BY_KEYWORD, Counter {name: calls}, the string literals the calls pass as name=,
+    the name pytest registers such a fixture under whatever attribute holds it; UNKNOWN, True when any call passes a
+    name= that is not a string literal or unpacks keywords (**kw), so the name it registers could be any."""
+    spellings = _fixture_spellings(tree)
+    by_keyword, unknown = collections.Counter(), False
+    for c in ast.walk(tree):
+        if isinstance(c, ast.Call) and _spelled_fixture(c.func, spellings):
+            for kw in c.keywords:
+                if kw.arg is None:
+                    unknown = True
+                elif kw.arg == "name":
+                    if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                        by_keyword[kw.value.value] += 1
+                    else:
+                        unknown = True
+    return _FixtureNames(by_keyword, unknown)
+
+
+def _registered_once(fn, bindings, star, names=None):
+    """True when pytest registers the module-level fixture def `fn`, and nothing else, under the name it is requested by.
+    Pytest registers the fixtures it finds among the module's attributes after the import, each under its name= keyword
+    when the decorator passes one, else under the attribute's name, and of two fixtures a module registers under one
+    name it runs the one it registered last (the attributes in dir()'s order) and never the other's body. So: the def's
+    name is the one binding it has at import (_module_name_bindings) and no star import could bind it (the verifier's
+    finding on round 2 of fork PR #894: the reader counted a fixture shadowed by a later `def _f(): yield` or `_f = None`,
+    which a child pytest showed never ran; a binding before the def, which the def replaces, is refused too, the safe
+    side: bound once, not bound last); and, from `names` (_fixture_names_by_keyword over the same tree), the name it
+    registers under is registered by no other fixture call's name= (the same verifier's finding at the next commit: a
+    fixture of another def given `name="_f"` shadows `_f` whatever its own attribute is called, and the reader read the
+    def's attribute name alone), and when the def passes name= itself, that name is a string literal, no statement of the
+    module binds it (a def or an assignment of that name may register a fixture under it by a spelling the reader does not
+    see; the safe side), and no call in the module passes a name= that is not a literal or unpacks keywords, which could
+    register any name. `names` None reads no name= at all (the callers pass it)."""
+    if bindings[fn.name] != 1 or star:
+        return False
+    if names is None:
+        return True
+    if names.unknown:
+        return False
+    own = [kw.value.value for d in fn.decorator_list
+           if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute) and d.func.attr in _FIXTURE_FUNCTIONS
+           for kw in d.keywords if kw.arg == "name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str)]
+    if not own:
+        return names.by_keyword[fn.name] == 0
+    return len(own) == 1 and names.by_keyword[own[0]] == 1 and (own[0] == fn.name or bindings[own[0]] == 0)
 
 
 def _conftest_reasserted_names(src=None):
     """The environment names tests/conftest.py re-asserts before every test, as _Reasserted(writes, removals), two
     frozensets kept apart (a pin that reads a pop asks for the removals). A name counts only when a function-scoped autouse
-    fixture (_is_autouse_fixture, _is_function_scoped_fixture) that pytest registers (_registered_once: its name bound once
-    at import, by the def) sets it by a plain assignment, or pops it by a pop as a statement, as one of the statements that
+    fixture (_is_autouse_fixture, _is_function_scoped_fixture) that pytest registers and runs (_registered_once: its name
+    bound once at import, by the def, and the name it registers under registered by no other fixture's name=) sets it by
+    a plain assignment, or pops it by a pop as a statement, as one of the statements that
     run before its yield on every run (_statements_before_the_yield), unconditionally: a statement of the fixture's own
     body, or one of the body of a for over a non-empty tuple of string literals there (_literal_tuple_loop; `for var in
     ("ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV"): os.environ[var] = ...` re-asserts both, and a rule without it reds the
@@ -2245,8 +2289,13 @@ def _conftest_reasserted_names(src=None):
     or a raise at any depth (a return nested in an if, a try, a with, a loop or a match ends the fixture on the runs where
     it is reached, and the verifier's finding on round 2 of fork PR #894 showed a test reading the name unasserted after an
     `if ...: return`); one under an if, while, with, try or match, or in a for over anything else; one in a def or class
-    nested in the fixture; a del; and a fixture whose name the module binds again, before or after the def, or that a star
-    import could bind (the same verifier's finding: pytest never registers a def a later binding replaced). Re-asserted
+    nested in the fixture; a del; a fixture whose name the module binds again, before or after the def, or that a star
+    import could bind (the same verifier's finding: pytest never registers a def a later binding replaced); and a fixture
+    another fixture of the module registers its name over by name= (`@pytest.fixture(name="_f")` on a def of any other
+    name), one whose own name= is not a literal or names a name the module binds, and every fixture of a module in which a
+    fixture call passes a name= that is not a literal or unpacks keywords (the verifier's finding at the next commit: of
+    two fixtures registered under one name pytest runs one, and a child pytest showed the shadowed one's pop never ran;
+    _registered_once). Re-asserted
     so, a module-level write of the name cannot outlive collection under pytest (the dead-port fixture's rule,
     2026-08-27); the value conftest writes is not read (the licence's property does not depend on it). What it does not
     read, each passing as no re-assert (the safe side, a licence that rests on it faults): a write through a call the
@@ -2261,10 +2310,11 @@ def _conftest_reasserted_names(src=None):
     tree = ast.parse(open(os.path.join(HERE, "conftest.py"), encoding="utf-8", errors="replace").read() if src is None else src)
     names = _EnvNames(tree)
     bindings, star = _module_name_bindings(tree)
+    fixture_names = _fixture_names_by_keyword(tree)
     writes, removals = set(), set()
     for fn in tree.body:
         if not (isinstance(fn, ast.FunctionDef) and _is_autouse_fixture(fn) and _is_function_scoped_fixture(fn)
-                and _registered_once(fn, bindings, star)):
+                and _registered_once(fn, bindings, star, fixture_names)):
             continue
         scope = names.within(fn)
         before = _statements_before_the_yield(fn.body)
@@ -2278,45 +2328,52 @@ def _conftest_reasserted_names(src=None):
     return _Reasserted(frozenset(writes), frozenset(removals))
 
 
-def _conftest_autouse_fixtures(tree):
-    """Every def at the top of tests/conftest.py's body decorated `<x>.fixture(..., autouse=True, ...)`, whatever its scope
-    and whether or not pytest registers it (_is_autouse_fixture): the population the two wide reads below walk."""
-    return [fn for fn in tree.body if isinstance(fn, ast.FunctionDef) and _is_autouse_fixture(fn)]
+def _conftest_fixtures(tree):
+    """Every def at the top of tests/conftest.py's body decorated `<x>.fixture` or `<x>.fixture(...)`, autouse or not,
+    whatever its scope and whether or not pytest registers it: the population the two wide reads below walk."""
+    def fixture_decorator(d):
+        f = d.func if isinstance(d, ast.Call) else d
+        return isinstance(f, ast.Attribute) and f.attr == "fixture"
+    return [fn for fn in tree.body if isinstance(fn, ast.FunctionDef) and any(fixture_decorator(d) for d in fn.decorator_list)]
 
 
 def _conftest_fixture_env_writes(src=None):
-    """Every environment name an autouse fixture of tests/conftest.py WRITES anywhere in its body, in any shape
-    _env_write_records reads, whatever the fixture's scope and wherever the statement stands (before or after the yield,
-    conditional, in any loop, a setdefault included): the wide read of the writes alone, for a pin that asserts a name is
-    NOT written, the ROMP_POSTAL_PORT pin (the verifier's finding on round 2 of fork PR #894: that pin's "not among the
-    writes" half read the narrow writes, _conftest_reasserted_names', which a conditional, late, setdefault or
-    session-scoped write of the port passes unread). What it does not read, each passing that pin unread: a write through
-    a call the fixture makes (a helper def: tests/conftest.py's restore_env writes computed keys, which the scan cannot
-    read); a fixture that is not autouse, which names its value only to the tests that request it by name; a fixture
-    decorated through a bare name or an alias (`from pytest import fixture`, `fx = pytest.fixture`) or by yield_fixture,
-    registered by a call rather than a decorator, defined inside a block, or an async def; and a write through the
-    module's namespace or a string exec or eval runs. The executed check beside the pin
-    (test_a_port_one_test_sets_is_gone_when_the_next_test_starts, a child pytest under the real conftest) reads the port
-    at run time whatever route set it, on the machine and environment the run has."""
+    """Every environment name a fixture of tests/conftest.py (_conftest_fixtures: autouse or not) WRITES anywhere in its
+    body, in any shape _env_write_records reads, whatever the fixture's scope and wherever the statement stands (before or
+    after the yield, conditional, in any loop, a setdefault included): the wide read of the writes alone, for a pin that
+    asserts a name is NOT written, the ROMP_POSTAL_PORT pin (the verifier's finding on round 2 of fork PR #894: that pin's
+    "not among the writes" half read the narrow writes, _conftest_reasserted_names', which a conditional, late, setdefault
+    or session-scoped write of the port passes unread). A fixture that is not autouse is read beside the autouse ones (the
+    verifier's finding at the next commit, which found false the reason this docstring gave for leaving it unread): it
+    runs for every test that requests it, by name, through a fixture that requests it (an autouse one among them) or by a
+    usefixtures mark, and a write it makes to the process environment holds for every later test in the process and every
+    child those tests spawn until something puts it back, not for the requesting tests alone. What it does not read, each
+    passing that pin unread: a write through a call the fixture makes (a helper def: tests/conftest.py's restore_env writes
+    computed keys, which the scan cannot read); a fixture decorated through a bare name or an alias (`from pytest import
+    fixture`, `fx = pytest.fixture`) or by yield_fixture, registered by a call rather than a decorator, defined inside a
+    block, or an async def; and a write through the module's namespace or a string exec or eval runs. The executed check
+    beside the pin (test_a_port_one_test_sets_is_gone_when_the_next_test_starts, a child pytest under the real conftest)
+    reads the port at run time whatever route set it, on the machine and environment the run has."""
     tree = ast.parse(open(os.path.join(HERE, "conftest.py"), encoding="utf-8", errors="replace").read() if src is None else src)
     names = _EnvNames(tree)
     out = set()
-    for fn in _conftest_autouse_fixtures(tree):
+    for fn in _conftest_fixtures(tree):
         out |= _env_writes(fn, names, "conftest.py")
     return out
 
 
 def _conftest_fixture_env_names(src=None):
-    """Every environment name an autouse fixture of tests/conftest.py writes or pops anywhere in its body, in any shape
-    _env_write_records reads, whatever the fixture's scope and wherever the statement stands (before or after the yield,
-    conditional, in a literal loop): the WIDE read, for a check that asks whether conftest touches a name per test at all
-    (the module env fixture's watched list, where conftest's own write would read as the module's). The narrow read,
+    """Every environment name a fixture of tests/conftest.py (_conftest_fixtures: autouse or not) writes or pops anywhere
+    in its body, in any shape _env_write_records reads, whatever the fixture's scope and wherever the statement stands
+    (before or after the yield, conditional, in a literal loop): the WIDE read, for a check that asks whether conftest
+    touches a name per test at all (the module env fixture's watched list, where conftest's own write would read as the
+    module's). The narrow read,
     _conftest_reasserted_names, would be the unsafe side there: a conditional or late write of a watched name would pass
     it unread. The writes are _conftest_fixture_env_writes' (what it does not read is in its docstring)."""
     tree = ast.parse(open(os.path.join(HERE, "conftest.py"), encoding="utf-8", errors="replace").read() if src is None else src)
     names = _EnvNames(tree)
     out = _conftest_fixture_env_writes(src)
-    for fn in _conftest_autouse_fixtures(tree):
+    for fn in _conftest_fixtures(tree):
         out |= _env_removals(fn, names)
     return out
 
@@ -3640,9 +3697,12 @@ class HermeticKernelPostal(unittest.TestCase):
         a literal loop that rebinds its own name. Since the verifier's findings on round 2 of fork PR #894 the port's "not
         among the writes" half reads the WIDE writes (_conftest_fixture_env_writes), so a write of the port in an autouse
         fixture beside the pop, conditional, after the yield, by setdefault or in a session-scoped fixture, is among them,
-        where the narrow writes the half read at round 2's sixteenth commit had none of the four; the two other classes of
-        those findings have tests of their own (a write after a block that may end the fixture, and a fixture pytest never
-        registers)."""
+        where the narrow writes the half read at round 2's sixteenth commit had none of the four; and since the verifier's
+        findings at the next commit a write of the port in a fixture that is not autouse, under the bare decorator or the
+        called one, is among them too (the wide read had named that class unread for a false reason:
+        test_a_fixture_that_is_not_autouse_writes_for_the_tests_after_it runs the premise); the other classes of those
+        findings have tests of their own (a write after a block that may end the fixture, and a fixture pytest never
+        registers or never runs)."""
         got = _conftest_reasserted_names()
         names = got.writes | got.removals
         for name, lic in LICENSED_MODULE_LEVEL_WRITES.items():
@@ -3650,8 +3710,8 @@ class HermeticKernelPostal(unittest.TestCase):
                 self.assertIn(name, names, "tests/conftest.py no longer re-asserts %s before every test (an unconditional plain "
                                            "assignment or pop before the yield of a function-scoped autouse fixture)" % name)
         self.assertEqual(("ROMP_POSTAL_PORT" in got.removals, "ROMP_POSTAL_PORT" in _conftest_fixture_env_writes()), (True, False),
-                         "the dead-port fixture pops ROMP_POSTAL_PORT before every test, and no autouse fixture writes it anywhere "
-                         "in its body, in any shape or scope (2026-09-22); the executed check is "
+                         "the dead-port fixture pops ROMP_POSTAL_PORT before every test, and no fixture of conftest, autouse or "
+                         "not, writes it anywhere in its body, in any shape or scope (2026-09-22); the executed check is "
                          "test_a_port_one_test_sets_is_gone_when_the_next_test_starts")
         pop = '    os.environ.pop("ROMP_POSTAL_PORT", None)\n'
         for what, src in (("a conditional write", "@pytest.fixture(autouse=True)\ndef _p():\n" + pop +
@@ -3661,7 +3721,11 @@ class HermeticKernelPostal(unittest.TestCase):
                           ("a setdefault", "@pytest.fixture(autouse=True)\ndef _p():\n" + pop +
                            "    os.environ.setdefault('ROMP_POSTAL_PORT', '45678')\n    yield\n"),
                           ("a session-scoped fixture's write", "@pytest.fixture(autouse=True)\ndef _p():\n" + pop + "    yield\n"
-                           "@pytest.fixture(autouse=True, scope='session')\ndef _s():\n    os.environ['ROMP_POSTAL_PORT'] = '45678'\n    yield\n")):
+                           "@pytest.fixture(autouse=True, scope='session')\ndef _s():\n    os.environ['ROMP_POSTAL_PORT'] = '45678'\n    yield\n"),
+                          ("a write in a fixture that is not autouse, the bare decorator", "@pytest.fixture(autouse=True)\ndef _p():\n"
+                           + pop + "    yield\n@pytest.fixture\ndef _n():\n    os.environ['ROMP_POSTAL_PORT'] = '45678'\n    yield\n"),
+                          ("a write in a fixture that is not autouse, the called decorator", "@pytest.fixture(autouse=True)\ndef _p():\n"
+                           + pop + "    yield\n@pytest.fixture(scope='module')\ndef _n():\n    os.environ['ROMP_POSTAL_PORT'] = '45678'\n    yield\n")):
             src = "import os, pytest\n" + src
             self.assertEqual(("ROMP_POSTAL_PORT" in _conftest_reasserted_names(src).removals,
                               "ROMP_POSTAL_PORT" in _conftest_fixture_env_writes(src),
@@ -3787,6 +3851,95 @@ class HermeticKernelPostal(unittest.TestCase):
         kept = "import os, pytest\n" + base + "def _g():\n    _f = 1\n    return _f\n"
         self.assertEqual(_conftest_reasserted_names(kept), _Reasserted(frozenset({"ROMP_MANAGER_PORT"}), frozenset()),
                          "a local of the name in another def binds nothing of the module's: %s" % kept)
+
+    def _synthetic_conftest_run(self, conftest_src, module_src):
+        """A child pytest in a scratch directory holding `conftest_src` as its conftest.py (a synthetic one: no copy of
+        tests/conftest.py, whose floors would hide what the plant does) and `module_src` as test_probe.py, run with -s so
+        the module's prints reach the output. Returns the child's output; its return code must be 0."""
+        d = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
+        for name, text in (("conftest.py", conftest_src), ("test_probe.py", module_src)):
+            with open(os.path.join(d, name), "w", encoding="utf-8") as f:
+                f.write(text)
+        child = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST" and not k.startswith("ROMP_PROBE_")}
+        child["TMPDIR"] = d
+        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "--rootdir", d, "test_probe.py"],
+                           cwd=d, env=child, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
+        out = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 0, out[-3000:])
+        return out
+
+    def test_a_fixture_another_fixture_registers_over_by_name_re_asserts_nothing(self):
+        """The verifier's finding at round 2's seventeenth commit of fork PR #894 (the ruled clause: a function-scoped
+        autouse fixture, which the reader counts only where pytest runs it): pytest registers a fixture under its name=
+        keyword when its decorator passes one, and of two fixtures a module registers under one name it runs one, so a
+        fixture of another def given `name="_f"` leaves `_f`'s body unrun, and _registered_once read the def's attribute
+        name alone. THE PREMISE, run: a child pytest whose conftest pops a probe name in `_f` and registers a second
+        autouse fixture `_g` under the name `_f`; its second test reads the value its first test set (the pop never ran),
+        where the same conftest without `_g` pops it. THE PLANTS, each read as a re-assert at the seventeenth commit and
+        refused now: a later fixture registered over the name, an earlier one, one that is not autouse, one through a
+        factory held in a name, one registered by a call that is passed the function, yield_fixture's name= and an
+        aliased fixture function's; a name= that is not a literal on another fixture, and keywords unpacked there (either
+        could register any name); the fixture's own name= not a literal; its own name= registered again by another
+        fixture; and its own name= naming a name another statement of the module binds.
+        Accepted: the fixture's own name= literal that nothing else registers or binds, and another fixture registered by
+        name= under a different name."""
+        probe = "ROMP_PROBE_REASSERT"
+        module = ("import os\n\n\ndef test_1_sets_the_name():\n    os.environ[%r] = '45678'\n\n\n"
+                  "def test_2_reads_it():\n    print('SEEN=%%s' %% os.environ.get(%r))\n" % (probe, probe))
+        popper = "import os, pytest\n\n\n@pytest.fixture(autouse=True)\ndef _f():\n    os.environ.pop(%r, None)\n    yield\n" % probe
+        shadowed = popper + "\n\n@pytest.fixture(autouse=True, name='_f')\ndef _g():\n    yield\n"
+        self.assertIn("SEEN=45678", self._synthetic_conftest_run(shadowed, module), "a fixture registered over _f by name=: _f's pop never ran")
+        self.assertIn("SEEN=None", self._synthetic_conftest_run(popper, module), "the control: _f alone pops the name before each test")
+        self.assertEqual((_conftest_reasserted_names(shadowed).removals, _conftest_reasserted_names(popper).removals),
+                         (frozenset(), frozenset({probe})), "the reader follows the run: the shadowed pop is no re-assert")
+        base = '@pytest.fixture(autouse=True)\ndef _f():\n    os.environ["ROMP_MANAGER_PORT"] = "1"\n    yield\n'
+        refused = (("a later fixture registered over the name", base + "@pytest.fixture(autouse=True, name='_f')\ndef _g():\n    yield\n"),
+                   ("an earlier fixture registered over the name", "@pytest.fixture(name='_f')\ndef _a():\n    yield\n" + base),
+                   ("a fixture that is not autouse registered over the name", base + "@pytest.fixture(name='_f')\ndef _z():\n    yield\n"),
+                   ("a factory held in a name that registers the name", base + "_fx = pytest.fixture(name='_f')\n@_fx\ndef _y():\n    yield\n"),
+                   ("a fixture registered by a call passed the function", base + "def _body():\n    yield\n_h = pytest.fixture(_body, name='_f')\n"),
+                   ("yield_fixture's name=", base + "@pytest.yield_fixture(name='_f')\ndef _w():\n    yield\n"),
+                   ("an aliased fixture function's name=", base + "from pytest import fixture as _fixture\n@_fixture(name='_f')\n"
+                    "def _v():\n    yield\n"),
+                   ("the fixture's own name= registered again by another fixture", base.replace("autouse=True)", "autouse=True, name='_registered')")
+                    + "@pytest.fixture(name='_registered')\ndef _g():\n    yield\n"),
+                   ("another fixture's name= that is not a literal", base + "N = '_f'\n@pytest.fixture(name=N)\ndef _g():\n    yield\n"),
+                   ("another fixture's keywords unpacked", base + "KW = {'name': '_f'}\n@pytest.fixture(**KW)\ndef _g():\n    yield\n"),
+                   ("the fixture's own name= not a literal", "N = '_f'\n" + base.replace("autouse=True)", "autouse=True, name=N)")),
+                   ("the fixture's own name= naming a name the module binds", base.replace("autouse=True)", "autouse=True, name='_other')")
+                    + "def _other():\n    pass\n"))
+        for what, text in refused:
+            src = "import os, pytest\n" + text
+            got = _conftest_reasserted_names(src)
+            self.assertNotIn("ROMP_MANAGER_PORT", got.writes | got.removals, "%s: pytest may not run the fixture: %s" % (what, src))
+        accepted = (("the fixture's own name= literal that nothing else registers", base.replace("autouse=True)", "autouse=True, name='_registered')")),
+                    ("another fixture registered by name= under another name", base + "@pytest.fixture(name='_other')\ndef _g():\n    yield\n"))
+        for what, text in accepted:
+            src = "import os, pytest\n" + text
+            got = _conftest_reasserted_names(src)
+            self.assertIn("ROMP_MANAGER_PORT", got.writes | got.removals, "%s: pytest registers and runs the fixture: %s" % (what, src))
+
+    def test_a_fixture_that_is_not_autouse_writes_for_the_tests_after_it(self):
+        """The verifier's finding at round 2's seventeenth commit of fork PR #894: the wide read of conftest's fixture writes
+        (_conftest_fixture_env_writes, the ROMP_POSTAL_PORT pin's "not among the writes" half) left a fixture that is not
+        autouse unread, on the reason that it names its value only to the tests that request it by name, which is false:
+        the write goes to the process environment and holds for every later test. THE PREMISE, run: a child pytest whose
+        conftest has a fixture, not autouse, that writes a probe name; the first test requests it, and the second, which
+        does not, reads the value. The wide read now reads such a fixture (at the seventeenth commit it read neither
+        plant): the write of the probe name in it, under the bare decorator and under the called one, is among the wide
+        writes, and the narrow read, which counts function-scoped autouse fixtures alone, still does not count it."""
+        probe = "ROMP_PROBE_NOT_AUTOUSE"
+        module = ("import os\n\n\ndef test_1_requests_it(_n):\n    pass\n\n\n"
+                  "def test_2_does_not():\n    print('SEEN=%%s' %% os.environ.get(%r))\n" % (probe,))
+        for decorator in ("@pytest.fixture", "@pytest.fixture(scope='function')"):
+            conftest_src = "import os, pytest\n\n\n%s\ndef _n():\n    os.environ[%r] = '45678'\n    yield\n" % (decorator, probe)
+            self.assertIn("SEEN=45678", self._synthetic_conftest_run(conftest_src, module),
+                          "%s: the write outlives the test that requested the fixture" % decorator)
+            got = _conftest_reasserted_names(conftest_src)
+            self.assertEqual((probe in _conftest_fixture_env_writes(conftest_src), probe in _conftest_fixture_env_names(conftest_src),
+                              probe in got.writes | got.removals), (True, True, False),
+                             "%s: among the wide writes and names, not a re-assert: %s" % (decorator, conftest_src))
 
     def test_every_licence_carries_a_checkable_condition_and_a_temporary_one_is_dated(self):
         """The licensed set is held to the reviewer's shape by _licence_table_faults (the fixup of 2026-09-22: the table
@@ -5447,7 +5600,7 @@ class HermeticKernelPostal(unittest.TestCase):
     def test_the_module_env_fixture_watches_the_seams_and_the_trio_and_no_name_conftest_re_asserts_but_the_port(self):
         """The list conftest's _module_env_restored watches (the reviewer's ruling of round 1 on fork PR #894): at least the
         seams _shared_state_restored watches per test and the postal trio; not PYTEST_CURRENT_TEST, which pytest writes
-        for every phase; and no name conftest re-asserts before every test (read from its autouse fixtures by
+        for every phase; and no name conftest re-asserts before every test (read from its fixtures, autouse or not, by
         _conftest_fixture_env_names, the wide read: a name written or popped anywhere in a fixture's own body, and not
         one reached through a call or a loop over a name, the credential names and the scope limits among them, none of
         which is watched), since
