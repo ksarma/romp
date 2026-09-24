@@ -469,6 +469,24 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, {}))
         self.assertIn("recordCache.releaseLost", err.getvalue())
 
+    def test_a_document_check_that_raises_keeps_the_entry(self):
+        size = self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        real = em._path_needs_write
+
+        def raising(*a, **k):
+            raise RuntimeError("synthetic")
+        em._path_needs_write = raising                                   # whether a write is due cannot be known
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                km._begin_checkpoint_cycle()
+        finally:
+            em._path_needs_write = real
+        self.assertEqual(self._weight(self.agent), size, "the entry is kept")
+        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, {}))
+        self.assertIn("the document check raised RuntimeError (counted as recordCache.releaseLost", err.getvalue())
+
     def test_an_owed_release_whose_file_is_gone_is_released(self):
         size = self._fold_while_running(AID, self.agent)
         self._stop(AID)

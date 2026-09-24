@@ -2383,7 +2383,7 @@ def _drop_quiescent_entry(key, ent, pop=True):
     # _CKPT_LOCK and _JSONL_CACHE_LOCK itself); it charges the pusher cycle's byte budget shared with the pass, and over the
     # budget the write AND the drop are deferred by one cycle (the entry stays; the read is not lost), counted under
     # checkpoints.converge.dropDeferred.
-    res = _drop_write(key, ent)                           # off (a cap of 0): nothing written, the pop alone
+    res = _drop_write(key, ent)                           # off (a cap of 0), or a write or check that failed: the pop alone
     if res == "refused":                                  # over the budget: deferred (the drop owed) when it does not fit
         oldest = None
         with _CKPT_LOCK:
@@ -2410,16 +2410,23 @@ def _drop_quiescent_entry(key, ent, pop=True):
     return wrote
 
 
-def _drop_write(key, ent):
+def _drop_write(key, ent, why=None):
     """A drop's document write (T362), shared by the quiescent drop and the release at an agent's end: when the file's
     document lacks something this process holds (_path_needs_write at the drop), it is written now from the entry in hand,
     with neither lock held, charged to the pusher cycle's checkpoint budget. Returns "clean" (nothing to write, or the drop
-    writes off), "wrote", "failed" (a write was due and wrote nothing) or "refused" (the budget had no room for the previous
-    document's read and about as much written, taken in one step: nothing charged, the caller defers)."""
+    writes off), "wrote", "failed" (a write was due and wrote nothing, or the check whether one was due raised: the name of
+    its exception is appended to the list `why` when one is given) or "refused" (the budget had no room for the previous
+    document's read and about as much written, taken in one step: nothing charged, the caller defers). A check that raised
+    was "clean" before 2026-09-24, which let the release pop without a document; the quiescent drop pops on "failed" as it
+    did on "clean"."""
     try:
-        needs = checkpoint_drop_writes_on() and _path_needs_write(key, ent, at_drop=True)
-    except Exception:
-        needs = False
+        if not checkpoint_drop_writes_on():
+            return "clean"
+        needs = _path_needs_write(key, ent, at_drop=True)
+    except Exception as e:
+        if why is not None:
+            why.append(type(e).__name__)
+        return "failed"
     if not needs:
         return "clean"
     cp = _ckpt_file(key)
@@ -2449,10 +2456,12 @@ def release_entry(path, reason):
     never pops), so those entries stayed whole until the count cap reached them. Here the end is the event itself.
     - An absent entry, or one weighing nothing (a restored tail), is left alone: "absent".
     - The file gone: nothing to write, everything to release.
-    - The document is written first (_drop_write) and the entry popped after, so a later fold restores a tail from the
-      document and reads nothing whole. With the drop writes off (a cycle cap of 0, or no checkpoint directory), or a write
-      that wrote nothing, the entry stays and the release is given up, counted and said once: a release without its
-      document would read the file whole at every fold that follows ("lost").
+    - The checkpoint document is written first when it lacks something the cache holds (_drop_write), and the entry popped
+      after, so a later fold restores a tail from the document and reads nothing whole. A file no fold holds a recordable
+      cursor for has nothing to write and is popped without a document. With the drop writes off (a cycle cap of 0, or no
+      checkpoint directory), a write that wrote nothing, or a check whether a write is due that raised, the entry stays and
+      the release is given up, counted and said once per cause: a release without its document would read the file whole
+      at every fold that follows ("lost").
     - The cycle's budget refusing the write defers the release to the next cycle's start ("deferred").
     - A read that replaced the entry between the write and the pop defers it too, never drops it ("raced").
     Returns "released", "absent", "lost", "deferred" or "raced". Runs on the pusher thread with neither lock held."""
@@ -2465,12 +2474,13 @@ def release_entry(path, reason):
         if _ckpt_dir() is None or not checkpoint_drop_writes_on():
             note_release_lost(1, "writesOff")
             return "lost"
-        res = _drop_write(key, ent)
+        why = []
+        res = _drop_write(key, ent, why)
         if res == "refused":
             _owe_release(key, reason)
             return "deferred"
         if res == "failed":
-            note_release_lost(1, "noDocument")
+            note_release_lost(1, ("the document check raised %s" % why[0]) if why else "noDocument")
             return "lost"
     with _JSONL_CACHE_LOCK:
         if _JSONL_CACHE.get(key) is ent:
