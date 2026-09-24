@@ -2534,13 +2534,11 @@ def release_entry(path, reason):
             return "deferred"
         if res == "absent":
             return "absent"
-        if res == "raced":
-            _owe_release(key, reason)
-            return "raced"
         if res == "failed":
             note_release_lost(1, ("the document check raised %s" % why[0]) if why else "noDocument")
             return "lost"
-    # the path's stripe, then the reader's lock, as in the quiescent drop: a read in flight inserts first, and the check fails
+    # the path's stripe, then the reader's lock, as in the quiescent drop: a read in flight inserts first, and the check fails;
+    # so does a read that replaced the entry before the write ("raced" from _drop_write), which is owed below the same way
     with _read_stripe(key), _JSONL_CACHE_LOCK:
         if _JSONL_CACHE.get(key) is ent:
             w = _cache_pop_locked(key)

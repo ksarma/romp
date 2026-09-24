@@ -545,6 +545,26 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, {}))
         self.assertIn("the file's checkpoint document could not be written", err.getvalue())
 
+    def test_a_directory_unbound_after_the_release_checked_it_keeps_the_entry(self):
+        size = self._fold_while_running(AID, self.agent)
+        self._stop(AID)
+        real = em._path_needs_write
+
+        def unbinding(*a, **k):                                          # the checkpoint directory is unbound after the release
+            out = real(*a, **k)                                          #  checked it and before the write
+            em.set_checkpoint_dir(lambda: None)
+            return out
+        em._path_needs_write = unbinding
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                km._begin_checkpoint_cycle()
+        finally:
+            em._path_needs_write = real
+        self.assertEqual(self._weight(self.agent), size, "the entry is kept")
+        self.assertEqual((self._stat("releaseLost"), self._stat("released")), (1, {}))
+        self.assertIn("the file's checkpoint document could not be written", err.getvalue())
+
     def test_a_release_whose_entry_is_evicted_before_its_write_is_absent_not_lost(self):
         self._fold_while_running(AID, self.agent)
         self._stop(AID)
