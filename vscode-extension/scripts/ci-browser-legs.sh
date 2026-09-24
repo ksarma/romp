@@ -34,14 +34,16 @@
 # reporter. `--check`, read as the first argument alone, runs the pre-run checks alone and starts no node --test (it does
 # not check that the bundles are built, which the step's run does).
 # After node --test it reads the run's record from scripts/ci-browser-legs-reporter.mjs (one line per result, attributed to
-# its bundle by node's own record of the file; node's TAP record names no file for a pass, so it cannot say which leg a pass
-# belongs to) and derives, per rostered leg, that A TEST OF ITS BUNDLE PASSED: at least one result attributed to it is a pass
-# that carries no skip or todo, is a test and not a suite, and is not marked as node's file-level result (node reports a file
-# that registered nothing as one pass named by its path; the reporter's header states what its mark reads). That is the
-# whole of what the record can prove: node's events carry no launch, so a bundle that mixes source pins with its browser
-# tests satisfies the property by a pin's pass alone, and a browser test behind an unmet condition, which registers nothing
-# and emits no event, leaves no line to read; for a leg that follows the roster rule, the skip and lost-browser reads below
-# see inBrowser's own skip and failure by name when the launch is reached, and nothing here proves it was reached. A leg
+# a file by node's own record of it: the bundle for a test registered in the bundle, the other file for a test registered in
+# a file the bundle loads at run time; node's TAP record names no file for a pass, so it cannot say which leg a pass belongs
+# to) and derives, per rostered leg, that A TEST OF ITS BUNDLE PASSED: at least one result attributed to it is a pass that
+# carries no skip or todo, is a test and not a suite, and is not marked as node's file-level result (node reports a file
+# that registered nothing, from itself or from a file it loads, as one pass named by its path; the reporter's header states
+# what its mark reads). That is the whole of what the record can prove: node's events carry no launch, so a bundle that
+# mixes source pins with its browser tests satisfies the property by a pin's pass alone, and a browser test behind an unmet
+# condition, which registers nothing and emits no event, leaves no line to read; for a leg that follows the roster rule, the
+# skip and lost-browser reads below see inBrowser's own skip and failure by name when the launch is reached from a test
+# registered in the bundle, and nothing here proves it was reached. A leg
 # with no such pass and no failure outside a todo is red naming the leg and what the record held instead (skips, todos,
 # suites, the file-level result), since the step would otherwise claim coverage it did not run; a leg with a failure
 # outside a todo and no such pass is node's red, passed through. Beside that property: a test skipped is red naming
@@ -51,7 +53,12 @@
 # --test-timeout outside any one test's result) is red naming the file and pointing at the spec output above for the cause;
 # and a failed test whose message BEGINS with the phrase inBrowser fails with when it cannot launch (the switch's name; a
 # message that merely quotes that phrase after other text, as a leg embedding a child run's output does, is an ordinary
-# failure) is printed beside its leg with the remedy: the runner lost its browser, check the Chromium install step. One pass
+# failure) is printed beside its leg with the remedy: the runner lost its browser, check the Chromium install step. The
+# property and each of these reds read only the results the record attributes to a rostered bundle, so a test registered in
+# any other file, such as one a leg loads at run time outside its bundle, is read through node's status alone: its skip, or
+# its failure inside a todo, reads green beside a pass of the bundle's own that counts; its failure outside a todo, a lost
+# browser's included, is red by node's status without the lost-browser remedy; and a leg whose bundle has neither a pass
+# that counts nor a failure outside a todo is red as unrun, the red's tally counting none of that file's results. One pass
 # over the record (awk), linear in its length. An empty roster prints "no legs in the roster" and exits 0 without starting
 # node --test: with no file arguments node --test runs its default glob, the whole suite again.
 set -euo pipefail

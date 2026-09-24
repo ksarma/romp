@@ -1,10 +1,12 @@
 // The browser-legs step's reporter for node --test. scripts/ci-browser-legs.sh passes it beside the spec reporter
 // (--test-reporter=./scripts/ci-browser-legs-reporter.mjs --test-reporter-destination=<file>) and reads its stream after the
-// run, so each result is attributed to its bundle by node's own record of the file (data.file; a result that carries none
-// is written with - and matches no roster line): node's TAP record, in a run over many files, reports every test at the top
-// level with no file name (a pass carries no location; only a failure does), so a TAP reader cannot say which rostered leg a
-// pass belongs to. One line per test:pass or test:fail event, eight tab-separated fields:
-//   1 the bundle's absolute path (node's data.file, resolved from the process's physical working directory);
+// run, so each result is attributed to a file by node's own record of it (data.file: the bundle for a test registered in the
+// bundle, the other file for a test registered in a file the bundle loads at run time; a result that carries none is written
+// with - and matches no roster line): node's TAP record, in a run over many files, reports every test at the top level with
+// no file name (a pass carries no location; only a failure does), so a TAP reader cannot say which rostered leg a pass
+// belongs to. One line per test:pass or test:fail event, eight tab-separated fields:
+//   1 the absolute path of that file, the bundle's or the loaded file's (node's data.file, resolved from the process's
+//     physical working directory);
 //   2 pass or fail;
 //   3 test or suite (a describe() reports as a suite; a suite's own pass is never a test of the leg);
 //   4 the directive: skip, todo, or - (a skipped test reports as a pass with a skip; a todo test reports as a pass or a fail with

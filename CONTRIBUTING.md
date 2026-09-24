@@ -82,7 +82,11 @@ line that is malformed, duplicated or names a source that moved or was deleted, 
 that is not built. After `node --test` it reads its own reporter's record, and a rostered leg with no
 passing test, a skipped test, a failure inside a todo, or a file that failed as a whole is red, naming
 the leg or the test; a leg that follows the roster rule and whose launch failed under the switch is
-named with the remedy to check the Chromium install step. Before you push,
+named with the remedy to check the Chromium install step. These reds and that remedy read the results
+node attributes to a rostered bundle's file. A test registered in any other file, such as one a leg
+loads at run time outside its bundle, is read through node's status alone: its pass does not count for
+the leg, its skip or its failure inside a todo reads green beside a passing test of the bundle's own, and
+its failure, a failed launch included, is red without that remedy. Before you push,
 `node --test tools/ci-browser-legs.test.mjs` from the repo root runs the tree checks CI's shell job runs
 (no `npm ci` needed). From `vscode-extension/`,
 `bash scripts/ci-browser-legs.sh --check` runs the step's pre-run checks except the bundle check,

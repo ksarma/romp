@@ -38,7 +38,11 @@
 # it skips there, and the script reds a skipped test in a rostered file, or its launch fails, which node reds unless
 # the leg swallows the failure and so breaks the roster rule. So such a test cannot sit in a rostered file. After the
 # run, a skipped test, a failure inside a todo, a file that failed as a whole, or a leg that ran no passing test is
-# red: each is coverage the step would claim and not have.
+# red: each is coverage the step would claim and not have. Those reads cover the results node attributes to a
+# rostered bundle's file: a test registered in any other file, such as one a leg loads at run time outside its bundle,
+# is read through node's status alone, so its pass does not count for the leg, its skip or its failure inside a todo
+# reads green beside a passing test of the bundle's own, and its failure, a failed launch included, is red by node's
+# status without the script's lost-browser remedy.
 #
 # The switch test below spawns three child node --test runs of its own first test (the switch set to "1", to another
 # non-empty value, and unset) with PLAYWRIGHT_BROWSERS_PATH pointed at an empty directory, and asserts that the two
