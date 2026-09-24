@@ -91,8 +91,15 @@ plus those hand-offs (the build's verifier pass after the round-1 fixes: until t
 and a `load_goals` through a
 reference bound before the recorder stood, or written inside the shared door's own body where the fallback skip takes it
 for the hand-off, left every witness green). So a load through a door of this judge module onto its cache or its
-counters that the recorders do not wrap, or through a reference to a real door taken before a recorder stood, is noticed
-even though it cannot be named. Outside both witnesses: a reader below the judge's loaders or beside its module, the
+counters that the recorders do not wrap, or through a reference to a real door taken before a recorder stood, is noticed,
+on a pass a case drives, even though it cannot be named, but only when it moves a call key (the shared door) or a goal_io
+load (the writer door, bumped at load_goals' first line even when it then raises): a shared-door call whose open or read
+raises moves neither, and no execution witness notices it. A reference taken before a recorder stood is refused statically
+by the birth pin only in the forms the pin reads (a binding, an attribute store or a constant) in kernel/kernel.py or
+kernel/judge.py; a reference built at run time, or held through a door, a reference or a file the pin does not read, is
+refused by no static pin, and its loads are noticed only as above (review round 9, correctness-1: a shared-door load
+planted on the directory, symlink-loop and mode-000 fault roads left every execution case green, the birth pin's static
+refusal alone red). Outside both witnesses: a reader below the judge's loaders or beside its module, the
 kernel opening and parsing the store file itself, the kernel calling the judge's own file reader (`jd._read_store_json`,
 below the loaders) or a second judge module loaded under another name with a cache and counters of its own (three plants,
 each per session in the pass loop, re-taken at this head (named by role in the round-9 paragraph below), over its 43 cases, one at a time with
@@ -1365,7 +1372,9 @@ def _bump_sites(obj, before=None):
     statement from the AST: an augmented add on a constant "loads" subscript of the Name _NUDGE_WALK_STATS, never a line of
     text (review round 2: a comment quoting the statement counted as a bump). Any other spelling (a plain assignment, the key in
     a variable, the dict under a local alias or qualified by its module, `-= -1`, `__setitem__`, `update`) is no bump here, so
-    the walk census reds on it, conservatively; the increment's value is not read (the served counter's delta holds it). With
+    the walk census reds on it, conservatively; the increment's value is not read (the served counter's delta holds it only on the
+    roads and in the states a case drives and reads the counter on, and a value conditioned on a state no case arranges, the
+    shared cache switched off say, is held by nothing; review round 9, extra5-3). With
     `before`, the line index of the load, only the bumps that are the statement directly before the load's own statement in
     the statement list holding it: the load's statement is the innermost statement spanning that line, and when two statements
     share the line (neither inside the other) the answer is empty. So a bump under a one-line `if` or `for`, a bump with another
@@ -2558,8 +2567,11 @@ class _WalkHarness(unittest.TestCase):
         before they raise, so those calls balance as they are (review round 8, tests-1 and correctness-2); the calls are listed in
         the message; `writerLoads`, the delta of goal_io
         loads, against the writer records plus the shared door's hand-offs over SHARED_HANDOFF_KEYS), so a load through a
-        door of the judge module the recorders do not wrap is noticed, unnamed; a reader that bypasses the module is outside
-        both. Between the two sits the second-bump bound (ruling 1 of the reviewer's rulings on the pre-emption), derived from
+        door of the judge module the recorders do not wrap is noticed, unnamed, but only when it moves a call key (the shared
+        door) or a goal_io load (the writer door, bumped at load_goals' first line even when it then raises): a shared-door call
+        whose open or read raises moves neither, and no execution witness notices it (review round 9, correctness-1); a reader
+        that bypasses the module is outside both. Between the two sits the second-bump bound (ruling 1 of the reviewer's rulings on
+        the pre-emption), derived from
         load_goals_shared's body in judge.py,
         read top to bottom: `_shared_bump("fallback")` then `return load_goals(fsid)` under `if _SHARED_OFF[0]`;
         `_shared_bump("absent")` then the same return under `except FileNotFoundError` around the store's open;
@@ -3809,10 +3821,15 @@ class TheCountersOneSite(unittest.TestCase):
         the witnesses of review round 9, extra5-2: a second judge loaded in another kernel file, a second judge bound in the kernel
         and reached through a judge function that is not a door, and jd rebound to a second judge from cli/ and from a def of the
         judge, each called from the look with the module green and the second module's reads counted, while a cli/ module calling
-        the real judge's shared door from the look red the pass, the recorder naming its caller); a load through a door of the judge module
-        onto its cache or its counters that no recorder wraps,
-        or through a reference to a door taken before a recorder stood, noticed by the reconciliations and not named (the module
-        docstring, _pass); a load written on a boundary wrapper's hand-off line, named for the kernel caller and counted under that
+        the real judge's shared door from the look red the pass, the recorder naming its caller); a load through a door of the
+        judge module onto its cache or its counters that no recorder wraps, or through a reference to a door taken before a
+        recorder stood, noticed by the reconciliations, on a pass a case drives, only when it moves a call key (the shared door)
+        or a goal_io load (the writer door, bumped at load_goals' first line even when it then raises), and not named, so a
+        shared-door call whose open or read raises, moving neither, is noticed by no execution witness, and such a reference is
+        refused statically by the birth pin only in the forms the pin reads (a binding, an attribute store or a constant) in
+        kernel/kernel.py or kernel/judge.py, one built at run time or held through a door, a reference or a file the pin does not
+        read being refused by no static pin, its loads noticed only as above (the module docstring, _pass); a load written on a
+        boundary wrapper's hand-off line, named for the kernel caller and counted under that
         caller's mechanism, since the step-over is line-granular (the module docstring); a call through load_goals_or_fault, which no
         harness case drives, so a wrapper missing from the recorder's boundary is noticed only by the derivation the birth pin reads
         (the comment above _BOUNDARY_HANDOFFS); a caller the fixture does not execute, on a road no case drives, outside the execution
@@ -3885,8 +3902,15 @@ class TheCountersOneSite(unittest.TestCase):
         closed: a constant that only contains the counter's name, in any letter case, fails the site case at a subscript key, a listed
         lookup or a dict read even when it reaches no counter (os.environ.get of a variable named ROMP_NUDGE_WALK_STATS_TRACE, say),
         and a legitimate one would need an exemption row with its reason, the shape _loader_births states for its whole-spelling
-        constants, while this census has no exemption rows (the site case); the increment's value, which no census reads (a `+= 2` or a
-        `+= 1.0` is a bump), held by the served counter's delta (_bump_sites, the bump forms B03 and B04); a second-key bump on a road
+        constants, while this census has no exemption rows (the site case); the birth pin's rules, which fail closed the same way,
+        each stated in full in _loader_births' docstring: in kernel/kernel.py and kernel/judge.py the consumer clause fires on
+        "load_goals" as a substring after lowering at a subscript key, a listed lookup or a dict read, and the value rule on a
+        constant that spells a door whole after the three transforms, wherever it appears, and in the kernel the jd rule fires on a
+        constant that reads as jd after the three transforms, anywhere, and on a keyword `jd=` at any call, so each of these fails
+        the birth case, named by line, with no loader involved, since the pin has no exemption rows (_loader_births, the birth
+        case); the increment's value, which no census reads (a `+= 2` or a `+= 1.0` is a bump), held by the served counter's delta
+        only on the roads and in the states a case drives and reads the counter on, a value conditioned on a state no case arranges
+        (the shared cache switched off, say) being held by nothing (_bump_sites, the bump forms B03 and B04); a second-key bump on a road
         no drive takes, a compare_miss entering the dup or refuse arm, the hand-off itself raising, or other state no drive arranges (a
         drive has at most one node, one sid and one call), and one placed in a callee of the door, seen by the counters alone (the door
         witness, _nested_codes); a forged pair, a corrupt or unreadable_journal bump beside a goal_io loads bump with no call through
