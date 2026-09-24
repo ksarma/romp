@@ -392,7 +392,7 @@ test("the raw land-saved write on a missed land with no row at the saved place, 
 const DEEP = "11111111-2222-4333-8444-000000000031";
 const DEEP_SEEK = { sid: "A", uuid: DEEP, kind: "user" };
 
-test("a deep link with a time whose pre-jump moves a reader who is not following the tail deep into the gap: the land misses with its fetch armed and the pre-jump stands, with no anchor restore writing the reader back to the row captured before the attempt and the take kept under the placement measured over it; when the fetch lands the land completes at the target, and the reader never went back in between", () => {
+test("a deep link with a time whose pre-jump moves a reader who is not following the tail deep into the gap: the land misses with its fetch armed and the pre-jump stands, with no anchor restore writing the reader back to the row captured before the attempt and the take kept under the placement measured over it; when the fetch lands, the next pass's hit writes the target (the harness's scrollToAnchor stub writes it, as landOn would, so this checks that nothing landActive writes after a hit moves the reader), and the reader goes from the gap to the target, never back in between", () => {
   const arm: Arm = { anchor: DEEP, t: 1700000000, seek: DEEP_SEEK, land: false, fetch: true, preJump: 1000 };
   const w = world({ saved: 2350 }, arm);
   w.land(w.content, w.v, true);
@@ -403,10 +403,11 @@ test("a deep link with a time whose pre-jump moves a reader who is not following
   assert.equal(w.spacer.h, 2000 + D, "the take stands under the placement: the pre-jump read the gap after it, and giving it back would re-size the gap under the reader just placed");
   assert.equal(w.parked(), false);
   assert.deepEqual(w.toasts, [], "the seek keeps searching; the miss raises no toast");
-  // the reply: the window arrives and the landing re-arms on its anchor (chatWindow, then showActive; here the durable seek re-arms it) and lands
+  // the reply: the window arrives and the landing re-arms on its anchor (chatWindow, then showActive; here the durable seek re-arms it) and lands;
+  // the stub writes the target itself (land-on), so what this pass checks is landActive's own part: nothing it writes after the hit moves the reader
   arm.land = true; arm.landAt = 1200; delete arm.preJump; arm.fetch = false;
   w.land(w.content, w.v, true);
-  assert.equal(w.content.scrollTop, 1200, "the land completes at the target: " + JSON.stringify(w.writes));
+  assert.equal(w.content.scrollTop, 1200, "the reader is at the target the hit wrote, and nothing landActive wrote after it moved them: " + JSON.stringify(w.writes));
   const visited = w.writes.map((x) => x.top).filter((top, i, a) => i === 0 || top !== a[i - 1]);
   assert.deepEqual(visited, [1000, 1200], "the reader went from the pre-jump's place to the target, never back to where they started and forward again: " + JSON.stringify(w.writes));
   // the same link with NO time: no pre-jump placed the reader, and the restore applies only to a miss with no fetch armed, so the saved place
