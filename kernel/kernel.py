@@ -36181,7 +36181,8 @@ def _subagent_walk_unreadable(where):
 def _subagent_walk_excluded(p, excluded):
     """Whether the path `p` lies under a part of the project directory the agent-file walk could not read: `excluded` is
     the walk's list of (path, kept) pairs (_subagent_file_walk), each excluding its path and everything under it except
-    what lies under `kept`, the own tree, which the walk reads before the listing that can fail (None for the rest)."""
+    what lies under `kept`: the own tree, which the walk reads before the listing and the entries' stats that can fail,
+    for the listing's exclusion and each entry's (None for the rest)."""
     p = str(p)
 
     def under(root):
@@ -36206,10 +36207,12 @@ def _subagent_file_walk(path, agent_id, read=None, faults=None, notes=None, excl
     through the rest; a file found anywhere is answered, `faults` notwithstanding (_subagent_file's gate reads a fault
     beside a found file as a lookup made, and memoizes it); only when the file is found nowhere does the walk answer
     through _subagent_walk_unreadable, with the first fault's path: the None answered then stands for a lookup that could
-    not be made, not a miss. `excluded`, a list when given, receives every such exclusion as (its path, None), and the
-    listing's as (the project directory, the own tree), since the own tree is read before the listing: what the walk
-    could not look through, which is where _subagent_file may still answer a standing resolution
-    (_subagent_walk_excluded). The tree's raise (_SubagentTreeUnreadable, not an OSError) is caught by name, so the
+    not be made, not a miss. `excluded`, a list when given, receives every such exclusion as (its path, None), except
+    that the listing's and each project-directory entry's keep the own tree, as (the project directory, the own tree)
+    and (the entry, the own tree), since the own tree is read in full before the listing: what the walk could not look
+    through, which is where _subagent_file may still answer a standing resolution (_subagent_walk_excluded). So a fault
+    on the stat of the own session directory's entry excludes nothing under the own tree beyond what the own tree's
+    read excluded itself. The tree's raise (_SubagentTreeUnreadable, not an OSError) is caught by name, so the
     listing's own `except OSError` never takes it for a missing tree; that clause itself takes ENOENT and ENOTDIR alone
     for no project directory to list, and any other errno for a listing that could not be made.
 
@@ -36310,8 +36313,8 @@ def _subagent_file_walk(path, agent_id, read=None, faults=None, notes=None, excl
             try:
                 is_dir = stat.S_ISDIR(os.stat(d).st_mode)     # through a link, as a sibling reached by one stays walkable
             except OSError as e:
-                if e.errno not in _REG_MISSING_ERRNOS:        # its type could not be read: that entry alone is excluded
-                    exclude(str(d), e)
+                if e.errno not in _REG_MISSING_ERRNOS:        # its type could not be read: that entry alone is excluded, keeping
+                    exclude(str(d), e, kept=str(own))         #  the own tree read above (the own session directory's entry too)
                     continue
                 is_dir = False                            # gone, a file on the way, a dangling or looping link: not a directory
             if is_dir:                                   # the directory the walk below reads: a file landing in

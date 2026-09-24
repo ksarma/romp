@@ -38,7 +38,8 @@ removed tree's and keyed as it is, and an Agent head with no steps, both gone on
 resolves the file, the head carries its step, and the frame cache's key moves, so the frame cached under the fault is
 rebuilt (a characterization, the witness of the texts that state it); (14) a lookup that could not be made answers the memo's standing resolution
 only when that path lies under what the walk could not read (StandingResolutionUnderAFault): a standing path under a
-tree the walk read in full, a sibling's or the own tree before a listing that faults, is not answered, and one under
+tree the walk read in full, a sibling's or the own tree before a listing that faults or beside an own session directory
+entry that cannot be typed, is not answered, and one under
 the tree that faults, or under a sibling the listing could not name, is; (15) a place below a tree's root that cannot
 be read, its root reading (FaultBelowTheRoot): a workflows/ or workflow directory whose listing fails, a workflow
 directory whose own lstat fails and an entry whose type cannot be read each exclude that place from the agent-file
@@ -1138,7 +1139,10 @@ class StandingResolutionUnderAFault(_Walk):
     answered at its old path while the project directory could not be listed, although the listing excludes only the
     siblings it could not name and the walk reads the own tree before it. Controls, green before the change and after
     it: a standing path under the very tree that faults, or under a sibling while the listing faults, is answered with
-    the fault, since the walk could not look there. Each fault is driven under a real EACCES (skipped as root, whom
+    the fault, since the walk could not look there. B1 (round 4 of #882, extra5-1): a standing path under the own tree is
+    not answered when the own session directory's entry cannot be typed (its os.stat raising EIO by mock), since the
+    entry's exclusion keeps the own tree as the listing's does; red at the round-4 head, whose entry exclusion kept
+    nothing and answered the stale path with the fault, and under a kernel that drops `kept=str(own)` there. Each fault is driven under a real EACCES (skipped as root, whom
     permission bits do not bind) and under an EIO by mock (the listing's EIO variant skipped on 3.10, whose pathlib lists
     through the os.listdir it bound at import)."""
 
@@ -1203,6 +1207,49 @@ class StandingResolutionUnderAFault(_Walk):
 
     def test_a_standing_path_under_the_own_tree_is_not_answered_when_the_project_directory_cannot_be_listed_eacces(self):
         self._own_file_gone_and_the_listing_faults("eacces")
+
+    def test_a_standing_path_under_the_own_tree_is_not_answered_when_the_own_session_directorys_entry_cannot_be_typed_eio(self):
+        """(B1) AID's file found at the own flat place and memoized, then moved out of the project directory (the own
+        subagents directory's stamp moves, so the next lookup walks), and the own session directory's os.stat, the read
+        the walk types that project-directory entry by, raising EIO by mock (an EIO or ESTALE on the directory's own
+        attributes; an EACCES there would come from the project directory's search permission and fail the own tree's
+        read as well). The walk reads
+        the own tree in full before the listing and the file is not there, so the standing path is disproven: None with
+        the fault, the stale path not answered, nothing memoized. RED at the round-4 head, where the entry's exclusion kept
+        nothing, so it excluded the own tree the walk had just read and the lookup answered the stale path with the
+        fault; and under a kernel whose entry exclusion drops `kept=str(own)`. Once the fault clears the lookup is a real
+        miss, memoized, with no fault."""
+        key = (str(self.tpath), AID)
+        km._SUBAGENT_FILE_CACHE.pop(key, None)
+        self.addCleanup(km._SUBAGENT_FILE_CACHE.pop, key, None)
+        own_file = self.subdir / ("agent-%s.jsonl" % AID)
+        self.assertEqual(km._subagent_file(str(self.tpath), AID), own_file, "premise: found at the own flat place and memoized")
+        entry = km._SUBAGENT_FILE_CACHE[key]
+        os.rename(str(own_file), os.path.join(self.td, own_file.name))      # the file leaves the own tree and the project
+        sess = str(self.subdir.parent)
+        real = os.stat
+
+        def eio(p, *a, **k):
+            if not isinstance(p, int) and os.fsdecode(p) == sess:
+                raise OSError(errno.EIO, "input/output error")
+            return real(p, *a, **k)
+        with mock.patch.object(os, "stat", eio):
+            with self.assertRaises(OSError, msg="premise: the own session directory's os.stat raises under the mock") as cm:
+                os.stat(sess)
+            self.assertNotIn(cm.exception.errno, km._REG_MISSING_ERRNOS,
+                             "premise: a fault, not an absence-shaped errno (%r)" % (cm.exception,))
+            faults = []
+            got = km._subagent_file(str(self.tpath), AID, faults)
+        seen = (got and os.path.relpath(str(got), self.td), faults, km._SUBAGENT_FILE_CACHE.get(key) is entry)
+        self.assertEqual(seen, (None, ["OSError"], True),
+                         "(the answer, faults, the memo entry untouched) = %r; keyed on (None, ['OSError'], True): the walk read "
+                         "the own tree in full and the file is not there, so the standing path under it is disproven whatever the "
+                         "own session directory's entry stat answered (an entry exclusion that keeps nothing excludes the own tree "
+                         "and answers the stale path, which no longer exists)" % (seen,))
+        after_faults = []
+        got = km._subagent_file(str(self.tpath), AID, after_faults)
+        self.assertEqual((got, after_faults, km._SUBAGENT_FILE_CACHE[key][1]), (None, [], None),
+                         "the fault cleared: the file is nowhere, a real miss with no fault, memoized")
 
     # ── controls: a standing path where the walk could not look is answered, with the fault ────────────────────────────
     def _under_the_faulting_tree(self, how):
