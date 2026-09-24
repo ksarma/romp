@@ -183,11 +183,14 @@ def write_owner_marker(d, lineage=()):
 # no surviving list named and the run ended green. Recorded in the run's first root, which stands until the
 # controller's unconfigure, after its check: every nested root of the run, at any depth, is in the one list the
 # check reads first, whatever became of the processes between. Carried in the owner marker, not in the environment:
-# nesting is decided by placement (the TMPDIR a process was handed is its parent's root, parent_root above), so the
-# parent's marker is there for exactly the processes that nest, whatever environment they were handed, and no name
-# is added to every test process's environment (the ruling offered a setdefault variable instead; the marker also
-# reaches a nested process whose environment was built with TMPDIR alone). What neither reaches is a process that is
-# not nested: one handed a TMPDIR that is no root mints inside that dir, and its root is a path under a run root
+# nesting is decided by placement (the TMPDIR a process was handed is a root directly under the system dir that
+# ROMP_TESTS_SYSTEM_TMPDIR records, parent_root above), so the parent's marker is there for exactly the processes that
+# nest, and no name is added to every test process's environment (the ruling offered a setdefault variable instead).
+# Nesting needs that inherited name as well as the TMPDIR: a child handed a root as its TMPDIR without it (an
+# environment built with TMPDIR alone) records the handed root as its system dir, is no nested process (no parent, no
+# lineage), mints its root INSIDE the handed root and lists itself nowhere; its root is a path under a run root, so the
+# run-end check reads it all the same. What neither reaches is a process that is not nested whose root lies outside
+# every run root: one handed a TMPDIR that is no root mints inside that dir, and its root is a path under a run root
 # only when that dir is (conftest.py names the class). A marker that cannot be read or carries no lineage makes the
 # parent the lineage's only root: the list the parent's own removal takes with it, the recording before this change.
 def root_lineage(parent):

@@ -16,31 +16,35 @@ process, detached, so the test's end never reached it; it kept writing into a sh
 another module's snapshot test red in one CI cell; at the same commit the run ended green. The classes the check does not
 read are listed, each with its reason, in the comment above LEAK_EXIT_BOUND_S in tests/conftest.py.
 
-Pinned by execution, each half where it lives. Scanner, over a stand-in root handed to the scan alone: a child holding the
-root through TMPDIR, through another name, through one component of a ':'-joined value, through its cwd, through an open
-file, through an argument; a root handed through a symlink met by its realpath at a cwd and at a descriptor, and a value
-spelled through a symlink outside the root not met (a named unread class); a path inside a longer argument not met
-(another); a sibling path with the root's name as a prefix is not the root; a child that exited is not reported; a child
-with no PYTEST_CURRENT_TEST is reported with an empty phase; the wait (a holder that exits ends it before the bound; one
-that never exits is reported at the bound); this user's unreadable process of the run listed as not judged, and one that
-started before the scanning process or sits in another cgroup counted instead, and one that exits during the wait not
-listed; the thread join (a non-daemon thread joined, a daemon thread never waited on, one that outlives the bound
-returned); the bound the child runs name; the roots (the controller's and its recorded children's, the lineage a nested
-process records itself in, and a dead nested root that two lists name returned once when it resists removal). RunEnd, in child pytest processes (the procfs
-cases skip where there is no /proc): a test that leaves a detached child ends the run red with the process and the phase
-named and "1 passed" still in the summary, and a child in the root by its cwd alone is named beside it (the two
-controls); a child the test gave a built environment during its call phase is named by pid and command line with the
-phase stated as unknown; a process leaked two nested pytest runs down, and one leaked by a nested run a worker started
-(where pytest-xdist is installed), is the outermost run's finding; holders through an open file, an argument and a cwd
-under a symlinked TMPDIR are named; a process holding no path under a root is not (the residual's witness); a
-non-dumpable process of the run is listed as not judged and leaves the exit status; a process a non-daemon thread starts
-after its test returned is named, and a daemon thread still running is reported; without procfs the check says so once
-and leaves the exit status alone, and Scanner's roots test, which reads no /proc, runs there; a test that leaves nothing
-ends the run green. The child runs set
+Pinned by execution, each half where it lives. Scanner, over a stand-in root handed to the scan alone: a child holding
+the root through TMPDIR, through another name, through one component of a ':'-joined value, through its cwd, through an
+open file, through an argument; a root handed through a symlink met by its realpath at a cwd and at a descriptor, and a
+value spelled through a symlink outside the root not met (a named unread class); a value or argument spelled with a
+doubled separator, a '.' or '..' segment or a leading '//' met as the path it names, a '..' out of the root not met, and
+a '..' after a symlink named (the lexical fold's safe side); a path inside a longer argument not met (another); a
+sibling path with the root's name as a prefix is not the root; a child that exited is not reported; a child with no
+PYTEST_CURRENT_TEST is reported with an empty phase; the wait (a holder that exits ends it before the bound; one that
+never exits is reported at the bound; each timed over this test's own children, since the wait covers every listed
+process and a sibling test's may be listed); this user's unreadable process of the run listed as not judged, and one
+that started before the scanning process or sits in another cgroup counted instead, and one that exits during the wait
+not listed; the thread join (every non-daemon thread joined, one started during the join too, a daemon thread never
+waited on, one that outlives the bound returned); the bound the child runs name; the roots (the controller's and its
+recorded children's, the lineage a nested process records itself in, and a dead nested root that two lists name returned
+once when it resists removal). RunEnd, in child pytest processes (the procfs cases skip where there is no /proc): a test
+that leaves a detached child ends the run red with the process and the phase named and "1 passed" still in the summary,
+and a child in the root by its cwd alone is named beside it (the two controls); a child the test gave a built
+environment during its call phase is named by pid and command line with the phase stated as unknown; a process leaked
+two nested pytest runs down, and one leaked by a nested run a worker started (where pytest-xdist is installed), is the
+outermost run's finding; holders through an open file, an argument and a cwd under a symlinked TMPDIR are named; a
+process holding no path under a root is not (the residual's witness); a non-dumpable process of the run is listed as not
+judged and leaves the exit status; a process a non-daemon thread starts after its test returned is named, and a daemon
+thread still running is reported; an idle pool a test left is waited the whole bound and reported as still running (the
+join's named cost); without procfs the check says so once and leaves the exit status alone, and Scanner's roots test,
+which reads no /proc, runs there; a test that leaves nothing ends the run green. The child runs set
 ROMP_TESTS_LEAK_EXIT_BOUND_S so a holder that never exits costs a fraction of a second rather than the whole bound; one
-run keeps the default, and a holder that exits inside it ends that run green. Guard holds the pytest guard: Scanner skips
-under `python -m unittest` after tests.conftest was imported, and runs under pytest. Synthetic throughout: the leaked
-processes are `sleep`s and Python sleepers this module starts and stops by the pid it recorded."""
+run keeps the default, and a holder that exits inside it ends that run green. Guard holds the pytest guard: Scanner
+skips under `python -m unittest` after tests.conftest was imported, and runs under pytest. Synthetic throughout: the
+leaked processes are `sleep`s and Python sleepers this module starts and stops by the pid it recorded."""
 import importlib.util
 import json
 import os
@@ -116,16 +120,22 @@ def _built_env():
     return {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
 
 
+def _under_dir(path, root):
+    """Whether `path` is `root` or a path under it, both already resolved."""
+    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+
+
 NON_DUMPABLE = ("import ctypes, sys, time; assert ctypes.CDLL(None, use_errno=True).prctl(4, 0, 0, 0, 0) == 0; "
                 "open(sys.argv[1], 'w').close(); time.sleep(float(sys.argv[2]) if sys.argv[2:] else 120)")
 #                PR_SET_DUMPABLE 0, then the ready file, then a sleep (120 s, or the seconds given)
 
 
 class _FakeThread:
-    """A stand-in for a thread in the join's pool: `ends` is whether a join ends it; a join of a daemon is a failure."""
+    """A stand-in for a thread in the join's pool: `ends` is whether a join ends it; a join of a daemon is a failure.
+    `starts`, a (pool, thread) pair, is a thread this one starts while it is being joined: it joins `pool` then."""
 
-    def __init__(self, name, daemon, ends):
-        self.name, self.daemon, self.ends, self.alive, self.joins = name, daemon, ends, True, []
+    def __init__(self, name, daemon, ends, starts=None):
+        self.name, self.daemon, self.ends, self.starts, self.alive, self.joins = name, daemon, ends, starts, True, []
 
     def is_alive(self):
         return self.alive
@@ -134,6 +144,9 @@ class _FakeThread:
         self.joins.append(timeout)
         if self.daemon:
             raise AssertionError("the join waited on a daemon thread")
+        if self.starts:
+            pool, started = self.starts
+            pool.append(started)
         if self.ends:
             self.alive = False
         else:
@@ -259,6 +272,54 @@ class Scanner(unittest.TestCase):
         self.assertEqual(by[p_via.pid]["via"], ["cwd"], "a cwd reached through that symlink is resolved by the kernel, and met")
 
     @procfs
+    def test_a_path_spelled_with_a_doubled_separator_or_a_dot_segment_is_read_as_the_path_it_names(self):
+        """Round 2 of fork PR #894's review: an environment value or an argument naming a path under the root with a
+        doubled separator, a '.' segment, a '..' segment that comes back into the root, or a leading '//' is read as the
+        path it names (conftest folds each with _lexical before the comparison), in a ':'-joined component and after an
+        option's '=' as well; a '..' out of the root, inside the value or at its end, folds to a path outside it and is
+        not a hold; and a '..' after a symlink in the root folds lexically, so that value is named though its real path
+        lies outside the root (the safe side the conftest comment states). Each child has a built environment and the
+        cwd /, so the spelling is its only hold."""
+        parent, name = os.path.split(self.root)
+        sleeper = [sys.executable, "-c", "import time; time.sleep(120)"]
+
+        def env_child(value, var="XDG_STATE_HOME"):
+            return self._sleeper(env=dict(_built_env(), **{var: value}), cwd="/")
+
+        def argv_child(arg):
+            return self._sleeper(env=_built_env(), cwd="/", argv=sleeper + [arg])
+
+        met = {
+            "a doubled separator": env_child(parent + "//" + name + "/x"),
+            "a '.' segment": env_child(parent + "/./" + name + "/x"),
+            "a '..' segment back into the root": env_child(parent + "/elsewhere/../" + name + "/x"),
+            "a leading '//'": env_child("/" + self.root),
+            "a doubled separator in a ':'-joined component": env_child(
+                "/usr/share" + os.pathsep + parent + "//" + name + "/share", var="XDG_DATA_DIRS"),
+            "a '.' segment in an argument": argv_child(parent + "/./" + name + "/argv"),
+            "a doubled separator after an option's '='": argv_child("--state=" + parent + "//" + name + "/s"),
+        }
+        out_of_root = env_child(self.root + "/../outside-x")
+        roots_parent = env_child(self.root + "/..")
+        outside = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, outside, True)
+        link = os.path.join(self.root, "out-link")
+        os.symlink(outside, link)
+        safe_side = env_child(os.path.join(link, "..", "x"))
+        by = {h["pid"]: h for h in self._holders()}
+        for what, p in met.items():
+            self.assertIn(p.pid, by, "a path under the root spelled with %s is a hold" % what)
+        self.assertEqual(by[met["a doubled separator"].pid]["via"], ["XDG_STATE_HOME"])
+        self.assertEqual(by[met["a doubled separator in a ':'-joined component"].pid]["via"], ["XDG_DATA_DIRS"])
+        self.assertEqual(by[met["a '.' segment in an argument"].pid]["via"], ["argv"])
+        self.assertEqual(by[met["a doubled separator after an option's '='"].pid]["via"], ["argv"])
+        self.assertNotIn(out_of_root.pid, by, "a '..' out of the root folds to a path outside it")
+        self.assertNotIn(roots_parent.pid, by, "a trailing '..' folds to the root's parent")
+        self.assertFalse(_under_dir(os.path.realpath(os.path.join(link, "..", "x")), os.path.realpath(self.root)),
+                         "the safe-side value's real path is outside the root")
+        self.assertIn(safe_side.pid, by, "a '..' after a symlink folds lexically, so the value is named (the safe side)")
+
+    @procfs
     def test_a_sibling_path_with_the_roots_name_as_a_prefix_and_the_roots_parent_are_not_the_root(self):
         sib = self.root + "-sibling"
         os.mkdir(sib)
@@ -268,12 +329,16 @@ class Scanner(unittest.TestCase):
         self.assertEqual([h["pid"] for h in self._holders() if h["pid"] in (p.pid, q.pid)], [],
                          "a match is the root itself or a path under it: the parent and a prefix-sharing sibling are neither")
 
+    # The wait's timings below scan this test's own children alone (`pids`): the wait also covers every process listed as
+    # not judged, and a scan of every process lists another test's non-dumpable child when one is alive in this cgroup
+    # (under pytest-xdist a sibling worker's), so a timing over the whole listing would depend on what the other tests
+    # are doing at that moment.
     @procfs
     def test_the_wait_ends_on_the_exit_event_before_the_bound(self):
         p = self._sleeper(TMPDIR=self.root)
         threading.Timer(0.4, _stop, args=(p.pid,)).start()
         t0 = time.monotonic()
-        leaked, _unjudged, ok = self.conftest._leaked_run_processes([self.root], bound_s=10.0)
+        leaked, _unjudged, ok = self.conftest._leaked_run_processes([self.root], bound_s=10.0, pids=[p.pid])
         took = time.monotonic() - t0
         self.assertTrue(ok)
         self.assertEqual(leaked, [], "the holder exited during the wait, so nothing is reported")
@@ -291,10 +356,11 @@ class Scanner(unittest.TestCase):
 
     @procfs
     def test_nothing_waits_when_nothing_holds(self):
+        q = self._sleeper(env=_built_env(), cwd="/")          # a live process that holds nothing and is readable
         t0 = time.monotonic()
-        leaked, _unjudged, ok = self.conftest._leaked_run_processes([self.root], bound_s=10.0)
-        self.assertEqual((leaked, ok), ([], True))
-        self.assertLess(time.monotonic() - t0, 3.0, "no holder, no wait")
+        leaked, unjudged, ok = self.conftest._leaked_run_processes([self.root], bound_s=10.0, pids=[q.pid])
+        self.assertEqual((leaked, unjudged["listed"], ok), ([], [], True))
+        self.assertLess(time.monotonic() - t0, 3.0, "no holder, nothing listed, no wait")
 
     def _non_dumpable(self, *sleep):
         """A child that made itself non-dumpable, holding the stand-in root in its environment, once its ready file says
@@ -316,7 +382,10 @@ class Scanner(unittest.TestCase):
         a non-dumpable child that sleeps a second) is not listed once it has gone."""
         p = self._non_dumpable("1.0")
         self.assertIn(p.pid, [u["pid"] for u in self._scan()[1]["listed"]], "listed before the wait")
-        _leaked, unjudged, ok = self.conftest._leaked_run_processes([self.root], bound_s=15.0)
+        t0 = time.monotonic()
+        _leaked, unjudged, ok = self.conftest._leaked_run_processes([self.root], bound_s=15.0, pids=[p.pid])
+        self.assertLess(time.monotonic() - t0, 5.0,
+                        "the wait ended on its exit, a second after it was ready, not at the 15 s bound")
         self.assertTrue(ok)
         self.assertNotIn(p.pid, [u["pid"] for u in unjudged["listed"]], "gone by the end of the wait, so not listed")
 
@@ -356,8 +425,9 @@ class Scanner(unittest.TestCase):
 
     def test_the_join_waits_for_a_non_daemon_thread_never_for_a_daemon_one_and_returns_what_outlives_the_bound(self):
         """extra5-3's join, over stand-in threads (the pool is handed in, so no thread of this process is waited on): a
-        non-daemon thread a join ends is joined and gone; a daemon thread is never joined and is returned; a non-daemon
-        thread that outlives the bound is joined for the bound and returned."""
+        non-daemon thread a join ends is joined and gone; a daemon thread is never joined and is returned; every
+        non-daemon thread is joined, not the first alone; a thread one of them starts while it is being joined is joined
+        too; a non-daemon thread that outlives the bound is joined for the bound and returned."""
         ends = _FakeThread("ends", daemon=False, ends=True)
         daemon = _FakeThread("server", daemon=True, ends=False)
         t0 = time.monotonic()
@@ -366,6 +436,17 @@ class Scanner(unittest.TestCase):
         self.assertEqual(left, [daemon], "the daemon thread is returned, the joined one is not")
         self.assertEqual((len(ends.joins), daemon.joins), (1, []))
         self.assertGreater(ends.joins[0], 9.0, "joined within the bound")
+        first = _FakeThread("first", daemon=False, ends=True)
+        second = _FakeThread("second", daemon=False, ends=True)
+        left = self.conftest._join_live_threads(10.0, among=[first, second])
+        self.assertEqual(left, [], "both non-daemon threads were joined, the second as well as the first")
+        self.assertEqual((len(first.joins), len(second.joins)), (1, 1))
+        pool = []
+        started = _FakeThread("started-during-the-join", daemon=False, ends=True)
+        pool.append(_FakeThread("starter", daemon=False, ends=True, starts=(pool, started)))
+        left = self.conftest._join_live_threads(10.0, among=pool)
+        self.assertEqual(left, [], "the thread started while the join ran was joined too: %r" % ([t.name for t in left],))
+        self.assertEqual(len(started.joins), 1)
         stays = _FakeThread("stays", daemon=False, ends=False)
         t0 = time.monotonic()
         left = self.conftest._join_live_threads(0.3, among=[stays])
@@ -453,6 +534,31 @@ def _late():
 def pytest_runtest_call(item):
     threading.Thread(target=_late, name="leaker-late-spawner").start()
     threading.Thread(target=threading.Event().wait, name="leaker-lingering-daemon", daemon=True).start()
+'''
+
+# An idle pool a test left, as a plugin of ONE child run (loaded the same way): in the test's call phase a one-worker
+# concurrent.futures pool runs one task and is kept, never shut down, so its worker is a live non-daemon thread that only
+# threading's exit hooks end. The plugin's sessionfinish, which runs before conftest's trylast one, and its unconfigure,
+# after it, record the seconds between them in the marker dir: the check's own time, the join included.
+IDLE_POOL_PLUGIN = '''\
+import concurrent.futures, os, time
+
+_POOLS, _AT = [], {}
+
+
+def pytest_runtest_call(item):
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="leaker-idle-pool")
+    pool.submit(int).result()
+    _POOLS.append(pool)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    _AT["finish"] = time.monotonic()
+
+
+def pytest_unconfigure(config):
+    with open(os.path.join(os.environ["ROMP_LEAK_CHECK_MARKER"], "check-seconds"), "w") as fh:
+        fh.write(repr(time.monotonic() - _AT["finish"]))
 '''
 
 # A platform without procfs, simulated for one child run: /proc is absent to os.path.isdir, os.listdir, os.readlink,
@@ -557,17 +663,25 @@ class RunEnd(unittest.TestCase):
         self.assertIn("spawned during " + THIS + "::Leaker::test_leaves_the_two_controls (call)", env_line)
         self.assertIn("| holds the root through cwd |", self._line(out, pids["cwd"]))
 
+    def _named_nowhere(self, out, pid):
+        """No holder line in `out`, and no report line names `pid`. Not "nothing said": the child run may list another
+        run's non-dumpable process in its cgroup (under pytest-xdist a sibling test's child run) as not judged, a line
+        the scheduling decides and these pins do not claim (the comment above LEAK_EXIT_BOUND_S names the class)."""
+        self.assertNotIn("hold its temp root", out, "no holder line")
+        self.assertEqual([line for line in out.splitlines() if line.startswith("[tests]   pid %d " % pid)], [],
+                         "no report line names pid %d:\n%s" % (pid, out))
+
     @procfs
     def test_a_holder_that_exits_within_the_default_bound_ends_the_run_green(self):
         """The wait at a real run end, with the default bound (no ROMP_TESTS_LEAK_EXIT_BOUND_S): a detached child that holds
         the root and exits a second and a half after its spawn is seen, waited for, gone, and the run ends green with
-        nothing said. Under a zero bound the same child is named: the contrast that shows the default is the bound that
-        applied (Scanner pins that the wait ends on the exit and not at the bound)."""
+        no holder line and no line naming it. Under a zero bound the same child is named: the contrast that shows the
+        default is the bound that applied (Scanner pins that the wait ends on the exit and not at the bound)."""
         r, pids, _ = self._child_run("test_leaves_a_child_that_exits_soon", bound=None)
         out = r.stdout + r.stderr
         self.assertIn("child", pids, out)
         self.assertEqual(r.returncode, 0, out)
-        self.assertNotIn("[tests]", out)
+        self._named_nowhere(out, pids["child"])
         r, pids, _ = self._child_run("test_leaves_a_child_that_exits_soon", bound="0")
         out = r.stdout + r.stderr
         self.assertEqual(r.returncode, 1, out)
@@ -643,13 +757,13 @@ class RunEnd(unittest.TestCase):
     @procfs
     def test_a_process_holding_no_path_under_a_root_is_not_seen_the_residuals_witness(self):
         """The class the check names as unread, by execution: a detached child given a built environment, the cwd /, and
-        nothing open in the root outlives the run, and the run ends green with nothing said. The comment above
-        LEAK_EXIT_BOUND_S names this test as that class's witness."""
+        nothing open in the root outlives the run, and the run ends green with no holder line and no line naming it. The
+        comment above LEAK_EXIT_BOUND_S names this test as that class's witness."""
         r, pids, _ = self._child_run("test_leaves_a_process_holding_no_path_under_a_root")
         out = r.stdout + r.stderr
         self.assertIn("residual", pids, out)
         self.assertEqual(r.returncode, 0, out)
-        self.assertNotIn("[tests]", out, "nothing said")
+        self._named_nowhere(out, pids["residual"])
         self.assertFalse(_gone(pids["residual"], bound=0.2), "the process outlived the run")
 
     @procfs
@@ -692,6 +806,27 @@ class RunEnd(unittest.TestCase):
         self.assertIn("leaker-lingering-daemon (daemon)", threads[0])
         self.assertNotIn("leaker-late-spawner", threads[0], "the non-daemon thread was joined")
         self.assertIn("A process one of them starts after that read is not seen", threads[0])
+
+    @procfs
+    def test_an_idle_pool_a_test_left_is_waited_the_whole_bound_and_reported_as_still_running(self):
+        """The join's cost the comment above LEAK_EXIT_BOUND_S names, by execution: a plugin of the child run
+        (IDLE_POOL_PLUGIN) leaves an idle concurrent.futures pool, whose worker is a non-daemon thread that only
+        threading's exit hooks end, and those run at interpreter exit, after the check. The run leaves no process and
+        ends green, but the check's join waits the whole bound for the worker and names it as still running."""
+        plugdir = tempfile.mkdtemp()
+        Path(plugdir, "romp_idle_pool_plugin.py").write_text(IDLE_POOL_PLUGIN)
+        pythonpath = os.pathsep.join([plugdir] + [p for p in [os.environ.get("PYTHONPATH")] if p])
+        r, pids, scratch = self._child_run("test_leaves_nothing", env_over={"PYTHONPATH": pythonpath}, bound="0.5",
+                                           args=("-p", "romp_idle_pool_plugin"))
+        out = r.stdout + r.stderr
+        self.assertEqual((pids, r.returncode), ({}, 0), out)
+        self.assertNotIn("hold its temp root", out)
+        threads = [t for t in out.splitlines() if "thread(s) of this process were still running" in t]
+        self.assertEqual(len(threads), 1, out)
+        self.assertIn("read /proc: leaker-idle-pool_0. A process", threads[0],
+                      "the idle worker, a non-daemon thread, alone")
+        took = float(Path(scratch, "check-seconds").read_text())
+        self.assertGreaterEqual(took, 0.45, "the join waited the whole 0.5 s bound for the idle worker: %.2f s" % took)
 
     def test_without_procfs_the_check_says_so_once_and_leaves_the_exit_status_alone(self):
         """tests-3's branch, the only one a platform without procfs runs: under a sitecustomize that hides /proc

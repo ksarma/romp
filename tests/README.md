@@ -247,21 +247,38 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   hold a path under the run's roots** (2026-09-22; its reads widened and its unread
   classes named 2026-09-24, round 2 of fork PR #894's review). At the controller's
   session end `tests/conftest.py` first joins its live non-daemon threads (within
-  the bound below; a daemon thread is never waited for), then reads `/proc` for
+  the bound below; a daemon thread is never waited for). A thread that ends costs
+  only the time until it ends; one that only threading's exit hooks end, which
+  run at interpreter exit after the check, is waited the whole bound and reported
+  as still running: the worker of an idle `concurrent.futures` pool a test never
+  shut down (an unclosed event loop's default executor is one; the module below
+  has its witness). It then reads `/proc` for
   every live process whose environment carries one of the run's temp roots or a
   path under one (a `:`-joined value counted per component), whose cwd is under
   one, one of whose open file descriptors points under one, or one of whose
   arguments is under one (whole, after an option's `=`, or as a `:`-joined
-  component), each root compared by its spelling and by its realpath. The roots
+  component), each root compared by its spelling and by its realpath, and each
+  environment value and argument read with a doubled separator and a `.` or `..`
+  segment folded as `os.path.normpath` folds them (lexically: a value whose `..`
+  follows a symlink is named when its folded spelling is under a root, the safe
+  side). The roots
   are the controller's and every root listed in its `romp-tests-children`: a
   nested process (an xdist worker, a nested pytest, any child of the run that
-  imports the tests package with a root as its TMPDIR) lists itself at mint time
+  imports the tests package handed a root as its TMPDIR together with the run's
+  `ROMP_TESTS_SYSTEM_TMPDIR`, as a child given a copy of its parent's
+  environment is) lists itself at mint time
   in the root of every process above it, the run's first included (the lineage
   its parent's owner marker records, `tests/__init__.py`), so the controller reads
   every nested root at any depth after the processes between have removed their
-  own. It waits for the one event it can observe, each holder's exit, up to
-  `LEAK_EXIT_BOUND_S` (5 s: a signalled child exits well inside it, a clean run
-  pays nothing because the wait starts only when a holder is seen), and if any
+  own. A child handed a root as its TMPDIR without that name (an environment
+  built with TMPDIR alone) does not nest: it mints its root inside the handed
+  root and lists itself nowhere, and is read all the same, since its root is a
+  path under a run root. It waits for the one event it can observe, each
+  holder's exit, up to `LEAK_EXIT_BOUND_S` (5 s: a signalled child exits well
+  inside it). The wait starts only when a holder is seen or a process is listed
+  as not judged (below): a run with neither pays nothing for it, and a run that
+  leaves only a listed process waits for its exit, up to the whole bound, and
+  stays green. If any
   still hold a root the run is RED and each is named: pid, parent, command line,
   what it holds the root through (the environment names, `cwd`, `fd`, `argv`),
   and the test phase current at its spawn (`PYTEST_CURRENT_TEST` in the
@@ -278,7 +295,8 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
     root, as one handed a built environment with its cwd elsewhere and no file
     open in the root (the residual probe in the module below is its witness);
   - a path spelled through a symlink outside the root, in an environment value or
-    an argument (compared as spelled; a cwd and a descriptor are resolved);
+    an argument (compared as spelled, folded lexically; a cwd and a descriptor
+    are resolved);
   - a path inside a longer string (code text in an argument, an option inside an
     environment value), a Unix socket bound under a root (its descriptor reads
     `socket:[inode]`), a file mapped with no descriptor open, an environment
@@ -288,15 +306,18 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
     itself non-dumpable (ssh-agent, gpg-agent and op do; a setuid program is the
     same) and started after the controller, in its cgroup, is listed by pid and
     command line as not judged, whether or not a holder was found, and leaves the
-    exit status alone; other users' processes, and this user's started before the
-    run or in another cgroup, are a count of unreadable processes printed with
-    any report;
+    exit status alone; that condition cannot tell this run's process from another
+    run's in the same cgroup (a sibling test's child run under pytest-xdist, a
+    second run started from the same shell), which is listed too; other users'
+    processes, and this user's started before the run or in another cgroup, are a
+    count of unreadable processes printed with any report;
   - a process started after the scan: by a non-daemon thread still running when
-    the join's bound ran out, or by a daemon thread. Such threads are reported by
-    count and name, with the statement that a process they start after the scan
-    is not seen.
-  The added reads cost a clean run's single scan about 28 to 32 ms on the box
-  (the comment has the measurement). A platform without procfs says so once, runs
+    the join's bound ran out, by a daemon thread, or by any process outside this
+    one. The threads of the first two kinds are reported by count and name, with
+    the statement that a process they start after the scan is not seen.
+  The added reads cost a clean run's single scan about 28 to 32 ms on the box,
+  and the fold 6 to 10 ms more on a busier box (the comment has both
+  measurements). A platform without procfs says so once, runs
   no check and leaves the exit status alone.
   `tests/test_run_end_leaked_processes.py` pins the scan, the wait, the join, the
   roots and the red run end by execution, in child pytest processes.

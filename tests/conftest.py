@@ -83,7 +83,11 @@ atexit.register(_remove_run_dirs)
 # cwd, the targets of its open file descriptors (/proc/<pid>/fd) and its argv (each argument, the part after an
 # argument's first '=', and each ':'-joined component of either). Each root is compared by its own spelling and by its
 # realpath: /proc resolves a cwd and a descriptor's target, so under a symlinked TMPDIR a cwd in the root reads as the
-# realpath (a trailing " (deleted)" the kernel adds once the target is removed is dropped). If any remain the run is RED
+# realpath (a trailing " (deleted)" the kernel adds once the target is removed is dropped). An environment value and an
+# argument are read folded (_lexical): a doubled separator and a '.' or '..' segment are folded as os.path.normpath folds
+# them, so <system>//<root name>/x and <root>/./x are read as the paths they name; the fold is lexical, so a '..' after a
+# symlink is folded as if the symlink were a directory, and such a value is named when its folded spelling is under a
+# root though its real path is not (the safe side). If any remain the run is RED
 # and each is named: pid, parent, command line, what it holds the root through (the environment names, "cwd", "fd",
 # "argv"), and the test PHASE current when it was spawned (PYTEST_CURRENT_TEST, inherited from the test process's
 # environment at the spawn). That phase is a pointer, not the culprit's name: a thread's spawn inherits the phase
@@ -94,22 +98,30 @@ atexit.register(_remove_run_dirs)
 # without the name. Keyed on that PROPERTY and never on a binary's name: a bus, a kernel, a session host, a mock ssh's
 # sleep are all the same leak.
 # The roots are the controller's and every root listed in its `romp-tests-children`: since 2026-09-24 a nested process
-# (an xdist worker, a nested pytest, any child of the run that imports the tests package with a root as its TMPDIR)
-# lists itself at mint time in the root of every process above it, the run's first included (tests/__init__.py, the
-# lineage), so the list the controller reads names every nested root of the run, at any depth, after the processes
-# between have removed their own roots; until then a nested root was listed only in its parent's root, which an xdist
-# worker removes at its unconfigure and a nested pytest before its caller's test returns, and a process two levels down
-# held a root no surviving list named (correctness-1). The workers themselves skip the check, and are gone when it runs
+# (an xdist worker, a nested pytest, any child of the run that imports the tests package handed a root as its TMPDIR
+# together with the run's ROMP_TESTS_SYSTEM_TMPDIR, as a child given a copy of its parent's environment is) lists itself
+# at mint time in the root of every process above it, the run's first included (tests/__init__.py, the lineage), so the
+# list the controller reads names every nested root of the run, at any depth, after the processes between have removed
+# their own roots; until then a nested root was listed only in its parent's root, which an xdist worker removes at its
+# unconfigure and a nested pytest before its caller's test returns, and a process two levels down held a root no
+# surviving list named (correctness-1). A child handed a root as its TMPDIR without that name (an environment built with
+# TMPDIR alone) does not nest: it mints its root inside the handed root and lists itself nowhere, and is read all the
+# same, since its root is a path under a run root. The workers themselves skip the check, and are gone when it runs
 # (xdist's DSession tears its nodes down in its own sessionfinish, which precedes this trylast one; a worker that
 # lingered would be reported by its command line, a visible red and not a silent miss). Events over heuristics: a child
 # a test signalled and did not wait for is legitimately EXITING at session end, so the check waits for the one event it
 # can observe, the pid's exit, and reports whatever still holds a root when the wait ends. A bound remains because a
 # process that never exits has no event to wait for; LEAK_EXIT_BOUND_S is longer than a signalled child takes to exit
-# on the box (the leaked bus of the reproduction was gone within a second of its SIGTERM) and costs a clean run
-# nothing, since the wait starts only when a holder is seen. Before the scan the controller joins its live non-daemon
-# threads other than the main one within the same bound (the interpreter joins them at exit anyway, so a clean run
-# pays nothing), so a process such a thread starts after its test returned is seen; it never waits on a daemon thread
-# (a server thread left running would make every run pay the bound). The check never kills: the pid it names is the
+# on the box (the leaked bus of the reproduction was gone within a second of its SIGTERM). The wait starts only when a
+# holder is seen or a process is listed as not judged (below), so a run with neither pays nothing for it, and a run that
+# leaves only a listed process waits for that process's exit, up to the whole bound, and stays green. Before the scan
+# the controller joins its live non-daemon threads other than the main one within the same bound, so a process such a
+# thread starts after its test returned is seen. A thread that ends costs the run only the time until it ends (the
+# interpreter would join it at exit anyway); one that ends only through threading's exit hooks, which run at
+# interpreter exit after this check, is waited the whole bound and reported as still running: the worker of an idle
+# concurrent.futures pool a test never shut down (an unclosed event loop's default executor is one), whose witness is
+# tests/test_run_end_leaked_processes.py's idle-pool case. The join never waits on a daemon thread (a server thread
+# left running would make every run pay the bound). The check never kills: the pid it names is the
 # developer's to stop (a bus by its server.pid), and a kill from here would be a destructive action on a report the
 # developer has not read.
 # What the check does not read, each named with its reason (tests/README.md has the same list):
@@ -118,7 +130,8 @@ atexit.register(_remove_run_dirs)
 #     process holds none (a per-run cgroup, or a walk of the process tree from the controller, would see it);
 #     tests/test_run_end_leaked_processes.py's residual probe is the witness, unnamed at the run end;
 #   * a path spelled through a symlink outside the root, in an environment value or an argument: the spelling is
-#     compared and never resolved (the kernel resolves a cwd and a descriptor, so those two are read under a symlink);
+#     compared, folded lexically and never resolved (the kernel resolves a cwd and a descriptor, so those two are read
+#     under a symlink);
 #   * a path inside a longer string, as code text in an argument (python -c "open('<root>/x')") or an option inside an
 #     environment value; a Unix socket bound under a root, whose descriptor reads socket:[inode]; a file mapped with no
 #     descriptor left open (/proc/<pid>/maps is not read); an environment the process changed after it started;
@@ -128,15 +141,21 @@ atexit.register(_remove_run_dirs)
 #     (ssh-agent, gpg-agent and op do; a setuid program is the same), whose cwd and descriptors are unreadable too. One
 #     of this user's that started after the controller and shares its cgroup is listed by pid and command line as not
 #     judged (waited for like a holder first), whether or not a holder was found, and does not change the exit status;
-#     the rest (other users', and this user's started before the run or in another cgroup, as a peer session's agent
-#     is) are a count, printed with any report;
+#     that condition cannot tell this run's process from another run's in the same cgroup (a sibling test's child run
+#     under pytest-xdist, a second run started from the same shell), which is listed too; the rest (other users', and
+#     this user's started before the run or in another cgroup, as a peer session's agent is) are a count, printed with
+#     any report;
 #   * a process started after the scan: by a non-daemon thread still running when the join's bound ran out, by a
 #     daemon thread, or by any process outside this one. The threads of the first two kinds are reported by count and
 #     name, with the statement that a process they start after the scan is not seen.
 # The added reads' cost on a clean run, measured on the box (2026-09-24, the scan over one root, the median of 15 rounds
 # interleaved with 951479a14's scan): about 780 processes, 150 of them this user's and readable with 1,800 to 2,300
 # descriptors open; the scan took 67 ms on 3.12 and 71 ms on 3.10 against 39 ms, the descriptor and argv reads 20 to 23
-# ms of the difference. A clean run scans once, and its join waits for nothing when no non-daemon thread is running.
+# ms of the difference. The fold of environment values and arguments (_lexical), measured later the same day on a busier
+# box (41 rounds, the median of each round's paired difference, about 910 processes at a load of 38 on 60 cores): the
+# scan took 104 ms on 3.12 and 109 ms on 3.10 against 951479a14's 51 and 50 ms, the fold 6 and 10 ms of that, for about
+# 330 values folded per scan, 311 of them a leading '//' that a ':' split leaves of a URL. A clean run scans once, and
+# its join waits for nothing when no non-daemon thread is running.
 # A platform without procfs says so once, runs no check and leaves the exit status alone.
 # tests/test_run_end_leaked_processes.py pins the scan, the wait, the join, the roots and the red run end by execution.
 LEAK_EXIT_BOUND_S = 5.0
@@ -180,14 +199,26 @@ _DELETED = " (deleted)"
 
 
 def _spellings(roots):
-    """Each root by its own spelling (a trailing separator dropped) and by its realpath, as one set."""
+    """Each root by its own spelling (a trailing separator dropped), folded (_lexical) and by its realpath, as one set."""
     out = set()
     for r in roots:
         if r:
             r = r.rstrip(os.sep) or os.sep
             out.add(r)
+            out.add(_lexical(r))
             out.add(os.path.realpath(r))
     return out
+
+
+def _lexical(path):
+    """`path` with a doubled separator, a '.' segment and a '..' segment folded as os.path.normpath folds them, and a
+    leading '//' read as '/' (normpath keeps two leading separators; Linux gives them no other meaning). Lexical: a '..'
+    after a symlink is folded as if the symlink were a directory. A path with no '//' and no '.' or '..' segment is
+    returned as is (a hidden directory's '/.' is no segment, and most values carry one)."""
+    if not ("//" in path or "/./" in path or "/../" in path or path.endswith(("/.", "/.."))):
+        return path
+    path = os.path.normpath(path)
+    return "/" + path.lstrip("/") if path.startswith("//") else path
 
 
 def _under(path, roots):
@@ -234,10 +265,11 @@ def _proc_argv(pid):
 
 
 def _argv_holds(argv, roots):
-    """Whether an argument, the part after an argument's first '=', or a ':'-joined component of either is under a root."""
+    """Whether an argument, the part after an argument's first '=', or a ':'-joined component of either is under a root,
+    each read folded (_lexical)."""
     for arg in argv:
         for part in (arg, arg.partition("=")[2]):
-            if part and any(_under(c, roots) for c in part.split(os.pathsep)):
+            if part and any(_under(_lexical(c), roots) for c in part.split(os.pathsep)):
                 return True
     return False
 
@@ -256,7 +288,8 @@ def _processes_holding(roots, skip_pids=(), pids=None):
     """(holders, unjudged, procfs read): every live process (not this one, not a zombie, not in `skip_pids`) whose
     environment carries a value that is one of `roots` or a path under one (a ':'-joined value counted per component),
     whose cwd is under one, one of whose open file descriptors points under one, or one of whose arguments is under one
-    (_argv_holds); each root by its spelling and its realpath (_spellings). Each holder is a dict: pid, ppid, cmd, via
+    (_argv_holds); each root by its spelling and its realpath (_spellings), each environment value and argument read
+    folded (_lexical: a doubled separator and a '.' or '..' segment). Each holder is a dict: pid, ppid, cmd, via
     (the environment names, then "cwd", "fd", "argv"), cwd, test (the PYTEST_CURRENT_TEST in its environment, the test
     phase current at its spawn, or "" when it carries none). The environment read is the one the process was STARTED
     with (/proc shows the initial block, not later putenv calls), which is what a child inherits.
@@ -308,7 +341,7 @@ def _processes_holding(roots, skip_pids=(), pids=None):
             k, sep, v = item.partition(b"=")
             if sep:
                 env[k.decode("utf-8", "replace")] = v.decode("utf-8", "replace")
-        via = sorted(k for k, v in env.items() if any(_under(part, spell) for part in v.split(os.pathsep)))
+        via = sorted(k for k, v in env.items() if any(_under(_lexical(part), spell) for part in v.split(os.pathsep)))
         cwd = _link("/proc/%d/cwd" % pid)
         if _under(cwd, spell):
             via.append("cwd")
@@ -333,11 +366,13 @@ def _pid_present(pid):
         return False
 
 
-def _leaked_run_processes(roots, bound_s=LEAK_EXIT_BOUND_S):
+def _leaked_run_processes(roots, bound_s=LEAK_EXIT_BOUND_S, pids=None):
     """(holders still present, unjudged, procfs read): the processes holding `roots` after every holder seen first, and
     every process first listed as not judged, has been given until `bound_s` to exit (the event waited for is the pid's
-    exit; the wait ends the moment the last one is gone). Nothing waits when nothing holds and nothing is listed."""
-    holders, unjudged, ok = _processes_holding(roots)
+    exit; the wait ends the moment the last one is gone). Nothing waits when nothing holds and nothing is listed.
+    `pids` is _processes_holding's stand-in listing, handed to both scans (tests/test_run_end_leaked_processes.py times
+    the wait over its own children alone: a process another test lists would be waited for too)."""
+    holders, unjudged, ok = _processes_holding(roots, pids=pids)
     if not ok or not (holders or unjudged["listed"]):
         return holders, unjudged, ok
     deadline = time.monotonic() + bound_s
@@ -346,7 +381,7 @@ def _leaked_run_processes(roots, bound_s=LEAK_EXIT_BOUND_S):
         pending = {pid for pid in pending if _pid_present(pid)}
         if pending:
             time.sleep(0.05)
-    return _processes_holding(roots)
+    return _processes_holding(roots, pids=pids)
 
 
 def _join_live_threads(bound_s, among=None):
