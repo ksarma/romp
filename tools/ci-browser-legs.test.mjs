@@ -56,24 +56,23 @@
 //     after node --test reads the reporter's record and derives, per rostered leg, that at least one result attributed to
 //     it is a pass with no skip or todo, a test and not a suite, and not marked as node's file-level result, red naming
 //     the leg when it has no such pass and no failure outside a todo attributed to it (todo-only, a describe() that
-//     registers none, a file
-//     that registered nothing, a failure inside a todo, a skip-only record whose red counts the skip; a leg with a
-//     failure outside a todo is node's red, passed through); turns a skipped test the record attributes to a rostered
-//     bundle into a red naming the test, its reason and the switch's state in the run (set to 1 as the step has it, or
-//     unset as a local run may); reds a failure inside a todo by name, and a file that failed as a whole by name, worded
-//     by node's rule (its process exited non-zero or was cut at --test-timeout outside any one test's result, a counting
-//     pass beside it included) and pointing at the spec output for the cause; prints the lost-browser remedy beside a leg
-//     whose failure message begins with inBrowser's cannot-launch phrase; and passes node's own failure status through.
-//     The property and each of those reds read only the results the record attributes to a rostered bundle, so a test
-//     registered in any other file, such as one a leg loads at run time, is read through node's status alone (the
-//     script's header states what that gives). The two remedies that move a leg off the step, after an unrun leg and
-//     after a skip under the switch, take its line
-//     out of the roster, each read from the script's stderr. The reporter itself is executed here over synthetic bundles
-//     with a real node --test (the shapes above, a bundle that throws at load, and a name holding a tab and a newline),
-//     and so is the composition: the script with the real node and the real reporter over those shapes as rostered legs,
-//     and over a leg whose test passes and whose error comes after the test ended. After one stub run and after the
-//     composition's first real-node run, the record file the script handed its reporter (the path the stub logged, in the
-//     fresh TMPDIR the run was given) is gone and that TMPDIR is empty;
+//     registers none, a file that registered nothing, a failure inside a todo, a skip-only record whose red counts the
+//     skip; a leg with a failure outside a todo is node's red, passed through); turns a skipped test the record
+//     attributes to a rostered bundle into a red naming the test, its reason and the switch's state in the run (set to 1
+//     as the step has it, or unset as a local run may); reds a failure inside a todo by name, and a file that failed as a
+//     whole by name, worded by node's rule (its process exited non-zero or was cut at --test-timeout outside any one
+//     test's result, a counting pass beside it included) and pointing at the spec output for the cause; prints the
+//     lost-browser remedy beside a leg whose failure message begins with inBrowser's cannot-launch phrase; and passes
+//     node's own failure status through. The property and each of those reds read only the results the record attributes
+//     to a rostered bundle, so a test registered in any other file, such as one a leg loads at run time, is read through
+//     node's status alone (the script's header states what that gives). The two remedies that move a leg off the step,
+//     after an unrun leg and after a skip under the switch, take its line out of the roster, each read from the script's
+//     stderr. The reporter itself is executed here over synthetic bundles with a real node --test (the shapes above, a
+//     bundle that throws at load, and a name holding a tab and a newline), and so is the composition: the script with the
+//     real node and the real reporter over those shapes as rostered legs, and over a leg whose test passes and whose
+//     error comes after the test ended. After one stub run and after the composition's first real-node run, the record
+//     file the script handed its reporter (the path the stub logged, in the fresh TMPDIR the run was given) is gone and
+//     that TMPDIR is empty;
 //   - the phrase the script reads a lost browser by is a literal in ui/webview/real-viewer-leg.ts's source, the SHARED
 //     PHRASE between the helper and the script, so a reword on either side is red here rather than a remedy dropped in
 //     silence. That pin reads text and guards the phrase alone: that inBrowser FAILS with it under the switch and skips
