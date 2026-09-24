@@ -1073,10 +1073,11 @@ def _bench(args, state, repo, out, shadow, rec, maps):
 
     def scope(live_map):
         """The pusher cycle's scope, as _pusher_cycle opens it: the liveness snapshot, the sid->path memo,
-        the discover-rows memo (a per-cycle memo slot some kernel revisions read), the names snapshot and
+        the discover-rows memo (a per-cycle memo slot some kernel revisions read), the names snapshot,
         the cycle's billing-availability memo (_auth_avail_status, upstream
-        https://github.com/romp-on/romp/pull/1147; a kernel from before it never reads the slot).
-        tests/test_perf_bench.py CycleScopeParity reads _pusher_cycle's slots and fails when one is
+        https://github.com/romp-on/romp/pull/1147; a kernel from before it never reads the slot), the
+        cycle's subagents-tree samples (upstream #1822) and the stamp index and launch folds derived from
+        them. tests/test_perf_bench.py CycleScopeParity reads _pusher_cycle's slots and fails when one is
         missing here."""
         km._live_scope.snapshot = live_map
         km._live_scope.subagent_stamps = {}   # the stamp index and the launch folds derived from the tree samples

@@ -17,8 +17,8 @@ The fix keys the re-checks on the event a time window would have stood in for: t
 holds each subagents root's sample once per cycle in _live_scope.subagent_trees, which the pusher cycle, the jobs pass
 and a connect push's chat loop open and clear (the try and finally blocks of _pusher_cycle and _jobs_cycle,
 _chat_push_scopes_open and _chat_push_scopes_close): the first reader of a root on that thread validates or walks it,
-and every later reader is served the (directories, stats) pair with no lstat, counted under `scoped`. This branch
-derives two slots from those samples, opened and cleared at exactly the sites that open and clear the tree slot
+and every later reader is served the (directories, stats) pair with no lstat, counted under `scoped`. Two slots are
+derived from those samples, opened and cleared at exactly the sites that open and clear the tree slot
 (SlotSites): the stamp index, _live_scope.subagent_stamps, filled from each pair as it is stored, from which _dir_stamp
 answers the agent-file lookup's re-check of a held tree's directories with no stat (what the re-check's other stamps
 cost: the cost home, _subagent_tree_memo_report's docstring); and the launch folds, _live_scope.subagent_launches, one
@@ -26,8 +26,8 @@ fold per agent per cycle, pass or push (_awaiting_nest). A change on disk after 
 one cycle later at most. The store differs from #1822's in one rule: a sample that reported a fault below its root is
 not held, where #1822 holds any answer with a directory (Guards). Nothing failed is held for the cycle; a launch fold
 that did not read the file is held for the CALL that observed the fault alone (two lifetimes; round 1 of #882 found that
-returned without any hold it was folded once per owner lookup, A x (A - 1) times per read where the parent's call-local
-memo folded A).
+returned without any hold it was folded once per owner lookup, A x (A - 1) times per read where the call-local map
+`launch_sets` (#1822's, and the code's before this change) folded A).
 
 Pinned here, through the REAL cycle functions so the clearing point tested is the wired one: (1) the bound: one pusher
 cycle and one jobs pass with three _session_awaiting calls each cost D os.lstat on the tree's directories (the one
@@ -39,14 +39,14 @@ file is nowhere the miss walk runs once per cycle and its dependency notes to th
 directories (round 1 of #882's correctness-1:
 the own tree's note was a fresh stat, one per walk), and two such rows share the project directory's one stamp stat, an own
 stamp _dir_stamp holds in the stamp index keyed by directory (dirStats moves by (D - 1) + 1 at one row and at two,
-where the cost term as stated before the owner's pass before round 2 of #882, per agent, predicted (D - 1) + G; the term's
+where a cost term per agent predicts (D - 1) + G; the term's
 one home is _subagent_tree_memo_report's docstring); the scope is closed after the cycle; the bound's counts are backed by a
 census, by call class, of the filesystem calls under the tree made through the classes the spy wraps (os.stat, os.lstat,
 os.scandir, os.listdir, os.access, os.readlink, os.open, os.walk, io.open, io.FileIO, and every call given a dir_fd as its
 own entry; a class outside that set, os.statvfs say, is outside the census, the roads it leaves open stated in _Spy's
 docstring and witnessed in (8)) pinned by equality, {lstat: D, stat: A} over the cycle and {} on each
 served path (the tree read, the stamp, the agent-file hit), so a read through a wrapped class the counts do not see fails by
-name (the owner's pass before round 2 of #882: a guarded listing on the served path left the module green); and a read
+name (under count pins alone a guarded listing on the served path leaves the module green); and a read
 outside any cycle (a thread with no tree scope open) pays per call, each agent's memo hit re-checking one stamp per
 directory its walk read (round 4 of #882, extra6-3): D for a nested agent, 1 for a flat one, and for an agent found
 nowhere the own tree's D and the project directory's 1, one failing stat per absent sibling place and S_d per sibling
@@ -65,14 +65,15 @@ slots set on its thread, each cleared in the function's finally; (3) two
 threads: a pusher cycle and a jobs pass running at once each validate once with their own scope object, never served
 by the other's; (4) the guards, each against the input it refuses and the input it accepts: a
 stamp stat that raises is answered (dir, None) and not held while one that succeeds is held; a walk with a failed
-listing is not held while a clean one is (the store rule in which this branch differs from #1822), and a walk that stored a racy stamp (the real window, one directory written at
-the walk) is held for the cycle like a clean one, its pair and its stamps, and walked again by the next cycle's first read
+listing is not held while a clean one is (the one store rule that differs from #1822's), and a walk that stored a racy
+stamp (the real window, one directory written at the walk) is held for the cycle like a clean one, its pair and its
+stamps, and walked again by the next cycle's first read
 (round 1 of #882: every case closed the window, so the hold had no executed pin and the opposite policy stayed green); a
 launch fold that did not read the file is folded once per read (the call-local
 hold) and again by the next read (not held for the cycle) while one that read it is held for the cycle, with the fault's
 producer driven for real (the reader's fail path, a raising fold, a readable file); and the one-cycle lag at each road
-by which a root leaves the memo (round 4 of #882, D3: upstream's forget and pops record no eviction, so nothing an open
-scope holds is dropped before the scope ends): the forget, which for an owned root evicts nothing and leaves the scope
+by which a root leaves the memo (upstream's forget and pops drop nothing an open scope holds before the scope ends): the
+forget, which for an owned root evicts nothing and leaves the scope
 serving, and which, evicting the root, leaves its held pair served for the rest of the scope, the next scope's first read
 walking; a root gone mid-cycle whose entry stood, popped by this thread's read, while a tree the scope holds is still
 served, and a missing root with no entry standing answered the same; the two pop paths, each found by a thread with no
@@ -84,24 +85,23 @@ pair and stamps, at no stat until that scope ends (the served call precedes the 
 next scope's first read finds it gone and stats its stamp afresh; and the scoped counter at every edge of these,
 asserted: a served read of a held root, removed, evicted or not, lands in scoped, and a missing-root pop and a
 replaced-root pop move it by nothing, so hit + miss + scoped is the reads answered a tree; (5) the lag across an
-eviction, for everything a scope holds (round 4 of #882, D3, which retired the per-root eviction table): no root's
-eviction drops anything from an open scope, so a held tree, a held stamp and held launch folds are served across the
-eviction of a root they are not under (0 lstats, 0 stats, 0 folds on the next read),
-and across their own root's eviction until the scope ends: a cached agent-file path is answered until the holder's scope
-ends after another thread found its tree gone, whether its stamps were indexed from the held tree or taken as own
+eviction, for everything a scope holds: no root's eviction drops anything from an open scope, so a held tree, a held
+stamp and held launch folds are served across the eviction of a root they are not under (0 lstats, 0 stats, 0 folds on
+the next read), and across their own root's eviction until the scope ends: a cached agent-file path is answered until
+the holder's scope ends after another thread found its tree gone, whether its stamps were indexed from the held tree or
+taken as own
 stamps by a lookup that preceded any tree read, and the next scope's lookup answers None; an own stamp is served across an
 unrelated root's eviction as a tree-indexed stamp is (0 stats); held launch folds stand across their own root's eviction
 and the next scope folds every agent again and nests the command; and a fold of a file found under a sibling's tree (the
 /clear-fork shape) is served past the sibling's eviction, the own root's and the sibling tree's removal until the cycle
 ends, the next cycle's first read resolving the gone file to nothing (the command top-level there: the bound's edge).
-Before 2026-09-21 one process-wide generation emptied every scope's three maps on any root's eviction: every held tree
-paid its D lstats again, every held stamp its stat, every awaiting agent its fold.
-(6) The dependency key (since 2026-09-21, round 1 of #882's ruling): the key a chat build records for a subagents tree the agent-file miss walk looked
+(6) The dependency key (#910): the key a chat build records for a subagents tree the agent-file miss walk looked
 through is the served read's (mtime, size) per directory, so a file landing after the hold under a directory the served
 listing lacked leaves the recorded key behind the next signature's re-stat and the tab is rebuilt, whether the landing moved
-the root's stamp or a listed child's; a fresh stat taken after the served listing recorded the post-landing key, equal to
-every later re-stat, and the tab that showed the file missing was never rebuilt; a build whose lookup the agent-file memo
-answers in a later cycle, or the held launch fold answers after a reader with no record open walked, records the same keys,
+the root's stamp or a listed child's (the mutant, a fresh stat taken after the served listing, records the post-landing
+key, equal to every later re-stat, and the tab that shows the file missing is never rebuilt); a build whose lookup the
+agent-file memo answers in a later cycle, or the held launch fold answers after a reader with no record open walked,
+records the same keys,
 replayed from the walk's notes (round 2 of #882, group B: before it such a build recorded nothing for the sibling's tree),
 the held fold's from the notes stored in its own entry, since the agent-file memo's entry can by then have been replaced
 by a lookup on a thread that holds no scope, whose walk reads the disk afresh, or cleared (round 3 of #882, tests-2, and
@@ -199,10 +199,10 @@ command, interpreter and head):
 - each half of the spy's patch of glob._StringGlobber's held functions removed alone, mutants of this module: SpyRoads'
   test_closed_road_path_rglob on 3.13, on its rglob('*') call without the builtin test (the held scandir) and on its
   glob('workflows') call without the _romp_sig_counting test (the held lstat, the kernel's wrapper).
-- a forget that empties the calling thread's three slots when it evicts a root (one process-wide generation, as before
-  2026-09-21, on one thread): Guards' forget case (the read after the evicting forget) and ScopedInvalidation's held-tree,
-  held-stamp and held-folds survival cases, its own-stamp case across an unrelated eviction, its own-root folds case and
-  its sibling-resolved fold case, each on the read after the forget;
+- a forget that empties the calling thread's three slots when it evicts a root: Guards' forget case (the read after the
+  evicting forget) and ScopedInvalidation's held-tree, held-stamp and held-folds survival cases, its own-stamp case
+  across an unrelated eviction, its own-root folds case and its sibling-resolved fold case, each on the read after the
+  forget;
 - a missing-root pop that empties the calling thread's three slots: Guards' gone-mid-cycle case, on the held tree's
   lstats;
 - the missing-root pop deleted, and the replaced-root pop deleted: Guards' gone-mid-cycle case and the removed-root pop
@@ -289,7 +289,7 @@ def _age(root):
 
 
 SLOTS = ("subagent_trees", "subagent_stamps", "subagent_launches")   # the tree scope's slots on _live_scope: upstream's
-#   held samples ({root: (directories, stats)}) and the two this branch derives from them, the stamp index ({directory:
+#   held samples ({root: (directories, stats)}) and the two derived from them, the stamp index ({directory:
 #   (directory, mtime_ns)}) and the launch folds ({(transcript, agentId): (launch ids, noted pairs)}); every site that
 #   opens or clears subagent_trees opens or clears all three
 
@@ -330,8 +330,8 @@ class _Spy:
     is the root or lies under it, directories and files alike. The counts key on what the bound derives (D lstats, A file
     stats); the census is pinned by EQUALITY where the bound's cases and the served paths run (_assert_bound, the
     served-paths case), so a read of the tree through a wrapped class the counts do not see, a listing, an access, an
-    open, a file's lstat, fails closed by the class's name (the owner's pass before round 2 of #882: the spy saw os.stat
-    and os.lstat alone, and a guarded os.scandir on the served tree path left the module green). The patch is the os
+    open, a file's lstat, fails closed by the class's name (a spy that sees os.stat and os.lstat alone leaves the module
+    green under a guarded os.scandir on the served tree path). The patch is the os
     module's attribute (io's for io.open and io.FileIO), which is what the kernel, os.path and the pathlib of 3.11, 3.12,
     3.13 and 3.14 look up at call time. Where glob._StringGlobber's __dict__ holds os.scandir or os.lstat as a
     staticmethod bound at import, the builtin itself or the kernel's counting wrapper around it, each is patched too, as
@@ -368,9 +368,9 @@ class _Spy:
     counted when it runs), test_open_road_a_bare_descriptor; a symlinked spelling, a path through a link to the session
     directory (normalization is lexical), test_open_road_a_symlinked_spelling_of_the_root; and pathlib on 3.10, which
     calls the os functions it bound at import (the pathlib of 3.11 to 3.14 looks them up at call time, or lists through
-    the globber patched above, and is counted), test_open_road_pathlib_on_3_10. The owner's pass before round 2 of #882 had planted os.statvfs on the served tree read
-    and the module stayed green, where os.listdir, os.readlink and os.path.exists planted there each red by the class's
-    name."""
+    the globber patched above, and is counted), test_open_road_pathlib_on_3_10. An os.statvfs planted on the served tree
+    read leaves the module green, where an os.listdir, os.readlink or os.path.exists planted there reds it by the
+    class's name."""
     KEYS = ("dir_stat", "dir_lstat", "file_stat")
     CLASSES = ("stat", "lstat", "scandir", "listdir", "access", "readlink", "open", "walk")   # the os functions wrapped; io.open and io.FileIO beside them
 
@@ -806,8 +806,8 @@ class _World(unittest.TestCase):
                          "scope removes)" % (what, asks))
         self.assertEqual(d["scoped"], flat.count("served"),
                          "memos.subagentTree scoped over one %s: %d; keyed on the asks the scope answered from its held pair, %d "
-                         "(_subagent_tree's early return alone moves it, so hit + miss + scoped is the reads of the root; before "
-                         "2026-09-21 those reads moved no counter)" % (what, d["scoped"], flat.count("served")))
+                         "(_subagent_tree's early return alone moves it, so hit + miss + scoped is the reads of the root that "
+                         "answered a tree)" % (what, d["scoped"], flat.count("served")))
         return flat
 
     def _assert_bound(self, what, sp, d, rec):
@@ -951,9 +951,9 @@ class BoundPerCycleAndPerPass(_World):
 
     def test_two_agents_whose_files_are_nowhere_share_the_project_directorys_one_stamp_stat(self):
         """The project directory's stamp stat, one term of the miss walk in the cost home, is once per cycle, SHARED by
-        every agent whose file is nowhere or under a sibling's tree, not once per such agent (the owner's pass before round
-        2 of #882: the term's homes read per agent, G such rows paying G project-directory stats where the code pays 1; the
-        home is _subagent_tree_memo_report's docstring). Two such rows: each walks once and pays its own candidate lstats and symlink
+        every agent whose file is nowhere or under a sibling's tree, not once per such agent (a term per agent has G such
+        rows paying G project-directory stats where the code pays 1; the home is _subagent_tree_memo_report's docstring).
+        Two such rows: each walks once and pays its own candidate lstats and symlink
         checks (G x, _miss_walk_cycle), but the project directory's stamp stat is an own stamp _dir_stamp holds in the
         stamp index (_live_scope.subagent_stamps) keyed by directory, so the first walk pays it and the second walk, and
         every re-check of either row in the cycle, is served it: dirStats moves by (D - 1) + 1, not (D - 1) + G, and the
@@ -980,9 +980,9 @@ class BoundPerCycleAndPerPass(_World):
                          "the project directory is held once, keyed by directory alone and not per agent: %r" % (sorted(str(k) for k in stamps),))
 
     def test_the_served_tree_read_the_served_stamp_and_the_agent_file_hit_make_no_filesystem_call_of_any_class_the_census_wraps_under_the_tree(self):
-        """The premise the bound's zeros rest on, by census rather than by two counts (the owner's pass before round 2 of
-        #882: the count pins saw os.stat and os.lstat alone, so a guarded os.scandir, an os.access or an os.open on the
-        served tree path, and a listing on _dir_stamp's served path, left the module green). Inside one scope, after the
+        """The premise the bound's zeros rest on, by census rather than by two counts (count pins that see os.stat and
+        os.lstat alone leave the module green under a guarded os.scandir, an os.access or an os.open on the served tree
+        path, or a listing on _dir_stamp's served path). Inside one scope, after the
         hold, each of the three served paths runs under the spy's census on its own: the tree read _subagent_tree answers
         from the held pair, the stamp _dir_stamp answers from the held stamps, and the agent-file hit _subagent_file answers
         from its memo with its stamp re-check served. Each makes no filesystem call of any class the census wraps on any
@@ -1472,9 +1472,7 @@ class MissPathRoads(_World):
         of G agents' files lies past it, under a readable sibling. The stamp is an own stat like any other, taken once and
         held for the cycle in the stamp index: 1 os.stat per cycle, cold and steady, whatever G and M; each cold walk's tree
         read pays its raising lstat, G cold and 0 steady. A boundary guard, red under a kernel that holds no own stat (G x
-        (1 + M)). It is green only where a file past an excluded sibling is answered, as round 2 of #882's group A made
-        it: under a kernel before that, which answered such a file None, every ghost lookup here answers None and the case
-        fails."""
+        (1 + M)). It is green only where a file past an excluded sibling is answered."""
         sess = Path(self.path).parent / ("11111111-2222-3333-4444-7c7c7c7c%04x" % 0xc000)
         (sess / "subagents").mkdir(parents=True)
         place = str(sess / "subagents")
@@ -1975,15 +1973,13 @@ class PerCycleNotSticky(_World):
                          "the command row nested under agent 0 in cycle two: %r" % (agent0,))
 
     def test_the_stamps_held_for_a_cycle_are_released_at_its_end_so_the_next_cycle_re_takes_the_project_directorys_stamp(self):
-        """The stamps memo's release at the cycle's end, pinned on its own (the owner's pass before round 2 of #882: a stamps
-        map carried across cycles on this thread, the trees and launches released as today, reddened one case in the module,
-        at a dependency-key outcome whose message named neither the stamps memo nor the cycle's end). Cycle one is the
+        """The stamps memo's release at the cycle's end, pinned on its own. Cycle one is the
         miss-path bound case, one row whose file is nowhere (_miss_walk_cycle asserts its costs): its walk stats the project
         directory once, an own stamp _dir_stamp holds in the stamp index. Cycle two over the same world, unchanged: the tree's one
         validation (D - 1 lstats into dirStats) and the row's memoized miss re-checked, whose project-directory stamp the new
-        scope does not hold, so it is re-taken (+1). Three pins, each keyed on what it names (the owner's pass before round 2
-        of #882, its fixes-by-execution lens: the count alone reds identically under a carried LAUNCHES map, whose served fold
-        makes no lookup in cycle two, so no project-directory stat is owed, and the count's message blamed the stamps map):
+        scope does not hold, so it is re-taken (+1). Three pins, each keyed on what it names (the count
+        alone reds identically under a carried LAUNCHES map, whose served fold makes no lookup in cycle two, so no
+        project-directory stat is owed, and the count's message would blame the stamps map):
         the lookup was made in cycle two, keyed on cycle two's stamp index holding the project directory's own stamp (a
         carried launches map reds here); the stamps map was released, keyed on cycle two's stamps map and its entry being
         objects other than cycle one's (a carried stamps map reds here, by identity); and then the count, cycle two's dirStats
@@ -2133,12 +2129,14 @@ class TwoThreadsEachValidateOnce(_World):
 
 
 class Guards(_World):
-    """(4) What the scope refuses to hold, each beside what it accepts. These open the scope directly (the clearing
+    """(4) What the scope refuses to hold beside what it accepts, the walk's cost terms, and upstream's one-cycle lag at
+    each road a root leaves the memo by (the held pair is served until the scope ends, and the next scope walks). Every
+    case opens the scope directly except the unreadable-session-directory case, which runs _pusher_cycle (the clearing
     point is pinned through the real cycles above)."""
 
     def test_a_forget_that_evicts_the_root_leaves_its_pair_served_until_the_scope_ends_and_the_next_scope_walks(self):
-        """Upstream's forget (_subagent_trees_forget) against an open scope, on the one-cycle lag (round 4 of #882, D3: no
-        eviction record, so nothing an open scope holds is dropped). Accept: a forget over a live set that owns the root
+        """Upstream's forget (_subagent_trees_forget) against an open scope, on the one-cycle lag (upstream's forget
+        drops nothing an open scope holds). Accept: a forget over a live set that owns the root
         evicts nothing, and the scope keeps serving the held pair. The lag: a forget that evicts the root pops its
         cross-cycle entry and leaves the held pair in the scope, served to the rest of the scope at no lstat and counted
         scoped, and the next scope's first read walks (the entry gone: one miss, D lstats). Keys on the reads served the
@@ -2275,7 +2273,7 @@ class Guards(_World):
         self.assertEqual(sc["trees"], {}, "an own stamp: no tree was read in this scope, so no pair lists the directory")
 
     def test_a_walk_with_a_failed_listing_is_not_held_while_a_clean_walk_is(self):
-        """The one rule in which this branch's store differs from upstream's (#1822 holds any answer with a directory): a
+        """The one rule in which the store differs from upstream's (#1822 holds any answer with a directory): a
         sample that reported a fault below its root is not stored in `subagent_trees`. workflows/'s listing fails once with
         EMFILE, a fault and not an absence, so the first read walks a truncated tree and is not held; the next read in the
         same scope walks again and finds the D directories, and that clean walk is held and served to the read after it at
@@ -2508,10 +2506,10 @@ class Guards(_World):
     def test_a_root_gone_mid_cycle_with_an_entry_is_popped_while_a_held_sibling_tree_stays_served(self):
         """_subagent_tree's missing-root pop (a session's tree removed while the walk memo held it), read on this thread,
         whose scope holds another session's tree: the pop removes the cross-cycle entry and answers (), (), and the held
-        tree is still served at 0 lstats, the same pair by identity (upstream's pop records no eviction, so it drops
-        nothing an open scope holds); a second read of the missing root, no entry standing, answers the same and the held
-        tree stays served. Red under a missing-root pop that empties this thread's scope (one process-wide generation, as
-        before 2026-09-21: the held tree validated again, D lstats where 0 are owed) and under the missing-root pop deleted
+        tree is still served at 0 lstats, the same pair by identity (upstream's pop drops nothing an open scope
+        holds); a second read of the missing root, no entry standing, answers the same and the held
+        tree stays served. Red under a missing-root pop that empties this thread's scope (the held tree
+        validated again, D lstats where 0 are owed) and under the missing-root pop deleted
         (the entry left standing)."""
         other_t = Path(self.td.name) / "other" / (OTHER_SID + ".jsonl")   # a second session's transcript, its tree beside it
         other_t.parent.mkdir()
@@ -2586,8 +2584,8 @@ class Guards(_World):
         """The body the two pop-path cases share. This thread's scope holds the sibling's tree (D directories) and this
         session's; the sibling is removed on disk ("missing") or removed and a regular file written in its place
         ("replaced"); a thread with no scope reads it, the pop. Keys, in order: the pop's answer and the cross-cycle entry
-        gone; the holder's next read of the sibling, served its held pair at 0 lstats (upstream's pop records no
-        eviction, so it drops nothing an open scope holds: the one-cycle lag), and this session's tree served too; a
+        gone; the holder's next read of the sibling, served its held pair at 0 lstats (upstream's pop drops
+        nothing an open scope holds: the one-cycle lag), and this session's tree served too; a
         second read on a thread with no scope, no entry standing, answering the same shape at the root's lstat alone; and
         the next scope's first read of the sibling, which answers the pop's shape at one lstat of the root. The pop
         deleted leaves the entry standing (the second key), and a tree slot kept past its scope serves the next scope the
@@ -2723,20 +2721,18 @@ class Guards(_World):
 
 
 class ScopedInvalidation(_World):
-    """(5) Nothing an open scope holds is dropped before the scope ends, whatever root leaves the memo (round 4 of #882,
-    D3: no eviction record and no vouch, upstream's one-cycle lag): a held tree, a held stamp and held launch folds stand
+    """(5) Nothing an open scope holds is dropped before the scope ends, whatever root leaves the memo (upstream's
+    one-cycle lag): a held tree, a held stamp and held launch folds stand
     across any root's eviction until the scope ends, and the next scope reads again. So a held tree, a held stamp and held
     launch folds are served across the eviction of a root they are not under, and across their own root's eviction too:
     a cached agent-file path is answered until the holder's scope ends after another thread found its tree gone, whether
     its stamps were indexed from the held tree or taken as own stamps, and the next scope's lookup answers None; an own
     stamp is served across an unrelated root's eviction as a tree-indexed stamp is; held launch folds stand across their
     own root's eviction and the next scope folds every agent again; and a fold of a file found under a sibling's tree is
-    served past the sibling's eviction, the own root's and the sibling tree's removal until the cycle ends. Before
-    2026-09-21 one process-wide generation emptied every scope's three maps on any root's eviction (every held tree paid
-    its D lstats again, every held stamp its stat, every awaiting agent its fold, once per forget), the defect a forget
-    that empties the calling thread's scope reproduces here. The eviction comes from the forget (nobody alive owns the
-    root) or, for a removed tree, from another thread's missing-root pop (a same-thread read of a held root is served
-    before its lstat, so it never pops)."""
+    served past the sibling's eviction, the own root's and the sibling tree's removal until the cycle ends. The eviction
+    comes from the forget (nobody alive owns the root) or, for a removed tree, from another thread's missing-root pop (a
+    same-thread read of a held root is served before its lstat, so it never pops); a forget that empties the calling
+    thread's scope reds each case whose eviction is the forget's."""
 
     def _other_root(self, tag="other"):
         """A second session's transcript and its tree beside it, walked into the cross-cycle memo and owned by nobody
@@ -2861,7 +2857,7 @@ class ScopedInvalidation(_World):
                               "the cached path %r to a removed file" % (p3, p1))
 
     def test_own_stamps_are_held_until_the_scope_ends_so_a_cached_agent_file_is_answered_until_then_and_not_by_the_next_scope(self):
-        """The stamps _dir_stamp took itself (D1.5 of #882's round 4): the owner-lookup-first order (a _subagent_file hit
+        """The stamps _dir_stamp took itself: the owner-lookup-first order (a _subagent_file hit
         inside the scope BEFORE any tree read this cycle, as a command row's owner lookup makes it) re-stats every directory
         the agent's walk read and holds each as an own stamp, since no held pair lists it. Held for the rest of the scope,
         across the tree's removal and another thread's pop: a second lookup is served (0 stats) and answers the cached
@@ -2903,7 +2899,7 @@ class ScopedInvalidation(_World):
         self.assertGreater(sp.total()["dir_stat"], 0, "the next scope's re-check stats the removed directories afresh (stat attempts), not served")
 
     def test_an_own_stamp_is_served_across_an_unrelated_roots_eviction_as_a_tree_indexed_stamp_is(self):
-        """The cost face of the same rule (D1.5 of #882's round 4): an own stamp (no tree read this cycle) costs its one stat
+        """The cost face of the same rule: an own stamp (no tree read this cycle) costs its one stat
         once per scope, and 0 after any eviction, an unrelated root's included, as a stamp indexed from a held tree does.
         Keys on 0 stats and the same object after an unrelated eviction, first for the own stamp and then, once the tree's
         read has filled the index for the same directory, for the indexed stamp after another unrelated eviction. Red
@@ -3113,15 +3109,15 @@ class ScopedInvalidation(_World):
 
 class DependencyKey(_World):
     """(6) The key a chat build records for a subagents tree the agent-file miss walk looked through is the served read's
-    stamp (since 2026-09-21, round 1 of #882's ruling). Two sessions share a project directory (a /clear fork's, the case the sibling scan exists for);
+    stamp (#910). Two sessions share a project directory (a /clear fork's, the case the sibling scan exists for);
     an agent row of this session names a file that exists nowhere yet; earlier in the cycle a build read the sibling's tree,
     so the scope holds it; then the file lands under the sibling's root in a directory the held listing lacks; then this
     session's chat build resolves the agent, is answered the held listing, finds the file nowhere and shows it missing. The
     tab is cached under the dependencies the build recorded (_chat_build_deps) and rebuilt when the next cycle's signature
-    re-stats one of them to a different key (_chat_sig_deps). Before 2026-09-21 the walk recorded the sibling's root under a
-    FRESH os.stat taken after the served listing, the post-landing key, equal to every later re-stat, so the tab stayed
-    stale until something else moved; and it recorded the root alone, which a landing under a listed child never moves. Now
-    every directory of the tree is recorded under the (mtime, size) of the stat the served read was taken with (the shape
+    re-stats one of them to a different key (_chat_sig_deps). What #910 fixed: a walk that records the sibling's root
+    under a FRESH os.stat taken after the served listing records the post-landing key, equal to every later re-stat, so the
+    tab stays stale until something else moves, and a note of the root alone misses a landing under a listed child. Every
+    directory of the tree is recorded under the (mtime, size) of the stat the served read was taken with (the shape
     _subagent_meta_map records: _subagent_tree_dep_note), so the key is behind the re-stat and the tab is rebuilt, whether
     the landing moved the root's stamp or a listed child's. The same keys reach a build whose lookup the walk did not run
     (round 2 of #882, group B): the agent-file memo's hit and _awaiting_nest's held launch fold replay the pairs the walk
@@ -3133,9 +3129,10 @@ class DependencyKey(_World):
     for a build that found the file nowhere and one for a build that found it. An own place holding what the walk
     refuses is noted nothing, so a tab over it is served from its first build on (round 3 of #882, group B), as is an
     own place whose lstat faults, so a tab over a file found past that fault is served once it clears; and a
-    symlinked subagents/ replaced by a real directory moves no recorded key, the second residual, witnessed. Driven
-    through the real _pusher_cycle, with the
-    build's record shape (build_session's literal) open around the real _session_awaiting."""
+    symlinked subagents/ replaced by a real directory holding the file moves the key the walk recorded for the link
+    (#910 notes a live link at a subagents path under its stat key: _subagent_walk_dep_note), so the tab is rebuilt.
+    Driven through the real _pusher_cycle, with the build's record shape (build_session's literal) open around the real
+    _session_awaiting."""
 
     def _sibling(self, workflows):
         """A second session's transcript beside this one's in the project directory and its subagents tree: the root alone,
@@ -3475,10 +3472,10 @@ class DependencyKey(_World):
 
     def test_a_held_fold_replays_its_own_walks_notes_after_a_lookup_on_a_thread_with_no_scope_replaced_the_agent_file_memos_entry(self):
         """The first of the two reasons the held fold replays the notes stored in its own entry and not the agent-file
-        memo's (the comment at _awaiting_nest's fold map), on the road the thread-scoped slots leave open (round 4 of #882,
-        D3, which re-pinned it here from the eviction road the table's removal closed): a thread that holds no scope looks
-        the agent up mid-cycle after a landing, and its walk, reading the disk afresh, replaces the memo entry with notes
-        the fold's ids never reflected; a build recording those holds the post-landing key, equal to every later re-stat,
+        memo's (the comment at _awaiting_nest's fold map), on the road the thread-scoped slots leave open: a thread that
+        holds no scope looks the agent up mid-cycle after a landing, and its walk, reading the disk afresh, replaces the
+        memo entry with notes the fold's ids never reflected; a build recording those holds the post-landing key, equal
+        to every later re-stat,
         and is never rebuilt. The fold held, a landing, the relookup on that thread (premises asserted: the fold still held
         when the chat build is made, the relookup found the file so the memo entry carries the root under the post-landing
         key, the chat build made no lookup); then one more pusher cycle. Keys, in one assertion: the key the chat build
@@ -3924,8 +3921,8 @@ class DependencyKey(_World):
         self.assertEqual(got, [None] * len(tab["builds"]), "each build's key for the absent own place: %r" % (got,))
 
     def test_a_symlinked_subagents_directory_replaced_by_a_real_directory_holding_the_file_moves_the_links_recorded_key_and_rebuilds_the_tab(self):
-        """What was group B's residual (round 3 of #882), now closed by the dependency-key fix this branch merges (#910):
-        the agent-file walk notes a live link at a subagents path under the path's stat key (_subagent_walk_dep_note), the
+        """A symlinked subagents/ replaced by a real directory, recorded since the dependency-key fix (#910): the
+        agent-file walk notes a live link at a subagents path under the path's stat key (_subagent_walk_dep_note), the
         link's target's (st_mtime, st_size), so the own subagents/ that is a link is in the tab's record. Once the link is
         replaced by a real directory holding the agent's file, that recorded key, and no other, moves against the next
         signature's re-stat, the next cycle rebuilds the tab, and the lookup finds the file. Keys on the moved keys being
@@ -4403,7 +4400,7 @@ class SpyRoads(_World):
 
 
 class SlotSites(unittest.TestCase):
-    """The rule for the two slots this branch derives from upstream's held trees (the stamp index, subagent_stamps, and
+    """The rule for the two slots derived from upstream's held trees (the stamp index, subagent_stamps, and
     the launch folds, subagent_launches): a value derived from a held tree lives no longer than the tree and exactly where
     the tree lives, so each is opened and cleared at exactly the sites that open and clear subagent_trees. A source
     census over kernel/kernel.py, keyed on the assignment and not on a helper's name: every `_live_scope.<slot> = {}` and

@@ -34125,8 +34125,9 @@ def _awaiting_nest(agents, commands, cmd_owner, path):
     # found under no tree the walk could read while one could not be: _subagent_file's faults, since 2026-09-21; a file
     # found past such a tree is resolved, and faults nothing), answers set() and is held in `faulted`, this call's own map
     # and never the slot, so the call's other owner lookups are served it (each of the A agents' lookups consults every
-    # other agent's launches, so a fault re-folded per lookup cost A x (A - 1) folds per call where the parent's call-local
-    # memo cost A: round 1 of #882's extra9-2) and the next call reads again. A file that resolved to nothing (ap None) is
+    # other agent's launches, so a fault re-folded per lookup cost A x (A - 1) folds per call where the call-local map
+    # `launch_sets` (#1822's, and the code's before this change) cost A: round 1 of #882's extra9-2) and the next call
+    # reads again. A file that resolved to nothing (ap None) is
     # a state, held. A held fold answers without calling _subagent_file, so it replays the pairs its entry stores to the
     # build it answers, once per call (round 2 of #882, group B), never the agent-file memo's entry, which can be gone or
     # newer by then: that memo is cleared whole past 1024 entries by any thread's lookup
@@ -35738,8 +35739,9 @@ def _subagent_tree_memo_report():
     Every other reader holds none and pays per call (the last entry): on a handler thread, a viewer's open
     (openSubagent), the history and episode replies (loadOlder, _chat_history_reply, loadEpisode), the act-now nudge
     pass (_ws_act_now_tick), a feed built for clearAll or for GET /feed.json with no pusher audience, the /classify
-    route and a connect push's own feed or timeline build; and a targeted push (_push_session_now), whose callers sit
-    on handler, spawn and backend threads.
+    route, a comment create's thread frame (commentCreate, its repeat answer included, through _comments_frame and
+    _thread_events) and a connect push's own feed or timeline build; and a targeted push (_push_session_now), whose
+    callers sit on handler, spawn and backend threads.
 
     ON A PUSHER CYCLE OR A JOBS PASS, per scope:
       - the validated hit (an entry whose identities stand): D_r lstats, the root's and one per known directory below
@@ -36101,11 +36103,9 @@ def _subagent_file(path, agent_id, faults=None, notes=None):
     (a read that did not happen is not a miss), and answers the memo's standing resolution for the agent only when that
     path lies under a place the walk could not read (_subagent_file_walk's `excluded`), else None:
     a standing path under a tree the walk read in full is disproven by that read, whatever faulted elsewhere (the pass
-    applying round 2 of #882's rulings; until then the standing path was answered past any fault, so a file moved out
-    of a readable tree was answered at its old path while an unrelated tree faulted; tests/test_subagent_tree_memo.py
-    StandingResolutionUnderAFault). A fault excludes what raised it from the walk and nothing else, so a file found past
-    one is a lookup made: answered, memoized, and nothing passed to `faults` (round 2 of #882, group A; until then a
-    fault anywhere answered None)."""
+    applying round 2 of #882's rulings; tests/test_subagent_tree_memo.py StandingResolutionUnderAFault). A fault
+    excludes what raised it from the walk and nothing else, so a file found past one is a lookup made: answered,
+    memoized, and nothing passed to `faults` (round 2 of #882, group A)."""
     if not path or not _AGENT_ID_RE.match(str(agent_id or "")):
         return None
     ckey = (str(path), str(agent_id))
@@ -36173,10 +36173,9 @@ def _subagent_walk_unreadable(where):
     that tree's read also noted under its own key, the build records the two keys' disagreement, _chat_build_deps) and
     the lookup answers None for this call, which
     _subagent_file declines to memoize (a read that did not happen is not a miss); the shape is _subagent_tree's
-    docstring's. A fault excludes what raised it from the walk and nothing else (round 2 of #882, group A; until then the walk
-    answered here at the first tree it could not read, so a file under a later, readable sibling was reported missing for
-    as long as the unrelated tree stayed unreadable): the walk records the fault and looks through every other tree first,
-    and a file found anywhere is the answer, memoized, with nothing noted here."""
+    docstring's. A fault excludes what raised it from the walk and nothing else (round 2 of #882, group A): the walk
+    records the fault and looks through every other tree first, and a file found anywhere is the answer, memoized, with
+    nothing noted here."""
     _chat_dep_note_taskout(where, _TREE_UNREADABLE)
     return None
 
@@ -39318,8 +39317,8 @@ def _chat_push_scopes_open():
     The frame's hit-path re-stats through _dir_stamps were a separate route, the follow-up #1822 named),
     opened with the two slots derived from them, the stamp index (`subagent_stamps`, which serves those
     re-stats: _subagent_tree's docstring) and the launch folds (`subagent_launches`, _awaiting_nest: one
-    fold per agent per push), which live exactly where the samples do. A pusher cycle
-    already holds the last three, so only the absent ones are opened, and the record says which;
+    fold per agent per push), which live exactly where the samples do. A pusher cycle already holds
+    every slot here but the shared components, so only the absent ones are opened, and the record says which;
     _chat_push_scopes_close clears exactly what was opened here, so a cycle's own scopes are never
     touched. The ownership record is written BEFORE the shared components are read (2026-09-18, the
     review's finding): _chat_sig_shared reads the flags and cards files, the colormap, the login label
