@@ -1079,32 +1079,32 @@ def _bench(args, state, repo, out, shadow, rec, maps):
         tests/test_perf_bench.py CycleScopeParity reads _pusher_cycle's slots and fails when one is
         missing here."""
         km._live_scope.snapshot = live_map
+        km._live_scope.subagent_stamps = {}   # the stamp index and the launch folds derived from the tree samples
+        km._live_scope.subagent_launches = {}   #  (_dir_stamp, _awaiting_nest), opened and cleared with them
         km._live_scope.paths = {}
         km._live_scope.sessions = {}
         km._live_scope.auth = {}
         km._live_scope.subagent_trees = {}   # ...and the cycle's subagents-tree samples (upstream PR 1822)
-        km._live_scope.subagent_stamps = {}   # ...and the stamp index derived from them (_dir_stamp)
-        km._live_scope.subagent_launches = {}   # ...and the launch folds derived from them (_awaiting_nest)
         km._live_scope.names = km._names_snapshot()
 
     def unscope():
+        km._live_scope.subagent_stamps = None
+        km._live_scope.subagent_launches = None
         km._live_scope.snapshot = None
         km._live_scope.names = None
         km._live_scope.paths = None
         km._live_scope.sessions = None
         km._live_scope.auth = None
         km._live_scope.subagent_trees = None
-        km._live_scope.subagent_stamps = None
-        km._live_scope.subagent_launches = None
 
     def new_cycle():
         """A fresh cycle's per-cycle memos (what _pusher_cycle resets between two cycles)."""
+        km._live_scope.subagent_stamps = {}   # the stamp index and the launch folds derived from the tree samples
+        km._live_scope.subagent_launches = {}
         km._live_scope.paths = {}
         km._live_scope.sessions = {}
         km._live_scope.auth = {}
         km._live_scope.subagent_trees = {}   # ...and the cycle's subagents-tree samples (upstream PR 1822)
-        km._live_scope.subagent_stamps = {}   # ...and the stamp index derived from them (_dir_stamp)
-        km._live_scope.subagent_launches = {}   # ...and the launch folds derived from them (_awaiting_nest)
 
     def clear_kernel_caches():
         """The kernel-side caches a freshly started kernel lacks (build_session's inputs above the parse)."""

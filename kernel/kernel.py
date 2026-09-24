@@ -66150,13 +66150,13 @@ def _pusher_cycle():
         _pusher_cycle_jobs(now, live_map, any_client)
     finally:
         _chat_push_scopes_close()
+        _live_scope.subagent_stamps = None      # the slots derived from the tree samples, cleared with them (the
+        _live_scope.subagent_launches = None    #  census in tests/test_subagent_tree_stamps_per_cycle.py SlotSites)
         _live_scope.snapshot = None
         _live_scope.names = None
         _live_scope.paths = None
         _live_scope.sessions = None
         _live_scope.subagent_trees = None
-        _live_scope.subagent_stamps = None
-        _live_scope.subagent_launches = None
         _live_scope.msgsum = None
         _live_scope.auth = None
         _PERF_STATS.cycle(time.monotonic() - _t_cycle, time.thread_time() - _c_cycle,
