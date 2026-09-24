@@ -53,8 +53,9 @@ send the page's origin (in Chromium a `mask` does). In one recorded run, before
 the sanitizer removed these references from chat messages, a chat message's
 `fill` sent the full URL of a page opened as `/chat?token=`, token included. No
 later run has reproduced it, the viewer's runs in
-`tests/test_paint_refs_kernel_pages_browser.py` included, so treat a page opened
-that way as able to send its token with such a request. Everywhere else the
+`tests/test_paint_refs_kernel_pages_browser.py` included, so treat any page
+whose own address carries `?token=` (a chat page or a Files pane opened on its
+own) as able to send its token with such a request. Everywhere else the
 sanitizer removes these references, and an `.svg` opened in its own tab loads
 nothing from another host (see Output sanitization below).
 The token-exempt routes are the no-side-effect liveness probes (`/healthz`,
@@ -112,15 +113,22 @@ UID can read.
   the sanitized markup before any node reaches the page, by the sanitizer and
   again by the strip that the file preview card and the feed's notice cards run,
   so none of them makes a request to another host when a chat message, a
-  previewed file or a notice card renders. A same-document `url(#id)` and this
-  origin's own stay (in an editor webview the sanitizer also keeps the kernel's
-  origin). A `data:` URL stays only when its media type is a raster image (PNG,
-  JPEG, GIF, WebP, AVIF, BMP or an icon), and every other one is removed: in
-  Firefox, a paint attribute that names a `data:` SVG, XHTML or XML document
-  loads that document, and the document fetches its own `@import` from another
-  host. Chromium and WebKit load no such document. The browser checks run in
-  Firefox only where it is installed and `ROMP_BROWSER_ENGINES` names it, since
-  CI installs Chromium alone. The file viewer gates a reference to another
+  previewed file or a notice card renders. In a chat message and a previewed
+  file, a same-document `url(#id)` and this origin's own stay (in an editor
+  webview the sanitizer also keeps the kernel's origin). A notice card keeps a
+  `url(#id)` and an absolute reference to this origin but removes a relative
+  one, since its strip gets no base URL to resolve it against (a known gap: the
+  reference is lost, and no request is made). A `data:` URL stays only when its
+  media type is a raster image (PNG, JPEG, GIF, WebP, AVIF, BMP or an icon), and
+  every other one is removed: in Firefox, a paint attribute that names a `data:`
+  SVG, XHTML or XML document loads that document, and the document fetches its
+  own `@import` from another host. Chromium and WebKit load no such document.
+  The browser checks run in Firefox only where it is installed and
+  `ROMP_BROWSER_ENGINES` names it, since CI installs Chromium alone. CI's
+  `npm test` runs before the job installs Chromium, so the chat's browser check
+  (`ui/webview/chat-paint-refs-browser.test.ts`, with its census of the derived
+  names) skips there until it is rostered as a browser leg, and its passes come
+  from runs outside CI. The file viewer gates a reference to another
   origin behind a click instead. It removes a `data:` reference whose type is not
   a raster image, as the other surfaces do, because a click labeled `data:` would
   load a document that fetches hosts the label never names

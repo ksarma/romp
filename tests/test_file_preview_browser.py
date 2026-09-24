@@ -21,11 +21,12 @@ so the logger records no request during the run, the offOrigin recorder holds no
 url(). Two controls say an empty log is the strip's work: the sample's same-origin reference (`url(/plots/own.svg#p)`, relative, so it
 resolves to the kernel's origin) is kept and requested from the kernel during the hover (the request is what the instrument sees; the
 kernel answers it with a 404), and after the run's record is taken the page fetches the logger once (no-cors), which must be its one
-line, so the logger is one the page can reach. Red before the fix, the same at the base 6cf6839ba (this file run over a copy of that
-tree) and with both passes removed (2026-09-23): the logger recorded ten requests during the hover (fill, stroke, clip-path, mask, the
-mask's image-set, the three markers, the escaped function name, the group's fill; the two masks with the page's origin as Referer,
-the rest with none), the offOrigin recorder held eleven URLs (the filter's request event fired and no request reached the logger),
-and the card held every value as written. Either pass alone keeps the run green: both run the one strip, dropRemoteRefs.
+line, so the logger is one the page can reach. Red before the fix, the same at the fork point 6cf6839ba and at the base fa3ef54b5,
+the merge-base (this file run over a copy of each tree) and with both passes removed (2026-09-23): the logger recorded ten requests
+during the hover (fill, stroke, clip-path, mask, the mask's image-set, the three markers, the escaped function name, the group's
+fill; the two masks with the page's origin as Referer, the rest with none), the offOrigin recorder held eleven URLs (the filter's
+request event fired and no request reached the logger), and the card held every value as written. Either pass alone keeps the run
+green: both run the one strip, dropRemoteRefs.
 Asserted, dark and light: nothing opens before the dwell and the card is up after
 it; leaving closes it after the grace; Escape closes it; the keyboard's focus opens it; the kernel's verdict rides each
 link as data-preview and the refused links make NO request; the section card shows the section alone with the grammar

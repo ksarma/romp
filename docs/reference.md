@@ -4680,9 +4680,19 @@ nodes join the page: an image's `src` or `srcset`, a picture's sources, a video'
 poster or source, an audio, an SVG image, in any spelling the URL parser
 resolves to another origin (a protocol-relative `//host`, backslashes, a tab or
 newline anywhere in the value, which the browser deletes before it reads the
-URL). An image becomes its alt text and the rest go, so a hover never sends a
-request elsewhere; a previewed document's images load only from this kernel
-(the file route, a relative path, a data: URI). The card closes when the link it
+URL). An image becomes its alt text and the rest go. An inline SVG's paint
+references go too: a `url()` naming another origin in a `fill`, `stroke`,
+`mask`, `clip-path`, `filter` or `marker-*` attribute, or in a style
+declaration, is removed from its element, which stays. A same-document
+`url(#id)` and this origin's own stay, and a `data:` URL there stays only when
+its type is a raster image, since Firefox loads a `data:` SVG, XHTML or XML
+document named that way and the document fetches whatever its own markup names.
+The sanitizer's default paint pass removes them first and the strip removes them
+again for any tree it is given (`ui/webview/md-sanitize.ts sanitizeMd`,
+`ui/webview/file-preview.ts stripRemoteLoads`,
+`ui/webview/paint-refs.ts dropRemoteRefs`). So a hover never sends a request
+elsewhere, and a previewed document's images load only from this kernel (the
+file route, a relative path, a data: URI). The card closes when the link it
 is anchored to leaves the document (a re-render, a tab pick), not on the tab
 strip's rebuilds. The markdown grammar renders `[[wikilinks]]`
 as their plain text and callout blockquotes (`> [!NOTE] …`) as blockquotes with

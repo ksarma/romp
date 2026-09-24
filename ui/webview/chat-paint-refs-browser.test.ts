@@ -18,16 +18,17 @@
 // strip's work and not a render that never happened. The remote logger's own control follows the read: a no-cors fetch
 // from the page to it, which must be its one line, so an empty log is not a server the page cannot reach. The wait is on
 // the control's arrival (bounded), then a drain: one round trip to the page server and 250 ms (the viewer's legs' drain).
-// Red before the fix, the same at the base 6cf6839ba (this leg run from a copy of that tree, paint-refs.ts copied beside it
-// for the import alone, since the base's sanitizer never calls it) and with the pass removed from sanitizeMd (2026-09-23,
-// Chromium 151): the remote logger held 19 requests within 30 ms of the page's own paint fetch, 16 from the reply (fill,
-// stroke, clip-path, mask, the mask's image-set, the three markers, the root's fill, the group's fill, both escaped function
-// names, the userinfo spelling, the quoted and the spaced url(), the protocol-relative one) and 3 from the user's message
-// (fill, the mask's image-set, marker-end). Each carried no Referer but the three mask references, which carried the page's
-// origin alone (`http://localhost:P/`), none its path. `filter`, on a rect and on the root, reached the logger in no run,
-// as the design note's matrix found, and neither did the HTML span's names, the style attribute or the cursor, which the
-// sanitizer already removes; the DOM still held 24 of the 26 remote values as written. Sub-tests 2, 3 and 5 red, the
-// controls green. Each other sub-test's red is its own mutation, recorded with the branch's other reds.
+// Red before the fix, the same at the fork point 6cf6839ba and at the base fa3ef54b5, the merge-base (this leg run from a
+// copy of each tree, paint-refs.ts copied beside it for the import alone, since neither tree's sanitizer calls it) and with
+// the pass removed from sanitizeMd (2026-09-23, Chromium 151): the remote logger held 19 requests within 30 ms of the
+// page's own paint fetch, 16 from the reply (fill, stroke, clip-path, mask, the mask's image-set, the three markers, the
+// root's fill, the group's fill, both escaped function names, the userinfo spelling, the quoted and the spaced url(), the
+// protocol-relative one) and 3 from the user's message (fill, the mask's image-set, marker-end). Each carried no Referer
+// but the three mask references, which carried the page's origin alone (`http://localhost:P/`), none its path. `filter`, on
+// a rect and on the root, reached the logger in no run, as the design note's matrix found, and neither did the HTML span's
+// names, the style attribute or the cursor, which the sanitizer already removes; the DOM still held 24 of the 26 remote
+// values as written. Sub-tests 2, 3 and 5 red, the controls green. Each other sub-test's red is its own mutation, recorded
+// with the branch's other reds.
 // The second test is the witness of the data: rule (paint-refs.ts DATA_RASTER_TYPES and dataMediaType): in Firefox 153 a
 // paint attribute that names a data: SVG, XHTML or XML document with a fragment loads it as a resource document, and that
 // document's own @import fetches another host as the message renders. It drives Chromium always, and Firefox and WebKit
@@ -600,8 +601,11 @@ const CSS_FORMS = ['url("%U")', "url(%U)", 'url("%U#p")', 'image-set(url("%U") 1
   'url("%U") 30 round', 'square inside url("%U")', 'url("%U") 0px', 'url("%U") blur(2px)', '"a" url("%U")', 'url("%U") 10 / 10px',
   'red url("%U") no-repeat center / cover', 'url("%U") center / contain no-repeat', '-webkit-cross-fade(url("%U"), url("%U"), 50%)', 'image-set("%U" 1x)',
   'url("%U") format("woff2")'];
-/** Names the attribute derivation adds to its candidates by hand: the other engines' prefixed and newer url()-taking properties,
- *  so a Chromium that gains one is read for it even when its style object does not list it. */
+/** Names the attribute derivation adds to its candidates by hand, 25 of them: the url()-taking properties that URL_PROPERTIES's
+ *  derivation found in WebKit 26.5 (2026-09-23), less the eight paint names, which DOMPurify's svg list already carries. Chromium
+ *  151 knows 22 of them (not -webkit-backdrop-filter, mask-border or mask-border-source) and Firefox 153 knows 19, so the three
+ *  lift Chromium's candidates from 985 to 988, and a Chromium that gains one is read for it even when its style object does not
+ *  list it. */
 const EXTRA_NAMES = ["-webkit-mask-image", "-webkit-mask", "-webkit-clip-path", "-webkit-filter", "-webkit-shape-outside", "-webkit-backdrop-filter",
   "-webkit-border-image", "-webkit-mask-box-image", "-webkit-mask-box-image-source", "mask-border", "mask-border-source", "cursor", "marker", "content", "offset",
   "offset-path", "shape-outside", "list-style", "list-style-image", "border-image", "border-image-source", "background", "background-image", "backdrop-filter", "mask-image"];

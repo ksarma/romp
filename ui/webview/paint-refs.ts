@@ -15,13 +15,16 @@
 // property the engine exposes, with eighteen value templates that put a url() where a grammar can take one (a bare and a
 // quoted url, a paint with a fallback colour, a cursor list, an image-set, a filter list, the background, border-image,
 // mask and list-style shorthands among them); a property is in the set when any template is supported (Chromium 30,
-// Firefox 28, WebKit 33). URL_ATTRS: every property name the engine knows plus DOMPurify's html, svg, xml and MathML
-// attribute lists (988 candidate names in Chromium), each set as an attribute on an svg `<rect>` through innerHTML and its
-// computed style read back; a name is in the set when the computed value carries the url() (the same nine in all three
-// engines). Each set is the UNION over the three engines, so a name any one engine reads is judged in every engine.
-// `cursor` is carried although the sanitizer drops that attribute today: the set is what the engines read, not what the
-// sanitizer keeps, so a later widening of the allowlist is covered with no change here (paint-refs-census.test.ts holds
-// the sanitizer's surviving attributes to these sets).
+// Firefox 28, WebKit 33). URL_ATTRS: every property name the engine knows, DOMPurify's html, svg, xml and MathML attribute
+// lists (985 names in Chromium) and 25 names added by hand (988 candidate names in Chromium), each set as an attribute on
+// an svg `<rect>` through innerHTML and its computed style read back; a name is in the set when the computed value carries
+// the url() (the same nine in all three engines). The 25 are EXTRA_NAMES in chat-paint-refs-browser.test.ts: the
+// url()-taking properties the derivation above found in WebKit, less the eight paint names DOMPurify's svg list already
+// carries, three of which (-webkit-backdrop-filter, mask-border and mask-border-source) Chromium does not know. Each set is
+// the UNION over the three engines, so a name any one engine reads is judged in every engine. `cursor` is carried although
+// the sanitizer drops that attribute today: the set is what the engines read, not what the sanitizer keeps, so a later
+// widening of the allowlist is covered with no change here (paint-refs-census.test.ts holds the sanitizer's surviving
+// attributes to these sets).
 //
 // The rule, for every URL cssUrls reads out of a value (a url token or a quoted string, in whatever function):
 //   STAYS: a same-document reference, `#id` (decided before any parse, so it stays with no base too); a `data:` URL whose
