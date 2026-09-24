@@ -3827,12 +3827,13 @@ class TheCountersOneSite(unittest.TestCase):
         counter say, to a callee the clause does not list, as the doors' needle-keeping constant at an unlisted callable is of
         that class (among them exec bound to another name, functools.partial(exec, ...), code.InteractiveInterpreter(...).runsource,
         builtins.__dict__['exec']; a verifier of the contained-name clause planted each in the kernel or the judge, a real write
-        with this case green); a spelling in a kernel/*.py file whose text holds the name in no letter case (among them escape
-        sequences alone, and an identifier in fullwidth letters, which the parser folds to the name); and a write that reaches the
-        dict with no spelling of its name at all (among them a function in another kernel module that finds
-        the dict through sys.modules by its keys, a scan of globals().values() for a dict holding the counter's keys) are outside
-        this census, whose population is stated above and in the list's item on the counter census's population, and the last
-        outside any static census. So is a module in a file that glob does not match, whatever its text
+        with this case green); a spelling in a kernel/*.py file whose text holds the name in no letter case and which the case does
+        not refuse (among them escape sequences alone, and an identifier in fullwidth letters, which the parser folds to the name);
+        and a write that reaches the dict with no spelling of its name at all (among them a function in another kernel module that
+        finds the dict through sys.modules by its keys, a scan of globals().values() for a dict holding the counter's keys) are
+        outside this census, whose population is stated above and in the list's item on the counter census's population, and the
+        last, in a file the case does not refuse, outside any static census. So is a module in a file that glob does not match,
+        whatever its text
         spells: in cli/, postal/ or any other directory, in a subdirectory of kernel/, or in a file of kernel/ not named *.py, which
         load_source loads just as well (review round 9, extra5-1: the refuters' helper as cli/c7x.py and as kernel/c7sub/c7x.py,
         loaded by a load_source line in the kernel and called first in _nudge_fire_list, moved the counter on a direct call with the
@@ -3937,10 +3938,11 @@ class TheCountersOneSite(unittest.TestCase):
         transform _door_text does not undo, from constants none
         of which reads as it whole or carries it whole into a subscript key, a listed lookup or a dict read, a constant carrying the
         name whole to a callee the contained-name clause does not list (among them exec bound to another name, a partial of exec), and a spelling
-        in a kernel/*.py file whose text holds the name in no letter case (among them escape sequences alone, and an identifier in
-        fullwidth letters, which the parser folds to the name), each outside the counter census (the census's population: the item
-        below), and a write
-        that reaches the counter with no spelling of its name, outside any static census, all of them caught only by execution, on a
+        in a kernel/*.py file whose text holds the name in no letter case and which the case does not refuse (among them escape
+        sequences alone, and an identifier in fullwidth letters, which the parser folds to the name), each outside the counter census
+        (the census's population and its refusal: the item below), and a write
+        that reaches the counter with no spelling of its name, outside any static census, all of them, in a file the case does not
+        refuse, caught only by execution, on a
         road a case drives and asserts memos.nudgeWalk.loads on, so a write on a road no such case drives is caught by nothing, a driven
         road among them: the wake sweep's skip branch for a failed or moot record, reached on those rows of the case whose records the
         sweep does not own, which does not read the counter (the site case); the counter census's population, the files the glob
