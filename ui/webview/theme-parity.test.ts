@@ -371,5 +371,5 @@ test("the outbound dress PAINTED: every state from which a gesture opens the out
       if (best >= 3) fails.push(`${sheet}: at ${hex(g)} the dress's best state paints ${best.toFixed(3)}:1, past the stated bound, where it should fall under 3:1 (the bound #404040 and the light one #efefef are stated exact)`);
     }
   }
-  assert.deepEqual(fails, [], "every state a gesture opens the outbound tab from paints the dress at 3:1, the mark on its ring of var(--bg), and the VS Code bound is exact:\n" + fails.join("\n"));
+  assert.deepEqual(fails, [], "every state a gesture opens the outbound tab from paints the dress at 3:1, the mark on its ring of var(--bg), and the VS Code bound is exact (a property pin):\n" + fails.join("\n"));
 });

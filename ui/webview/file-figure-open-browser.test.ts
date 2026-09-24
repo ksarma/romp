@@ -1232,7 +1232,7 @@ test("in a browser: a remote picture under the floor (20 by 20, from the second 
       }
       await page.mouse.move(5, 5);
       await page.evaluate(() => document.body.classList.remove("theme-light"));
-      assert.deepEqual(fails, [], "every state a click or a key opens the tab from inside a dead link, the press held included, and the mark on hover on the grounds of a highlight, a table header, an even row and a callout, on a fine pointer, paint the dress at 3:1, and the ring on hover covers no neighbouring ink:\n" + fails.join("\n"));
+      assert.deepEqual(fails, [], "every state a click or a key opens the tab from inside a dead link, the press held included, and the mark on hover on the grounds of a highlight, a table header, an even row and a callout, on a fine pointer, paint the dress at 3:1, and the ring on hover covers no neighbouring ink (a property pin read off the page):\n" + fails.join("\n"));
       assert.deepEqual(errors, [], "no page errors");
       await page.close();
     });
@@ -1336,7 +1336,7 @@ test("in a browser, under CDP touch emulation (hover none, a coarse pointer) ena
       await pressedLegible(page, "deadcap", "light theme, a mouse press under touch emulation", fails, (m) => t.diagnostic(m));
       await page.evaluate(() => new Promise<void>((done) => { const c = document.querySelectorAll(".fileview-md img")[2].nextElementSibling as HTMLElement; c.addEventListener("transitionend", () => done(), { once: true }); setTimeout(done, 1500); document.body.classList.remove("theme-light"); }));
       await frames(page, 2);
-      assert.deepEqual(fails, [], "every state a tap or a press opens the tab from paints the dress at 3:1, the VS Code bound is exact, and the ring at rest covers no neighbouring ink:\n" + fails.join("\n"));
+      assert.deepEqual(fails, [], "every state a tap or a press opens the tab from paints the dress at 3:1, the VS Code bound is exact, and the ring at rest covers no neighbouring ink (a property pin read off the page):\n" + fails.join("\n"));
       // the web control at rest at full opacity (a local one keeps 0.8), read after the painted reads so their red comes first
       assert.equal(touch.imgs[2].controlOpacity, "1", "the web control visible at rest at full opacity");
       // the dead link's words, a residual the sheets' comment states and this its witness: the rule dims the anchor's colour, so the
@@ -2054,7 +2054,7 @@ async function foldCase(t: any, body: (page: any, figs: FoldFig[], cell: (what: 
       await page.close();
     });
   } finally { await second.close(); }
-  assert.deepEqual(fails, [], "every cell as the fold's click requires:\n" + fails.join("\n"));
+  assert.deepEqual(fails, [], "every cell as the fold's click requires (a property pin read off the page):\n" + fails.join("\n"));
 }
 /** The cells of one click that the fold must take alone: the hit on the picture and, for a Ctrl-click, its ctrlKey read back (both
  *  preconditions, asserted at once), then the fold's one toggle open, no window.open call and the viewer still on the report. */
