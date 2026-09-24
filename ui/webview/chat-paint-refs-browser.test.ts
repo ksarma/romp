@@ -32,8 +32,9 @@
 // The second test is the witness of the data: rule (paint-refs.ts DATA_RASTER_TYPES and dataMediaType): in Firefox 153 a
 // paint attribute that names a data: SVG, XHTML or XML document with a fragment loads it as a resource document, and that
 // document's own @import fetches another host as the message renders. It drives Chromium always, and Firefox and WebKit
-// when ROMP_BROWSER_ENGINES names them (a comma list; any other name fails the test, a named engine that does not launch
-// fails it too, and the log names the engines that ran). In each engine the chat page gets one user message (userMd: the
+// when ROMP_BROWSER_ENGINES names them (a comma list; any other name fails the test, once it names Firefox or WebKit any
+// engine that does not launch fails it too, Chromium included, and the log names the engines that ran). In each engine
+// the chat page gets one user message (userMd: the
 // five attributes fill, stroke, mask, filter and clip-path, each naming a data: SVG document with its fragment and an
 // @import of its own on the remote logger) and one reply (md(): the same five, the six other spellings Firefox loads the
 // same way, each on a fill (upper case, a charset parameter, base64, application/xhtml+xml, text/xml and application/xml),

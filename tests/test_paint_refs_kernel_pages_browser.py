@@ -52,8 +52,9 @@ same-document url(#g), the page's own mask (absolute on the notice, whose strip 
 a data: URL typed image/png whose body is an svg with an @import. The @imports name a second server of this class's own on
 http://localhost:Q, listening on 127.0.0.1 and ::1 at one port, which logs each request's path, Referer class and
 Sec-Fetch headers. The scene drives Chromium always, and Firefox and WebKit when ROMP_BROWSER_ENGINES names them (a comma
-list; any other name fails the test, and a named engine that does not launch is a failure, never a skip). CI's extension
-job installs Chromium alone and sets no such variable, so it runs the Chromium leg with nothing skipped; the Firefox and
+list; any other name fails the test, a named Firefox or WebKit that does not launch is a failure, never a skip, and a
+Chromium that does not launch is a skip, named or not). CI's extension job installs Chromium alone and sets no such
+variable, so it runs the Chromium leg with nothing skipped; the Firefox and
 WebKit figures are runs on a machine that has those engines, with the variable set. In each engine, after both cards
 rendered and the page's own mask was requested from the kernel (the positive control), each page sets the same documents,
 unsanitized, outside the card, and the driver waits (bounded) for the loads the engine makes of them (CONTROL_LOADS: all

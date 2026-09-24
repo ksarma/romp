@@ -66,8 +66,9 @@ connections. The drawing, consumer and control subtests are green there by desig
 consumers were never changed, and the control is the harness.
 
 Skips LOUDLY without the extension deps or Playwright's Chromium; the CI extension job installs Chromium and runs served
-files with ROMP_SERVED_TESTS_REQUIRE=1, which turns any skip into a failure there. An engine ROMP_BROWSER_ENGINES names that
-does not launch is a failure, never a skip. SYNTHETIC fixtures only (session web, the notes-api demo world, placeholder
+files with ROMP_SERVED_TESTS_REQUIRE=1, which turns any skip into a failure there. A Firefox or WebKit that
+ROMP_BROWSER_ENGINES names and that does not launch is a failure, never a skip. A Chromium that does not launch is the skip
+above, named or not. SYNTHETIC fixtures only (session web, the notes-api demo world, placeholder
 uuids, host gpu1)."""
 import base64
 import errno
