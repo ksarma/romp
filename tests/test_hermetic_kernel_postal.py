@@ -249,7 +249,6 @@ KERNEL_PATH = re.compile(r"(?:^|/)romp-kernel$")
 # dispatch.
 CLI_PATH = re.compile(r"(?:^|/)bin/romp$")
 KERNEL_VERBS = {"up"}
-PLACEHOLDER = re.compile(r"^%[sr]$|^\{\}$|^\{0\}$")   # a template, or its first word, that is nothing but its argument: "%s" % KERNEL
 # callables whose value is the path built from, or preserved from, their LAST positional argument, by the canonical
 # dotted name the callee resolves to (_SpawnScan._callee_names: `from os.path import join`, `import os.path as osp;
 # osp.join` and `j = os.path.join; j(...)` all resolve to os.path.join, `from pathlib import Path as P` to pathlib.Path)
@@ -322,8 +321,8 @@ class _SpawnScan:
     to either (`run = subprocess.run`); an unbound `subprocess` or `Popen`, a snippet's, is the library by its spelling.
     Its argv (the first positional or `args=`) holds the kernel's path when an ELEMENT evaluates to it, and so does its
     `executable=` when that is the path: a string, an f-string, a % or a .format template with a whole word whose text
-    ends in romp-kernel or that ends in a placeholder the path fills (_template_is_path; the tail and first-word reads
-    beside it; in a string the shell reads, the words the shell splits it into as well); a path joined onto it
+    ends in romp-kernel or that ends in a placeholder the path fills (_template_is_path; an f-string's tail read beside
+    it; in a string the shell reads, the words the shell splits it into as well); a path joined onto it
     (os.path.join, Path, /, either operand of +, any element of a str.join over a literal list, the callee of a
     path-building call resolved by binding too); a path-preserving wrapper (str, os.fspath, .resolve(), joinpath); any
     value of an `or` or a conditional, a walrus's value, the default of `.get(key, default)` or `os.getenv(key,
@@ -619,15 +618,12 @@ class _SpawnScan:
 
     def is_kernel_path(self, node, scope, seen=frozenset(), cli=False, shell=False):
         """Does `node`, read in `scope`, evaluate to the kernel script's path (with `cli`, to the CLI's)? A string, an
-        f-string, a % template or a .format template is read at every whole word (_template_is_path), beside the
-        tail and first-word reads below; with `shell` (a string the shell reads as a command: holds_kernel_path says
-        which), at the words the shell splits it into as well (_shell_words)."""
-        pattern = CLI_PATH if cli else KERNEL_PATH
+        f-string, a % template or a .format template is read at every whole word (_template_is_path), and an f-string
+        by its tail as well (below); with `shell` (a string the shell reads as a command: holds_kernel_path says which),
+        at the words the shell splits it into as well (_shell_words)."""
         pieces = _template_pieces(node)
         if pieces is not None and self._template_is_path(pieces, scope, seen, cli, shell):
             return True
-        if isinstance(node, ast.Constant):
-            return isinstance(node.value, str) and _text_is_path(node.value, pattern)
         read = lambda v, s, seen: self.is_kernel_path(v, s, seen, cli, shell)   # noqa: E731  the same question of a bound value
         if isinstance(node, ast.Name):
             return self._resolve(node, scope, seen, read)
@@ -637,20 +633,16 @@ class _SpawnScan:
             return self._resolve(node, scope, seen, read) or self._element(node, scope, seen | {("container", id(node))}, read)
         if isinstance(node, ast.Starred):
             return self.holds_kernel_path(node.value, scope, seen)
-        if isinstance(node, ast.JoinedStr):   # f"{BIN}/romp-kernel", f"{KERNEL}": the tail
+        if isinstance(node, ast.JoinedStr):   # the tail read: the last piece alone, which in a string the shell reads
+            # catches a launch whose whole text shlex cannot split while its last constant piece splits (row A50: bash's
+            # ANSI-C quote earlier in a bash -c program); f"{BIN}/romp-kernel" (A5) and f"{KERNEL}" are the whole-word read's
             last = node.values[-1] if node.values else None
             if isinstance(last, ast.FormattedValue):
                 return self.is_kernel_path(last.value, scope, seen, cli, shell)
             return last is not None and self.is_kernel_path(last, scope, seen, cli, shell)
         if isinstance(node, ast.BinOp):
-            if isinstance(node.op, ast.Mod):   # "%s/romp-kernel --serve" % BIN, "%s --serve" % KERNEL: the template's text or
-                if isinstance(node.left, ast.Constant) and isinstance(node.left.value, str):   # its first word decides
-                    if _text_is_path(node.left.value, pattern):
-                        return True
-                    if _head_is_placeholder(node.left.value):   # the argument is the program: the tuple's first, or the value
-                        first = node.right.elts[0] if isinstance(node.right, ast.Tuple) and node.right.elts else node.right
-                        return self.is_kernel_path(first, scope, seen, cli, shell)
-                return False
+            if isinstance(node.op, ast.Mod):   # a % template the whole-word read above did not take ("%s/romp-kernel --serve"
+                return False                   # % BIN, "%s --serve" % KERNEL and row B28 are its); never its right operand
             if isinstance(node.op, ast.Add):   # BIN + "/romp-kernel", KERNEL + " --serve": either operand
                 return self.is_kernel_path(node.right, scope, seen, cli, shell) or self.is_kernel_path(node.left, scope, seen, cli, shell)
             return self.is_kernel_path(node.right, scope, seen, cli, shell)   # BIN / "romp-kernel": the tail
@@ -700,10 +692,11 @@ class _SpawnScan:
 
     def _call_is_kernel_path(self, call, scope, seen, cli, shell=False):
         """A call's value is the path when its callee resolves by binding to a path-building function (PATH_FUNCTIONS)
-        whose last positional argument is the path, or is a path-preserving method (by the method's NAME) on the path,
-        or a template's .format. A bare-name callee the scan reads no function for (a helper defined in the module, a
-        parameter, a name bound to a call's value, an unbound name that is no builtin) is listed under the residual
-        with its kind; a builtin or an imported function other than the path builders is a consumer, and is not."""
+        whose last positional argument is the path, or is a path-preserving method (by the method's NAME) on the path;
+        a template's .format is the whole-word read's (is_kernel_path), and a .format call that read did not take is not
+        the path. A bare-name callee the scan reads no function for (a helper defined in the module, a parameter, a name
+        bound to a call's value, an unbound name that is no builtin) is listed under the residual with its kind; a
+        builtin or an imported function other than the path builders is a consumer, and is not."""
         f = call.func
         names = self._callee_names(f, scope)
         if names & PATH_FUNCTIONS:
@@ -717,18 +710,13 @@ class _SpawnScan:
         if names & ENV_DEFAULT_FUNCTIONS:   # os.getenv("ROMP_KERNEL", KERNEL): the default is a possible value
             default = call.args[1] if len(call.args) > 1 else next((k.value for k in call.keywords if k.arg == "default"), None)
             return default is not None and self.is_kernel_path(default, scope, seen, cli, shell)
-        if isinstance(f, ast.Attribute):   # a method on a value: template.format(...), path.resolve(), base.joinpath(...)
-            pattern = CLI_PATH if cli else KERNEL_PATH
+        if isinstance(f, ast.Attribute):   # a method on a value: path.resolve(), base.joinpath(...), os.environ.get(...)
             if f.attr == "get":   # os.environ.get("ROMP_KERNEL", KERNEL), the env-override idiom: the default is a possible value
                 default = call.args[1] if len(call.args) > 1 else next((k.value for k in call.keywords if k.arg == "default"), None)
                 return default is not None and self.is_kernel_path(default, scope, seen, cli, shell)
             if f.attr == "join" and len(call.args) == 1 and isinstance(call.args[0], (ast.List, ast.Tuple)):
                 return any(self.holds_kernel_path(e.value, scope, seen) if isinstance(e, ast.Starred)   # " ".join([...]): any element
                            else self.is_kernel_path(e, scope, seen, cli, shell) for e in call.args[0].elts)
-            if f.attr == "format":
-                return isinstance(f.value, ast.Constant) and isinstance(f.value.value, str) and (
-                    _text_is_path(f.value.value, pattern)
-                    or (_head_is_placeholder(f.value.value) and bool(call.args) and self.is_kernel_path(call.args[0], scope, seen, cli, shell)))
             if f.attr == "joinpath":
                 return bool(call.args) and self.is_kernel_path(call.args[-1], scope, seen, cli, shell)
             if f.attr in PATH_METHODS:
@@ -1090,13 +1078,6 @@ def _constant_slice(node):
     return None
 
 
-def _text_is_path(text, pattern):
-    """A string constant, or a template's text, IS the path when `pattern` matches it whole or matches its first word
-    (a shell command string's program: "bin/romp-kernel --serve", "%s/romp-kernel --serve")."""
-    words = text.split()
-    return bool(pattern.search(text) or (words and pattern.search(words[0])))
-
-
 def _template_pieces(node):
     """A string template as a list of pieces, each a str (the template's own text) or a placeholder, (the argument
     nodes that may fill it, whether they are every argument); None for a node that is no template. A str constant is
@@ -1263,13 +1244,6 @@ def _shell_first_arguments(words, i):
             continue
         break
     return out
-
-
-def _head_is_placeholder(text):
-    """A template that is nothing but its argument, whole ("%s" % KERNEL) or in its first word ("%s --serve" % KERNEL,
-    "{} --serve".format(KERNEL)): the argument is then the program, and is read for the path."""
-    words = text.split()
-    return bool(PLACEHOLDER.match(text) or (words and PLACEHOLDER.match(words[0])))
 
 
 def _call_args(call):
@@ -2540,6 +2514,9 @@ PLANT_TABLE = (
      'subprocess.Popen([shutil.which("bash"), "-c", "\'bin/romp-kernel\'"])'),
     ("A49 the path quoted as the whole program of a login shell's -lc (the flag in a cluster)", 'caught-by-argv', 1,
      'subprocess.Popen(["bash", "-lc", "\'bin/romp-kernel\'"])'),
+    ('A50 the path quoted in the last constant piece of a bash -c program in an f-string whose whole text shlex cannot '
+     'split (a bash ANSI-C quote before it): caught by the f-string tail read alone', 'caught-by-argv', 1,
+     'subprocess.run(["bash", "-c", f"echo $\'it\\\\\'s\' {N}; exec \'bin/romp-kernel\' --serve"])'),
     ('N1 a same-named local in another function (the comparison names it)', 'no-spawn', None,
      'def a():\n    k = os.path.join(BIN, "romp-kernel")\ndef b():\n    k = [sys.executable, "-m", "pytest"]\n    subprocess.run(k)'),
     ('N2 p beside -p', 'no-spawn', None,
