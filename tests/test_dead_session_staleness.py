@@ -1071,7 +1071,11 @@ class ReaderFollowsTheWriter(unittest.TestCase):
     dial releases once its answer has named F; the fold of the hub's declared-name row by our dial holds and the hub's
     next dial releases, while the fold by the hub's own dial under a new name releases; a far host with no bus id is
     released the same way (the verifier's green mutant N9); and residual (3d), a roster recorded after a newer one
-    from the same source, three faces each still rule 5.
+    from the same source, three faces each still rule 5. Since the forty-fifth commit (the reviewer's ruling of round
+    4 to keep the release by the same hub process's omission, and its verifier at the thirty-third commit, by
+    execution) the two faces that release causes, residual (3a)'s second face and residual (3d)'s face (1), each pin
+    the next word about the far host ending the race, and face (1) pins the release's three conditions beside its
+    answer.
     The control isolates the old path: with the bus's file removed and a line at STATE/remote-sids, the
     judge's read path until 2026-09-22, the reader answers cannot-determine, so the read MOVED to the
     bus's file rather than widening to both, and a reverted read fails this pin by its own message. The
@@ -2448,6 +2452,9 @@ out["roads"][road]["farRestartDial"] = dial(f, F, hub, HUB)
 dial(hub, HUB, us, US)                             # the same hub process's roster omits F
 out["roads"][road]["heldAfter"] = held_words(us, HUB)
 step(road, "sameHubOmitsF", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
+LISTINGS["f"] = [S["other"], S["new"]]             # the next word about F: its kernel answers, naming the new session
+dial(f, F, hub, HUB); dial(hub, HUB, us, US)       # F's answering exchange with the hub, then the hub's next exchange here
+step(road, "farAnswersHub", us, newOnFar=S["new"])
 road = "restartedHubNamesAnotherFarHost"           # G behind the same hub answers the restarted hub before F does
 us, f, hub, c = held_after_relay(road, HUB, "px-hub9")
 g = other(road, "g")
@@ -2545,10 +2552,15 @@ out["roads"][road]["park"] = park(f, S["new"], "px-hub13")
 out["roads"][road]["landingAtHub"] = mail_dial(f, F, hub, HUB)
 out["roads"][road]["landingHere"] = mail_dial(hub, HUB, us, US)  # the NEWER dial lands first: F's cached word and the mail
 step(road, "newerDialRecorded", us, newOnFar=S["new"], nobody=S["nobody"])
+# face (1)'s cause, the release's three conditions: the newer roster names F, its road, and the older dial's hub process
+out["roads"][road]["newerRecorded"] = [roster_via(us, HUB), us.PEER_STATE[HUB].get("road"),
+                                       bool(older.get("busId")) and us.PEER_STATE[HUB].get("busId") == older.get("busId")]
 with As(us):
     out["roads"][road]["olderDialStatus"] = us.peer_exchange_handle(older)[1]   # the older dial arrives last
 out["roads"][road]["heldAfter"] = held_words(us, HUB)
 step(road, "olderDialLanded", us, newOnFar=S["new"], nobody=S["nobody"])
+dial(hub, HUB, us, US)                             # the next word about F: the hub's next roster names F's cached word again
+step(road, "hubDialsAgain", us, newOnFar=S["new"])
 road = "olderAnsweredWordFoldedLate"               # the verifier's R2: the hub's older answer names F's ANSWERED word
 us, f, hub, c = far_behind_hub(road, HUB)
 out["roads"][road] = {}
@@ -3989,10 +4001,18 @@ print(json.dumps(out))
         and the new session's mail rode that exchange here; then F's bus restarts during its kernel's blink with its disk
         twin gone, so its next exchange with the SAME hub process serves an empty cache: presenceAnswered False and no
         session row. The hub's roster omits F, which this bus cannot tell from F's answer with an empty listing, the
-        release (the previous test), so the word is released, and the new session, live on F, answers rule 5 while the
-        hub and C vouch: a false rule 5 left open until F's answering exchange with the hub and the hub's next exchange
-        here (at the thirty-first commit the word stayed held, cannot-determine). The follow-up is the carrier fix; this
-        witness asserts the rule-5 answer, so it turns red when the carrier lands and the disclosure moves with it."""
+        release by the same hub process's omission
+        (test_a_far_hosts_empty_answer_through_the_same_hub_process_releases_its_held_word), so the word is released,
+        and the new session, live on F, answers rule 5 while the hub and C vouch: a false rule 5 left open until F's
+        answering exchange with the hub and the hub's next exchange here, which the last step drives (rule 4 then). The
+        release causes this face: at the thirty-first commit the word stayed held, cannot-determine. The reviewer ruled
+        to keep the release (round 4; the writer's docstring states the ruling under residual (3d)): holding the word
+        instead leaves every sid on this machine at cannot-determine in a common state, a far host whose word is held
+        answering its hub with an empty listing once its sessions all end, until the host has a session to name again
+        or our bus restarts (unless its own row speaks here); the release costs two narrow races, this face and residual
+        (3d)'s face (1). The closure is the carrier fix, each heard far host's answered bit carried independent of
+        session rows; this witness asserts the rule-5 answer, so it turns red when the carrier lands and the disclosure
+        moves with it."""
         S = ROAD_SIDS
         for shape, got in self.roads.items():
             with self.subTest(shape=shape):
@@ -4007,6 +4027,9 @@ print(json.dumps(out))
                                  "disclosure moves with it")
                 self.assertEqual(road["heldAfter"], [], "the same hub process omits F: the word is released")
                 self.assertEqual(road["sameHubOmitsF"]["rows"][R_VIA_F], [False, False, True, False, False, False, [S["other"]]])
+                self.assertEqual(self._road(got, "farBusRestartsNoTwin", "farAnswersHub", "newOnFar"), RULE_4,
+                                 "the next word about F ends the race: F answers the hub naming the session, and the hub's next "
+                                 "exchange here carries it")
 
     def test_a_restarted_hub_naming_another_far_host_first_releases_nothing(self):
         """Z1, the verifier's road at the thirty-first commit (a mutant that released a held word whenever the hub's
@@ -4137,12 +4160,25 @@ print(json.dumps(out))
         its host's blink whose mail rode the newer, cached roster here (the arm, cannot-determine), then the older roster
         recorded: (1) by the SAME road, two of the restarted hub's dials delivered in the other order (a hub that links
         this bus under two names dials it from two loops, and a request the hub gave up on can arrive after the next
-        one), the older omitting F: the release of F's held word (the road's condition holds), rule 5; (2) the verifier's
-        R2 at the thirty-second commit, the hub's older answer to our dial naming F's ANSWERED word folded after the
-        hub's dial naming F's cached word: F's word answered, rule 5; (3) the same for a peer's own row, B's older answer
-        to our dial folded after B's cached dial: rule 5. Faces (2) and (3) read rule 5 at the round's base as well.
-        Closing it needs the source's own order on its rosters, an exchange-field change outside this fix-tier PR; these
-        witnesses assert the rule-5 answer, so they turn red when it closes and the disclosure moves with it."""
+        one), the older omitting F: the release of F's held word by the same hub process's omission (the road and the
+        hub process match), rule 5; (2) the verifier's R2 at the thirty-second commit, the hub's older answer to our dial
+        naming F's ANSWERED word folded after the hub's dial naming F's cached word: F's word answered, rule 5; (3) the
+        same for a peer's own row, B's older answer to our dial folded after B's cached dial: rule 5. All three read
+        rule 5 at the round's base, where no arm existed (each already at the newer roster). The release by the same
+        hub process's omission (the thirty-second commit) CAUSES face (1) (the reviewer's verifier at the thirty-third
+        commit, by execution): at the thirty-first commit the word stayed held, cannot-determine once the older
+        dial landed, as it does under a writer without that release; this witness pins the release's three conditions
+        beside the answer (the newer roster, recorded by the hub's dial, named F's cached word, and the older dial is the
+        same hub process's) and the hub's next roster, which names F again and ends the race. The reviewer ruled to keep
+        the release (round 4; the writer's docstring states the ruling under residual (3d)): holding the word instead
+        leaves every sid on this machine at cannot-determine in a common state, a far host whose word is held answering
+        its hub with an empty listing once its sessions all end, until the host has a session to name again or our bus
+        restarts (unless its own row speaks here); the release costs two narrow races, face (1) and residual (3a)'s
+        second face. The source's own order on its rosters closes all three faces; the carrier fix, each heard far
+        host's answered bit carried independent of session rows, closes face (1) as well, since the release then keys
+        on the far host's own answered word, and a roster the hub built before it heard F says nothing about F. Both
+        are exchange-field changes outside this fix-tier PR; these witnesses assert the rule-5 answer, so they turn red
+        when a closure lands and the disclosure moves with it."""
         S = ROAD_SIDS
         for shape, got in self.roads.items():
             with self.subTest(shape=shape):
@@ -4153,8 +4189,16 @@ print(json.dumps(out))
                                  UNANSWERED(R_VIA_F + " (listing unanswered)"))
                 self.assertEqual((self._road(got, "hubDialsOutOfOrder", "olderDialLanded", "newOnFar"), same["heldAfter"]),
                                  (RULE_5, []),
-                                 "RESIDUAL (3d), face (1), HOLDS: the older dial's omission, by the road that named F, releases "
-                                 "the word; when this pin reds, the source's order has closed the residual")
+                                 "RESIDUAL (3d), face (1), HOLDS: the older dial's omission, by the road and the hub process that "
+                                 "named F, releases the word (the release by the same hub process's omission, which the reviewer "
+                                 "ruled to keep, causes this face); when this pin reds, a closure has landed, the source's own "
+                                 "order on its rosters or the carrier fix, and the disclosure moves with it")
+                self.assertEqual(same["newerRecorded"], [[[R_F, S["other"]]], "dial", True],
+                                 "FACE (1)'S CAUSE, the release's three conditions (_via_held): the newer roster, recorded by the "
+                                 "hub's dial, named F's cached word, and the older dial is the same hub process's")
+                self.assertEqual(self._road(got, "hubDialsOutOfOrder", "hubDialsAgain", "newOnFar"),
+                                 UNANSWERED(R_VIA_F + " (listing unanswered)"),
+                                 "the next word about F ends the race: the hub's next roster names F's cached word again")
                 word = got["roads"]["olderAnsweredWordFoldedLate"]
                 self.assertEqual(word["olderAnswerVia"], [[R_F, S["other"], True]], "the hub's older answer: F's answered word")
                 self.assertEqual(self._road(got, "olderAnsweredWordFoldedLate", "newerDialRecorded", "newOnFar"),
