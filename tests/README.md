@@ -125,13 +125,17 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   and read only by an update, a spread, an iteration or a membership test, `|=`,
   `os.putenv`, the dunder spellings `__setitem__` and `__ior__` on the mapping or
   unbound with the mapping as the first argument, through `os.environ` or
-  `os.environb` under any name `os` is imported as, `from os import environ`, a name
+  `os.environb` under any name `os` is imported as, `from os import environ` or
+  `from os import *`, a name
   a single assignment binds to either, or a parameter a call at import passes it to
   or that defaults to it, a subscript whose key a `for` over string literals binds),
   EQUALS the licensed set `LICENSED_MODULE_LEVEL_WRITES` there, an equality and never
   a floor, and every write meets its licence's condition. A name is read through its
-  first binding alone: bound again by anything, it is unreadable, and a write
-  through it fails the test naming the file and line. What stays outside the scan
+  first binding alone: bound again by any binding the module's code spells (a star
+  import counting as a binding of every name), it is unreadable, and a write
+  through it fails the test naming the file and line; a rebinding through the
+  module's namespace (`globals()`, `sys.modules`) is not seen, and is one of the
+  shapes listed outside the scan. What stays outside the scan
   is listed in one place, the comment above `_Module` in that module, each shape
   with a plant the scan is held to recording nothing for. The licences
   are per name and checkable, each with a condition on

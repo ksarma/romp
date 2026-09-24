@@ -184,28 +184,39 @@ def _literal_mapping_keys(node):
     return None if m is None else set(m)
 
 
+_TYPE_ALIAS = getattr(ast, "TypeAlias", None)     # the `type X = ...` statement, 3.12 on; None where it does not parse
+
+
 class _EnvNames:
     """What spells the process environment in a module, so a write is read whatever name it goes through (review round 2,
     2026-09-18; before it the scan read `os.environ[...]` and `os.environ.setdefault` alone, and a module-level
     `os.environ.update(...)` was invisible to it): `os.environ` under any name os is imported as, `environ` after
-    `from os import environ` (or its `as` name), and every name bound to it (`env = os.environ`); `os.environb`, the same
-    environment keyed by bytes, the same way (the third commit of 2026-09-22); a parameter a call at import passes the
+    `from os import environ` (or its `as` name) or after `from os import *` (since the verifier's finding on round 2 of
+    fork PR #894: os.__all__ carries environ and environb, and a write through the star-imported name passed silently),
+    and every name bound to it (`env = os.environ`); `os.environb`, the same environment keyed by bytes, the same way
+    (the third commit of 2026-09-22); a parameter a call at import passes the
     mapping to, or whose default is the mapping, when the resolver reads that call's callee (_environ_params; round 2
     of fork PR #894, the reviewer's ruling of round 1, where the parameter route was missed silently). Beside those, the
     names bound to a dict literal or to `dict(...)` of keywords, which an `update(NAME)` reads through the name
     (tests/test_update_banner_confirm_served.py updates its DEAD_PORTS that way at import).
     THE RULE (the reviewer's ruling of round 1 on fork PR #894, where the first binding was read as the only one and a
     later mutation or rebinding left the census recording writes that did not happen and missing ones that did): a
-    first binding is read and ANY later binding invalidates it. A name bound again by anything that binds (another
-    assignment, an augmented or annotated one, a walrus, an import, a def, a class, a for or with target, an except name,
-    a match capture, a `global` declaration in any def, a parameter of the function being read) is unreadable in every
-    table (`_rebound`), except that a for loop's own target keeps the loop's literals and a single-name assignment keeps
-    its dict literal (the first binding of each). A tracked dict is read ONLY through the allowed reads (_DICT_READS: an
-    environment update's mapping argument, a ** spread, a for or comprehension iterable, a membership test, the one
+    first binding is read and any later binding the module's own code spells invalidates it. A name bound again by a
+    binding form (another assignment, an augmented or annotated one, a walrus, an import, a def, a class, a for or with
+    target, an except name, a match capture, a `type` statement, a `global` declaration in any def, a parameter of the
+    function being read) is unreadable in every table (`_rebound`), except that a for loop's own target keeps the loop's
+    literals and a single-name assignment keeps its dict literal (the first binding of each); a star import at import
+    time (`from helper import *`) binds names no text of the module spells, so it makes EVERY name bound at import
+    unreadable in every table (the verifier's finding on round 2 of fork PR #894: a loop name or a dict a star import
+    rebound was read through its first binding). A tracked dict is read ONLY through the allowed reads (_DICT_READS:
+    an environment update's mapping argument, a ** spread, a for or comprehension iterable, a membership test, the one
     binding itself), which is what DEAD_PORTS does; any other reference to its name in any scope (a subscript store or
     delete, a mutating method, an augmented assignment, an alias, a use inside a def, a rebinding) makes it unreadable, so
     an update through it is loud (UnreadableEnvWrite naming the module and the line), since no list of mutations can
-    enumerate aliasing. Built from the code that runs at import (a class body's bindings among it, read as the module's:
+    enumerate aliasing. What the rule does not read: a binding or a mutation made through the module's namespace rather
+    than spelled by name (`globals()["k"] = v`, `vars()["D"][K] = v`, `sys.modules[__name__].D[K] = v`) or by another
+    module that imports this one back; the comment above _Module names it ([namespace-rebinding]) with its reason and
+    its plants. Built from the code that runs at import (a class body's bindings among it, read as the module's:
     the body runs at import, and a name bound in both scopes is bound twice); a function's own bindings are added when
     the function is walked (`within`), its parameters shadowing every table. `bindings` (since the fixup of 2026-09-22,
     the verifier's finding that five licences had no value condition) is every name bound at import, to its value
@@ -221,6 +232,7 @@ class _EnvNames:
         self.loop_literals = {}      # a name a `for` binds to each of a tuple or list of string literals, in turn
         self.bindings = {}           # a name bound at import -> its value node when that one binding is an assignment; else None
         self._scope, self._parent, self._dicts_checked = tree, None, False     # the dict check's scope (dict_items)
+        self._star = False           # a star import seen at import time (absorb): every name it could bind is unreadable
         if tree is not None:
             self.absorb([node for node, _nested in _import_time_nodes(tree.body)])
             for loop in _module_level_compounds(tree.body, (ast.For, ast.AsyncFor)):
@@ -232,6 +244,9 @@ class _EnvNames:
                 if isinstance(st, ast.Global):
                     for name in st.names:
                         self._rebound(name)          # a def that declares it global rebinds it when it runs
+            if self._star:
+                for name in set(self.bindings) | set(self.loop_literals) | set(self.dicts):
+                    self._rebound(name)              # a star import may bind any of them, so each is bound twice
 
     def _absorb_loop(self, n):
         """`for var in ("A", "B"): environ[var] = v` writes exactly A and B (conftest's service-env fixture, the guard
@@ -276,8 +291,15 @@ class _EnvNames:
                 elif isinstance(n, ast.ImportFrom):
                     if n.module == "os":
                         self.environ_names.update(a.asname or a.name for a in n.names if a.name in ("environ", "environb"))
+                        if any(a.name == "*" for a in n.names):
+                            self.environ_names.update(("environ", "environb"))     # os.__all__ carries both
                     for a in n.names:
-                        self._rebound(a.asname or a.name)
+                        if a.name == "*":
+                            self._star = True        # binds names no text here spells: every name, after the walk (__init__)
+                        else:
+                            self._rebound(a.asname or a.name)
+                elif _TYPE_ALIAS and isinstance(n, _TYPE_ALIAS):
+                    self._rebound(n.name.id)         # `type k = ...` (3.12) binds k
                 elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                     self._rebound(n.name)
                 elif isinstance(n, (ast.With, ast.AsyncWith)):
@@ -331,7 +353,10 @@ class _EnvNames:
 
     def _drop_dicts_referenced_outside_the_reads(self, scope):
         """Every tracked dict (a name bound once to a literal mapping) referenced anywhere under `scope` (the module's tree,
-        or a function), in any nested scope, other than by one of _DICT_READS becomes unreadable (None). One BFS walk:
+        or a function), in any nested scope, other than by one of _DICT_READS becomes unreadable (None). A reference is a
+        Name node or a string that binds the name (_names_bound_by_a_string); one through the module's namespace
+        (`globals()["D"]`, `sys.modules[__name__].D`) or from another module is not seen, and the comment above _Module
+        names that ([namespace-rebinding]). One BFS walk:
         ast.walk visits a parent before its children, so an allowed reference is recorded, by id(node) in a side table,
         before the name under it is reached."""
         tracked = {name for name, items in self.dicts.items() if items is not None}
@@ -442,10 +467,13 @@ class _Substitute(ast.NodeTransformer):
     """An expression with every name whose one binding at import is an assignment replaced by that value expression,
     recursively, rewritten over a FRESH tree parsed from the expression's text (_fresh), never over the parsed node or a
     copy of it; a name already under substitution (`seen`) is left as it is, so a self-referencing binding cannot loop.
-    THE RULE (_EnvNames): a first binding is read and any later binding of the name, of any form, invalidates it, so a
-    name rebound by a for or with target, an except name, a match capture, a def, a class or a `global` in a def stays a
-    name here (the reviewer's ruling of round 1 on fork PR #894: before it such a name resolved to its first assignment,
-    and a licence's value check passed a value the module never writes)."""
+    THE RULE (_EnvNames): a first binding is read and any later binding the module's code spells invalidates it, so a
+    name rebound by a for or with target, an except name, a match capture, a def, a class, a `type` statement or a
+    `global` in a def, or any name after a star import, stays a name here (the reviewer's ruling of round 1 on fork PR
+    #894: before it such a name resolved to its first assignment, and a licence's value check passed a value the module
+    never writes; the star import since the verifier's finding on round 2). A name rebound through the module's
+    namespace (`globals()["_ROOT"] = v`) is not seen, and still resolves to its first assignment: the comment above
+    _Module names it ([namespace-rebinding])."""
 
     def __init__(self, bindings, seen=frozenset()):
         self.bindings, self.seen = bindings, seen
@@ -548,7 +576,8 @@ def _env_write_records(node, names, where="<module>", environ_params=()):
 def _writes_in_scope(node, names, where):
     """_env_write_records over `node` with `names` already the scope's own (the resolver computes it once per callee)."""
     out = []
-    assigned = set()        # id() of every environment subscript an assignment names: read with its value, never again
+    assigned = set()        # id() of every environment subscript an assignment names: read with its value, never again;
+                            # and of a bare annotation's target, which writes nothing
 
     def write(key, shape, value, line):
         out.append(_Write(key, shape, value, line, _resolved(value, names)))
@@ -556,7 +585,11 @@ def _writes_in_scope(node, names, where):
     for n in ast.walk(node):
         if isinstance(n, (ast.Assign, ast.AnnAssign)):
             if isinstance(n, ast.AnnAssign) and n.value is None:
-                continue        # a bare annotation writes nothing
+                # a bare annotation writes nothing: `os.environ[K]: str` evaluates the mapping and the key and sets
+                # nothing, so its target is not read as a store below either (the verifier's finding on round 2 of fork
+                # PR #894: it was recorded as a write of shape "target", a write that does not happen)
+                assigned.add(id(n.target))
+                continue
             for t in _flat_targets(n.targets if isinstance(n, ast.Assign) else [n.target]):
                 if isinstance(t, ast.Subscript) and names.is_environ(t.value):
                     assigned.add(id(t))
@@ -801,7 +834,8 @@ def _import_time_defs(body):
 # consulted, so a private name reads as bound, the safe side; the dotted and star shapes since the third commit of
 # 2026-09-22) and through a helper that re-exports it (`from helper2 import floor` where helper2 imported it); a def
 # shadowed by a later import of its name, both read; a bare decorator (`@_arm` calls `_arm(fn)` at import) and a
-# decorator factory's call; a `metaclass=M` value (M's __new__, __call__ and __init__); a base named bare (not called:
+# decorator factory's call; a `metaclass=M` value (M's __prepare__, __new__, __call__ and __init__; __prepare__ since the
+# verifier's finding on round 2 of fork PR #894, where a write in it passed silently); a base named bare (not called:
 # its __init_subclass__ chain, which creating the subclass runs); recursively through the callee's own calls, the
 # mapping followed into a parameter the call passes it to or that defaults to it (_environ_params; passed into *args,
 # **kwargs or a spread, it is loud). A bare name anywhere else (a default, an if test, a with item, a for iterable, an
@@ -809,10 +843,9 @@ def _import_time_defs(body):
 # expression are followed. The whole callee is read, so a write or a call in a def or lambda nested in it counts
 # whether or not the callee calls it, and a module-level block's body is read whatever its test, an `if __name__ ==
 # "__main__":` body among them, which runs when the file runs as a script and not at import: both on the safe side. A
-# chain of calls is followed to _CALL_DEPTH_CAP (40) calls and raises past it, naming the chain; the deepest chain in the tree
-# at round 2 of fork PR #894 is 16 calls, from tests/test_thread_stop_census.py's __main__ block (`python -m
-# tests.test_hermetic_kernel_postal --deepest-chain` prints it). The census at that head finds two calls at import
-# that reach a write, both licensed: tests/test_intr_marks_memo.py and tests/test_merge_tx_sets_light.py call
+# chain of calls is followed to _CALL_DEPTH_CAP (40) calls and raises past it, naming the chain (the deepest chain in the
+# tree, and how it is derived, is under _CALL_DEPTH_CAP). The census at round 2 of fork PR #894 finds two calls at
+# import that reach a write, both licensed: tests/test_intr_marks_memo.py and tests/test_merge_tx_sets_light.py call
 # test_asm_checkpoint.kernel_module() at module level (`import test_asm_checkpoint as TA; km = TA.kernel_module()`) and
 # its body setdefaults ROMP_KERNEL_NO_OPEN to "1" (the verifier's own walker had counted the shape empty, so the
 # module-alias form is one a resolver misses easily); no other call, decorator, metaclass or base it follows reaches
@@ -829,6 +862,26 @@ def _import_time_defs(body):
 #   [instance-method] a method called on an instance (`Seam().arm()`).
 #   [helper-lambda] a lambda another module binds (`from helper import ARM; ARM()`); a lambda in the module's own
 #     import-time code is read where it stands, called or not.
+#   [lambda-parameter] the mapping reaching a lambda's parameter, by the parameter's default (`lambda env=os.environ:
+#     env.__setitem__(K, v)`) or by a call of the lambda itself (`(lambda env: env.update(K=v))(os.environ)`): a lambda is
+#     read where it stands with every parameter unreadable (_EnvNames.within), and the parameter route (_environ_params)
+#     is followed for a def or class a call resolves to, never for a lambda.
+#   [aliased-callee] a def or class called through anything but its own name, an import of it or a class's method: a
+#     module-level alias (`_g = _floor; _g()`, `_A = _Seam; _A()`), an expression (`[_floor][0]()`, `(_floor if x else
+#     None)()`), getattr (`getattr(module, "_floor")()`), functools.partial (`functools.partial(_floor)()`) or an
+#     attribute of the def (`_floor.__call__()`): _resolve reads a dotted name chain, and the value an alias is bound to
+#     is not followed.
+#   [callback] code under tests/ that a callee outside tests/ runs: a def passed as an argument (`map(_w, xs)`,
+#     `sorted(xs, key=_w)`, `threading.Thread(target=_w)`; a bare name passed is a reference, not a call, the reviewer's
+#     ruling of round 1 on fork PR #894) and an async def's coroutine run by it (`asyncio.run(_f())`; a call of an async
+#     def runs nothing of its body, so _import_time_defs leaves async defs out).
+#   [protocol-hook] a special method Python runs without a call the scan sees: a context manager's __enter__ (`with
+#     _C():`), a descriptor's __set_name__ (`x = _D()` in a class body) and __get__ (`_K.x`, a property's getter among
+#     them), a class's __class_getitem__ (`_B[int]`, and a base spelled that way, whose __init_subclass__ is not read
+#     either), an instance's __mro_entries__ (`class K(_E())`), an iteration's __iter__ (`for x in _It()`), an operator
+#     (`_C() + 1`), a truth test (`if _C():`), a format (`f"{_C()}"`) and a finalizer (`_C()`, collected at once). An
+#     instantiation reads __new__ and __init__, a metaclass its __prepare__, __new__, __call__ and __init__, a base named
+#     bare its __init_subclass__, and no other special method is read.
 #   [call-result] a callee or a base bound to a call's result (`arm = make(); arm()`, `class K(make_base())`,
 #     `under_conftest = unittest.skipUnless(...)`): the call itself is followed, not what it returns.
 #   [exec-eval] `exec` or `eval` of a string.
@@ -837,11 +890,20 @@ def _import_time_defs(body):
 #   [inherited-method] a method a class inherits from a base of another module (`class K(helper.Base)`, then `K()` runs
 #     helper.Base.__init__); _method_chain follows bases of the same module only.
 #   [held-otherwise] the mapping held by anything but a name the scan binds (`os.environ` under any name os is imported
-#     as, `from os import environ` or its `as` name, a name a single-target assignment binds to either mapping, and a
-#     parameter the call being followed binds to it): an attribute (`ns.env = os.environ`), a container item, a name
-#     bound by unpacking, a walrus, or a for or with target, a name another module binds to it (`from helper import
-#     ENV`), the mapping fetched by getattr (`getattr(os, "environ")`) or through sys.modules.
-#   [from-os-putenv] `from os import putenv`, then `putenv(K, v)`.
+#     as, `from os import environ` or its `as` name, `environ` after `from os import *`, a name a single-target
+#     assignment binds to either mapping, and a parameter the call being followed binds to it): an attribute (`ns.env =
+#     os.environ`), a container item, a name bound by unpacking, a walrus, or a for or with target, a name another module
+#     binds to it (`from helper import ENV`, or through `from helper import *`), the mapping fetched by getattr
+#     (`getattr(os, "environ")`) or through sys.modules.
+#   [from-os-putenv] `from os import putenv` or `from os import *`, then `putenv(K, v)`.
+#   [namespace-rebinding] a name rebound, or a tracked dict mutated, through the module's namespace rather than by a
+#     binding or a reference the module spells (`globals()["k"] = v`, `globals()["D"][K] = v`, `vars()["D"][K] = v`,
+#     `sys.modules[__name__].D[K] = v`), or by a module it imports that reaches back into it through sys.modules: the
+#     name reads through its first binding (THE RULE in _EnvNames), so a write through it is recorded under the first
+#     binding's key and a licence's value check reads the first binding's value. Not read as rebinding every name
+#     wherever such a reference appears: many of the tree's writer modules reference globals(), vars(), sys.modules or a
+#     __dict__ for other ends, and each value they write through a name would go unreadable and fault its licence (five
+#     licensed writes in four modules, measured at the fix of the verifier's findings on round 2 of fork PR #894).
 #   [bound-method] a bound method of the mapping held in a name or fetched by getattr (`_set = os.environ.__setitem__;
 #     _set(K, v)`, `getattr(os.environ, "update")(K=v)`), or a functools.partial of one.
 #   [posix-putenv] `posix.putenv(K, v)`.
@@ -935,12 +997,13 @@ def _every_statement(body):
 
 def _call_roles(tree):
     """{id(node): role} for every bare name or attribute (no parentheses) that Python CALLS where it stands, anywhere in
-    `tree`: a decorator ("decorator": `@_arm` calls `_arm(fn)`), a class's `metaclass=` value ("metaclass": M is called
-    to create the class, which runs M.__new__ and M.__init__; M.__call__ is read beside them, the safe side) and a class's
-    base ("base": NOT a call; creating the subclass runs the base's __init_subclass__). Any other bare name, in a base
-    expression's arguments, a default, an if test, a with item, a for iterable or an except type, is a reference and not
-    a call (the reviewer's ruling of round 1 on fork PR #894: the resolver read every bare name handed in as a call, so a
-    base's __init__ counted as the class statement's write and a def named in a default was reported as called)."""
+    `tree`: a decorator ("decorator": `@_arm` calls `_arm(fn)`), a class's `metaclass=` value ("metaclass": creating the
+    class runs M.__prepare__, then calls M, which runs M.__new__ and M.__init__; M.__call__ is read beside them, the safe
+    side) and a class's base ("base": NOT a call; creating the subclass runs the base's __init_subclass__). Any other
+    bare name, in a base expression's arguments, a default, an if test, a with item, a for iterable or an except type, is
+    a reference and not a call (the reviewer's ruling of round 1 on fork PR #894: the resolver read every bare name
+    handed in as a call, so a base's __init__ counted as the class statement's write and a def named in a default was
+    reported as called)."""
     roles = {}
     for n in _every_statement(tree.body):
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -984,17 +1047,21 @@ def _dotted(node):
 
 
 _ROLE_METHODS = {"call": ("__new__", "__init__"), "decorator": ("__new__", "__init__"),
-                 "metaclass": ("__new__", "__call__", "__init__"), "base": ("__init_subclass__",)}
+                 "metaclass": ("__prepare__", "__new__", "__call__", "__init__"), "base": ("__init_subclass__",)}
 #   the methods of a CLASS that run when a name resolved to it is called (an instantiation, or a class used as a
 #   decorator), used as a metaclass, or subclassed; a DEF runs itself when called, as a decorator or as a metaclass,
 #   and nothing when named as a base
 
 _CALL_DEPTH_CAP = 40
 #   the longest chain of calls the resolver follows from one call at import; a chain longer than it raises
-#   (_CallChainAtTheCap), naming the chain, and a cycle is cut by the per-chain seen set before it. The deepest chain the
-#   census follows over tests/ at round 2 of fork PR #894 is 16 calls (`--deepest-chain` derives it, _deepest_call_chain);
-#   the cap was six until then, a silent cut (the reviewer's ruling of round 1: 33 callees in the tree sat past it, none
-#   reaching a write), and a cap of 40 derives the same census
+#   (_CallChainAtTheCap), naming the chain, and a cycle is cut by the per-chain seen set before it. The cap was six until
+#   round 2 of fork PR #894, a silent cut (the reviewer's ruling of round 1: 33 callees in the tree sat past it, none
+#   reaching a write), and a cap of 40 derives the same census. THE FIGURE, stated here and nowhere else in the tree: the
+#   deepest chain the census follows over tests/ was 16 calls, from tests/test_thread_stop_census.py's __main__ block,
+#   derived at the fix of the verifier's findings on round 2 of fork PR #894 on 3.10 and 3.12, with the memo and with a
+#   memo that stores nothing (`python -m tests.test_hermetic_kernel_postal --deepest-chain` prints it, from
+#   _deepest_call_chain). It is not pinned: it moves with the tree, as the census counts do. What holds the cap above
+#   every chain in the tree is the census pin itself, which a chain at the cap turns red by raising.
 
 
 class _CallChainAtTheCap(UnreadableEnvWrite):
@@ -1131,14 +1198,19 @@ def _reached_writes(node, mod, seen=frozenset(), depth=0, names=None, scope=None
 
 
 def _reach(node, mod, seen, depth, names, scope, origin, chain, memo):
-    """(records, height, cuts) for _reached_writes: `height` is the longest chain of callees read under `node`, and
-    `cuts` the keys in `seen` (the callees above) a cycle was cut at under it. A callee's reading is memoized by
-    (id of its def, the parameters bound to the mapping) when nothing under it was cut against a callee above it, and
-    reused only where the stored height still fits under the cap from the depth it is reached at, so the memo changes
-    neither what is read nor where the cap raises (the census table and its records are byte-identical with and without
-    it at round 2 of fork PR #894; the cap and cycle pin plants both halves of the condition)."""
+    """(records, height, cuts, visited) for _reached_writes: `height` is the longest chain of callees read under `node`,
+    `cuts` the keys in `seen` (the callees above) a cycle was cut at under it, and `visited` the keys of every callee read
+    under it. A callee's reading is memoized by (id of its def, the parameters bound to the mapping), with the height and
+    the callees it read, when nothing under it was cut against a callee above it; it is reused only where none of the
+    callees it read is above it now (a fresh reading would cut the cycle there: the verifier's finding on round 2 of fork
+    PR #894, where `_a -> _b -> _c -> _a`, read first from `_b`, was reused under `_a` and recorded `_a`'s write a second
+    time through the chain back to `_a`) and where the stored height still fits under the cap from the depth it is
+    reached at. Under those three conditions a fresh reading makes every seen-set check the same way, so the memo
+    changes neither what is read nor where the cap raises. The cap and cycle pin plants each condition and compares the
+    records with a reading whose memo stores nothing; over the whole tree the two were byte-identical when measured at
+    the fix of the verifier's findings on round 2 of fork PR #894 (not pinned: a whole-tree reading costs a census)."""
     names = mod.names if names is None else names
-    out, height, cuts = [], 0, set()
+    out, height, cuts, visited = [], 0, set(), set()
     for n in ast.walk(node):
         if isinstance(n, ast.Call):
             role, parts = "call", _dotted(n.func)
@@ -1162,26 +1234,28 @@ def _reach(node, mod, seen, depth, names, scope, origin, chain, memo):
             try:
                 params = _environ_params(fn, n if role == "call" else None, bound, names, target, mod.where)
                 hit = memo.get((id(fn), params))
-                if hit is not None and depth + hit[1] < _CALL_DEPTH_CAP:
-                    inner, sub_height = hit
+                if hit is not None and depth + hit[1] < _CALL_DEPTH_CAP and hit[2].isdisjoint(seen):
+                    inner, sub_height, sub_visited = hit
                 else:
                     inner_names = target.names.within(fn, params)
-                    sub, sub_height, sub_cuts = _reach(fn, target, seen | {key}, depth + 1, inner_names, None, start,
-                                                       chain + (label,), memo)
+                    sub, sub_height, sub_cuts, sub_visited = _reach(fn, target, seen | {key}, depth + 1, inner_names, None,
+                                                                    start, chain + (label,), memo)
                     inner = _writes_in_scope(fn, inner_names, target.where) + sub
                     sub_cuts.discard(key)
                     if not sub_cuts:
-                        memo[(id(fn), params)] = (inner, sub_height)
+                        memo[(id(fn), params)] = (inner, sub_height, frozenset(sub_visited))
                     cuts |= sub_cuts
             except _CallChainAtTheCap:
                 raise
             except UnreadableEnvWrite as e:
                 raise UnreadableEnvWrite("%s; reached at import from %s:%d through %s" % (e, mod.where, n.lineno, label)) from None
             height = max(height, sub_height + 1)
+            visited.add(key)
+            visited |= sub_visited
             for w in inner:
                 via = ("%s -> %s" % (label, w.via)) if w.via else ("%s, the write at line %d" % (label, w.line))
                 out.append(w._replace(line=n.lineno, via=via))
-    return out, height, cuts
+    return out, height, cuts, visited
 
 
 def _module_level_env_write_records(tree, where="<module>", root=None):
@@ -1260,9 +1334,65 @@ _OUTSIDE_THE_SCAN = {
                        _outside_plant("import os\nfor env in (os.environ,):\n    env['{key}'] = '1'\n"),
                        _outside_plant("import contextlib, os\nwith contextlib.nullcontext(os.environ) as env:\n    env['{key}'] = '1'\n"),
                        _outside_plant("from h_env import ENV\nENV['{key}'] = '1'\n", {"h_env.py": "import os\nENV = os.environ\n"}),
+                       _outside_plant("from h_env_star import *\nENV['{key}'] = '1'\n", {"h_env_star.py": "import os\nENV = os.environ\n"}),
                        _outside_plant("import os\ngetattr(os, 'environ')['{key}'] = '1'\n"),
                        _outside_plant("import sys\nsys.modules['os'].environ['{key}'] = '1'\n")],
-    "from-os-putenv": [_outside_plant("from os import putenv\nputenv('{key}', '1')\n")],
+    "from-os-putenv": [_outside_plant("from os import putenv\nputenv('{key}', '1')\n"),
+                       _outside_plant("from os import *\nputenv('{key}', '1')\n")],
+    # the verifier's findings on round 2 of fork PR #894: shapes missed silently with none of them named here
+    "lambda-parameter": [_outside_plant("import os\n_arm = lambda env=os.environ: env.__setitem__('{key}', '1')\n_arm()\n"),
+                         _outside_plant("import os\n(lambda env: env.update({key}='1'))(os.environ)\n")],
+    "aliased-callee": [_outside_plant("import os\ndef _floor():\n    os.environ['{key}'] = '1'\n_g = _floor\n_g()\n"),
+                       _outside_plant("import os\nclass _Seam:\n    def __init__(self):\n        os.environ['{key}'] = '1'\n"
+                                      "_A = _Seam\n_A()\n"),
+                       _outside_plant("import os\ndef _floor():\n    os.environ['{key}'] = '1'\n[_floor][0]()\n"),
+                       _outside_plant("import os\ndef _floor():\n    os.environ['{key}'] = '1'\n(_floor if True else None)()\n"),
+                       _outside_plant("import os, sys\ndef _floor():\n    os.environ['{key}'] = '1'\n"
+                                      "getattr(sys.modules[__name__], '_floor')()\n"),
+                       _outside_plant("import functools, os\ndef _floor():\n    os.environ['{key}'] = '1'\n"
+                                      "functools.partial(_floor)()\n"),
+                       _outside_plant("import os\ndef _floor():\n    os.environ['{key}'] = '1'\n_floor.__call__()\n")],
+    "callback": [_outside_plant("import os\ndef _w(x):\n    os.environ['{key}'] = '1'\nlist(map(_w, [1]))\n"),
+                 _outside_plant("import os\ndef _w(x):\n    os.environ['{key}'] = '1'\n    return x\nsorted([1, 2], key=_w)\n"),
+                 _outside_plant("import os, threading\ndef _w():\n    os.environ['{key}'] = '1'\n"
+                                "_t = threading.Thread(target=_w)\n_t.start()\n_t.join()\n"),
+                 _outside_plant("import asyncio, os\nasync def _f():\n    os.environ['{key}'] = '1'\nasyncio.run(_f())\n")],
+    "protocol-hook": [_outside_plant("import os\nclass _C:\n    def __enter__(self):\n        os.environ['{key}'] = '1'\n"
+                                     "    def __exit__(self, *a):\n        pass\nwith _C():\n    pass\n"),
+                      _outside_plant("import os\nclass _D:\n    def __set_name__(self, owner, name):\n"
+                                     "        os.environ['{key}'] = '1'\nclass _K:\n    x = _D()\n"),
+                      _outside_plant("import os\nclass _D:\n    def __get__(self, obj, owner):\n        os.environ['{key}'] = '1'\n"
+                                     "class _K:\n    x = _D()\n_K.x\n"),
+                      _outside_plant("import os\nclass _S:\n    @property\n    def p(self):\n        os.environ['{key}'] = '1'\n"
+                                     "_S().p\n"),
+                      _outside_plant("import os\nclass _B:\n    def __class_getitem__(cls, x):\n        os.environ['{key}'] = '1'\n"
+                                     "        return cls\n_A = _B[int]\n"),
+                      _outside_plant("import os\nclass _B:\n    def __class_getitem__(cls, x):\n        return cls\n"
+                                     "    def __init_subclass__(cls, **kw):\n        os.environ['{key}'] = '1'\n"
+                                     "class _K(_B[int]):\n    pass\n"),
+                      _outside_plant("import os\nclass _B:\n    def __init_subclass__(cls, **kw):\n        os.environ['{key}'] = '1'\n"
+                                     "class _E:\n    def __mro_entries__(self, bases):\n        return (_B,)\n"
+                                     "class _K(_E()):\n    pass\n"),
+                      _outside_plant("import os\nclass _It:\n    def __iter__(self):\n        os.environ['{key}'] = '1'\n"
+                                     "        return iter(())\nfor _x in _It():\n    pass\n"),
+                      _outside_plant("import os\nclass _C:\n    def __add__(self, other):\n        os.environ['{key}'] = '1'\n"
+                                     "        return 0\n_s = _C() + 1\n"),
+                      _outside_plant("import os\nclass _C:\n    def __bool__(self):\n        os.environ['{key}'] = '1'\n"
+                                     "        return True\nif _C():\n    pass\n"),
+                      _outside_plant("import os\nclass _C:\n    def __format__(self, spec):\n        os.environ['{key}'] = '1'\n"
+                                     "        return ''\n_t = f'{_C()}'\n"),
+                      _outside_plant("import os\nclass _C:\n    def __del__(self):\n        os.environ['{key}'] = '1'\n_C()\n")],
+    "namespace-rebinding": [_outside_plant("import os\nfor k in ('ROMP_PLANTED_DECOY',):\n    pass\nglobals()['k'] = '{key}'\n"
+                                           "os.environ[k] = '1'\n"),
+                            _outside_plant("import os\nD = {'ROMP_PLANTED_DECOY': '1'}\nglobals()['D']['{key}'] = '1'\n"
+                                           "os.environ.update(D)\n"),
+                            _outside_plant("import os\nD = {'ROMP_PLANTED_DECOY': '1'}\nvars()['D']['{key}'] = '1'\n"
+                                           "os.environ.update(D)\n"),
+                            _outside_plant("import os, sys\nD = {'ROMP_PLANTED_DECOY': '1'}\nsys.modules[__name__].D['{key}'] = '1'\n"
+                                           "os.environ.update(D)\n"),
+                            _outside_plant("import os\nD = {'ROMP_PLANTED_DECOY': '1'}\nimport h_back\nos.environ.update(D)\n",
+                                           {"h_back.py": "import sys\nfor _n, _m in list(sys.modules.items()):\n"
+                                                         "    if _n.startswith('planted_'):\n        _m.D['{key}'] = '1'\n"})],
     "bound-method": [_outside_plant("import os\n_set = os.environ.__setitem__\n_set('{key}', '1')\n"),
                      _outside_plant("import os\ngetattr(os.environ, 'update')({key}='1')\n"),
                      _outside_plant("import functools, os\nfunctools.partial(os.environ.__setitem__, '{key}')('1')\n")],
@@ -1496,7 +1626,8 @@ def _shown_value(rec):
     if rec.resolved != rec.value:
         return "%s (that is, %s)" % (rec.value, rec.resolved)
     if re.fullmatch(r"[A-Za-z_]\w*", rec.value):
-        return "%s (a name the scan cannot read through: bound more than once at import, or not by an assignment)" % rec.value
+        return ("%s (a name the scan cannot read through: bound more than once at import, a star import counting as a "
+                "binding of every name, or not by an assignment)" % rec.value)
     return rec.value
 
 
@@ -2643,9 +2774,12 @@ class HermeticKernelPostal(unittest.TestCase):
         positional dir), which the regex before the third commit of 2026-09-22 accepted; a name bound once to a mkdtemp
         and rebound at import by a for target (in a block or a class body too), a with target, an except name, a def, a
         class, a match capture or a `global` in a def the module calls, each passing the licence at the round-1 head
-        (round 2 of fork PR #894); an augmented write of the browser switch, and a starred putenv (a SyntaxError naming no
-        module at the round-1 head); a licence whose re-assert conftest dropped; and a dead licence. The floor modules are never faulted, whatever they write; a licensed write
-        is clean, every mkdtemp form the census shows among them."""
+        (round 2 of fork PR #894), and by a star import or a `type` statement (3.12 on), each passing the licence at
+        round 2's eleventh commit (the verifier's findings on it); an augmented write of the browser switch, and a starred
+        putenv (a SyntaxError naming no module at the round-1 head); a licence whose re-assert conftest dropped; and a
+        dead licence. The floor modules are never faulted, whatever they write; a licensed write is clean, every mkdtemp
+        form the census shows among them, and so is a bare annotation of a leak name, which writes nothing (a new-name
+        fault at the eleventh commit)."""
         def records_of(src, rel):
             out = collections.defaultdict(list)
             for name, rec in _module_level_records(ast.parse(src), rel):
@@ -2728,6 +2862,9 @@ class HermeticKernelPostal(unittest.TestCase):
                              ('_ROOT = tempfile.mkdtemp()\nmatch {"k": 1}:\n    case {**_ROOT}:\n        pass\nos.environ["XDG_STATE_HOME"] = _ROOT', "bound more than once at import"),
                              ('_ROOT = tempfile.mkdtemp()\nclass _K:\n    for _ROOT in ("/srv/real-state",):\n        pass\nos.environ["XDG_STATE_HOME"] = _ROOT', "bound more than once at import"),
                              ('_ROOT = tempfile.mkdtemp()\ndef _real():\n    global _ROOT\n    _ROOT = "/srv/real-state"\n_real()\nos.environ["XDG_STATE_HOME"] = _ROOT', "bound more than once at import"),
+                             # the verifier's findings on round 2 of fork PR #894: a star import binds names no text spells
+                             ('_ROOT = tempfile.mkdtemp()\nfrom h_star import *\nos.environ["XDG_STATE_HOME"] = _ROOT',
+                              "a star import counting as a binding of every name"),
                              # an augmented write has no value to meet a licence with; a starred value is read, not a crash
                              ('os.environ["ROMP_KERNEL_NO_OPEN"] += "1"', "licensed for the value '1' alone, not a shape with no value"),
                              ('rest = ("0",)\nos.putenv("ROMP_X", *rest)', "by test_planted.py:3 (putenv) and is not in the licensed set")):
@@ -2753,8 +2890,14 @@ class HermeticKernelPostal(unittest.TestCase):
                      '_ROOT = tempfile.mkdtemp(prefix="romp-envnames-")\nos.environ["ROMP_SERVICE_ENV_FILE"] = _ROOT + "/absent.env"',
                      'os.environ["ROMP_STATE_DIR"] = os.path.join(tempfile.mkdtemp(prefix="romp-tests-state-"), "romp")',
                      'class _K:\n    os.environ["ROMP_KERNEL_NO_OPEN"] = "1"',
-                     'def _floor():\n    os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")\n_floor()'):
+                     'def _floor():\n    os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")\n_floor()',
+                     'os.environ["ROMP_POSTAL_PEERS"]: str'):          # a bare annotation writes nothing
             self.assertEqual(full("import os, tempfile\n" + line + "\n", "test_planted.py"), [], line)
+        if _TYPE_ALIAS is not None:     # `type X = ...` parses from 3.12 on
+            faults = full('import os, tempfile\n_ROOT = tempfile.mkdtemp()\ntype _ROOT = str\nos.environ["XDG_STATE_HOME"] = _ROOT\n',
+                          "test_planted.py")
+            self.assertEqual(len(faults), 1, faults)
+            self.assertIn("bound more than once at import", faults[0])
         # the floor modules are licensed wholesale
         self.assertEqual(full('import os\nos.environ["ROMP_ANYTHING"] = "1"\n', "conftest.py"), [])
         # a re-asserted licence stands only while conftest re-asserts the name
@@ -2861,7 +3004,10 @@ class HermeticKernelPostal(unittest.TestCase):
         test_an_augmented_write_and_a_key_bound_as_a_target_are_read_with_no_value), and a dict or loop name misread
         through its first binding at the round-1 head is loud (the rule in
         test_a_tracked_dict_is_read_only_through_the_allowed_reads_and_any_other_reference_is_loud and
-        test_a_name_is_read_through_its_first_binding_alone_and_a_later_binding_or_a_parameter_makes_it_loud)."""
+        test_a_name_is_read_through_its_first_binding_alone_and_a_later_binding_or_a_parameter_makes_it_loud). Since the
+        verifier's findings on round 2: `environ` after `from os import *` is the mapping (os.__all__ carries it; missed
+        silently at round 2's eleventh commit), and a bare annotation of a key (`os.environ[K]: str`), which evaluates the
+        mapping and the key and sets nothing, is no write (recorded as a write of shape "target" at that commit)."""
         for shape in ('os.environ["ROMP_POSTAL_PEERS"] = "0"',
                       'if True:\n    os.environ["ROMP_POSTAL_PEERS"] = "0"',
                       'os.environ.setdefault("ROMP_POSTAL_PEERS", "0")',
@@ -2914,7 +3060,10 @@ class HermeticKernelPostal(unittest.TestCase):
                       'env = os.environ\nfor env["ROMP_POSTAL_PEERS"] in ["0"]:\n    pass',
                       'for os.environb[b"ROMP_POSTAL_PEERS"] in [b"0"]:\n    pass',
                       'class _Planted:\n    for os.environ["ROMP_POSTAL_PEERS"] in ["0"]:\n        pass',
-                      'def _floor():\n    for os.environ["ROMP_POSTAL_PEERS"] in ["0"]:\n        pass\n_floor()'):
+                      'def _floor():\n    for os.environ["ROMP_POSTAL_PEERS"] in ["0"]:\n        pass\n_floor()',
+                      # the verifier's findings on round 2 of fork PR #894: the name a star import of os binds
+                      'from os import *\nenviron["ROMP_POSTAL_PEERS"] = "0"',
+                      'from os import *\nenvironb.update({b"ROMP_POSTAL_PEERS": b"0"})'):
             self.assertIn("ROMP_POSTAL_PEERS", _module_level_env_writes(ast.parse("import os\n" + shape + "\n"), "planted.py"), shape)
         dunder = _module_level_env_write_records(ast.parse('import os\nos.environ.__setitem__("ROMP_POSTAL_PEERS", "0")\nos.environ.__ior__({"ROMP_X": "1"})\n'), "planted.py")
         self.assertEqual([(w.key, w.shape, ast.unparse(w.value)) for w, _n in dunder], [("ROMP_POSTAL_PEERS", "__setitem__", "'0'"), ("ROMP_X", "__ior__", "'1'")],
@@ -2925,7 +3074,10 @@ class HermeticKernelPostal(unittest.TestCase):
                       'class _Seam:\n    def setUp(self):\n        os.environ["ROMP_POSTAL_PEERS"] = "0"',            # a method never called at import
                       'class _Seam:\n    def arm(self):\n        os.environ["ROMP_POSTAL_PEERS"] = "0"\n_Seam().arm()',   # a method on an instance: outside the scan, named
                       'saved = {}\nsaved.update(os.environ, ROMP_POSTAL_PEERS="0")',                                 # a write to `saved`; the environment is read
-                      'saved = {}\nsaved.setdefault(os.environ, "0")'):                                           # not the environment's setdefault
+                      'saved = {}\nsaved.setdefault(os.environ, "0")',                                            # not the environment's setdefault
+                      'os.environ["ROMP_POSTAL_PEERS"]: str',                                                      # a bare annotation sets nothing
+                      'class _Planted:\n    os.environ["ROMP_POSTAL_PEERS"]: str',
+                      'def _f():\n    os.environ["ROMP_POSTAL_PEERS"]: str\n_f()'):
             self.assertNotIn("ROMP_POSTAL_PEERS", _module_level_env_writes(ast.parse("import os\n" + shape + "\n"), "planted.py"), shape)
         # through a helper under the root: imported by name, as a module, aliased, with the package prefix, by its dotted
         # name and by a star import (the last two since the third commit of 2026-09-22: both passed the resolver
@@ -3003,7 +3155,11 @@ class HermeticKernelPostal(unittest.TestCase):
         and the line: an assignment, an import, a def, a with target, a loop over a tuple target, and in a callee a
         parameter or a local assignment. At the round-1 head each was recorded as ROMP_KERNEL_NO_OPEN or
         ROMP_MANAGER_PORT (the reassigned loop name had been loud before that round's commits). A function's own loop over
-        literals, the module's and a class body's are still read."""
+        literals, the module's and a class body's are still read. The verifier's findings on round 2 of fork PR #894 added
+        three kinds: a star import, which binds names no text of the module spells and so makes every name unreadable, and
+        a `type` statement (3.12 on), each recorded as ROMP_KERNEL_NO_OPEN at round 2's eleventh commit; and the walrus,
+        the annotated and the augmented rebinding and a callee's match capture, except name and with target, loud at that
+        commit too but held by no plant, so a mutant that dropped any one of those readings left every pin green."""
         self.maxDiff = None
         loud = (
             ("a loop name reassigned at import", 'for k in ("ROMP_KERNEL_NO_OPEN",):\n    pass\nk = "ROMP_POSTAL_PORT"\nos.environ[k] = "1"',
@@ -3021,7 +3177,26 @@ class HermeticKernelPostal(unittest.TestCase):
             ("a callee's local assignment over a module loop name", 'for name in ("ROMP_MANAGER_PORT",):\n    pass\ndef _f():\n'
              '    name = "ROMP_POSTAL_PORT"\n    os.environ[name] = "1"\n_f()', "at line 6 of planted.py: os.environ[name] = '1' (a string or bytes literal key"),
             ("a callee's parameter over a module dict name", 'D = {"ROMP_MANAGER_PORT": "1"}\ndef _put(D):\n    os.environ.update(D)\n'
-             '_put({"ROMP_POSTAL_PORT": "1"})', "at line 4 of planted.py"))
+             '_put({"ROMP_POSTAL_PORT": "1"})', "at line 4 of planted.py"),
+            # the verifier's findings on round 2 of fork PR #894
+            ("a loop name rebound by a star import", 'for k in ("ROMP_KERNEL_NO_OPEN",):\n    pass\nfrom h_star import *\n'
+             'os.environ[k] = "1"', "at line 5 of planted.py"),
+            ("a loop name rebound by a walrus", 'for k in ("ROMP_KERNEL_NO_OPEN",):\n    pass\nif (k := "ROMP_POSTAL_PORT"):\n    pass\n'
+             'os.environ[k] = "1"', "at line 6 of planted.py"),
+            ("a loop name rebound by an annotated assignment", 'for k in ("ROMP_KERNEL_NO_OPEN",):\n    pass\nk: str = "ROMP_POSTAL_PORT"\n'
+             'os.environ[k] = "1"', "at line 5 of planted.py"),
+            ("a loop name rebound by an augmented assignment", 'for k in ("ROMP_POSTAL",):\n    pass\nk += "_PORT"\nos.environ[k] = "1"',
+             "at line 5 of planted.py"),
+            ("a callee's match capture over a module loop name", 'for k in ("ROMP_KERNEL_NO_OPEN",):\n    pass\ndef _f():\n'
+             '    match "ROMP_POSTAL_PORT":\n        case k:\n            os.environ[k] = "1"\n_f()', "at line 7 of planted.py"),
+            ("a callee's except name over a module loop name", 'for k in ("ROMP_KERNEL_NO_OPEN",):\n    pass\ndef _f():\n    try:\n'
+             '        pass\n    except OSError as k:\n        pass\n    os.environ[k] = "1"\n_f()', "at line 9 of planted.py"),
+            ("a callee's with target over a module loop name", 'import contextlib\nfor k in ("ROMP_KERNEL_NO_OPEN",):\n    pass\n'
+             'def _f():\n    with contextlib.nullcontext("ROMP_POSTAL_PORT") as k:\n        os.environ[k] = "1"\n_f()',
+             "at line 7 of planted.py"))
+        if _TYPE_ALIAS is not None:     # the statement parses from 3.12 on
+            loud += (("a loop name rebound by a type statement", 'for k in ("ROMP_KERNEL_NO_OPEN",):\n    pass\ntype k = str\n'
+                      'os.environ[k] = "1"', "at line 5 of planted.py"),)
         wrong = []
         for label, body, where in loud:
             try:
@@ -3044,7 +3219,9 @@ class HermeticKernelPostal(unittest.TestCase):
         and the pin passed. A tracked dict is read only through _DICT_READS, and any other reference to its name, in any
         scope, makes an update through it loud, naming the module and the line: a subscript store, a value overwritten,
         |=, update with a keyword, setdefault, an alias (no list of mutations can enumerate aliasing), a mutation inside
-        a def the module calls, an unbound dict.update, a del, a rebinding by a for target, a def of the same name. At the
+        a def the module calls, an unbound dict.update, a del, a rebinding by a for target, a def of the same name, and a
+        star import (the verifier's finding on round 2 of fork PR #894: it rebinds names no text of the module spells, and
+        the update read the first binding at round 2's eleventh commit). At the
         round-1 head each recorded the dict's first binding, not what the module had made of it by the update. A module that reads its dict
         the way DEAD_PORTS is read, through every allowed read (the update argument, `|=`, ** spreads in a call and a
         dict display, a for and a comprehension iterable, a membership test, inside a def as well) is still read, keys
@@ -3062,7 +3239,8 @@ class HermeticKernelPostal(unittest.TestCase):
                 ("a del", 'D = {"ROMP_MANAGER_PORT": "1", "ROMP_POSTAL_PEERS": "0"}\ndel D["ROMP_MANAGER_PORT"]\nos.environ.update(D)', 4),
                 ("a rebinding by a for target", first + 'for D in ({"ROMP_POSTAL_PEERS": "0"},):\n    pass\nos.environ.update(D)', 5),
                 ("a def of the same name", first + 'def D():\n    pass\nos.environ.update(D)', 5),
-                ("an update through |= of the environment", first + 'D["ROMP_POSTAL_PEERS"] = "0"\nos.environ |= D', 4))
+                ("an update through |= of the environment", first + 'D["ROMP_POSTAL_PEERS"] = "0"\nos.environ |= D', 4),
+                ("a rebinding by a star import", first + 'from h_star import *\nos.environ.update(D)', 4))
         wrong = []
         for label, body, line in loud:
             try:
@@ -3091,13 +3269,17 @@ class HermeticKernelPostal(unittest.TestCase):
         decorator or a `metaclass=` value, and a base named bare runs its __init_subclass__ chain. At the round-1 head the
         eight that never run were recorded, and the metaclass's __new__ and __call__ and both __init_subclass__ plants were
         not; the metaclass's __init__ (the control, found through the rule this narrows), the bare decorator and the call
-        inside a base expression were recorded at both heads."""
+        inside a base expression were recorded at both heads. The verifier's findings on round 2 of fork PR #894 added two:
+        a metaclass's __prepare__, which creating the class runs before it calls the metaclass (not recorded at round 2's
+        eleventh commit), and a metaclass named by attribute (`metaclass=helper.Meta`), recorded at that commit but held by
+        no plant, so a mutant that read a Name alone as the metaclass left every pin green."""
         self.maxDiff = None
         root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, root, True)
         with open(os.path.join(root, "planted_base.py"), "w", encoding="utf-8") as f:
             f.write('import os\nclass Base:\n    def __init__(self):\n        os.environ["ROMP_POSTAL_PEERS"] = "0"\n'
-                    'class Hooked:\n    def __init_subclass__(cls, **kw):\n        os.environ["ROMP_POSTAL_PEERS"] = "0"\n')
+                    'class Hooked:\n    def __init_subclass__(cls, **kw):\n        os.environ["ROMP_POSTAL_PEERS"] = "0"\n'
+                    'class Meta(type):\n    def __init__(cls, *a):\n        os.environ["ROMP_POSTAL_PEERS"] = "0"\n')
         write = 'def _w():\n    os.environ["ROMP_POSTAL_PEERS"] = "0"\n'
         never = (("a base whose __init__ writes, never instantiated", 'class _Base:\n    def __init__(self):\n'
                   '        os.environ["ROMP_POSTAL_PEERS"] = "0"\nclass _K(_Base):\n    pass'),
@@ -3118,7 +3300,10 @@ class HermeticKernelPostal(unittest.TestCase):
                 '        os.environ["ROMP_POSTAL_PEERS"] = "0"\nclass _K(_Base):\n    pass'),
                ("an imported base's __init_subclass__", 'from planted_base import Hooked\nclass _K(Hooked):\n    pass'),
                ("a bare decorator", write.replace("():", "(fn):") + '@_w\ndef _d():\n    pass'),
-               ("a call inside a base expression", write + 'class _K(_w() or object):\n    pass'))
+               ("a call inside a base expression", write + 'class _K(_w() or object):\n    pass'),
+               ("a metaclass's __prepare__", 'class _M(type):\n    @classmethod\n    def __prepare__(mcs, name, bases, **kw):\n'
+                '        os.environ["ROMP_POSTAL_PEERS"] = "0"\n        return {}\nclass _K(metaclass=_M):\n    pass'),
+               ("a metaclass named by attribute", 'import planted_base\nclass _K(metaclass=planted_base.Meta):\n    pass'))
         wrong = []
         for label, body in never + run:
             keys = _module_level_env_writes(ast.parse("import os\n" + body + "\n"), "planted.py", root=root)
@@ -3136,7 +3321,9 @@ class HermeticKernelPostal(unittest.TestCase):
         module attribute). A class-body def shadowed by a later import in the body was read at both heads, through the
         import alone at the round-1 head and through both bindings now. A parameter is the mapping only where the call
         binds it so, and it shadows a module name bound to the mapping. The mapping passed into *args or **kwargs is loud,
-        since the scan cannot say what the callee does with it."""
+        since the scan cannot say what the callee does with it. A keyword-only parameter defaulting to the mapping was read
+        at round 2's eleventh commit and held by no plant (the verifier's finding on round 2 of fork PR #894: a mutant that
+        dropped that route left every pin green); it has one now."""
         self.maxDiff = None
         root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, root, True)
@@ -3162,6 +3349,7 @@ class HermeticKernelPostal(unittest.TestCase):
                 ("the mapping passed by keyword", "def _put(env=None):\n    env['ROMP_POSTAL_PEERS'] = '0'\n_put(env=os.environ)"),
                 ("the mapping passed to a method", "class _S:\n    def __init__(self, env):\n        env['ROMP_POSTAL_PEERS'] = '0'\n_S(os.environ)"),
                 ("the mapping as a parameter's default", "def _put(env=os.environ):\n    env['ROMP_POSTAL_PEERS'] = '0'\n_put()"),
+                ("the mapping as a keyword-only parameter's default", "def _put(*, env=os.environ):\n    env['ROMP_POSTAL_PEERS'] = '0'\n_put()"),
                 ("the mapping passed on through two callees", "def _inner(e):\n    e.update(ROMP_POSTAL_PEERS='0')\ndef _outer(env):\n"
                  "    _inner(env)\n_outer(os.environ)"),
                 ("a def a helper re-exports, imported by name", "from planted_reexport import floor\nfloor()"),
@@ -3190,9 +3378,13 @@ class HermeticKernelPostal(unittest.TestCase):
     def test_a_call_chain_longer_than_the_cap_raises_naming_the_chain_and_a_cycle_is_cut(self):
         """The reviewer's ruling of round 1 on fork PR #894 (correctness-4, extra4-2): the resolver cut a chain at six calls,
         silently, so a write seven callees down passed unread. The cap is now 40 calls, above the deepest chain the
-        census follows in the tree (16 at round 2, from a __main__ block; `--deepest-chain` derives it), and a chain
-        longer than the cap raises naming every call in it; a cycle is still cut by the per-chain seen set, without a
-        raise. At the round-1 head the chain of 40 below was not recorded and the chain of 41 passed silently."""
+        census follows in the tree (the figure, and how it is derived, is under _CALL_DEPTH_CAP), and a chain longer than
+        the cap raises naming every call in it; a cycle is still cut by the per-chain seen set, without a raise. At the
+        round-1 head the chain of 40 below was not recorded and the chain of 41 passed silently. The memo (_reach) is
+        reused only under its three conditions, each planted here with the records compared to a reading whose memo
+        stores nothing: no cycle cut under the callee against a callee above it, none of the callees it read above it now
+        (the verifier's finding on round 2 of fork PR #894: `_a -> _b -> _c -> _a` read from `_b` first and reused under
+        `_a` recorded `_a`'s write a second time, back through `_a`), and its height still under the cap."""
         def chain(n):
             defs = "".join("def _f%d():\n    _f%d()\n" % (i, i + 1) for i in range(n - 1))
             return "import os\n" + defs + "def _f%d():\n    os.environ['ROMP_POSTAL_PEERS'] = '0'\n_f0()\n" % (n - 1)
@@ -3221,6 +3413,35 @@ class HermeticKernelPostal(unittest.TestCase):
         with self.assertRaises(UnreadableEnvWrite, msg="a chain through a callee read shallow first") as loud:
             _module_level_env_write_records(ast.parse("import os\n" + deep + "_x0()\n_y0()\n"), "planted.py")
         self.assertIn("is longer than the resolver's cap of 40 calls", str(loud.exception))
+        # and a callee is not reused under a callee it read (the verifier's finding on round 2 of fork PR #894): _b, read
+        # from its own call, reaches _a through _c (cut where _a calls _b back); under _a's call a fresh reading of _b cuts
+        # at _a, so _a's write is recorded once there, not again through _b -> _c -> _a
+        loop3 = ("import os\ndef _a():\n    os.environ['ROMP_POSTAL_PEERS'] = '0'\n    _b()\ndef _b():\n    _c()\n"
+                 "def _c():\n    _a()\n_b()\n_a()\n")
+        recs = _module_level_env_write_records(ast.parse(loop3), "planted.py")
+        self.assertEqual([(w.key, w.line, w.via) for w, _n in recs],
+                         [("ROMP_POSTAL_PEERS", 9, "_b() at planted.py:5 -> _c() at planted.py:7 -> _a() at planted.py:2, the write at line 3"),
+                          ("ROMP_POSTAL_PEERS", 10, "_a() at planted.py:2, the write at line 3")],
+                         "_b's reading from line 9 went through _a, so it is not reused under _a's call at line 10")
+
+        class _StoresNothing(dict):
+            def __setitem__(self, key, value):
+                pass
+
+        def projected(pairs):       # a record's value is a node of its own parse: compared by its text
+            return [(w.key, w.shape, None if w.value is None else ast.unparse(w.value), w.line, w.resolved, w.via, nested)
+                    for w, nested in pairs]
+
+        def without_memo(src):
+            tree = ast.parse(src)
+            mod, out = _module_record(tree, "planted.py", HERE), []
+            for node, nested, scope in _import_time_nodes_scoped(tree.body):
+                out += [(w, nested) for w in _env_write_records(node, mod.names, "planted.py")]
+                out += [(w, nested) for w in _reached_writes(node, mod, scope=scope, memo=_StoresNothing())]
+            return out
+        for src in (cycle, cycle + "_b()\n", loop3, "import os\n" + deep + "_x0()\n", chain(40)):
+            self.assertEqual(projected(_module_level_env_write_records(ast.parse(src), "planted.py")), projected(without_memo(src)),
+                             "the memo changes nothing a reading that stores nothing records")
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         path = os.path.join(d, "test_planted_chain.py")
@@ -3236,7 +3457,10 @@ class HermeticKernelPostal(unittest.TestCase):
         plants' keys; each plant, run in a child interpreter, writes its name to the process environment (after its hook,
         and not at its import, for what runs after the import); and the scan records nothing and raises nothing for it.
         A change that starts reading a shape reds here, and so does one that names a shape with no plant. README points
-        at the comment and keeps no list of its own."""
+        at the comment and keeps no list of its own. The verifier's findings on round 2 of fork PR #894 found shapes the
+        scan missed silently with none of them named (a metaclass's __prepare__, now read; the rest named under
+        lambda-parameter, aliased-callee, callback, protocol-hook and namespace-rebinding, and a star import added to
+        held-otherwise and from-os-putenv), each with its plants."""
         self.maxDiff = None
         text = open(os.path.join(HERE, "test_hermetic_kernel_postal.py"), encoding="utf-8").read()
         self.assertIn("OUTSIDE the scan, named here", text, "the list's one home is the comment above _Module")
