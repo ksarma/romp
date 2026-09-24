@@ -47,8 +47,10 @@ This module holds five things, and it never skips: a pin that skips reports gree
    nested block two columns past its parent key, a sequence's entries opening with a key, the keys spelled as ci.yml
    spells them and none twice in one mapping; on a key's line, a plain scalar that opens with no YAML indicator and
    holds no `: `, a single-quoted scalar without `''`, a double-quoted scalar without a backslash, or a flow sequence of
-   such scalars, each closed on that line and followed by nothing but a trailing comment; and a `|` literal block as a
-   step's run. Every other line is refused by name, valid YAML included: among them an anchor, an alias, a tag, a merge
+   such scalars, each closed on that line and followed by nothing but a trailing comment (on a name: or a
+   working-directory: key, whose values the parser reads as the text after the key, the plain scalar alone, with no
+   comment); and a `|` literal block as a step's run. Every other line is refused by name, valid YAML included: among
+   them a quoted value or a trailing comment on a name: or working-directory: key, an anchor, an alias, a tag, a merge
    key, an explicit key, a flow mapping, a flow collection nested or continued past its line, a quoted scalar continued
    past its line, an escape in a quoted scalar, a folded block, a chomping or indentation indicator, a literal block
    anywhere but a step's run, a header or a value on the line after its key, a plain scalar continued past its line, a
@@ -1394,6 +1396,14 @@ YAML_CONTINUED = ("a line indented past the block it belongs to: a scalar contin
 # lines at the refused line's indent or deeper are read as part of it and not scanned
 YAML_CARRIED = ("a quoted scalar continued past its line", "a flow collection continued past its line")
 YAML_QUOTED_FORM = {"'": "a single-quoted scalar on one line", '"': "a double-quoted scalar on one line"}
+# the keys whose value the parser reads as the text after `key: ` (a step's name and working directory, the job's
+# default directory; pytest_invocations, and InstallStep's name reads): on these the scan accepts a plain scalar with no
+# trailing comment and nothing else, the one form ci.yml writes them in (the allowlist's second verify pass,
+# 2026-09-24: a quoted name or directory, or a name with a trailing comment, valid YAML, read with its quotes or its
+# comment, and the module was red for a reason other than a refusal)
+YAML_PLAIN_KEYS = ("name", "working-directory")
+YAML_PLAIN_KEY_WHAT = ("a %s: value other than a plain scalar with no trailing comment (the parser reads a step's "
+                       "name: and working-directory: values as the text after the key)")
 YAML_PROPERTY_NAMES = {"&": "an anchor", "*": "an alias", "!": "a tag"}
 
 
@@ -1548,16 +1558,18 @@ def yaml_line_forms(src):
     key's value on the key's line, a plain scalar that opens with no YAML indicator and holds no `: `, a single-quoted
     scalar without `''`, a double-quoted scalar without a backslash, or a flow sequence of such scalars (a plain one
     holding no `:`, `#`, `?` or bracket), each closed on that line and followed by nothing but a spaced trailing
-    comment; and a literal block header `|` as the value of a step's run (jobs, a job, steps, an entry), whose text is
-    the lines indented past the key, each at least as far as the first, which are not scanned as YAML. Every other line
-    is refused by name, among them an anchor, an alias, a tag, a merge key, an explicit key, a flow mapping, a flow
-    collection inside a flow sequence or continued past its line, a quoted scalar continued past its line, a backslash
-    in a double-quoted scalar, `''` in a single-quoted one, a folded block, a chomping or indentation indicator, a
-    literal block anywhere but a step's run, a header or a value on the line after its key, a plain scalar continued
-    past its line, a directive, a document marker, a quoted, spaced or otherwise spelled key, a key twice in one
-    mapping, a sequence at its parent key's indent (YAML's compact style), an indentation other than two columns past
-    the parent, a tab or any other control character, a character outside ASCII outside a comment line, and a last line
-    with no newline after it (the real file ends in one, and _env_block's and JOB_RE's patterns need one). After a
+    comment, and on a name: or working-directory: key (YAML_PLAIN_KEYS) the plain scalar alone, with no comment; and a
+    literal block header `|` as the value of a step's run (jobs, a job, steps, an entry), whose text is the lines
+    indented past the key, each at least as far as the first, which are not scanned as YAML. Every other line is
+    refused by name, among them a quoted value or a trailing comment on a name: or working-directory: key, an anchor,
+    an alias, a tag, a merge key, an explicit key, a flow mapping, a flow collection inside a flow sequence or
+    continued past its line, a quoted scalar continued past its line, a backslash in a double-quoted scalar, `''` in a
+    single-quoted one, a folded block, a chomping or indentation indicator, a literal block anywhere but a step's run,
+    a header or a value on the line after its key, a plain scalar continued past its line, a directive, a document
+    marker, a quoted, spaced or otherwise spelled key, a key twice in one mapping, a sequence at its parent key's
+    indent (YAML's compact style), an indentation other than two columns past the parent, a tab or any other control
+    character, a character outside ASCII outside a comment line, and a last line with no newline after it (the real
+    file ends in one, and _env_block's and JOB_RE's patterns need one). After a
     refused line, the lines that belong to what it opened are not scanned, so a construct is named once, at its first
     line: the lines indented past it (past its key, for a refused value; past its parent key, for the first line of a
     nested value), or, for a quoted scalar or flow collection that YAML carries on, every line from its key's column in;
@@ -1700,6 +1712,8 @@ def yaml_line_forms(src):
                 continue
         else:
             value_forms, what = _yaml_inline_value(v)
+            if not what and key in YAML_PLAIN_KEYS and value_forms != ["a plain scalar on one line"]:
+                what = YAML_PLAIN_KEY_WHAT % key
         if what:
             # a refused value's own lines are those indented past its key (an entry's first key sits past the dash, and
             # the entry's later keys are scanned); one YAML carries on is followed from the key's column
@@ -2349,6 +2363,23 @@ YAML_REFUSED_ROWS = (
     ("a step holding env: twice, the second without the switch (AL-04)", "first",
      '      - name: Two envs (pytest)\n        env:\n          %s: "1"\n        env:\n          OTHER: x\n' % SWITCH + RUN_OK,
      ((4, "a key its mapping already holds (env)"),), True),
+    # the two keys the parser reads as the text after the key (YAML_PLAIN_KEYS; the allowlist's second verify pass, W1,
+    # W2b and W3: each valid YAML, read with its quotes or its comment, and red for another reason than a refusal)
+    ("a step's name double-quoted (W1)", "first", '      - name: "Quoted name"\n        run: echo hi\n',
+     ((1, YAML_PLAIN_KEY_WHAT % "name"),), True),
+    ("a step's name single-quoted", "first", "      - name: 'Quoted name'\n        run: echo hi\n",
+     ((1, YAML_PLAIN_KEY_WHAT % "name"),), True),
+    ("a step's name with a trailing comment (W3)", "first", "      - name: Commented name # the step\n        run: echo hi\n",
+     ((1, YAML_PLAIN_KEY_WHAT % "name"),), True),
+    ("a step's working-directory double-quoted (W2b)", "first",
+     '      - name: Quoted dir\n        working-directory: "${{ github.workspace }}"\n        run: echo hi\n',
+     ((2, YAML_PLAIN_KEY_WHAT % "working-directory"),), True),
+    ("a step's working-directory with a trailing comment", "first",
+     "      - name: Commented dir\n        working-directory: vscode-extension # the extension\n        run: echo hi\n",
+     ((2, YAML_PLAIN_KEY_WHAT % "working-directory"),), True),
+    ("a job's default working-directory single-quoted", "job",
+     "  wd:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: 'sub'\n    steps:\n      - run: echo hi\n",
+     ((5, YAML_PLAIN_KEY_WHAT % "working-directory"),), True),
     # characters
     ("a tab after the switch key's colon (AL-18)", "last", '      - name: Tab (pytest)\n        env:\n          %s:\t"1"\n' % SWITCH + RUN_OK,
      ((3, "a tab or other control character ('\\t')"),), True),
@@ -2400,7 +2431,8 @@ YAML_ACCEPTED_ROWS = (
     ("a literal block's lines opening with *), &>, -, [, a key and an anchor, --- and ?",
      "      - name: Block\n        run: |\n          case $x in\n            *) echo other ;;\n          esac\n          &>/dev/null true\n"
      "          - item\n          [ -n x ]\n          key: &x\n          ---\n          ? q\n"),
-    ("quoted scalars holding *, & and #", '      - name: "* & # *"\n        run: echo \'&x *y #z\'\n'),
+    # (a quoted name, this row's first key until the allowlist's second verify pass, is refused now: YAML_PLAIN_KEYS)
+    ("quoted scalars holding *, & and #", '      - name: Quoted\n        env:\n          NOTE: "* & # *"\n        run: echo \'&x *y #z\'\n'),
     ("a flow sequence of plain, single-quoted and double-quoted scalars", "      - uses: ./a\n        with:\n          list: ['3.10', \"3.13\", main]\n"),
     ("trailing comments after a key with no value, a plain value, a quoted value and a flow sequence",
      "      - uses: ./a  # c\n        with:   # c\n          a: x # c\n          b: 'y' # c\n          c: [z] # c\n"),
