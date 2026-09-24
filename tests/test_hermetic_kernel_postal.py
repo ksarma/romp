@@ -103,14 +103,21 @@ tree has. The table over the tree is read ONCE PER MODULE RUN from the module's 
 _read_root, the one function that reads the tree and every plant), and the same read gives the peers test every file's
 module-level environment writes, so the trio test, the guard test, the comparison case, the --roads arm and the peers
 test's walk share one parse of each file (PR #850's ninth review round, after each had scanned or parsed the tree on its
-own); the placement test parses the tunnels module once more when it runs. Every tree the module builds comes from
-_parse_text, whose counter the parse pin reads, and every Bindings from _bindings_of (the helpers pin). The read keeps
-no tree: each file's tree and bindings are dropped once its row is read (the bindings released, Bindings.release, so
-reference counting frees both), and the read's value is tuples, strings, numbers and the dicts and frozensets that index
-them. Once the module's tests have run here, tearDownModule fails on a tree or a Bindings the module built that is still
-reachable, on more tree nodes and ast_bindings objects alive than at the module's start (setUpModule's count, the net
-count of every ast.AST, Bindings, Scope and Declaration the collector tracks, so a node kept without its tree's root is
-counted), and on a file of the tree whose text was parsed other than the parse pin expects over the whole module run,
+own); the placement test parses the tunnels module once more when it runs. Every tree and Bindings the module builds by
+a road it spells in its own text as one of the spellings _TREE_BUILDERS holds (among them ast.parse, compile's
+PyCF_ONLY_AST, `from ast import` and Bindings.of) comes from its two helpers, _parse_text, whose counter the parse pin
+reads, and _bindings_of (the helpers pin, which reads the module's tokens); a road by any other spelling is not read,
+among them getattr, __import__, a name bound at run time, compile's flag by value, and another module's function that
+parses (ast.literal_eval, which the module calls). The read keeps no tree: each file's tree and bindings are dropped
+once its row is read (the bindings released, Bindings.release, so reference counting frees both), so it holds one file's
+tree at a time: _parse counts the file trees alive at each file parse, the read's value carries the most, and the cycle
+test holds it to one over its plant read and the release pin over the tree's read. The read's value is tuples, strings,
+numbers and the dicts and frozensets that index them, among them each file's text key as the read parsed it. Once the
+module's tests have run here, tearDownModule fails on a tree or a Bindings the module built that is still reachable, on
+more tree nodes and ast_bindings objects alive than at the module's start (setUpModule's count, the net count of every
+ast.AST, Bindings, Scope and Declaration the collector tracks, so a node kept without its tree's root is counted), and
+on a text of the tree's read, as the read recorded it at its parse, parsed other than the parse pin expects over the
+whole module run,
 and then drops that value (_release). The release pin holds the release, the plain value and the teardown's first two
 checks; the parse pin holds the third. This is an EXCEPTION to tests/parse_cache.py's rule that the AST censuses under
 tests/ parse through its one process-wide cache, and the reason is a measurement (PR #850's review round 9, E ruled
@@ -1294,16 +1301,20 @@ def _hermetic(src):
     return "kernel_env(" in src or all(k in src for k in TRIO)
 
 
-# -- the module's own parses (PR #850's review round 9, E ruled again): every tree this module builds comes from
-# -- _parse_text and every Bindings from _bindings_of (the helpers pin); the read parses each file of the tree once per
-# -- module run and holds one file's tree at a time; tearDownModule fails on a tree or Bindings still reachable, on more
-# -- of their objects alive than at the module's start (setUpModule) and on a file parsed other than expected -------
+# -- the module's own parses (PR #850's review round 9, E ruled again): every tree and Bindings this module builds by a
+# -- road it spells as one of the spellings _TREE_BUILDERS holds comes from _parse_text or _bindings_of (the helpers
+# -- pin; a road by another spelling is not read); the read parses each file of the tree once per module run and holds
+# -- one file's tree at a time (_parse counts the file trees alive; the cycle test and the release pin hold it to one);
+# -- tearDownModule fails on a tree or Bindings still reachable, on more of their objects alive than at the module's
+# -- start (setUpModule) and on a text of the read, as it parsed it, parsed other than expected ---------------------
 _PARSES = collections.Counter()   # _text_key(text) -> the parses _parse_text made of that text in this module run
 _TREES = []                       # (filename, weak reference) for every tree _parse_text returned in this module run
 _BINDINGS = []                    # (filename, weak reference) for every Bindings _bindings_of built in this module run
 _READS = [0]                      # the reads of the real tree made in this module run (_tree_read)
 _TREE_READ = {}                   # "tree" -> the real tree's read while the module runs (_TreeRead: plain values only)
-_PLACEMENT_PARSES = [0]           # the placement test's parses of the tunnels module in this module run
+_PLACEMENT_PARSES = collections.Counter()   # _text_key(text) -> the placement test's parses of that text (the tunnels module)
+_FILE_TREES = []                  # weak references to the file trees _parse built that were alive at its last call
+_MOST_FILE_TREES = [0]            # the most file trees alive at any _parse since the last reset (_read_root resets it)
 _AT_START = []                    # _held_count() at setUpModule, after a gc.collect(): one value while the module runs
 _HELD_TYPES = (ast.AST, ast_bindings.Bindings, ast_bindings.Scope, ast_bindings.Declaration)   # the types _held_count counts
 
@@ -1315,7 +1326,8 @@ def _text_key(text):
 
 
 def _parse_text(text, filename="<unknown>"):
-    """THE parse of this module (the helpers pin: no other code of the module spells a road to a tree): ast.parse(text,
+    """THE parse of this module (the helpers pin: no other code of the module spells a road to a tree as one of the
+    spellings _TREE_BUILDERS holds): ast.parse(text,
     filename), counted in _PARSES under the text's key before the parse, and the tree's weak reference recorded in
     _TREES under `filename` once it parses (the release pin and tearDownModule read them). Nothing is kept: the tree
     lives while the caller holds it."""
@@ -1338,11 +1350,12 @@ _TREE_BUILDERS = (("ast", ".", "parse"), ("PyCF_ONLY_AST",), ("from", "ast", "im
 
 
 def _tree_builder_spellings(text):
-    """(line, spelling) of every token sequence in `text` that spells a road to a tree or a Bindings (_TREE_BUILDERS):
-    ast.parse, PyCF_ONLY_AST (compile's flag for a tree), `from ast import` and `import ast as` (the parser under
-    another name), Bindings.of and Bindings( (ast_bindings' constructors), each spelling joined by spaces. Read from the
-    tokens (tokenize), so a string, a docstring or a comment that names one counts nothing, and no tree is built to read
-    them; a road by another spelling (getattr, a name bound at run time) is not read."""
+    """(line, spelling) of every token sequence in `text` that spells a road to a tree or a Bindings as one of the
+    spellings _TREE_BUILDERS holds, among them ast.parse, PyCF_ONLY_AST (compile's flag for a tree), `from ast import`
+    (the parser under another name) and Bindings.of (an ast_bindings constructor), each spelling joined by spaces. Read
+    from the tokens (tokenize), so a string, a docstring or a comment that names one counts nothing, and no tree is built
+    to read them; a road by another spelling is not read, among them getattr, __import__, a name bound at run time,
+    compile's flag by value, and another module's function that parses (ast.literal_eval)."""
     skip = (tokenize.COMMENT, tokenize.NL, tokenize.INDENT, tokenize.DEDENT, tokenize.ENCODING)
     tokens = [t for t in tokenize.generate_tokens(io.StringIO(text).readline) if t.type not in skip]
     found = []
@@ -1355,10 +1368,17 @@ def _tree_builder_spellings(text):
 
 def _parse(path, rel):
     """The text and a fresh tree (_parse_text) of the file at `path`, `rel` the filename the tree carries (for a
-    SyntaxError's message)."""
+    SyntaxError's message). The tree is a FILE tree, and _parse records how many file trees are alive when it builds
+    one: a weak reference to each (_FILE_TREES, the dead dropped at each call) and the most alive at any call, the new
+    one among them (_MOST_FILE_TREES), which a read resets at its start and carries in its value (_read_root), so the
+    cycle test and the release pin hold the read to one file tree at a time. A -c program's tree, parsed by
+    _parse_text alone inside one file's scan, is not a file tree and is not counted."""
     with open(path, encoding="utf-8") as f:
         text = f.read()
-    return text, _parse_text(text, rel)
+    tree = _parse_text(text, rel)
+    _FILE_TREES[:] = [ref for ref in _FILE_TREES if ref() is not None] + [weakref.ref(tree)]
+    _MOST_FILE_TREES[0] = max(_MOST_FILE_TREES[0], len(_FILE_TREES))
+    return text, tree
 
 
 def _source(path):
@@ -1370,7 +1390,7 @@ def _source(path):
 
 TREE_SKIP = (os.path.basename(__file__),)   # the trio test's population: every module under tests/ but this one
 _RoadsTable = collections.namedtuple("_RoadsTable", "roads hermetic compared paths")
-_TreeRead = collections.namedtuple("_TreeRead", "table env_writes paths root")
+_TreeRead = collections.namedtuple("_TreeRead", "table env_writes paths root keys most_trees")
 
 
 def _roads_row(name, src, tree, hand=()):
@@ -1406,24 +1426,30 @@ def _read_root(root, skip=(), listing=None):
     walked recursively (_tree_module_paths; over tests/ the peers test's population), and every module directly under
     `root` but `skip` (the table's population; over tests/ the trio test's, every module but this one), each file parsed
     ONCE (_parse) and its tree dropped before the next file is parsed, the bindings of its scan released in _roads_row,
-    so the read holds one file's tree at a time and none once it returns. From that one parse: each walked file's
-    module-level environment writes (_module_level_env_writes: the set of keys, or the message of the UnreadableEnvWrite
-    raised for a file whose keys the scan cannot read, which _peers_writers raises again), and each table module's roads
-    row (_roads_row), its comparison read with the module's entries of `listing`, the hand listing (LISTED_BY_HAND
-    unless a plant hands its own). The value is a _TreeRead of plain values: `table` the _RoadsTable (`roads` {name:
-    (road, sites, unresolved)}, spawn_roads says what each holds; `hermetic` the names of the modules that carry the
-    trio; `compared` {name: comparison values}; `paths` the table's files), `env_writes` {path under `root`: keys or the
-    refusal's message}, `paths` the walked files, and `root`. A file that does not parse raises from the read with its
+    so the read holds one file's tree at a time and none once it returns: _parse counts the file trees alive at each
+    file parse, the read resets that count's maximum when it starts and carries it as `most_trees`, and the cycle test
+    holds it to one over its plant read and the release pin over the tree's read. From that one parse: each walked
+    file's module-level environment writes (_module_level_env_writes: the set of keys, or the message of the
+    UnreadableEnvWrite raised for a file whose keys the scan cannot read, which _peers_writers raises again), and each
+    table module's roads row (_roads_row), its comparison read with the module's entries of `listing`, the hand listing
+    (LISTED_BY_HAND unless a plant hands its own). The value is a _TreeRead of plain values: `table` the _RoadsTable
+    (`roads` {name: (road, sites, unresolved)}, spawn_roads says what each holds; `hermetic` the names of the modules
+    that carry the trio; `compared` {name: comparison values}; `paths` the table's files), `env_writes` {path under
+    `root`: keys or the refusal's message}, `paths` the walked files, `root`, `keys` {path: the text key (_text_key) of
+    every file the read parsed, as it parsed it}, which the parse check holds the counter to (_parse_count_faults), and
+    `most_trees`. A file that does not parse raises from the read with its
     name. Nothing is memoised here: over tests/ the module run's one read is _tree_read's, and a plant is read again on
     each call."""
     listing = LISTED_BY_HAND if listing is None else listing
     paths = _tree_module_paths(root)
     in_walk = set(paths)
     in_table = {os.path.join(root, name) for name in os.listdir(root) if name.endswith(".py") and name not in skip}
-    roads, hermetic, compared, table_paths, env_writes = {}, set(), {}, [], {}
+    roads, hermetic, compared, table_paths, env_writes, keys = {}, set(), {}, [], {}, {}
+    _MOST_FILE_TREES[0] = 0                                # the window the read's most_trees measures starts here
     for path in sorted(in_walk | in_table):
         rel = os.path.relpath(path, root)
         src, tree = _parse(path, rel)
+        keys[path] = _text_key(src)                        # the text as parsed: the parse check holds _PARSES to it
         if path in in_walk:
             try:
                 env_writes[rel] = frozenset(_module_level_env_writes(tree, rel))
@@ -1436,9 +1462,9 @@ def _read_root(root, skip=(), listing=None):
                 hermetic.add(rel)
             if comparison is not None:
                 compared[rel] = comparison
-        del src, tree                     # dropped before the next parse, so no two trees are alive at once
+        del src, tree                     # dropped before the next parse: one file tree alive at a time (most_trees)
     table = _RoadsTable(roads, frozenset(hermetic), compared, tuple(table_paths))
-    return _TreeRead(table, env_writes, tuple(paths), root)
+    return _TreeRead(table, env_writes, tuple(paths), root, keys, _MOST_FILE_TREES[0])
 
 
 def _tree_read():
@@ -1490,24 +1516,33 @@ def _still_held():
     return held, grown
 
 
-def _parse_count_faults():
-    """(file, parses, expected) for every .py under tests/ (_tree_module_paths: the population of the tree's read, the
-    table's modules inside it) whose text the module's counter (_PARSES) holds other than expected in this module run:
-    one parse for each file that holds the text, for each read of the tree the run made (_READS), and for the tunnels
-    module the placement test's parses besides (_PLACEMENT_PARSES). The texts are read from the files here (_source),
-    no tree built. The parse pin reads it in its test and tearDownModule at the module's end."""
-    keys = {path: _text_key(_source(path)) for path in _tree_module_paths()}
+def _parse_count_faults(read=None, reads=None):
+    """(file, parses, expected) for every text the module's counter (_PARSES) holds other than expected in this module
+    run, over the texts as they were parsed: each file's text key as `read` recorded it at its parse (_read_root's
+    `keys`; by default the module run's read of the tree, _TREE_READ, none when no read was made) and the tunnels
+    module's key as the placement test parsed it (_PLACEMENT_PARSES). Expected: one parse for each file of the read that
+    holds the text, for each of the `reads` reads of it (by default _READS, the reads of the tree the run made), and the
+    placement test's parses of that text besides. A file of the read parsed again through _parse_text moves its key past
+    the expected count and is named; a file edited after the read is held to the text the read parsed, not to the text
+    on disk now (PR #850's tenth review round: a check that re-read the files at check time named a file edited during
+    the run as parsed 0 times against 1). No file is read and no tree built here. The parse pin reads it in its test and
+    tearDownModule at the module's end."""
+    read = _TREE_READ.get("tree") if read is None else read
+    reads = _READS[0] if reads is None else reads
+    keys = dict(read.keys) if read is not None else {}
     holders = collections.Counter(keys.values())
-    tunnels = _tunnels_path()
-    counts = [(os.path.relpath(path, HERE), _PARSES[key],
-               holders[key] * _READS[0] + (_PLACEMENT_PARSES[0] if path == tunnels else 0)) for path, key in keys.items()]
+    counts = [(os.path.relpath(path, read.root), _PARSES[key], holders[key] * reads + _PLACEMENT_PARSES[key])
+              for path, key in sorted(keys.items())]
+    counts += [("test_kernel_tunnels.py, as the placement test parsed it", _PARSES[key], _PLACEMENT_PARSES[key])
+               for key in _PLACEMENT_PARSES if key not in holders]
     return [row for row in counts if row[1] != row[2]]
 
 
 def _module_end_faults():
     """The module end's checks (tearDownModule), a message for each that fails: a tree or a Bindings the module recorded
     still reachable, more objects of _HELD_TYPES alive than at the module's start or no start count (_still_held), and
-    files of the tree whose text was parsed other than expected (_parse_count_faults). Each is read over the whole
+    texts of the tree's read, as it parsed them, parsed other than expected (_parse_count_faults). Each is read over the
+    whole
     module run in this process, so a test that keeps a tree or re-parses a file is seen whatever its place in the run's
     order and whichever worker runs it."""
     held, grown = _still_held()
@@ -1523,9 +1558,9 @@ def _module_end_faults():
                       "the module's end than at its start, after a gc.collect() (a net count over the process)" % grown)
     parses = _parse_count_faults()
     if parses:
-        faults.append("files of the tree whose text was parsed other than expected in this module run, by the module's "
-                      "counter (_PARSES): (file, parses, expected: one per file that holds the text for each read of the "
-                      "tree, and for the tunnels module the placement test's parses besides) %r" % parses)
+        faults.append("texts of the tree's read, as it parsed them, parsed other than expected in this module run, by the "
+                      "module's counter (_PARSES): (file, parses, expected: one per file that holds the text for each read "
+                      "of the tree, and the placement test's parses of that text besides) %r" % parses)
     return faults
 
 
@@ -1535,7 +1570,9 @@ def _release():
     _TREE_READ.clear()
     _PARSES.clear()
     _READS[0] = 0
-    _PLACEMENT_PARSES[0] = 0
+    _PLACEMENT_PARSES.clear()
+    del _FILE_TREES[:]
+    _MOST_FILE_TREES[0] = 0
     del _TREES[:]
     del _BINDINGS[:]
     del _AT_START[:]
@@ -3204,20 +3241,28 @@ class HermeticKernelPostal(unittest.TestCase):
 
     def test_the_tree_is_parsed_once_per_file_in_the_module_run_and_read_once(self):
         """THE PARSE PIN (PR #850's review round 9, E ruled again): the trio test, the guard test and the peers test
-        share one parse of each file per module run, counted by the module's own counter: _PARSES, which _parse_text,
-        the module's one road to a tree (the helpers pin), moves once per parse against the text's key (_text_key), so a
-        parse counts whatever road reached it and whatever filename it was given. Their reads (_kernel_spawn_offenders,
-        spawn_roads, _peers_writers), with the --roads arm's (_print_roads) and the comparison case's (_roads_table),
-        answer from the module run's one read of the tree (_tree_read, made by whichever of them ran first) and hand
-        back its objects; the module run read the tree once (_READS); and the text of every file of the read's
-        population, the peers test's (every .py under tests/) with the table's (the modules directly under tests/ but
-        this one) inside it, read from the files here, was parsed once for each file that holds it
-        (_parse_count_faults). The one other parse of a file of the tree is the placement test's, of the tunnels module,
-        once per run of that test (_PLACEMENT_PARSES), and nothing keeps its tree (the release pin): that file's
-        expected count adds those runs. The red: a reader that parses the tree again, by any road, moves the counter
-        past the expected count of each file it reads. Read here, the count sees the parses of the tests that ran before
-        this one in the process; tearDownModule reads the same count over the whole module run (_module_end_faults), so
-        a re-parse in a test that runs after this one, or on another worker under xdist, fails the module's teardown."""
+        share one parse of each file per module run, counted by the module's own counter: _PARSES, which _parse_text
+        moves once per parse against the text's key (_text_key), so a parse counts whatever filename it was given. Every
+        tree the module builds by a road it spells in its own text as one of the spellings _TREE_BUILDERS holds comes
+        from _parse_text (the helpers pin); a road by any other spelling is not read, among them getattr, __import__, a
+        name bound at run time, compile's flag by value, and another module's function that parses (ast.literal_eval,
+        which the module calls). Their reads (_kernel_spawn_offenders, spawn_roads, _peers_writers), with the --roads
+        arm's (_print_roads) and the comparison case's (_roads_table), answer from the module run's one read of the tree
+        (_tree_read, made by whichever of them ran first) and hand back its objects; the module run read the tree once
+        (_READS); the read recorded a text key for every file it parsed and no other (its `keys`), its population the
+        peers test's (every .py under tests/) with the table's (the modules directly under tests/ but this one) inside
+        it; and each of those texts, as the read parsed it, was parsed once for each file that holds it
+        (_parse_count_faults over the read's keys, so a file edited after the read is held to the text the read parsed,
+        PR #850's tenth review round). The one other parse of a file of the tree is the placement test's, of the tunnels
+        module, once per run of that test (_PLACEMENT_PARSES, under the key of the text it parsed), and nothing keeps
+        its tree (the release pin): that text's expected count adds those runs. The red: a reader that parses the tree
+        again through _parse_text moves the counter past the expected count of each file it reads. Read here, the count
+        sees the parses of the tests that ran before this one in the process; tearDownModule reads the same count over
+        the whole module run (_module_end_faults), so a re-parse in a test that runs after this one, or on another
+        worker under xdist, fails the module's teardown. The read's population is also compared with a walk of tests/
+        taken here (_tree_module_paths), and the peers test compares it with an os.walk: a file added or removed under
+        tests/ during the module's run reds both, a stated residual; no test writes a .py under tests/, so the trigger
+        is a person or a session editing the tree mid-run."""
         read = _tree_read()
         _kernel_spawn_offenders(HERE, skip=TREE_SKIP)                  # the trio test's read
         roads = spawn_roads(HERE, skip=TREE_SKIP)                      # the guard test's
@@ -3231,34 +3276,43 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertTrue(read.table.paths and len(read.table.paths) == len(read.table.roads), "the table read no module, or "
                         "its paths and its rows disagree: %d paths, %d rows" % (len(read.table.paths), len(read.table.roads)))
         self.assertTrue(set(read.table.paths) <= set(read.paths), "the peers test's population holds every module the table read")
-        self.assertEqual(list(read.paths), _tree_module_paths(), "the files _parse_count_faults reads "
-                         "(_tree_module_paths) are the read's population")
-        self.assertEqual(_parse_count_faults(), [], "files of the tree whose text was parsed other than expected in this "
-                         "module run, by the module's counter (_PARSES): (file, parses, expected: one per file that holds "
-                         "the text for each read of the tree, and for the tunnels module the placement test's parses besides)")
+        self.assertEqual(sorted(read.keys), sorted(set(read.paths) | set(read.table.paths)), "the read recorded a text key "
+                         "for every file it parsed and for no other: the population _parse_count_faults holds _PARSES to")
+        self.assertEqual(list(read.paths), _tree_module_paths(), "the read's population against a walk of tests/ taken "
+                         "now (_tree_module_paths); a file added or removed under tests/ during the module's run reds this, "
+                         "the stated residual")
+        self.assertEqual(_parse_count_faults(), [], "texts of the tree's read, as it parsed them, parsed other than expected "
+                         "in this module run, by the module's counter (_PARSES): (file, parses, expected: one per file that "
+                         "holds the text for each read of the tree, and the placement test's parses of that text besides)")
 
     def test_the_tree_read_keeps_no_tree_and_no_bindings_and_leaves_plain_values(self):
         """THE RELEASE PIN (PR #850's review round 9, E ruled again: no tree and no Bindings object of the module
-        outlives it, and the table is left as plain values). Every tree the module builds comes from _parse_text and
-        every Bindings from _bindings_of (the helpers pin), each recording a weak reference (_TREES, _BINDINGS). After
-        the reads of the trio test, the guard test and the peers test (the module run's one read of the tree, made now
-        or by an earlier test of the run): the records name a tree for every file of the read's population and a
-        Bindings for every row of its table, so an empty record cannot pass; and the read's value, walked whole, holds
-        nothing but tuples, strings, numbers, None and the dicts and frozensets that index them. Then tearDownModule,
-        the module end's check, is called here twice on the module's state, which is put back after each call so the
-        later tests of the run read the same read. Over the state as it stands it raises nothing and leaves every
-        container empty: every tree and Bindings recorded in the module run so far, the read's and those of every test
-        that ran before this one in the process, is gone, no more tree nodes and ast_bindings objects are alive than at
-        the module's start, and no file of the tree was parsed other than expected (_module_end_faults; _still_held
-        reads each weak reference and setUpModule's net count of every ast.AST, Bindings, Scope and Declaration the
-        collector tracks, again after one gc.collect() when either shows something: a weak reference sees only the tree
-        root or the Bindings it refers to, the count also a node kept without its root). With a planted tree held, and
-        planted statements held whose tree's root is dead, it raises naming the tree and not the statements' file,
-        reports a growth of at least the statements held, and leaves the containers empty too. At the module's end
-        tearDownModule runs the same checks over the whole run, so a tree kept by a test that runs after this one fails
-        the module's teardown, and then drops what the module holds (_release). The red is the round's mutant runs: a
-        cache at module scope that keeps each parse leaves every tree alive here and at the teardown, and one that keeps
-        each tree's statements and drops its root grows the count at both."""
+        outlives it, and the table is left as plain values). Every tree and Bindings the module builds by a road it
+        spells in its own text as one of the spellings _TREE_BUILDERS holds comes from _parse_text or _bindings_of (the
+        helpers pin; a road by any other spelling is not read, among them getattr, __import__, a name bound at run time,
+        compile's flag by value, and another module's function that parses, ast.literal_eval, which the module calls),
+        each recording a weak reference (_TREES, _BINDINGS). After the reads of the trio test, the guard test and the
+        peers test (the module run's one read of the tree, made now or by an earlier test of the run): the records name
+        a tree for every file of the read's population and a Bindings for every row of its table, so an empty record
+        cannot pass; the read held one file's tree at a time, its most_trees (the most file trees alive at any file
+        parse, _parse's count, reset when the read started) one, the tree just built (PR #850's tenth review round); and
+        the read's value, walked whole, holds nothing but tuples, strings, numbers, None and the dicts and frozensets
+        that index them. Then tearDownModule, the module end's check, is called here twice on the module's state, which
+        is put back after each call so the later tests of the run read the same read. Over the state as it stands it
+        raises nothing and leaves every container empty: every tree and Bindings recorded in the module run so far, the
+        read's and those of every test that ran before this one in the process, is gone, no more tree nodes and
+        ast_bindings objects are alive than at the module's start, and no text of the tree's read, as the read parsed
+        it, was parsed other than expected (_module_end_faults; _still_held reads each weak reference and setUpModule's
+        net count of every ast.AST, Bindings, Scope and Declaration the collector tracks, again after one gc.collect()
+        when either shows something: a weak reference sees only the tree root or the Bindings it refers to, the count
+        also a node kept without its root). With a planted tree held, and planted statements held whose tree's root is
+        dead, it raises naming the tree and not the statements' file, reports a growth of at least the statements held,
+        and leaves the containers empty too. At the module's end tearDownModule runs the same checks over the whole run,
+        so a tree kept by a test that runs after this one fails the module's teardown, and then drops what the module
+        holds (_release). The red is the round's mutant runs: a cache at module scope that keeps each parse leaves every
+        tree alive here and at the teardown, and one that keeps each tree's statements and drops its root grows the
+        count at both; a read that keeps every file tree until it returns reds the most_trees assertion here and in the
+        cycle test."""
         read = _tree_read()
         _kernel_spawn_offenders(HERE, skip=TREE_SKIP)                  # the trio test's read
         spawn_roads(HERE, skip=TREE_SKIP)                              # the guard test's
@@ -3268,6 +3322,8 @@ class HermeticKernelPostal(unittest.TestCase):
                          "recorded (_TREES)")
         self.assertEqual(sorted(set(read.table.roads) - {f for f, _ in _BINDINGS}), [], "rows of the read's table with no "
                          "Bindings recorded (_BINDINGS)")
+        self.assertEqual(read.most_trees, 1, "the most file trees alive at any file parse of the tree's read (_parse's count, "
+                         "reset when the read starts, the tree just built among them): one file's tree at a time is one")
         foreign, stack = collections.Counter(), [read]
         while stack:   # loop-ok: each pass pops one value, and the read's value is finite and acyclic
             value = stack.pop()
@@ -3280,8 +3336,8 @@ class HermeticKernelPostal(unittest.TestCase):
                 foreign[type(value).__name__] += 1
         self.assertEqual(dict(foreign), {}, "the tree's read holds values other than tuples, strings, numbers, None, dicts "
                          "and frozensets (type: count)")
-        saved = (dict(_TREE_READ), collections.Counter(_PARSES), _READS[0], list(_TREES), list(_BINDINGS), _PLACEMENT_PARSES[0],
-                 list(_AT_START))
+        saved = (dict(_TREE_READ), collections.Counter(_PARSES), _READS[0], list(_TREES), list(_BINDINGS),
+                 collections.Counter(_PLACEMENT_PARSES), list(_AT_START), list(_FILE_TREES), _MOST_FILE_TREES[0])
 
         def put_back():
             _release()
@@ -3290,12 +3346,15 @@ class HermeticKernelPostal(unittest.TestCase):
             _READS[0] = saved[2]
             _TREES[:] = saved[3]
             _BINDINGS[:] = saved[4]
-            _PLACEMENT_PARSES[0] = saved[5]
+            _PLACEMENT_PARSES.update(saved[5])
             _AT_START[:] = saved[6]
+            _FILE_TREES[:] = saved[7]
+            _MOST_FILE_TREES[0] = saved[8]
 
         def sizes():
             return {"_TREE_READ": len(_TREE_READ), "_PARSES": len(_PARSES), "_READS": _READS[0], "_TREES": len(_TREES),
-                    "_BINDINGS": len(_BINDINGS), "_PLACEMENT_PARSES": _PLACEMENT_PARSES[0], "_AT_START": len(_AT_START)}
+                    "_BINDINGS": len(_BINDINGS), "_PLACEMENT_PARSES": len(_PLACEMENT_PARSES), "_AT_START": len(_AT_START),
+                    "_FILE_TREES": len(_FILE_TREES), "_MOST_FILE_TREES": _MOST_FILE_TREES[0]}
 
         try:
             tearDownModule()                                           # the check: raises on any fault it reads
@@ -3323,10 +3382,15 @@ class HermeticKernelPostal(unittest.TestCase):
 
     def test_every_tree_and_bindings_the_module_builds_comes_from_its_two_helpers(self):
         """THE HELPERS PIN, which the parse pin and the release pin stand on (they count and watch what _parse_text and
-        _bindings_of record): in this module's source, read by its tokens (_tree_builder_spellings), the one ast.parse
-        is _parse_text's and the one Bindings.of is _bindings_of's, and nothing spells PyCF_ONLY_AST, `from ast
-        import`, `import ast as` or Bindings( . A road by another spelling (getattr, a name bound at run time) is not
-        read. The reader is held to each spelling in code, a call split across lines among them, and to none in a
+        _bindings_of record): in this module's source, read by its tokens (_tree_builder_spellings), every road to a
+        tree or a Bindings spelled as one of the spellings _TREE_BUILDERS holds (among them ast.parse, compile's
+        PyCF_ONLY_AST, `from ast import` and Bindings.of) lies inside _parse_text or _bindings_of, and each helper
+        spells its own road once: the one ast.parse is _parse_text's and the one Bindings.of is _bindings_of's. It reads
+        by spelling, so a road by any other spelling is not read, among them getattr, __import__, a name bound at run
+        time, compile's flag by value, and another module's function that parses (ast.literal_eval, which the module
+        calls). The reader is held to every spelling _TREE_BUILDERS holds, in code: the samples below find one road
+        each, a call split across lines among them, and together every spelling of _TREE_BUILDERS, so a spelling added
+        there without a sample reds here; and to none in a
         string, a comment or an import of ast by its own name."""
         found = _tree_builder_spellings(_source(os.path.join(HERE, TREE_SKIP[0])))
         inside = {}
@@ -3337,10 +3401,14 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual(outside, [], "roads to a tree or a Bindings outside _parse_text and _bindings_of (line, spelling)")
         self.assertEqual(sorted(spelling for _, spelling in found), ["Bindings . of", "ast . parse"], "each helper spells its "
                          "road once")
-        for code in ('t = ast.parse(src)\n', 't = ast.parse(\n    src)\n', 'c = compile(src, "m", "exec", ast.PyCF_ONLY_AST)\n',
-                     'from ast import parse\n', 'import ast as a\n', 'b = ast_bindings.Bindings.of(t)\n',
-                     'b = ast_bindings.Bindings(t)\n'):
+        samples = ('t = ast.parse(src)\n', 't = ast.parse(\n    src)\n', 'c = compile(src, "m", "exec", ast.PyCF_ONLY_AST)\n',
+                   'from ast import parse\n', 'import ast as a\n', 'b = ast_bindings.Bindings.of(t)\n',
+                   'b = ast_bindings.Bindings(t)\n')
+        for code in samples:
             self.assertEqual(len(_tree_builder_spellings(code)), 1, "the reader finds the road in %r" % code)
+        self.assertEqual(sorted({spelling for code in samples for _, spelling in _tree_builder_spellings(code)}),
+                         sorted(" ".join(spelling) for spelling in _TREE_BUILDERS), "the samples find every spelling "
+                         "_TREE_BUILDERS holds, each spelling joined by spaces as the reader reports it")
         self.assertEqual(_tree_builder_spellings('s = "ast.parse(src)"\n# ast.parse(src)\nimport ast\nimport ast_bindings\n'),
                          [], "the reader finds no road in a string, a comment or an import of ast by its own name")
 
@@ -3356,10 +3424,16 @@ class HermeticKernelPostal(unittest.TestCase):
         before the check reads it): the first read warms what a first use imports or fills, a gc.collect() takes the
         baseline, and after the second read, its value alive, gc.collect() finds no unreachable object (DEBUG_SAVEALL
         for that one collection, so a red names the types found). The round's mutant that drops the release reds it with
-        the plant's bindings graphs. Each read parses each planted module once (_parse_text), so the two move the
+        the plant's bindings graphs. The second read also holds one file's tree at a time with no collection to help it:
+        its most_trees, the most file trees alive at any file parse (_parse's count), is one, the tree just built (PR
+        #850's tenth review round: the unreachable count sees cyclic garbage alone, and a read that kept every tree
+        until it returned stayed green here; that mutant reds this and the release pin's same assertion over the tree's
+        read). The collector's state as the test found it, and its debug flags, are put back by cleanups registered
+        before the test changes them, so a process that runs with the collector off is left off. Each read parses each
+        planted module once (_parse_text), so the two move the
         module's counter by two for each module that holds a planted text: nothing caches a plant's parse."""
-        self.assertTrue(gc.isenabled(), "the case plants the collector's off state from the on state pytest runs in")
-        self.addCleanup(gc.enable)                                     # registered BEFORE the disable below
+        was = gc.isenabled()                                           # the collector's state as the test found it...
+        self.addCleanup(gc.enable if was else gc.disable)              # ...put back by a cleanup registered BEFORE the disable
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         texts = collections.Counter()
@@ -3385,6 +3459,9 @@ class HermeticKernelPostal(unittest.TestCase):
         kinds = collections.Counter(type(o).__name__ for o in gc.garbage[start:])
         del gc.garbage[start:]
         self.assertTrue(read.table.roads, "the second read read no module")
+        self.assertEqual(read.most_trees, 1, "the most file trees alive at any file parse of the plant's read, the collector "
+                         "off (_parse's count, reset when the read starts, the tree just built among them): one file's tree "
+                         "at a time is one")
         self.assertEqual(unreachable, 0, "the read dropped %d objects only the collector could reclaim (%s): a cycle the "
                                          "read made and did not break before returning, which would keep each module's tree "
                                          "alive until a collection reached it" % (unreachable, ", ".join("%s %d" % kv for kv in kinds.most_common(8))))
@@ -3398,10 +3475,12 @@ class HermeticKernelPostal(unittest.TestCase):
         of every class that attaches or detaches; peers is assigned in each of those setUps and put back by a cleanup
         that setUp registers, and NEVER at module level. A module-level peers assignment is the leak of 2026-09-18 (the
         header); a tearDown-only restore is the hole of review round 1 (a subclass setUp that raises skips it). The
-        tunnels module is parsed here, once per run of this test (_PLACEMENT_PARSES, which the parse pin adds to that
-        file's count beside the tree's read), and nothing keeps the tree past the test (the release pin)."""
-        _PLACEMENT_PARSES[0] += 1
-        self.assertEqual(_placement_faults(_parse_text(_tunnels_source(), "test_kernel_tunnels.py")), [])
+        tunnels module is parsed here, once per run of this test (_PLACEMENT_PARSES, under the key of the text it
+        parsed, which the parse check adds to that text's expected count beside the tree's read), and nothing keeps the
+        tree past the test (the release pin)."""
+        text = _tunnels_source()
+        _PLACEMENT_PARSES[_text_key(text)] += 1
+        self.assertEqual(_placement_faults(_parse_text(text, "test_kernel_tunnels.py")), [])
 
     def test_the_placement_check_reds_on_a_planted_module_level_write_and_on_a_teardown_only_restore(self):
         """The check is run over synthetic copies of the real module so it is known to be able to fail (review round 1,
@@ -3446,7 +3525,9 @@ class HermeticKernelPostal(unittest.TestCase):
         os.environ or any name bound to it), and a write whose keys the scan cannot read fails here naming the file
         and line rather than passing unread. The per-test half (set in setUp, put back by a cleanup) is a convention,
         checked above for the tunnels module alone; tests/README.md says so. The writes are read from the module run's
-        one read of the tree (_tree_read, whose population is checked against the same walk), from the parse the roads
+        one read of the tree (_tree_read, whose population is checked against the same walk: a file added or removed
+        under tests/ during the module's run reds that check, a stated residual; no test writes a .py under tests/, so
+        the trigger is a person or a session editing the tree mid-run), from the parse the roads
         table's rows are read from; a plant root read by the same function (_read_root) holds _peers_writers to a
         writer it names and to an unreadable write it raises on, since over the tree it finds neither."""
         paths = _tree_module_paths()
