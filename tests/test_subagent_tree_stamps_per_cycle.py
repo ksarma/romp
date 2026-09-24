@@ -1567,7 +1567,8 @@ class PerCycleNotSticky(_World):
 
 class TwoThreadsEachValidateOnce(_World):
     """(3) The scope is thread-confined (_live_scope): a pusher cycle and a jobs pass at once each validate once and
-    hold their own pair; neither is served the other's."""
+    hold their own pair; neither is served the other's. Each thread's three slots (the samples, the stamp index and the
+    launch folds) are its own objects, keyed on identity per slot."""
 
     def test_a_pusher_cycle_and_a_jobs_pass_at_once_each_validate_once_with_their_own_scope(self):
         gate = threading.Barrier(2, timeout=30)           # both scopes open before either reads
@@ -1612,8 +1613,12 @@ class TwoThreadsEachValidateOnce(_World):
             self.assertEqual(c["dir_stat"], 0, "the %s's thread paid no stamp re-check stat: %d (before the scope CALLS x A x D = %d)"
                              % (what, c["dir_stat"], CALLS * A * D))
         self.assertIsNotNone(rec["P"]["scope"]); self.assertIsNotNone(rec["J"]["scope"])
-        self.assertIsNot(rec["P"]["scope"], rec["J"]["scope"],
-                         "each thread's scope is its own (_live_scope.subtrees is thread-local): a module-level memo would be one object")
+        for slot, key in zip(SLOTS, ("trees", "stamps", "launches")):
+            p, j = rec["P"]["scope"][key], rec["J"]["scope"][key]
+            self.assertIsNotNone(p, "the pusher cycle's thread held _live_scope.%s while its job ran" % slot)
+            self.assertIsNotNone(j, "the jobs pass's thread held _live_scope.%s while its job ran" % slot)
+            self.assertIsNot(p, j, "each thread holds its own _live_scope.%s object, keyed on identity (_live_scope is "
+                                   "thread-local): a slot bound to one module-level object would be the same object on both" % slot)
         d = self._delta(b)
         self.assertEqual((d["hit"], d["miss"]), (2, 0), "one validated hit per thread (was CALLS per thread = %d)" % (2 * CALLS))
 
@@ -4166,8 +4171,8 @@ class DependencyKey(_World):
 
 class SumOverRoots(_World):
     """(7) The cost across sessions is the sum over the roots read of each root's own figure, whatever the split (the
-    derived cost sentence in the comment block at _subagent_scope_open, docs/reference.md and the ledger entry; the lab
-    that measured it at more sizes lives outside the repo, this is its pin in the tree). Three alive sessions in one
+    validated-hit entry of the cost home, _subagent_tree_memo_report's docstring; the lab that measured it at more sizes
+    lives outside the repo, this is its pin in the tree). Three alive sessions in one
     project directory with trees of UNEQUAL size and UNEQUAL agent counts, setUp's (D, A) and EXTRA's, each read CALLS times
     in one pusher cycle and in one jobs pass, the reads interleaved across the sessions (S0, S1, S2, S0, ...) as the
     builds' are, so a scope that held one root at a time would validate on every read. Keys, per root: D_r os.lstat on its
@@ -4472,45 +4477,75 @@ class SlotSites(unittest.TestCase):
     """The rule for the two slots this branch derives from upstream's held trees (the stamp index, subagent_stamps, and
     the launch folds, subagent_launches): a value derived from a held tree lives no longer than the tree and exactly where
     the tree lives, so each is opened and cleared at exactly the sites that open and clear subagent_trees. A source
-    census over kernel/kernel.py's module-level functions, keyed on the assignment and not on a helper's name: the set of
-    functions holding a literal `_live_scope.<slot> = {}` equals subagent_trees' set, and likewise for `= None` (the
-    connect push's close clears the owned slots through its setattr loop, which the leak test in
-    tests/test_chat_build_sig_inputs.py executes). Red with any one site's line removed or moved to another function."""
+    census over kernel/kernel.py, keyed on the assignment and not on a helper's name: every `_live_scope.<slot> = {}` and
+    `_live_scope.<slot> = None`, and every `setattr(_live_scope, "<slot>", ...)` with those values, attributed to the
+    innermost enclosing function by its qualified name (a method as Class.method, a nested function as outer.inner, the
+    module's top level as <module>). For each shape, the assignments per function of each derived slot equal
+    subagent_trees' by equality of the {function: count} maps, so the set of functions is equal and each function
+    assigns the derived slot as often as the tree slot. The connect push's close clears the owned slots through its
+    setattr loop over chat_push_owned, whose names are not literals: the leak test in
+    tests/test_chat_build_sig_inputs.py executes that clear. Red with any one site's line removed or moved to another
+    function."""
+
+    SITES = {"{}": {"_pusher_cycle", "_jobs_cycle", "_chat_push_scopes_open"}, "None": {"_pusher_cycle", "_jobs_cycle"}}
 
     @staticmethod
     def _sites():
         import ast
+        from collections import Counter
         src = Path(os.path.dirname(HERE), "kernel", "kernel.py").read_text()
         sites = {}
-        for fn in ast.parse(src).body:
-            if not isinstance(fn, ast.FunctionDef):
-                continue
-            for node in ast.walk(fn):
-                if not isinstance(node, ast.Assign):
-                    continue
-                if isinstance(node.value, ast.Dict) and not node.value.keys:
-                    shape = "{}"
-                elif isinstance(node.value, ast.Constant) and node.value.value is None:
-                    shape = "None"
-                else:
-                    continue
+
+        def shape_of(v):
+            if isinstance(v, ast.Dict) and not v.keys:
+                return "{}"
+            if isinstance(v, ast.Constant) and v.value is None:
+                return "None"
+            return None
+
+        def is_scope(node):
+            return isinstance(node, ast.Name) and node.id == "_live_scope"
+
+        class Census(ast.NodeVisitor):
+            def __init__(self):
+                self.stack = []
+
+            def _enter(self, node):
+                self.stack.append(node.name)
+                self.generic_visit(node)
+                self.stack.pop()
+            visit_FunctionDef = visit_AsyncFunctionDef = visit_ClassDef = _enter
+
+            def _count(self, slot, shape):
+                if slot in SLOTS and shape is not None:
+                    sites.setdefault((slot, shape), Counter())[".".join(self.stack) or "<module>"] += 1
+
+            def visit_Assign(self, node):
                 for t in node.targets:
-                    if (isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id == "_live_scope"
-                            and t.attr in SLOTS):
-                        sites.setdefault((t.attr, shape), set()).add(fn.name)
+                    if isinstance(t, ast.Attribute) and is_scope(t.value):
+                        self._count(t.attr, shape_of(node.value))
+                self.generic_visit(node)
+
+            def visit_Call(self, node):
+                if (isinstance(node.func, ast.Name) and node.func.id == "setattr" and len(node.args) == 3 and is_scope(node.args[0])
+                        and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str)):
+                    self._count(node.args[1].value, shape_of(node.args[2]))
+                self.generic_visit(node)
+        Census().visit(ast.parse(src))
         return sites
 
     def test_every_derived_slot_is_opened_and_cleared_at_exactly_the_tree_slots_sites(self):
         sites = self._sites()
         for shape in ("{}", "None"):
-            trees = sites.get(("subagent_trees", shape), set())
-            self.assertTrue(trees, "premise: the census found the functions assigning subagent_trees = %s" % shape)
+            trees = dict(sites.get(("subagent_trees", shape), {}))
+            self.assertTrue(self.SITES[shape] <= set(trees),
+                            "premise: the census found subagent_trees = %s in %s, the sites the rule names; it found %r"
+                            % (shape, sorted(self.SITES[shape]), trees))
             for slot in SLOTS[1:]:
-                got = sites.get((slot, shape), set())
+                got = dict(sites.get((slot, shape), {}))
                 self.assertEqual(got, trees,
-                                 "the functions assigning _live_scope.%s = %s: %r; keyed on equality with subagent_trees' %r, the "
-                                 "slot opened and cleared exactly where the tree slot is" % (slot, shape, sorted(got), sorted(trees)))
-
+                                 "the assignments of _live_scope.%s = %s per function: %r; keyed on equality with subagent_trees' %r, "
+                                 "the slot opened and cleared exactly where the tree slot is, as often" % (slot, shape, got, trees))
 
 if __name__ == "__main__":
     unittest.main()
