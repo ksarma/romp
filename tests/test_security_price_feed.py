@@ -217,8 +217,12 @@ INVENTORY = os.path.join("scripts", "network-inventory.py")
 INVENTORY_SRC = _read(INVENTORY) if os.path.exists(os.path.join(ROOT, INVENTORY)) else ""
 EXPECTED_COUNTS = os.path.join("scripts", "network-inventory-expected.json")
 # the second round of the review of PR 878: the section derived from the census's table, each sentence anchored
-TRIGGER = ("when the Token usage view opens and this kernel has made no fetch attempt yet, or its last attempt is more "
-           "than six hours old, with no credential")
+# fresh-1 of the sixth round: the trigger is a build of the view's payload, which a period pick requests as well as the view's open;
+# one text in the section, docs/reference.md (tests/test_reference_price_feed.py's TRIGGER), the table's price-feed trigger cell and
+# the ledger entry's opening paragraph, which the trigger case below holds
+TRIGGER_BUILD = "a build of the Token usage view's payload (`/analytics`), on an open of the view or a period picked in it"
+TRIGGER = ("at " + TRIGGER_BUILD + ", when this kernel has made no fetch attempt yet, or its last attempt is more than six hours old, "
+           "with no credential")
 STAMPED = ("stamps the attempt before the fetch runs, so a fetch that fails or lands nothing holds the six hours like one "
            "that landed, and the first open of the view after a start always fetches")
 OLD_TRIGGER = "the table it holds is more than six hours old"
@@ -355,22 +359,52 @@ PAINT_NOTICE = "a notice card's body on the feed page, which a session writes th
 PAINT_STRIPPED = ("The file preview and the notice card strip an image, video, audio, a poster and an svg image before the nodes join the page, so "
                   "only the paint references load there.")
 PAINT_WITNESS = "ui/webview/chat-media-loads-browser.test.ts"
-# every caller of stripRemoteLoads in ui/ and vscode-extension/src (test files excluded), by (file, enclosing function), found by grep
-# and placed: a caller missing from this map is red by name, an entry that finds no caller is red as stale
+# What the two caller censuses below count, skip and red (tests-3 of the sixth round, the references to stripRemoteLoads and what
+# is skipped among it): one text in their comments and messages, the class docstring,
+# the script's docstring (the census module's PAINT_ROAD_SENTENCE), its comment above PAINT_ROW and that row's where cell; the paint
+# road's case holds the docstring and the where cell
+CALL_COUNT_RED = ("counts by grep every call in render.ts spelled `md(` or `userMd(`, a gap before the paren allowed, on one line (`md (t)` "
+                  "and `x.md(t)` among them), and every reference to "
+                  "stripRemoteLoads (a call, an import, an alias) in the .ts and .js files directly under ui/webview and vscode-extension/src, "
+                  "skipping test files, each name's definition (`function md(` and the like), a line that opens with `//`, `*` or `/*`, and the "
+                  "text from a `//` that starts the line or follows whitespace; each match is counted under the nearest `function NAME(` line "
+                  "at or above it, so a new call or reference moves a count and is red: under its caller's name when that line declares the "
+                  "caller, and otherwise under the function that line declares, or under none above the first such line")
+# every reference to stripRemoteLoads outside its definition under ui/webview and vscode-extension/src (test files excluded): a call,
+# the import that binds the name, an alias (`const s = stripRemoteLoads`); with the number each (file, function) has at the head and
+# its reason; the census counts by grep every call in render.ts spelled `md(` or `userMd(`, a gap before the paren allowed, on one
+# line (`md (t)` and `x.md(t)` among them), and every reference to stripRemoteLoads (a call, an import, an alias) in the .ts and .js
+# files directly under ui/webview and vscode-extension/src, skipping test files, each name's definition (`function md(` and the
+# like), a line that opens with `//`, `*` or `/*`, and the text from a `//` that starts the line or follows whitespace; each match is
+# counted under the nearest `function NAME(` line at or above it, so a new call or reference moves a count and is red: under its
+# caller's name when that line declares the caller, and otherwise under the function that line declares, or under none above the
+# first such line (where the two imports stand);
+# an entry whose function has no reference left is red as stale (since the sixth round; at the sixth round's head the census counted
+# the calls spelled `stripRemoteLoads(` alone, so a call through an alias counted nowhere)
 STRIP_CALLERS = {
-    ("ui/webview/render.ts", "previewMdClean"): "the chat's file preview (the paint row)",
-    ("ui/webview/feed.ts", "noticeBodyNodes"): "a notice card's body (the paint row)",
-    ("ui/webview/render.ts", "renderFilePreview"): "the provider slot (c.body.html), filled by no producer at this head: renderFilePreview's "
-                                                   "calls pass only contentFor or textOnlyContent, and neither writes html",
+    ("ui/webview/render.ts", "previewMdClean"): (1, "the chat's file preview (the paint row)"),
+    ("ui/webview/feed.ts", "noticeBodyNodes"): (1, "a notice card's body (the paint row)"),
+    ("ui/webview/render.ts", "renderFilePreview"): (1, "the provider slot (c.body.html), filled by no producer at this head: renderFilePreview's "
+                                                       "calls pass only contentFor or textOnlyContent, and neither writes html"),
+    ("ui/webview/render.ts", None): (1, "the import that binds the name for the file's two calls, above its first function declaration"),
+    ("ui/webview/feed.ts", None): (1, "the import that binds the name for noticeBodyNodes's call, above the file's first function declaration"),
 }
 # renderFilePreview's calls, by content: each passes a content built by contentFor or textOnlyContent (a fifth call, or another builder, is red)
 PREVIEW_CONTENT_CALL = re.compile(r"renderFilePreview\(p, (?:ok \? )?(?:contentFor|textOnlyContent)\(")
-STRIP_REMOTE_LOADS = re.compile(r"(?<!function )\bstripRemoteLoads\(")   # every call, placed by its enclosing function, not the definition
+STRIP_REMOTE_LOADS = re.compile(r"(?<!function )\bstripRemoteLoads\b")   # every reference (a call, the import, an alias), not the definition
 # the md() and userMd() callers on the web dashboard (the round's ruling 6): every function in render.ts that renders a chat text
-# through md() or userMd(), named in the chat-media trigger cell in backticks, so a new caller is red by name
-MD_CALLERS = ("renderAgentNotif", "renderInjected", "renderEventInner", "renderCompact", "renderQueued", "renderTool", "renderPostalService",
-              "renderTeammate", "commentMsgEl")
-MD_CALL = re.compile(r"(?<![\w.$])(?<!function )(?:md|userMd)\(")   # a md() or userMd() call, not a longer identifier ending in md( and not the definition
+# through md() or userMd(), each named in the chat-media trigger cell in backticks, with the number of calls it has at the head
+# (renderEventInner's seven sit on six lines: one line carries two; a space before the paren is read too, `md (t)`); the census counts
+# by grep every call in render.ts spelled `md(` or `userMd(`, a gap before the paren allowed, on one line (`md (t)` and `x.md(t)`
+# among them), and every reference to stripRemoteLoads (a call, an import, an alias) in the .ts and .js files directly under
+# ui/webview and vscode-extension/src, skipping test files, each
+# name's definition (`function md(` and the like), a line that opens with `//`, `*` or `/*`, and the text from a `//` that starts the
+# line or follows whitespace; each match is counted under the nearest `function NAME(` line at or above it, so a new call or reference
+# moves a count and is red: under its caller's name when that line declares the caller, and otherwise under the function that line
+# declares, or under none above the first such line
+MD_CALLERS = {"renderAgentNotif": 1, "renderInjected": 1, "renderEventInner": 7, "renderCompact": 1, "renderQueued": 3, "renderTool": 3,
+              "renderPostalService": 1, "renderTeammate": 1, "commentMsgEl": 1}
+MD_CALL = re.compile(r"(?<!function )\b(?:md|userMd)\s*\(")   # a call spelled md( or userMd(, a gap before the paren allowed, on one line, not the definition
 # The .svg tab road (extra6-2 of the fifth round of the review): a modified click on a path link to an .svg opens the file in the
 # browser's own tab from the kernel's /file route or its relay, a sandboxed svg document that loads what its markup names; the
 # section's sentence and the table's row, named and not counted (the loads have no line in the tree; the opener's one site is local by
@@ -425,9 +459,14 @@ DOCUMENT_ESSENCES = ("text/html", "text/xsl", "multipart/x-mixed-replace", "mult
 XML_FAMILY = re.compile(r"^[a-z]+/(?:[a-z0-9.+-]+\+)?xml$")
 # The served pages, the connection family's binding arm and the shapes no pattern reads (F, G, H, I of the fifth round): one source
 # with the census module and the script's docstring (census carries SERVED_PAGES and UNREAD_BINDINGS; BINDING_ARM is SECURITY.md's
-# clause, held to the script docstring here). SERVED_PAGES replaces the fourth round's served sentence in place.
+# clause, held to the script docstring here). SERVED_PAGES replaces the fourth round's served sentence in place; since the sixth
+# round UNREAD_BINDINGS is the two JavaScript refusals and what a read binding leaves unread (correctness-4, extra6-1, extra7-2,
+# extra6-3), and BINDING_ARM reads a whole require in its declaration's first declarator only.
 SERVED_PAGES = census.SERVED_PAGES
 UNREAD_BINDINGS = census.UNREAD_BINDINGS
+# The vendored copy outside the walk (extra7-1 of the sixth round): one text with the script's docstring and the ledger entry's census
+# paragraph, which the census module holds (TheVendoredCopyIsStatedOutsideTheWalk)
+VENDORED_SCOPE = census.VENDORED_SCOPE
 # The GitHub button (extra7-1): the clicked-link row's sent cell names the address romp composes, held to the URL shapes
 # tests/test_file_github.py executes; the trigger cell names the button's mechanics per document; the section carries both
 CLICKED_GITHUB_SENT = "the file viewer's GitHub button carries an address romp composes (`_file_github_link` in kernel/kernel.py"
@@ -482,7 +521,8 @@ ECHO_RULE = ("An echo- or print-led shell line is skipped as a printed remedy on
 # after its own lead-in (the child_process family's treatment extended to http, https, net, tls and ws, through the shapes the patterns
 # read); tests/test_price_feed_census.py plants each shape (TheAddedBindingShapesAreRead). One text with the script's docstring.
 BINDING_ARM = ("a `get` or `request` of `http` or `https`, a `connect` or `createConnection` of `net` and a `connect` of `tls` through an "
-               "inline require, a name the file keeps the module under (a require or an `await import()` assigned whole in its declaration, "
+               "inline require, a name the file keeps the module under (a require or an `await import()` assigned whole in the first "
+               "declarator of its declaration, "
                "TypeScript's `import X = require()`, a namespace or default import, alone or the two in one statement, a default beside a brace "
                "list, `import { default as X }`), or a bare name the file binds from the module by a brace list, alone or beside a default, in "
                "an import, a destructured require or a destructured `await import()` (renamed or not), and `ws` by its constructor shape (`new "
@@ -740,6 +780,14 @@ class TheSectionScopesItsClaimToWhatTheCodeDoes(_Pins):
         self.assertNotIn(OLD_TRIGGER, flat, "%s: the table's age is a different clock from the attempt's stamp" % self.DOC)
         self.assertQuoted("the last fetch attempt is more than six hours old, or there has been none", _flat(REFERENCE),
                           "docs/reference.md", "the reference states the same trigger")
+        # fresh-1 of the sixth round: the trigger is a build of the view's payload, which a period pick requests too, one text in the
+        # section (TRIGGER above), the reference, the table's price-feed trigger cell (TheTableIsTheLedgers holds the ledger block's
+        # row equal to it) and the ledger entry's opening paragraph; tests/test_price_feed_census.py holds who reaches the build
+        self.assertQuoted(TRIGGER_BUILD, _flat(REFERENCE), "docs/reference.md", "the trigger is a build of the view's payload")
+        self.assertQuoted(TRIGGER_BUILD, _road("price-feed")[2], "the table's price-feed trigger cell", "one text with the section")
+        opening = [ln for ln in _read(census.LEDGER).splitlines() if ln.startswith("The kernel fetched a third party's price table")]
+        self.assertEqual(len(opening), 1, "%s has one opening paragraph saying what the kernel fetched" % census.LEDGER)
+        self.assertQuoted(TRIGGER_BUILD, opening[0], census.LEDGER, "the opening paragraph states the trigger as the build too")
         refresh = _pydef(KERNEL, "_refresh_remote_prices")
         self.assertTrue(refresh, "kernel/kernel.py defines _refresh_remote_prices at the top level")
         where = "kernel/kernel.py _refresh_remote_prices"
@@ -915,8 +963,11 @@ class TheSectionScopesItsClaimToWhatTheCodeDoes(_Pins):
 class TheSectionIsTheTables(_Pins):
     """The section's road list is the census's table, held equal by execution (round 2 of the review of PR 878: the
     section made a completeness claim and named no derivation, and its pins asserted its sentences against themselves).
-    Each case asserts the section's text first; the table comes from `python3 scripts/network-inventory.py --table`
-    run over the tree, and a road it prints that the section does not say in words is red here, naming the road."""
+    Each case asserts the section's text first; the table is the census script's --table output over the tree, composed in
+    process by tests/test_price_feed_census.py's tree_run (render_table over that module's one scan of the tree; that module
+    holds the file's --table road, run as a command line, to render_table's output over its two tiny roots, and no run of the
+    file prints the full tree's table), and a road it prints that the section does not say in words is red here, naming the
+    road."""
 
     def test_the_section_names_the_derivation_and_what_the_run_refuses(self):
         self.assertNetwork()
@@ -932,6 +983,19 @@ class TheSectionIsTheTables(_Pins):
         self.assertTrue(os.path.exists(os.path.join(ROOT, "tests", "test_price_feed_census.py")), "the module the section says runs it")
         self.assertQuoted("--table", _read("tests", "test_price_feed_census.py"), "tests/test_price_feed_census.py",
                           "the census module runs the script and compares its table")
+
+    def test_the_vendored_copy_outside_the_walk_is_said_after_the_walks_claim(self):
+        # the sixth round (extra7-1): vendor/track-changents is runtime code the walk does not read, said after the sentence that names
+        # the walked roots and before the served pages, one text with the script's docstring; tests/test_price_feed_census.py holds the
+        # docstring's scope paragraph and the ledger entry's census paragraph to it and plants a load there that the run does not see
+        self.assertNetwork()
+        flat = _flat(NETWORK)
+        self.assertQuoted(VENDORED_SCOPE, flat, self.DOC, "the vendored copy outside the walk")
+        self.assertLess(flat.index(SUITE_RUNS), flat.index(VENDORED_SCOPE), "%s: it follows the walk's claim" % self.DOC)
+        self.assertLess(flat.index(VENDORED_SCOPE), flat.index(SERVED_PAGES), "%s: the served pages follow it" % self.DOC)
+        doc = re.match(r'(?s)\A(?:#[^\n]*\n)*"""(.*?)"""', INVENTORY_SRC)
+        self.assertTrue(doc, "%s opens with a module docstring" % INVENTORY)
+        self.assertQuoted(VENDORED_SCOPE, _flat(doc.group(1)), "%s's docstring" % INVENTORY, "one source: the section's sentence is the script's")
 
     def test_every_road_of_the_table_is_said_in_the_section(self):
         self.assertNetwork()
@@ -1282,8 +1346,12 @@ class TheSectionIsTheTables(_Pins):
         self.assertQuoted(ECHO_RULE, flat, self.DOC, "the echo rule, beside the disclosure sentence")
         self.assertQuoted(SERVED_PAGES, flat, self.DOC, "the served pages, beside the walk's claim")
         self.assertQuoted(BINDING_ARM, flat, self.DOC, "the connection family through its bindings, beside the disclosure")
-        self.assertQuoted(UNREAD_BINDINGS, flat, self.DOC, "the three binding shapes no pattern reads, beside the disclosure (correctness-3 of the fifth round)")
-        self.assertLess(flat.index(DISCLOSURE), flat.index(UNREAD_BINDINGS), "%s: the unread shapes follow the rule they fall under" % self.DOC)
+        self.assertQuoted(UNREAD_BINDINGS, flat, self.DOC, "the two JavaScript refusals and what a read binding leaves unread, beside the "
+                          "disclosure (correctness-3 of the fifth round; correctness-4, extra6-1, extra7-2 and extra6-3 of the sixth)")
+        self.assertLess(flat.index(DISCLOSURE), flat.index(UNREAD_BINDINGS), "%s: the refusals and the residual follow the rule they qualify" % self.DOC)
+        self.assertQuoted("a client the list names is a site through a call on each binding shape the patterns read, the connection family "
+                          "read through its bindings as the child_process family is: " + BINDING_ARM, flat, self.DOC,
+                          "the arm's lead-in says a call on a read binding is a site, not every use of one (extra6-3 of the sixth round)")
         self.assertLess(flat.index(UNREAD_BINDINGS), flat.index(ECHO_RULE), "%s: the echo rule follows, as in the docstring" % self.DOC)
         doc = re.match(r'(?s)\A(?:#[^\n]*\n)*"""(.*?)"""', INVENTORY_SRC)
         self.assertTrue(doc, "%s opens with a module docstring" % INVENTORY)
@@ -1445,10 +1513,15 @@ class TheEditorPromptRunsTheExtensionsOwnInstallScript(_Pins):
 
 
 def _enclosing_callers(call_re):
-    """Every call of `call_re` under ui/webview and vscode-extension/src (non-test .ts and .js), as (relpath, enclosing top-level
-    function name), the enclosing function the nearest preceding `function NAME(` (comment lines and trailing `//` comments
-    stripped, so a call in prose is not counted): the population a caller census is derived from, by grep, never listed by hand."""
-    out = set()
+    """Every match of `call_re` under ui/webview and vscode-extension/src (non-test .ts and .js), a call or, for stripRemoteLoads, any
+    reference outside the definition, counted per match (two on one line are two), as {(relpath, function name): calls}: a match is
+    counted under the nearest line at or above it that opens with `function NAME(` (after an optional `export` and `async`), and a
+    match above the first such line under None (a line that opens with `//`, `*` or `/*` skipped, and the text from a `//` that
+    starts the line or follows whitespace cut, so a call in prose is not counted). The population a caller census is derived from, by grep,
+    never listed by hand. The function is where the call sits by that rule, not always its caller: a caller spelled another way (an
+    arrow, a method, a function expression) is counted under the declaration above it, so it moves that entry's count (tests-3 of
+    the sixth round: a set of names, as this returned before, let such a caller below a listed one pass)."""
+    out = {}
     for base in ("ui/webview", "vscode-extension/src"):
         d = os.path.join(ROOT, base)
         for name in sorted(os.listdir(d)):
@@ -1464,39 +1537,61 @@ def _enclosing_callers(call_re):
                     continue
                 mc = re.search(r"(?:^|(?<=\s))//", ln)
                 code = ln[:mc.start()] if mc else ln
-                if call_re.search(code):
+                n = len(call_re.findall(code))
+                if n:
                     fn = None
                     for hi, hn in headers:
                         if hi <= i:
                             fn = hn
                         else:
                             break
-                    out.add((rel, fn))
+                    out[(rel, fn)] = out.get((rel, fn), 0) + n
     return out
+
+
+def _count_drift(found, committed):
+    """The census's disagreements with its committed counts, as sorted (key, committed, found) triples, a side that lacks the key
+    reading 0: a new call moves a count (a new key, or a listed one's), and an entry whose function has no call left is found at 0,
+    red as stale whatever count it commits."""
+    keys = set(found) | set(committed)
+    return sorted(((k, committed.get(k, 0), found.get(k, 0)) for k in keys
+                   if k not in found or k not in committed or found[k] != committed[k]), key=repr)
 
 
 class TheStripAndMdCallersArePlaced(_Pins):
     """The paint road's caller census (extra6-1 of the fifth round, the round's ruling 6): the paint references of the chat's file
-    preview and a notice card have no attribute line, so the row is named and not counted and a pin over the callers of
-    stripRemoteLoads is what reds a new surface on the strip. Every caller of stripRemoteLoads under ui/webview and
-    vscode-extension/src is placed in STRIP_CALLERS (the two rowed surfaces and the provider slot, filled by no producer: every
-    renderFilePreview call passes a content built by contentFor or textOnlyContent, PREVIEW_CONTENT_CALL); and every md() or
-    userMd() caller in render.ts (the chat texts the road covers) is named in the chat-media trigger cell in backticks, so a new
-    caller reds by name. Derived by grep, never listed by hand."""
+    preview and a notice card have no attribute line, so the row is named and not counted and a pin over the calls of
+    stripRemoteLoads is what reds a new surface on the strip. Every reference to stripRemoteLoads outside its definition under
+    ui/webview and vscode-extension/src (a call, the import that binds the name, an alias) is counted in STRIP_CALLERS (the two rowed
+    surfaces, the provider slot, filled by no producer: every renderFilePreview call passes a content built by contentFor or
+    textOnlyContent, PREVIEW_CONTENT_CALL, and the two imports); and every call in render.ts spelled `md(` or `userMd(` (the chat
+    texts the road covers; a gap before the paren allowed, on one line) is counted in MD_CALLERS, whose functions the chat-media trigger
+    cell names in backticks. Each census carries the number per (file, function) at the head, counted per match (tests-3 of the
+    sixth round; renderEventInner's seven md() and userMd() calls sit on six lines); the census counts by grep every call in
+    render.ts spelled `md(` or `userMd(`, a gap before the paren allowed, on one line (`md (t)` and `x.md(t)` among them), and every
+    reference to stripRemoteLoads (a call, an import, an alias) in the .ts and .js files directly under ui/webview and
+    vscode-extension/src, skipping test files, each name's definition (`function md(` and the like), a line that opens with `//`, `*` or `/*`, and the text from a `//` that starts the line or
+    follows whitespace; each match is counted under the nearest `function NAME(` line at or above it, so a new call or reference
+    moves a count and is red: under its caller's name when that line declares the caller, and otherwise under the function that line
+    declares, or under none above the first such line. Derived by grep, never listed by hand."""
 
     def test_every_stripRemoteLoads_caller_is_placed(self):
-        callers = _enclosing_callers(STRIP_REMOTE_LOADS)
-        self.assertEqual(callers, set(STRIP_CALLERS), "every caller of stripRemoteLoads is classified and every classification names a caller "
-                         "(a new surface on the strip is red here): %r" % sorted(callers ^ set(STRIP_CALLERS)))
+        drift = _count_drift(_enclosing_callers(STRIP_REMOTE_LOADS), {k: n for k, (n, _) in STRIP_CALLERS.items()})
+        if drift:
+            self.fail("every reference to stripRemoteLoads outside its definition (a call, an import, an alias) is counted in STRIP_CALLERS: "
+                      "the census " + CALL_COUNT_RED
+                      + "; an entry whose function has no reference left is stale. (file, function), committed, found: %r" % drift)
         n_calls = len(re.findall(r"(?<!function )renderFilePreview\(", RENDER))   # the calls, not the definition
         n_content = len(PREVIEW_CONTENT_CALL.findall(RENDER))
         self.assertTrue(n_calls >= 4 and n_content == n_calls, "every renderFilePreview call passes a contentFor or textOnlyContent content, so the "
                         "provider slot (c.body.html) is filled by no producer at this head: %d calls, %d content builds" % (n_calls, n_content))
 
     def test_the_md_callers_are_placed_in_the_chat_media_trigger_cell(self):
-        callers = {fn for rel, fn in _enclosing_callers(MD_CALL) if rel == "ui/webview/render.ts"}
-        self.assertEqual(callers, set(MD_CALLERS), "every md() or userMd() caller in render.ts is named (the round's ruling 6; a new caller is red "
-                         "here): %r" % sorted(callers ^ set(MD_CALLERS)))
+        found = {fn: n for (rel, fn), n in _enclosing_callers(MD_CALL).items() if rel == "ui/webview/render.ts"}
+        drift = _count_drift(found, MD_CALLERS)
+        if drift:
+            self.fail("every call in render.ts spelled md( or userMd( is counted in MD_CALLERS (the round's ruling 6): the census "
+                      + CALL_COUNT_RED + "; an entry whose function has no call left is stale. Function, committed, found: %r" % drift)
         rows, rc, err = _table()
         self.assertTrue(rows, "%s --table printed no table (exit %s): %s" % (INVENTORY, rc, err))
         cells = _row(rows, CHAT_MEDIA_LABEL)
@@ -1525,6 +1620,12 @@ class TheChatFilePreviewAndNoticePaintRoadIsNamed(_Pins):
         self.assertQuoted("`stripRemoteLoads`", cells[0], "the row's where cell", "the strip the caller census guards")
         self.assertQuoted("`previewMdClean`", cells[0], "the row's where cell", "the chat's file preview")
         self.assertQuoted("`noticeBodyNodes`", cells[0], "the row's where cell", "the notice card's body")
+        self.assertQuoted(CALL_COUNT_RED, cells[0], "the row's where cell", "what the caller census reds, one text with that census's "
+                          "messages (tests-3 of the sixth round)")
+        doc = re.match(r'(?s)\A(?:#[^\n]*\n)*"""(.*?)"""', INVENTORY_SRC)
+        self.assertTrue(doc, "%s opens with a module docstring" % INVENTORY)
+        self.assertQuoted(CALL_COUNT_RED, _flat(doc.group(1)), "%s's docstring" % INVENTORY, "the paint road's sentence says what the "
+                          "caller census reds, one text with the row's where cell")
         self.assertQuoted(PAINT_CLAUSE, cells[2], "the row's sent cell", "one text with the section")
         self.assertTrue(cells[3].startswith("none"), "the row's off-switch cell: no setting gates it: %r" % cells[3])
         self.assertTrue(os.path.isfile(os.path.join(ROOT, PAINT_WITNESS)), "the executed witness is in the tree: " + PAINT_WITNESS)

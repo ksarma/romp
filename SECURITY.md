@@ -169,8 +169,9 @@ and per-machine, from this trust level).
 
 By default the kernel opens one connection of its own to a host other than the
 model provider: it fetches a public model-pricing table
-(`raw.githubusercontent.com/.../model_prices_and_context_window.json`) when
-the Token usage view opens and this kernel has made no fetch attempt yet, or
+(`raw.githubusercontent.com/.../model_prices_and_context_window.json`) at a
+build of the Token usage view's payload (`/analytics`), on an open of the view
+or a period picked in it, when this kernel has made no fetch attempt yet, or
 its last attempt is more than six hours old, with no credential. The kernel
 stamps the attempt before the fetch runs, so a fetch that fails or lands
 nothing holds the six hours like one that landed, and the first open of the
@@ -185,80 +186,167 @@ it finds with the counts committed beside it in
 `scripts/network-inventory-expected.json`, and exits 1 naming any site it
 cannot place, any count that differs, any HTTP or socket client it does not
 know and any row of its table that names no site; the test suite runs it
-(`tests/test_price_feed_census.py`). The pages the kernel serves and its
-service worker's script, from its own string constants (the dashboard shell,
+(`tests/test_price_feed_census.py`). vendor/track-changents is runtime code,
+reached by relative imports from walked files (the dashboard's ui sources, a
+session hook and the file-comments host) and by install.sh's links into
+~/.claude, and it is not walked. A load written there is no site and no line,
+and the import gate does not read its imports. The pages the kernel serves and
+its service worker's script, from its own string constants (the dashboard shell,
 the seven pane pages, the token login page, the too-large page and /sw.js, with
 the shim, the timeline boot and the shell scripts they inline), are read from
 kernel.py's syntax tree and scanned as browser text keyed kernel/kernel.py plus
-tool, with the DOM loads counted. The routes are derived from every `_send`
-call and every Content-Type header written outside `_send`, in every scanned
-Python file. A `_send` call's content type is read through the definition it
-reaches: the kernel's Handler._send writes its `ctype` parameter, so the call's
-third argument or its `ctype=` keyword; the postal bus's writes
-application/json; the session host's and its transport's write a frame to a
-Unix socket and answer no HTTP request (FRAME_WRITERS), and any other
-definition that writes no Content-Type fails the run. The type is read through
-module constants, through a local whose every binding is read and through a
-dict literal's values; the part before any `;`, stripped and lower-cased, is
-compared with the types a browser runs script from (SCRIPT_TYPES: text/html;
-the XML types text/xml, application/xml, text/xsl and any type with a `+xml`
-suffix, image/svg+xml and application/xhtml+xml among them; and text/javascript
-under each name a browser takes for JavaScript, application/javascript among
-them). The page function of each script-running route is followed to the text
-it returns or inlines. In that text the served pass reads a BoolOp's operands,
-a method call's receiver and a subscript's container when they name a module
-constant or a local, the receiver of `.encode` or `.format_map` whatever it is,
-a class attribute the class body binds, a loop, unpacking or with target from
-its source, and a local container's appended or stored values; it passes over a
-base that carries no page text (an import, a builtin, a parameter, an except
-name, or a name the function binds from one of those). The run fails by name
-(SERVED) on a content type the pass cannot read, a script-running type written
-outside `_send`, a function that answers outside `_send` more often than it
-writes a Content-Type header, a container the module writes at run time, any
-other receiver or container, and a route whose text the pass cannot read,
-unless the served allowlist, SERVED_ALLOW, names the place by its function and
-expression, with the number of places the entry covers and the reason (the two
-answers with no body, the CORS preflight's 204 and the websocket upgrade's 101,
-are named there); an entry that names nothing in the run, or covers a different
-number of places, fails the run too. In served text every `fetch(` and
-`import(` on a line is read by its own argument, and no comment skip applies,
-since a joined constant is one line whatever it starts with. A file the page
-reads at run time is covered by the walk when it is a scanned kind, and a
-stylesheet is named, not scanned. The shell and browser sides are matched by a
-named list with no completeness gate: a tool or a client the lists do not name
-is no site and no line; the Python side's gate is module-granular: an import
-outside the allow-list fails the run, and a primitive of a known module outside
-NET and SUB is not a site. Three binding shapes no pattern reads fall under
-that rule: a require assigned after its declaration
-(`let h; h = require("http")`), a `.then()` callback parameter of `import()`,
-and a call through an alias of `require`
-(`const r = require; const h = r("http")`); a call through any of them is no
-site and no line. The import gate reads the literal `require()` and `import()`
-of the first two, so in those shapes an `https`, `net` or `tls` module fails
-the run and the residual reaches `http`, `ws` and `child_process`, the packages
-the list knows; an aliased require spells no literal `require()`, so the gate
-does not read its module either, and that shape reaches every module. An echo-
-or print-led shell line is skipped as a printed remedy only when nothing live
-follows the printed text: the text outside quotes and the body of every
-`$(...)` and backtick substitution, wherever it stands, are scanned by the
-interpreter arm and the tool list, so `echo "$body" | curl ...` and
-`echo "rate: $(curl ...)"` are sites and a remedy that names a tool inside
+tool, with the DOM loads counted. The routes are derived from the calls of
+`_send` the scan reads (spelled `_send(...)` or `<x>._send(...)`; a call
+through a name computed at run time is not read) and every Content-Type header
+written outside `_send`, in every scanned Python file. A `_send` call's content
+type is read through the definition it reaches: the kernel's Handler._send
+writes its `ctype` parameter, so the call's third argument or its `ctype=`
+keyword; the postal bus's writes application/json; the session host's and its
+transport's write a frame to a Unix socket and answer no HTTP request
+(FRAME_WRITERS), and any other definition that writes no Content-Type fails the
+run. The type is read through a module name no code writes after binding it
+(one module-level assignment binds it, nothing else at module level binds it,
+and nothing in the file writes that name, in any scope: a subscript store or
+delete, a call `<name>.<method>(` of a method _MUTATORS or _DUNDER_MUTATORS
+lists, a call of such a method on a type _CONTAINER_TYPES lists with the name as
+its first argument (`dict.update(<name>, ...)`), a binding in a function that
+declares the name `global` (as the target of an assignment, an augmented
+assignment, a loop, a comprehension, a with or a walrus, or by an import, a def
+or class statement or an except clause) or a module-level augmented assignment),
+through a local whose every binding is read
+and through a dict literal's values; the part before any `;`, stripped and
+lower-cased, is compared with the types a browser runs script from
+(SCRIPT_TYPES: text/html; the XML types text/xml, application/xml, text/xsl and
+any type with a `+xml` suffix, image/svg+xml and application/xhtml+xml among
+them; and text/javascript under each name a browser takes for JavaScript,
+application/javascript among them). A script-running route's page body is the
+call's second positional argument, read only when the definition the call
+reaches writes its own second positional parameter as the body (its one
+`.write(<name>)` names that parameter) and the call passes that argument
+positionally, with no starred argument before it and no `**`; any other
+script-running call (a keyword body, a starred or `**` call, a definition whose
+written body is another parameter, a local or an expression) fails the run by
+name. The page function of each script-running route is followed to the text it
+returns or inlines. In that text the served pass reads a BoolOp's operands, a
+method call's receiver and a subscript's container when they name a module
+constant (a name one module-level assignment binds and nothing else binds
+there) or a local, the receiver of `.encode` or `.format_map` whatever it is, a
+class attribute the class body binds, a loop, unpacking or with target from its
+source, and a local container's appended or stored values; it passes over a base
+that carries no page text (an import that is its name's one module-level binding
+and is not rebound, a builtin that no module-level binding shadows and that is
+not rebound, a parameter, an except name, or a name the function binds from one
+of those), and over a bare module name that is such an import or such a builtin,
+or a function or a class that is its name's one module-level binding and is not
+rebound; a name is rebound when a function binds it under `global` or a
+statement at module level writes it, in one of the forms listed above for a
+route's type, and by nothing else: a function's `X = []` of a local of the same
+name, or its `X.append(...)`, does not rebind it. It follows a call whose callee
+is a module
+function (its name's one module-level binding, not rebound), a function defined
+in the page function or a method of the route's class (to what it returns, any
+decorator on it not applied), a text method or a file read, or any other method
+(through its receiver, as above, so `_K.__call__(t)` on a module constant `_K`
+that holds a lambda reads `_K`, and a lambda is a value slot with no text), and
+it reads every call's arguments; a call to any other callee passes when the
+callee is
+such an import, such a builtin or a parameter. The run fails by name (SERVED) on
+any other reference to `_send` (a read of it that is not a call's function, or a
+string equal to `_send`), a content type the pass cannot read, a script-running
+type written outside `_send`, a function that answers outside `_send` more often
+than it writes a Content-Type header, a container the module writes at run time,
+any other receiver or container, any other callee (a module constant, a local, a
+class, a subscript, a call and a lambda among them), any other bare module name
+(one bound other than by one assignment, an import, a function or a class beside
+another module-level binding, and a rebound import, builtin, function or class
+among them), and a route whose text the pass
+cannot read, unless the served allowlist, SERVED_ALLOW, names the place by its
+function and expression, with the number of places the entry covers and the
+reason (the two answers with no body, the CORS preflight's 204 and the
+websocket upgrade's 101, are named there); an entry that names nothing in the
+run, or covers a different number of places, fails the run too. In served text
+every `fetch(` and `import(` on a line is read by its own argument, and no
+comment skip applies, since a joined constant is one line whatever it starts
+with. A file the page reads at run time is covered by the walk when it is a
+scanned kind, and a stylesheet is named, not scanned. The shell and browser
+sides are matched by a named list with no completeness gate: a tool or a client
+the lists do not name is no site and no line; the Python side's gate is
+module-granular: an import outside the allow-list fails the run, and a
+primitive of a known module outside NET and SUB is not a site. Two refusals
+cover what the JavaScript binding patterns and the import gate do not read,
+each an IMPORT line unless the JavaScript allowlist, JS_ALLOW, names the place
+by its file and expression, with the number of places the entry covers and the
+reason; an entry that names nothing in the run, or covers a different number of
+places, fails the run too. First, a literal specifier of a family module
+(`http`, `https`, `net`, `tls`, `ws` or `child_process`) that the import gate
+reads is read only where a binding the patterns read takes the module from it,
+whole or by names, or an arm reads a call through it
+(`require('http').request(`); a require or an `await import()` taken whole does
+not count when `.`, `?`, `[` or `(` follows it past whitespace and comments,
+and a brace list that takes `default` does not count unless the same statement
+binds that name whole (`import { default as X }`), so a require in a later
+declarator, `require("http").get` read as a value, a destructured default, a
+require assigned after its declaration, a `.then()` callback of `import()` and
+a re-export are each refused. Second, on a walked line the scan reads (not in
+served text), a require or import the gate cannot read is refused: a call of
+`require` in any other shape (whitespace or a comment before the paren, a
+template or a computed specifier), `require` as a bare value (followed by `;`,
+`,`, `)`, `}`, `]` or the end of the line, outside a string and a comment, where
+a quote opens a string to the same quote's next occurrence on the line that no
+backslash escapes, `/*` outside a string opens a comment to the next `*/` on the
+line or the line's end, and `//` outside a string opens a comment to the line's
+end), any `.require(` call, any member access on `require`, a
+`createRequire(` call, and an `import(` with a template specifier
+or with whitespace or a comment before its paren. So every
+literal specifier of a family module that the gate reads is read or refused,
+and on a walked line every require the gate cannot read is refused when it is
+spelled in one of those shapes; one spelled another way (a computed member such
+as `module["require"]`, `require` beside an operator, a createRequire under
+another name) is no site and no line. A client is read through a call on the
+module or on a binding the patterns read: a dotted call on an inline require or
+on a name the file keeps the module under, or a call of a bare name the file
+binds from it. A client reached from such a binding any other way is no site
+and no line, among them a member alias (`const g = http.get`), a destructure
+from the binding (`const { get } = http`), a computed member, `.call` and an
+optional chain. The import gate reads a specifier in a literal require() or
+import() spelled whole on one line (the name, its paren, the quoted specifier
+and the closing paren, with nothing between them but whitespace inside the
+parens), on a line that starts with import or export,
+on a line led by a closing brace in a walked file, and on a line led by `from`
+(in served text, by `from` or a closing brace) that continues an import or
+export statement that begins its own line; in a walked file it skips a
+comment-led line. Through a binding whose specifier the gate reads, `https`,
+`net` and `tls` still fail the run at the gate, so this residual reaches `http`,
+`ws` and `child_process`, the packages the list knows; through a binding the
+patterns read from a specifier the gate does not read (one on the line after a
+trailing `from`, in a require() or `await import()` split across lines, in a
+statement that does not begin its line, or on a comment-led line of a walked
+file) it reaches `https`, `net` and `tls` as well, save a split require on a
+walked line, which the second refusal refuses.
+The first refusal also refuses a line that binds nothing to call, such as
+`import type http from "http"` or `let a: typeof import("http")`; no such line
+is live. An echo- or print-led shell line is skipped as a printed remedy only
+when nothing live follows the printed text: the text outside quotes and the
+body of every `$(...)` and backtick substitution, wherever it stands, are
+scanned by the interpreter arm and the tool list, so `echo "$body" | curl ...`
+and `echo "rate: $(curl ...)"` are sites and a remedy that names a tool inside
 quotes is not. On the browser and editor side a client the list names is a site
-through each binding shape the patterns read, the connection family read
-through its bindings as the child_process family is: a `get` or `request` of
-`http` or `https`, a `connect` or `createConnection` of `net` and a `connect`
-of `tls` through an inline require, a name the file keeps the module under (a
-require or an `await import()` assigned whole in its declaration, TypeScript's
-`import X = require()`, a namespace or default import, alone or the two in one
-statement, a default beside a brace list, `import { default as X }`), or a bare
-name the file binds from the module by a brace list, alone or beside a default,
-in an import, a destructured require or a destructured `await import()`
-(renamed or not), and `ws` by its constructor shape (`new <binding>(`,
-`new <namespace>.WebSocket(`, `new (require('ws'))(`), each an added arm beside
-the literal spellings (`http.get(`, `net.connect(`, the bare global
-`new WebSocket(`), a call the literal list already names on a line counted once
-under the same tool. NET and SUB are the script's lists of the connection and
-command primitives it reads. Four classes of outbound activity the scan cannot
+through a call on each binding shape the patterns read, the connection family
+read through its bindings as the child_process family is: a `get` or `request`
+of `http` or `https`, a `connect` or `createConnection` of `net` and a
+`connect` of `tls` through an inline require, a name the file keeps the module
+under (a require or an `await import()` assigned whole in the first declarator
+of its declaration, TypeScript's `import X = require()`, a namespace or default
+import, alone or the two in one statement, a default beside a brace list,
+`import { default as X }`), or a bare name the file binds from the module by a
+brace list, alone or beside a default, in an import, a destructured require or
+a destructured `await import()` (renamed or not), and `ws` by its constructor
+shape (`new <binding>(`, `new <namespace>.WebSocket(`, `new (require('ws'))(`),
+each an added arm beside the literal spellings (`http.get(`, `net.connect(`,
+the bare global `new WebSocket(`), a call the literal list already names on a
+line counted once under the same tool. NET and SUB are the script's lists of
+the connection and command primitives it reads. Four classes of outbound
+activity the scan cannot
 derive are named and counted in its table rather than left out: an external
 program started whose far end its arguments do not show (a shell, node, perl or
 python as the program, whether the kernel starts it, a shell script of romp's

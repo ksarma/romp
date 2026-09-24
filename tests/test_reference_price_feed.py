@@ -152,8 +152,12 @@ OVR_SITS = "after the source (and after the unrecognised clause when there is on
 FEED_PUSHES = ("tails.push(unrec)", "tails.push(ovr)", "tails.push(rej)", "tails.push(badFile)")
 DEFAULTS_TAILS = ("(unrec ? '; ' + unrec : '')", "(ovr ? '; ' + ovr : '')", "(rej ? '; ' + rej : '')", "(badFile ? '; ' + badFile : '')")
 ENDS_CLAUSE = "1 row of model-prices.json could not be read and was skipped (the rest of the file applies)"
-# the trigger (the reference's wording, now SECURITY.md's too), and the kernel's compare, stamp and thread start behind it
-TRIGGER = "when the modal opens and the last fetch attempt is more than six hours old, or there has been none"
+# the trigger, and the kernel's compare, stamp and thread start behind it; since the sixth round (fresh-1) the trigger is a build of
+# the view's payload, which a period pick requests as well as the view's open, and its words for the build are one text with
+# SECURITY.md's, the table's price-feed trigger cell's and the ledger entry's (tests/test_security_price_feed.py's TRIGGER_BUILD
+# holds those homes)
+TRIGGER = ("at a build of the Token usage view's payload (`/analytics`), on an open of the view or a period picked in it, when the last "
+           "fetch attempt is more than six hours old, or there has been none")
 TTL_CHECK = 'if now - _price_cache["t"] < PRICE_TTL:'
 TTL_STAMP = '_price_cache["t"] = now'
 THREAD_START = "threading.Thread(target=work"

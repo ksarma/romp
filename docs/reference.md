@@ -1127,9 +1127,11 @@ yes. The gear reports a machine that is missing node or the comment tools.
 
 - `ROMP_PRICE_FEED=off` stops the kernel from fetching model prices. The
   gear's analytics modal (**Token usage**) prices transcript tokens with a
-  per-model table that ships with romp as built-in defaults; when the modal
-  opens and the last fetch attempt is more than six hours old, or there has
-  been none, the kernel fetches the public LiteLLM price list from
+  per-model table that ships with romp as built-in defaults; at a build of
+  the Token usage view's payload (`/analytics`), on an open of the view or a
+  period picked in it, when the last fetch attempt is more than six hours
+  old, or there has been none, the kernel fetches the public LiteLLM price
+  list from
   `raw.githubusercontent.com`, a third-party host, with no credential, and
   keeps the rows it parsed in memory until the next restart or the next fetch
   that lands: a landed fetch replaces them with the rows it parsed, even when

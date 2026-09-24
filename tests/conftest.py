@@ -333,8 +333,9 @@ os.environ["ROMP_CLAUDE_BIN"] = "/bin/false"
 # setUp to drive the fetch against a local fake server; StalenessEvent and ModelsRoute set it in
 # setUp and pop it in tearDown — leaving it absent for every test after that module in a serial
 # run; hence the per-test re-assert below, on the same reasoning as the manager-port one
-# (tests/test_model_catalog_floor.py pins the re-assert by execution; tests/test_price_feed_floor.py pins
-# both statements, this line and the fixture, on this file's source). Those pops still win inside their own tests:
+# (tests/test_model_catalog_floor.py pins the re-assert by execution, in one case that pops the switch and
+# runs the fixture itself, so in a serial run and in a pytest-xdist worker alike; tests/test_price_feed_floor.py
+# pins both statements, this line and the fixture, on this file's source). Those pops still win inside their own tests:
 # pytest fills every fixture, autouse included, in the item's setup phase, before runtest hands
 # the case to TestCase.run(), which is what calls setUp.
 os.environ["ROMP_MODEL_CATALOG"] = "off"

@@ -15,9 +15,12 @@ name PRICE_FEED_URL, and every other read of that name, so an alias (`url = PRIC
 read once, in the worker's urlopen); (2) every call to _refresh_remote_prices (the one caller is _model_prices); (3)
 every call to _model_prices, partitioned by its `refresh` argument: the callers that let the refresh run (no
 `refresh` argument, or one that is not the constant False) are the cost view's build alone, and the refresh=False
-callers are the guard's road and the status's own merge, which never enter the refresh (T350). The enclosing function
-is the path of nested defs and classes (the worker is `_refresh_remote_prices.work`); a call at module level is
-`<module>`.
+callers are the guard's road and the status's own merge, which never enter the refresh (T350); (4) since the sixth round
+(fresh-1), every load of the name _token_analytics, the build of the Token usage view's payload that lets the refresh run
+(called, aliased or passed), classified per function with the number of loads it holds: the /analytics route and the build's
+own one rebuild, so a load anywhere else (a boot caller, an alias) is red by name and a second load in either function as a
+moved count. The enclosing function is the path of nested defs and classes (the worker is `_refresh_remote_prices.work`); a
+call at module level is `<module>`.
 
 Text only: kernel/kernel.py is read as a file and parsed once per process (tests/parse_cache.py's source_and_tree: the
 parse this half, the switch case and the served pass below share, and in a serial cell the thread-stop census's parse of
@@ -45,13 +48,16 @@ the run (inventory, _collector_off), over the tree once per process (tree_run: o
 tests/parse_cache.py's derived, the script's scan, figures, problems, render_sites and render_table in main's order,
 serving the listing road and the --table road from one scan), over a copy of the scanned scope with one mutation at a
 time (each red the round reproduced or named, now a pin), or with a class's row-less mutations planted together and read
-from one run (_SharedRun, whose docstring says why that loses nothing), over two tiny roots (no sites; a missing root),
-and --table against the block the ledger entry carries between its two marker lines. Two child runs run the file as the
-command line runs it (_command_line; since the fifth round, when the review found the documented command held by no real
-run): over each tiny root, exiting 1 with the in-process run's output byte for byte, and over a copy whose kernel/kernel.py
+from one run (_SharedRun, whose docstring says why that loses nothing), over two tiny roots (no sites; a missing root) on
+both roads, and the tree's --table, composed in process (tree_run), against the block the ledger entry carries between its
+two marker lines. Two cases run the file as the command line runs it, in children (_command_line; since the fifth round,
+when the review found the documented command held by no real run): over each tiny root, exiting 1 with the in-process run's
+output byte for byte, and since the sixth round with --table before the root too, exiting 1 with the table render_table
+writes from a scan made apart from main on stdout and the problem lines on stderr; and over a copy whose kernel/kernel.py
 carries exactly the served pass's plants (written by _served_text, the text the pass parses), exiting 1 with the pass's
-output byte for byte, so the entry's exit code, the tree derivation and the served splice are each held against a real
-run. The script loads no romp code and
+output byte for byte, so the entry's exit code, its --table road, the tree derivation and the served splice are each held
+against a real run. A run of the file thus covers the listing road over a full copy of the scanned scope and both roads
+over the tiny roots; no run of the file prints the full tree's table. The script loads no romp code and
 this module loads none beyond tests/romp_load.py's kernel/loadsource.py; the copy lives under the run's temp root (tests/__init__.py's hook removes it, and
 tearDownModule does too).
 
@@ -80,11 +86,11 @@ scratch copy of the tree with its arm taken out of the script (the round's recor
 
 The fourth round of the review (2026-09-23, the landing round again) found four holes in the census's completeness claim and
 one road with no row. The classes below pin the closing of each by execution over the scope copy, and the mutations are
-numbered on from the third round's record (M19 to M25): TheEchoRuleScansTheLiveRemainder, a shell run member, appends seven
-echo-led lines to bin/romp (ECHO_TEXT): the pipe form and the double-quoted substitution form are curl sites, a python3 -c
+numbered on from the third round's record (M19 to M25): TheEchoRuleScansTheLiveRemainder, a shell run member, appends the
+echo-led lines ECHO_TEXT holds to bin/romp: the pipe form and the double-quoted substitution form are curl sites, a python3 -c
 substitution is an interpreter site on its row and a node -e one is UNCLASSIFIED, while three copies of the tree's printed
 remedies (a tool inside quotes) list no site, and the tree's four remedy lines, located by content, have no site line (M19:
-the head's one-line skip restored in a scratch copy of the script, none of the four live lines listed).
+the head's one-line skip restored in a scratch copy of the script, none of the live lines listed).
 TheConnectionFamilyIsReadThroughItsBindings, a browser run member, plants ui/webview/probe-bindings.ts (an inline require's
 get, a renamed destructured request, a ws default import's constructor) and probe-dedupe.ts (a namespace-bound http.get the
 literal list and the arm both match, listed once), and holds the timeline view's two require('http').request calls to their
@@ -171,6 +177,15 @@ KERNEL_PATH = os.path.join("kernel", "kernel.py")
 URL_SITES = {"_refresh_remote_prices.work": "the worker's urlopen, inside the one function the switch gates"}
 REFRESH_CALLERS = {"_model_prices": "the merge's refresh road (refresh=True), the cost view's"}
 REFRESH_TRUE_CALLERS = {"_token_analytics": "the /analytics build, the one road that lets a fetch start"}
+# Who builds the Token usage view's payload, the build that lets a fetch start (fresh-1 of the sixth round): every load of the name
+# _token_analytics in kernel/kernel.py's tree (a call, an alias, a pass as an argument), per enclosing function with the number of
+# loads it holds at the head and its reason. A load anywhere else, in another function or at module level (a boot caller,
+# `f = _token_analytics`), is red by name, and a second load in a classified function as a moved count; a reference that is no load
+# of the name (an attribute, a string) is not read.
+ANALYTICS_REFS = {
+    "Handler.do_GET": (1, "the /analytics route: a build of the Token usage view's payload, on an open of the view or a period picked in it"),
+    "_token_analytics": (1, "its own one rebuild under _ANALYTICS_REPRICING, when the table moved while the payload was priced"),
+}
 REFRESH_FALSE_CALLERS = {
     "_spend_window_usd": "the spend guard's window sum on the pusher's path: never a fetch (T350)",
     "_spend_guard_tick": "the spend guard's tick on the pusher's path: never a fetch (T350)",
@@ -178,15 +193,21 @@ REFRESH_FALSE_CALLERS = {
 }
 RESOLVE = ("either gate it behind _price_feed_off (the first statement of _refresh_remote_prices is the shape) and add it "
            "to the table in tests/test_price_feed_census.py with its reason, or route it through _model_prices")
+RESOLVE_ANALYTICS = ("a build of the Token usage view's payload anywhere but its route and its one rebuild can start the price fetch "
+                     "from there (at boot, on a timer): drop the reference, or add its function to ANALYTICS_REFS in "
+                     "tests/test_price_feed_census.py with its count and its reason, and state the new trigger where the table's "
+                     "price-feed row, SECURITY.md and docs/reference.md state it")
 
 
 class _Census(ast.NodeVisitor):
-    """Every call in a module with the path of the function it sits in, and every read of PRICE_FEED_URL."""
+    """Every call in a module with the path of the function it sits in, every read of PRICE_FEED_URL and every load of the name
+    _token_analytics."""
 
     def __init__(self):
         self.path = []
         self.calls = []        # (path, Call)
         self.url_reads = []    # (path, line)
+        self.builds = []       # (path, line): each load of the name _token_analytics
 
     def _scope(self, node):
         self.path.append(node.name)
@@ -202,6 +223,8 @@ class _Census(ast.NodeVisitor):
     def visit_Name(self, node):
         if node.id == "PRICE_FEED_URL" and isinstance(node.ctx, ast.Load):
             self.url_reads.append((".".join(self.path) or "<module>", node.lineno))
+        if node.id == "_token_analytics" and isinstance(node.ctx, ast.Load):
+            self.builds.append((".".join(self.path) or "<module>", node.lineno))
 
 
 def _callee(call):
@@ -225,13 +248,16 @@ def _refresh_is_false(call):
 
 
 def census(src, tree=None):
-    """{"url": {path: [lines]}, "url_reads": {path: [lines]}, "refresh": {...}, "true": {...}, "false": {...}}; `tree` is the
-    source's parsed tree when the caller holds one (the kernel's, from tests/parse_cache.py), else the source is parsed here."""
+    """{"url": {path: [lines]}, "url_reads": {path: [lines]}, "refresh": {...}, "true": {...}, "false": {...}, "builds": {...}};
+    `tree` is the source's parsed tree when the caller holds one (the kernel's, from tests/parse_cache.py), else the source is
+    parsed here."""
     c = _Census()
     c.visit(tree if tree is not None else ast.parse(src))
-    out = {"url": {}, "url_reads": {}, "refresh": {}, "true": {}, "false": {}}
+    out = {"url": {}, "url_reads": {}, "refresh": {}, "true": {}, "false": {}, "builds": {}}
     for path, line in c.url_reads:
         out["url_reads"].setdefault(path, []).append(line)
+    for path, line in c.builds:
+        out["builds"].setdefault(path, []).append(line)
     for path, call in c.calls:
         name = _callee(call)
         if _reads_url(call):
@@ -260,6 +286,17 @@ class _Pins(unittest.TestCase):
             self.fail("the census table names %s, which no longer %s: drop it from the table (a classified site that is "
                       "gone is a stale row, never a pass)" % (path, what))
 
+    def assertBuildsClassified(self, found):
+        """Every load of _token_analytics is in a function ANALYTICS_REFS classifies (else: red by file, function and line), every
+        classified function still loads it, and each holds the number of loads the table gives it (else: a moved count, naming the
+        function and its lines), so a second reference inside a classified function is not absorbed into the one classified there."""
+        self.assertClassified(found, ANALYTICS_REFS, "loads _token_analytics", RESOLVE_ANALYTICS)
+        for path, (n, why) in sorted(ANALYTICS_REFS.items()):
+            lines = found.get(path, [])
+            self.assertEqual(len(lines), n, "%s:%s %s loads _token_analytics %d times and ANALYTICS_REFS classifies %d (%s): each load "
+                             "is a reference of its own: %s" % (KERNEL_PATH, ",".join(str(x) for x in lines), path, len(lines), n, why,
+                                                               RESOLVE_ANALYTICS))
+
 
 class TheFeedHasOneFetchSite(_Pins):
     def test_the_census_finds_its_anchors(self):
@@ -267,6 +304,7 @@ class TheFeedHasOneFetchSite(_Pins):
         self.assertTrue(CENSUS["url"], "kernel/kernel.py calls something with PRICE_FEED_URL among its arguments")
         self.assertTrue(CENSUS["refresh"], "kernel/kernel.py calls _refresh_remote_prices")
         self.assertTrue(CENSUS["true"] and CENSUS["false"], "kernel/kernel.py calls _model_prices with and without refresh=False")
+        self.assertTrue(CENSUS["builds"], "kernel/kernel.py loads the name _token_analytics")
 
     def test_the_url_is_read_at_the_workers_urlopen_alone(self):
         self.assertClassified(CENSUS["url"], URL_SITES, "passes PRICE_FEED_URL to a call", RESOLVE)
@@ -287,6 +325,13 @@ class TheFeedHasOneFetchSite(_Pins):
         self.assertClassified(CENSUS["false"], REFRESH_FALSE_CALLERS, "calls _model_prices with refresh=False",
                               "a new refresh=False caller never fetches (T350); add it to the table with its reason")
 
+    def test_the_build_is_reached_from_its_route_and_its_one_rebuild_alone(self):
+        """fresh-1 of the sixth round: the trigger is a build of the Token usage view's payload (/analytics), so the roads to a
+        fetch are the roads to the build. Every load of the name _token_analytics in the kernel's tree, called, aliased or passed,
+        is classified per function with its count (ANALYTICS_REFS: the route in do_GET and the build's own one rebuild), read from
+        the tree this module already holds (no parse, no scan); a boot caller or an alias passed every price feed check before."""
+        self.assertBuildsClassified(CENSUS["builds"])
+
     def test_the_switch_is_the_first_statement_of_the_one_fetch_site(self):
         """Read as text here so the census and the gate are one module (tests/test_price_feed_off.py executes it)."""
         fn = next(n for n in KERNEL_TREE.body if isinstance(n, ast.FunctionDef) and n.name == "_refresh_remote_prices")
@@ -297,7 +342,8 @@ class TheFeedHasOneFetchSite(_Pins):
 
 class TheCensusIsLive(unittest.TestCase):
     """The extractor on a small module of its own: a second fetch site, a second refresh caller and an alias are found,
-    and a classified site that is gone is found missing. The same functions run over the real kernel above."""
+    a boot caller, an alias and a second load of the build (_token_analytics) are found and red, and a classified site that
+    is gone is found missing. The same functions run over the real kernel above."""
 
     SMALL = '''
 PRICE_FEED_URL = "https://TESTHOST/prices.json"
@@ -323,7 +369,13 @@ def _price_feed_status(now):
     return _model_prices(now, refresh=False)
 
 def _token_analytics(now, window):
+    if window < 0:
+        return _token_analytics(now, -window)
     return _model_prices(now)
+
+class Handler:
+    def do_GET(self):
+        return self._send(200, _token_analytics(0, 86400))
 '''
 
     def test_the_small_module_matches_the_table(self):
@@ -332,6 +384,7 @@ def _token_analytics(now, window):
         self.assertEqual(set(c["refresh"]), set(REFRESH_CALLERS))
         self.assertEqual(set(c["true"]), set(REFRESH_TRUE_CALLERS))
         self.assertEqual(set(c["false"]), set(REFRESH_FALSE_CALLERS))
+        self.assertEqual({p: len(v) for p, v in c["builds"].items()}, {p: n for p, (n, _) in ANALYTICS_REFS.items()})
 
     def test_a_second_urlopen_of_the_url_is_found(self):
         c = census(self.SMALL + "\ndef _warm_prices():\n    return urllib.request.urlopen(PRICE_FEED_URL, timeout=4)\n")
@@ -354,6 +407,27 @@ def _token_analytics(now, window):
     def test_a_second_caller_of_the_refresh_is_found(self):
         c = census(self.SMALL + "\ndef _boot_warm(now):\n    _refresh_remote_prices(now)\n")
         self.assertEqual(set(c["refresh"]) - set(REFRESH_CALLERS), {"_boot_warm"})
+
+    def test_a_boot_caller_an_alias_and_a_second_load_of_the_build_are_found(self):
+        pins = _Pins("assertBuildsClassified")
+        pins.assertBuildsClassified(census(self.SMALL)["builds"])
+        for plant, path, what in (("\ndef main():\n    _token_analytics(int(time.time()), 86400)\n", "main", "a boot caller"),
+                                  ("\nf = _token_analytics\n", "<module>", "an alias"),
+                                  ("\ndef _boot_warm():\n    threading.Thread(target=_token_analytics, args=(0, 1)).start()\n",
+                                   "_boot_warm", "a pass as an argument")):
+            c = census(self.SMALL + plant)
+            self.assertEqual(set(c["builds"]) - set(ANALYTICS_REFS), {path}, what)
+            with self.assertRaises(AssertionError) as cm:
+                pins.assertBuildsClassified(c["builds"])
+            self.assertIn(" %s loads _token_analytics and is not in the classified set" % path, str(cm.exception), what)
+        second = self.SMALL.replace("        return self._send(200, _token_analytics(0, 86400))\n",
+                                    "        g = _token_analytics\n        return self._send(200, _token_analytics(0, 86400))\n")
+        self.assertNotEqual(second, self.SMALL)
+        c = census(second)
+        self.assertEqual(len(c["builds"]["Handler.do_GET"]), 2, "a second load inside a classified function")
+        with self.assertRaises(AssertionError) as cm:
+            pins.assertBuildsClassified(c["builds"])
+        self.assertIn("Handler.do_GET loads _token_analytics 2 times and ANALYTICS_REFS classifies 1", str(cm.exception))
 
     def test_a_classified_site_that_is_gone_is_found_missing(self):
         gone = self.SMALL.replace("def _spend_guard_tick(now):\n    return _model_prices(int(now), refresh=False)\n", "")
@@ -441,14 +515,17 @@ def inventory(root, *flags):
     return rc, out.getvalue(), err.getvalue()
 
 
-def _command_line(root, timeout):
-    """(exit code, stdout bytes, stderr text) of `python3 <root>/scripts/network-inventory.py <root>` in a child: the file run as
-    SECURITY.md's Network access section documents the command, so its `if __name__ == "__main__"` entry runs, which no
-    in-process run reaches (script_module loads the file under a private name). Two cases of this module make it (the fifth
-    round of the review, 2026-09-23, found that the cost cut left the documented command held by no real run): the tiny roots'
-    case (about 0.05 s a child) and the served class's command-line case (one full scan). The child inherits this process's
+def _command_line(root, timeout, *flags):
+    """(exit code, stdout bytes, stderr text) of `python3 <root>/scripts/network-inventory.py [--table] <root>` in a child, the
+    flags before the root: the file run as SECURITY.md's Network access section and the ledger entry document the command, so
+    its `if __name__ == "__main__"` entry runs, which no in-process run reaches (script_module loads the file under a private
+    name). Two cases of this module make it (the fifth round of the review, 2026-09-23, found that the cost cut left the
+    documented command held by no real run, and the sixth found the same of its --table road), and what a run of the file
+    covers is theirs: the listing road over a full copy of the scanned scope (the served class's command-line case, one full
+    scan) and both roads, the listing and --table, over each of the two tiny roots (the tiny roots' case, about 0.06 s a child).
+    No run of the file prints the full tree's table: tree_run composes it in process. The child inherits this process's
     environment, the state floor above included, and reads no state."""
-    p = subprocess.run([sys.executable, os.path.join(root, INVENTORY), root], capture_output=True, timeout=timeout)
+    p = subprocess.run([sys.executable, os.path.join(root, INVENTORY)] + list(flags) + [root], capture_output=True, timeout=timeout)
     return p.returncode, p.stdout, p.stderr.decode("utf-8", "replace")
 
 
@@ -493,7 +570,10 @@ def tree_run(*flags):
     listing, the problem lines after it on stdout; with --table the table on stdout and the problem lines on stderr; the exit
     code 1 when there is any problem line, else 0 (main's own composition, read for the order; main itself runs in every
     other run of this module, over the copy and the tiny roots, and the served class's command-line case holds this
-    composition to a run of the file, through the served pass, which starts from it). Two roads and no other flag."""
+    composition to a run of the file, through the served pass, which starts from it). Two roads and no other flag. With
+    --table it composes the full tree's table in this process (render_table over the one derivation) and runs neither main
+    nor the file: no run of the file prints the full tree's table, and the file's --table road is held to print
+    render_table's output, with the problem lines on stderr and exit 1, over the two tiny roots (the tiny roots' case)."""
     if flags not in ((), ("--table",)):
         raise ValueError("tree_run takes no flag or --table alone, the two roads main renders: %r" % (flags,))
     run = _tree()
@@ -655,6 +735,17 @@ class _Scope(unittest.TestCase):
             self.fail("the command line's stdout over %s is not the in-process run's (%d bytes against the in-process %d):\n%s\n(stderr: %s)"
                       % (root, len(got), len(out.encode("utf-8")), "\n".join(diff[:40]), err[-400:]))
 
+    def assertTableRoad(self, how, got, want):
+        """One --table run, (exit code, stdout, stderr) as `how` made it (in process or the command line), equals `want`: exit 1, the
+        table render_table writes from a scan made apart from main (_run_of), and the problem lines on stderr, joined, with a
+        newline. Compared part by part, so a failure names the part; a stdout difference names its first differing lines."""
+        (rc, out, err), (wrc, wout, werr) = got, want
+        self.assertEqual(rc, wrc, "%s: --table over a root with problem lines exits %d (got %r; stderr: %s)" % (how, wrc, rc, err[-400:]))
+        if out != wout:
+            diff = list(difflib.unified_diff(wout.splitlines(), out.splitlines(), "render_table", how, lineterm="", n=0))
+            self.fail("%s: --table's stdout is not render_table's output (%d characters against %d):\n%s" % (how, len(out), len(wout), "\n".join(diff[:40])))
+        self.assertEqual(err, werr, "%s: --table writes the problem lines to stderr, joined, with a newline" % how)
+
     def assertListed(self, out, pattern, msg=""):
         """A site line matching the pattern is in the run's listing (the failure quotes the lines of that file, not the run)."""
         if not re.search(pattern, out, re.M):
@@ -806,13 +897,21 @@ class TheCensusRunsFromTheSuite(_SharedRun):
         self.assertEqual(after, before, "the counts file is untouched by a refused write")
 
     def test_no_sites_and_a_missing_root_are_each_refused_by_name(self):
-        """Two tiny roots (no sites; the kernel root missing), each run in this process (inventory) and as the command line runs
-        the file (_command_line; the fifth round of the review found the documented command held by no real run, fresh-1):
-        exit 1 from both and the same stdout, byte for byte. The child is a run of the file's own entry,
-        `sys.exit(main(sys.argv[1:]))` under `if __name__ == "__main__"`, which every in-process run skips, so a lost sys.exit,
-        a deleted block or an entry that drops main's return code exits 0 here (M32 to M34), at about 0.05 s a child. No child
-        runs over a clean tree for exit 0: an entry that always exits non-zero fails the documented command on every tree,
-        which is loud. The served class's command-line case holds the full scan."""
+        """Two tiny roots (no sites; the kernel root missing), each run on both of main's roads, the listing and --table, in this
+        process (inventory) and as the command line runs the file (_command_line; the fifth round of the review found the
+        documented command held by no real run, fresh-1). With no flag: exit 1 from both and the same stdout, byte for byte. The
+        child is a run of the file's own entry, `sys.exit(main(sys.argv[1:]))` under `if __name__ == "__main__"`, which every
+        in-process run skips, so a lost sys.exit, a deleted block or an entry that drops main's return code exits 0 here (M32 to
+        M34), at about 0.06 s a child. With --table (the sixth round, tests-2 and extra7-4: since the cost cut no run reached
+        main's --table branch, while the ledger entry says its block is that road's output), each run (the child with --table
+        before the root) exits 1 and prints the table render_table writes from a scan of the root made here apart from
+        main (_run_of, never inventory(tiny, "--table"), which would hold main to itself), with the problem lines on stderr,
+        joined, with a newline (assertTableRoad). A renderer swap, the problem lines routed to stdout and an exit code of 0 under
+        --table are each red in both halves, and an entry that drops --table from argv in the command-line half only (the
+        round's record). So a run of the file covers both roads over the tiny roots and the listing road over a full copy (the
+        served class's command-line case); no child runs the full tree's --table, whose table tree_run composes in process. No
+        child runs over a clean tree for exit 0: an entry that always exits non-zero fails the documented command on every tree,
+        which is loud."""
         for missing in (None, "kernel"):
             tiny = tempfile.mkdtemp(prefix="census-tiny-")
             for d in SCOPE_DIRS:
@@ -827,6 +926,12 @@ class TheCensusRunsFromTheSuite(_SharedRun):
             else:
                 self.assertNotIn("declared root", gates(out))
             self.assertCommandLine(tiny, rc, out, timeout=60)
+            mod = script_module(tiny)
+            run = _run_of(mod, tiny, mod.scan(tiny))
+            want = (1, run.table, "\n".join(run.problems) + "\n")
+            self.assertTableRoad("in process", inventory(tiny, "--table"), want)
+            code, got, err = _command_line(tiny, 60, "--table")
+            self.assertTableRoad("the command line", (code, got.decode("utf-8", "replace"), err), want)
 
 
 class TheWalkIsRecursiveOverTheDeclaredScope(_SharedRun):
@@ -835,7 +940,9 @@ class TheWalkIsRecursiveOverTheDeclaredScope(_SharedRun):
     shell hook, a Python fixture below the webview root and a program reference in kernel/credentials.py; each case's
     property is a file's own line in UNCLASSIFIED or in a gate line, or a file's absence from them. Since the fifth round
     the run also carries the primitive list's two blocks in kernel/credentials.py and the literal-URL function in
-    kernel/kernel.py (ThePrimitiveListIsKeptHonest, ASecondSiteInsideARowedFunctionIsRed), each keyed on its own lines."""
+    kernel/kernel.py (ThePrimitiveListIsKeptHonest, ASecondSiteInsideARowedFunctionIsRed), each keyed on its own lines, and
+    since the sixth round two plants in vendor/track-changents, a directory the walk does not read
+    (TheVendoredCopyIsStatedOutsideTheWalk, keyed on their files)."""
 
     RUN = "walk"
 
@@ -868,6 +975,122 @@ class TheWalkIsRecursiveOverTheDeclaredScope(_SharedRun):
 
     def test_a_program_the_kernel_runs_from_an_unscanned_directory_is_a_gate(self):
         self.assertRefused(self.rc, self.out, "PROGRAM kernel/credentials.py:", "names 'tools/probe-host.mjs'")
+
+
+# The sixth round's text on the vendored copy (extra7-1, 2026-09-24): one text in three homes, the script's docstring (its scope
+# paragraph), SECURITY.md's Network access section (tests/test_security_price_feed.py holds that home) and the ledger entry's census
+# paragraph. The review declined walking the vendored files (a widening under the rule on instruments' limits), so the text states
+# the walk's true population; TheVendoredCopyIsStatedOutsideTheWalk holds it to the behaviour and to the tree.
+VENDORED_SCOPE = ("vendor/track-changents is runtime code, reached by relative imports from walked files (the dashboard's ui sources, a "
+                  "session hook and the file-comments host) and by install.sh's links into ~/.claude, and it is not walked. A load written "
+                  "there is no site and no line, and the import gate does not read its imports.")
+VENDORED = "vendor/track-changents"
+# the places the text names, by the first path segment of the walked file that imports the copy: the dashboard's ui sources, a
+# session hook, and the file-comments host (tools/file-comments-host.mjs, the one program the kernel starts from tools/)
+VENDORED_IMPORTERS = ["hooks", "tools", "ui"]
+# two plants in the copy, each a file runtime code reaches (the engine the dashboard's bundles carry, the guard install.sh links into
+# ~/.claude), each carrying an absolute fetch, an https client and a package the census does not know: every one a line were the
+# file walked (an UNCLASSIFIED site, an IMPORT line)
+VENDORED_PLANTS = (VENDORED + "/engine.js", VENDORED + "/hooks/track-guard.mjs")
+VENDORED_PLANT = ('const https = require("https");\nhttps.get("https://example.invalid/vendored");\n'
+                  'fetch("https://example.invalid/vendored");\nimport("probe-vendored-package");\n')
+# The /dist and /media entry's reason names the vendored files the page bundles carry (regression-1, extra6-4 and extra7-3): the
+# webview leg's census, ui/webview/spacer-measure.test.ts, holds its OUTSIDE list equal to esbuild's metafile of the shipped webview
+# config by execution, and TheVendoredCopyIsStatedOutsideTheWalk holds the reason's names to that list
+SPACER_MEASURE = os.path.join("ui", "webview", "spacer-measure.test.ts")
+DIST_SOURCES = ("/dist serves the bundles esbuild builds from three sources, none of it read as served text: the scanned ui and "
+                "vscode-extension/src sources; the vendor/track-changents files they import, directly or through each other, which the "
+                "walk does not read (")
+DIST_PACKAGES = "; and the node_modules packages KNOWN_JS_IMPORTS names, together with the packages those depend on (text/javascript)."
+
+
+class TheVendoredCopyIsStatedOutsideTheWalk(_SharedRun):
+    """vendor/track-changents is runtime code the walk does not read (the sixth round, extra7-1): the review ruled the text true to
+    the walk's population rather than a wider walk, and this class holds the text to the behaviour and to the tree. The walk run
+    carries its two plants in the copy (VENDORED_PLANTS, each a file the copy does not have, so each is a new file there, removed
+    again with the directories it made); the case asserts no line of the run names them, a property keyed on their files. The
+    other cases read the tree: the text in the docstring's scope paragraph and the ledger entry's census paragraph (SECURITY.md's
+    home is held by tests/test_security_price_feed.py), the places the text names as the walked files that import the copy, read
+    by the script's own walk and specifier reader, install.sh's links, and the /dist and /media entry's reason (regression-1,
+    extra6-4 and extra7-3)."""
+
+    RUN = "walk"
+
+    @classmethod
+    def mutate(cls, cleanup):
+        for rel in VENDORED_PLANTS:
+            _plant(rel, VENDORED_PLANT, cleanup)
+
+    def test_a_load_and_an_import_written_there_are_no_site_and_no_line(self):
+        named = [ln for ln in self.out.splitlines() if VENDORED in ln or "example.invalid/vendored" in ln or "probe-vendored-package" in ln]
+        self.assertEqual(named, [], "a fetch, an https client and an unknown package planted in %s are no site and no line, as the "
+                         "text says (a walk that reads the copy lists them here, and the text must say so first)" % ", ".join(VENDORED_PLANTS))
+
+    def test_the_text_stands_in_the_docstrings_scope_paragraph_and_the_ledgers_census_paragraph(self):
+        with open(os.path.join(ROOT, INVENTORY), encoding="utf-8") as f:
+            doc = ast.get_docstring(ast.parse(f.read())) or ""
+        scope = [" ".join(p.split()) for p in doc.split("\n\n") if p.startswith("The walk is recursive over every declared root")]
+        self.assertEqual(len(scope), 1, "the docstring has one scope paragraph")
+        self.assertIn(VENDORED_SCOPE, scope[0], "the docstring's scope paragraph states the vendored copy outside the walk")
+        with open(os.path.join(ROOT, LEDGER), encoding="utf-8") as f:
+            text = f.read()
+        paragraphs = [" ".join(p.split()) for p in text.split("\n\n") if DISCLOSURE[1:] in " ".join(p.split())]
+        self.assertEqual(len(paragraphs), 1, "one paragraph of %s carries the disclosure sentence" % LEDGER)
+        self.assertIn(VENDORED_SCOPE, paragraphs[0], "the census paragraph states the vendored copy outside the walk")
+        self.assertLess(paragraphs[0].index("Its walk is recursive over"), paragraphs[0].index(VENDORED_SCOPE),
+                        "the census paragraph states it after the walk it qualifies")
+
+    def test_the_places_the_text_names_are_the_walked_files_that_import_the_copy_and_install_links_it(self):
+        """The text's population read from the tree: every relative specifier the import gate reads in a walked JavaScript file (the
+        tree derivation's files, the script's kind_of, _js_specifiers and _js_package, which passes a relative specifier as the
+        tree's own module) that resolves to a file under the copy, grouped by the importing file's first path segment, comes from
+        exactly the three places the text names; and install.sh links files of the copy into ~/.claude."""
+        mod = script_module(ROOT)
+        js_roots = tuple(d + "/" for d in mod.JS_ROOTS)
+        places = {}
+        for rel in _tree().res.files:
+            if mod.kind_of(os.path.join(ROOT, rel), os.path.basename(rel), rel.startswith(js_roots)) != "js":
+                continue
+            with open(os.path.join(ROOT, rel), encoding="utf-8", errors="replace") as f:
+                for i, ln in enumerate(f.read().splitlines(), 1):
+                    s = ln.strip()
+                    if s.startswith(("//", "*", "/*")):
+                        continue
+                    for m in mod._js_specifiers(s):
+                        spec = m.group(2)
+                        if not spec.startswith(".") or mod._js_package(spec) is not None:
+                            continue
+                        target = os.path.normpath(os.path.join(os.path.dirname(rel), spec)).replace(os.sep, "/")
+                        if target.startswith(VENDORED + "/") and os.path.isfile(os.path.join(ROOT, target)):
+                            places.setdefault(rel.split("/")[0], []).append("%s:%d %s" % (rel, i, target))
+        self.assertEqual(sorted(places), VENDORED_IMPORTERS, "the walked files that import the copy by a relative path are the "
+                         "dashboard's ui sources, a session hook and the file-comments host, the three the text names: %r" % places)
+        with open(os.path.join(ROOT, "install.sh"), encoding="utf-8") as f:
+            install = f.read()
+        self.assertRegex(install, r'(?m)^_tc="\$ROMP_DIR/%s"$' % re.escape(VENDORED), "install.sh names the copy it links from")
+        self.assertIn('ln -sfn "$target" "$link"', install, "install.sh's _link_tc links (a symbolic link)")
+        self.assertTrue(re.findall(r'(?m)^\s*_link_tc "\$_tc/[^"]+" "\$HOME/\.claude/[^"]+"$', install),
+                        "install.sh links files of the copy into ~/.claude")
+
+    def test_the_dist_entrys_reason_names_the_three_sources_and_the_vendored_files_the_bundles_carry(self):
+        """A source pin on the reason's words: the three sources (regression-1, extra6-4 and extra7-3) and the vendored files named
+        in it, equal both ways to the vendored entries of ui/webview/spacer-measure.test.ts's OUTSIDE list. The executed proof of
+        those names is that webview leg, which builds the shipped webview config in memory and holds OUTSIDE equal to esbuild's
+        metafile; the extension's bundle, the other one /dist serves, carried no vendored file and no package outside
+        KNOWN_JS_IMPORTS at the metafile read the round recorded, and no test here builds it."""
+        reason = script_module(ROOT).SERVED_ALLOW[DIST_KEY][1]
+        self.assertIn(DIST_SOURCES, reason, "the reason names the three sources")
+        self.assertIn(DIST_PACKAGES, reason, "the reason names the packages' dependencies too")
+        named = reason.split(DIST_SOURCES, 1)[1].split(")", 1)[0]
+        named = [n.strip() for n in re.split(r", | and ", named)]
+        with open(os.path.join(ROOT, SPACER_MEASURE), encoding="utf-8") as f:
+            src = f.read()
+        m = re.search(r"\n  const OUTSIDE = \[(.*?)\n  \];", src, re.S)
+        self.assertTrue(m, "%s carries the OUTSIDE list, the modules a page bundle loads from outside ui/webview" % SPACER_MEASURE)
+        outside = re.findall(r'"%s/([^"]+)"' % re.escape(VENDORED), m.group(1))
+        self.assertTrue(outside, "the OUTSIDE list names vendored modules")
+        self.assertEqual(sorted(named), sorted(outside), "the reason's vendored files are the ones the page bundles load (OUTSIDE in %s)"
+                         % SPACER_MEASURE)
 
 
 MUTANT_PROGRAMS = '''
@@ -1065,32 +1288,65 @@ ECHO_RULE = ("An echo- or print-led shell line is skipped as a printed remedy on
 SERVED_PAGES = ("The pages the kernel serves and its service worker's script, from its own string constants (the dashboard shell, the seven pane "
                 "pages, the token login page, the too-large page and /sw.js, with the shim, the timeline boot and the shell scripts they inline), "
                 "are read from kernel.py's syntax tree and scanned as browser text keyed kernel/kernel.py plus tool, with the DOM loads counted. "
-                "The routes are derived from every `_send` call and every Content-Type header written outside `_send`, in every scanned Python "
-                "file. A `_send` call's content type is read through the definition it reaches: the kernel's Handler._send writes its `ctype` "
-                "parameter, so the call's third argument or its `ctype=` keyword; the postal bus's writes application/json; the session host's and "
-                "its transport's write a frame to a Unix socket and answer no HTTP request (FRAME_WRITERS), and any other definition that writes no "
-                "Content-Type fails the run. The type is read through module constants, through a local whose every binding is read and through a "
-                "dict literal's values; the part before any `;`, stripped and lower-cased, is compared with the types a browser runs script from "
-                "(SCRIPT_TYPES: text/html; the XML types text/xml, application/xml, text/xsl and any type with a `+xml` suffix, image/svg+xml and "
-                "application/xhtml+xml among them; and text/javascript under each name a browser takes for JavaScript, application/javascript among "
-                "them). The page function of each script-running route is followed to the text it returns or inlines. In that text the served pass "
-                "reads a BoolOp's operands, a method call's receiver and a subscript's container when they name a module constant or a local, the "
-                "receiver of `.encode` or `.format_map` whatever it is, a class attribute the class body binds, a loop, unpacking or with target "
-                "from its source, and a local container's appended or stored values; it passes over a base that carries no page text (an import, a "
-                "builtin, a parameter, an except name, or a name the function binds from one of those). The run fails by name (SERVED) on a content "
-                "type the pass cannot read, a script-running type written outside `_send`, a function that answers outside `_send` more often than "
-                "it writes a Content-Type header, a container the module writes at run time, any other receiver or container, and a route whose "
-                "text the pass cannot read, unless the served allowlist, SERVED_ALLOW, names the place by its function and expression, with the "
-                "number of places the entry covers and the reason (the two answers with no body, the CORS preflight's 204 and the websocket "
-                "upgrade's 101, are named there); an entry that names nothing in the run, or covers a different number of places, fails the run "
-                "too. In served text every `fetch(` and `import(` on a line is read by its own argument, and no comment skip applies, since a "
-                "joined constant is one line whatever it starts with. A file the page reads at run time is covered by the walk when it is a scanned "
-                "kind, and a stylesheet is named, not scanned.")
+                "The routes are derived from the calls of `_send` the scan reads (spelled `_send(...)` or `<x>._send(...)`; a call through a name "
+                "computed at run time is not read) and every Content-Type header written outside `_send`, in every scanned Python file. A `_send` "
+                "call's content type is read through the definition it reaches: the kernel's Handler._send writes its `ctype` parameter, so the "
+                "call's third argument or its `ctype=` keyword; the postal bus's writes application/json; the session host's and its transport's "
+                "write a frame to a Unix socket and answer no HTTP request (FRAME_WRITERS), and any other definition that writes no Content-Type "
+                "fails the run. The type is read through a module name no code writes after binding it (one module-level assignment "
+                "binds it, nothing else at module level binds it, and nothing in the file writes that name, in any scope: a subscript "
+                "store or delete, a call `<name>.<method>(` of a method _MUTATORS or _DUNDER_MUTATORS lists, a call of such a method on "
+                "a type _CONTAINER_TYPES lists with the name as its first argument (`dict.update(<name>, ...)`), a binding in a function "
+                "that declares the name `global` (as the target of an assignment, an augmented assignment, a loop, a comprehension, a with "
+                "or a walrus, or by an import, a def or class statement or an except clause) or a module-level augmented assignment), "
+                "through a local whose every binding is read and through a dict "
+                "literal's values; the part before "
+                "any `;`, stripped and lower-cased, is compared with the types a browser runs script from (SCRIPT_TYPES: text/html; the XML types "
+                "text/xml, application/xml, text/xsl and any type with a `+xml` suffix, image/svg+xml and application/xhtml+xml among them; and "
+                "text/javascript under each name a browser takes for JavaScript, application/javascript among them). A script-running route's "
+                "page body is the call's second positional argument, read only when the definition the call reaches writes its own second "
+                "positional parameter as the body (its one `.write(<name>)` names that parameter) and the call passes that argument positionally, "
+                "with no starred argument before it and no `**`; any other script-running call (a keyword body, a starred or `**` call, a "
+                "definition whose written body is another parameter, a local or an expression) fails the run by name. The page function of each "
+                "script-running route is followed to the text it returns or inlines. In that text the served pass reads a BoolOp's operands, a "
+                "method call's receiver and a subscript's container when they name a module constant (a name one module-level assignment binds "
+                "and nothing else binds there) or a local, the receiver of `.encode` or `.format_map` whatever it is, a class attribute the class "
+                "body binds, a loop, unpacking or with target from its source, and a local container's appended or stored "
+                "values; it passes over a base that carries no page text (an import that is its name's one module-level binding and is not "
+                "rebound, a builtin that no module-level binding shadows and that is not rebound, a parameter, an except name, or a name "
+                "the function binds from one of those), and over a bare module name that is such an import or such a builtin, or a function "
+                "or a class that is its name's one module-level binding and is not rebound; a name is rebound when a function binds it "
+                "under `global` or a statement at module level writes it, in one of the forms listed above for a route's type, and by "
+                "nothing else: a function's `X = []` of a local of the same name, or its `X.append(...)`, does not rebind it. It follows a "
+                "call whose callee is "
+                "a module function (its name's one module-level binding, not rebound), a function defined in the page function or a method "
+                "of the route's class (to what it returns, any decorator on it not applied), a text method or a file read, or any other "
+                "method (through its receiver, as above, so `_K.__call__(t)` on a module constant `_K` that holds a lambda reads `_K`, and "
+                "a lambda is a value slot with no text), and it reads every call's arguments; a call to any other callee passes when the "
+                "callee is such an import, such a builtin or "
+                "a parameter. The run fails by name (SERVED) on any other reference to `_send` (a read of it that is not a call's function, "
+                "or a string equal to `_send`), a content type the pass cannot "
+                "read, a script-running type written outside `_send`, a function that answers outside `_send` more often than it "
+                "writes a Content-Type header, a container the module writes at run time, any other receiver or container, any "
+                "other callee (a module constant, a local, a class, a subscript, a call and a lambda among them), any other bare module "
+                "name (one bound other than by one assignment, an import, a function or a class beside another module-level binding, and a "
+                "rebound import, builtin, function or class among them), and a route whose text the pass cannot read, unless the served "
+                "allowlist, "
+                "SERVED_ALLOW, names the place by its function and expression, with the number of places the entry covers and "
+                "the reason (the two answers with no body, the CORS preflight's 204 and the websocket upgrade's 101, are named "
+                "there); an entry that names nothing in the run, or covers a different "
+                "number of places, fails the run too. In served text every `fetch(` and `import(` on a line is read by its own argument, and no "
+                "comment skip applies, since a joined constant is one line whatever it starts with. A file the page reads at run time is covered "
+                "by the walk when it is a scanned kind, and a stylesheet is named, not scanned.")
 SERVED_REFUSED_SCAN = ("The whole of kernel.py is not scanned as text, since a text scan misreads Python and JS concatenations (a Python "
                        "method spelled like a client, a `from` inside a script split across Python literals).")
-SERVED_IMPORT_GATE = ("Over served text the import gate's statement form applies only to a line that starts with import or export (a line led "
-                      "by a closing brace is a multi-line import's last line in a module and any block's in a page's script), while a literal "
-                      "require() or import() is gated wherever it stands.")
+SERVED_IMPORT_GATE = ("Over served text the import gate's statement form applies to a line that starts with import or export, "
+                      "and to a line led by `from` or a closing brace only where it continues an import or export statement that begins "
+                      "its own line and has not yet ended (a line led by a closing brace is a multi-line import's last line in a module "
+                      "and any block's in a page's script), while a literal require() or import() spelled whole on one line (the name, its "
+                      "paren, the quoted specifier and the closing paren, with nothing between them but whitespace inside the parens) is "
+                      "gated "
+                      "wherever it stands.")
 SERVED_KEYED_RESIDUAL = ("The served pages' rows are keyed by tool (kernel/kernel.py plus WebSocket, window.open or clients.openWindow) and counted "
                          "once per line; only fetch and import() are read per match. A second socket or opener in the served text is therefore "
                          "caught by the count per key when it changes the tool or stands on a line without its tool, and not when it joins a line "
@@ -1106,8 +1362,13 @@ ROUND_FOUR_SENTENCES = (("the echo rule", ECHO_RULE), ("the served pages", SERVE
 # The fifth round's sentences (2026-09-23), one text each with the script's docstring: the served scan's line-keying residual
 # (correctness-4), the two roads named in the table and not counted (extra6-1, the paint references of the chat's file preview
 # and a notice card; extra6-2, an .svg opened in its own tab), and the binding shapes no pattern reads (correctness-3), which
-# TheAddedBindingShapesAreRead's residual file witnesses at no site; SERVED_PAGES above is the fifth round's rewrite of the
-# fourth round's sentence (F, G and H), one text with SECURITY.md's (tests/test_security_price_feed.py holds that home)
+# the sixth round's review rewrote as UNREAD_BINDINGS below (correctness-4, extra6-1, extra7-2 and extra6-3: the two JavaScript
+# refusals, JS_ALLOW, and the population a binding the patterns read still leaves unread; one text with SECURITY.md's, which
+# tests/test_security_price_feed.py holds, and with the ledger entry's census paragraph, which TheJavaScriptSideRefusesWhatItCannotRead
+# holds; TheAddedBindingShapesAreRead and TheJavaScriptSideRefusesWhatItCannotRead execute it); SERVED_PAGES above is the fifth
+# round's rewrite of the fourth round's sentence (F, G and H), one text with SECURITY.md's (tests/test_security_price_feed.py holds
+# that home); PAINT_ROAD_SENTENCE's last clause, what the caller census reds, is the sixth round's (tests-3), one text with that
+# census's messages, which tests/test_security_price_feed.py holds in the script's docstring and the paint row's where cell
 SERVED_LINE_RESIDUAL = ("A site in served text is listed at the first line of the string part that carries it. Text joined across implicitly "
                         "concatenated literals is one part, listed at its first line. On Python 3.10 and 3.11 an f-string part is listed at the "
                         "line where the expression before it ends, so a part that starts on a later line (after a `}` on a line of its own, or in "
@@ -1115,22 +1376,61 @@ SERVED_LINE_RESIDUAL = ("A site in served text is listed at the first line of th
 PAINT_ROAD_SENTENCE = ("One road is named in the table and not counted, since its loads are rendered-markdown insertions with no attribute line: "
                        "the chat's file preview (render.ts previewMdClean) and a notice card's body (feed.ts noticeBodyNodes) render markdown "
                        "through the shared sanitizer and then stripRemoteLoads (ui/webview/file-preview.ts), which reads no paint attribute, so an "
-                       "inline svg's paint references load from the hosts they name; tests/test_security_price_feed.py places every caller of "
-                       "stripRemoteLoads by grep, so a new surface on the strip is red by name.")
+                       "inline svg's paint references load from the hosts they name; tests/test_security_price_feed.py counts by grep "
+                       "every call in render.ts spelled `md(` or `userMd(`, a gap before the paren allowed, on one line (`md (t)` and "
+                       "`x.md(t)` among them), and every reference to "
+                       "stripRemoteLoads (a call, an import, an alias) in the .ts and .js files directly under ui/webview and "
+                       "vscode-extension/src, skipping test files, each name's definition (`function md(` and the like), a line that "
+                       "opens with `//`, `*` or `/*`, and the text from a `//` that starts the line or follows whitespace; each match "
+                       "is counted under the nearest `function NAME(` line at or above it, so a new call or reference moves a count and "
+                       "is red: under its caller's name when that line declares the caller, and otherwise under the function that line "
+                       "declares, or under none above the first such line.")
 SVG_TAB_ROAD_SENTENCE = ("A second road is named in the table and not counted, since its loads are the opened document's own and have no line in "
                          "this tree: a Cmd, Ctrl or middle click on a path link to an .svg opens the kernel's /file URL, or its /remote/<host>/file "
                          "relay, in the browser's own tab through preview.ts's openFileTab, a site counted on the local-kernel road by the URL it "
                          "opens, and that tab is an svg document that loads what its markup names; tests/test_security_price_feed.py holds the "
                          "road's population to the property that image/svg+xml is the one document type /file serves a file's bytes under, so a "
                          "second document type there is red.")
-UNREAD_BINDINGS = ("Three binding shapes no pattern reads fall under that rule: a require assigned after its declaration (`let h; h = "
-                   "require(\"http\")`), a `.then()` callback parameter of `import()`, and a call through an alias of `require` (`const r = require; "
-                   "const h = r(\"http\")`); a call through any of them is no site and no line. The import gate reads the literal `require()` and "
-                   "`import()` of the first two, so in those shapes an `https`, `net` or `tls` module fails the run and the residual reaches "
-                   "`http`, `ws` and `child_process`, the packages the list knows; an aliased require spells no literal `require()`, so the gate "
-                   "does not read its module either, and that shape reaches every module.")
+UNREAD_BINDINGS = ("Two refusals cover what the JavaScript binding patterns and the import gate do not read, each an IMPORT line unless "
+                   "the JavaScript allowlist, JS_ALLOW, names the place by its file and expression, with the number of places the entry "
+                   "covers and the reason; an entry that names nothing in the run, or covers a different number of places, fails the run "
+                   "too. First, a literal specifier of a family module (`http`, `https`, `net`, `tls`, `ws` or `child_process`) that the "
+                   "import gate reads is read only where a binding the patterns read takes the module from it, whole or by names, or an "
+                   "arm reads a call through it (`require('http').request(`); a require or an `await import()` taken whole does not count "
+                   "when `.`, `?`, `[` or `(` follows it past whitespace and comments, and a brace list that takes `default` does not "
+                   "count unless the same statement binds that name whole (`import { default as X }`), so a require in a later declarator, "
+                   "`require(\"http\").get` read as a value, a destructured default, a require assigned after its declaration, a `.then()` "
+                   "callback of `import()` and a re-export are each refused. Second, on a walked line the scan reads (not in served text), "
+                   "a require or import the gate cannot read is refused: a call of `require` in any other shape (whitespace or a comment "
+                   "before the paren, a template or a computed specifier), `require` as a bare value (followed by `;`, `,`, `)`, `}`, `]` "
+                   "or the end of the line, outside a string and a comment, where a quote opens a string to the same quote's "
+                   "next occurrence on the line that no backslash escapes, `/*` outside a string opens a comment to the next "
+                   "`*/` on the line or the line's end, and `//` outside a string opens a comment to the line's end), any "
+                   "`.require(` call, any member access on `require`, a `createRequire(` call, and an `import(` with a template "
+                   "specifier or with whitespace or a comment before its paren. So every literal specifier of a family module "
+                   "that the gate reads is read or refused, and on a walked line every require the gate cannot read is refused "
+                   "when it is spelled in one of those shapes; one spelled another way (a "
+                   "computed member such as `module[\"require\"]`, `require` beside an operator, a createRequire under another name) is no "
+                   "site and no line. A client is read through a call on the module or on a binding the patterns read: a dotted call on an "
+                   "inline require or on a name the file keeps the module under, or a call of a bare name the file binds from it. A client "
+                   "reached from such a binding any other way is no site and no line, among them a member alias (`const g = http.get`), a "
+                   "destructure from the binding (`const { get } = http`), a computed member, `.call` and an optional chain. The import "
+                   "gate reads a specifier in a literal require() or import() spelled whole on one line (the name, its paren, the quoted "
+                   "specifier and the closing paren, with nothing between them but whitespace inside the parens), on a line that starts "
+                   "with "
+                   "import or export, on a line led by a closing brace in a walked file, and on a line led by `from` (in served text, "
+                   "by `from` or a closing brace) that continues an import or export statement that begins its own line; in a walked "
+                   "file it skips a comment-led line. Through a binding whose specifier the gate reads, `https`, `net` and `tls` still "
+                   "fail the run at the gate, so this residual reaches `http`, `ws` and `child_process`, the packages the list knows; "
+                   "through a binding the patterns read from a specifier the gate does not read (one on the line after a trailing "
+                   "`from`, in a require() or `await import()` split across lines, in a statement that does not begin its line, or on a "
+                   "comment-led line of a walked file) it reaches `https`, `net` and `tls` as well, save a split require on a walked "
+                   "line, which the second refusal refuses. The first refusal also refuses a "
+                   "line that binds nothing to call, such as `import type http from \"http\"` or `let a: typeof import(\"http\")`; no such "
+                   "line is live.")
 ROUND_FIVE_SENTENCES = (("the served scan's line-keying residual", SERVED_LINE_RESIDUAL), ("the paint road named and not counted", PAINT_ROAD_SENTENCE),
-                        ("the .svg tab road named and not counted", SVG_TAB_ROAD_SENTENCE), ("the binding shapes no pattern reads", UNREAD_BINDINGS))
+                        ("the .svg tab road named and not counted", SVG_TAB_ROAD_SENTENCE),
+                        ("the two JavaScript refusals and what a read binding leaves unread", UNREAD_BINDINGS))
 
 
 def _inventory_docstring():
@@ -1440,11 +1740,11 @@ class TheResidualClassIsStatedAndHeld(_SharedRun):
         doc = _inventory_docstring()
         for name, sentence in ROUND_FOUR_SENTENCES:
             self.assertIn(sentence, doc, "the docstring states %s in the sentence the tests hold" % name)
-        # since the fifth round the binding shapes no pattern reads (UNREAD_BINDINGS) stand between the two: the residual of the
-        # disclosure's rule, stated right after it, and then the echo rule
+        # since the fifth round UNREAD_BINDINGS stands between the two (since the sixth round the two JavaScript refusals and what a
+        # read binding leaves unread): the refusals and the residual of the disclosure's rule, stated right after it, and then the echo rule
         after = doc[doc.index(DISCLOSURE) + len(DISCLOSURE):].lstrip()
-        self.assertEqual(after[:len(UNREAD_BINDINGS)], UNREAD_BINDINGS, "the binding shapes no pattern reads are the sentence right after the "
-                         "disclosure sentence: the residual of the rule it states")
+        self.assertEqual(after[:len(UNREAD_BINDINGS)], UNREAD_BINDINGS, "the two JavaScript refusals and what a read binding leaves unread are "
+                         "the sentences right after the disclosure sentence: the refusals and the residual of the rule it states")
         self.assertEqual(after[len(UNREAD_BINDINGS):].lstrip()[:len(ECHO_RULE)], ECHO_RULE,
                          "the echo rule follows: the narrowing of the skip is stated where the closed lists are")
 
@@ -1453,8 +1753,9 @@ class TheResidualClassIsStatedAndHeld(_SharedRun):
         pass's R plants), the two roads named in the table and not counted (the paint references of the chat's file preview and a
         notice card, extra6-1, held by tests/test_security_price_feed.py's caller census and the browser witness; an .svg opened in
         its own tab, extra6-2, held by that module's document-type case and the tab witness) and the binding shapes no pattern reads
-        (correctness-3, witnessed at no site by TheAddedBindingShapesAreRead): each in the docstring in the sentence the tests hold,
-        the table's two rows in TheTableIsTheLedgers."""
+        (correctness-3; since the sixth round the two JavaScript refusals and what a read binding leaves unread, executed by
+        TheAddedBindingShapesAreRead and TheJavaScriptSideRefusesWhatItCannotRead): each in the docstring in the sentence the tests
+        hold, the table's two rows in TheTableIsTheLedgers."""
         doc = _inventory_docstring()
         for name, sentence in ROUND_FIVE_SENTENCES:
             self.assertIn(sentence, doc, "the docstring states %s in the sentence the tests hold" % name)
@@ -1628,11 +1929,15 @@ class TheClickedLinkRoadIsPinned(_Scope):
 
 
 # ---- the fourth round of the review (2026-09-23) --------------------------------------------------------------------------
-# D1, the echo rule: eleven echo-led lines appended to bin/romp in the shared shell run. The first eight are live (a pipe outside
-# the quotes; a curl substitution inside them; a python3 -c and a node -e substitution; and, since the fifth round (tests-1), one
+# D1, the echo rule: seventeen echo-led lines appended to bin/romp in the shared shell run. The first thirteen are live (a pipe
+# outside the quotes; a curl substitution inside them; a python3 -c and a node -e substitution; since the fifth round (tests-1), one
 # line per arm of _live_remainder's walk: a backtick substitution inside the quotes, then a subshell paren, a quoted paren and a
-# backslash-escaped paren each standing in a body before its curl), the last three are copies of the tree's printed remedies (a
-# tool inside quotes; an escaped quote and an escaped dollar; a substitution whose body names no tool).
+# backslash-escaped paren each standing in a body before its curl; and, since the sixth round (tests-1), one line per arm that
+# round found unpinned: an unterminated $( body, which runs to the end of the line; a backslash-escaped quote inside the outermost
+# double quotes; a backslash before a quote outside any quotes; a single-quoted string with a # in it, closed before the pipe,
+# which holds the single-quote state's test, its close and its advance; and a # inside a word, which starts no comment), the next
+# three are copies of the tree's printed remedies (a tool inside quotes; an escaped quote and an escaped dollar; a substitution
+# whose body names no tool), and the last, since the sixth round, is a remedy negative: a pipe after a word-initial #, a comment.
 ECHO_TEXT = ('echo "$body" | curl -fsSL -d @- https://TESTHOST/collect\n'
              'echo "rate: $(curl -fsSL https://TESTHOST/rate)"\n'
              'echo "$(python3 -c \'import urllib.request; urllib.request.urlopen("https://TESTHOST/x").read()\')"\n'
@@ -1641,12 +1946,21 @@ ECHO_TEXT = ('echo "$body" | curl -fsSL -d @- https://TESTHOST/collect\n'
              'echo "$( (cd /tmp) ; curl -fsSL https://TESTHOST/subshell)"\n'
              'echo "$(printf \')\' ; curl -fsSL https://TESTHOST/quoted)"\n'
              'echo "$(printf \\) ; curl -fsSL https://TESTHOST/escaped)"\n'
+             'echo "$(curl -fsSL https://TESTHOST/x\n'
+             'echo "say \\"hi\\"" | curl -d @- https://TESTHOST/x\n'
+             'echo \\"x\\" | curl -d @- https://TESTHOST/x\n'
+             'echo \'a #b\' | curl -d @- https://TESTHOST/collect\n'
+             'echo a#b | curl -d @- https://TESTHOST/x\n'
              'echo "  curl -fsSL https://TESTHOST/bootstrap.sh | bash"\n'
              'echo "    curl -fsSL <url> | ROMP_DIR=\\"\\$HOME/elsewhere\\" bash" >&2\n'
-             'echo "      forward the port:  ssh -N -L $p:127.0.0.1:$p $(hostname -s 2>/dev/null || echo \'<this-host>\')"\n')
+             'echo "      forward the port:  ssh -N -L $p:127.0.0.1:$p $(hostname -s 2>/dev/null || echo \'<this-host>\')"\n'
+             'echo "$body" # | curl -d @- https://TESTHOST/collect\n')
 ECHO_STARTS = (("pipe", 'echo "$body" |'), ("substitution", 'echo "rate: $('), ("python", 'echo "$(python3 -c'), ("node", 'echo "$(node -e'),
                ("backtick", 'echo "tick: `'), ("subshell", 'echo "$( (cd'), ("quoted", 'echo "$(printf \')\''), ("escaped", 'echo "$(printf \\)'),
-               ("remedy_pipe", 'echo "  curl'), ("remedy_escaped", 'echo "    curl'), ("remedy_ssh", 'echo "      forward'))
+               ("unterminated", 'echo "$(curl'), ("quoted_escape", 'echo "say'), ("bare_escape", 'echo \\"x'), ("single_quote", "echo 'a #b'"),
+               ("inner_hash", "echo a#b"),
+               ("remedy_pipe", 'echo "  curl'), ("remedy_escaped", 'echo "    curl'), ("remedy_ssh", 'echo "      forward'),
+               ("remedy_comment", 'echo "$body" #'))
 # the tree's four printed remedies, located by content: the pipe or the substitution stands inside the quotes, so none is live
 REMEDY_LINES = (("bin/romp-uninstall", 'bootstrap.sh | bash"'), ("install.sh", 'bootstrap.sh | bash"'),
                 ("bootstrap.sh", 'ROMP_DIR=\\"\\$HOME/elsewhere\\"'), ("bin/romp", "forward the port:"))
@@ -1681,26 +1995,115 @@ SHAPE_LINES = {"mixed default": (11, "http.get"), "mixed named member": (12, "ht
                "await import() whole": (17, "http.get"), "await import() destructured": (18, "http.request"), "ws mixed default": (19, "WebSocket"),
                "ws mixed named member": (20, "WebSocket"), "child_process mixed default": (22, "execFile"), "child_process mixed named member": (23, "spawn")}
 SHAPE_COUNTS = {"http.get": 4, "http.request": 4, "WebSocket": 2, "execFile": 1, "spawn": 1}   # the file's per-key counts, None committed
-# the shapes no pattern reads, the disclosed residual: a require assigned after its declaration, a .then() callback parameter and an
-# aliased require, over http, ws and child_process; the variables are not spelled as the modules, so the literal list is silent too
+# the shapes no pattern reads, the fifth round's disclosed residual: a require assigned after its declaration, a .then() callback
+# parameter and an aliased require, over http, ws and child_process; the variables are not spelled as the modules, so the literal
+# list is silent too. Since the sixth round each is refused at the line that spells it (UNREAD_REFUSED), and no line is a site
 UNREAD_TEXT = ('export function probeUnreadBindings(u: string): void {\n  let hh; hh = require("http");\n  hh.get("http://TESTHOST/x");\n'
                '  import("http").then((hp) => hp.get("http://TESTHOST/x"));\n  const rq = require; const hr = rq("http");\n'
                '  hr.get("http://TESTHOST/x");\n  let wl; wl = require("ws"); new wl(u);\n  import("ws").then((wp) => new wp.WebSocket(u));\n'
                '  const wr = rq("ws"); new wr(u);\n  let cpl; cpl = require("child_process"); cpl.execFile("ls", ["-la"]);\n'
                '  import("child_process").then((cpp) => cpp.spawn("ls", ["-la"]));\n  const cpr = rq("child_process"); cpr.execFile("ls", ["-la"]);\n}\n')
 # the residual's second half over the packages the list does not know: a late-assigned require and a .then() import of https spell
-# a literal require() or import(), which the import gate reads (IMPORT at lines 2 and 4); the aliased require spells none, so its
-# https is neither refused nor a site (lines 5 and 6), the split UNREAD_BINDINGS states
+# a literal require() or import(), which the import gate reads (IMPORT at lines 2 and 4), and since the sixth round the specifier
+# refusal names each too; the aliased require spells none, and since the sixth round the bare `require` at line 5 is refused
 UNREAD_HTTPS = ('export function probeUnreadHttps(u: string): void {\n  let hs; hs = require("https");\n  hs.get("https://TESTHOST/x");\n'
                 '  import("https").then((hp) => hp.get("https://TESTHOST/x"));\n  const rq = require; const hr = rq("https");\n'
                 '  hr.get("https://TESTHOST/x");\n}\n')
+# The sixth round's refusals (correctness-4, extra6-1, extra7-2): the IMPORT line each gives, the refusal's two messages with the
+# place filled in. A family module's specifier the gate reads that no counted binding takes and no arm reads a call through:
+_SPEC_REFUSED = ("IMPORT %s:%d names %s in %s, and no binding the patterns count takes the module there and no call the census reads goes "
+                 "through it: bind the module whole or by names in a shape the patterns read, or name the place in JS_ALLOW with its reason")
+# and, on a walked line, a require or import the gate cannot read (the clause, then the expression as spelled):
+_REQ_REFUSED = ("IMPORT %s:%d spells a require or import the import gate cannot read (%s: %s): require a module as require(\"<module>\") or "
+                "import(\"<module>\"), the quote right after the paren, or name the place in JS_ALLOW with its reason")
+_BARE = "require as a bare value"
+# the fifth round's residual plants, each line that spells a refused shape: UNREAD_TEXT's (line, the refusal's message after the place)
+UNREAD_REFUSED = ((2, ("names", "http", 'require("http")')), (4, ("names", "http", 'import("http")')), (5, ("spells", _BARE, "require")),
+                  (7, ("names", "ws", 'require("ws")')), (8, ("names", "ws", 'import("ws")')),
+                  (10, ("names", "child_process", 'require("child_process")')), (11, ("names", "child_process", 'import("child_process")')))
+UNREAD_HTTPS_REFUSED = ((2, ("names", "https", 'require("https")')), (4, ("names", "https", 'import("https")')), (5, ("spells", _BARE, "require")))
+# The sixth round's first refusal, a family module's specifier no counted binding reads, one line per shape its ruling names (a
+# require in a later declarator, `require("http").get` read as a value, a destructured default of `await import()`, a `.then()`
+# import) with the named and the namespace re-export, a default beside a brace list that takes `default` (the default is read, the
+# brace list's `default as Hy` is not, so the place is not read and Hy.get at line 15 is no site), and the two over-reds the text
+# discloses, `import type` and `typeof import()`; each silent at the sixth round's head, each a line under the refusal here
+REFUSED_SPECIFIERS_TEXT = ('import type Ht from "http";\nexport { request as probeRequest } from "http";\nexport * as probeCp from "child_process";\n'
+                           'import Hx, { default as Hy } from "http";\n\n'
+                           'export async function probeRefusedSpecifiers(u: string): Promise<void> {\n'
+                           '  const fs = require("fs"), cp = require("child_process");\n  cp.execFile("ls", ["-la"]);\n'
+                           '  const get = require("http").get;\n  get("http://TESTHOST/x");\n'
+                           '  const { default: h } = await import("http");\n  h.get("http://TESTHOST/x");\n'
+                           '  import("http").then((hp) => hp.get("http://TESTHOST/x"));\n  let ta: typeof import("http");\n'
+                           '  Hy.get("http://TESTHOST/x");\n  void fs; void Ht; void Hx; void u; void ta;\n}\n')
+REFUSED_SPECIFIER_LINES = (("import type, an over-red the text discloses", 1, "http", 'from "http"'),
+                           ("a named re-export", 2, "http", 'from "http"'), ("a namespace re-export", 3, "child_process", 'from "child_process"'),
+                           ("a default beside a brace list that takes default", 4, "http", 'from "http"'),
+                           ("a require in a later declarator", 7, "child_process", 'require("child_process")'),
+                           ("require(\"http\").get read as a value", 9, "http", 'require("http")'),
+                           ("a destructured default of await import()", 11, "http", 'import("http")'),
+                           ("a .then() callback of import()", 13, "http", 'import("http")'),
+                           ("typeof import(), an over-red the text discloses", 14, "http", 'import("http")'))
+# The sixth round's second refusal, a require or import the gate cannot read, one line per spelling its ruling names (`require (`, a template specifier, a comment
+# before the paren, `module.require`, `process.mainModule.require`, createRequire, a member access on require, an aliased require,
+# and import( with a gap before its paren or a template specifier); each silent at the sixth round's head, each a line under the
+# refusal.
+# Line 12 is held at no line: the bare-value clause does not read the word inside a string or a trailing comment (_js_code)
+UNREAD_REQUIRES_TEXT = ('export function probeUnreadRequires(u: string): void {\n  const a = require ("http");\n  const b = require(`http`);\n'
+                        '  const c = require/* a comment */("http");\n  const d = module.require("http");\n'
+                        '  const e = process.mainModule.require("http");\n  const f = createRequire(u)("http");\n'
+                        '  const g = require.resolve("http");\n  const r = require;\n  void import (u);\n  void import(`http`);\n'
+                        '  const w = "require, in a string"; // a trailing comment that ends with require\n'
+                        '  void [a, b, c, d, e, f, g, r, w];\n}\n')
+_CALL = "a call of require in a shape the gate does not read"
+_IMPORT_GAP = "an import( with a template specifier or a gap before its paren"
+UNREAD_REQUIRE_LINES = (("require (", 2, _CALL, 'require ("http")'), ("a template specifier", 3, _CALL, "require(`http`)"),
+                        ("a comment before the paren", 4, _CALL, 'require/* a comment */("http")'),
+                        ("module.require", 5, "a .require( call", 'module.require("http")'),
+                        ("process.mainModule.require", 6, "a .require( call", 'process.mainModule.require("http")'),
+                        ("createRequire", 7, "a createRequire( call", "createRequire(u)"),
+                        ("a member access on require", 8, "a member access on require", "require.resolve"),
+                        ("an aliased require", 9, _BARE, "require"), ("import with a gap before its paren", 10, _IMPORT_GAP, "import (u)"),
+                        ("import with a template specifier", 11, _IMPORT_GAP, "import(`http`)"))
+# the allowlist's two gates, planted in the same run: the manager's `require.main` guard respelled (its entry then names nothing)
+# and a second `new (require('http').Agent)` appended to the timeline view (a second place under that entry's key)
+MANAGER_GUARD = "if (require.main === module) {"
+MANAGER_GUARD_GONE = "if (process.argv[1] === __filename) {"
+TIMELINE_SECOND_AGENT = "const probeAgent = new (require('http').Agent)();\n"
+# the four live places JS_ALLOW names at this head: key -> the text that locates its one line in the tree
+JS_ALLOW_PLACES = {("bin/romp-manager", "require.main"): "if (require.main === module) {",
+                   ("ui/romp-timeline-view.js", "require('http')"): "agent = new (require('http').Agent)(",
+                   ("ui/webview/real-viewer-leg.ts", 'createRequire(path.join(EXT, "package.json"))'): "export const requireCjs = createRequire(",
+                   ("ui/webview/real-viewer-leg.ts", "import (?!type\\b)"): "RENDER.matchAll(/^import (?!type\\b)"}
+MODULE_REASON = ("`module` opens nothing itself, but its createRequire makes a require the import gate cannot read, so a `createRequire(` call "
+                 "is refused by name")
+# What a binding the patterns read still leaves unread (extra6-3 of the sixth round): a member alias and a destructure from a namespace binding,
+# held at their outcome (no site, no line), and a member alias of an https namespace, where the gate reads the specifier (IMPORT at 2)
+ALIASES_TEXT = ('import * as http from "http";\nimport * as hs from "https";\n\nexport function probeUnreadAliases(u: string): void {\n'
+                '  const g = http.get;\n  g(u);\n  const { request } = http;\n  request(u);\n  const gs = hs.get;\n  gs(u);\n}\n')
+# A statement split across lines, gated where the gate reads its specifier (since the sixth round, the texts stating the gate's true
+# population): an import led by `from` on the line after its clause (the continuation of a statement that begins its own line), a
+# brace list's closing line (read before too) and a non-family package's `from` line (the continuation alone reads it: no binding
+# pattern names the package), each an IMPORT line (2, 5, 9); and three bindings the patterns read whose specifier the gate does not
+# read, each no line of the gate (the population UNREAD_BINDINGS states): a specifier on the line after a trailing `from` (7), a
+# require split after its paren, whose paren line is the second refusal's (10) and whose specifier line is none (11), and a binding in
+# a comment line (14); no site, since every client is reached through a member alias
+SPLIT_TEXT = ('import * as hs1\n  from "https";\nimport {\n  get as hg2\n} from "https";\nimport * as hs3 from\n  "https";\n'
+              'import { probeSplitX }\n  from "probe-split-pkg";\nconst hs4 = require(\n  "https"\n);\n/**\n * const hs5 = require("https");\n */\n'
+              'export function probeSplitImports(u: string): void {\n  const g1 = hs1.get; g1(u); const g3 = hs3.get; g3(u); const g4 = hs4.get; g4(u);\n'
+              '  void hg2; void probeSplitX;\n}\n')
+SPLIT_GATED = {2: "https", 5: "https", 9: "probe-split-pkg"}
+SPLIT_UNGATED = (7, 11, 14)   # a binding's specifier after a trailing `from`, after a require's paren, in a comment line: no gate line
+SPLIT_PAREN = 10   # `const hs4 = require(`: the second refusal's line (a call of require the gate cannot read on its own line)
 # E, the served pages: the plants in kernel/kernel.py (each located by content in the copy after every plant has landed)
 BOOT_ANCHOR = "function post(m){api.postMessage(m);}\n"
 BOOT_PLANTS = ('fetch("https://example.invalid/probe");\n'
                'new WebSocket("wss://example.invalid/");\n'
                'window.open("https://example.invalid/");\n'
                "}else{alert('Pull from '+h+' failed');}\n"
-               "import x from 'example-pkg';\n")
+               "import x from 'example-pkg';\n"
+               "import {\n  y\n} from 'example-split-pkg';\n"
+               "export const q = 1;\n"
+               "}else{alert('Pulled from '+q+' ok');}\n")
 SETTINGS_ANCHOR = '            "<script src=/dist/settings-page.js?v=%d></script></body></html>"'
 SETTINGS_PLANT = '            "<script>navigator.sendBeacon(\'https://example.invalid/t\',\'x\')</script>"\n'
 CHAT_BRANCH = ('            if p == "/chat":\n                _client_seen[0] = time.time()\n'
@@ -1797,13 +2200,19 @@ class TheEchoRuleScansTheLiveRemainder(_SharedRun):
     are curl sites on bin/romp's row, as are, since the fifth round (tests-1), four lines that each hold one arm of
     _live_remainder's walk: a backtick substitution inside the quotes (the top loop's backtick branches), a subshell paren before
     the curl inside a body (the paren-depth counter), a quoted paren before it (the body walk's quote state) and a backslash-escaped
-    paren before it (the body walk's backslash escape); the row's committed count moves by six, and each line is asserted on its
-    own, so a removed arm reds the pin that names it (M47 to M50, one-line mutants of a scratch copy of the script, in the round's
-    record). A python3 -c substitution is an interpreter site on its row (by one) and a node -e one is UNCLASSIFIED, while a remedy
-    that names a tool inside its quotes stays no site: three copies of the tree's own remedy lines list nothing, and the four
-    originals, located by content, have no site line while the tree runs clean. Before the fourth round every such line was skipped
-    whole, so the live shapes were silent at exit 0. The block is appended to bin/romp in the shared shell run (no other member
-    touches that file); its lines are recorded by content."""
+    paren before it (the body walk's backslash escape), and since the sixth round (tests-1) five more, one per arm that round found
+    unpinned: an unterminated $( body (the body walk's return at the end of the line), a backslash-escaped quote inside the
+    outermost double quotes (the top loop's escape there), a backslash before a quote outside any quotes (the top loop's escape
+    outside quotes), `echo 'a #b' | curl ...` (the top loop's single-quote state: its test, its close and its advance) and
+    `echo a#b | curl ...` (the word-initial condition on #, which a loosened test would break on); the row's committed count moves
+    by eleven, and each line is asserted on its own, so a removed arm reds the pin that names it (M47 to M50 and the sixth round's
+    mutants, one-line mutants of a scratch copy of the script, in each round's record). A python3 -c substitution is an interpreter
+    site on its row (by one) and a node -e one is UNCLASSIFIED, while a remedy that names a tool inside its quotes stays no site:
+    three copies of the tree's own remedy lines list nothing, and the four originals, located by content, have no site line while
+    the tree runs clean. Beside them since the sixth round, one remedy negative, `echo "$body" # | curl ...`, lists nothing: the #
+    starts a comment, and with the word-initial condition deleted the commented curl would be a site. Before the fourth round every
+    such line was skipped whole, so the live shapes were silent at exit 0. The block is appended to bin/romp in the shared shell
+    run (no other member touches that file); its lines are recorded by content."""
 
     RUN = "shell"
 
@@ -1825,12 +2234,23 @@ class TheEchoRuleScansTheLiveRemainder(_SharedRun):
                           "a quoted paren inside the body does not close it: the body walk's quote state")
         self.assertListed(out, r"bin/romp:%d  curl  echo \"\$\(printf \\\) ; curl .*  in -  -> local-kernel$" % at["escaped"],
                           "a backslash-escaped paren inside the body does not close it: the body walk's backslash escape")
+        self.assertListed(out, r"bin/romp:%d  curl  echo \"\$\(curl -fsSL .*  in -  -> local-kernel$" % at["unterminated"],
+                          "an unterminated $( body runs to the end of the line and is live: the body walk's return at the end of the line")
+        self.assertListed(out, r"bin/romp:%d  curl  echo \"say \\\"hi\\\"\" \| curl .*  in -  -> local-kernel$" % at["quoted_escape"],
+                          "a backslash-escaped quote inside the outermost double quotes does not close them: the top loop's escape inside double quotes")
+        self.assertListed(out, r"bin/romp:%d  curl  echo \\\"x\\\" \| curl .*  in -  -> local-kernel$" % at["bare_escape"],
+                          "a backslash outside the quotes escapes the quote after it, which opens no string: the top loop's escape outside quotes")
+        self.assertListed(out, r"bin/romp:%d  curl  echo 'a #b' \| curl .*  in -  -> local-kernel$" % at["single_quote"],
+                          "a # inside single quotes is printed text and the quote closes before the pipe: the top loop's single-quote state, "
+                          "its test, its close and its advance")
+        self.assertListed(out, r"bin/romp:%d  curl  echo a#b \| curl .*  in -  -> local-kernel$" % at["inner_hash"],
+                          "a # inside a word starts no comment: the top loop's word-initial condition on #")
         self.assertListed(out, r"bin/romp:%d  python3 -c  .*  in -  -> local-kernel \[external-program\]" % at["python"], "an interpreter substitution is a site on its row, classed")
         self.assertIn("bin/romp:%d" % at["node"], unclassified(out), "the node -e substitution has no row: UNCLASSIFIED")
         self.assertListed(out, r"bin/romp:%d  node -e  .*  in -  -> UNCLASSIFIED \[external-program\]" % at["node"])
         expected = _expected()
         self.assertRefused(self.rc, out, "COUNTS per_key bin/romp:curl: the committed count is %d, this run found %d"
-                           % (expected["per_key"]["bin/romp:curl"], expected["per_key"]["bin/romp:curl"] + 6),
+                           % (expected["per_key"]["bin/romp:curl"], expected["per_key"]["bin/romp:curl"] + 11),
                            "COUNTS per_key bin/romp:python3 -c: the committed count is %d, this run found %d"
                            % (expected["per_key"]["bin/romp:python3 -c"], expected["per_key"]["bin/romp:python3 -c"] + 1),
                            "COUNTS per_key bin/romp:node -e: the committed count is None, this run found 1")
@@ -1841,6 +2261,9 @@ class TheEchoRuleScansTheLiveRemainder(_SharedRun):
         for name in ("remedy_pipe", "remedy_escaped", "remedy_ssh"):
             self.assertNotIn("bin/romp:%d" % at[name], named, name)
             self.assertFalse(_listed(out, "bin/romp:%d  " % at[name]), "%s: the tool stands in the printed text, inside the quotes, and is not live" % name)
+        self.assertNotIn("bin/romp:%d" % at["remedy_comment"], named, "remedy_comment")
+        self.assertFalse(_listed(out, "bin/romp:%d  " % at["remedy_comment"]),
+                         "remedy_comment: a word-initial # starts a comment, so the pipe after it is not live (the top loop's break on #)")
 
     def test_the_trees_four_remedy_lines_have_no_site_line_and_the_run_is_clean(self):
         rc, out, _ = tree_run()
@@ -1850,12 +2273,13 @@ class TheEchoRuleScansTheLiveRemainder(_SharedRun):
             self.assertFalse(_listed(out, "%s:%d  " % (rel, n)), "%s:%d prints a remedy whose pipe or substitution stands inside the quotes: no site" % (rel, n))
 
     def test_the_head_skip_restored_leaves_the_live_lines_silent(self):
-        """M19: the one-line skip the round replaced, restored in a scratch copy of the script, skips the eight live shapes whole."""
+        """M19: the one-line skip the round replaced, restored in a scratch copy of the script, skips the thirteen live shapes whole."""
         lines = self.lines(self.append("bin/romp", ECHO_TEXT))
         at = {name: next(i + 1 for i, ln in enumerate(lines) if ln.startswith(start)) for name, start in ECHO_STARTS}
         self.replace(INVENTORY, ECHO_ARM, ECHO_SKIP)
         rc, out, _ = inventory(scope_copy())
-        for name in ("pipe", "substitution", "python", "node", "backtick", "subshell", "quoted", "escaped"):
+        for name in ("pipe", "substitution", "python", "node", "backtick", "subshell", "quoted", "escaped",
+                     "unterminated", "quoted_escape", "bare_escape", "single_quote", "inner_hash"):
             self.assertFalse(_listed(out, "bin/romp:%d  " % at[name]), "%s: under the head's skip the live line is silent (the defect the arm closes)" % name)
         self.assertNotIn("bin/romp:%d" % at["node"], unclassified(out))
         self.assertNotIn("COUNTS per_key bin/romp:", out, "no bin/romp count moves: the run reads as the tree at exit %d" % rc)
@@ -1929,29 +2353,74 @@ class TheConnectionFamilyIsReadThroughItsBindings(_SharedRun):
                            "COUNTS per_key ui/romp-timeline-view.js:http.request: the committed count is 2, this run found None")
 
 
+def _import_lines(out, rel):
+    """The IMPORT lines of a run that name a place in one file (`IMPORT <rel>:<line> ...`)."""
+    return [ln for ln in out.splitlines() if ln.startswith("IMPORT %s:" % rel)]
+
+
+def _refusal(rel, line, how):
+    """The sixth round's IMPORT line for a place: how is ("names", the module, the specifier as spelled) for a family module's
+    specifier no counted binding reads, or ("spells", the clause, the expression) for a require or import the gate cannot read."""
+    kind, a, b = how
+    return (_SPEC_REFUSED if kind == "names" else _REQ_REFUSED) % (rel, line, a, b)
+
+
 class TheAddedBindingShapesAreRead(_SharedRun):
     """The fifth round of the review (correctness-3): _binding_patterns gained the mixed default-plus-named import (the default a
     space, the brace list names), the default-plus-namespace import (both spaces), `import { default as X }` (X a space), TypeScript's
     `import X = require()` and a bound `await import()` whole (a space) and destructured (names), each alternative one line of the
     script; the shapes reach child_process through the same patterns. probe-binding-shapes.ts, planted in the shared browser run,
     calls through each shape once over http, ws and child_process, and every call line is a site keyed by the family's tool with no
-    row; probe-unread-bindings.ts plants the three shapes no pattern reads (a require assigned after its declaration, a `.then()`
-    callback parameter, an aliased require) over the same three modules and is the residual's witness: no line of it is a site, and
-    no IMPORT line names it (the modules are known, so the import gate is silent too); probe-unread-https.ts plants the same three
-    over https, where the gate reads the first two by their literal require() and import() and the aliased require is neither
-    refused nor a site (UNREAD_BINDINGS, the docstring's sentence, held here). No scan is added: each alternative's line removed from
-    a scratch copy of the script silences that arm's lines and no other, a red the round's record carries (M40 to M46) and not a case
-    of its own, since each such case would be a full scan. Every property is a line of these files, so the run's other members
-    (appended to strip.ts, or files of their own) cannot satisfy or fail one."""
+    row, and no IMPORT line names the file (each specifier is read by the binding it makes). probe-unread-bindings.ts plants the
+    three shapes no pattern reads (a require assigned after its declaration, a `.then()` callback parameter, an aliased require)
+    over the same three modules, and probe-unread-https.ts the same three over https: until the sixth round the residual's witness
+    at no site, and since the sixth round's review (correctness-4, extra6-1, extra7-2; the ruling moved these plants from held at
+    no site to red at their refusal lines) each line that spells a refused shape is an IMPORT line by name, the late-assigned
+    require and the `.then()` import by the specifier refusal and the aliased require's bare `require` by the require refusal,
+    while no line is a site; over https the gate's own IMPORT lines stand beside them. probe-unread-aliases.ts holds what a binding
+    the patterns read still leaves unread (extra6-3, planted at its outcome as the fifth round's I planted the residual): a member
+    alias and a destructure from a namespace binding are no site and no line, and an https namespace's member alias fails the run
+    at the gate alone, which reads that import's own line (UNREAD_BINDINGS, the docstring's text, held here). No scan
+    is added: each alternative's line removed from a scratch copy of the script silences that arm's lines and no other, a red the
+    fifth round's record carries (M40 to M46) and not a case of its own, since each such case would be a full scan; the sixth
+    round's arms are recorded the same way. Every property is a line of these files, so the run's other members (appended to
+    strip.ts, or files of their own) cannot satisfy or fail one."""
 
     RUN = "browser"
     SHAPES, UNREAD, HTTPS = "ui/webview/probe-binding-shapes.ts", "ui/webview/probe-unread-bindings.ts", "ui/webview/probe-unread-https.ts"
+    ALIASES = "ui/webview/probe-unread-aliases.ts"
+    SPLIT = "ui/webview/probe-split-imports.ts"
 
     @classmethod
     def mutate(cls, cleanup):
         _plant(cls.SHAPES, SHAPES_TEXT, cleanup)
         _plant(cls.UNREAD, UNREAD_TEXT, cleanup)
         _plant(cls.HTTPS, UNREAD_HTTPS, cleanup)
+        _plant(cls.ALIASES, ALIASES_TEXT, cleanup)
+        _plant(cls.SPLIT, SPLIT_TEXT, cleanup)
+
+    def test_a_split_statement_is_gated_at_its_continuing_line_and_the_other_split_specifiers_are_no_gate_line(self):
+        """Since the sixth round the import gate reads a `from`-led line (and in served text a brace-led one) that continues an
+        import or export statement that begins its own line, and no line but the ones UNREAD_BINDINGS names reads a specifier, as
+        the texts state the gate's population. probe-split-imports.ts (SPLIT_TEXT): over https the gate's line at the `from` line after a namespace
+        clause (2) and at a brace list's closing line (5, read at the sixth round's head too), and over a package no binding pattern
+        names at its `from` line (9); no gate line at a specifier on the line after a trailing `from` (7), at a split require's
+        specifier (11) or at a binding in a comment line (14), the three shapes UNREAD_BINDINGS names as bindings whose specifier
+        the gate does not read; the split require's paren line is the second refusal's (10). At the sixth round's head only 5 is a
+        line.
+        The arm whose removal reds 2 and 9 is the continuation state (2's `from` line is read by nothing else)."""
+        out = self.out
+        for line, pkg in SPLIT_GATED.items():
+            self.assertRefused(self.rc, out, "IMPORT %s:%d imports %s, a package the census does not know" % (self.SPLIT, line, pkg))
+        self.assertRefused(self.rc, out, _refusal(self.SPLIT, SPLIT_PAREN, ("spells", "a call of require in a shape the gate does not read", "require(")))
+        for line in SPLIT_UNGATED:
+            self.assertNotIn("IMPORT %s:%d " % (self.SPLIT, line), out, "a binding's specifier the gate does not read is no gate line "
+                             "(UNREAD_BINDINGS names the shape)")
+        self.assertEqual(sorted(int(ln.split(" ", 2)[1].rsplit(":", 1)[1]) for ln in _import_lines(out, self.SPLIT)),
+                         sorted(list(SPLIT_GATED) + [SPLIT_PAREN]),
+                         "the gate's line at each continuing line and the refusal at the split require's paren, and no other:\n"
+                         + "\n".join(_import_lines(out, self.SPLIT)))
+        self.assertFalse(_listed(out, self.SPLIT + ":"), "every client is reached through a member alias: no line of the file is a site")
 
     def test_each_added_shape_is_a_site_keyed_by_the_familys_tool(self):
         out = self.out
@@ -1964,20 +2433,133 @@ class TheAddedBindingShapesAreRead(_SharedRun):
             self.assertRefused(self.rc, out, "COUNTS per_key %s:%s: the committed count is None, this run found %d" % (self.SHAPES, tool, n))
         self.assertEqual(sorted(int(ln.split("  ")[0].rsplit(":", 1)[1]) for ln in _listed(out, self.SHAPES + ":")),
                          sorted(line for line, _ in SHAPE_LINES.values()), "the call lines and no other line of the file")
+        self.assertEqual(_import_lines(out, self.SHAPES), [], "every specifier of the file is read by the binding it makes: no refusal")
 
-    def test_the_unread_shapes_are_no_site_the_residual_witness(self):
+    def test_the_fifth_rounds_unread_shapes_are_refused_at_their_lines_and_no_line_is_a_site(self):
         out = self.out
-        self.assertIn(UNREAD_BINDINGS, _inventory_docstring(), "the docstring states the residual this file witnesses")
-        self.assertFalse(_listed(out, self.UNREAD + ":"), "no pattern reads these shapes, so no line is a site (the disclosed residual)")
+        self.assertIn(UNREAD_BINDINGS, _inventory_docstring(), "the docstring states the refusals this file holds")
+        self.assertFalse(_listed(out, self.UNREAD + ":"), "no pattern reads these shapes, so no line is a site")
         self.assertFalse([t for t in unclassified(out) if t.startswith(self.UNREAD + ":")])
-        self.assertNotIn("IMPORT " + self.UNREAD, out, "http, ws and child_process are known packages: the gate is not what holds them")
+        for line, how in UNREAD_REFUSED:
+            self.assertRefused(self.rc, out, _refusal(self.UNREAD, line, how))
+        self.assertEqual(sorted(int(ln.split(" ", 2)[1].rsplit(":", 1)[1]) for ln in _import_lines(out, self.UNREAD)),
+                         sorted(line for line, _ in UNREAD_REFUSED),
+                         "one IMPORT line per refused shape and none on the call lines (http, ws and child_process are known packages):\n"
+                         + "\n".join(_import_lines(out, self.UNREAD)))
 
-    def test_over_https_the_gate_reads_the_literal_shapes_and_not_the_aliased_require(self):
+    def test_over_https_the_gate_and_the_refusals_read_the_literal_shapes_and_the_aliased_require_is_refused(self):
         out = self.out
         self.assertRefused(self.rc, out, "IMPORT %s:2 imports https" % self.HTTPS, "IMPORT %s:4 imports https" % self.HTTPS)
-        for line in (5, 6):
-            self.assertNotIn("IMPORT %s:%d " % (self.HTTPS, line), out, "an aliased require spells no literal require(): the gate does not read it")
-        self.assertFalse(_listed(out, self.HTTPS + ":"), "no line of the file is a site: the aliased require's https reaches the network unread")
+        for line, how in UNREAD_HTTPS_REFUSED:
+            self.assertRefused(self.rc, out, _refusal(self.HTTPS, line, how))
+        self.assertNotIn("IMPORT %s:5 imports" % self.HTTPS, out, "an aliased require spells no literal require(): the gate does not read it, "
+                         "and the bare `require` it takes is refused instead")
+        self.assertEqual(len(_import_lines(out, self.HTTPS)), 5, "the gate's two lines and the three refusals:\n" + "\n".join(_import_lines(out, self.HTTPS)))
+        self.assertFalse(_listed(out, self.HTTPS + ":"), "no line of the file is a site")
+
+    def test_a_member_alias_and_a_destructure_from_a_read_binding_are_no_site_and_https_fails_at_the_gate(self):
+        out = self.out
+        self.assertIn("a member alias (`const g = http.get`), a destructure from the binding (`const { get } = http`)", _inventory_docstring(),
+                      "the docstring names the two shapes this file holds (its sentence is UNREAD_BINDINGS)")
+        self.assertFalse(_listed(out, self.ALIASES + ":"), "a client reached from a read binding other than by a call on it is no site")
+        self.assertEqual(_import_lines(out, self.ALIASES), ["IMPORT %s:2 imports https, a package the census does not know: a client that opens "
+                                                            "connections or starts programs takes its primitives into JS or the child_process family; "
+                                                            "either way add it to KNOWN_JS_IMPORTS with the reason" % self.ALIASES],
+                         "no line for the http aliases (the residual), and over https the gate's line at the specifier the binding came from")
+
+
+class TheJavaScriptSideRefusesWhatItCannotRead(_SharedRun):
+    """The sixth round of the review (correctness-4, extra6-1, extra7-2), ruled under the reviewer's rule on instruments' limits (a
+    loud refusal, not a widening): two refusals on the JavaScript side, each an IMPORT line by file and line unless JS_ALLOW names the
+    place by its file and expression. A family module's specifier the import gate reads (http, https, net, tls, ws, child_process)
+    is read only where a counted binding takes the module from it or an arm reads a call through it (_specifier_read; a whole
+    binding followed by `.`, `?`, `[` or `(` does not count, nor does a brace list taking `default` that no whole binding of the
+    same statement reads), and on a walked line a require or import the gate cannot read is refused (_js_unread_requires).
+    probe-refused-specifiers.ts plants the four shapes ruling 1 names (a require in a later declarator, `require("http").get`
+    read as a value, a destructured default of `await import()`, a `.then()` import), the named and the namespace re-export, a
+    default beside a brace list that takes `default` (the counted default and the uncounted brace list end at one place, which is
+    then not read), and the two over-reds the text discloses (`import type`, `typeof import()`), and probe-unread-requires.ts the
+    spellings ruling 2 names (`require (`, a template specifier, a comment before the paren, `module.require`,
+    `process.mainModule.require`, createRequire, a member access on require, an aliased require, and import( with a gap or a
+    template); each is silent at the sixth round's head and one IMPORT line here, and no line of either file is a site. One line of
+    the second file is held at no line: `require` inside a string and at the end of a trailing comment, which the bare-value clause
+    does not read (_js_code). The allowlist's four live places (the manager's `require.main` guard, the
+    timeline view's agent, the test helper's createRequire and its regex literal) are held on the tree's one derivation by their
+    recorded places, and its two gates in this run: the manager's guard respelled in the copy leaves its entry naming nothing, and
+    a second agent appended to the timeline view is a second place under that entry's key, each an IMPORT ALLOW line by key. Each
+    refusal's arm removed from a scratch copy of the script silences its plants and no other (the round's record), not a case of
+    its own, since each would be a full scan; the plants ride the shared browser run and add none. Every property is a line of
+    these files or a line naming a key, so the run's other members cannot satisfy or fail one."""
+
+    RUN = "browser"
+    SPECS, REQUIRES = "ui/webview/probe-refused-specifiers.ts", "ui/webview/probe-unread-requires.ts"
+
+    @classmethod
+    def mutate(cls, cleanup):
+        _plant(cls.SPECS, REFUSED_SPECIFIERS_TEXT, cleanup)
+        _plant(cls.REQUIRES, UNREAD_REQUIRES_TEXT, cleanup)
+        _replace("bin/romp-manager", MANAGER_GUARD, MANAGER_GUARD_GONE, cleanup)
+        _append("ui/romp-timeline-view.js", TIMELINE_SECOND_AGENT, cleanup)
+
+    def test_a_family_specifier_no_counted_binding_reads_is_refused_at_its_line(self):
+        out = self.out
+        for shape, line, mod, form in REFUSED_SPECIFIER_LINES:
+            self.assertRefused(self.rc, out, _refusal(self.SPECS, line, ("names", mod, form)))
+        self.assertEqual(sorted(int(ln.split(" ", 2)[1].rsplit(":", 1)[1]) for ln in _import_lines(out, self.SPECS)),
+                         sorted(line for _s, line, _m, _f in REFUSED_SPECIFIER_LINES),
+                         "one IMPORT line per planted shape and none on the call lines:\n" + "\n".join(_import_lines(out, self.SPECS)))
+        self.assertFalse(_listed(out, self.SPECS + ":"), "no binding the patterns count is made, so no call line is a site")
+
+    def test_a_require_or_import_the_gate_cannot_read_is_refused_at_its_line(self):
+        out = self.out
+        for spelling, line, what, expr in UNREAD_REQUIRE_LINES:
+            self.assertRefused(self.rc, out, _refusal(self.REQUIRES, line, ("spells", what, expr)))
+        self.assertEqual(sorted(int(ln.split(" ", 2)[1].rsplit(":", 1)[1]) for ln in _import_lines(out, self.REQUIRES)),
+                         sorted(line for _s, line, _w, _e in UNREAD_REQUIRE_LINES),
+                         "one IMPORT line per planted spelling:\n" + "\n".join(_import_lines(out, self.REQUIRES)))
+        self.assertFalse(_listed(out, self.REQUIRES + ":"), "no line of the file is a site")
+
+    def test_the_allowlist_places_the_four_live_lines_by_file_and_expression(self):
+        rc, out, _ = tree_run()
+        self.assertClean(rc, out)
+        self.assertFalse([ln for ln in out.splitlines() if ln.startswith("IMPORT")], "the tree's run has no IMPORT line")
+        allow, res = getattr(script_module(ROOT), "JS_ALLOW", {}), _tree().res
+        self.assertEqual(set(allow), set(JS_ALLOW_PLACES), "the one JavaScript allowlist holds the four live places and no other")
+        for key, locator in sorted(JS_ALLOW_PLACES.items()):
+            count, reason = allow[key]
+            self.assertTrue(reason.strip(), "every entry carries its reason: %r" % (key,))
+            lines = [i + 1 for i, ln in enumerate(_lines(os.path.join(ROOT, key[0]))) if locator in ln]
+            self.assertEqual(len(lines), 1, "%r is located by content on one line of %s: %r" % (locator, key[0], lines))
+            self.assertEqual(count, 1, "each entry covers its one live place: %r" % (key,))
+            self.assertEqual(sorted(line for line, _col in res.allow_hits.get(key, ())), lines,
+                             "the tree's run records the entry's one place at the located line: %r" % (key,))
+        # a source pin, not the proof: the executed proof of the createRequire refusal is the plant above (line 7 of
+        # probe-unread-requires.ts) and the allowlist's place for the helper's call
+        self.assertIn(MODULE_REASON, _script_comments(ROOT), "KNOWN_JS_IMPORTS's reason for `module` says its createRequire is refused by name")
+
+    def test_an_entry_naming_nothing_and_a_second_place_under_a_key_fail_the_run(self):
+        out = self.out
+        self.assertRefused(self.rc, out, "IMPORT ALLOW bin/romp-manager 'require.main' names nothing this run reads: drop it from JS_ALLOW (an "
+                           "entry for code that is gone is never a pass)",
+                           "IMPORT ALLOW ui/romp-timeline-view.js \"require('http')\" covers 2 places, the entry says 1: a new place under an "
+                           "entry's key is read or named, never excused by the key")
+        self.assertFalse(_import_lines(out, "ui/romp-timeline-view.js"), "the second agent is excused by the key and counted against it, not listed")
+
+    def test_the_ledger_entrys_census_paragraph_carries_the_text(self):
+        """The entry's census paragraph is the third home of UNREAD_BINDINGS (the docstring's is held by TheResidualClassIsStatedAndHeld
+        and SECURITY.md's by tests/test_security_price_feed.py): one text, right after the disclosure sentence it qualifies."""
+        with open(os.path.join(ROOT, LEDGER), encoding="utf-8") as f:
+            text = f.read()
+        paragraphs = [" ".join(p.split()) for p in text.split("\n\n") if DISCLOSURE[1:] in " ".join(p.split())]
+        self.assertEqual(len(paragraphs), 1, "one paragraph of %s carries the disclosure sentence" % LEDGER)
+        self.assertIn(DISCLOSURE[1:] + " " + UNREAD_BINDINGS, paragraphs[0], "the census paragraph carries the text right after the disclosure")
+
+
+def _script_comments(root):
+    """The script's full-line comments, their `#` leads dropped and their wraps folded to single spaces, so a comment's sentence is
+    matched whole."""
+    with open(os.path.join(root, INVENTORY), encoding="utf-8") as f:
+        return " ".join(" ".join(ln.strip()[1:].strip() for ln in f if ln.strip().startswith("#")).split())
 
 
 # F, G and H of the fifth round, planted in the same served pass: a route's content type (F), the receivers and containers a
@@ -2093,6 +2675,180 @@ FGH_PLANT_LINES = (tuple((tag, _fgh_mark(tag)) for tag in [t for _, t in FGH_TYP
                       ("r2_value", ' f"<b>{p}"'), ("r3", _fgh_mark("r3")), ("r3_open", 'self._send(200, (f"<p>{p}</p>"')))
 SERVED_COMPUTED_PLANTS = ("slot", "h4")   # the plants whose one site is the computed class: the format slot and H4's second import(
 
+# B and C of the sixth round (2026-09-24), the served routes' and the served text's refusals, planted in the same pass: do_GET
+# branches before the /chat branch (BC_ROUTES) with what they read appended at the module's end (BC_DEFS). Each plant is silent at
+# the sixth round's head but five (c3s and c3d, read there at call.args[1], and rbi and rbd, read there as the text their names
+# hold, each page's fetch UNCLASSIFIED, and c3k, whose keyword body crashes the run with an IndexError and no line) and a SERVED
+# line by name here, each line held at the plant's own line (BC_PLANT_LINES, by content), save grl, held at no line. B: a route
+# typed through a module name the module writes after binding it (a subscript store, a rebind under `global`, a dunder mutator, a
+# container type's method naming it first, and an import, a def, a class statement or an except clause binding it under `global`); a
+# body the census does not read at the call's second positional argument (a definition that writes its third parameter, a class
+# whose second `_send` definition, the one Python binds, does so, a keyword body, a starred argument before the body, a `**`
+# spread); a reference to `_send` that is no call (an alias of the bound method, a bare read, a getattr naming it, a string equal to
+# `_send`). C: a bare module name bound other than by one assignment (only inside a try, a default and then a rebind, an import or a
+# def and then an assignment, a builtin-named name bound in a try) or rebound (an import, a def or a builtin a function binds under
+# `global`, an import a statement at module level writes), and the same rule over a route's type (a type constant bound again under
+# an if); a call to a callee the pass does not follow (a module-constant lambda, a constant aliasing a function, functools.partial
+# through a constant, an instance read through a constant, a subscript dispatch, a callee that is itself a call, a class, a
+# local-bound callee, a rebound import or def, a builtin-named constant); a container a container type's method writes, read in a
+# page; and an import a function writes only through a local of its own (grl), which keeps its exemption.
+BC_ROUTES = "".join((
+    _fgh_route("c1s", 'return self._send(200, "%s", _PROBE_C1S["page"])' % (FGH_PAGE % "c1s")),
+    _fgh_route("c1g", 'return self._send(200, "%s", _PROBE_C1G)' % (FGH_PAGE % "c1g")),
+    _fgh_route("c2ct", 'return self._send(200, "%s", _PROBE_C2CT)' % (FGH_PAGE % "c2ct")),
+    _fgh_route("c3k", 'return self._send(200, body="%s", ctype="text/html")' % (FGH_PAGE % "c3k")),
+    _fgh_route("c3s", 'return self._send(*(200,), "%s", ctype="text/html")' % (FGH_PAGE % "c3s")),
+    _fgh_route("c3d", 'return self._send(200, "%s", "text/html", **{})' % (FGH_PAGE % "c3d")),
+    _fgh_route("c5a", "reply = self._send", 'return reply(200, "%s", "text/html")' % (FGH_PAGE % "c5a")),
+    _fgh_route("c5n", "_c5n = _send", 'return self._send(200, "<p>c5n</p>", "text/plain")'),
+    _fgh_route("c5g", 'return getattr(self, "_send")(200, "%s", "text/html")' % (FGH_PAGE % "c5g")),
+    _fgh_route("c2t", 'return self._send(200, "<p>c2t</p>" + _PROBE_C2T, "text/html")'),
+    _fgh_route("c2d", 'return self._send(200, "<p>c2d</p>" + _PROBE_C2D, "text/html")'),
+    _fgh_route("x6l", 'return self._send(200, "<p>x6l</p>" + _PROBE_X6L("t"), "text/html")'),
+    _fgh_route("x6a", 'return self._send(200, "<p>x6a</p>" + _PROBE_X6A("t"), "text/html")'),
+    _fgh_route("x6p", 'return self._send(200, "<p>x6p</p>" + _PROBE_X6P(), "text/html")'),
+    _fgh_route("x6i", 'return self._send(200, "<p>x6i</p>" + _PROBE_X6I.page(), "text/html")'),
+    _fgh_route("x6s", 'return self._send(200, "<p>x6s</p>" + _PROBE_X6S["k"]("t"), "text/html")'),
+    _fgh_route("x6c", 'return self._send(200, "<p>x6c</p>" + _probe_x6c_factory()("t"), "text/html")'),
+    _fgh_route("x6k", 'return self._send(200, "<p>x6k</p>" + _ProbeX6K("t"), "text/html")'),
+    _fgh_route("x6o", "_pg = _probe_x6o_page", 'return self._send(200, "<p>x6o</p>" + _pg("t"), "text/html")'),
+    _fgh_route("wsi", 'return self._send(200, "%s", _PROBE_WSI["page"])' % (FGH_PAGE % "wsi")),
+    _fgh_route("wdu", 'return self._send(200, "%s", _PROBE_WDU["page"])' % (FGH_PAGE % "wdu")),
+    _fgh_route("wco", 'return self._send(200, "%s", _PROBE_WCO["page"])' % (FGH_PAGE % "wco")),
+    _fgh_route("wla", 'return self._send(200, "<p>wla</p>" + _PROBE_WLA[0], "text/html")'),
+    _fgh_route("wsa", 'return self._send(200, "<p>wsa</p>" + "".join(_PROBE_WSA), "text/html")'),
+    _fgh_route("srb", 'return builtins.getattr(self, "_send")(200, "%s", "text/html")' % (FGH_PAGE % "srb")),
+    _fgh_route("sra", 'return operator.attrgetter("_send")(self)(200, "%s", "text/html")' % (FGH_PAGE % "sra")),
+    _fgh_route("srg", 'return self.__getattribute__("_send")(200, "%s", "text/html")' % (FGH_PAGE % "srg")),
+    _fgh_route("srv", 'return vars(type(self))["_send"](self, 200, "%s", "text/html")' % (FGH_PAGE % "srv")),
+    _fgh_route("rbi", 'return self._send(200, "<p>rbi</p>" + _PROBE_RBI, "text/html")'),
+    _fgh_route("rbk", 'return self._send(200, "<p>rbk</p>" + _PROBE_RBK("t"), "text/html")'),
+    _fgh_route("rbd", 'return self._send(200, "<p>rbd</p>" + _probe_rbd, "text/html")'),
+    _fgh_route("rbc", 'return self._send(200, "<p>rbc</p>" + _probe_rbc(), "text/html")'),
+    _fgh_route("bic", 'return self._send(200, "<p>bic</p>" + format("t"), "text/html")'),
+    _fgh_route("bit", 'return self._send(200, "<p>bit</p>" + ascii, "text/html")'),
+    _fgh_route("gti", 'return self._send(200, "%s", _PROBE_GTI)' % (FGH_PAGE % "gti")),
+    _fgh_route("gtf", 'return self._send(200, "%s", _PROBE_GTF)' % (FGH_PAGE % "gtf")),
+    _fgh_route("gtd", 'return self._send(200, "%s", _PROBE_GTD)' % (FGH_PAGE % "gtd")),
+    _fgh_route("gtc", 'return self._send(200, "%s", _PROBE_GTC)' % (FGH_PAGE % "gtc")),
+    _fgh_route("gte", 'return self._send(200, "%s", _PROBE_GTE)' % (FGH_PAGE % "gte")),
+    _fgh_route("gri", 'return self._send(200, "<p>gri</p>" + _PROBE_GRI, "text/html")'),
+    _fgh_route("grd", 'return self._send(200, "<p>grd</p>" + _probe_grd(), "text/html")'),
+    _fgh_route("grb", 'return self._send(200, "<p>grb</p>" + hex, "text/html")'),
+    _fgh_route("grm", 'return self._send(200, "<p>grm</p>" + _PROBE_GRM, "text/html")'),
+    _fgh_route("grl", 'return self._send(200, "<p>grl</p>" + _PROBE_GRL, "text/html")')))
+BC_DEFS = "\n\n" + "\n\n\n".join((
+    '_PROBE_C1S = {"page": "application/json"}\n_PROBE_C1S["page"] = "text/html"',
+    '_PROBE_C1G = "application/json"\n\n\ndef _probe_c1g_set():\n    global _PROBE_C1G\n    _PROBE_C1G = "text/html"',
+    '_PROBE_C2CT = "text/plain"\nif _PROBE_C2CT == "text/plain":\n    _PROBE_C2CT = "text/html"',
+    'class _ProbeC3(object):\n    def _send(self, code, ctype, body):\n        self.send_header("Content-Type", ctype)\n'
+    '        self.wfile.write(body)\n\n    def do_GET(self):\n        return self._send(200, "text/html", "%s")' % (FGH_PAGE % "c3p"),
+    'try:\n    _PROBE_C2T = "%s"\nexcept Exception:\n    pass' % (FGH_PAGE % "c2t"),
+    '_PROBE_C2D = "<p>none</p>"\ntry:\n    _PROBE_C2D = "%s"\nexcept Exception:\n    pass' % (FGH_PAGE % "c2d"),
+    '_PROBE_X6L = lambda t: "%s" + t' % (FGH_PAGE % "x6l"),
+    'def _probe_x6a_page(t):\n    return "%s" + t\n\n\n_PROBE_X6A = _probe_x6a_page' % (FGH_PAGE % "x6a"),
+    'def _probe_x6p_page(t):\n    return "%s" + t\n\n\n_PROBE_X6P = functools.partial(_probe_x6p_page, "t")' % (FGH_PAGE % "x6p"),
+    'class _ProbeX6Page(object):\n    def page(self):\n        return "%s"\n\n\n_PROBE_X6I = _ProbeX6Page()' % (FGH_PAGE % "x6i"),
+    'def _probe_x6s_page(t):\n    return "%s" + t\n\n\n_PROBE_X6S = {"k": _probe_x6s_page}' % (FGH_PAGE % "x6s"),
+    'def _probe_x6c_page(t):\n    return "%s" + t\n\n\ndef _probe_x6c_factory():\n    return _probe_x6c_page' % (FGH_PAGE % "x6c"),
+    'class _ProbeX6K(str):\n    def __new__(cls, t):\n        return str.__new__(cls, "%s" + t)' % (FGH_PAGE % "x6k"),
+    'def _probe_x6o_page(t):\n    return "%s" + t' % (FGH_PAGE % "x6o"),
+    '_PROBE_WSI = {"page": "application/json"}\n\n\ndef _probe_wsi_set():\n    _PROBE_WSI.__setitem__("page", "text/html")',
+    '_PROBE_WDU = {"page": "application/json"}\ndict.update(_PROBE_WDU, page="text/html")',
+    '_PROBE_WCO = {"page": "application/json"}\ncollections.OrderedDict.update(_PROBE_WCO, page="text/html")',
+    '_PROBE_WLA = ["<p>none</p>"]\nlist.append(_PROBE_WLA, "%s")' % (FGH_PAGE % "wla"),
+    '_PROBE_WSA = {"<p>none</p>"}\nset.add(_PROBE_WSA, "%s")' % (FGH_PAGE % "wsa"),
+    'from json import dumps as _PROBE_RBI\n_PROBE_RBI = "%s"' % (FGH_PAGE % "rbi"),
+    'from json import dumps as _PROBE_RBK\n_PROBE_RBK = lambda t: "%s" + t' % (FGH_PAGE % "rbk"),
+    'def _probe_rbd():\n    return "<p>none</p>"\n\n\n_probe_rbd = "%s"' % (FGH_PAGE % "rbd"),
+    'def _probe_rbc():\n    return "<p>none</p>"\n\n\n_probe_rbc = lambda: "%s"' % (FGH_PAGE % "rbc"),
+    'format = lambda t: "%s" + t' % (FGH_PAGE % "bic"),
+    'try:\n    ascii = "%s"\nexcept Exception:\n    pass' % (FGH_PAGE % "bit"),
+    'class _ProbeTwoSends(object):\n    def _send(self, code, body, ctype):\n        self.send_header("Content-Type", ctype)\n'
+    '        self.wfile.write(body)\n\n    def _send(self, code, ctype, body):\n        self.send_header("Content-Type", ctype)\n'
+    '        self.wfile.write(body)\n\n    def do_GET(self):\n        return self._send(200, "text/html", "%s")' % (FGH_PAGE % "tsd"),
+    '_PROBE_GTI = "application/json"\n\n\ndef _probe_gti_set():\n    global _PROBE_GTI\n    import json as _PROBE_GTI',
+    '_PROBE_GTF = "application/json"\n\n\ndef _probe_gtf_set():\n    global _PROBE_GTF\n    from json import dumps as _PROBE_GTF',
+    '_PROBE_GTD = "application/json"\n\n\ndef _probe_gtd_set():\n    global _PROBE_GTD\n\n    def _PROBE_GTD():\n        return "text/html"',
+    '_PROBE_GTC = "application/json"\n\n\ndef _probe_gtc_set():\n    global _PROBE_GTC\n\n    class _PROBE_GTC(object):\n        pass',
+    '_PROBE_GTE = "application/json"\n\n\ndef _probe_gte_set():\n    global _PROBE_GTE\n    try:\n        pass\n'
+    '    except Exception as _PROBE_GTE:\n        pass',
+    'from json import dumps as _PROBE_GRI\n\n\ndef _probe_gri_set():\n    global _PROBE_GRI\n    _PROBE_GRI = "%s"' % (FGH_PAGE % "gri"),
+    'def _probe_grd():\n    return "<p>none</p>"\n\n\ndef _probe_grd_set():\n    global _probe_grd\n    _probe_grd = lambda: "%s"' % (FGH_PAGE % "grd"),
+    'def _probe_grb_set():\n    global hex\n    hex = "%s"' % (FGH_PAGE % "grb"),
+    'from json import dumps as _PROBE_GRM\n_PROBE_GRM["page"] = "%s"' % (FGH_PAGE % "grm"),
+    'from json import dumps as _PROBE_GRL\n\n\ndef _probe_grl_local():\n    _PROBE_GRL = []\n    _PROBE_GRL.append("%s")\n'
+    '    return _PROBE_GRL' % (FGH_PAGE % "grl"))) + "\n"
+_TYPE_UNREAD = "SERVED kernel/kernel.py:%%d serves a response whose content type the census cannot resolve (%s in Handler.do_GET)"
+_BODY_UNREAD = ("SERVED kernel/kernel.py:%%d serves text/html through %s, whose page body the census does not read (%s, in %s): the census "
+                "reads a body as the call's second positional argument, the parameter the definition writes; pass it so")
+_SEND_REF = ("SERVED kernel/kernel.py:%%d refers to _send other than by a call the scan reads (%s in Handler.do_GET): the routes are the "
+             "calls spelled _send(...) or <x>._send(...); call it so, or name the place in SERVED_ALLOW with its reason")
+_TEXT_UNREAD = "SERVED kernel/kernel.py:%%d builds a served page from %s (%s), text the census did not read"
+_MEMO_UNREAD = ("SERVED kernel/kernel.py:%%d builds a served page from %s, a container the module writes at run time: name it in SERVED_ALLOW "
+                "with the walked file its value comes from")
+_REBOUND = "a module name bound other than by one assignment"
+_NOT_SECOND = "the definition's written body is not its second positional parameter"
+# (the plant, its tag, the SERVED line with the tag's line in place of %d); B's, then C's
+BC_ROUTE_REFUSED = (("B1 a dict constant a subscript store rewrites types a route", "c1s", _TYPE_UNREAD % "_PROBE_C1S['page']"),
+                    ("B1 a constant rebound under global types a route", "c1g", _TYPE_UNREAD % "_PROBE_C1G"),
+                    ("B2 a definition that writes its third parameter as the body", "c3p", _BODY_UNREAD % ("_ProbeC3._send", _NOT_SECOND, "_ProbeC3.do_GET")),
+                    ("B2 a body passed by keyword", "c3k", _BODY_UNREAD % ("Handler._send", "a keyword body", "Handler.do_GET")),
+                    ("B2 a starred argument before the body", "c3s", _BODY_UNREAD % ("Handler._send", "a starred argument", "Handler.do_GET")),
+                    ("B2 a ** spread", "c3d", _BODY_UNREAD % ("Handler._send", "a ** argument", "Handler.do_GET")),
+                    ("B3 an alias of the bound method", "c5a", _SEND_REF % "self._send"),
+                    ("B3 a bare _send read", "c5n", _SEND_REF % "_send"),
+                    ("B3 a getattr naming _send", "c5g", _SEND_REF % "getattr(self, '_send')"),
+                    ("B1 a dict constant a __setitem__ call rewrites types a route", "wsi", _TYPE_UNREAD % "_PROBE_WSI['page']"),
+                    ("B1 a dict constant dict.update(<name>, ...) rewrites types a route", "wdu", _TYPE_UNREAD % "_PROBE_WDU['page']"),
+                    ("B1 a dict constant a collections type's update rewrites types a route", "wco", _TYPE_UNREAD % "_PROBE_WCO['page']"),
+                    ("B3 a string equal to _send through builtins.getattr", "srb", _SEND_REF % "'_send'"),
+                    ("B3 a string equal to _send through operator.attrgetter", "sra", _SEND_REF % "'_send'"),
+                    ("B3 a string equal to _send through __getattribute__", "srg", _SEND_REF % "'_send'"),
+                    ("B3 a string equal to _send as a key of vars()", "srv", _SEND_REF % "'_send'"),
+                    ("B2 a class's second _send definition, the one Python binds, writes its third parameter as the body", "tsd",
+                     _BODY_UNREAD % ("_ProbeTwoSends._send", _NOT_SECOND, "_ProbeTwoSends.do_GET")),
+                    ("B1 a type constant an import under global rebinds types a route", "gti", _TYPE_UNREAD % "_PROBE_GTI"),
+                    ("B1 a type constant a from-import under global rebinds types a route", "gtf", _TYPE_UNREAD % "_PROBE_GTF"),
+                    ("B1 a type constant a def under global rebinds types a route", "gtd", _TYPE_UNREAD % "_PROBE_GTD"),
+                    ("B1 a type constant a class statement under global rebinds types a route", "gtc", _TYPE_UNREAD % "_PROBE_GTC"),
+                    ("B1 a type constant an except clause under global rebinds types a route", "gte", _TYPE_UNREAD % "_PROBE_GTE"))
+BC_TEXT_REFUSED = (("C1 a module name bound only inside a try", "c2t", _TEXT_UNREAD % ("_PROBE_C2T", "a module name bound other than by one assignment")),
+                   ("C1 a default and then a rebind", "c2d", _TEXT_UNREAD % ("_PROBE_C2D", "a module name bound other than by one assignment")),
+                   ("C1 a type constant bound again under an if", "c2ct", _TYPE_UNREAD % "_PROBE_C2CT"),
+                   ("C2 a module-constant lambda", "x6l", _TEXT_UNREAD % ("_PROBE_X6L('t')", "a call")),
+                   ("C2 a module constant aliasing a function", "x6a", _TEXT_UNREAD % ("_PROBE_X6A('t')", "a call")),
+                   ("C2 functools.partial through a module constant", "x6p", _TEXT_UNREAD % ("_PROBE_X6P()", "a call")),
+                   ("C2 an instance read through a module constant", "x6i", _TEXT_UNREAD % ("_ProbeX6Page()", "a call")),
+                   ("C2 a subscript dispatch", "x6s", _TEXT_UNREAD % ("_PROBE_X6S['k']('t')", "a call")),
+                   ("C2 a callee that is itself a call", "x6c", _TEXT_UNREAD % ("_probe_x6c_factory()('t')", "a call")),
+                   ("C2 a class callee", "x6k", _TEXT_UNREAD % ("_ProbeX6K('t')", "a call")),
+                   ("C2 a local-bound callee", "x6o", _TEXT_UNREAD % ("_pg('t')", "a call")),
+                   ("B1 a list constant list.append(<name>, ...) writes, read in a page", "wla", _MEMO_UNREAD % "_PROBE_WLA[0]"),
+                   ("B1 a set constant set.add(<name>, ...) writes, read in a page", "wsa", _MEMO_UNREAD % "_PROBE_WSA"),
+                   ("C1 an import rebound by an assignment", "rbi", _TEXT_UNREAD % ("_PROBE_RBI", _REBOUND)),
+                   ("C1 an import rebound by an assignment, called", "rbk", _TEXT_UNREAD % ("_PROBE_RBK('t')", "a call")),
+                   ("C1 a def rebound by an assignment", "rbd", _TEXT_UNREAD % ("_probe_rbd", _REBOUND)),
+                   ("C1 a def rebound by an assignment, called", "rbc", _TEXT_UNREAD % ("_probe_rbc()", "a call")),
+                   ("C1 a builtin-named module constant, called", "bic", _TEXT_UNREAD % ("format('t')", "a call")),
+                   ("C1 a builtin-named name bound inside a try", "bit", _TEXT_UNREAD % ("ascii", _REBOUND)),
+                   ("C1 an import a function rebinds under global", "gri", _TEXT_UNREAD % ("_PROBE_GRI", _REBOUND)),
+                   ("C1 a def a function rebinds under global, called", "grd", _TEXT_UNREAD % ("_probe_grd()", "a call")),
+                   ("C1 a builtin a function rebinds under global", "grb", _TEXT_UNREAD % ("hex", _REBOUND)),
+                   ("C1 an import a module-level statement writes", "grm", _TEXT_UNREAD % ("_PROBE_GRM", _REBOUND)))
+BC_PLANT_LINES = (("c1s", '_PROBE_C1S["page"])'), ("c1g", "_PROBE_C1G)"), ("c2ct", "_PROBE_C2CT)"), ("c3p", _fgh_mark("c3p")),
+                  ("c3k", _fgh_mark("c3k")), ("c3s", _fgh_mark("c3s")), ("c3d", _fgh_mark("c3d")), ("c5a", "reply = self._send"),
+                  ("c5n", "_c5n = _send"), ("c5g", 'return getattr(self, "_send")'), ("c2t", "+ _PROBE_C2T,"), ("c2d", "+ _PROBE_C2D,"),
+                  ("x6l", '_PROBE_X6L("t")'), ("x6a", '_PROBE_X6A("t")'), ("x6p", "_PROBE_X6P()"), ("x6i", "_PROBE_X6I = _ProbeX6Page()"),
+                  ("x6s", '_PROBE_X6S["k"]("t")'), ("x6c", '_probe_x6c_factory()("t")'), ("x6k", '_ProbeX6K("t")'), ("x6o", '_pg("t")'),
+                  ("wsi", '_PROBE_WSI["page"])'), ("wdu", '_PROBE_WDU["page"])'), ("wco", '_PROBE_WCO["page"])'), ("wla", "+ _PROBE_WLA[0],"),
+                  ("wsa", '"".join(_PROBE_WSA)'), ("srb", 'builtins.getattr(self, "_send")'), ("sra", 'operator.attrgetter("_send")'),
+                  ("srg", 'self.__getattribute__("_send")'), ("srv", 'vars(type(self))["_send"]'), ("rbi", "+ _PROBE_RBI,"), ("rbk", '+ _PROBE_RBK("t"),'), ("rbd", "+ _probe_rbd,"),
+                  ("rbc", "+ _probe_rbc(),"), ("bic", '+ format("t"),'), ("bit", "+ ascii,"), ("tsd", _fgh_mark("tsd")),
+                  ("gti", "_PROBE_GTI)"), ("gtf", "_PROBE_GTF)"), ("gtd", "_PROBE_GTD)"), ("gtc", "_PROBE_GTC)"), ("gte", "_PROBE_GTE)"),
+                  ("gri", "+ _PROBE_GRI,"), ("grd", "+ _probe_grd(),"), ("grb", '"<p>grb</p>" + hex,'), ("grm", "+ _PROBE_GRM,"))
+
+
 
 def _plant_lines(text, specs, where):
     """The plants' lines in `text` by content, {name: line}: for each (name, needle) of `specs` the lines carrying the needle, found
@@ -2120,31 +2876,33 @@ def _plant_lines(text, specs, where):
 
 SERVED_KEY = ("tests/test_price_feed_census.py", "the served pass over the planted kernel.py")   # parse_cache.derived's key
 SERVED_PLANT_LINES = ((("fetch", 'fetch("https://example.invalid/probe");'), ("alert", "}else{alert('Pull from '+h+' failed');}"),
-                       ("import", "import x from 'example-pkg';"), ("settings_def", "def _settings_page():"),
+                       ("import", "import x from 'example-pkg';"), ("split_import", "} from 'example-split-pkg';"),
+                       ("alert_after_export", "}else{alert('Pulled from '+q+' ok');}"), ("settings_def", "def _settings_page():"),
                        ("settings_anchor", SETTINGS_ANCHOR.strip()), ("probe_read", '    return (UI / "probe.html").read_text()'),
                        ("fstring", 'fetch(\'https://example.invalid/f\')'), ("slot", '"<script>fetch(\'%s\')</script>" % p'),
                        ("body_param", 'return self._send(200, body, "text/html")'))
-                      + FGH_PLANT_LINES)   # the plants' lines, located by content once all have landed; a tuple of names, one per occurrence
+                      + FGH_PLANT_LINES + BC_PLANT_LINES)   # the plants' lines, located by content once all have landed; a tuple of names, one per occurrence
 SERVED_PLANTS = ((BOOT_ANCHOR, BOOT_ANCHOR + BOOT_PLANTS), (SETTINGS_ANCHOR, SETTINGS_PLANT + SETTINGS_ANCHOR),
                  (CHAT_BRANCH, ROUTE_PLANTS + CHAT_BRANCH), (SEND_ANCHOR, SEND_PLANT + SEND_ANCHOR),
                  (CHAT_BRANCH, FGH_ROUTES + CHAT_BRANCH), (SEND_ANCHOR, FGH_HANDLER + SEND_ANCHOR),
                  (DRIFT_JS_ANCHOR, H1_PLANT + DRIFT_JS_ANCHOR), (DRIFT_CSS_ANCHOR, DRIFT_CSS_ANCHOR + H2_PLANT),
-                 (SLICE_SEND, SLICE_LITERAL))   # (anchor, text), in the order they land
+                 (SLICE_SEND, SLICE_LITERAL), (CHAT_BRANCH, BC_ROUTES + CHAT_BRANCH))   # (anchor, text), in the order they land
 
 
 def _served_text(text):
     """kernel/kernel.py's text with TheServedPagesAreScanned's plants applied: SERVED_PLANTS in order (_replace_text, so an anchor
-    that is absent or repeated is a broken mutation), then PROBE_PAGE_DEF and FGH_DEFS appended as _append lands a block. The
+    that is absent or repeated is a broken mutation), then PROBE_PAGE_DEF, FGH_DEFS and BC_DEFS appended as _append lands a block. The
     plants: the boot's fetch, socket, opener, alert and import, the settings page's beacon, the probe, f-string and
     format-slot routes and the method serving a parameter, and, since the fifth round, F, G and H's: the F1 to F10 and F12
     routes, the G routes with their module definitions and Handler's G5 attribute and G11 method, the H4 to H7 routes and
     the residual's R1 to R3 routes,
-    H1 and H2 in the drift banner's joined constants, and F11's respelled _file_slice type. The plants' one writer: the served
+    H1 and H2 in the drift banner's joined constants, and F11's respelled _file_slice type, and since the sixth round B and C's
+    routes and module definitions (BC_ROUTES, BC_DEFS). The plants' one writer: the served
     pass parses this text, and the command-line case writes it into the scope copy's kernel/kernel.py, so the two plant sets
     cannot drift."""
     for old, new in SERVED_PLANTS:
         text = _replace_text(text, old, new, KERNEL_PATH)
-    return text + ("" if text.endswith("\n") else "\n") + PROBE_PAGE_DEF + FGH_DEFS
+    return text + ("" if text.endswith("\n") else "\n") + PROBE_PAGE_DEF + FGH_DEFS + BC_DEFS
 
 
 def _served_build():
@@ -2231,8 +2989,11 @@ class TheServedPagesAreScanned(_Scope):
     locals in two functions, each fetch UNCLASSIFIED; a receiver a function or a method returns and a run-time memo, each a
     SERVED line) and H's reads (a fetch after local ones in a joined constant, a joined constant led by `*{`, a second and
     computed import( on a line, a multi-line f-string's later part, two identical parts on two lines and two identical
-    constants on one line, each at its own line, and the residual's three shapes, each held at the line it is listed at).
-    None adds a
+    constants on one line, each at its own line, and the residual's three shapes, each held at the line it is listed at). Since
+    the sixth round B and C's plants ride it too, each a SERVED line by name: a route typed through a written module name, a
+    body the census does not read, a reference to `_send` that is no call, a container the module writes, a module name bound
+    other than by one assignment or rebound and a callee the pass does not follow; beside them an import a function writes
+    only through a local of its own is held at no line. None adds a
     socket or an opener, so the rowed keys' counts move by the boot's two plants alone. At the tree the shim's and the shell's
     sockets, the boot's dead opener and the worker's clients.openWindow list on local-kernel, the four fetches whose route
     literal a caller passes list as computed, and the four pane stylesheets are named, not scanned. The pass is the class's
@@ -2283,6 +3044,17 @@ class TheServedPagesAreScanned(_Scope):
         out = self.out
         self.assertRefused(self.rc, out, "IMPORT kernel/kernel.py:%d imports example-pkg" % self.at["import"])
         self.assertNotIn("IMPORT kernel/kernel.py:%d " % self.at["alert"], out, "a brace-led line with `from` in a string is any block's last line in a page's script, not an import")
+
+    def test_a_brace_led_line_is_read_in_served_text_only_where_it_continues_an_import_statement(self):
+        """Since the sixth round, over served text a line led by `from` or a closing brace is read as a statement's `from` line only
+        where it continues an import or export statement that begins its own line and has not yet ended. The boot's split import
+        (`import {`, `y`, `} from 'example-split-pkg';`) is gated at its brace-led line, silent at the sixth round's head; a brace-led line with `from` in a string after an export statement that ended on its own line (`export
+        const q = 1;`) is any block's last line, and no line. The arms whose removal reds each: the continuation state for the
+        first, and the state's end at a statement's `;` for the second (the export then left open, the alert's `from '+q+'` read)."""
+        out = self.out
+        self.assertRefused(self.rc, out, "IMPORT kernel/kernel.py:%d imports example-split-pkg" % self.at["split_import"])
+        self.assertNotIn("IMPORT kernel/kernel.py:%d " % self.at["alert_after_export"], out,
+                         "after an export statement that ended on its line, a brace-led line is any block's last line, not an import")
 
     def assertFetchUnclassifiedAt(self, n, tag, why):
         """A plant page's fetch (FGH_PAGE with `tag`) is named on the UNCLASSIFIED line at line n of the planted kernel.py and
@@ -2411,6 +3183,69 @@ class TheServedPagesAreScanned(_Scope):
         with self.subTest(plant="R3 text merged across concatenated literals"):
             self.assertFetchUnclassifiedAt(at["r3_open"], "r3", "a site in text joined across literals is listed at the first part's line")
             self.assertNotIn("kernel/kernel.py:%d" % at["r3"], unclassified(out), "on every interpreter")
+
+    def test_a_route_typed_through_a_written_name_an_unread_body_or_a_send_reference_is_refused_by_name(self):
+        """B of the sixth round, the served routes' refusals (correctness-1, correctness-3, correctness-5), each a SERVED line at
+        the plant's own line. B1: a route typed through a module name the module writes after binding it resolves to no type: a dict
+        constant a module-level subscript store rewrites (c1s), a constant a function rebinds under `global` by an assignment (c1g),
+        a dict constant a dunder mutator writes (wsi, `__setitem__`), a dict constant a container type's method names as its first
+        argument (wdu, `dict.update`; wco, `collections.OrderedDict.update`), and a type constant a function binds under `global` by
+        an import (gti), a from-import (gtf), a def (gtd), a class statement (gtc) and an except clause (gte), the written names
+        routes_of threads through _ctype_values and _dict_of. B2: a script-running route whose body the census does not read at the
+        call's second positional argument: a definition whose one write names its third parameter (c3p, a class of its own with
+        `_send(self, code, ctype, body)`), a class whose second `_send` definition, the one Python binds, does so (tsd), a body
+        passed by keyword (c3k), a starred argument before the body (c3s) and a `**` spread (c3d); the keyword body's page is no
+        site (refused, not read). B3: a reference to `_send` that is no call the scan reads: an alias of the bound method (c5a), a
+        bare `_send` read (c5n), a getattr naming it (c5g), and a string equal to `_send` (srb `builtins.getattr`, sra
+        `operator.attrgetter`, srg `__getattribute__`, srv a key of `vars()`). The arm whose removal reds each: the written names
+        for c1s and c1g, the dunder mutators for wsi, the container type's first argument for wdu and wco, and the binding under
+        `global` recorded for an import (gti), a from-import (gtf), a def or class statement (gtd and gtc) and an except clause
+        (gte), each plant then typed by its literal, application/json, and silent; the definition's body parameter for c3p (its type
+        argument then read as the body, silent); the last definition read for tsd (the first then read, its type argument the page,
+        silent); the call's positional check for c3k (the run then dies with an IndexError, the defect at the sixth round's head),
+        c3s and c3d (each then read at the call's second argument, its page's fetch UNCLASSIFIED); and the attribute and bare-name
+        reads of `_send` for c5a and c5n, the getattr read for c5g and the string's read for srb to srv (each silent). At the sixth
+        round's head c3s and c3d are read at call.args[1] (each page's fetch UNCLASSIFIED), c3k crashes the run, and every other
+        plant is silent."""
+        for plant, tag, line in BC_ROUTE_REFUSED:
+            with self.subTest(plant=plant):
+                self.assertRefused(self.rc, self.out, line % self.at[tag])
+        listed = [ln for ln in self.out.splitlines() if SITE_LINE.match(ln) and _fgh_mark("c3k") in ln]
+        self.assertEqual(listed, [], "the keyword body is refused, not read: its page is no site")
+
+    def test_a_page_text_past_the_constants_and_the_followed_calls_is_refused_by_name(self):
+        """C of the sixth round, the served text's refusals (correctness-2, extra6-2), each a SERVED line at the plant's own line.
+        C1: the served pass's constants are the names one module-level assignment binds and nothing else binds there
+        (_module_consts), and a bare module name that is no constant passes only as an import, a function or a class that is its
+        name's one module-level binding, or a builtin no module-level binding shadows, and in each case only when nothing rebinds
+        the name (no function binds it under `global` and no statement at module level writes it; a write through a function's local
+        of the same name does not count): a name bound only inside a module-level try (c2t), a default rebound inside a try (c2d),
+        an import rebound by an assignment (rbi), a def rebound by one (rbd), a builtin-named name bound inside a try (bit), an
+        import a function rebinds under `global` (gri), a builtin so rebound (grb) and an import a statement at module level writes
+        (grm) are each refused as "a module name bound other than by one assignment"; a rebound import called (rbk), a rebound def
+        called (rbc) and a def a function rebinds under `global`, called (grd), none a function the pass follows, and a
+        builtin-named module constant called (bic) are refused as "a call"; an import a function writes only through a local of its
+        own (grl) keeps its exemption and is no line; and the route typing reads the same constants, so a type constant bound again
+        under a module-level if (c2ct) is a type the census cannot resolve. C2: a call whose callee the pass does not follow passes
+        only as an import, a builtin or a parameter, and any other is refused as "a call": a module-constant lambda (x6l), a module
+        constant aliasing a function (x6a), functools.partial through a module constant (x6p), an instance read through a module
+        constant (x6i, refused at the constant's own line, where its value calls the class), a subscript dispatch (x6s), a callee
+        that is itself a call (x6c), a class (x6k) and a local-bound callee (x6o). A list and a set constant a container type's
+        method writes (wla `list.append`, wsa `set.add`) are containers the module writes, refused where a page reads them. The arm
+        whose removal reds each: the Name arm's classification for c2t and c2d, the one-binding count for c2d and c2ct (c2d then
+        read as its default, c2ct typed text/plain), the refusal of any other callee for x6l to x6k, and _base's local-bound callee
+        for x6o (the local then passed as a name the body binds); the one-binding check on an import in _base's name arm for rbi and
+        in its call arm for rbk, on a function for rbd and on a followed module function for rbc; the builtin check after the
+        module's bindings in _base's call arm for bic and in its name arm for bit; the rebind check in _Served._sole for gri, grd
+        and grm and in _Served._builtin for grb, and a write by a statement at module level recorded as a rebind for grm (each then
+        silent, since each page's literal part is a piece); and the container type's first argument for wla and wsa. A write through
+        a function's local recorded as a rebind reds grl. At the sixth round's head rbi and rbd are read (each page's fetch
+        UNCLASSIFIED) and every other plant is silent."""
+        for plant, tag, line in BC_TEXT_REFUSED:
+            with self.subTest(plant=plant):
+                self.assertRefused(self.rc, self.out, line % self.at[tag])
+        self.assertEqual([ln for ln in self.out.splitlines() if "_PROBE_GRL" in ln], [],
+                         "an import whose name a function writes only through a local of its own (grl) keeps its exemption: no line")
 
     def test_the_served_texts_own_sites_are_rowed_or_computed_and_its_stylesheets_named(self):
         rc, out, _ = tree_run()

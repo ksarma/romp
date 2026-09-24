@@ -3,9 +3,12 @@
 // wording's base cases, the node and the wiring). The kernel's block (_price_feed_status) carries more than a
 // source and a reason: `fetchedAt` and `lastError` outlive the fetch that set them, `rows` counts the built-in ids
 // the feed matched and `known` how many the table holds, and `off` is the switch as read now. Each pin here is a
-// state the recorded blocks can hold, worded so it is true when shown:
-// - a fetch in flight is said as one, never as "nothing fetched yet": after a landed-empty or failed fetch the
-//   kernel's re-attempt reads inflight with fetchedAt or lastError set, and "nothing fetched" would be false;
+// state the recorded blocks can hold, worded so it is true when shown, apart from the two renderer checks the first
+// item names:
+// - a fetch in flight is said as one, never as "nothing fetched yet". The first case also words two blocks the kernel
+//   does not emit, reason inflight with fetchedAt set and with lastError set: the kernel ranks a landed or failed
+//   result above a flight, so its re-attempt after a landed-empty or failed fetch reads empty or failed
+//   (tests/test_price_feed_off.py ReattemptKeepsTheEarlierResult); the two stay as checks of the renderer alone;
 // - the feed's rows keep serving under the switch or after a failed refresh (traffic stops, data does not), and the
 //   line says which, where it used to say "live feed, fetched N hours ago" alone;
 // - a feed that matched some of the table's ids prices those and no more, and the line says so instead of calling
@@ -37,16 +40,18 @@ const note = (pf: unknown): string => {
   return gear.raPriceNote(pf);
 };
 
-test("a fetch in flight is worded as one, apart from nothing fetched yet, so a re-attempt never says nothing was fetched", () => {
+test("a fetch in flight is worded as one, apart from nothing fetched yet, and so are two inflight blocks the kernel does not emit", () => {
   assert.equal(note({ off: false, source: "defaults", reason: "inflight", fetchedAt: null, ageS: null, lastError: null, rows: 0 }),
     "prices: built-in defaults; the feed was still being fetched when these figures were priced; pick a period to reprice", "the first open: the payload is built before the fetch it started lands");
   assert.equal(note({ source: "defaults", reason: "unfetched" }), "prices: built-in defaults; nothing fetched from the feed yet",
     "no attempt this kernel life (reachable on /version before the first open)");
-  // the kernel's re-attempt after a fetch that landed and matched nothing: fetchedAt set, cache empty, a worker parked
+  // a block the kernel does not emit, inflight with fetchedAt set: it ranks a landed or failed result above a flight, so
+  // its re-attempt after a fetch that landed and matched nothing reads empty (ReattemptKeepsTheEarlierResult); a renderer check
   const afterEmpty = note({ off: false, source: "defaults", reason: "inflight", fetchedAt: 1_781_100_000, ageS: 21_600, lastError: null, rows: 0 });
   assert.equal(afterEmpty, "prices: built-in defaults; the feed was still being fetched when these figures were priced; pick a period to reprice");
   assert.ok(!afterEmpty.includes("nothing fetched"), "a fetch landed six hours ago: 'nothing fetched' would be false");
-  // the kernel's re-attempt after a failed fetch: lastError set, a worker parked
+  // the second block the kernel does not emit, inflight with lastError set: a failed result ranks above a flight too, so
+  // its re-attempt after a failed fetch reads failed; a renderer check
   const afterFailed = note({ off: false, source: "defaults", reason: "inflight", fetchedAt: null, ageS: null, lastError: "HTTPError: HTTP 500", rows: 0 });
   assert.equal(afterFailed, "prices: built-in defaults; the feed was still being fetched when these figures were priced; pick a period to reprice");
   assert.ok(!afterFailed.includes("nothing fetched"));

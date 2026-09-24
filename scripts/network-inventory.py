@@ -9,11 +9,15 @@ from tools/, each with its road from the table below. Run from the repository ro
 
 Standard library only. The script exits 1, naming the reason, on: a site with no road (UNCLASSIFIED); a row naming no site
 (STALE ROW); no sites at all (a broken scan or moved roots); a declared root that is missing (SCOPE); a Python file that does
-not parse (PARSE); an import the census does not know (IMPORT); a road with no table entry or a table entry with no road
-(TABLE); a served route whose content type, receiver, container or text the served pass cannot read, a script-running type
-written outside `_send`, a function that answers outside `_send` more often than it writes a Content-Type header, or a `_send`
-definition that writes none and is not a named frame writer, each unless SERVED_ALLOW names it, and an allowlist entry that
-names nothing or covers a different number of places (SERVED); and any figure that differs from the committed counts in
+not parse (PARSE); an import the census does not know, a family module's specifier that no counted binding and no arm reads,
+or a require or import on a walked line that the import gate cannot read, each unless JS_ALLOW names it, and an entry there
+that names nothing or covers a different number of places (IMPORT); a road with no table entry or a table entry with no road
+(TABLE); a served route whose content type, receiver, container, callee or text the served pass cannot read, a reference to
+`_send` other than a call the scan reads (a read of it that is not a call's function, or a string equal to `_send`), a
+script-running type written outside `_send`, a function that answers outside `_send`
+more often than it writes a Content-Type header, or a `_send` definition that writes none and is not a named frame writer, each
+unless SERVED_ALLOW names it, a script-running route whose page body it does not read, and an allowlist entry that names nothing
+or covers a different number of places (SERVED); and any figure that differs from the committed counts in
 scripts/network-inventory-expected.json (COUNTS): the totals, the counts by kind, by class, by road and by row key. So a scan
 that finds fewer sites than the committed count, a file the walk stopped opening, or a second site inside a function that
 already has a row is a loud line, not a clean report.
@@ -26,6 +30,9 @@ only (a fixture of another kind below them, such as a CRLF Python sample, is ski
 scripts/ and the rest of tools/ are the maintainers' release, review and bench tooling that nothing under the runtime trees
 runs; the one program the kernel starts from tools/ is named in NAMED, and a string constant naming those directories from
 the runtime trees is a gate (PROGRAM), so a second such program takes a place here or fails the run.
+vendor/track-changents is runtime code, reached by relative imports from walked files (the dashboard's ui sources, a session
+hook and the file-comments host) and by install.sh's links into ~/.claude, and it is not walked. A load written there is no
+site and no line, and the import gate does not read its imports.
 
 A row is keyed on file plus enclosing function (a Python site) or file plus tool (a shell or JavaScript line); the committed
 count per row key is the guard for a second site inside a function that already has a row, and the listing names the new
@@ -45,8 +52,8 @@ changes). Four classes of outbound activity this scan cannot derive are named in
   browser-computed-url: a fetch, or a dynamic import(), in the browser or editor code whose first argument is computed at run
     time. A fetch is local only when its argument is a relative literal or a kernel-URL helper call (ku, kernelUrl, fileUrl,
     sliceUrl); an absolute literal needs a row; a computed argument is counted here and listed, and so is, in a page the kernel
-    serves, a literal whose URL carries a Python format slot (`%s`, `{}`), filled at serve time; a dynamic import() with a
-    literal specifier is an import and goes through the package gate below, not a site.
+    serves, a literal whose URL carries a Python format slot (`%s`, `{}`), filled at serve time; a dynamic import() in the
+    gate's literal form (below) is an import and goes through the package gate, not a site.
   browser-dom-loads: the browser DOM's own loads (img, iframe, script, link and anchor src, srcset and href writes, setAttribute
     of those, HTML templates carrying them), counted by pattern over the browser and editor code and the served pages, one count
     per line that carries one (a page template inlined as one string is one line, however many it carries); the viewer's and the chat's
@@ -63,8 +70,14 @@ plants one such call and holds this sentence to the behaviour.
 One road is named in the table and not counted, since its loads are rendered-markdown insertions with no attribute line: the
 chat's file preview (render.ts previewMdClean) and a notice card's body (feed.ts noticeBodyNodes) render markdown through the
 shared sanitizer and then stripRemoteLoads (ui/webview/file-preview.ts), which reads no paint attribute, so an inline svg's
-paint references load from the hosts they name; tests/test_security_price_feed.py places every caller of stripRemoteLoads by
-grep, so a new surface on the strip is red by name.
+paint references load from the hosts they name; tests/test_security_price_feed.py counts by grep every call in render.ts spelled
+`md(` or `userMd(`, a gap before the paren allowed, on one line (`md (t)` and `x.md(t)` among them), and every reference to
+stripRemoteLoads (a call, an import, an alias) in the .ts
+and .js files directly under ui/webview and vscode-extension/src, skipping test files, each name's definition (`function md(`
+and the like), a line that opens with `//`, `*` or `/*`, and the text from a `//` that starts the line or follows whitespace;
+each match is counted under the nearest `function NAME(` line at or above it, so a new call or reference moves a count and is
+red: under its caller's name when that line declares the caller, and otherwise under the function that line declares, or under
+none above the first such line.
 A second road is named in the table and not counted, since its loads are the opened document's own and have no line in this
 tree: a Cmd, Ctrl or middle click on a path link to an .svg opens the kernel's /file URL, or its /remote/<host>/file relay, in the
 browser's own tab through preview.ts's openFileTab, a site counted on the local-kernel road by the URL it opens, and that tab is
@@ -100,58 +113,115 @@ the file binds from child_process by a brace list, in the binding shapes the con
 the Python side classes its own; the
 connection family the same way: a `get` or `request` of `http` or `https`, a `connect` or `createConnection` of `net` and a
 `connect` of `tls` through an inline require, a name the file keeps the module under (a require or an `await import()` assigned
-whole in its declaration, TypeScript's `import X = require()`, a namespace or default import, alone or the two in one
+whole in the first declarator of its declaration, TypeScript's `import X = require()`, a namespace or default import, alone or the two in one
 statement, a default beside a brace list, `import { default as X }`), or a bare name the file binds from the module by a brace
 list, alone or beside a default, in an import, a destructured require or a destructured `await import()` (renamed or not), and
 `ws` by its constructor shape (`new <binding>(`, `new <namespace>.WebSocket(`, `new (require('ws'))(`), each an added arm beside
 the literal spellings (`http.get(`, `net.connect(`, the bare global `new WebSocket(`), a call the literal list already names on
-a line counted once under the same tool; and an import gate over every package the scoped files
-import or require: a specifier that does not start with `.`, `/` or
+a line counted once under the same tool; and an import gate over every package the scoped files import or require, read in a
+literal require() or import() spelled whole on one line (the name, its paren, the quoted specifier and the closing paren, with
+nothing between them but whitespace inside the parens), on a line that starts with import or export, on a line led by a closing
+brace (a multi-line import's last line) and on a line led by `from` that continues an import or export statement that begins its
+own line, and not on a comment-led line: a specifier that does not start with `.`, `/` or
 `*` names a package (its first path segment, two for a scoped package, `node:` dropped), and a package outside
 KNOWN_JS_IMPORTS fails the run (IMPORT). The shell and browser sides are matched by a named list with no completeness gate: a
 tool or a client the lists do not name is no site and no line; the Python side's gate is module-granular: an import outside the
-allow-list fails the run, and a primitive of a known module outside NET and SUB is not a site. Three binding shapes no pattern
-reads fall under that rule: a require assigned after its declaration (`let h; h = require("http")`), a `.then()` callback
-parameter of `import()`, and a call through an alias of `require` (`const r = require; const h = r("http")`); a call through any
-of them is no site and no line. The import gate reads the literal `require()` and `import()` of the first two, so in those
-shapes an `https`, `net` or `tls` module fails the run and the residual reaches `http`, `ws` and `child_process`, the packages
-the list knows; an aliased require spells no literal `require()`, so the gate does not read its module either, and that shape
-reaches every module. An echo- or print-led shell line
+allow-list fails the run, and a primitive of a known module outside NET and SUB is not a site. Two refusals cover what the
+JavaScript binding patterns and the import gate do not read, each an IMPORT line unless the JavaScript allowlist, JS_ALLOW,
+names the place by its file and expression, with the number of places the entry covers and the reason; an entry that names
+nothing in the run, or covers a different number of places, fails the run too. First, a literal specifier of a family module
+(`http`, `https`, `net`, `tls`, `ws` or `child_process`) that the import gate reads is read only where a binding the patterns
+read takes the module from it, whole or by names, or an arm reads a call through it (`require('http').request(`); a require or
+an `await import()` taken whole does not count when `.`, `?`, `[` or `(` follows it past whitespace and comments, and a brace
+list that takes `default` does not count unless the same statement binds that name whole (`import { default as X }`), so a
+require in a later declarator, `require("http").get` read as a value, a destructured default, a require assigned after its
+declaration, a `.then()` callback of `import()` and a re-export are each refused. Second, on a walked line the scan reads (not
+in served text), a require or import the gate cannot read is refused: a call of `require` in any other shape (whitespace or a
+comment before the paren, a template or a computed specifier), `require` as a bare value (followed by `;`, `,`, `)`, `}`, `]`
+or the end of the line, outside a string and a comment, where a quote opens a string to the same quote's next occurrence on the
+line that no backslash escapes, `/*` outside a string opens a comment to the next `*/` on the line or the line's end, and `//`
+outside a string opens a comment to the line's end), any `.require(` call, any member access on `require`, a
+`createRequire(` call, and an `import(` with a template specifier or with whitespace or a comment before its paren. So every
+literal specifier of a family module that the gate reads is read or refused, and on a walked line every require the gate
+cannot read is refused when it is spelled in one of those shapes; one spelled another way (a computed member such as
+`module["require"]`, `require` beside an operator, a createRequire under another name) is no site and no line. A client is
+read through a call on the module or on a binding the patterns read: a dotted call on an inline require or on a name the file
+keeps the module under, or a call of a bare name the file binds from it. A client reached from such a binding any other way is
+no site and no line, among them a member alias (`const g = http.get`), a destructure from the binding (`const { get } =
+http`), a computed member, `.call` and an optional chain. The import gate reads a specifier in a literal require() or import()
+spelled whole on one line (the name, its paren, the quoted specifier and the closing paren, with nothing between them but
+whitespace inside the parens), on a line that starts with import or export, on a line led by a closing brace in a walked file, and
+on a line led by `from` (in served text, by `from` or a closing brace) that continues an import or export statement that begins
+its own line; in a walked file it skips a comment-led line. Through a binding whose specifier the gate reads, `https`, `net` and
+`tls` still fail the run at the gate, so this residual reaches `http`, `ws` and `child_process`, the packages the list knows;
+through a binding the patterns read from a specifier the gate does not read (one on the line after a trailing `from`, in a
+require() or `await import()` split across lines, in a statement that does not begin its line, or on a comment-led line of a
+walked file) it reaches `https`, `net` and `tls` as well, save a split require on a walked line, which the second refusal
+refuses. The first refusal also refuses a line that binds nothing to call, such as `import type http from
+"http"` or `let a: typeof import("http")`; no such line is live. An echo- or print-led shell line
 is skipped as a printed remedy only when nothing live follows the printed text: the text outside quotes and the body of every
 `$(...)` and backtick substitution, wherever it stands, are scanned by the interpreter arm and the tool list, so `echo "$body" |
 curl ...` and `echo "rate: $(curl ...)"` are sites and a remedy that names a tool inside quotes is not.
 The pages the kernel serves and its service worker's script, from its own string constants (the dashboard shell, the seven pane
 pages, the token login page, the too-large page and /sw.js, with the shim, the timeline boot and the shell scripts they inline),
 are read from kernel.py's syntax tree and scanned as browser text keyed kernel/kernel.py plus tool, with the DOM loads counted.
-The routes are derived from every `_send` call and every Content-Type header written outside `_send`, in every scanned Python
-file. A `_send` call's content type is read through the definition it reaches: the kernel's Handler._send writes its `ctype`
-parameter, so the call's third argument or its `ctype=` keyword; the postal bus's writes application/json; the session host's
-and its transport's write a frame to a Unix socket and answer no HTTP request (FRAME_WRITERS), and any other definition that
-writes no Content-Type fails the run. The type is read through module constants, through a local whose every binding is read and
-through a dict literal's values; the part before any `;`, stripped and lower-cased, is compared with the types a browser runs
-script from (SCRIPT_TYPES: text/html; the XML types text/xml, application/xml, text/xsl and any type with a `+xml` suffix,
-image/svg+xml and application/xhtml+xml among them; and text/javascript under each name a browser takes for JavaScript,
-application/javascript among them). The page function of each script-running route is followed to the text it returns or
-inlines. In that text the served pass reads a BoolOp's operands, a method call's receiver and a subscript's container when they
-name a module constant or a local, the receiver of `.encode` or `.format_map` whatever it is, a class attribute the class body
-binds, a loop, unpacking or with target from its source, and a local container's appended or stored values; it passes over a
-base that carries no page text (an import, a builtin, a parameter, an except name, or a name the function binds from one of
-those). The run fails by name (SERVED) on a content type the pass cannot read, a script-running type written outside `_send`, a
-function that answers outside `_send` more often than it writes a Content-Type header, a container the module writes at run
-time, any other receiver or container, and a route whose text the pass cannot read, unless the served allowlist, SERVED_ALLOW,
-names the place by its function and expression, with the number of places the entry covers and the reason (the two answers with
-no body, the CORS preflight's 204 and the websocket upgrade's 101, are named there); an entry that names nothing in the run, or
-covers a different number of places, fails the run too. In served text every `fetch(` and `import(` on a line is read by its own
-argument, and no comment skip applies, since a joined constant is one line whatever it starts with. A file the page reads at run
-time is covered by the walk when it is a scanned kind, and a stylesheet is named, not scanned. A site in served text is listed
+The routes are derived from the calls of `_send` the scan reads (spelled `_send(...)` or `<x>._send(...)`; a call through a name
+computed at run time is not read) and every Content-Type header written outside `_send`, in every scanned Python file. A `_send`
+call's content type is read through the definition it reaches: the kernel's Handler._send writes its `ctype` parameter, so the
+call's third argument or its `ctype=` keyword; the postal bus's writes application/json; the session host's and its transport's
+write a frame to a Unix socket and answer no HTTP request (FRAME_WRITERS), and any other definition that writes no Content-Type
+fails the run. The type is read through a module name no code writes after binding it (one module-level assignment binds it,
+nothing else at module level binds it, and nothing in the file writes that name, in any scope: a subscript store or delete, a
+call `<name>.<method>(` of a method _MUTATORS or _DUNDER_MUTATORS lists, a call of such a method on a type _CONTAINER_TYPES
+lists with the name as its first argument (`dict.update(<name>, ...)`), a binding in a function that declares the name `global`
+(as the target of an assignment, an augmented assignment, a loop, a comprehension, a with or a walrus, or by an import, a def or
+class statement or an except clause) or a module-level augmented assignment), through a local whose every binding is read and
+through a dict literal's values; the part before
+any `;`, stripped and lower-cased, is compared with the types a browser runs script from (SCRIPT_TYPES: text/html; the XML types
+text/xml, application/xml, text/xsl and any type with a `+xml` suffix, image/svg+xml and application/xhtml+xml among them; and
+text/javascript under each name a browser takes for JavaScript, application/javascript among them). A script-running route's
+page body is the call's second positional argument, read only when the definition the call reaches writes its own second
+positional parameter as the body (its one `.write(<name>)` names that parameter) and the call passes that argument positionally,
+with no starred argument before it and no `**`; any other script-running call (a keyword body, a starred or `**` call, a
+definition whose written body is another parameter, a local or an expression) fails the run by name. The page function of each
+script-running route is followed to the text it returns or inlines. In that text the served pass reads a BoolOp's operands, a
+method call's receiver and a subscript's container when they name a module constant (a name one module-level assignment binds
+and nothing else binds there) or a local, the receiver of `.encode` or `.format_map` whatever it is, a class attribute the class
+body binds, a loop, unpacking or with target from its source, and a local container's appended or stored values; it passes over
+a base that carries no page text (an import that is its name's one module-level binding and is not rebound, a builtin that no
+module-level binding shadows and that is not rebound, a parameter, an except name, or a name the function binds from one of
+those), and over a bare module name that is such an import or such a builtin, or a function or a class that is its name's one
+module-level binding and is not rebound; a name is rebound when a function binds it under `global` or a statement at module level
+writes it, in one of the forms listed above for a route's type, and by nothing else: a function's `X = []` of a local of the same
+name, or its `X.append(...)`, does not rebind it. It follows a call whose callee is a module function (its name's one module-level
+binding, not
+rebound), a function defined in the page function or a method of the route's class (to what it returns, any decorator on it not
+applied), a text method or a file read, or any other method (through its receiver, as above, so `_K.__call__(t)` on a module
+constant `_K` that holds a lambda reads `_K`, and a lambda is a value slot with no text), and it reads every call's arguments; a
+call to any other callee passes when the callee is such an import, such a builtin or a
+parameter. The run fails by name (SERVED) on any other reference to `_send` (a read of it that is not a call's function, or a
+string equal to `_send`), a content type the pass cannot read, a script-running type written outside `_send`, a function that
+answers outside `_send` more often than it writes a Content-Type header, a container the module writes at run time, any other
+receiver or container, any other callee (a module constant, a local, a class, a subscript, a call and a lambda among them), any
+other bare module name (one bound other than by one assignment, an import, a function or a class beside another module-level
+binding, and a rebound import, builtin, function or class among them), and a route whose text the pass cannot read, unless the
+served allowlist, SERVED_ALLOW, names the place by
+its function and expression, with the number of places the entry covers and the reason (the two answers with no body, the CORS
+preflight's 204 and the websocket upgrade's 101, are named there); an entry that names nothing in the run, or covers a different
+number of places, fails the run too. In served text every `fetch(` and `import(` on a line is read by its own argument, and no
+comment skip applies, since a joined constant is one line whatever it starts with. A file the page reads at run time is covered
+by the walk when it is a scanned kind, and a stylesheet is named, not scanned. A site in served text is listed
 at the first line of the string part that carries it. Text joined across implicitly concatenated literals is one part, listed at
 its first line. On Python 3.10 and 3.11 an f-string part is listed at the line where the expression before it ends, so a part
 that starts on a later line (after a `}` on a line of its own, or in the next literal of a concatenation) is listed early. The
 count is the same on every interpreter. The whole of kernel.py is not scanned as text, since a text scan misreads Python and JS
 concatenations (a Python method spelled like a client, a `from` inside a script split across Python literals). Over served text
-the import gate's statement form applies only to a line that starts with import or export (a line led by a closing brace is a
-multi-line import's last line in a module and any block's in a page's script), while a literal require() or import() is gated
-wherever it stands. The served pages' rows are keyed by tool (kernel/kernel.py plus WebSocket, window.open or
+the import gate's statement form applies to a line that starts with import or export, and to a line led by `from` or a closing
+brace only where it continues an import or export statement that begins its own line and has not yet ended (a line led by a
+closing brace is a multi-line import's last line in a module and any block's in a page's script), while a literal require() or
+import() spelled whole on one line (the name, its paren, the quoted specifier and the closing paren, with nothing between them but
+whitespace inside the parens) is gated wherever it stands. The served pages' rows are keyed by tool (kernel/kernel.py plus
+WebSocket, window.open or
 clients.openWindow) and counted once per line; only fetch and import() are read per match. A second socket or opener in the
 served text is therefore caught by the count per key when it changes the tool or stands on a line without its tool, and not when
 it joins a line or a joined constant that already carries its tool, as any rowed shell or JavaScript line is (the residual
@@ -168,6 +238,7 @@ import json
 import os
 import re
 import sys
+import weakref
 
 EXPECTED = os.path.join("scripts", "network-inventory-expected.json")
 PY_ROOTS = ("kernel", "cli", "postal", "bin", "hooks")     # every kind by extension or shebang, recursively
@@ -220,7 +291,9 @@ perf_export perf_public spend_repair
 # reach the kernel on the loopback, each a site), ws (the extension's websocket to the kernel, a site) and vscode (the editor
 # API: its `openExternal` hands a URL to the operating system's default browser, a site of the clicked-link road); every other
 # one opens nothing: the node built-ins for files, paths, hashing and assertions; the TypeScript compiler; and the browser
-# libraries the webview bundles (markdown, math, sanitising, highlighting, the editor widget, PDF rendering).
+# libraries the webview bundles (markdown, math, sanitising, highlighting, the editor widget, PDF rendering). `module` opens
+# nothing itself, but its createRequire makes a require the import gate cannot read, so a `createRequire(` call is refused by
+# name (_js_unread_requires), and the one at this head, a test helper's, is placed by JS_ALLOW with its reason.
 KNOWN_JS_IMPORTS = set("""
 child_process http ws
 assert crypto fs module os path url util vscode typescript
@@ -229,6 +302,25 @@ marked katex dompurify highlight.js pdfjs-dist
 @codemirror/lang-json @codemirror/lang-markdown @codemirror/lang-python @codemirror/language @codemirror/legacy-modes
 @codemirror/search @codemirror/state @codemirror/view
 """.split())
+# The JavaScript allowlist, in SERVED_ALLOW's shape and keyed on the code, never a line: (file, the expression as the refusal
+# spells it) -> (the number of places the entry covers, the reason). A family module's literal specifier that no counted binding
+# takes and no arm reads a call through, and on a walked line a require or import the import gate cannot read, are each an
+# IMPORT line unless named here (line_scan); an entry that names nothing in the run, or covers a different number of places
+# (distinct line and column positions), is an IMPORT ALLOW line, so a new place under an entry's key is read or named, never
+# excused by it. A named file stays walked, and every other line of it is read.
+JS_ALLOW = {
+ ("bin/romp-manager", "require.main"): (1,
+  "the manager's entry guard, `if (require.main === module)`: it asks whether the file runs as the program and loads no module"),
+ ("ui/romp-timeline-view.js", "require('http')"): (1,
+  "`new (require('http').Agent)(...)`, the keep-alive agent the view's kernel proof and its post share (their two `require('http')"
+  ".request` calls are sites on the local-kernel row): it constructs an agent and opens no connection"),
+ ("ui/webview/real-viewer-leg.ts", "createRequire(path.join(EXT, \"package.json\"))"): (1,
+  "a test-only helper: nothing at run time imports it, and its importers are the webview test files, ui/webview/shell-drag-leg.ts "
+  "(itself imported only by tests and a bench tool) and that bench, tools/viewer-resize-bench.ts; the require it makes loads "
+  "esbuild and playwright for the browser legs, and neither is in KNOWN_JS_IMPORTS"),
+ ("ui/webview/real-viewer-leg.ts", "import (?!type\\b)"): (1,
+  "a regex literal, `/^import (?!type\\b)...from \"[^\"]+\";/gm`, that reads render.ts's import statements as text: no import runs"),
+}
 CP_FAMILY = ("exec", "execSync", "execFile", "execFileSync", "spawn", "spawnSync", "fork")   # child_process's program starters
 # The one program the kernel starts from a directory outside the runtime trees; a string constant naming tools/ or scripts/
 # from the runtime trees that is not one of these fails the run (PROGRAM).
@@ -334,7 +426,7 @@ PAINT_CLAUSE = (PAINT_LIST + "; each such request carries no cookie and carries 
 # sites on every run, so a hand-written member cannot survive here. Text: the repository's privacy documentation.
 ROADS = [
  ("price-feed", "price feed (kernel-request)",
-  "an open of the Token usage view (`_token_analytics` with refresh) when the last fetch attempt is older than `PRICE_TTL`, six hours, or there has been none this kernel life; never at boot; nothing re-arms it",
+  "through `_token_analytics` with refresh: a build of the Token usage view's payload (`/analytics`), on an open of the view or a period picked in it, when the last fetch attempt is older than `PRICE_TTL`, six hours, or there has been none this kernel life; never at boot; nothing re-arms it",
   "GET of the public LiteLLM price table on raw.githubusercontent.com, no credential", "`ROMP_PRICE_FEED=off`"),
  ("model-catalog", "model catalog refresh (kernel-request)",
   "through `_refresh_model_catalog`, from `_model_catalog_boot` and `_note_unknown_model`: the first boot with no catalog cache file; after that once per unknown `claude-*` model id per kernel life (a set path or a pick names an id the merged list lacks); single-flight, up to ten pages",
@@ -469,10 +561,15 @@ UNSEEN_ROW = ("a socket primitive on a receiver this scan cannot resolve (not de
   "to the address the socket is given at run time",
   "not applicable")
 # The paint references of two surfaces that strip media, a road named and not counted: their loads are rendered-markdown insertions
-# with no attribute line, and tests/test_security_price_feed.py places every caller of stripRemoteLoads by grep, so a new surface on
-# the strip is red by name. render_table prints it beside the browser-dom-loads row.
+# with no attribute line, and tests/test_security_price_feed.py counts by grep every call in render.ts spelled `md(` or `userMd(`,
+# a gap before the paren allowed, on one line (`md (t)` and `x.md(t)` among them), and every reference to stripRemoteLoads (a call,
+# an import, an alias) in the .ts and .js files directly under ui/webview and vscode-extension/src, skipping test files, each name's definition (`function md(` and the like), a line that
+# opens with `//`, `*` or `/*`, and the text from a `//` that starts the line or follows whitespace; each match is counted under the
+# nearest `function NAME(` line at or above it, so a new call or reference moves a count and is red: under its caller's name when
+# that line declares the caller, and otherwise under the function that line declares, or under none above the first such line.
+# render_table prints it beside the browser-dom-loads row.
 PAINT_ROW = ("an inline svg's paint references in the chat's file preview and a notice card (browser)",
-  "not counted: two surfaces render markdown through the shared sanitizer (ui/webview/md-sanitize.ts) and then `stripRemoteLoads` (ui/webview/file-preview.ts), which removes an element whose src, srcset, poster or data, or an svg image's, use's or feimage's href, names another origin, and reads no paint attribute: the chat's file preview (`previewMdClean` in ui/webview/render.ts) and a notice card's body (`noticeBodyNodes` in ui/webview/feed.ts); their loads are rendered-markdown insertions with no attribute line, so this scan cannot count them, and tests/test_security_price_feed.py places every caller of `stripRemoteLoads` by grep (these two, and the provider slot in `renderFilePreview`, which no producer fills at this head), so a new surface on the strip is red by name",
+  "not counted: two surfaces render markdown through the shared sanitizer (ui/webview/md-sanitize.ts) and then `stripRemoteLoads` (ui/webview/file-preview.ts), which removes an element whose src, srcset, poster or data, or an svg image's, use's or feimage's href, names another origin, and reads no paint attribute: the chat's file preview (`previewMdClean` in ui/webview/render.ts) and a notice card's body (`noticeBodyNodes` in ui/webview/feed.ts); their loads are rendered-markdown insertions with no attribute line, so this scan cannot count them; tests/test_security_price_feed.py holds the calls of `stripRemoteLoads`, one in each of these two and one in the provider slot in `renderFilePreview`, which no producer fills at this head, and counts by grep every call in render.ts spelled `md(` or `userMd(`, a gap before the paren allowed, on one line (`md (t)` and `x.md(t)` among them), and every reference to stripRemoteLoads (a call, an import, an alias) in the .ts and .js files directly under ui/webview and vscode-extension/src, skipping test files, each name's definition (`function md(` and the like), a line that opens with `//`, `*` or `/*`, and the text from a `//` that starts the line or follows whitespace; each match is counted under the nearest `function NAME(` line at or above it, so a new call or reference moves a count and is red: under its caller's name when that line declares the caller, and otherwise under the function that line declares, or under none above the first such line",
   "the chat's file preview of a markdown file: a pointer dwell of 350 ms (`PREVIEW_DWELL_MS`) or a keyboard focus on a link in the chat to a markdown file the kernel allows to preview (one in the session's folder or your home; a glossary term links to its section the same way); a notice card's body: the feed page painting the card, its body written by a session through POST `/notice` (`romp card`), a session on an attached machine included; no click, no gate, no setting; the editor extension's webviews block these loads by their CSP (`img-src` the webview's own resource origin and `data:`), so this road is the web dashboard's alone",
   "GET of each paint reference's URL as the file or the notice carries it (a file in the session's folder or your home, whoever wrote it; a notice a session posted), a class this scan cannot bound, from the browser showing the dashboard to the host the URL names; only an inline svg's paint references load there (an image, video, audio, a poster and an svg image are stripped before the nodes join the page): " + PAINT_CLAUSE,
   "none: no setting gates them")
@@ -532,9 +629,12 @@ class Result(object):
     def __init__(self):
         self.sites, self.dom, self.problems, self.files, self.skipped = [], [], [], [], 0
         self.served, self.served_files = [], []   # the Python files whose served pages were scanned; the stylesheets a page reads at run time
-        # SERVED_ALLOW's and FRAME_WRITERS's matches this run (key -> the source positions it covered), and per Python file the module
-        # names some code writes after binding them (a subscript store or delete, a mutating call, a global rebind): the run-time memos
-        self.allow_hits, self.writes = {}, {}
+        # SERVED_ALLOW's, FRAME_WRITERS's and JS_ALLOW's matches this run (key -> the source positions it covered; a JS_ALLOW key is
+        # (file, expression), a file with no colon, so no key of one list is a key of another), and per Python file the module
+        # names some code writes after binding them (a subscript store or delete, a mutating call, a binding under `global`): the
+        # run-time memos; and per Python file the rebinds, the names a function binds under `global` or a statement at module level
+        # writes, each of which costs an import, a function, a class or a builtin its exemption in the served pass (_Served._sole)
+        self.allow_hits, self.writes, self.rebinds = {}, {}, {}
     def emit(self, *a):
         self.sites.append(Site(*a))
 
@@ -584,25 +684,44 @@ class Scan(ast.NodeVisitor):
         self.rel, self.res, self.stack, self.alias, self.consts, self.binds, self.imports = rel, res, [], {}, {}, [], []
         self.defs, self.routes = [], []   # the enclosing def nodes; the routes of a served page or script (routes_of, for served_texts)
         # the route candidates, each (call, its enclosing defs, "Class.function"): every `_send` call, every Content-Type header
-        # written with send_header, every send_response; and the module names written after their binding (Result.writes)
-        self.sends, self.ctype_writes, self.responds = [], [], []
-        self.globals, self.writes = [set()], res.writes.setdefault(rel, {})
+        # written with send_header, every send_response; every other reference to `_send` (a read of it that is not a call's
+        # function, or a string equal to `_send`), each refused in routes_of; and the module names written after their binding (Result.writes)
+        self.sends, self.ctype_writes, self.responds, self.send_refs, self.send_funcs = [], [], [], [], set()
+        self.globals, self.writes, self.rebinds = [set()], res.writes.setdefault(rel, {}), res.rebinds.setdefault(rel, {})
     def visit_Module(self, n):   # the walk, then the routes read from its candidates
         self.generic_visit(n); self.routes = routes_of(self.rel, n, self, self.res)
     def visit_Global(self, n):
         self.globals[-1].update(n.names)
-    def visit_Name(self, n):   # a module name a function rebinds under `global`
-        if isinstance(n.ctx, ast.Store) and self.stack and n.id in self.globals[-1]: self.writes.setdefault(n.id, []).append(n.lineno)
+    def write(self, name, line, rebind=False):
+        """A write of a name (Result.writes); a binding under `global` (rebind) or a write by a statement at module level is also a
+        rebind of the module's name (Result.rebinds), and any other write inside a function or a class body is a write only."""
+        self.writes.setdefault(name, []).append(line)
+        if rebind or not self.stack: self.rebinds.setdefault(name, []).append(line)
+    def global_bind(self, name, line):   # a binding of a name the enclosing function declares `global`
+        if self.stack and name in self.globals[-1]: self.write(name, line, True)
+    def visit_Name(self, n):   # a module name a function binds under `global`; a bare `_send` read other than as a call's function
+        if isinstance(n.ctx, ast.Store): self.global_bind(n.id, n.lineno)
+        elif n.id == "_send" and isinstance(n.ctx, ast.Load) and id(n) not in self.send_funcs: self.send_ref(n)
+    def visit_ExceptHandler(self, n):   # `except E as X` under `global X`
+        if n.name: self.global_bind(n.name, n.lineno)
+        self.generic_visit(n)
+    def visit_Attribute(self, n):   # an `<x>._send` read other than as a call's function (`reply = self._send`)
+        if n.attr == "_send" and isinstance(n.ctx, ast.Load) and id(n) not in self.send_funcs: self.send_ref(n)
+        self.visit(n.value)   # the one child that holds nodes (attr is a string; the ctx marker holds none and no visitor reads it)
+    def send_ref(self, n):
+        self.send_refs.append((n, tuple(self.defs), ".".join(self.stack) or "<module>"))
     def visit_Subscript(self, n):   # a subscript store or delete writes its container
-        if isinstance(n.ctx, (ast.Store, ast.Del)) and isinstance(n.value, ast.Name): self.writes.setdefault(n.value.id, []).append(n.lineno)
+        if isinstance(n.ctx, (ast.Store, ast.Del)) and isinstance(n.value, ast.Name): self.write(n.value.id, n.lineno)
         self.generic_visit(n)
     def visit_AugAssign(self, n):   # a module-level `X += ...` rebinds X after its binding
-        if isinstance(n.target, ast.Name) and not self.stack: self.writes.setdefault(n.target.id, []).append(n.lineno)
+        if isinstance(n.target, ast.Name) and not self.stack: self.write(n.target.id, n.lineno)
         self.generic_visit(n)
     def visit_Import(self, n):
         self.alias.update({a.asname or a.name: a.name for a in n.names}); self.imports.extend((a.name.split(".")[0], n.lineno) for a in n.names)
+        for a in n.names: self.global_bind((a.asname or a.name).split(".")[0], n.lineno)   # an import under `global`
     def visit_ImportFrom(self, n):
         self.alias.update({a.asname or a.name: (n.module or "") + "." + a.name for a in n.names})
+        for a in n.names: self.global_bind(a.asname or a.name, n.lineno)
         if n.level == 0 and n.module: self.imports.append((n.module.split(".")[0], n.lineno))
     def dotted(self, n):
         if isinstance(n, ast.Name): return self.alias.get(n.id, n.id)
@@ -662,8 +781,9 @@ class Scan(ast.NodeVisitor):
         if os.path.basename(value) not in KNOWN_PROGRAM_REFS:
             self.res.problems.append("PROGRAM %s:%d names %r: a program under that directory is outside the declared scope; add it to NAMED "
                                      "and KNOWN_PROGRAM_REFS, or state here why it is not a program the kernel runs" % (self.rel, n.lineno, value))
-    def visit_Constant(self, n):   # a program path spelled as one string: "tools/x.mjs"
+    def visit_Constant(self, n):   # a program path spelled as one string: "tools/x.mjs"; a string equal to `_send`
         if isinstance(n.value, str) and _PROGRAM_PATH.match(n.value): self.program_ref(n, n.value)
+        if n.value == "_send" and id(n) not in self.send_funcs: self.send_ref(n)   # `builtins.getattr(self, "_send")`, attrgetter("_send")
     def visit_BinOp(self, n):   # a program path built with pathlib: ROOT / "tools" / "x.mjs"
         if (isinstance(n.op, ast.Div) and isinstance(n.right, ast.Constant) and isinstance(n.right.value, str) and isinstance(n.left, ast.BinOp)
                 and isinstance(n.left.right, ast.Constant) and n.left.right.value in ("tools", "scripts")):
@@ -675,6 +795,7 @@ class Scan(ast.NodeVisitor):
             a = n.args
             for x, d in list(zip(a.args[len(a.args) - len(a.defaults):], a.defaults)) + list(zip(a.kwonlyargs, a.kw_defaults)):
                 if d is not None and self.prim(d): b[x.arg] = self.prim(d)
+        self.global_bind(n.name, n.lineno)   # a def or class statement under `global`, bound in the enclosing scope
         self.stack.append(n.name); self.binds.append(b); self.defs.append(n); self.globals.append(set()); self.generic_visit(n)
         self.globals.pop(); self.defs.pop(); self.binds.pop(); self.stack.pop()
     visit_FunctionDef = visit_AsyncFunctionDef = visit_ClassDef = enter
@@ -698,10 +819,17 @@ class Scan(ast.NodeVisitor):
     def visit_Call(self, n):
         d = self.dotted(n.func); p = SUB.get(d) or NET.get(d); attr = getattr(n.func, "attr", "")
         where = ".".join(self.stack) or "<module>"
-        if attr == "_send" or (isinstance(n.func, ast.Name) and n.func.id == "_send"): self.sends.append((n, tuple(self.defs), where))   # route candidates:
-        if _is_ctype_write(n): self.ctype_writes.append((n, tuple(self.defs), where))                                                    # typed by routes_of
+        if attr == "_send" or (isinstance(n.func, ast.Name) and n.func.id == "_send"):   # route candidates, typed by routes_of
+            self.sends.append((n, tuple(self.defs), where)); self.send_funcs.add(id(n.func))   # (the func is no reference of its own)
+        if _is_ctype_write(n): self.ctype_writes.append((n, tuple(self.defs), where))
+        if (isinstance(n.func, ast.Name) and n.func.id == "getattr" and len(n.args) > 1 and isinstance(n.args[1], ast.Constant)
+                and n.args[1].value == "_send"):   # `_send` named by a getattr: refused as the call (its string is no second reference)
+            self.send_refs.append((n, tuple(self.defs), where)); self.send_funcs.add(id(n.args[1]))
         if attr == "send_response": self.responds.append((n, tuple(self.defs), where))
-        if attr in _MUTATORS and isinstance(n.func.value, ast.Name): self.writes.setdefault(n.func.value.id, []).append(n.lineno)   # a mutating call writes its receiver
+        if attr in _MUTATORS + _DUNDER_MUTATORS:   # a mutating call writes its receiver, and a container type's writes its first argument
+            if isinstance(n.func.value, ast.Name): self.write(n.func.value.id, n.lineno)
+            if n.args and isinstance(n.args[0], ast.Name) and self.dotted(n.func.value) in _CONTAINER_TYPES:   # dict.update(X, ...)
+                self.write(n.args[0].id, n.lineno)
         if not p and isinstance(n.func, ast.Name) and self.binds:
             b = self.binds[-1].get(n.func.id)
             if isinstance(b, str) and b not in ("SOCKET", "LOOP"): p = b + " via " + n.func.id
@@ -776,8 +904,8 @@ def _binding_patterns(mod):
     `await import()`; spaces 1 a require assigned whole in its declaration, 2 a namespace import, 3 a default import alone,
     4 the default of a mixed default-plus-named import, 5 and 6 the default and the namespace of a default-plus-namespace
     import, 7 `import { default as X }` (X is the module), 8 TypeScript's `import X = require()`, 9 a bound `await import()`
-    whole. The shapes no pattern reads are named in the module docstring (a require assigned after its declaration, a
-    `.then()` callback parameter, an aliased require)."""
+    whole. A match binds only as _module_bindings counts it, and a family module's specifier no counted match reads is refused
+    by line_scan (the module docstring's sentence on the two refusals)."""
     spec = r"['\"](?:node:)?%s['\"]" % re.escape(mod)
     req = r"require\(\s*%s\s*\)" % spec
     dyn = r"await\s+import\(\s*%s\s*\)" % spec
@@ -807,6 +935,10 @@ _CP_RENAME = re.compile(r"\s+as\s+|\s*:\s*")   # the `as` or `:` that renames a 
 # constructor-shaped (`new <binding>(`) and keyed `WebSocket`, the literal `new WebSocket(` entry's name.
 NET_FAMILY = {"http": ("get", "request"), "https": ("get", "request"), "net": ("connect", "createConnection"), "tls": ("connect",)}
 _NET_PATTERNS = {mod: _binding_patterns(mod) for mod in tuple(NET_FAMILY) + ("ws",)}
+# The family modules, whose clients the binding arms read: a literal specifier of one that the import gate reads is read (a
+# counted binding takes the module from it, or an arm reads a call through it) or refused by name (line_scan, JS_ALLOW)
+FAMILY = ("child_process",) + tuple(NET_FAMILY) + ("ws",)
+_GOES_ON = (".", "?", "[", "(")   # after a require or `await import()`, a member access, a conditional or a call: no whole binding
 
 
 def _names_module(text, patterns):
@@ -816,26 +948,49 @@ def _names_module(text, patterns):
     return any(q + m + q in text for q in "'\"" for m in (mod, "node:" + mod))
 
 
+def _next_code(text, i):
+    """The first character of text at or after index i past whitespace, line breaks and comments ('' at the end)."""
+    n = len(text)
+    while i < n:
+        if text[i].isspace(): i += 1
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2); i = n if j < 0 else j + 2
+        elif text.startswith("//", i):
+            j = text.find("\n", i); i = n if j < 0 else j + 1
+        else: return text[i]
+    return ""
+
+
 def _module_bindings(text, patterns):
-    """(names, spaces) a JavaScript or TypeScript file binds from one module, by its patterns (_binding_patterns): `names` maps a
-    bare name the file destructures or imports to the member it stands for (renamed or not; a `type` import binds no value
-    but is read for parity, and `default as X` in a brace list lands here under the member `default`, which no family names,
-    beside X's place in `spaces`), `spaces` holds the names the file keeps the module under. A names match fills one group,
-    its brace list (the alternative that matched); a spaces match fills one group per bound name (two for a
-    default-plus-namespace import), so every filled group is read and no group number is."""
+    """(names, spaces, read) a JavaScript or TypeScript file binds from one module, by its patterns (_binding_patterns): `names`
+    maps a bare name the file destructures or imports to the member it stands for (renamed or not; a `type` import binds no
+    value but is read for parity, and `default as X` in a brace list lands here under the member `default`, which no family
+    names, beside X's place in `spaces`), `spaces` holds the names the file keeps the module under, and `read` holds the text
+    offsets where a counted match ends, each the end of the specifier it reads. A names match fills one group, its brace list
+    (the alternative that matched); a spaces match fills one group per bound name (two for a default-plus-namespace import), so
+    every filled group is read and no group number is. A spaces match (the module taken whole) that ends at a require's or an
+    `await import()`'s closing paren and is followed, past whitespace and comments, by `.`, `?`, `[` or `(` binds nothing and
+    does not count (the value is a member, a conditional or a call, not the module: `const get = require("http").get`); a names
+    match whose brace list takes `default` binds its names and does not count, unless a spaces match ending at the same place
+    binds that name whole (the `import { default as X }` shape). Where a counted and an uncounted match end at one place, the
+    place is not read."""
     spec, names_rx, spaces_rx, _mod = patterns
-    names, spaces = {}, set()
-    if not _names_module(text, patterns): return names, spaces
+    names, spaces, read, unread, whole = {}, set(), set(), set(), {}
+    if not _names_module(text, patterns): return names, spaces, read
+    for m in spaces_rx.finditer(text):
+        if text[m.end() - 1] == ")" and _next_code(text, m.end()) in _GOES_ON: unread.add(m.end()); continue
+        got = {g for g in m.groups() if g}
+        spaces.update(got); whole.setdefault(m.end(), set()).update(got); read.add(m.end())
     for m in names_rx.finditer(text):
+        read.add(m.end())
         for part in next((g for g in m.groups() if g is not None), "").split(","):
             part = part.strip()
             if part.startswith("type "): part = part[5:].strip()
             if part:
                 bits = [b.strip() for b in _CP_RENAME.split(part)]
                 names[bits[-1]] = bits[0]
-    for m in spaces_rx.finditer(text):
-        spaces.update(g for g in m.groups() if g)
-    return names, spaces
+                if bits[0] == "default" and bits[-1] not in whole.get(m.end(), ()): unread.add(m.end())
+    return names, spaces, read - unread
 
 
 def _cp_bindings(text):
@@ -846,12 +1001,13 @@ def _cp_bindings(text):
     a family call qualified to the module (`child_process.<fn>(`, `require('child_process').<fn>(`, a name in `spaces`), and
     `bare` matches a family call by a name in `names`, or is None when the file binds none. A file whose text never names
     child_process binds nothing and qualifies no call, so it is None here and no line of it is a site. A family member
-    called by a bare name the file does not bind is not a site."""
+    called by a bare name the file does not bind is not a site. `read` holds the offsets where a counted binding ends
+    (_module_bindings), for the refusal of a specifier no binding reads (line_scan)."""
     if "child_process" not in text: return None
-    names, spaces = _module_bindings(text, (_CP_MODULE, _CP_NAMES, _CP_SPACES, _CP_NAME))
+    names, spaces, read = _module_bindings(text, (_CP_MODULE, _CP_NAMES, _CP_SPACES, _CP_NAME))
     qual = [r"\bchild_process", r"require\(\s*%s\s*\)" % _CP_MODULE.pattern] + [r"\b" + re.escape(s) for s in sorted(spaces)]
     bare = sorted(n for n, fn in names.items() if fn in CP_FAMILY)
-    return {"names": names, "spaces": spaces, "qualified": re.compile(r"(?:%s)\.(%s)\(" % ("|".join(qual), "|".join(CP_FAMILY))),
+    return {"names": names, "spaces": spaces, "read": read, "qualified": re.compile(r"(?:%s)\.(%s)\(" % ("|".join(qual), "|".join(CP_FAMILY))),
             "bare": re.compile(r"(?<![\w.$])(%s)\(" % "|".join(map(re.escape, bare))) if bare else None}
 
 
@@ -871,29 +1027,30 @@ def _net_bindings(text):
     and tls a member call qualified to an inline require or to a space (a name the file keeps the module under, the shapes
     _binding_patterns reads), and a call by a bare name the file binds from the module (renamed or not); for ws the constructor shape
     (`new (require('ws'))(`, `new (require('ws').WebSocket)(`, `new <space>(`, `new <space>.WebSocket(`, `new <bound name>(`).
-    Empty for a file that names none of the modules; the bare global `new WebSocket(` is the literal list's."""
-    arms = []
+    Returned as {"arms": [(module, pattern, tool of a match)], "read": {module: the offsets where a counted binding ends}},
+    the arms empty for a file that names none of the modules; the bare global `new WebSocket(` is the literal list's."""
+    arms, read = [], {}
     for mod, members in NET_FAMILY.items():
         if not _names_module(text, _NET_PATTERNS[mod]): continue
-        names, spaces = _module_bindings(text, _NET_PATTERNS[mod])
+        names, spaces, read[mod] = _module_bindings(text, _NET_PATTERNS[mod])
         tool = ("http" if mod == "https" else mod) + ".%s"
         qual = [r"require\(\s*%s\s*\)" % _NET_PATTERNS[mod][0].pattern] + [r"\b" + re.escape(s) for s in sorted(spaces)]
-        arms.append((re.compile(r"(?:%s)\.(%s)\(" % ("|".join(qual), "|".join(members))), lambda m, t=tool: t % m.group(1)))
+        arms.append((mod, re.compile(r"(?:%s)\.(%s)\(" % ("|".join(qual), "|".join(members))), lambda m, t=tool: t % m.group(1)))
         bare = {n: fn for n, fn in names.items() if fn in members}
         if bare:
-            arms.append((re.compile(r"(?<![\w.$])(%s)\(" % "|".join(map(re.escape, sorted(bare)))), lambda m, t=tool, b=bare: t % b[m.group(1)]))
+            arms.append((mod, re.compile(r"(?<![\w.$])(%s)\(" % "|".join(map(re.escape, sorted(bare)))), lambda m, t=tool, b=bare: t % b[m.group(1)]))
     if _names_module(text, _NET_PATTERNS["ws"]):
-        names, spaces = _module_bindings(text, _NET_PATTERNS["ws"])
+        names, spaces, read["ws"] = _module_bindings(text, _NET_PATTERNS["ws"])
         heads = ([r"\(\s*require\(\s*%s\s*\)(?:\.WebSocket)?\s*\)" % _NET_PATTERNS["ws"][0].pattern]
                  + [re.escape(s) + r"(?:\.WebSocket)?" for s in sorted(spaces)] + [re.escape(n) for n, fn in sorted(names.items()) if fn == "WebSocket"])
-        arms.append((re.compile(r"\bnew\s+(?:%s)\s*\(" % "|".join(heads)), lambda m: "WebSocket"))
-    return arms
+        arms.append(("ws", re.compile(r"\bnew\s+(?:%s)\s*\(" % "|".join(heads)), lambda m: "WebSocket"))
+    return {"arms": arms, "read": read}
 
 
 def _net_sites(ln, nb):
     """The tools of the connection family's binding arm (_net_bindings) on the line, each once, in order of first match."""
     out = []
-    for rx, tool_of in nb or ():
+    for _mod, rx, tool_of in nb["arms"] if nb else ():
         for m in rx.finditer(ln):
             t = tool_of(m)
             if t not in out: out.append(t)
@@ -942,21 +1099,137 @@ def _js_argv(fn, text):
 _JS_FROM = re.compile(r"\bfrom\s*(['\"])([^'\"]+)\1")
 _JS_SIDE_EFFECT = re.compile(r"import\s*(['\"])([^'\"]+)\1")
 _JS_REQUIRE = re.compile(r"(?<![\w.$])(?:require|import)\(\s*(['\"])([^'\"]+)\1\s*\)")
+_JS_STATEMENT = re.compile(r"(?:import|export)\b(?!\s*[(.])")   # the first line of an import or export statement (not `import(`, `import.meta`)
 
 
-def _js_specifiers(s, served=False):
-    """The module specifiers a JavaScript or TypeScript line imports or requires: an import or export statement's `from` string
-    (the closing line of a multi-line import starts with `}`; in served text, where a `}` leads any block, the statement form
-    applies only to a line that starts with import or export), a side-effect import, and every literal require() and import()."""
+def _js_specifiers(s, served=False, cont=False):
+    """The module specifiers a JavaScript or TypeScript line imports or requires, as their matches over the line (group 2 the
+    specifier, group 0 the form as spelled): an import or export statement's `from` string, on a line that starts with import or
+    export, or that starts with `from` or `}` and continues an import or export statement that begins its own line and has no
+    specifier yet (`cont`, line_scan's state: `import * as h` and then `from "https"` on the next line), a side-effect import, and
+    every literal require() and import() spelled whole on the line. In a walked file a line led by `}` is read whatever began it
+    (a multi-line import's closing line); in served text, where a `}` leads any block, only as such a continuation."""
     if "import" not in s and "require" not in s and "from" not in s: return []   # every shape below spells one of the three
     out = []
-    if s.startswith(("import", "export")) or (not served and s.startswith("}")):
+    if s.startswith(("import", "export")) or (not served and s.startswith("}")) or (cont and (s.startswith("}") or _JS_FROM.match(s))):
         m = _JS_FROM.search(s)
-        if m: out.append(m.group(2))
+        if m: out.append(m)
         m = _JS_SIDE_EFFECT.match(s)
-        if m: out.append(m.group(2))
-    out.extend(m.group(2) for m in _JS_REQUIRE.finditer(s))
+        if m: out.append(m)
+    out.extend(_JS_REQUIRE.finditer(s))
     return out
+
+
+def _call_end(text, i):
+    """The index after the paren that closes the one at text[i] (quotes skipped; the line's end when none closes it)."""
+    depth, quote, j, n = 0, None, i, len(text)
+    while j < n:
+        ch = text[j]
+        if quote:
+            if ch == "\\": j += 2; continue
+            if ch == quote: quote = None
+        elif ch in "'\"`": quote = ch
+        elif ch in "([{": depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth <= 0: return j + 1
+        j += 1
+    return n
+
+
+def _js_code(ln):
+    """The line with every string's text blanked and a trailing comment cut, for the bare-value clause of _js_unread_requires: a
+    quote (', " or a backtick) opens a string to the same quote's next unescaped occurrence on the line, `//` outside a string
+    starts a trailing comment, and `/* ... */` outside a string is blanked. Columns are kept."""
+    out, q, i, n = list(ln), None, 0, len(ln)
+    while i < n:
+        ch = ln[i]
+        if q:
+            if ch == "\\":
+                out[i:i + 2] = " " * len(out[i:i + 2]); i += 2; continue
+            if ch == q: q = None
+            else: out[i] = " "
+            i += 1; continue
+        if ch in "'\"`": q = ch
+        elif ln.startswith("//", i): return "".join(out[:i])
+        elif ln.startswith("/*", i):
+            j = ln.find("*/", i + 2); j = n if j < 0 else j + 2
+            out[i:j] = " " * (j - i); i = j; continue
+        i += 1
+    return "".join(out)
+
+
+_REQ_CALL = re.compile(r"(?<![\w$.])require\s*(?:/\*.*?\*/\s*)*\(")        # a call of require, whatever stands before its paren
+_REQ_METHOD = re.compile(r"\.\s*require\s*(?:/\*.*?\*/\s*)*\(")            # any .require( call
+_REQ_MEMBER = re.compile(r"(?<![\w$])require\s*(?:\?\.\s*[\w$]*|\.\s*[\w$]*|\[[^\]]*\]?)")   # any member access on require
+_REQ_BARE = re.compile(r"(?<![\w$])require\s*(?=[;,)}\]]|$)")              # require as a bare value, over the line's code (_js_code)
+_CREATE_REQUIRE = re.compile(r"(?<![\w$])createRequire\s*(?:/\*.*?\*/\s*)*\(")
+_IMPORT_CALL = re.compile(r"(?<![\w$.])import(\s*(?:/\*.*?\*/\s*)*)\((\s*`)?")   # a dynamic import: the gap before its paren, a template
+
+
+def _chain_start(ln, i):
+    """Where the dotted name that ends just before index i starts (`process.mainModule` before `.require`)."""
+    while i > 0 and (ln[i - 1].isalnum() or ln[i - 1] in "_$.?"): i -= 1
+    return i
+
+
+def _js_unread_requires(ln):
+    """The requires and imports on a walked JavaScript or TypeScript line that the import gate cannot read, as (column, what,
+    the expression as spelled): a call of `require` in any shape but the gate's literal one (whitespace or a comment before the
+    paren, a template or a computed specifier), `require` as a bare value (followed by `;`, `,`, `)`, `}`, `]` or the end of the
+    line, in the line's code: _js_code), any `.require(` call, any member access on `require`, a `createRequire(` call, and an
+    `import(` with a template specifier or whitespace or a comment before its paren. line_scan refuses each unless JS_ALLOW names
+    it; a line that spells neither `equire` (require, createRequire) nor `import` costs two substring tests."""
+    out = []
+    if "equire" in ln:
+        for m in _REQ_CALL.finditer(ln):
+            if not _JS_REQUIRE.match(ln, m.start()):
+                out.append((m.start(), "a call of require in a shape the gate does not read", ln[m.start():_call_end(ln, m.end() - 1)]))
+        for m in _REQ_METHOD.finditer(ln):
+            at = _chain_start(ln, m.start())
+            out.append((at, "a .require( call", ln[at:_call_end(ln, m.end() - 1)]))
+        for m in _REQ_MEMBER.finditer(ln):
+            out.append((m.start(), "a member access on require", m.group(0)))
+        for m in _REQ_BARE.finditer(_js_code(ln)):
+            at = _chain_start(ln, m.start())
+            out.append((at, "require as a bare value", ln[at:m.start() + len("require")]))
+        for m in _CREATE_REQUIRE.finditer(ln):
+            out.append((m.start(), "a createRequire( call", ln[m.start():_call_end(ln, m.end() - 1)]))
+    if "import" in ln:
+        for m in _IMPORT_CALL.finditer(ln):
+            if m.group(1) or m.group(2):
+                out.append((m.start(), "an import( with a template specifier or a gap before its paren", ln[m.start():_call_end(ln, m.end() - 1 - len(m.group(2) or ""))]))
+    return out
+
+
+def _line_starts(text):
+    """The offset in text where each of its lines starts, the lines as str.splitlines cuts them (line_scan's lines)."""
+    out, at = [], 0
+    for piece in text.splitlines(True):
+        out.append(at); at += len(piece)
+    return out
+
+
+def _specifier_read(mod, end, ln, lo, hi, cp, nb):
+    """Whether a family module's literal specifier, spelled at ln[lo:hi] and ending at text offset `end`, is read: a counted
+    binding of the module ends there (_module_bindings), or a match of the module's arm spans it, a call read through it
+    (`require('http').request(`, `new (require('ws'))(`)."""
+    if mod == "child_process":
+        if cp is None: return False
+        if end in cp["read"]: return True
+        rxs = [cp["qualified"]]
+    else:
+        if end in nb["read"].get(mod, ()): return True
+        rxs = [rx for m, rx, _tool in nb["arms"] if m == mod]
+    return any(m.start() <= lo and hi <= m.end() for rx in rxs for m in rx.finditer(ln))
+
+
+def _js_refuse(res, rel, line, col, expr, text):
+    """A refusal on the JavaScript side (line_scan): excused when JS_ALLOW names the place by its file and expression (the place,
+    its line and column, recorded in res.allow_hits, whose count problems() holds to the entry's), a problem line otherwise."""
+    key = (rel, expr)
+    if key in JS_ALLOW: res.allow_hits.setdefault(key, set()).add((line, col))
+    else: res.problems.append(text)
 
 
 def _js_package(spec):
@@ -1025,12 +1298,17 @@ def _live_remainder(text):
 def line_scan(rel, kind, text, res, base=0, dom=None, served=False):
     """The shell or JavaScript sites, the DOM loads and the package gate over one file's text (read once, by scan). For a page
     the kernel serves (served_texts), `base` offsets the line numbers to the constant's place in its Python file, `dom` forces
-    the DOM arm on (None keeps the rule: the browser and editor roots), and `served` narrows the import gate's statement form
-    to a line that starts with import or export."""
+    the DOM arm on (None keeps the rule: the browser and editor roots), and `served` reads a line led by `}` as a statement's
+    `from` line only where it continues an import or export statement (_js_specifiers). Two refusals ride the JavaScript lines,
+    each excused only by JS_ALLOW: a family module's specifier the gate reads that no counted binding and no arm reads
+    (_specifier_read), wherever the gate reads, and in a walked file (not served text) a require or import the gate cannot read
+    (_js_unread_requires)."""
     tools, any_tool, comment = (JS_RX, JS_ANY, ("//", "*", "/*")) if kind == "js" else (SH_RX, SH_ANY, ("#",))
     if dom is None: dom = kind == "js" and rel.startswith(tuple(d + "/" for d in JS_ROOTS))
     cp = _cp_bindings(text) if kind == "js" else None
     nb = _net_bindings(text) if kind == "js" else None
+    first, starts = base + 1, None   # the text's first line number; its line offsets (_line_starts), made at the first family specifier
+    stmt = False   # an import or export statement that begins its own line has no specifier yet and has not ended (_js_specifiers's `cont`)
     for i, ln in enumerate(text.splitlines(), base + 1):
         s = ln.strip(); live = ln; seen = set()
         if s.startswith(comment) and not served: continue   # served text: a joined constant is one line whatever it starts with, never a comment
@@ -1038,11 +1316,31 @@ def line_scan(rel, kind, text, res, base=0, dom=None, served=False):
             live = _live_remainder(s[5:] if s.startswith("echo ") else s[6:])   # live (_live_remainder) is scanned, and a line with nothing live is skipped
             if not live.strip(): continue
         if kind == "js":
-            for spec in _js_specifiers(s, served):
-                pkg = _js_package(spec)
+            forms = _js_specifiers(s, served, stmt)
+            said = any(f.re is _JS_FROM or f.re is _JS_SIDE_EFFECT for f in forms)
+            if _JS_STATEMENT.match(s): stmt = not said and not _js_code(s).rstrip().endswith(";")   # begun here, and not ended on its line
+            elif stmt and (said or _js_code(s).rstrip().endswith(";")): stmt = False   # its specifier read, or a statement ended with no `from`
+            for f in forms:
+                pkg = _js_package(f.group(2))
                 if pkg and pkg not in KNOWN_JS_IMPORTS:
                     res.problems.append("IMPORT %s:%d imports %s, a package the census does not know: a client that opens connections or starts programs "
                                         "takes its primitives into JS or the child_process family; either way add it to KNOWN_JS_IMPORTS with the reason" % (rel, i, pkg))
+            for f in forms:   # a family module's specifier: read by a counted binding or an arm, else refused by name
+                mod = _js_package(f.group(2))
+                if mod not in FAMILY: continue
+                if starts is None: starts = _line_starts(text)
+                off = len(ln) - len(ln.lstrip())
+                if not _specifier_read(mod, starts[i - first] + off + f.end(), ln, off + f.start(), off + f.end(), cp, nb):
+                    _js_refuse(res, rel, i, off + f.start(), f.group(0),
+                               "IMPORT %s:%d names %s in %s, and no binding the patterns count takes the module there and no call the census reads "
+                               "goes through it: bind the module whole or by names in a shape the patterns read, or name the place in JS_ALLOW "
+                               "with its reason" % (rel, i, mod, f.group(0)))
+            if not served:   # walked files only: a require or import the gate cannot read
+                for col, what, expr in _js_unread_requires(ln):
+                    _js_refuse(res, rel, i, col, expr,
+                               "IMPORT %s:%d spells a require or import the import gate cannot read (%s: %s): require a module as "
+                               "require(\"<module>\") or import(\"<module>\"), the quote right after the paren, or name the place in JS_ALLOW "
+                               "with its reason" % (rel, i, what, expr[:80]))
             for fn, at in _cp_sites(ln, cp):   # a program site, classed by its argv as Scan.visit_Call classes a Python command
                 head, sub, follow, shell = _js_argv(fn, ln[at:])
                 tool, road, cls = fn, T.get("%s:%s" % (rel, fn)), None
@@ -1096,18 +1394,29 @@ _READ_CALLS = ("read_text", "read")                                        # a f
 # The calls that write their receiver: on a module name, a write after its binding (a run-time memo, Result.writes); on a local
 # container, their arguments are the container's values too (_Served._locals)
 _MUTATORS = ("update", "setdefault", "append", "extend", "insert", "pop", "popitem", "clear", "add", "discard", "remove")
+# The dunder spellings of a write (`X.__setitem__(k, v)`), and the container types whose method called on the type writes its first
+# argument (`dict.update(X, ...)`, `list.append(X, v)`, `collections.OrderedDict.__setitem__(X, k, v)`), as Scan.dotted spells them: a
+# call of either kind is a write of that module name (Result.writes), as a mutating method call on it is
+_DUNDER_MUTATORS = ("__setitem__", "__delitem__", "__ior__", "__iadd__", "__isub__", "__iand__", "__ixor__", "__imul__")
+_CONTAINER_TYPES = frozenset(("dict", "list", "set") + tuple("collections." + t for t in (
+    "OrderedDict", "defaultdict", "Counter", "deque", "ChainMap", "UserDict", "UserList")))
 # The served pass's allowlist, keyed on the code and never a line number: ("file:function", the expression as ast.unparse spells
 # it) -> (the number of places the entry covers, the reason). A route candidate whose content type the census cannot resolve, a
-# script-running type written outside `_send`, a response answered outside `_send` with no Content-Type header, a container the
-# module writes at run time, a receiver or container the pass does not read, and a file a page reads that the walk does not
-# scan are each a SERVED line unless named here; an entry that names nothing in the run, or covers a different number of places
-# (distinct source positions), is a SERVED ALLOW line, so a new place under an entry's key is read or named, never excused by it.
+# reference to `_send` other than a call the scan reads (a read of it that is not a call's function, or a string equal to
+# `_send`), a script-running type written outside `_send`, a response answered outside `_send` with no Content-Type header, a
+# container the module writes at run time, a receiver or container the pass does not read, a callee the pass does not follow, a
+# bare module name bound other than by one assignment, and a file a page reads that the walk does not scan are each a SERVED line unless named here (a route whose body the census does not read is not
+# excused here: it is passed as the call's second positional argument or refused); an entry that names nothing in the run, or
+# covers a different number of places (distinct source positions), is a SERVED ALLOW line, so a new place under an entry's key
+# is read or named, never excused by it.
 SERVED_ALLOW = {
  ("kernel/kernel.py:Handler.do_GET", "ct + '; charset=utf-8'"): (2,
-  "the /dist and /media branch, files from disk typed by their suffix: /dist serves the bundles esbuild builds from the scanned ui "
-  "and vscode-extension/src sources and from the node_modules packages KNOWN_JS_IMPORTS names (text/javascript); /media serves "
-  "vscode-extension/media, which the walk does not read: the repository's own fonts, pictures and SVG icons (image/svg+xml); "
-  "neither is read as served text"),
+  "the /dist and /media branch, files from disk typed by their suffix: /dist serves the bundles esbuild builds from three sources, "
+  "none of it read as served text: the scanned ui and vscode-extension/src sources; the vendor/track-changents files they import, "
+  "directly or through each other, which the walk does not read (engine.js, display.js, obsidian/src/track-cm.js and "
+  "obsidian/src/track-logic.js); and the node_modules packages KNOWN_JS_IMPORTS names, together with the packages those depend "
+  "on (text/javascript). /media serves vscode-extension/media, which the walk does not read: the repository's own fonts, pictures "
+  "and SVG icons (image/svg+xml); neither is read as served text"),
  ("kernel/kernel.py:Handler._file_preview", "mime"): (4,
   "the user-file arm of /file (the GET, its HEAD reply and its range reply): a file on this machine that a session or the user "
   "names, typed from _PREVIEW_MIME (pictures, image/svg+xml among them, and application/pdf) or as text/plain; an .svg opened in "
@@ -1174,19 +1483,67 @@ def _scopes_of(defs):
     return out
 
 
-def _dict_of(e, consts, scopes):
-    """The dict literal an expression holds: the literal itself, or a module constant bound to one (a name no enclosing scope binds)."""
+_CONSTS = weakref.WeakKeyDictionary()   # a module's tree -> (its _module_consts, its _module_bound): routes_of and the served pass read them once per tree
+
+
+def _module_consts(tree):
+    """The module names the served pass and the route typing read as constants, each with its value: a name bound by one top-level
+    single-name assignment and by no other binding at module level. The count walks the module's statements outside def, class
+    and import bodies and takes every Name stored or deleted there (a comprehension's target among them, which errs toward
+    refusing), with the names a def, a class, an import, an except clause or a match pattern binds there; so a name bound twice
+    (a default and then a rebind), or bound once inside a try, if, for or with block, is no constant here. Computed once per
+    tree (_CONSTS, keyed on the tree object and holding no tree alive); neither reader writes the map."""
+    return _module_scope(tree)[0]
+
+
+def _module_bound(tree):
+    """The number of module-level bindings of each name the module binds there, by _module_consts's count (a name absent is
+    bound nowhere at module level): the served pass exempts an import, a function or a class only as the name's one binding,
+    and a builtin only where no module-level binding shadows it, and neither where Result.rebinds records the name (a binding
+    under `global` in a function, a write by a statement at module level: _Served._sole and _Served._builtin)."""
+    return _module_scope(tree)[1]
+
+
+def _module_scope(tree):
+    got = _CONSTS.get(tree)
+    if got is None: got = _CONSTS[tree] = _module_consts_of(tree)
+    return got
+
+
+def _module_consts_of(tree):
+    count, stack = {}, list(tree.body)
+    while stack:
+        n = stack.pop()
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)): count[n.name] = count.get(n.name, 0) + 1; continue
+        if isinstance(n, (ast.Import, ast.ImportFrom)):
+            for a in n.names: k = (a.asname or a.name).split(".")[0]; count[k] = count.get(k, 0) + 1
+            continue
+        if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)): count[n.id] = count.get(n.id, 0) + 1
+        elif isinstance(n, ast.ExceptHandler) and n.name: count[n.name] = count.get(n.name, 0) + 1
+        elif isinstance(n, (ast.MatchAs, ast.MatchStar)) and n.name: count[n.name] = count.get(n.name, 0) + 1
+        elif isinstance(n, ast.MatchMapping) and n.rest: count[n.rest] = count.get(n.rest, 0) + 1
+        stack.extend(ast.iter_child_nodes(n))
+    return ({n.targets[0].id: n.value for n in tree.body
+             if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) and count.get(n.targets[0].id) == 1},
+            count)
+
+
+def _dict_of(e, consts, scopes, written):
+    """The dict literal an expression holds: the literal itself, or the value of a module name no code writes after binding it
+    (_module_consts, and not in `written`) when that value is one (a name no enclosing scope binds)."""
     if isinstance(e, ast.Dict): return e
     if isinstance(e, ast.Name) and not any(e.id in p or e.id in s or e.id in o for p, s, o in scopes):
-        c = consts.get(e.id)
+        c = consts.get(e.id) if e.id not in written else None
         return c if isinstance(c, ast.Dict) else None
     return None
 
 
-def _ctype_values(e, scopes, consts, depth=0):
-    """The strings a content-type expression can hold, or None when the census cannot resolve it: a literal, a module constant, a
-    local whose every binding resolves, a `+` of two resolved sides, a conditional's branches, a dict literal's values (by
-    subscript or `.get`, with `.get`'s default)."""
+def _ctype_values(e, scopes, consts, written, depth=0):
+    """The strings a content-type expression can hold, or None when the census cannot resolve it: a literal, a module name no code
+    writes after binding it (one of _module_consts and not in `written`, the module names some code writes after their binding:
+    Result.writes), a local whose every binding resolves, a `+` of two resolved sides, a conditional's branches, a dict literal's
+    values (by subscript or `.get`, with `.get`'s default). A written module name resolves to None, as any name it does not read
+    does."""
     if depth > 24: return None
     if isinstance(e, ast.Constant): return {e.value} if isinstance(e.value, str) else None
     if isinstance(e, ast.Name):
@@ -1195,28 +1552,28 @@ def _ctype_values(e, scopes, consts, depth=0):
             if e.id in single:
                 out = set()
                 for v in single[e.id]:
-                    r = _ctype_values(v, scopes, consts, depth + 1)
+                    r = _ctype_values(v, scopes, consts, written, depth + 1)
                     if r is None: return None
                     out |= r
                 return out
-        if e.id in consts: return _ctype_values(consts[e.id], [], consts, depth + 1)
+        if e.id in consts and e.id not in written: return _ctype_values(consts[e.id], [], consts, written, depth + 1)
         return None
     if isinstance(e, ast.BinOp) and isinstance(e.op, ast.Add):
-        left, right = _ctype_values(e.left, scopes, consts, depth + 1), _ctype_values(e.right, scopes, consts, depth + 1)
+        left, right = _ctype_values(e.left, scopes, consts, written, depth + 1), _ctype_values(e.right, scopes, consts, written, depth + 1)
         return None if left is None or right is None else {a + b for a in left for b in right}
     if isinstance(e, ast.IfExp):
-        a, b = _ctype_values(e.body, scopes, consts, depth + 1), _ctype_values(e.orelse, scopes, consts, depth + 1)
+        a, b = _ctype_values(e.body, scopes, consts, written, depth + 1), _ctype_values(e.orelse, scopes, consts, written, depth + 1)
         return None if a is None or b is None else a | b
     if (isinstance(e, ast.Call) and isinstance(e.func, ast.Attribute) and e.func.attr == "get" and e.args) or isinstance(e, ast.Subscript):
-        d = _dict_of(e.func.value if isinstance(e, ast.Call) else e.value, consts, scopes)
+        d = _dict_of(e.func.value if isinstance(e, ast.Call) else e.value, consts, scopes, written)
         if d is None: return None
         out = set()
         for v in d.values:
-            r = _ctype_values(v, scopes, consts, depth + 1)
+            r = _ctype_values(v, scopes, consts, written, depth + 1)
             if r is None: return None
             out |= r
         if isinstance(e, ast.Call) and len(e.args) > 1:
-            r = _ctype_values(e.args[1], scopes, consts, depth + 1)
+            r = _ctype_values(e.args[1], scopes, consts, written, depth + 1)
             if r is None: return None
             out |= r
         return out
@@ -1236,19 +1593,48 @@ def _is_ctype_write(c):
             and isinstance(c.args[0], ast.Constant) and isinstance(c.args[0].value, str) and c.args[0].value.lower() == "content-type")
 
 
+def _body_param(d, pos):
+    """The parameter a `_send` definition writes as its page body, or None: its second positional parameter (`pos`, self
+    dropped for a method), when its one `<x>.write(<name>)` call names it, whatever the definition rebinds that name to before
+    the write (the kernel's Handler._send encodes `body` in place). A definition that writes another parameter, a local or an
+    expression, or has more than one such write, has no body parameter the census reads."""
+    names = [c.args[0].id for c in ast.walk(d) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "write"
+             and len(c.args) == 1 and not c.keywords and isinstance(c.args[0], ast.Name)]
+    return names[0] if len(names) == 1 and len(pos) > 1 and names[0] == pos[1] else None
+
+
+def _unread_body(call, param):
+    """Why the census does not read a route's page body from this `_send` call (None when it reads `call.args[1]`): the
+    definition's body parameter (_body_param) is None, or the call does not pass that argument positionally with no starred
+    argument before it, or it spreads a mapping with `**`."""
+    if param is None: return "the definition's written body is not its second positional parameter"
+    if any(k.arg is None for k in call.keywords): return "a ** argument"
+    if any(isinstance(a, ast.Starred) for a in call.args[:2]): return "a starred argument"
+    if len(call.args) < 2: return "a keyword body" if any(k.arg == param for k in call.keywords) else "no body argument"
+    return None
+
+
 def routes_of(rel, tree, sc, res):
-    """The routes of one Python file's served pages and scripts, read from its candidates (Scan.sends, Scan.ctype_writes and
-    Scan.responds): every `_send` call is typed through the `_send` definition it reaches in this file (the parameter that
-    definition's Content-Type write names, by position or keyword, or the value it writes: the kernel's Handler._send its
-    `ctype`, the postal bus's application/json), and a call to a definition that writes no Content-Type is a frame writer's
-    (FRAME_WRITERS) or a SERVED line; the type is resolved (_ctype_values) and a script-running one (_script_type) makes the
-    call a route whose text the served pass reads; an unresolved type is a SERVED line. Every Content-Type header written
-    outside a `_send` definition is typed the same way, and a script-running one is a SERVED line (the served pass follows a
-    page's text through `_send` alone); a function outside `_send` that answers (send_response) more often than it writes a
-    Content-Type header is a SERVED line, the browser typing that body by sniffing it. SERVED_ALLOW excuses a place by its
-    function and expression. Returns the routes, (call, the enclosing function, the class name, the script-running type),
-    sorted by line."""
-    consts = {n.targets[0].id: n.value for n in tree.body if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)}
+    """The routes of one Python file's served pages and scripts, read from its candidates (Scan.sends, Scan.ctype_writes,
+    Scan.responds and Scan.send_refs): every `_send` call the scan reads (spelled `_send(...)` or `<x>._send(...)`) is typed
+    through the `_send` definition it reaches in this file (the class body's or the module's last `def _send`, a later
+    assignment to `_send` in that body not followed; the parameter that definition's Content-Type write names, by position or keyword, or the value it writes: the
+    kernel's Handler._send its `ctype`, the postal bus's application/json),
+    and a call to a definition that writes no Content-Type is a frame writer's (FRAME_WRITERS) or a SERVED line; the type is
+    resolved (_ctype_values, through a module name no code writes after binding it: _module_consts less the names Result.writes
+    records) and a script-running one (_script_type) makes the call a route whose text the served pass reads; an unresolved
+    type is a SERVED line. A route's page body is the call's second positional argument, read only when the definition writes
+    that parameter as its body (_body_param) and the call passes it positionally with no starred argument before it and no
+    `**`; any other script-running call (a keyword body, a starred or `**` call, a definition whose written body is another
+    parameter, a local or an expression) is a SERVED line by name (_unread_body) and no route. Any other reference to `_send` (a
+    read of it that is not a call's function, or a string equal to `_send`) is a SERVED line; a call through a name computed at
+    run time is not read. Every Content-Type header written outside a `_send` definition is typed the same way, and a script-running
+    one is a SERVED line (the served pass follows a page's text through `_send` alone); a function outside `_send` that answers
+    (send_response) more often than it writes a Content-Type header is a SERVED line, the browser typing that body by sniffing
+    it. SERVED_ALLOW excuses a place by its function and expression, save an unread body. Returns the routes, (call, the
+    enclosing function, the class name, the script-running type, the body expression), sorted by line."""
+    consts = _module_consts(tree)
+    written = {x for x in res.writes.get(rel, {}) if x in consts}   # the module names some code writes after binding them
     funcs = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
     routes, cache, typed = [], {}, {}
 
@@ -1265,7 +1651,7 @@ def routes_of(rel, tree, sc, res):
     def judge(call, where, expr, defs, direct):
         """The script-running type of one candidate, or None: allowlisted, not script-running, or refused by name here."""
         if allowed(where, expr, call): return None
-        vals = _ctype_values(expr, scopes(defs), consts) if expr is not None else None
+        vals = _ctype_values(expr, scopes(defs), consts, written) if expr is not None else None
         if vals is None:
             res.problems.append("SERVED %s:%d serves a response whose content type the census cannot resolve (%s in %s): spell it so the "
                                 "scan reads it, or name the call in SERVED_ALLOW with its reason" % (rel, call.lineno, ast.unparse(expr)[:60] if expr is not None else "no value", where))
@@ -1282,7 +1668,7 @@ def routes_of(rel, tree, sc, res):
         cls = next((x for x in reversed(defs) if isinstance(x, ast.ClassDef)), None)
         f, d, method = call.func, None, False
         if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "self" and cls is not None:
-            d = next((b for b in cls.body if isinstance(b, (ast.FunctionDef, ast.AsyncFunctionDef)) and b.name == "_send"), None); method = True
+            d = next((b for b in reversed(cls.body) if isinstance(b, (ast.FunctionDef, ast.AsyncFunctionDef)) and b.name == "_send"), None); method = True   # the last, as Python binds it
         elif isinstance(f, ast.Name):
             d = funcs.get("_send")
         if d is None:
@@ -1297,6 +1683,8 @@ def routes_of(rel, tree, sc, res):
                                 "no HTTP request, or type its answer" % (rel, call.lineno, dkey.split(":", 1)[1])); continue
         a = d.args; pos = [x.arg for x in a.posonlyargs + a.args]; defaults = dict(zip(pos[len(pos) - len(a.defaults):], a.defaults))
         if method: pos = pos[1:]
+        if ("body", id(d)) not in typed: typed[("body", id(d))] = _body_param(d, pos)
+        unread = _unread_body(call, typed[("body", id(d))])
         for w in writes:
             v = w.args[1]
             if isinstance(v, ast.Name) and v.id in pos + [x.arg for x in a.kwonlyargs]:   # the type is the call's argument for that parameter
@@ -1308,7 +1696,18 @@ def routes_of(rel, tree, sc, res):
                 ctype = judge(call, where, expr, defs, False)
             else:   # the definition writes the type itself
                 ctype = judge(call, dkey.split(":", 1)[1], v, [d], False)
-            if ctype is not None: routes.append((call, fn, cls.name if cls is not None else None, ctype))
+            if ctype is None: continue
+            if unread:   # a script-running call whose body the census does not read: refused by name, never read at a guessed position
+                res.problems.append("SERVED %s:%d serves %s through %s, whose page body the census does not read (%s, in %s): the census reads "
+                                    "a body as the call's second positional argument, the parameter the definition writes; pass it so"
+                                    % (rel, call.lineno, ctype.split(";")[0], dkey.split(":", 1)[1], unread, where))
+                continue
+            routes.append((call, fn, cls.name if cls is not None else None, ctype, call.args[1]))
+    for node, defs, where in sc.send_refs:   # a reference to `_send` that is no call the scan reads: its calls would be no routes
+        if not allowed(where, node, node):
+            res.problems.append("SERVED %s:%d refers to _send other than by a call the scan reads (%s in %s): the routes are the calls "
+                                "spelled _send(...) or <x>._send(...); call it so, or name the place in SERVED_ALLOW with its reason"
+                                % (rel, node.lineno, ast.unparse(node)[:60], where))
     counts = {}   # per function outside _send: [its Content-Type writes, its answers the allowlist does not name, the function's where]
     for call, defs, where in sc.ctype_writes:
         inner = next((x for x in reversed(defs) if not isinstance(x, ast.ClassDef)), None)
@@ -1330,26 +1729,41 @@ def routes_of(rel, tree, sc, res):
 
 class _Served(object):
     """The text a route's page is served from, followed through the module's syntax tree: the body expression of each route
-    (routes_of) resolved to its string constants (a literal, an f-string's parts, `+` and `%` operands and the argument tuple, a
-    conditional's branches, a BoolOp's operands, a starred value, a comprehension's element with its targets read from their
-    source, a module constant by name, a local by every binding it has in the function, a `.format`, `.join`, `.replace` or
-    `.strip` receiver and its arguments, every `return` of a module function or a `self.` method the page calls, and the
-    arguments of any other call), each a piece (label, its own line, text, the part it came from) for line_scan; a local bound
-    to a `.read_text()` or `.read()` is a file slot the walk covers or names. A method call's receiver and a subscript's
-    container are read when they name a module constant or a local, and so are the receiver of `.encode` or `.format_map`
-    whatever it is and a class attribute the class body binds (`self.X`, `Cls.X`); a name the function binds as a loop,
-    unpacking or with target, or by a walrus, is read from that source, and a local container's appended or stored values are
-    its values too; a module container some code writes after binding it (a subscript store or delete, a mutating call, a
-    global rebind) is a run-time memo, and it and any other receiver or container are refused by name unless the base carries
-    no page text (an import, a builtin, a parameter or a name bound from one, a BoolOp over those) or SERVED_ALLOW names the
-    place; a parameter in the body, a comparison, a unary expression and a lambda are value slots (no text); anything else is
-    text the census did not read, a SERVED problem by name, as is a route whose body yields no piece and no file slot."""
+    (routes_of: the call's second positional argument) resolved to its string constants (a literal, an f-string's parts, `+` and
+    `%` operands and the argument tuple, a conditional's branches, a BoolOp's operands, a starred value, a comprehension's element
+    with its targets read from their source, a module constant by name (a name one module-level assignment binds and nothing else
+    binds there: _module_consts), a local by every binding it has in the function, a `.format`, `.join`, `.replace` or `.strip`
+    receiver and its arguments, and every `return` of a module function, a function defined in the page function or a `self.`
+    method the page calls), each a piece (label, its own line, text, the part it came from) for line_scan; a local bound to a
+    `.read_text()` or `.read()` is a file slot the walk covers or names. A method call's receiver and a subscript's container are
+    read when they name a module constant or a local, and so are the receiver of `.encode` or `.format_map` whatever it is and a
+    class attribute the class body binds (`self.X`, `Cls.X`); a name the function binds as a loop, unpacking or with target, or by
+    a walrus, is read from that source, and a local container's appended or stored values are its values too; a module container
+    some code writes after binding it (a write Result.writes records, as the served sentence lists them) is a run-time memo, and it
+    and any other receiver or container are refused by name unless the base carries no page text (an import that is its name's
+    one module-level binding, a builtin no module-level binding shadows, a parameter or a name bound from one, a BoolOp over
+    those) or SERVED_ALLOW names the place. A call is followed only as listed here (a file read, a text method's receiver, a
+    module function that is its name's one module-level binding, a function defined in the page function, a method of the
+    route's class, and any other method call through its receiver as above, so `_K.__call__(t)` on a constant holding a lambda
+    reads `_K` and finds a value slot), each followed function read to its own returns with any decorator on it not applied, and
+    every call's arguments are read as text; any other callee passes when _base finds it such an import, such a builtin or a
+    parameter, and is refused by name otherwise (a module constant, a local, a class, a subscript, a call and a lambda literal
+    among them) unless SERVED_ALLOW names the place. A bare module name that is no constant passes when it is such an import or
+    such a builtin, or a function or a class that is its name's one module-level binding, and any other (one bound other than by
+    one assignment, an import, a function or a class beside another module-level binding, and a rebound import, builtin, function
+    or class among them) is refused by name unless SERVED_ALLOW names the place. An import, a builtin, a function or a class
+    passes in none of these places, and a module function is not followed, when its name is rebound (Result.rebinds: a function
+    binds it under `global`, or a statement at module level writes it); no other write counts, a function's write through a
+    local of the same name among them. A parameter in the
+    body, a comparison, a unary expression and a lambda are value slots (no text); anything else is text the census did not
+    read, a SERVED problem by name, as is a route whose body yields no piece and no file slot."""
     def __init__(self, rel, tree, res):
         self.rel, self.res, self.consts, self.funcs, self.methods, self.names = rel, res, {}, {}, {}, set(dir(builtins))
         self.imports, self.builtins, self.class_attrs = set(), set(dir(builtins)), {}
+        self.consts = _module_consts(tree)   # a name bound by one module-level assignment and nothing else at module level
+        self.bound = _module_bound(tree)     # every module-level binding's count: an import, a function or a class is exempt as a name's one binding
         for node in tree.body:
-            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name): self.consts[node.targets[0].id] = node.value
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)): self.funcs[node.name] = node
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)): self.funcs[node.name] = node
             elif isinstance(node, ast.ClassDef):
                 self.methods[node.name] = {n.name: n for n in node.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
                 self.class_attrs[node.name] = {n.targets[0].id: n.value for n in node.body
@@ -1357,8 +1771,11 @@ class _Served(object):
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 bound = {(a.asname or a.name).split(".")[0] for a in node.names}; self.names.update(bound); self.imports.update(bound)
             else: self.names.update(n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)) if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) else None
-        self.names.update(self.funcs); self.names.update(self.methods)   # every module-level binding: a bare name of one is a value slot
+        self.names.update(self.funcs); self.names.update(self.methods)   # every module-level binding: a bare name of one not a constant is
+        # classified by _base (resolve's Name arm): an import, a function or a class that is the name's one module-level binding, or a
+        # builtin no module-level binding shadows, is a value slot when nothing rebinds the name (self.rebound), and any other is refused
         self.memos = {x for x in res.writes.get(rel, {}) if x in self.consts}   # the module containers some code writes (Scan's walk)
+        self.rebound = set(res.rebinds.get(rel, {}))   # the names a function binds under `global` or a module-level statement writes
         self.pieces, self.files, self.problems = [], [], []
         self.held = []   # every locals map a context built, held for the pass: a local read is keyed on its map's id, never reused
 
@@ -1457,26 +1874,41 @@ class _Served(object):
             self.problems.append("SERVED %s:%d builds a served page from %s, a container the module writes at run time: name it in SERVED_ALLOW "
                                  "with the walked file its value comes from" % (self.rel, whole.lineno, ast.unparse(whole)[:60]))
 
+    def _sole(self, name):
+        """Whether the module binds the name exactly once at module level (_module_bound) and never rebinds it (Result.rebinds: no
+        function binds it under `global` and no statement at module level writes it): an import, a def or a class is exempt as the
+        name's one binding, never beside another (`from json import dumps as X` and then `X = ...`) or rebound (`global X` and then
+        `X = ...` in a function); a write inside a function through a local of the same name (`quote = []`) does not count."""
+        return self.bound.get(name, 0) == 1 and name not in self.rebound
+
+    def _builtin(self, name):
+        """A builtin no module-level binding shadows and nothing rebinds: a name the module binds (`format = lambda ...`, one bound
+        in a try) is the module's, never the builtin, and so is one a function binds under `global` or a module-level statement
+        writes (Result.rebinds)."""
+        return name in self.builtins and name not in self.bound and name not in self.rebound
+
     def _base(self, e, ctx):
-        """What a receiver or a container derives from: ('exempt', why) for a base that carries no page text (an import, a builtin, a
-        parameter or a name the body binds from one, a BoolOp over those), ('readable', why) for one resolve reads, ('unread', why)
-        otherwise."""
+        """What a receiver or a container derives from: ('exempt', why) for a base that carries no page text (an import that is the
+        name's one module-level binding, a builtin no module-level binding shadows, each with nothing rebinding the name: _sole and
+        _builtin; a parameter or a name the body binds from one, a BoolOp over those), ('readable', why) for one resolve reads,
+        ('unread', why) otherwise."""
         params, local, cls, nested, where = ctx
         if isinstance(e, (ast.Constant, ast.JoinedStr, ast.List, ast.Tuple, ast.Dict, ast.Set, ast.BinOp, ast.IfExp)): return "readable", "an expression"
         if isinstance(e, ast.Name):
             if e.id in local or e.id in self.consts: return "readable", "a name"
             if e.id in params: return "exempt", "a parameter or a name the body binds"
-            if e.id in self.imports: return "exempt", "an import"
-            if e.id in self.builtins: return "exempt", "a builtin"
-            if e.id in nested or e.id in self.funcs or e.id in self.methods: return "unread", "a function or class object"
+            if e.id in self.imports and self._sole(e.id): return "exempt", "an import"
+            if self._builtin(e.id): return "exempt", "a builtin"
+            if e.id in nested or ((e.id in self.funcs or e.id in self.methods) and self._sole(e.id)): return "unread", "a function or class object"
             return "unread", "a module name bound other than by one assignment"
         if isinstance(e, (ast.Attribute, ast.Subscript)): return self._base(e.value, ctx)
         if isinstance(e, ast.Call):
             f = e.func
             if isinstance(f, ast.Name):
-                if f.id in self.funcs or f.id in nested: return "unread", "a function's return"
-                if f.id in self.imports: return "exempt", "an import"
-                if f.id in self.builtins: return "exempt", "a builtin"
+                if f.id in nested or (f.id in self.funcs and self._sole(f.id)): return "unread", "a function's return"
+                if f.id in local: return "unread", "a call"   # a local-bound callee: its value is not followed to a return
+                if f.id in self.imports and self._sole(f.id): return "exempt", "an import"
+                if self._builtin(f.id): return "exempt", "a builtin"
                 if f.id in params: return "exempt", "a parameter or a name the body binds"
                 return "unread", "a call"
             if isinstance(f, ast.Attribute):
@@ -1554,7 +1986,13 @@ class _Served(object):
             elif e.id in self.consts:
                 if e.id in self.memos and e.id not in params: self._memo(e.id, e, where)
                 elif e.id not in done: done.add(e.id); self.resolve(self.consts[e.id], (set(), {}, None, {}, e.id), e.id, done)
-            elif e.id not in params and e.id not in nested and e.id not in self.names:   # a name bound nowhere the census reads
+            elif e.id in params or e.id in nested: pass   # a value slot: a parameter or a name the body binds, a nested function
+            elif e.id in self.names:   # a module-level binding that is no constant: an import, a builtin, a function or a class passes
+                kind, why = self._base(e, ctx)
+                if kind == "unread" and why != "a function or class object" and not self._allowed(where, e):
+                    self.problems.append("SERVED %s:%d builds a served page from %s (%s), text the census did not read"
+                                         % (self.rel, e.lineno, ast.unparse(e)[:60], why))
+            else:   # a name bound nowhere the census reads
                 self.problems.append("SERVED %s:%d builds a served page from %s, text the census did not read" % (self.rel, e.lineno, ast.unparse(e)[:60]))
         elif isinstance(e, ast.Call):
             f = e.func
@@ -1565,7 +2003,7 @@ class _Served(object):
                 if key not in done:
                     done.add(key); fn = nested[f.id]
                     for r in self._returns(fn): self.resolve(r, self._ctx(fn, cls, ctx, where + "." + f.id), label + "." + f.id, done)
-            elif isinstance(f, ast.Name) and f.id in self.funcs:
+            elif isinstance(f, ast.Name) and f.id in self.funcs and self._sole(f.id):   # a module function, the name's one module-level binding
                 if f.id not in done:
                     done.add(f.id); fn = self.funcs[f.id]
                     for r in self._returns(fn): self.resolve(r, self._ctx(fn, None, None, f.id), f.id, done)
@@ -1575,6 +2013,11 @@ class _Served(object):
                     done.add(key); fn = self.methods[cls][f.attr]
                     for r in self._returns(fn): self.resolve(r, self._ctx(fn, cls, None, key), key, done)
             elif isinstance(f, ast.Attribute): self.receiver(f.value, e, ctx, label, done)   # any other method call: its receiver
+            else:   # any other callee: an import, a builtin or a parameter passes (_base), anything else is refused by name
+                kind, why = self._base(e, ctx)
+                if kind != "exempt" and not self._allowed(where, e):
+                    self.problems.append("SERVED %s:%d builds a served page from %s (%s), text the census did not read"
+                                         % (self.rel, e.lineno, ast.unparse(e)[:60], why))
             for a in e.args + [k.value for k in e.keywords]: self.resolve(a, ctx, label, done)   # a value slot's arguments are text too (json.dumps(x))
         elif isinstance(e, ast.Subscript):
             self.receiver(e.value, e, ctx, label, done)
@@ -1592,14 +2035,14 @@ class _Served(object):
             self.problems.append("SERVED %s:%d builds a served page from %s, text the census did not read" % (self.rel, e.lineno, ast.unparse(e)[:60]))
 
     def run(self, routes):
-        for call, fn, cls, ctype in routes:
+        for call, fn, cls, ctype, body in routes:   # the body routes_of read: the call's second positional argument
             before = len(self.pieces), len(self.files)
             where = ((cls + ".") if cls is not None else "") + fn.name if fn is not None else "<module>"
             ctx = self._ctx(fn, cls, None, where) if fn is not None else (set(), {}, cls, {}, "<module>")
-            self.resolve(call.args[1], ctx, fn.name if fn is not None else "<module>", set())
+            self.resolve(body, ctx, fn.name if fn is not None else "<module>", set())
             if (len(self.pieces), len(self.files)) == before:
                 self.problems.append("SERVED %s:%d serves %s from %s, text the census did not read"
-                                     % (self.rel, call.lineno, ctype.split(";")[0], ast.unparse(call.args[1])[:60]))
+                                     % (self.rel, call.lineno, ctype.split(";")[0], ast.unparse(body)[:60]))
 
 
 def served_texts(rel, tree, routes, res):
@@ -1679,6 +2122,12 @@ def problems(root, res, fig, expected):
     for k in sorted(set(FRAME_WRITERS) - {h[1] for h in res.allow_hits if h[0] == "frame"}):
         out.append("SERVED ALLOW %s is named in FRAME_WRITERS and no `_send` call reaches it: drop it (an entry for code that is gone is never "
                    "a pass)" % k)
+    for k in sorted(set(JS_ALLOW) - set(res.allow_hits)):
+        out.append("IMPORT ALLOW %s %r names nothing this run reads: drop it from JS_ALLOW (an entry for code that is gone is never a pass)" % k)
+    for k in sorted(set(JS_ALLOW) & set(res.allow_hits)):
+        if len(res.allow_hits[k]) != JS_ALLOW[k][0]:
+            out.append("IMPORT ALLOW %s %r covers %d places, the entry says %d: a new place under an entry's key is read or named, never excused "
+                       "by the key" % (k + (len(res.allow_hits[k]), JS_ALLOW[k][0])))
     table ={r[0] for r in ROADS}; roads = set(fig["per_road"])
     for r in sorted(roads - table - LOCAL_ROADS): out.append("TABLE the road %s has sites and no ROADS entry (its trigger, what it sends and its switch; "
                                                              "SECURITY.md's Network access section and the ledger's table follow from it)" % r)

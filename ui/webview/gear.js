@@ -2236,7 +2236,9 @@ function initGear(post, opts) {
 // above 0 is rows for known models that could not be read), 'inflight' (a fetch is under way and nothing has landed
 // or failed before it: the first open of the modal, whose payload is built before the fetch it starts lands, so the
 // next open shows the feed), 'unfetched' (no attempt yet). Each reason is worded on its own: a fetch in flight is
-// not "nothing fetched yet", which after a landed or failed fetch would be false (review round 1). On either source
+// not "nothing fetched yet" (review round 1). The kernel sends 'inflight' only while no fetch has landed or failed,
+// since it ranks a landed or failed result above a flight (tests/test_price_feed_off.py
+// ReattemptKeepsTheEarlierResult), so during a re-attempt the line still words the earlier result. On either source
 // `overrides` counts the rows the user's model-prices.json put in effect, and the line says so: those rows price
 // their models whichever table the line names. On either source too, `unrecognised` is the kernel's boolean for a
 // ROMP_PRICE_FEED value that is neither off nor unset (the review of PR 878: only off turns the feed off, so such a
