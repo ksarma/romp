@@ -34136,8 +34136,11 @@ def _awaiting_nest(agents, commands, cmd_owner, path):
     # answers without calling _subagent_file, and for a Workflow agent with no Agent tool event it is the only lookup a chat
     # build makes, so that build recorded no key for the trees the walk read). They are stored here and not read from the
     # agent-file memo's entry because that entry can be gone or newer when the fold is served: the memo is cleared whole
-    # past 1024 entries by any thread's lookup, and a lookup after a landing replaces the entry with a later walk's pairs,
-    # which the held ids never reflected (a build recording those would hold the post-landing keys and never be rebuilt).
+    # past 1024 entries by any thread's lookup (tests/test_subagent_tree_stamps_per_cycle.py DependencyKey
+    # test_a_held_fold_replays_its_own_walks_notes_after_the_agent_file_memo_was_cleared), and a lookup after a landing
+    # replaces the entry with a later walk's pairs, which the held ids never reflected, so a build recording those would
+    # hold the post-landing keys and never be rebuilt (DependencyKey
+    # test_a_held_fold_replays_its_own_walks_notes_after_a_later_lookup_replaced_the_agent_file_memos_entry).
     launch_sets = sc["launches"] if sc is not None else {}
     faulted = {}
     reported = set()                                      # agents whose resolution's keys this call's build holds (one call, one build)

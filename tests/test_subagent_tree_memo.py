@@ -40,10 +40,11 @@ rebuilt (a characterization, the witness of the texts that state it); (14) a loo
 only when that path lies under what the walk could not read (StandingResolutionUnderAFault): a standing path under a
 tree the walk read in full, a sibling's or the own tree before a listing that faults, is not answered, and one under
 the tree that faults, or under a sibling the listing could not name, is; (15) a place below a tree's root that cannot
-be read, its root reading (FaultBelowTheRoot): a workflows/ or workflow directory whose listing fails excludes that
-place from the agent-file walk, so with the file under it the lookup answers None with the fault, memoizes nothing and
-walks again at the next lookup, the chat build's record re-arms once the fault clears, the lookup then finds the file,
-and a standing resolution under the place is answered and left standing; (16) the agent-file walk's own reads of a place
+be read, its root reading (FaultBelowTheRoot): a workflows/ or workflow directory whose listing fails, a workflow
+directory whose own lstat fails and an entry whose type cannot be read each exclude that place from the agent-file
+walk, so with the file under it the lookup answers None with the fault, memoizes nothing and walks again at the next
+lookup, the chat build's record re-arms once the fault clears, the lookup then finds the file, and a standing
+resolution under the place is answered and left standing; (16) the agent-file walk's own reads of a place
 read the error (FaultOnTheWalksOwnRead): a candidate file whose lstat fails for a reason other than ENOENT and ENOTDIR
 (in a directory that can be listed but not searched, or an EIO), in a workflow directory and at the flat place, and a
 project-directory entry whose os.stat fails outside _REG_MISSING_ERRNOS, each with the file there alone, answer None
@@ -760,6 +761,51 @@ class _Walk(_Tree):
             km._chat_dep_scope.deps = None
         return got, faults, deps["task_outs"]
 
+    def _looked_up(self, aid):
+        """`aid`'s lookup under a running chat build's dependency scope: (answer, the caller's faults, the build's notes)."""
+        faults, deps = [], {"task_outs": [], "postal_any": False}
+        km._chat_dep_scope.deps = deps
+        try:
+            got = km._subagent_file(str(self.tpath), aid, faults)
+        finally:
+            km._chat_dep_scope.deps = None
+        return got, faults, deps["task_outs"]
+
+    def _unmade_then_found(self, aid, fault, place, err, found):
+        """Under `fault` (a context manager), two lookups of `aid`, observed; after the fault's block, asserted first so
+        that the memo serving the miss after the fault clears is the red: no memo entry before the next lookup, which
+        finds `found` with no fault and memoizes it. Then what each lookup under the fault answered: None with the fault
+        `err` passed to the caller, nothing memoized, a walk each and the one (place, _TREE_UNREADABLE) note by equality
+        on the place."""
+        key = (str(self.tpath), aid)
+        walks, real_walk, seen = [], km._subagent_file_walk, []
+
+        def counting(*a, **k):
+            walks.append(1)
+            return real_walk(*a, **k)
+        with fault, mock.patch.object(km, "_subagent_file_walk", counting):
+            for call in ("first", "second"):
+                got, faults, notes = self._looked_up(aid)
+                seen.append((call, got, faults, notes, km._SUBAGENT_FILE_CACHE.get(key)))
+        walked = len(walks)
+        before = km._SUBAGENT_FILE_CACHE.get(key)
+        memo = None if before is None else ("a memo entry answering", before[1])
+        got, faults, _notes = self._looked_up(aid)
+        self.assertEqual((memo, got, faults), (None, found, []),
+                         "the fault cleared: (the memo entry before the next lookup, its answer, its faults) = %r; keyed on (None, the "
+                         "file, []): a lookup under the fault memoized nothing, so this one walks and finds the file (a miss memoized "
+                         "under the fault stands, since a chmod or a cleared EIO moves no stamp, and is answered here: the readable "
+                         "file reported missing)" % ((memo, got, faults),))
+        self.assertEqual(km._SUBAGENT_FILE_CACHE[key][1], found, "and memoizes it")
+        for call, got, faults, notes, memo in seen:
+            self.assertIsNone(got, "%s lookup under the fault: the file lies at the place the walk could not read" % call)
+            self.assertIsNone(memo, "%s lookup under the fault: nothing memoized (%r)" % (call, memo))
+            self.assertEqual(faults, [err], "%s lookup under the fault: the caller is told the lookup could not be made" % call)
+            self.assertEqual([p for p, k in notes if k == km._TREE_UNREADABLE], [place],
+                             "%s lookup under the fault: the running chat build is told the place is unreadable, the place by "
+                             "equality: %r" % (call, notes))
+        self.assertEqual(walked, 2, "two lookups under the fault, two walks: nothing memoized, so each lookup walks again")
+
 
 class FaultExcludesItsOwnTree(_Walk):
     """A fault excludes the tree that raised it and nothing else (round 2 of #882, group A: correctness-1, regression-1,
@@ -1158,7 +1204,13 @@ class FaultBelowTheRoot(_Walk):
     and before this change (the pass applying round 2 of #882's rulings; the base behaved the same): _subagent_tree told no
     reader of a failed listing below the root, so the walk found no file, took that for a miss and memoized it on stamps
     a chmod or a transient EIO does not move, and every lookup after the fault cleared was answered the memoized miss
-    until a stamped directory changed. The chat record's re-arm composes two rules: the tree read noted the place under
+    until a stamped directory changed. The tree read's two other shapes have their cases since round 3 of #882 (tests-1:
+    removing either report left both modules green): the workflow directory whose own lstat fails (workflows/ at 0o644
+    for a real EACCES, an EIO by mock on its lstat) and the workflow directory's entry whose type cannot be read (an EIO
+    on is_dir by a wrapped os.scandir), each asserting None, the fault, nothing memoized, the (place, _TREE_UNREADABLE)
+    note by equality on the workflow directory and the file found once the fault clears; red at the round-2 head for
+    the same reason, and under a kernel that drops that shape's report (the EACCES variant on the place's equality,
+    since the candidate's lstat in the unsearchable workflows/ faults too and is noted instead). The chat record's re-arm composes two rules: the tree read noted the place under
     its own key, which a chmod does not move, and the walk noted it unreadable, and a path reported under two keys is
     recorded as their disagreement (_chat_build_deps). A standing resolution under the place that faults is answered with
     the fault and left standing, red before too, when the walk's miss replaced it in the memo. A control, green before the
@@ -1296,6 +1348,103 @@ class FaultBelowTheRoot(_Walk):
     def test_a_workflows_directory_under_a_siblings_tree_that_cannot_be_listed_eio_is_a_fault_with_nothing_memoized(self):
         self._sibling_fault_below("eio")
 
+    # ── the tree read's two other shapes (round 3 of #882, tests-1) ───────────────────────────────────────────────────
+    @contextlib.contextmanager
+    def _child_lstat_fails(self, how):
+        """workflows/ listed and its entry typed while the workflow directory's own lstat fails inside the block.
+        "eacces": workflows/ at mode 0o644 (read without search: a real fault), its premises asserted: the listing
+        succeeds and names the workflow directory, the entry's is_dir(follow_symlinks=False) from the listing succeeds,
+        and the child's lstat raises PermissionError; "eio": os.lstat of the workflow directory alone raising EIO by
+        mock, every other call reading."""
+        wfs, wf = str(self.subdir / "workflows"), str(self.wf)
+        if how == "eacces":
+            if os.geteuid() == 0:
+                self.skipTest("permission bits do not bind root: no EACCES to drive")
+            os.chmod(wfs, 0o644)
+            try:
+                with os.scandir(wfs) as it:
+                    ents = {e.name: e for e in it}
+                    self.assertIn(self.wf.name, ents, "premise: workflows/'s listing succeeds and names the workflow directory")
+                    self.assertTrue(ents[self.wf.name].is_dir(follow_symlinks=False),
+                                    "premise: the entry's type, from the listing, reads as a directory")
+                with self.assertRaises(PermissionError, msg="premise: the child's lstat raises"):
+                    os.lstat(wf)
+                yield
+            finally:
+                os.chmod(wfs, 0o755)
+            return
+        real = os.lstat
+
+        def eio(p, *a, **k):
+            if not isinstance(p, int) and os.fsdecode(p) == wf:
+                raise OSError(errno.EIO, "input/output error")
+            return real(p, *a, **k)
+        with mock.patch.object(os, "lstat", eio):
+            yield
+
+    @contextlib.contextmanager
+    def _entry_type_fails(self):
+        """workflows/ listed through a wrapped os.scandir whose every entry's is_dir(follow_symlinks=False) raises EIO
+        inside the block, every other listing and call reading; the premise asserted: the wrapped entry's type raises."""
+        wfs, real = str(self.subdir / "workflows"), os.scandir
+
+        class Entry:
+            def __init__(self, e):
+                self._e = e
+
+            def __getattr__(self, name):
+                return getattr(self._e, name)
+
+            def is_dir(self, *, follow_symlinks=True):
+                if not follow_symlinks:
+                    raise OSError(errno.EIO, "input/output error")
+                return self._e.is_dir()
+
+        class Listing:
+            def __init__(self, it):
+                self._it = it
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self._it.close()
+                return False
+
+            def __iter__(self):
+                return (Entry(e) for e in self._it)
+
+        def scandir(p=".", *a, **k):
+            it = real(p, *a, **k)
+            return Listing(it) if not isinstance(p, int) and os.fsdecode(p) == wfs else it
+        with mock.patch.object(os, "scandir", scandir):
+            with os.scandir(wfs) as it:
+                ents = list(it)
+            self.assertEqual([e.name for e in ents], [self.wf.name], "premise: the wrapped listing names the workflow directory")
+            with self.assertRaises(OSError, msg="premise: the entry's type raises"):
+                ents[0].is_dir(follow_symlinks=False)
+            yield
+
+    def test_a_workflow_directory_whose_lstat_fails_eacces_is_a_fault_with_nothing_memoized_and_the_place_noted(self):
+        """The child-lstat shape under a real EACCES (workflows/ at 0o644). The place noted is the workflow directory, the
+        child whose lstat failed, by equality: A's candidate road faults here too (workflows/ cannot be searched, so the
+        candidate's lstat in it raises) and would note the candidate, so with the child's report removed the case still
+        sees a fault and reds on the place alone."""
+        km._SUBAGENT_TREES.pop(str(self.subdir), None)             # no standing tree entry: the fault is met by a walk
+        self._unmade_then_found(AID_WF, self._child_lstat_fails("eacces"), str(self.wf), "PermissionError", self.target)
+
+    def test_a_workflow_directory_whose_lstat_fails_eio_is_a_fault_with_nothing_memoized_and_the_place_noted(self):
+        """The child-lstat shape under an EIO by mock on the workflow directory's lstat alone."""
+        km._SUBAGENT_TREES.pop(str(self.subdir), None)
+        self._unmade_then_found(AID_WF, self._child_lstat_fails("eio"), str(self.wf), "OSError", self.target)
+
+    def test_an_entry_whose_type_cannot_be_read_eio_is_a_fault_with_nothing_memoized_and_the_entry_noted(self):
+        """The entry-type shape: workflows/'s listing succeeds and the workflow directory's entry cannot be typed (EIO on
+        is_dir(follow_symlinks=False) by a wrapped os.scandir). The place noted is the entry, the workflow directory
+        (os.path.join of the directory listed and the entry's name), not workflows/."""
+        km._SUBAGENT_TREES.pop(str(self.subdir), None)
+        self._unmade_then_found(AID_WF, self._entry_type_fails(), str(self.wf), "OSError", self.target)
+
     # ── controls, green before the change and after it ─────────────────────────────────────────────────────────────────
     def test_control_a_file_under_a_readable_sibling_is_found_past_a_fault_below_the_own_root(self):
         _hold, holder_file = self._sibling(SID_HOLD, holder=True)
@@ -1408,50 +1557,6 @@ class FaultOnTheWalksOwnRead(_Walk):
         """The own subagents/ holding only files (workflows/ removed): the flat layout's real shape."""
         shutil.rmtree(str(self.subdir / "workflows"))
         return str(self.subdir / ("agent-%s.jsonl" % AID))
-
-    def _looked_up(self, aid):
-        faults, deps = [], {"task_outs": [], "postal_any": False}
-        km._chat_dep_scope.deps = deps
-        try:
-            got = km._subagent_file(str(self.tpath), aid, faults)
-        finally:
-            km._chat_dep_scope.deps = None
-        return got, faults, deps["task_outs"]
-
-    def _unmade_then_found(self, aid, fault, place, err, found):
-        """Under `fault` (a context manager), two lookups of `aid`, observed; after the fault's block, asserted first so
-        that the memo serving the miss after the fault clears is the red: no memo entry before the next lookup, which
-        finds `found` with no fault and memoizes it. Then what each lookup under the fault answered: None with the fault
-        `err` passed to the caller, nothing memoized, a walk each and the one (place, _TREE_UNREADABLE) note by equality
-        on the place."""
-        key = (str(self.tpath), aid)
-        walks, real_walk, seen = [], km._subagent_file_walk, []
-
-        def counting(*a, **k):
-            walks.append(1)
-            return real_walk(*a, **k)
-        with fault, mock.patch.object(km, "_subagent_file_walk", counting):
-            for call in ("first", "second"):
-                got, faults, notes = self._looked_up(aid)
-                seen.append((call, got, faults, notes, km._SUBAGENT_FILE_CACHE.get(key)))
-        walked = len(walks)
-        before = km._SUBAGENT_FILE_CACHE.get(key)
-        memo = None if before is None else ("a memo entry answering", before[1])
-        got, faults, _notes = self._looked_up(aid)
-        self.assertEqual((memo, got, faults), (None, found, []),
-                         "the fault cleared: (the memo entry before the next lookup, its answer, its faults) = %r; keyed on (None, the "
-                         "file, []): a lookup under the fault memoized nothing, so this one walks and finds the file (a miss memoized "
-                         "under the fault stands, since a chmod or a cleared EIO moves no stamp, and is answered here: the readable "
-                         "file reported missing)" % ((memo, got, faults),))
-        self.assertEqual(km._SUBAGENT_FILE_CACHE[key][1], found, "and memoizes it")
-        for call, got, faults, notes, memo in seen:
-            self.assertIsNone(got, "%s lookup under the fault: the file lies at the place the walk could not read" % call)
-            self.assertIsNone(memo, "%s lookup under the fault: nothing memoized (%r)" % (call, memo))
-            self.assertEqual(faults, [err], "%s lookup under the fault: the caller is told the lookup could not be made" % call)
-            self.assertEqual([p for p, k in notes if k == km._TREE_UNREADABLE], [place],
-                             "%s lookup under the fault: the running chat build is told the place is unreadable, the place by "
-                             "equality: %r" % (call, notes))
-        self.assertEqual(walked, 2, "two lookups under the fault, two walks: nothing memoized, so each lookup walks again")
 
     # ── (1) the candidate under a real EACCES ───────────────────────────────────────────────────────────────────────
     def test_a_candidate_in_a_workflow_directory_that_can_be_listed_but_not_searched_is_a_fault_with_nothing_memoized_eacces(self):

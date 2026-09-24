@@ -96,7 +96,10 @@ listing lacked leaves the recorded key behind the next signature's re-stat and t
 the root's stamp or a listed child's; a fresh stat taken after the served listing recorded the post-landing key, equal to
 every later re-stat, and the tab that showed the file missing was never rebuilt; a build whose lookup the agent-file memo
 answers in a later cycle, or the held launch fold answers after a reader with no record open walked, records the same keys,
-replayed from the walk's notes (round 2 of #882, group B: before it such a build recorded nothing for the sibling's tree);
+replayed from the walk's notes (round 2 of #882, group B: before it such a build recorded nothing for the sibling's tree),
+the held fold's from the notes stored in its own entry, since the agent-file memo's entry can by then have been replaced
+by a later lookup's walk or cleared (round 3 of #882, tests-2: one case for each, red under a kernel that replays the
+memo entry's notes);
 a path one build reported under two keys, a held fold's replayed key behind a fresh walk's among them, is recorded under a
 key no re-stat equals, so that tab is rebuilt too, where a record keeping the first key kept the walk's and never rebuilt
 it; and a sibling session directory appearing after a build moves no key it recorded on any of the three roads, the
@@ -111,9 +114,11 @@ interleaved, cost the sum over their roots of D_r lstats (each root its own D_r)
 over the sessions of A_s), so the total directories decide the cycle's cost and not their split over roots (the derived
 cost sentence's pin in the tree; a lab lifted from this world measured the same at more sizes outside the repo). (8) The
 census's own roads (round 2 of #882, extra6-2), executed on the tree under the spy: each road the spy closes (a
-non-normalized or relative spelling of the root, a call given a dir_fd, io.FileIO) is counted, and each road it leaves
-open (a DirEntry from a listing of the root's parent, a path outside the tree, an os class outside CLASSES, a bare
-descriptor, a symlinked spelling, pathlib on 3.10) has an executed witness whose census is {}. (9) The eviction table's
+non-normalized or relative spelling of the root, a call given a dir_fd, io.FileIO, and since round 3 of #882 (extra8-2)
+Path.glob and rglob through 3.13's glob._StringGlobber, whose control is red on 3.13 without the spy's patch) is
+counted, and each road it leaves open (a DirEntry from a listing of the root's parent, a path outside the tree, an os
+class outside CLASSES, a bare descriptor, a symlinked spelling, pathlib on 3.10; 3.11's pathlib is counted) has an
+executed witness whose census is {}. (9) The eviction table's
 lock (round 2 of #882, group E): the clear straddle, the wiped record and one root's out-of-order stores, each driven
 with real threads, answer vouched False under the lock where the unlocked table answered True, and the out-of-order
 store driven through the real forget, walk and pop serves no pair of a removed tree (the unlocked table served its 2
@@ -157,6 +162,7 @@ import tempfile
 import threading
 import time
 import traceback
+import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -223,8 +229,13 @@ class _Spy:
     served-paths case), so a read of the tree through a wrapped class the counts do not see, a listing, an access, an
     open, a file's lstat, fails closed by the class's name (the owner's pass before round 2 of #882: the spy saw os.stat
     and os.lstat alone, and a guarded os.scandir on the served tree path left the module green). The patch is the os
-    module's attribute (io's for io.open and io.FileIO), which is what the kernel, os.path and the pathlib of 3.12 and
-    3.14 look up at call time; the kernel runs on 3.12.
+    module's attribute (io's for io.open and io.FileIO), which is what the kernel, os.path and the pathlib of 3.11, 3.12,
+    3.13 and 3.14 look up at call time; the kernel runs on 3.12. Where glob._StringGlobber's __dict__ holds os.scandir
+    or os.lstat as a staticmethod bound at import, the builtin itself or the kernel's counting wrapper around it (3.13
+    holds both: Path.glob and Path.rglob list and stat through them), each is patched too, as a staticmethod wrapping
+    the held object, keyed on that mechanism and not on a version (round 3 of #882, extra8-2: rglob's census was {} on
+    3.13); 3.14's globber holds a scandir of its own that calls os.scandir at call time, counted already and left as
+    it is.
 
     Which spellings the census places (round 2 of #882, extra6-2: a reviewer's reads planted on the served paths through a
     `//` or `/./` spelling of the root, a dir_fd, io.FileIO and a DirEntry of the root's parent each left both modules
@@ -233,7 +244,8 @@ class _Spy:
     relative spelling are the root; never os.path.realpath, which would call the patched os.lstat and count itself. A call
     given a dir_fd is its own census entry, `<class>(dir_fd)`, wherever its path points, since a path relative to a
     descriptor cannot be placed without reading the descriptor: such a call is counted on the safe side. Each of those
-    roads, and io.FileIO, has a red control in SpyRoads asserting that the census counts it (test_closed_road_...), and a
+    roads, io.FileIO and the globber's, has a red control in SpyRoads asserting that the census counts it
+    (test_closed_road_..., the globber's test_closed_road_path_rglob, red on 3.13 without its patch), and a
     read through one of them on a served path fails that path's {} pin by its entry's name (the served-paths case in
     BoundPerCycleAndPerPass, and _assert_bound's equality over a cycle).
 
@@ -247,8 +259,8 @@ class _Spy:
     os.listdir(fd), os.scandir(fd), on a descriptor opened outside the window (an os.open of a path under the tree is
     counted when it runs), test_open_road_a_bare_descriptor; a symlinked spelling, a path through a link to the session
     directory (normalization is lexical), test_open_road_a_symlinked_spelling_of_the_root; and pathlib on 3.10, which
-    calls the os functions it bound at import (the pathlib of 3.12 and 3.14 looks them up at call time and is counted),
-    test_open_road_pathlib_on_3_10. The owner's pass before round 2 of #882 had planted os.statvfs on the served tree read
+    calls the os functions it bound at import (the pathlib of 3.11 to 3.14 looks them up at call time, or lists through
+    the globber patched above, and is counted), test_open_road_pathlib_on_3_10. The owner's pass before round 2 of #882 had planted os.statvfs on the served tree read
     and the module stayed green, where os.listdir, os.readlink and os.path.exists planted there each red by the class's
     name."""
     KEYS = ("dir_stat", "dir_lstat", "file_stat")
@@ -318,6 +330,13 @@ class _Spy:
         self._patches += [mock.patch.object(os, cls, self._wrapped(cls, getattr(os, cls))) for cls in self.CLASSES[2:]]
         self._patches += [mock.patch.object(io, "open", opn), mock.patch.object(builtins, "open", opn),
                           mock.patch.object(io, "FileIO", FileIO)]
+        globber = getattr(sys.modules.get("glob"), "_StringGlobber", None)
+        for cls in ("scandir", "lstat"):                  # a globber holding os functions bound at import (Path.glob, rglob)
+            held = globber.__dict__.get(cls) if globber is not None else None
+            fn = getattr(held, "__func__", None)
+            if isinstance(held, staticmethod) and (isinstance(fn, types.BuiltinFunctionType) or hasattr(fn, "_romp_sig_counting")):
+                self._patches.append(mock.patch.object(   # stays a staticmethod (a plain function binds as a method), wrapping the
+                    globber, cls, staticmethod(self._wrapped(cls, fn))))   # held object: the builtin or the kernel's wrapper
         for p in self._patches:
             p.start()
         return self
@@ -3120,7 +3139,9 @@ class DependencyKey(_World):
     _subagent_meta_map records: _subagent_tree_dep_note), so the key is behind the re-stat and the tab is rebuilt, whether
     the landing moved the root's stamp or a listed child's. The same keys reach a build whose lookup the walk did not run
     (round 2 of #882, group B): the agent-file memo's hit and _awaiting_nest's held launch fold replay the pairs the walk
-    noted (_subagent_file_notes_replay), where before they recorded nothing for the sibling's tree; a replayed key that
+    noted (_subagent_file_notes_replay), where before they recorded nothing for the sibling's tree, the held fold from its
+    own entry's notes, which two cases pin against a memo entry replaced by a later lookup and one cleared whole (round 3
+    of #882, tests-2); a replayed key that
     disagrees with a fresher key the same build reported for the path is recorded as the disagreement (_chat_build_deps),
     which no re-stat equals; the project directory stays out of every record, the residual two cases here witness, one
     for a build that found the file nowhere and one for a build that found it. An own place holding what the walk
@@ -3372,6 +3393,110 @@ class DependencyKey(_World):
         self.assertNotEqual(restat, recorded,
                             "the next signature's re-stat of the root, %r, against the recorded key %r: keyed on a difference, the tab "
                             "is rebuilt" % (restat, recorded))
+
+    def _held_fold_behind_a_changed_memo(self, change):
+        """The held-fold road when the agent-file memo's entry is no longer the fold's (round 3 of #882, tests-2), in one
+        cycle. A reader with no chat record open resolves an agent whose file is nowhere: its walk reads the sibling's tree
+        (held), noting the root under the served read's key, and _awaiting_nest holds the agent's launch fold with those
+        notes. The agent's file then lands under the sibling's root in workflows/, a directory the held listing lacks (the
+        root's stamp moves), and `change` runs: "replaced", the sibling's root is evicted (owned by no alive session) and a
+        lookup of the agent walks again, reads the tree again, finds the file and replaces the memo entry with that walk's
+        notes; "cleared", the agent-file memo is cleared whole, as any thread's lookup past 1024 entries clears it. Then the
+        chat build's _session_awaiting consults the agent's launches, which the held fold answers. Asserts the premises
+        and returns (the root, what the job saw)."""
+        other = self._sibling(workflows=False)                     # the held listing will be the root alone
+        root = str(other)
+        aid = "a%016x" % (0x7cf8 if change == "replaced" else 0x7cf9)
+        self.live_aids.append(aid)
+        self.addCleanup(km._SUBAGENT_FILE_CACHE.pop, (self.path, aid), None)
+        rec = {}
+
+        def job(now, live_map, **kw):
+            walks = []
+            with self._counting("_subagent_file_walk", aid, walks):
+                rec["aw0"] = km._session_awaiting(SID, self.path, True)   # a reader with no record open: the fold held
+            rec["walks0"] = walks
+            held = _scope()["launches"].get((self.path, aid))
+            rec["held_notes"] = held[3] if held is not None else None
+            dirs, stats = km._subagent_tree(root)                  # the pair the walk was answered, held: its keys
+            rec["dirs"] = list(dirs)
+            rec["served"] = {sd: (st.st_mtime, st.st_size) for sd, st in zip(dirs, stats)}
+            wf = other / "workflows" / ("wf_%016x" % 0x7cf8)
+            wf.mkdir(parents=True)                                  # the landing: workflows/ created, the root's stamp moves
+            self._add_agent(wf, 243, aid)
+            rec["file"] = wf / ("agent-%s.jsonl" % aid)
+            rec["fresh"] = km._chat_stat_key(root)
+            if change == "replaced":
+                km._subagent_trees_forget([{"path": self.path}])    # the sibling's root, owned by no alive session, evicted
+                rec["evicted"] = root in km._SUBAGENT_ROOT_EVICTED
+                rec["relookup"] = km._subagent_file(self.path, aid)  # walks again, with no record open: the memo entry replaced
+                rec["memo_notes"] = km._SUBAGENT_FILE_CACHE.get((self.path, aid), (None, None, "absent"))[2]
+            else:
+                km._SUBAGENT_FILE_CACHE.clear()
+                rec["memo_notes"] = km._SUBAGENT_FILE_CACHE.get((self.path, aid), (None, None, "absent"))[2]
+            held = _scope()["launches"].get((self.path, aid))
+            rec["vouched"] = held is not None and km._subagent_vouched(held[1], held[2])
+            asked = []
+            with self._counting("_subagent_file", aid, asked):
+                rec["aw"], rec["deps"] = self._chat_build()
+            rec["asked"] = asked
+        km._turn_notify_tick = job
+        km._pusher_cycle()
+        self.assertIn("deps", rec, "the job ran to its end: %r" % (rec,))
+        self.assertEqual(((rec["aw0"] or {}).get("count"), rec["walks0"][:1]), (A + 1, [None]),
+                         "premise: the reader saw the A agents and the new row, and its lookup walked and missed")
+        self.assertEqual(rec["dirs"], [root], "premise: the held listing is the sibling's root alone")
+        self.assertIn((root, rec["served"][root]), rec["held_notes"] or (),
+                      "premise: the fold is held with its walk's notes, the root under the served read's key: %r" % (rec["held_notes"],))
+        self.assertTrue(rec["vouched"], "premise: the fold is still held and vouched when the chat build is made (keyed on the own "
+                                        "root, which no eviction here moved)")
+        self.assertNotEqual(rec["fresh"], rec["served"][root], "premise: the landing moved the root's (mtime, size)")
+        if change == "replaced":
+            self.assertEqual((rec["evicted"], rec["relookup"]), (True, rec["file"]),
+                             "premise: the sibling's root was evicted and the replacing lookup found the file")
+            self.assertIn((root, rec["fresh"]), rec["memo_notes"],
+                          "premise: the memo entry now carries the later walk's notes, the root under the post-landing key, so it "
+                          "differs from the fold's: %r" % (rec["memo_notes"],))
+        else:
+            self.assertEqual(rec["memo_notes"], "absent", "premise: the agent-file memo holds no entry for the agent")
+        self.assertEqual(((rec["aw"] or {}).get("count"), rec["asked"]), (A + 1, []),
+                         "premise: the chat build called _subagent_file zero times for the agent, its launches answered by the held "
+                         "fold: %r" % (rec["asked"],))
+        return root, rec
+
+    def _assert_the_folds_own_key(self, root, rec, why):
+        recorded = dict(rec["deps"]["task_outs"]).get(root, "unrecorded")
+        self.assertEqual(recorded, rec["served"][root],
+                         "the key the chat build recorded for the sibling's root when %s: %r; keyed on equality with the served read's "
+                         "%r, the key the fold's own walk noted, replayed from the fold entry (a replay of the memo entry's notes "
+                         "records %s)" % (why, recorded, rec["served"][root],
+                                          "the later walk's post-landing key %r" % (rec["fresh"],) if rec["memo_notes"] != "absent" else "nothing, \"unrecorded\""))
+        restat = dict(km._chat_sig_deps(SID, rec["deps"])[0]).get(root, "unrecorded")
+        self.assertNotEqual(restat, recorded,
+                            "the next signature's re-stat of the root, %r, against the recorded key %r: keyed on a difference, the tab "
+                            "that shows the agent with no file is rebuilt" % (restat, recorded))
+
+    def test_a_held_fold_replays_its_own_walks_notes_after_a_later_lookup_replaced_the_agent_file_memos_entry(self):
+        """The first of the two reasons the held fold replays the notes stored in its own entry and not the agent-file
+        memo's (the comment at _awaiting_nest's fold map): a lookup after a landing replaces the memo entry with a later
+        walk's notes, which the fold's ids never reflected, so a build recording those would hold the post-landing key,
+        equal to every later re-stat, and never be rebuilt. The fold held, a landing, the sibling root's eviction, a lookup
+        that replaces the memo entry (premises asserted: the fold held and vouched after the eviction, the replacing
+        lookup found the file so the memo entry's notes differ from the fold's, the chat build made no lookup); then the
+        key the chat build recorded for the sibling's root equals the served read's, the fold's walk's, and differs from
+        the next signature's re-stat. Red under a kernel that replays the memo entry's notes at serve time."""
+        root, rec = self._held_fold_behind_a_changed_memo("replaced")
+        self._assert_the_folds_own_key(root, rec, "a later lookup replaced the agent-file memo's entry")
+
+    def test_a_held_fold_replays_its_own_walks_notes_after_the_agent_file_memo_was_cleared(self):
+        """The second reason (the comment at _awaiting_nest's fold map): the agent-file memo is cleared whole past 1024
+        entries by any thread's lookup, so when the fold is served the memo's entry can be gone. The fold held, a landing,
+        the memo cleared (premises asserted: the fold held and vouched, no memo entry for the agent, the chat build made
+        no lookup); then the key the chat build recorded for the sibling's root equals the served read's, the fold's
+        walk's, and differs from the next signature's re-stat. Red under a kernel that replays the memo entry's notes at
+        serve time (it finds none and records nothing)."""
+        root, rec = self._held_fold_behind_a_changed_memo("cleared")
+        self._assert_the_folds_own_key(root, rec, "the agent-file memo was cleared")
 
     def test_a_held_folds_replayed_key_behind_a_fresh_walks_key_for_the_same_directory_re_arms_the_tab(self):
         """The held-fold road when a fresh walk in the same build reports the directory first (the pass applying round 2
@@ -4145,6 +4270,28 @@ class SpyRoads(_World):
             os.stat(via)
         self.assertEqual(sp.tree_calls(), {}, "a listing and a stat of the root through a link to its session directory: %r; %s"
                          % (sp.tree_calls(), self.OPEN))
+
+    def test_closed_road_path_rglob(self):
+        """Path.glob and Path.rglob on 3.13 list and stat through glob._StringGlobber, which holds os.scandir and os.lstat
+        as staticmethods bound at import, so a patch of the os module's attributes never sees them; the spy patches the
+        globber's held functions where its __dict__ holds them so (keyed on that mechanism, not on a version: 3.14's
+        globber calls os.scandir at call time, the other interpreters have none), so the road is closed (round 3 of
+        #882, extra8-2: the census counted nothing for rglob on 3.13). Path(root).rglob('*') under the spy lists every
+        directory of the tree at least once wherever the census counts pathlib: a census whose scandir count is at least
+        D, each directory listed (the counts differ by interpreter, each pathlib listing the tree its own way). 3.10's pathlib, which lists through the accessor it bound at import, is the road left
+        open (test_open_road_pathlib_on_3_10), so there the census is {}. Red on 3.13 with the globber's patch removed."""
+        root = Path(str(self.sub))
+        with self._spy() as sp:
+            got = sorted(str(p) for p in root.rglob("*") if p.is_dir())
+        self.assertEqual(got, sorted(self.dirs[1:]), "premise: rglob found every directory below the root")
+        c = sp.tree_calls()
+        if getattr(sys.modules.get("pathlib"), "_NormalAccessor", None) is not None:
+            self.assertEqual(c, {}, "Path.rglob on %s, whose pathlib lists through the accessor it bound at import: %r; %s"
+                             % (sys.version.split()[0], c, self.OPEN))
+        else:
+            self.assertGreaterEqual(c.get("scandir", 0), D,
+                                    "filesystem calls under the tree over Path(root).rglob('*') on %s, by class: %r; keyed on a scandir "
+                                    "count of at least D = %d, each directory listed: %s" % (sys.version.split()[0], c, D, self.CLOSED))
 
     def test_open_road_pathlib_on_3_10(self):
         root = Path(str(self.sub))
