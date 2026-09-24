@@ -6324,8 +6324,9 @@ class SdkSession:
         #   {"type","since"}. Fed by the SubagentStart hook — the exact, event-based "what's running right now"
         #   signal the tmux backend never had; drained by SubagentStop, a Workflow run's per-agent progress list,
         #   the agent's own task end, and the client teardown (see _reconcile_workflow_agents / _drop_live_work).
-        #   Keeps the session 'working' while any run and surfaces a live count on the lane. Every add and removal is
-        #   queued for the kernel's record cache (_note_live_agents), which releases an ended agent's parsed transcript.
+        #   Keeps the session 'working' while any run and surfaces a live count on the lane. Every add and every end is
+        #   queued for the kernel's record cache (_note_live_agents), which releases an ended agent's parsed transcript;
+        #   an end is queued from its exact event even for an agent this object never held (a reattach after a restart).
         self._bg_tasks: dict[str, dict] = {}         # LIVE background tasks (a run_in_background Bash, a bg agent):
         #   task_id -> {"desc","type","since","toolUseId","lastTool"}. Fed by the CLI's DESIGNED task lifecycle
         #   stream (system/task_started..task_updated — see _on_message), terminal statuses clear — so an idle
@@ -6362,6 +6363,9 @@ class SdkSession:
         #   the rest — _reconcile_workflow_agents.
         self._wf_slots: dict[str, dict] = {}         # task_id -> {slot index: the agent id it last held}: a retried
         #   slot is re-minted with a NEW id, and the displaced id is over the moment the slot changes hands
+        self._wf_ended: dict[str, set] = {}          # task_id -> the agent ids of the run already queued as ended for the
+        #   kernel's record cache: every progress event re-sends the whole list, so a slot done three events ago is
+        #   still "done" in this one, and without the set each event would queue every finished agent again
         self.chosen_model = reg.get("model") or ""   # the alias the user picked (opus/sonnet/…); self.model is the display name
         # The last model the CLI ACCEPTED for THIS session — the target its own layers (chosen_model, the
         # reg's `model`) revert to when a set_model is refused. None = absent (the account default). The
@@ -12059,8 +12063,9 @@ class SdkSession:
         if aid:
             with self._sub_lock:
                 gone = self._subagents.pop(aid, None) is not None
-            if gone:
-                self._note_live_agents([aid], False)
+            # queued whether or not this object held it: an object that reattached to a surviving CLI after a kernel restart
+            # never saw the start of an agent already running (no subagent mirror exists), and the stop is still its end
+            self._note_live_agents([aid], False)
             self.backend._poke()
             if gone:
                 self._note_work_ended("a subagent")
@@ -12100,6 +12105,7 @@ class SdkSession:
             self._subagents.clear()
             self._wf_agents.clear()
             self._wf_slots.clear()
+            self._wf_ended.clear()
             died = sorted((dict(v) for v in self._bg_tasks.values()), key=lambda d: d.get("since") or 0)
             self._bg_tasks.clear()
             self._seeded_tasks.clear()   # a seeded row (the reg's mirror at an attach) dies with the CLI like any other on
@@ -12239,15 +12245,22 @@ class SdkSession:
                     slots[idx] = aid
                 if e.get("state") in self._WF_AGENT_ENDED:
                     ended.add(aid)
-            drop = [a for a in ended if a in self._subagents]
+            over = set(ended) | (seen if terminal else set())
+            drop = [a for a in over if a in self._subagents]
+            # every agent the run reports over is queued as ended, held here or not (an object that reattached after a kernel
+            # restart never saw the starts of the agents already running), each once per run (_wf_ended)
+            queued = self._wf_ended.setdefault(tid, set())
+            fresh = [a for a in over if a in self._subagents or a not in queued]
+            queued.update(fresh)
             if terminal:
-                drop += [a for a in seen if a in self._subagents and a not in ended]
                 self._wf_agents.pop(tid, None)
                 self._wf_slots.pop(tid, None)
+                self._wf_ended.pop(tid, None)
             for a in drop:
                 self._subagents.pop(a, None)
+        if fresh:
+            self._note_live_agents(fresh, False)
         if drop:
-            self._note_live_agents(drop, False)
             self.backend._poke()
             # no arm of a held settings pick here (2026-09-09): a removal never arms, the settle that finds
             # the live sets empty does (_arm_reconnect_if_quiet); the line says the pick still waits
@@ -12315,7 +12328,12 @@ class SdkSession:
                     wf = (gone or {}).get("type") == "local_workflow" or tid in self._wf_agents
             if ended and self._subagents.pop(tid, None) is not None:
                 sub_changed = True   # a Task agent's own task ended — with or without its SubagentStop
-        if sub_changed:
+        # a Task agent's end is queued for the kernel's record cache when this object held the agent, or when the row it
+        # ended is an agent's (an object that reattached after a kernel restart holds the agent only through the row seeded
+        # from the reg's mirror, which carries a Task agent under its agent id). Never for another task type: its id names no
+        # agent transcript, so its end would release nothing and could cost the kernel a walk of the project directory
+        # (_subagent_file on a miss)
+        if sub_changed or (ended and (gone or {}).get("type") == "local_agent"):
             self._note_live_agents([tid], False)
         if wf and (ended or isinstance(d.get("workflow_progress"), list)):
             # pokes when it retires anything; a progress event without the list (a throttled
@@ -20831,9 +20849,13 @@ class SdkBackend:
 
     def note_agent_live(self, sid, agent_id, live):
         """An agent entered (`live`) or left a session's live set: queued for the kernel's record cache. Called by the session
-        at the one site that adds (the SubagentStart hook) and at every site that removes (SubagentStop, the agent's own task
-        end, the workflow roster's done/error/re-minted slot or the run's end, the reconnect teardown (_drop_live_work), and
-        the CLI's end (_on_session_gone when the session is not detached)), outside the session's lock.
+        at the one site that adds (the SubagentStart hook), at each exact end event whether or not the session object held
+        the agent (SubagentStop, a Task agent's own task end, the workflow roster's done/error/re-minted slot or the run's
+        end: an object that reattached after a kernel restart never saw the starts of the agents already running), and where
+        a CLI's agents end with it (the reconnect teardown (_drop_live_work), and the CLI's end (_on_session_gone when the
+        session is not detached)), outside the session's lock. An agent can be queued as ended more than once (its stop and
+        its task's end): in one batch the kernel acts on the agent's last event only, and a later end finds the entry gone or a
+        restored tail weighing nothing, unless a reader pulled the file whole in between.
         Past _AGENT_LIVE_MAX the oldest event is dropped, so a backend nothing drains stays bounded; a dropped end is counted
         (a release given up), a dropped start is not."""
         q = getattr(self, "_agent_live_q", None)
@@ -21678,9 +21700,10 @@ class SdkBackend:
             # the CLI ended (a kill, a shutdown, an idle crash, a cut that the heal resumes in a new object) and its agents
             # ended with it, but nothing removed them from _subagents: this object is dropped with the dict full. Each is
             # queued as ended for the kernel's record cache (_note_live_agents), which releases its parsed transcript. A
-            # detached session's CLI lives on under its host, so its agents have not ended. Not covered: after a detach
-            # and a reattach the new object never saw the agents the old one held, so a SubagentStop for one of them pops
-            # nothing and queues no end.
+            # detached session's CLI lives on under its host, so its agents have not ended. The object that reattaches to
+            # it never saw those agents start, and queues each one's end from its own exact end event all the same: the
+            # SubagentStop, the Task agent's task end (through the row seeded from the reg's mirror), and the workflow
+            # slot's done or error state, its re-minted slot or its run's end.
             with sess._sub_lock:
                 gone_agents = list(sess._subagents)
                 sess._subagents.clear()

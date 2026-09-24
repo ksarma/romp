@@ -233,6 +233,49 @@ class AgentEnd(unittest.TestCase):
         self.assertEqual(self._weight(self.agent), size, "the agent keeps its records")
         self.assertEqual(self._stat("released"), {})
 
+    # ---- an object that reattached after a kernel restart never saw the start, and still queues the end ----
+
+    def _reattached(self, aid, path):
+        """The agent runs across a kernel restart under a session host: the object that saw its start is dropped at the
+        detach, and the one that reattaches to the surviving CLI starts with an empty live set (no subagent mirror exists).
+        This module's state root has session hosts off (setUp): no host is started."""
+        size = self._fold_while_running(aid, path)
+        km._begin_checkpoint_cycle()                                     # drains the start
+        self._session_gone(detached=True)
+        self.assertEqual(self.be.drain_agent_live_events(), ([], 0), "precondition: the detach queued no end")
+        again = sb.SdkSession(self.be, {"sid": SID, "name": "api", "cwd": self.root})
+        self.assertNotIn(aid, again._subagents, "precondition: the new object never saw the start")
+        return again, size
+
+    def _queued_then_released(self, aid, path, size):
+        self.assertEqual(list(self.be._agent_live_q), [(SID, aid, False)], "the end was queued, once")
+        km._begin_checkpoint_cycle()
+        self.assertIsNone(self._weight(path), "released at the next cycle")
+        self.assertEqual(self._stat("released"), {"agentEnded": {"count": 1, "bytes": size}})
+
+    def test_a_reattached_object_queues_the_end_at_the_agents_stop_hook(self):
+        again, size = self._reattached(AID, self.agent)
+        asyncio.run(again._subagent_stop_hook({"agent_id": AID}, None, None))
+        self._queued_then_released(AID, self.agent, size)
+
+    def test_a_reattached_object_queues_the_end_at_the_agents_task_end_and_not_a_shells(self):
+        again, size = self._reattached(AID, self.agent)
+        shell = "b0000000000000001"
+        again._seed_live_work_from_reg({"bgTasks": [                     # the reg's mirror, seeded at the attach
+            {"taskId": AID, "type": "local_agent", "desc": "check the notes-api routes", "since": 100},
+            {"taskId": shell, "type": "local_bash", "desc": "run the notes-api tests", "since": 100}]})
+        again._on_task_event("task_notification", {"task_id": shell, "status": "completed"})
+        self.assertEqual(list(self.be._agent_live_q), [], "a shell's end queues nothing")
+        again._on_task_event("task_notification", {"task_id": AID, "status": "completed"})
+        self._queued_then_released(AID, self.agent, size)
+
+    def test_a_reattached_object_queues_the_end_at_the_agents_workflow_slot_once(self):
+        again, size = self._reattached(WF_AID, self.wf_agent)
+        for _ in range(2):                                               # the run re-sends its whole list on every change
+            again._on_task_event("task_progress", {"task_id": WF_TID, "workflow_progress": [_wf(1, WF_AID, "done")]})
+        again._on_task_event("task_notification", {"task_id": WF_TID, "status": "completed"})   # and the run ends
+        self._queued_then_released(WF_AID, self.wf_agent, size)
+
     # ---- after the release ----
 
     def test_a_released_agent_folds_from_its_document_without_a_whole_read(self):
