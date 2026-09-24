@@ -197,7 +197,8 @@ command, interpreter and head):
 - the miss-walk unit, a walk that goes on past the file it found through the rest of the own tree, the project directory
   and every sibling before answering it: FoundRoads, each case, on its per-walk census or its project-directory calls;
 - a derived slot's line removed from any one of its ten open and clear sites: SlotSites, on the {function: count}
-  equality (a tree slot's line removed reds its premise);
+  equality (a tree slot's line removed reds its premise); and either derived slot's opening line removed from
+  _chat_push_scopes_open: the connect-push case too, on its census (the stamp index) or its fold count (the launch folds);
 - each half of the spy's patch of glob._StringGlobber's held functions removed alone, mutants of this module: SpyRoads'
   test_closed_road_path_rglob on 3.13, on its rglob('*') call without the builtin test (the held scandir) and on its
   glob('workflows') call without the _romp_sig_counting test (the held lstat, the kernel's wrapper).
