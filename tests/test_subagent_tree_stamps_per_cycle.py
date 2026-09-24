@@ -137,8 +137,9 @@ other (place, None) stamp an agent's memo holds, each with its cold lstats: a si
 raises under a real EACCES (the own root's count beside the unreadable tree's own stats of it, pinned as their sum and
 by the step per agent) and an absent or dangling-link own root, beside the boundary where the stamp's stat succeeds (an
 EIO on a root's lstat alone, a file or a live link in the own root's place: held once per cycle), and a place with no
-tree costs one lstat per _subagent_tree call and, with a link or a file in it, one os.stat per dependency note, never
-held (all in MissPathRoads); a sibling tree the walk reads is read once per cycle and
+tree costs one lstat per _subagent_tree call and, with a link or a file in it, one os.stat per dependency note and
+one os.lstat more for the walk's note of a file or a live link, never held (all in MissPathRoads); a sibling tree the
+walk reads is read once per cycle and
 costs a candidate lstat per directory per walk, and on a steady cycle one own stat per directory, shared (both in
 MissPathRoads, with a command row whose owner is read from the agents' transcripts before the tree is read, which
 re-stats the tree's D directories once per cycle); each walk lists the project directory once and stats its E entries,
@@ -1580,9 +1581,14 @@ class MissPathRoads(_World):
         readers that call it on the own root's place are counted by name (each _session_awaiting read's
         _subagent_meta_map, CALLS per cycle, and the agent's walk, once in the cold cycle), and the lstats of the place
         taken inside _subagent_tree equal those calls, cold and steady, with hit, miss, scoped and evict unmoved. With a
-        link or a file in the place each dependency note of it (_subagent_tree_dep_note: _subagent_meta_map's and the
-        walk's) asks _chat_stat_key whether it dangles, one os.stat per note, the same count; with nothing there, none.
-        Red under a kernel that holds the not-a-tree answer for the cycle (one lstat per cycle, scoped moved)."""
+        link or a file in the place each dependency note of it (_subagent_meta_map's through _subagent_tree_dep_note,
+        the walk's through _subagent_walk_dep_note) asks _chat_stat_key whether it dangles, one os.stat per note, the
+        same count; with nothing there, none. The walk's note also takes one os.lstat of the place when the stat found
+        something (a file or a live link), which checks that the place did not change after the read: counted inside
+        _subagent_walk_dep_note, 1 in the cold cycle for "file" and "live", 0 for "dangling" (its key is None and the
+        lstat is skipped) and "absent" (noted through _subagent_tree_dep_note), and 0 in the steady cycle, where no walk
+        runs. Red under a kernel that holds the not-a-tree answer for the cycle (one lstat per cycle, scoped moved), and
+        on the walk note's lstat under one whose walk note does not re-check the place after the stat."""
         for n, shape in enumerate(("absent", "dangling", "file", "live")):
             own = self._no_tree_in_the_own_place(shape)
             ghosts = self._ghosts(1, 0x7f80 + 0x10 * n)
@@ -1590,21 +1596,26 @@ class MissPathRoads(_World):
                 with self.subTest(shape=shape, phase=phase):
                     calls = {}
                     what = "the %s cycle, own root's place %s" % (phase, shape)
-                    pc, d = self._cycle(ghosts, what, count=2, within=("_subagent_tree", "_chat_stat_key"),
+                    pc, d = self._cycle(ghosts, what, count=2, within=("_subagent_tree", "_chat_stat_key", "_subagent_walk_dep_note"),
                                         inner=lambda: self._tree_calls_on(own, calls))
                     readers = {"_subagent_meta_map": CALLS}
                     if phase == "cold":
                         readers["_subagent_file_walk"] = 1
                     self.assertEqual(calls, readers, "%s: premise, the readers that call _subagent_tree on the place: %r" % (what, calls))
                     notes = sum(readers.values()) if shape != "absent" else 0
+                    recheck = 1 if phase == "cold" and shape in ("file", "live") else 0
                     got = (pc.count("lstat", [own], within="_subagent_tree"), pc.count("stat", [own], within="_chat_stat_key"),
+                           pc.count("lstat", [own], within="_subagent_walk_dep_note"),
                            tuple(d[k] for k in ("hit", "miss", "scoped", "evict")))
-                    want = (sum(calls.values()), notes, (0, 0, 0, 0))
+                    want = (sum(calls.values()), notes, recheck, (0, 0, 0, 0))
                     self.assertEqual(got, want,
                                      "(the lstats of the place inside _subagent_tree, the note's os.stat of it inside _chat_stat_key, "
-                                     "(hit, miss, scoped, evict)) over %s: %r; keyed on (one per _subagent_tree call, one per note of "
-                                     "a link or a file, (0, 0, 0, 0)) = %r: nothing held (a kernel that holds the not-a-tree answer "
-                                     "for the cycle pays one lstat and moves scoped)" % (what, got, want))
+                                     "the walk note's lstat of it inside _subagent_walk_dep_note, (hit, miss, scoped, evict)) over %s: "
+                                     "%r; keyed on (one per _subagent_tree call, one per note of a link or a file, one in the cold "
+                                     "cycle's walk for a file or a live link and none otherwise, (0, 0, 0, 0)) = %r: nothing held (a "
+                                     "kernel that holds the not-a-tree answer for the cycle pays one lstat and moves scoped), and the "
+                                     "walk's note re-checks a place its stat found (a note that does not pays no lstat)"
+                                     % (what, got, want))
 
     def test_a_sibling_tree_the_walk_reads_is_read_once_per_cycle_and_costs_a_candidate_lstat_per_directory_per_walk(self):
         """The sibling-tree term: S sibling sessions with subagents trees of DSIB directories each, G agents whose file is

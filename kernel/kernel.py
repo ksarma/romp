@@ -35763,7 +35763,12 @@ def _subagent_tree_memo_report():
         (no call on each served path), and _assert_asks in every bound case;
       - a place with no tree (an absent root, a dangling or live link or a file in its place): one lstat per call,
         whichever reader makes it, never held, no counter; with a link or a file there, each dependency note of it asks
-        _chat_stat_key whether it dangles, one os.stat per note, counted nowhere. MissPathRoads
+        _chat_stat_key whether it dangles, one os.stat per note: _subagent_meta_map's note (_subagent_tree_dep_note)
+        costs that os.stat alone, and the agent-file walk's note (_subagent_walk_dep_note) costs it plus one os.lstat
+        for a file or a live link, which checks that the place did not change after the read (a dangling link's key is
+        None and the lstat is skipped); none of these moves a counter. The walk notes a sibling session's place through
+        the same helper, so a sibling whose subagents place is a file or a live link costs each walk that stat and lstat
+        too; the case below prices the own place only. MissPathRoads
         test_a_place_with_no_tree_costs_one_lstat_per_read_and_is_never_held;
       - the launch fold (_awaiting_nest): one os.stat of the agent's file per agent per scope, sum_s A_s, held; no
         counter. The two bound cases (A file stats). A fold that faults is held for its one call alone: A_s folds per
